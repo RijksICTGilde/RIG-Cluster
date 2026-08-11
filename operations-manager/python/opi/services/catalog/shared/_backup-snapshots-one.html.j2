@@ -1,131 +1,132 @@
-{# Snapshot table for ONE deployment. Rendered by _backup-snapshots.html.j2, which
-   fetches every deployment's snapshots in a single request and fans them out. #}
+{#
+  De snapshottabel van EEN deployment, in de nieuwe vormgeving.
+
+  Overname van opi/services/catalog/shared/_backup-snapshots-one.html.j2: dezelfde acht
+  kolommen in dezelfde volgorde (Backup Run, Type, Component, Storage, Gen, Timestamp,
+  Grootte, Snapshot ID), dezelfde groepering per ``backup_run_id`` met de nieuwste run
+  bovenaan, dezelfde omrekening van bytes naar KB/MB/GB, dezelfde tooltips en dezelfde
+  slotregel met de aantallen.
+
+  WAT ER ANDERS IS
+
+  De afwisselende rijkleur per backup run is eruit. Die stond in het origineel als
+  ``background`` in een style-attribuut met een rvo-kleurvariabele, en die variabelen
+  bestaan in het NLDD-thema niet. Een eigen kleur kiezen zou een ontwerpbesluit zijn, en
+  een stylesheet kan hier niet: dit fragment komt met ``hx-swap-oob`` binnen, dus alles
+  buiten de gemarkeerde blokken wordt weggegooid. De groepering zelf blijft zichtbaar - de
+  runs staan bij elkaar, elke rij draagt zijn run-id met het aantal items in de tooltip, en
+  de slotregel telt de runs.
+#}
 {% if backups_error %}
-<c-alert kind="warning" heading="Backups konden niet worden opgehaald"
-         content="{{ backups_error }}" />
+<c-alert type="warning" heading="Backups konden niet worden opgehaald">{{ backups_error }}</c-alert>
 {% else %}
-                    {% if backups %}
-                    {# Group backups by backup_run_id for visual distinction #}
-                    {% set backup_runs = {} %}
-                    {% for backup in backups %}
-                        {% set run_id = backup.backup_run_id or 'unknown' %}
-                        {% if run_id not in backup_runs %}
-                            {% set _ = backup_runs.update({run_id: []}) %}
-                        {% endif %}
-                        {% set _ = backup_runs[run_id].append(backup) %}
-                    {% endfor %}
-                    {% set run_colors = ['var(--rvo-color-wit)', 'var(--rvo-color-grijs-100)'] %}
-                    <div style="overflow-x: auto;">
-                        <table class="backup-table" style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
-                            <thead>
-                                <tr style="border-bottom: 2px solid var(--rvo-color-grijs-300);">
-                                    <th>Backup Run</th>
-                                    <th>Type</th>
-                                    <th>Component</th>
-                                    <th>Storage</th>
-                                    <th>Gen</th>
-                                    <th>Timestamp</th>
-                                    <th>Grootte</th>
-                                    <th>Snapshot ID</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% set color_idx = namespace(val=0) %}
-                                {% for run_id, run_backups in backup_runs.items() | sort(reverse=true) %}
-                                {% set row_bg = run_colors[color_idx.val % 2] %}
-                                {% for backup in run_backups %}
-                                <tr style="border-bottom: 1px solid var(--rvo-color-grijs-200); background: {{ row_bg }};">
-                                    <td>
-                                        {% if run_id != 'unknown' %}
-                                            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-                                                <code style="font-family: monospace; font-size: 0.75rem; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw); padding: 2px 6px; border-radius: 4px; cursor: help;" title="{{ run_backups | length }} item(s) in deze backup run">{{ run_id }}</code>
-                                                {% set trigger_val = backup.trigger or 'scheduled' %}
-                                                {% if trigger_val == 'manual' %}
-                                                    <span style="font-size: 0.7rem; padding: 1px 6px; border-radius: 4px; background: var(--rvo-color-oranje-300); color: var(--rvo-color-donkerblauw); white-space: nowrap;" title="Handmatige backup - wordt niet automatisch verwijderd">handmatig</span>
-                                                {% else %}
-                                                    <span style="font-size: 0.7rem; padding: 1px 6px; border-radius: 4px; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); white-space: nowrap;" title="Automatische backup - valt onder retentiebeleid">auto</span>
-                                                {% endif %}
-                                            </div>
-                                        {% else %}
-                                            <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">-</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if backup.resource_type == 'pvc' %}
-                                            <c-tag type="info" content="PVC" />
-                                        {% elif backup.resource_type == 'database' %}
-                                            <c-tag type="success" content="DB" />
-                                        {% elif backup.resource_type == 'bucket' %}
-                                            <c-tag type="warning" content="Bucket" />
-                                        {% else %}
-                                            <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">{{ backup.resource_type or '-' }}</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <span style="display: inline-flex; align-items: center; gap: 4px;">
-                                            <c-icon icon="document-blanco" size="sm" color="grijs-600" />
-                                            {{ backup.component_name or '-' }}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        {{ backup.storage_name or '-' }}
-                                    </td>
-                                    <td>
-                                        {% if backup.generation is not none %}
-                                            <span style="display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; background: var(--rvo-color-grijs-200); border-radius: 4px; font-weight: 500;">v{{ backup.generation }}</span>
-                                        {% else %}
-                                            <span style="color: var(--rvo-color-grijs-500);">-</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <span style="color: var(--rvo-color-grijs-700);">{{ backup.timestamp | dutch_date }}</span>
-                                    </td>
-                                    <td>
-                                        {% if backup.size_bytes is not none %}
-                                            {% if backup.size_bytes == 0 %}
-                                                <span style="color: var(--rvo-color-grijs-500);">0 B (leeg)</span>
-                                            {% else %}
-                                                {% set size_mb = (backup.size_bytes / 1048576) | round(2) %}
-                                                {% if size_mb >= 1024 %}
-                                                    {{ (size_mb / 1024) | round(2) }} GB
-                                                {% elif size_mb >= 1 %}
-                                                    {{ size_mb }} MB
-                                                {% else %}
-                                                    {{ (backup.size_bytes / 1024) | round(2) }} KB
-                                                {% endif %}
-                                            {% endif %}
-                                        {% else %}
-                                            <span style="color: var(--rvo-color-grijs-500);">-</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% set tags_display = [] %}
-                                        {% if backup.tags %}
-                                            {% for key, value in backup.tags.items() %}
-                                                {% set _ = tags_display.append(key ~ ': ' ~ value) %}
-                                            {% endfor %}
-                                        {% endif %}
-                                        <code style="font-family: monospace; font-size: 0.7rem; background: var(--rvo-color-grijs-100); padding: 2px 6px; border-radius: 4px; cursor: pointer; user-select: all;" title="Click to select, PVC: {{ backup.pvc_name }}&#10;{% if backup.tags %}Tags:&#10;{{ tags_display | join('&#10;') }}{% endif %}">{{ backup.snapshot_id }}</code>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                                {% set color_idx.val = color_idx.val + 1 %}
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    <p class="rvo-text--sm rvo-text--subtle" style="margin-top: 8px;">
-                        {% set known_runs = backup_runs.keys() | reject('equalto', 'unknown') | list %}
-                        {% if known_runs | length > 0 %}
-                            {{ known_runs | length }} backup run(s), {{ backups|length }} snapshot(s) totaal
-                        {% else %}
-                            {{ backups|length }} backup(s) gevonden
-                        {% endif %}
-                    </p>
+    {% if backups %}
+    {# Groeperen per backup run, zoals het origineel. #}
+    {% set backup_runs = {} %}
+    {% for backup in backups %}
+        {% set run_id = backup.backup_run_id or 'unknown' %}
+        {% if run_id not in backup_runs %}
+            {% set _ = backup_runs.update({run_id: []}) %}
+        {% endif %}
+        {% set _ = backup_runs[run_id].append(backup) %}
+    {% endfor %}
+    {# NLDD maakt van een tabel een CSS-grid: zonder columns valt alles in een kolom. #}
+    <c-table columns="1.4fr 0.6fr 1fr 1fr 0.5fr 1.2fr 0.8fr 1.4fr">
+        <c-table-head>
+            <c-th>Backup Run</c-th>
+            <c-th>Type</c-th>
+            <c-th>Component</c-th>
+            <c-th>Storage</c-th>
+            <c-th>Gen</c-th>
+            <c-th>Timestamp</c-th>
+            <c-th>Grootte</c-th>
+            <c-th>Snapshot ID</c-th>
+        </c-table-head>
+        {% for run_id, run_backups in backup_runs.items() | sort(reverse=true) %}
+        {% for backup in run_backups %}
+        <c-table-row>
+            <c-td>
+                {% if run_id != 'unknown' %}
+                    <code title="{{ run_backups | length }} item(s) in deze backup run">{{ run_id }}</code>
+                    {% set trigger_val = backup.trigger or 'scheduled' %}
+                    {% if trigger_val == 'manual' %}
+                        <span title="Handmatige backup - wordt niet automatisch verwijderd"><c-tag type="warning" label="handmatig" /></span>
                     {% else %}
-                    <p class="rvo-text--md rvo-text--subtle">
-                        <c-icon icon="info" size="sm" color="grijs-500" />
-                        Geen backups gevonden voor deze deployment
-                    </p>
+                        <span title="Automatische backup - valt onder retentiebeleid"><c-tag type="default" label="auto" /></span>
                     {% endif %}
+                {% else %}
+                    -
+                {% endif %}
+            </c-td>
+            <c-td>
+                {% if backup.resource_type == 'pvc' %}
+                    <c-tag type="info" label="PVC" />
+                {% elif backup.resource_type == 'database' %}
+                    <c-tag type="success" label="DB" />
+                {% elif backup.resource_type == 'bucket' %}
+                    <c-tag type="warning" label="Bucket" />
+                {% else %}
+                    {{ backup.resource_type or '-' }}
+                {% endif %}
+            </c-td>
+            <c-td>
+                <c-cluster gap="xs" align="center">
+                    <c-icon icon="file-text" size="sm" />
+                    {{ backup.component_name or '-' }}
+                </c-cluster>
+            </c-td>
+            <c-td>{{ backup.storage_name or '-' }}</c-td>
+            <c-td>
+                {% if backup.generation is not none %}
+                    v{{ backup.generation }}
+                {% else %}
+                    -
+                {% endif %}
+            </c-td>
+            <c-td>{{ backup.timestamp | dutch_date }}</c-td>
+            <c-td>
+                {% if backup.size_bytes is not none %}
+                    {% if backup.size_bytes == 0 %}
+                        0 B (leeg)
+                    {% else %}
+                        {% set size_mb = (backup.size_bytes / 1048576) | round(2) %}
+                        {% if size_mb >= 1024 %}
+                            {{ (size_mb / 1024) | round(2) }} GB
+                        {% elif size_mb >= 1 %}
+                            {{ size_mb }} MB
+                        {% else %}
+                            {{ (backup.size_bytes / 1024) | round(2) }} KB
+                        {% endif %}
+                    {% endif %}
+                {% else %}
+                    -
+                {% endif %}
+            </c-td>
+            <c-td>
+                {% set tags_display = [] %}
+                {% if backup.tags %}
+                    {% for key, value in backup.tags.items() %}
+                        {% set _ = tags_display.append(key ~ ': ' ~ value) %}
+                    {% endfor %}
+                {% endif %}
+                <code title="Click to select, PVC: {{ backup.pvc_name }}&#10;{% if backup.tags %}Tags:&#10;{{ tags_display | join('&#10;') }}{% endif %}">{{ backup.snapshot_id }}</code>
+            </c-td>
+        </c-table-row>
+        {% endfor %}
+        {% endfor %}
+    </c-table>
+    <c-paragraph size="sm">
+        {% set known_runs = backup_runs.keys() | reject('equalto', 'unknown') | list %}
+        {% if known_runs | length > 0 %}
+            {{ known_runs | length }} backup run(s), {{ backups|length }} snapshot(s) totaal
+        {% else %}
+            {{ backups|length }} backup(s) gevonden
+        {% endif %}
+    </c-paragraph>
+    {% else %}
+    <c-cluster gap="sm" align="center">
+        <c-icon icon="info-circle" size="sm" />
+        <c-paragraph size="sm">Geen backups gevonden voor deze deployment</c-paragraph>
+    </c-cluster>
+    {% endif %}
 {% endif %}

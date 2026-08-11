@@ -13,7 +13,7 @@ hx-headers, not fetch().
 import re
 from pathlib import Path
 
-_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "opi" / "templates"
+_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "opi" / "templates_lotc"
 _WRITE_METHOD = re.compile(r"""method\s*:\s*['"](POST|PUT|PATCH|DELETE)['"]""", re.IGNORECASE)
 
 

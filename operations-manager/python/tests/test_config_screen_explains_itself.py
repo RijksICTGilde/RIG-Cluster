@@ -19,14 +19,14 @@ import pytest
 from opi.forms.visualizers import wizard_sections
 from opi.services.services import ServiceAdapter
 
-_STEP = pathlib.Path(opi.__file__).parent / "templates/wizard/modal_wizard_step.html.j2"
+_STEP = pathlib.Path(opi.__file__).parent / "templates_lotc/bg/_modal-wizard-step.html.j2"
 # A help_template resolves against the template root, the service catalog (a service's
 # own help.md lives in its package, RC-36), or templates/help for the few
 # explanations that belong to no single service.
 _HELP_ROOTS = (
-    pathlib.Path(opi.__file__).parent / "templates",
+    pathlib.Path(opi.__file__).parent / "templates_lotc",
     pathlib.Path(opi.__file__).parent / "services" / "catalog",
-    pathlib.Path(opi.__file__).parent / "templates" / "help",
+    pathlib.Path(opi.__file__).parent / "templates_lotc" / "help",
 )
 
 _PROJECT_SECTIONS = [

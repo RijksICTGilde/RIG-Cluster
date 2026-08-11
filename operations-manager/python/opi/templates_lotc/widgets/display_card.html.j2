@@ -10,9 +10,9 @@
         </div>
         {% if val %}
             {% if val in ['Versleuteld opgeslagen', 'Geconfigureerd'] %}
-        <c-tag type="success"/>
+        <c-tag type="success" label="{{ val|e }}"/>
             {% elif val == 'Niet geconfigureerd' %}
-        <c-tag type="warning"/>
+        <c-tag type="warning" label="{{ val|e }}"/>
             {% else %}
         <span>{{ val|e }}</span>
             {% endif %}

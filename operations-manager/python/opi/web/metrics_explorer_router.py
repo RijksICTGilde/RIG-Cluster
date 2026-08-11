@@ -88,8 +88,7 @@ async def metrics_explorer_page(request: Request):
 
     return render(
         request,
-        roos="metrics-explorer.html.j2",
-        lotc="bg/metrics-explorer.html.j2",
+        template="bg/metrics-explorer.html.j2",
         context={
             "request": request,
             "title": "Metrics Explorer",

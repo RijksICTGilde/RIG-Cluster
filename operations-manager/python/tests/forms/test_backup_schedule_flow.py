@@ -28,14 +28,9 @@ from opi.forms.visualizers.wizard_sections import build_backup_schedule_section
 from opi.web.router_wizard import _render_step_html
 
 
-def _roos_request() -> SimpleNamespace:
-    """Een verzoek dat om de bestaande weergave vraagt.
-
-    _render_step_html leest alleen de weergavekeuze uit het verzoek: dezelfde velden en
-    waarden, maar door de roos-adapter of door de LOTC-adapter. Deze tests toetsen de
-    roos-uitvoer, dus die keuze staat hier expliciet.
-    """
-    return SimpleNamespace(query_params={"layout": "roos"}, cookies={})
+def _request() -> SimpleNamespace:
+    """Het kleinste dat _render_step_html van een verzoek leest."""
+    return SimpleNamespace(query_params={}, cookies={})
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +301,7 @@ class TestBackupScheduleSectionRendering:
 
     def test_renders_with_no_existing_schedule(self) -> None:
         section = build_backup_schedule_section(0)
-        html = _render_step_html(_roos_request(), section, yaml_data={"deployments": [{"name": "prod"}]})
+        html = _render_step_html(_request(), section, yaml_data={"deployments": [{"name": "prod"}]})
         assert html
         assert "Herhaling" in html
         # Time field should be hidden when no schedule is set
@@ -315,18 +310,18 @@ class TestBackupScheduleSectionRendering:
     def test_renders_with_existing_rrule_schedule(self) -> None:
         section = build_backup_schedule_section(0)
         yaml_data = {"deployments": [{"name": "prod", "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"}}]}
-        html = _render_step_html(_roos_request(), section, yaml_data=yaml_data)
+        html = _render_step_html(_request(), section, yaml_data=yaml_data)
         assert html
         assert "DAILY" in html or "Dagelijks" in html
 
     def test_renders_select_element(self) -> None:
         section = build_backup_schedule_section(0)
-        html = _render_step_html(_roos_request(), section, yaml_data={"deployments": [{"name": "prod"}]})
-        assert "<c-select-field" in html
+        html = _render_step_html(_request(), section, yaml_data={"deployments": [{"name": "prod"}]})
+        assert 'data-lotc-component="select-field"' in html
 
     def test_renders_all_frequency_options(self) -> None:
         section = build_backup_schedule_section(0)
-        html = _render_step_html(_roos_request(), section, yaml_data={"deployments": [{"name": "prod"}]})
+        html = _render_step_html(_request(), section, yaml_data={"deployments": [{"name": "prod"}]})
         assert "Dagelijks" in html
         assert "Wekelijks" in html
         assert "Maandelijks" in html
@@ -339,7 +334,7 @@ class TestBackupScheduleSectionRendering:
                 {"name": "staging", "backup": {"schedule": "FREQ=WEEKLY;BYHOUR=3;BYMINUTE=0;BYDAY=SU"}},
             ]
         }
-        html = _render_step_html(_roos_request(), section, yaml_data=yaml_data)
+        html = _render_step_html(_request(), section, yaml_data=yaml_data)
         assert html
         assert "Herhaling" in html
 

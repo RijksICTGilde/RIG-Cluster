@@ -8,7 +8,7 @@ a situation gets the block for free and no service name appears in the template.
 
 from __future__ import annotations
 
-from opi.core.templates import templates
+from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING, SleepState, write
 from opi.services.deployment_state import collect_deployment_state
 from opi.services.services import ServiceAdapter

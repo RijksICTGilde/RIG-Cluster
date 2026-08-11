@@ -8,9 +8,8 @@ De voettekst wees naar ``/api`` in plaats van naar ``/docs``. Dat staat in
 welk htmx-adres een blok ophaalt, welke velden een formulier heeft - maar nergens of een
 ``href`` ergens AANKOMT. Een link is de enige soort navigatie die niemand aanroept: hij
 staat er, hij ziet er goed uit, en pas als een gebruiker klikt blijkt het niets te zijn.
-Het gedragsoppervlak in ``lotc_compare_behaviour.py`` verzamelt bestemmingen wel, maar legt
-ze alleen naast de oude pagina; een link die in BEIDE vormgevingen fout is - of die alleen
-in de nieuwe bestaat, zoals deze - komt daar niet uit.
+De gedragsmeting in ``tests/oppervlak.py`` verzamelt bestemmingen wel, maar legt alleen
+vast DAT ze er zijn; of ze aankomen is een andere vraag, en die stelt niemand anders.
 
 Daarom wordt hier elke interne link van elke omgezette pagina echt BEZOCHT, met de browser
 en dus met de sessie erbij. Eerst worden alle links van alle pagina's verzameld en
@@ -74,7 +73,7 @@ def _verzamel_links(app_server: str, page: Page) -> dict[str, str]:
     """
     gevonden: dict[str, str] = {}
     for pad in PAGINAS:
-        antwoord = page.goto(f"{app_server}{pad}?layout=nldd", wait_until="networkidle")
+        antwoord = page.goto(f"{app_server}{pad}", wait_until="networkidle")
         assert antwoord is not None, f"{pad} leverde geen antwoord"
         assert antwoord.status == 200, f"{pad} zelf gaf HTTP {antwoord.status}"
         for link in page.evaluate(LINK_JS):

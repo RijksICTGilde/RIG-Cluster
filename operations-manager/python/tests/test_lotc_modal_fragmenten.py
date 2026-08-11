@@ -1,135 +1,46 @@
-"""De fragmenten van de bewerkdialoog doen in beide weergaven hetzelfde.
+"""De fragmenten van de bewerkdialoog: dragen ze nog waar het opslaan aan hangt?
 
 De dialoog op de projectpagina wordt gevuld door vijf fragmenten: de stap, de
-samenvatting, het startbeeld van de voortgang, de voortgang zelf en de meldingen bij
-"alleen opslaan". Ze zijn omgezet naar LOTC, en de eis bij die omzetting is dat ze er
-anders UITZIEN en hetzelfde DOEN.
+samenvatting, het startbeeld van de voortgang, de voortgang zelf en de melding bij
+"alleen opslaan".
 
-Wat hier gemeten wordt is dus niet de vormgeving maar het gedrag: waar een knop heen
-gaat, welk adres htmx ophaalt, welke JavaScript-functie er aangeroepen wordt, welke
-velden er zijn en welke id's er staan waar htmx of het script aan hangt. Twee keer
-dezelfde context, twee sjablonen, een vergelijking van verzamelingen.
+Hier stond een VERGELIJKING met de oude vormgeving van hetzelfde fragment: elke
+bestemming, elk htmx-adres, elke aanroep, elk veld en elk id, twee keer gerenderd met
+dezelfde context. Die tweede vormgeving is er niet meer. Wat ervoor in de plaats komt is
+de LIJST: ``tests/oppervlak_snapshot_fragmenten.json`` legt per geval vast wat het
+fragment draagt, en deze poort faalt als er iets van AF gaat.
 
-Waarom hier en niet in de e2e-poort: deze drie standen (voortgang loopt, klaar, mislukt)
-en de samenvatting zijn met een draaiende testserver niet te bereiken - die heeft geen
-takendienst. Ze RENDEREN wel, met een context die we hier zelf neerzetten, en dat is
-precies genoeg om te zien of er een knop of een adres is weggevallen.
+De lijst bijwerken::
 
-De stapfragmenten zelf gaan wel over de echte route; die staan in
-tests/e2e/test_lotc_modal_pariteit.py.
+    ZAD_SCHRIJF_OPPERVLAK=1 uv run pytest tests/test_lotc_modal_fragmenten.py
+
+Lees de diff dan ook echt: aan die velden en dat ene hx-post hangt het OPSLAAN, dus elke
+regel die verdwijnt is een dialoog die stilletjes minder bewaart dan je invulde.
+
+Waarom hier en niet in de e2e-poort: de drie standen van de voortgang (loopt, klaar,
+mislukt) en de samenvatting zijn met een draaiende testserver niet te bereiken - die heeft
+geen takendienst. Ze RENDEREN wel, met een context die we hier zelf neerzetten.
+
+De stapfragmenten op de echte route staan in tests/e2e/test_gedragsoppervlak.py.
 """
 
 from __future__ import annotations
 
-import re
-from html.parser import HTMLParser
+import json
+import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opi.core.templates import get_templates
 from opi.core.templates_lotc import templates_lotc
 from opi.web.navigation_lotc import to_nldd_icon
+from tests.oppervlak import als_lijsten, meet, ontbreekt
 
-HX_ATTRS = ("hx-get", "hx-post", "hx-delete", "hx-put", "hx-patch")
-JS_ATTRS = ("onclick", "@click", "onchange", "oninput", "onsubmit")
+SNAPSHOT = Path(__file__).resolve().parent / "oppervlak_snapshot_fragmenten.json"
 
-#: Het wizardtoken en het CSRF-token gaan HELEMAAL uit een gemeten adres.
-#:
-#: Niet alleen omdat ze per sessie verschillen. De twee componentsystemen zetten ze op een
-#: andere plek: onder roos verdwijnt de querystring van een knop met een voorwaardelijk
-#: attribuut ernaast uit het adres en reist het token alleen nog in ``hx-vals`` mee, onder
-#: LOTC blijft hij in het adres EN in ``hx-vals`` staan. Beide kanten sturen het token dus
-#: mee; alleen de weg verschilt, en dat is vormgeving van het componentsysteem.
-#:
-#: Dat het token ECHT aankomt is daarmee niet gemeten, en daar is deze toets ook niet de
-#: plek voor: dat doet tests/e2e/test_lotc_modal_dialoog.py, die de dialoog opent en
-#: opslaat tegen een draaiende server.
-VLUCHTIG = re.compile(r"[?&](?:_wizard_token|csrf|csrf_token)=[^&\s\"']*", re.IGNORECASE)
-
-
-def stabiel(waarde: str) -> str:
-    """Haal de tokens uit een adres, zodat er een PAD overblijft om te vergelijken."""
-    zonder = VLUCHTIG.sub("", waarde)
-    return zonder.replace("&", "?", 1) if "?" not in zonder and "&" in zonder else zonder
-
-
-#: Verschillen in de id-verzameling die we AANVAARDEN, elk met de reden erbij. Een regel
-#: hier is een besluit, geen dekking.
-AANVAARDE_IDS = {
-    # Het roos-veld zet zijn label in een eigen <label id="...-label"> en zijn uitleg in
-    # een <span id="...-helper">. Het LOTC-veld draagt allebei als attribuut op
-    # <nldd-form-field>; er is dus geen apart element om een id op te zetten. De uitleg
-    # zelf is er wel, met een id op -help. Eigenschap van de formulierlaag, niet van deze
-    # omzetting - het geldt net zo op de al omgezette wizardpagina.
-    "-label": "label is een attribuut geworden in plaats van een eigen element",
-    "-helper": "de uitleg heet -help in de LOTC-formulierlaag",
-    # De stappenbalk van roos is een <nav id="wizard-steps">; die van LOTC is een
-    # <c-step-indicator> zonder eigen id. In de DIALOOG hangt er niets aan: de hele
-    # #edit-section-inner wordt bij elke stap vervangen, dus er is niets om apart aan te
-    # wijzen. (Op de wizardPAGINA wel - daar zet het fragment zelf de wikkel met die id
-    # eromheen, en dat is ongewijzigd.)
-    "wizard-steps": "de stappenbalk heeft in de dialoog geen id nodig; niets wijst hem aan",
-}
-
-
-class Oppervlak(HTMLParser):
-    """Verzamelt wat een fragment DOET, los van hoe het eruitziet.
-
-    De tegenhanger van ``Oppervlak`` in scripts/lotc_compare_behaviour.py, met een
-    verschil dat hier nodig is: een LOTC-formulierveld is geen ``<input>`` maar een
-    ``<nldd-text-field name=...>``. Alleen op de tagnaam ``input`` meten zou elk veld in
-    de nieuwe weergave als verdwenen melden terwijl het er gewoon staat - en een meetlat
-    die altijd piept, houdt niemand in de gaten.
-
-    ``<nldd-icon name=...>`` valt er expres buiten: dat ``name`` is de naam van het
-    plaatje, geen formulierveld.
-    """
-
-    BESTURING_TAGS = ("input", "select", "textarea")
-    GEEN_BESTURING = ("nldd-icon",)
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.bestemmingen: set[str] = set()
-        self.htmx: set[str] = set()
-        self.functies: set[str] = set()
-        self.velden: set[str] = set()
-        self.ids: set[str] = set()
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        d = {k: (v or "") for k, v in attrs}
-
-        for sleutel, waarde in d.items():
-            if sleutel not in ("href", "action") and not sleutel.endswith("-href"):
-                continue
-            if waarde and not waarde.startswith(("#", "javascript:", "/static/")):
-                self.bestemmingen.add(stabiel(waarde))
-
-        for sleutel in HX_ATTRS:
-            if d.get(sleutel):
-                self.htmx.add(f"{sleutel}={stabiel(d[sleutel])}")
-
-        for sleutel in JS_ATTRS:
-            for naam in re.findall(r"([A-Za-z_$][\w$]*)\s*\(", d.get(sleutel, "")):
-                self.functies.add(naam)
-
-        is_besturing = tag in self.BESTURING_TAGS or (
-            tag.startswith(("nldd-", "c-")) and tag not in self.GEEN_BESTURING
-        )
-        if is_besturing and d.get("name"):
-            self.velden.add(d["name"])
-
-        # input-id telt mee: het LOTC-veld geeft de id door aan zijn eigen invoerveld.
-        for sleutel in ("id", "input-id"):
-            if d.get(sleutel):
-                self.ids.add(d[sleutel])
-
-
-def meet(html: str) -> Oppervlak:
-    oppervlak = Oppervlak()
-    oppervlak.feed(html)
-    return oppervlak
+#: De omgevingsvariabele die van deze poort een schrijver maakt. Zie de moduledocstring.
+SCHRIJVEN = os.environ.get("ZAD_SCHRIJF_OPPERVLAK") == "1"
 
 
 def _steps() -> Any:
@@ -214,39 +125,13 @@ def _fragment_context(status: str) -> dict[str, Any]:
     }
 
 
-#: Per geval: het roos-sjabloon, het LOTC-sjabloon, de context, en of de roos-uitvoer nog
-#: door ``process_components`` moet. Die laatste vraag volgt precies wat de route doet:
-#: de voortgangsfragmenten renderen met opzet EEN keer.
-GEVALLEN: list[tuple[str, str, str, dict[str, Any], bool]] = [
-    (
-        "samenvatting",
-        "wizard/modal_wizard_review.html.j2",
-        "bg/_modal-wizard-review.html.j2",
-        REVIEW_CONTEXT,
-        True,
-    ),
-    (
-        "voortgang-start",
-        "wizard/modal_wizard_progress.html.j2",
-        "bg/_modal-wizard-progress.html.j2",
-        PROGRESS_CONTEXT,
-        False,
-    ),
-    (
-        "opgeslagen",
-        "wizard/modal_wizard_success.html.j2",
-        "bg/_modal-wizard-success.html.j2",
-        {},
-        True,
-    ),
+#: Per geval: de naam, het sjabloon en de context.
+GEVALLEN: list[tuple[str, str, dict[str, Any]]] = [
+    ("samenvatting", "bg/_modal-wizard-review.html.j2", REVIEW_CONTEXT),
+    ("voortgang-start", "bg/_modal-wizard-progress.html.j2", PROGRESS_CONTEXT),
+    ("opgeslagen", "bg/_modal-wizard-success.html.j2", {}),
     *[
-        (
-            f"voortgang-{status}",
-            "wizard/modal_wizard_progress_fragment.html.j2",
-            "bg/_modal-wizard-progress-fragment.html.j2",
-            _fragment_context(status),
-            False,
-        )
+        (f"voortgang-{status}", "bg/_modal-wizard-progress-fragment.html.j2", _fragment_context(status))
         for status in ("running", "completed", "failed")
     ],
 ]
@@ -304,14 +189,8 @@ def _stap_context(*, eerste: bool, laatste: bool, basis_url: str, flow_id: str =
     }
 
 
-STAP_GEVALLEN: list[tuple[str, str, str, dict[str, Any], bool]] = [
-    (
-        naam,
-        "wizard/modal_wizard_step.html.j2",
-        "bg/_modal-wizard-step.html.j2",
-        context,
-        True,
-    )
+STAP_GEVALLEN: list[tuple[str, str, dict[str, Any]]] = [
+    (naam, "bg/_modal-wizard-step.html.j2", context)
     for naam, context in (
         (
             "stap-eerste",
@@ -354,40 +233,60 @@ STAP_GEVALLEN: list[tuple[str, str, str, dict[str, Any], bool]] = [
 ]
 
 
-def _render(roos: str, lotc: str, context: dict[str, Any], verwerk_roos: bool) -> tuple[Oppervlak, Oppervlak]:
-    env = get_templates().env
-    oud = env.get_template(roos).render(context)
-    if verwerk_roos:
-        oud = str(env.filters["process_components"](oud))
-    nieuw = templates_lotc.env.get_template(lotc).render(context)
-    return meet(oud), meet(nieuw)
+ALLE_GEVALLEN = [*GEVALLEN, *STAP_GEVALLEN]
 
 
-@pytest.mark.parametrize(
-    ("naam", "roos", "lotc", "context", "verwerk_roos"),
-    [*GEVALLEN, *STAP_GEVALLEN],
-    ids=[g[0] for g in (*GEVALLEN, *STAP_GEVALLEN)],
-)
-def test_het_fragment_kan_alles_wat_het_oude_kon(
-    naam: str, roos: str, lotc: str, context: dict[str, Any], verwerk_roos: bool
-) -> None:
-    """Geen bestemming, geen htmx-adres, geen aanroep en geen veld mag wegvallen."""
-    oud, nieuw = _render(roos, lotc, context, verwerk_roos)
+@pytest.fixture(scope="module")
+def vastgelegd() -> dict[str, dict[str, list[str]]]:
+    if not SNAPSHOT.exists():
+        return {}
+    return json.loads(SNAPSHOT.read_text())
 
-    verdwenen: list[str] = []
-    for label, a, b in (
-        ("bestemming", oud.bestemmingen, nieuw.bestemmingen),
-        ("htmx", oud.htmx, nieuw.htmx),
-        ("js-functie", oud.functies, nieuw.functies),
-        ("veld", oud.velden, nieuw.velden),
-    ):
-        verdwenen.extend(f"{label}: {weg}" for weg in sorted(a - b))
 
-    verdwenen.extend(
-        f"id: {weg}" for weg in sorted(oud.ids - nieuw.ids) if not any(sleutel in weg for sleutel in AANVAARDE_IDS)
+@pytest.fixture(scope="module")
+def geschreven():
+    """Verzamelt de metingen en schrijft ze weg als erom gevraagd is."""
+    verzameld: dict[str, dict[str, list[str]]] = {}
+    yield verzameld
+    if SCHRIJVEN and verzameld:
+        bestaand = json.loads(SNAPSHOT.read_text()) if SNAPSHOT.exists() else {}
+        bestaand.update(verzameld)
+        SNAPSHOT.write_text(json.dumps(bestaand, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+
+
+def test_de_lijst_dekt_elk_geval(vastgelegd: dict[str, dict[str, list[str]]]) -> None:
+    """Bewaak de bewaker: een geval zonder vastgelegde lijst is een geval zonder poort."""
+    if SCHRIJVEN:
+        pytest.skip("de lijst wordt in deze run opnieuw geschreven")
+
+    ontbrekend = [naam for naam, _, _ in ALLE_GEVALLEN if naam not in vastgelegd]
+    assert not ontbrekend, (
+        f"deze gevallen staan niet in {SNAPSHOT.name}: {ontbrekend}. "
+        f"Draai ZAD_SCHRIJF_OPPERVLAK=1 pytest {Path(__file__).name} om ze vast te leggen."
     )
 
-    assert not verdwenen, f"verdwenen gedrag in {naam}:\n  " + "\n  ".join(verdwenen)
+
+@pytest.mark.parametrize(("naam", "sjabloon", "context"), ALLE_GEVALLEN, ids=[g[0] for g in ALLE_GEVALLEN])
+def test_het_fragment_draagt_nog_alles_wat_er_vastligt(
+    vastgelegd: dict[str, dict[str, list[str]]],
+    geschreven: dict[str, dict[str, list[str]]],
+    naam: str,
+    sjabloon: str,
+    context: dict[str, Any],
+) -> None:
+    """Geen bestemming, geen htmx-adres, geen aanroep, geen veld en geen id mag wegvallen."""
+    gemeten = meet(templates_lotc.env.get_template(sjabloon).render(context))
+
+    if SCHRIJVEN:
+        geschreven[naam] = als_lijsten(gemeten)
+        return
+
+    weg = ontbreekt(vastgelegd.get(naam, {}), gemeten)
+    assert not weg, (
+        f"verdwenen gedrag in {naam} ({sjabloon}):\n  "
+        + "\n  ".join(weg)
+        + f"\nIs dat de bedoeling, werk dan {SNAPSHOT.name} bij MET de reden in de PR."
+    )
 
 
 def test_de_samenvatting_toont_alle_drie_de_soorten_veld() -> None:

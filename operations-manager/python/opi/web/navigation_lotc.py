@@ -44,6 +44,9 @@ ROOS_TO_NLDD_ICONS = {
     "delta-naar-rechts": "caret-right",
     "delta-omlaag": "caret-down",
     "downloaden": "square-arrow-down",
+    # Uitloggen. Stond hier niet, dus het menu-item droeg een lege plek; zichtbaar werd
+    # dat pas toen de icoontoets ook het MENU ging meten (RC-67).
+    "uitgang": "arrow-right-out-bucket",
     "document-blanco": "file-text",
     "externe-link": "link",
     "foutmelding": "exclamation-triangle",

@@ -22,11 +22,10 @@ REALM = "demo-realm"
 ENCRYPTED_SEED = "AGE-ENCRYPTED-SEED-BLOB"
 RAW_SEED = "12345678901234567890"
 
-#: Beide vormgevingen van het blok dat de knop draagt. De LOTC-tegenhanger kwam er in
-#: RC-64 bij, en een drift-poort die maar een van de twee leest, bewaakt de helft.
+#: Het blok dat de knop draagt. Dit was een lijst van twee zolang elke dienst zijn
+#: sjabloon in twee vormgevingen had; er is er nog een.
 _SECTION_TEMPLATES = [
     Path(__file__).parent.parent / "opi/services/catalog/keycloak/section-detail.html.j2",
-    Path(__file__).parent.parent / "opi/services/catalog/keycloak/section-detail-lotc.html.j2",
 ]
 
 
@@ -59,14 +58,13 @@ async def _call(role: str = "admin", realm: str = REALM, data: dict[str, Any] | 
     Returns the response plus the context handed to the template, which is where
     a leaked seed would show up.
 
-    Het antwoord gaat sinds RC-64 door ``render_fragment``: hetzelfde fragment, in de
-    vormgeving van de pagina die het opvraagt. Beide sjabloonnamen worden hier gevangen,
-    zodat een lek in een van de twee wegen even hard opvalt.
+    Het antwoord gaat sinds RC-64 door ``render_fragment``: de sjabloonnaam en de context
+    worden hier gevangen, zodat een lek in de context opvalt.
     """
     captured: dict = {}
 
-    def _render_fragment(request: Any, *, roos: str, lotc: str, context: dict, **_: Any) -> str:
-        captured.update({"template": roos, "lotc_template": lotc, "context": context})
+    def _render_fragment(request: Any, *, template: str, context: dict, **_: Any) -> str:
+        captured.update({"template": template, "context": context})
         return "<html/>"
 
     store = MagicMock()
@@ -91,9 +89,7 @@ async def _call(role: str = "admin", realm: str = REALM, data: dict[str, Any] | 
 
 async def test_returns_a_six_digit_code() -> None:
     _, captured = await _call()
-
     assert captured["template"] == "keycloak/otp-code.html.j2"
-    assert captured["lotc_template"] == "keycloak/otp-code-lotc.html.j2"
     code = captured["context"]["code"]
     assert len(code) == 6, code
     assert code.isdigit(), code

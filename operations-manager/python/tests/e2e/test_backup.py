@@ -202,11 +202,13 @@ class TestBackupCreateModal:
     def test_resource_type_checkboxes_present(self, modal: EditModalHelper) -> None:
         """Resource type checkboxes should be present and pre-checked."""
         modal.open_edit_modal("modal-backup", "Backup aanmaken")
-        # After SSR, <c-checkbox> is rendered as <label class="rvo-checkbox">
-        # with an inner <input type="checkbox">.
-        group = modal.page.locator(".rvo-form-group:has(span:text('Resource types'))")
+        # De groep is een <div> met de veldattributen en een <span> als kop; de vakjes
+        # zelf zijn gewone <input type="checkbox">, met opzet (zie
+        # templates_lotc/widgets/checkbox_group.html.j2: een componentveld zet zijn
+        # invoerveld in een shadow root en dan ziet een <form> hem niet).
+        group = modal.page.locator("div:has(> span:text('Resource types'))").last
         group.wait_for(state="visible", timeout=5000)
-        checkboxes = group.locator("input[type='checkbox'][name='resource_types[]']")
+        checkboxes = group.locator("input[type='checkbox']")
         assert checkboxes.count() >= 1, "Should have at least one resource type checkbox"
         # All should be checked by default
         for i in range(checkboxes.count()):
