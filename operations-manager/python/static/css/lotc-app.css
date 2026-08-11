@@ -59,12 +59,11 @@ nldd-page-footer {
  * het thema zelf levert, kan hier een regel weg.
  */
 :root {
-    /* space-2xs stond hier NIET, terwijl alert-gap ernaar verwijst. Een calc() met een
-       onbekende variabele erin is in zijn geheel ongeldig, dus --rvo-alert-gap leverde
-       niets op en de gap in base.css viel weg. Gemeten tegen het tokenbestand van het
-       oude thema: --rvo-space-2xs bestond daar en was 4px. */
-    --rvo-space-2xs: 4px;
-    --rvo-alert-gap: calc(var(--rvo-space-2xs) + var(--rvo-space-xs));
+    /* Hier stonden --rvo-space-2xs en --rvo-alert-gap. Ze bestonden voor EEN gebruiker:
+       .rvo-alert__container in base.css, de flexregel die de ROOS-c-alert zijn uitlijning
+       terug moest geven. Die regel raakte onder NLDD niets meer (<c-alert> is
+       <nldd-banner> en lijnt zichzelf uit) en is in RC-74 weggehaald; daarmee had ook dit
+       paar geen lezer meer. Dit is precies het krimpen dat hierboven bedoeld wordt. */
     --rvo-color-donkerblauw: #01689b;
     --rvo-color-grijs-050: #F8FAFC;
     --rvo-color-grijs-100: #F1F5F9;
