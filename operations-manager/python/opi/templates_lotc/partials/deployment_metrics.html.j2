@@ -1,12 +1,13 @@
 {# Fragment: deployment metrics for a single deployment (no extends) #}
 {% set active_duration = duration | default(60) %}
 {% set durations = [(60, "1 uur"), (120, "2 uur"), (360, "6 uur"), (720, "12 uur"), (1440, "24 uur")] %}
-<div class="metrics-toolbar">
+{# .metrics-toolbar was flex met een klein gat: <c-cluster gap="xs">. #}
+<c-cluster gap="xs">
     {% for value, label in durations %}
     {# label= en niet als inhoud: nldd-button toont alleen zijn text-attribuut. #}
     <c-button size="xs" label="{{ label }}"/>
     {% endfor %}
-</div>
+</c-cluster>
 {% if deployment.components %}
 <div class="metrics-grid">
     {% for component in deployment.components | sort(attribute='reference') %}
