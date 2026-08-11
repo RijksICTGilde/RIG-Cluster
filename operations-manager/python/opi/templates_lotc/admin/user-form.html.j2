@@ -16,10 +16,15 @@
             <c-layout-flow gap="lg">
                 {{ form_html|safe }}
 
-                <div class="user-form-actions">
+                {# .user-form-actions uit admin.css was een eigen flexregel voor de twee
+                   knoppen onder een formulier. Daar heeft de formulierlaag een plek
+                   voor: <c-action-group>. Die zet de knoppen naast elkaar met de
+                   afstand van het thema en geeft ze role="group". bg/admin-user-form
+                   doet het al zo. #}
+                <c-action-group align="start">
                     <c-button label="Opslaan" size="md" type="submit"/>
                     {% set lotc_onclick_1 %}window.location.href='/admin/users'{% endset %}<c-button label="Annuleren" size="md"/>
-                </div>
+                </c-action-group>
             </c-layout-flow>
         </form>
     </c-card>
@@ -27,6 +32,3 @@
 </c-layout-flow>
 {% endblock %}
 
-{% block additional_styles %}
-<link rel="stylesheet" href="{{ static_url('css/admin.css') }}">
-{% endblock %}
