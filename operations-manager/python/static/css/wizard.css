@@ -188,11 +188,11 @@ c-fieldset c-fieldset {
 }
 .service-card--selected {
     border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: var(--rvo-color-hemelblauw-100, #E5F0F9);
+    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
 }
 .service-card--locked-checked {
     border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: var(--rvo-color-hemelblauw-100, #E5F0F9);
+    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
     opacity: 0.85;
 }
 /* Read-only card (project details): same look as the picker, but nothing to pick. */
@@ -382,21 +382,6 @@ c-fieldset c-fieldset {
 .approval-type-subdomain { background: var(--rvo-color-hemelblauw-150); color: var(--rvo-color-hemelblauw-750); }
 .approval-type-domain { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
 
-.approval-status-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-/* --rvo-color-geel-300/-750 staan niet in de shim van lotc-app.css, en met opzet: het
-   oude thema had ze ook niet. "Aangevraagd" kreeg dus ook DAAR geen achtergrond, terwijl
-   goedgekeurd en afgewezen die wel hebben. Dat ziet er scheef uit, maar het invullen zou
-   de weergave anders maken dan het origineel en dit is een omzetting. Aantekening voor
-   een volgende taak; de telling staat vast in tests/test_css_dode_variabelen.py. */
-.approval-status-requested { background: var(--rvo-color-geel-300); color: var(--rvo-color-geel-750); }
-.approval-status-approved { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
-.approval-status-denied { background: var(--rvo-color-rood-150); color: var(--rvo-color-rood-750); }
 
 .approval-history {
     padding: var(--rvo-space-xs) 0;
@@ -476,13 +461,6 @@ c-fieldset c-fieldset {
     flex-wrap: wrap;
 }
 
-.backup-option__id {
-    font-size: 0.8rem;
-    background: var(--rvo-color-hemelblauw-200);
-    color: var(--rvo-color-donkerblauw);
-    padding: 2px 6px;
-    border-radius: 4px;
-}
 
 .backup-option__timestamp {
     color: var(--rvo-color-grijs-600);
@@ -513,29 +491,9 @@ c-fieldset c-fieldset {
 }
 
 /* Soort resource in een backup: de kleur zegt welke. */
-.backup-type {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.7rem;
-    font-weight: 500;
-}
 
-.backup-type--pvc {
-    background: var(--rvo-color-hemelblauw-200);
-    color: var(--rvo-color-donkerblauw);
-}
 
-.backup-type--database {
-    background: var(--rvo-color-grasgroen-200);
-    color: var(--rvo-color-grasgroen-800);
-}
 
-.backup-type--bucket {
-    background: var(--rvo-color-oranje-200);
-    color: var(--rvo-color-oranje-800);
-}
 
 .backup-select {
     width: 100%;
@@ -575,7 +533,10 @@ c-fieldset c-fieldset {
 }
 
 .restore-mode-option--selected {
-    background: var(--rvo-color-hemelblauw-100);
+    /* Vaste waarde, geen var(): --rvo-color-hemelblauw-100 staat niet in de lijst van
+       lotc-app.css en leverde dus NIETS op - de gekozen optie was niet te zien. Dit is de
+       lichtste tint van dezelfde hemelblauw die er wel is. */
+    background: #E5F0F9;
     border-color: var(--rvo-color-hemelblauw);
 }
 

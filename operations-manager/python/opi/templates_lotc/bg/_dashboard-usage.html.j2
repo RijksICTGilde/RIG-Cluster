@@ -18,23 +18,28 @@
   geladen. Ze wordt hieronder aangeroepen en niet op DOMContentLoaded, want dit fragment
   komt pas NA het laden van de pagina binnen; op dat moment zijn de canvassen er.
 
-  Het raster is <c-auto-grid> geworden; wat de meters zelf hun maat geeft is nog
-  static/css/dashboard.css (.gauge-container, .chart-container), dezelfde stylesheet als
-  op de bestaande pagina, door bg/dashboard.html.j2 geladen.
+  Wat de meters van hun maat en plaats haalt is static/css/dashboard.css
+  (.metrics-grid, .gauge-container, .chart-container), dezelfde stylesheet als op de
+  bestaande pagina; ook die wordt door bg/dashboard.html.j2 geladen. Een kanttekening:
+  .gauge-percentage vraagt om var(--rvo-color-hemelblauw), en die kleurvariabele bestaat
+  in het NLDD-thema niet. Het percentage erft dan de tekstkleur - de meter zelf, die door
+  het canvas getekend wordt, is volledig gelijk aan het origineel.
 #}
 {% from "bg/_patterns.html.j2" import panel %}
 
 {# De kop IN de kaart, zoals overal: de kop van EEN blok hoort in dat blok. De vier
    metingen blijven hun eigen kaart houden binnen deze; dat leest als een groep. #}
 {% if prometheus_available and metrics %}
+    {% call panel("Resource Usage", "chart-x-y-axis-line") %}
     {# .metrics-grid uit dashboard.css was repeat(auto-fit, minmax(280px, 1fr)):
        <c-auto-grid min="280px">. Let op: dezelfde KLASSENAAM staat ook in
-       metrics-charts.css, waar hij een flexkolom is. Door dit raster een component
-       te maken is die naamsbotsing hier weg.
+       metrics-charts.css, waar hij een flexkolom is. Door dit raster een component te
+       maken is die naamsbotsing hier weg.
 
        De KLASSE blijft er wel op staan: tests/e2e/test_lotc_pariteit.py leest de meters
-       uit met locator(".metrics-grid"). Hij is dus geen opmaak meer maar een haak. #}
-    {% call panel("Resource Usage", "chart-x-y-axis-line") %}
+       uit met locator(".metrics-grid"). Hij is dus geen opmaak meer maar een haak.
+
+       De kaart eromheen komt van de basis (RC-70): de kop van EEN kaart hoort erin. #}
     <c-auto-grid min="280px" gap="lg" class="metrics-grid">
         {% call panel("CPU Usage", "chart-x-y-axis-line") %}
             <div class="gauge-container">
