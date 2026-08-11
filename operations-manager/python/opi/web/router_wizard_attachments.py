@@ -225,7 +225,7 @@ async def unstage_attachment(
 ):
     """Remove a staged attachment and delete its staged file.
 
-    ``attachment_id`` rides the URL path, not an hx-vals JSON attribute: the ROOS c-button
+    ``attachment_id`` rides the URL path, not an hx-vals JSON attribute: the c-button
     re-emits attribute values with double quotes, which mangles inline JSON.
     """
     state, save = _resolve_state(request, wizard_token)
