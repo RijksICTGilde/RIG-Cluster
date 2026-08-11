@@ -58,16 +58,46 @@ machine rustig is, en anders de taak uit stap 3.
 ## Wat de bouwtaak nu zelf bewaakt
 
 **Een controle vooraf** (`scripts/build-preflight.sh`). Weigert te beginnen als er minder
-dan 6 GB vrij is, en meldt dan wat er draait, zodat je weet wie je omver zou duwen. Die 6
-GB is de grens van de build (4 GB) plus ruimte voor de docker-daemon en het laden in Kind.
-Bewust toch doorgaan kan met `BUILD_PREFLIGHT_SKIP=1`, de grens verzetten met
-`BUILD_MIN_AVAILABLE_MB`.
+dan **1536 MB** vrij is (`MemAvailable`), en meldt dan wat er draait, zodat je weet wie je
+omver zou duwen. Bewust toch doorgaan kan met `BUILD_PREFLIGHT_SKIP=1`, de grens verzetten
+met `BUILD_MIN_AVAILABLE_MB`.
 
 **Een grens op het geheugen** (`task sandbox:build-builder`). De standaardbuilder draait in
 de docker-daemon en kent geen grens; een `docker-container`-builder wel. De grens staat op
-**4 GiB**: ruim boven wat de zwaarste stap (`uv sync`) nodig heeft, en het laat ~11 GB over
-voor het cluster en de andere sessies. Lager afstellen laat een build sneuvelen die het wel
-had gekund. Verzetten kan met `SANDBOX_BUILD_MEMORY=6g`.
+**2 GiB**. Verzetten kan met `SANDBOX_BUILD_MEMORY=4g`.
+
+### Hoeveel geheugen kost een build echt
+
+Allebei die getallen zijn gemeten, niet geschat - de eerste versie van dit document had ze
+op 4 GiB en 6 GB staan op grond van een schatting, en die drempel werd op deze machine
+nooit gehaald. Wat een build werkelijk kost:
+
+| | koude build | warme build |
+|---|---|---|
+| piek in de buildkit-container | **427-475 MB** | **108 MB** |
+| `MemAvailable` gezakt van/naar | 4600 -> 4130 MB | 4526 -> 4011 MB |
+| duur | 125-153 s | 16-36 s |
+| apt-regels | 94 | 0 |
+
+Een koude build (alle drie de apt-rondes, `uv sync`, skopeo en de tarball-export naar de
+daemon) kost dus ongeveer een halve GB. Dat is logisch: dit werk is vrijwel volledig
+schijf- en netwerkverkeer, geen rekenwerk dat gegevens in het geheugen houdt.
+
+**De val: `MemFree` is niet "vrij geheugen".** Het incidentverslag noemde "nog 1 GB van de
+15 vrij" en daar kwam de conclusie "de build at het geheugen op" vandaan. Maar `MemFree`
+staat op deze machine ALTIJD rond de 0,2-0,9 GB, ook als er niets gebeurt, omdat de
+paginacache (`Cached`, ~4 GB) hem opvult. Die cache is direct opvraagbaar en telt mee in
+`MemAvailable`. In de metingen hierboven zie je dat gedrag terug: `MemFree` schommelt de
+hele build rond de 300 MB terwijl `MemAvailable` nauwelijks beweegt.
+
+Wat er bij het incident wél knelde was de **load** (34,8), dus I/O- en CPU-verdringing van
+drie gelijktijdige builds - niet geheugenuitputting. De cache uit stap 1 is daarom de
+eigenlijke reparatie; de geheugengrens is een vangnet tegen een build die ontspoort.
+
+**Een drempel die niemand haalt is geen bescherming.** De 6 GB uit de eerste versie
+blokkeerde elke build op een machine die de hele dag tussen 3 en 5,5 GB zit. Het effect is
+niet "veiliger", het is dat iedereen `BUILD_PREFLIGHT_SKIP=1` uit gewoonte gaat gebruiken -
+en dan is de controle er helemaal niet meer.
 
 **Cache.** `operations-manager/Dockerfile` doet drie `apt-get`-rondes (basispakketten,
 kubectl, skopeo). Zonder cache haalt elke build die opnieuw op - normaal traag, en fataal

@@ -12,10 +12,11 @@ vars:
   # kind-cluster. Een aparte builder met een geheugengrens houdt de build binnen zijn
   # eigen ruimte en houdt tegelijk de buildcache vast. Zie sandbox:build-builder.
   SANDBOX_BUILDER_NAME: '{{default "rig-sandbox-builder" .SANDBOX_BUILDER_NAME}}'
-  # 4 GiB van de 16: ruim boven wat de zwaarste stap (uv sync) nodig heeft, en laat
-  # genoeg over voor het kind-cluster (~4-6 GB) en de andere sessies. Lager afstellen
-  # laat een build sneuvelen die het wel had gekund; hoger haalt de grens leeg.
-  SANDBOX_BUILD_MEMORY: '{{default "4g" .SANDBOX_BUILD_MEMORY}}'
+  # 2 GiB. Gemeten, niet geschat: een KOUDE build (alle drie de apt-rondes, uv sync,
+  # skopeo en de tarball-export) piekt op 427 MB in de buildkit-container, een warme op
+  # 108 MB. 2 GiB is dus bijna vijf keer de gemeten piek - genoeg marge voor een zwaardere
+  # dependency-ronde, en klein genoeg om de machine nooit leeg te trekken.
+  SANDBOX_BUILD_MEMORY: '{{default "2g" .SANDBOX_BUILD_MEMORY}}'
   # Optionele registry-cache, dezelfde vorm als publish-operations-manager. Leeg = alleen
   # de cache van de builder zelf, wat op een dev-server het geval is.
   SANDBOX_CACHE_IMAGE: '{{default "" .SANDBOX_CACHE_IMAGE}}'
