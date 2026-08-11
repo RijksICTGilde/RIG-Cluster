@@ -1,0 +1,46 @@
+{#
+  De kiezer waarmee je tussen deployments wisselt.
+
+  Stond alleen op het tabblad Deployments. Op Metrics speelt precies hetzelfde - je kijkt
+  daar per deployment - en daar moest je opnieuw kiezen. Nu staat hij op allebei, uit dit
+  ene bestand, en onthoudt de keuze zichzelf over de tabbladen heen
+  (static/js/deployment_switch.js, sessionStorage per project).
+
+  DE ID BLIJFT. switchDeployment() zoekt op id="global-deployment-selector" om de kiezer
+  mee te laten lopen als de keuze ergens anders vandaan komt (de URL-hash, de opgeslagen
+  keuze). Elk tabblad is een eigen pagina, dus die id komt nooit twee keer in een document.
+
+  De kiezer als THEMAveld met een ECHTE <select> erin (native="true"). Hij stond hier als
+  kale <select> met een los <label><strong> ervoor: dat werkte wel maar stond er
+  onopgemaakt bij, en de afstand tot het blok eronder kwam van niets. c-select-field zet
+  er de vormgeving en de label-opmaak van het thema omheen en geeft nog steeds een echte
+  <select> - nodig, want switchDeployment() leest this.value.
+
+  De OPTIES staan er als kale <option>. Dat is geen slordigheid: <c-option> rendert binnen
+  een native select een <nldd-menu-item>, en daar maakt een <select> niets van - de lijst
+  blijft dan leeg. Gemeten.
+
+  Geen class in :attrs: het component zet er zelf al een op, en twee class-attributen op
+  een tag betekent dat de browser de tweede negeert.
+
+  GEEN "Optioneel" bij deze kiezer, en ook geen required om dat label kwijt te raken.
+  lotc-forms zet "Optioneel" op elk veld dat niet verplicht is (rijksconventie: markeer
+  optioneel, niet verplicht). Dat klopt voor een invoerveld en niet voor een kiezer waar
+  altijd iets geselecteerd staat. Hij stond hier even op required="true" om het label weg
+  te krijgen; dan zegt de HTML dat er iets ingevuld MOET worden en dat is een andere
+  onwaarheid. data-no-optional-badge zegt alleen wat het is - zie onze kopie van
+  components/_forms.j2, en het verzoek aan het thema in request_for_components.md.
+#}
+{% if project.deployments | length > 1 %}
+    {% set kiezer_gedrag = {'onchange': 'switchDeployment(this.value)', 'data-no-optional-badge': '1'} %}
+    <c-select-field
+        native="true"
+        id="global-deployment-selector"
+        name="global-deployment-selector"
+        label="Deployment"
+        :attrs="kiezer_gedrag">
+        {% for deployment in project.deployments | sort(attribute='name') %}
+            <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
+        {% endfor %}
+    </c-select-field>
+{% endif %}

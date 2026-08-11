@@ -109,3 +109,21 @@ nldd-page-footer {
     --rvo-space-xl: 24px;
     --rvo-space-xs: 8px;
 }
+
+/*
+ * De statuskaarten van Deployment Status even hoog in hun rij.
+ *
+ * Gemeten: de cellen van .lotc-auto-grid zijn AL even hoog (een grid rekt zijn cellen
+ * uit), maar de kaart in zo'n cel is zo hoog als zijn inhoud. Staat er in de ene een
+ * foutmelding en in de andere niet, dan is de linkerkaart twee keer zo hoog en hangt de
+ * rechter half in de lucht.
+ *
+ * Eerst gekeken of het thema er iets voor heeft, want daar gaat deze taak over:
+ * c-auto-grid kent alleen min/gap/class, c-card kent geen hoogte-stand, en er is geen
+ * hulpklasse voor "vul je cel". Dat is een verzoek geworden (request_for_components.md).
+ * Zolang dat er niet is, is dit de ene regel die het verschil maakt; hij hangt aan de id
+ * die er toch al stond.
+ */
+#deployment-status > div > nldd-card {
+    height: 100%;
+}

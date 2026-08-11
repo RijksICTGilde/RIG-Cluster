@@ -112,9 +112,24 @@ def test_bedrading_op_lege_invoer() -> None:
 #: Onze kopie van de gedeelde macro's van lotc-forms.
 ONZE_KOPIE = Path(__file__).resolve().parent.parent / "opi" / "templates_lotc" / "components" / "_forms.j2"
 
-#: De regel in ``nldd_field`` zoals lotc-forms hem heeft, en zoals wij hem maken.
-ORIGINEEL_REGEL = "  {{ caller() }}"
-ONZE_REGEL = "  {% if error %}{{ caller() | foutbedrading(id ~ '-error') }}{% else %}{{ caller() }}{% endif %}"
+#: De twee regels in ``nldd_field`` zoals lotc-forms ze heeft, en zoals wij ze maken.
+#: 1. de besturing: wij bedraden de foutmelding erop.
+#: 2. de openingstag: wij laten "Optioneel" weg als het veld daarom vraagt.
+VERVANGINGEN = [
+    (
+        "(id, label, help, error, required, kind) -%}\n",
+        "(id, label, help, error, required, kind) -%}\n{% set besturing = caller() %}\n",
+    ),
+    (
+        '<nldd-form-field label="{{ label }}"{% if not required %} optional{% endif %}',
+        '<nldd-form-field label="{{ label }}"'
+        "{% if not required and 'data-no-optional-badge' not in besturing %} optional{% endif %}",
+    ),
+    (
+        "  {{ caller() }}",
+        "  {% if error %}{{ besturing | foutbedrading(id ~ '-error') }}{% else %}{{ besturing }}{% endif %}",
+    ),
+]
 
 
 #: De sjabloonmap van de geinstalleerde lotc-forms.
@@ -125,7 +140,7 @@ def _geinstalleerde_kopie() -> str:
     return (LOTC_FORMS / "_forms.j2").read_text()
 
 
-def test_onze_kopie_wijkt_op_precies_een_regel_af() -> None:
+def test_onze_kopie_wijkt_op_precies_twee_punten_af() -> None:
     """Verandert lotc-forms iets anders in dit bestand, dan faalt dit - en niet de UI.
 
     Onze kopie ligt op de searchpath VOOR de sjablonen van de design systems en wint dus
@@ -142,8 +157,10 @@ def test_onze_kopie_wijkt_op_precies_een_regel_af() -> None:
     # alleen het NLDD-frame gaat om; rvo_field heeft dezelfde regel en blijft zoals hij is
     kop, streep_nldd, nldd = origineel.partition("{% macro nldd_field")
     assert streep_nldd, "lotc-forms heeft geen macro nldd_field meer"
-    assert ORIGINEEL_REGEL in nldd, "lotc-forms rendert de besturing niet meer met een kale caller()"
-    verwacht = kop + streep_nldd + nldd.replace(ORIGINEEL_REGEL, ONZE_REGEL, 1)
+    for van, naar in VERVANGINGEN:
+        assert van in nldd, f"lotc-forms schrijft nldd_field anders; deze regel is weg: {van}"
+        nldd = nldd.replace(van, naar, 1)
+    verwacht = kop + streep_nldd + nldd
     assert kopie == verwacht, "lotc-forms heeft components/_forms.j2 gewijzigd; loop onze kopie na"
 
 

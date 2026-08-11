@@ -1,6 +1,15 @@
-{# ONZE KOPIE van components/_forms.j2 uit lotc-forms, met EEN wijziging: nldd_field
-   bedraadt de foutmelding zodat je hem ook ZIET. Zie de macro onderaan en
-   opi/forms/lotc_attrs.py (bedraad_foutmelding) voor de meting en de reden.
+{# ONZE KOPIE van components/_forms.j2 uit lotc-forms, met TWEE wijzigingen in nldd_field:
+
+   1. De foutmelding wordt bedraad, zodat je hem ook ZIET. Zie de macro onderaan en
+      opi/forms/lotc_attrs.py (bedraad_foutmelding) voor de meting en de reden.
+   2. Een veld dat ``data-no-optional-badge`` draagt krijgt geen "Optioneel" mee.
+      lotc-forms zet dat label op elk veld dat niet verplicht is (rijksconventie: markeer
+      optioneel, niet verplicht). Voor een invoerveld klopt dat; voor een KIEZER met een
+      vaste selectie, of voor het enige veld van een regel die je zelf toevoegde ("URI
+      Optioneel"), betekent het niets. De omweg was zulke velden ``required`` noemen, en
+      dan zegt de HTML dat er iets ingevuld MOET worden - een andere onwaarheid. Dit
+      attribuut zegt alleen wat het is: geen badge. Het derde standje hoort in het thema
+      te zitten en staat als verzoek in request_for_components.md.
 
    Dit bestand ligt op de searchpath VOOR de sjablonen van de design systems (die zet
    setup_components erachteraan), dus elk veldsjabloon van lotc-forms dat
@@ -68,8 +77,9 @@
 {# NLDD frame: native nldd-form-field wrapping the control + help/error text.
    Dutch-gov convention marks OPTIONAL, not required, so `optional` when not required. #}
 {% macro nldd_field(id, label, help, error, required, kind) -%}
-<nldd-form-field label="{{ label }}"{% if not required %} optional{% endif %} data-lotc-component="{{ kind }}">
-  {% if error %}{{ caller() | foutbedrading(id ~ '-error') }}{% else %}{{ caller() }}{% endif %}
+{% set besturing = caller() %}
+<nldd-form-field label="{{ label }}"{% if not required and 'data-no-optional-badge' not in besturing %} optional{% endif %} data-lotc-component="{{ kind }}">
+  {% if error %}{{ besturing | foutbedrading(id ~ '-error') }}{% else %}{{ besturing }}{% endif %}
   {% if help %}<nldd-form-field-help-text id="{{ id }}-help">{{ help }}</nldd-form-field-help-text>{% endif %}
   {% if error %}<nldd-form-field-error-text id="{{ id }}-error" invalid>{{ error }}</nldd-form-field-error-text>{% endif %}
 </nldd-form-field>
