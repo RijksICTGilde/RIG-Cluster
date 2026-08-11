@@ -1,11 +1,18 @@
-{# De vier kerncijfers: projecten, deployments, gebruikers en pods. #}
-<div class="stats-grid">
+{# De vier kerncijfers: projecten, deployments, gebruikers en pods.
+
+   .stats-grid was repeat(auto-fit, minmax(200px, 1fr)) met een gat ertussen: dat is
+   <c-auto-grid min="200px">. De klasse blijft erop staan voor de marge eronder, en de
+   mediaregel die dit raster onder 768px op een kolom zette kon weg - auto-fit doet dat
+   vanzelf.
+
+   .stat-header (icoon links, getal rechts) is <c-cluster justify="between">. #}
+<c-auto-grid min="200px" gap="lg" class="stats-grid">
     <c-card class="stat-card" outline="true" padding="lg" background-color="wit">
         <c-layout-flow gap="sm">
-            <div class="stat-header">
+            <c-cluster justify="between" align="center">
                 <c-icon icon="rectangle-stack" size="lg"/>
                 <span class="stat-number" data-count="{{ active_projects }}">0</span>
-            </div>
+            </c-cluster>
             <c-heading type="h3" label="Actieve Projecten"/>
             <p>{{ total_deployments }} deployments</p>
         </c-layout-flow>
@@ -13,31 +20,31 @@
 
     <c-card class="stat-card" outline="true" padding="lg" background-color="wit">
         <c-layout-flow gap="sm">
-            <div class="stat-header">
+            <c-cluster justify="between" align="center">
                 <c-icon icon="cylinder-split" size="lg"/>
                 <span class="stat-number" data-count="{{ total_deployments }}">0</span>
-            </div>
+            </c-cluster>
             <c-heading type="h3" label="Deployments"/>
         </c-layout-flow>
     </c-card>
 
     <c-card class="stat-card" outline="true" padding="lg" background-color="wit">
         <c-layout-flow gap="sm">
-            <div class="stat-header">
+            <c-cluster justify="between" align="center">
                 <c-icon icon="user" size="lg"/>
                 <span class="stat-number" data-count="{{ total_users }}">0</span>
-            </div>
+            </c-cluster>
             <c-heading type="h3" label="Gebruikers"/>
         </c-layout-flow>
     </c-card>
 
     <c-card class="stat-card" outline="true" padding="lg" background-color="wit">
         <c-layout-flow gap="sm">
-            <div class="stat-header">
+            <c-cluster justify="between" align="center">
                 <c-icon icon="check-mark-circle" size="lg"/>
                 <span class="stat-number" data-count="{{ pod_count }}">0</span>
-            </div>
+            </c-cluster>
             <c-heading type="h3" label="Pods"/>
         </c-layout-flow>
     </c-card>
-</div>
+</c-auto-grid>

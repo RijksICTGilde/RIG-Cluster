@@ -33,7 +33,11 @@
 <c-heading type="h2" size="4" label="Resource Usage" />
 
 {% if prometheus_available and metrics %}
-    <div class="metrics-grid">
+    {# .metrics-grid uit dashboard.css was repeat(auto-fit, minmax(280px, 1fr)):
+       <c-auto-grid min="280px">. Let op: dezelfde KLASSENAAM staat ook in
+       metrics-charts.css, waar hij een flexkolom is. Door dit raster een component
+       te maken is die naamsbotsing hier weg. #}
+    <c-auto-grid min="280px" gap="lg">
         {% call panel("CPU Usage", "chart-x-y-axis-line") %}
             <div class="gauge-container">
                 <canvas id="cpu-gauge" class="gauge"></canvas>
@@ -70,7 +74,7 @@
             </div>
             <c-paragraph size="sm">Inbound/Outbound (KB/s, laatste 30 min)</c-paragraph>
         {% endcall %}
-    </div>
+    </c-auto-grid>
 
     <script>
         initializeGauges({{ metrics.cpu_percentage }}, {{ metrics.memory_percentage }}, {{ metrics.storage_percentage }});
