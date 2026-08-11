@@ -128,6 +128,21 @@ class TestTaskfileBuildTasks:
 
         assert "docker buildx rm" in cmds
 
+    def test_builder_is_created_when_this_session_does_not_know_it(self, taskfile: dict) -> None:
+        """`docker buildx build --builder` reads the session's buildx store, not the daemon.
+
+        A container in the daemon says nothing about this session: every dclaude session on
+        the shared server has its own ~/.docker/buildx. Checking only `docker inspect` makes
+        the task report "staat klaar" after which the build dies on 'no builder found'.
+        """
+        # raw, niet via safe_dump: die escapet de aanhalingstekens in de shell-conditie
+        cmds = "\n".join(str(cmd) for cmd in taskfile["tasks"][BUILDER_TASK]["cmds"])
+
+        assert (
+            'if ! docker buildx inspect {{.SANDBOX_BUILDER_NAME}} >/dev/null 2>&1 || [ "$STATE" != "$WANT host" ]; then'
+            in cmds
+        )
+
     def test_build_task_runs_the_preflight_check_first(self, taskfile: dict) -> None:
         cmds = taskfile["tasks"][BUILD_TASK]["cmds"]
 
