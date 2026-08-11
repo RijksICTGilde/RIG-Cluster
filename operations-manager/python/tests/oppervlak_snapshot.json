@@ -103,10 +103,8 @@
       "/admin/approvals",
       "/admin/usage",
       "/admin/users",
-      "/admin/users/719be40e-9968-44d2-9d35-2312250eb149/delete",
-      "/admin/users/719be40e-9968-44d2-9d35-2312250eb149/edit",
-      "/admin/users/9a80ed2d-f11d-4001-a86a-39e04361d8de/delete",
-      "/admin/users/9a80ed2d-f11d-4001-a86a-39e04361d8de/edit",
+      "/admin/users/<id>/delete",
+      "/admin/users/<id>/edit",
       "/admin/users/create",
       "/auth/logout",
       "/cli",
@@ -840,6 +838,7 @@
     ],
     "htmx": [
       "hx-get=/forms/wizard/create-project/attachments/list",
+      "hx-post=/forms/wizard/create-project/attachments/stage",
       "hx-post=/forms/wizard/create-project/attachments/validate-id",
       "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-attachments/step/attachments?_wizard_token=<wisselend>"
     ],
@@ -919,7 +918,6 @@
       "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-component-0/step/component-edit-0?_wizard_token=<wisselend>"
     ],
     "ids": [
-      "components[0]/_services-config{publish-on-web}/config/tls",
       "components[0]/aliases",
       "components[0]/command",
       "components[0]/image",
@@ -946,7 +944,6 @@
     ],
     "velden": [
       "_wizard_token",
-      "components[0]/_services-config{publish-on-web}/config/tls",
       "components[0]/aliases",
       "components[0]/command",
       "components[0]/image",
@@ -973,7 +970,6 @@
       "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-component-1/step/component-edit-1?_wizard_token=<wisselend>"
     ],
     "ids": [
-      "components[1]/_services-config{publish-on-web}/config/tls",
       "components[1]/aliases",
       "components[1]/command",
       "components[1]/image",
@@ -999,7 +995,6 @@
     ],
     "velden": [
       "_wizard_token",
-      "components[1]/_services-config{publish-on-web}/config/tls",
       "components[1]/aliases",
       "components[1]/command",
       "components[1]/image",
@@ -1084,8 +1079,6 @@
       "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-domain-0/step/domain-edit-0?_wizard_token=<wisselend>"
     ],
     "ids": [
-      "deployments[0]/_services-config{publish-on-web}/config/base-domain",
-      "deployments[0]/_services-config{publish-on-web}/config/domain-format",
       "display-url-preview",
       "edit-section-actions",
       "edit-section-content",
@@ -1094,9 +1087,7 @@
       "modal-wizard-steps"
     ],
     "velden": [
-      "_wizard_token",
-      "deployments[0]/_services-config{publish-on-web}/config/base-domain",
-      "deployments[0]/_services-config{publish-on-web}/config/domain-format"
+      "_wizard_token"
     ]
   },
   "/projects/test-project-detail/modal-wizard/modal-edit-identity": {

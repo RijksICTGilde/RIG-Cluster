@@ -103,6 +103,9 @@ def test_component_delete_posts_the_right_component(app_server: str, auth_page: 
     """The component card's own delete confirmation carries that component's name."""
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
+    # De componentkaarten stonden op het tabblad Project en hebben sinds de opdeling een
+    # eigen tabblad.
+    open_tab(auth_page, "componenten")
 
     card = auth_page.locator(".component-card", has_text="web-app").first
     knop(card, "Verwijderen").first.click()

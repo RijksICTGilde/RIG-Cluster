@@ -8,8 +8,12 @@
   attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
   middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
 #}
-{% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors %}
-<div :attrs="field_attrs(field)">
+{% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, html_attributes %}
+{# De attributen van het veld op een GEWONE div, met de macro en niet met de
+   :attrs-spread. Die spread hoort bij een componenttag: de voorbewerker leest hem daar,
+   en op een <div> laat hij hem staan - dan kwam er letterlijk :attrs="field_attrs(field)"
+   in de HTML en waren de htmx- en data-attributen van dit veld verdwenen. #}
+<div {{ html_attributes(field_attrs(field)) }}>
     <span class="utrecht-form-label">{{ field.label|e }}</span>
     {{ helper_text(field) }}
     {{ render_examples(field) }}

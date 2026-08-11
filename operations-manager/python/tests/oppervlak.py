@@ -37,10 +37,14 @@ JS_ATTRS = ("onclick", "@click", "onchange", "oninput", "onsubmit")
 #: een meetlat die altijd piept, houdt niemand in de gaten.
 VLUCHTIG = re.compile(r"((?:_wizard_token|csrf|csrf_token|nonce|_ts|v)=)[^&\s\"']+", re.IGNORECASE)
 
+#: Een UUID in een pad. De gebruikers van de testserver krijgen bij elke start een nieuwe,
+#: dus /admin/users/<id>/edit is per run een ander adres terwijl het dezelfde KNOP is.
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
 
 def stabiel(waarde: str) -> str:
     """Vervang wat per verzoek verschilt door een vaste tekst."""
-    return VLUCHTIG.sub(r"\1<wisselend>", waarde)
+    return UUID.sub("<id>", VLUCHTIG.sub(r"\1<wisselend>", waarde))
 
 
 #: Achtervoegsels van id's die het design system ZELF bijmaakt om een veld aan zijn label
