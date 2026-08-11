@@ -78,10 +78,7 @@
     </script>
 
     {% if total_cpu_usage > 0 %}
-        {# De kop BUITEN de kaart, net als "Resource Usage" hierboven. Als panel() stond hij
-           erin, en dan staan twee koppen op hetzelfde niveau verschillend. #}
-        <c-heading type="h2" size="4" label="Verdeling over projecten" />
-        <c-card outline padding="lg">
+        {% call panel("Verdeling over projecten", "chart-x-y-axis-line") %}
             <c-stack gap="sm">
                 {% for project in projects if project.cpu_cores is defined and project.cpu_cores > 0 %}
                     <c-progress-bar
@@ -93,7 +90,7 @@
                         accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
                 {% endfor %}
             </c-stack>
-        </c-card>
+        {% endcall %}
     {% endif %}
 {% else %}
     <c-alert type="info" heading="Resourcegebruik niet beschikbaar">
