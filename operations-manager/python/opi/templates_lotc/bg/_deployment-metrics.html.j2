@@ -57,7 +57,8 @@
 </div>
 {% endmacro %}
 
-<div class="metrics-toolbar">
+{# .metrics-toolbar was flex met een klein gat: <c-cluster gap="xs">. #}
+<c-cluster gap="xs">
     {% for value, label in durations %}
     {# Het doel is het blok van DEZE deployment: metrics-content-<naam>, zoals
        metrics_scraper/section-deployment.html.j2 het neerzet. Hier stond #metrics-content, en dat
@@ -70,15 +71,16 @@
               hx-target="#metrics-content-{{ deployment.name }}"
               hx-swap="innerHTML" />
     {% endfor %}
-</div>
+</c-cluster>
 
 {% if deployment.components %}
-<div class="metrics-grid">
+{# .metrics-grid uit metrics-charts.css was een flexkolom met een gat: <c-stack>. #}
+<c-stack gap="lg">
     {% for component in deployment.components | sort(attribute='reference') %}
     {% set component_name = component.reference %}
     {% set m = metrics.get(component_name, {}) %}
     {% call panel(component_name, "puzzle-piece") %}
-        <div class="charts-container">
+        <c-auto-grid min="220px" gap="sm">
             {# CPU Chart #}
             <div class="chart-item">
                 <div class="chart-label">CPU (millicores){% if m.cpu_limit %} - Limit: {{ m.cpu_limit|int }}m{% endif %}</div>
@@ -144,21 +146,22 @@
                 <div class="chart-current no-data">No data</div>
                 {% endif %}
             </div>
-        </div>
+        </c-auto-grid>
     {% endcall %}
     {% endfor %}
-</div>
+</c-stack>
 {% elif discovered_workloads %}
 {# Een Helm-deployment: dan zijn de workloads niet uit het projectbestand bekend maar uit
    het cluster ontdekt. Zonder schijfmetingen, net als de bestaande pagina. #}
-<div class="metrics-grid">
+{# .metrics-grid uit metrics-charts.css was een flexkolom met een gat: <c-stack>. #}
+<c-stack gap="lg">
     {% for workload in discovered_workloads %}
     {% set workload_name = workload.name %}
     {% set workload_id = workload_name | replace('.', '-') | replace(':', '-') %}
     {% set m = metrics.get(workload_name, {}) %}
-    {% set pods %}<span class="pod-count-chip">{{ workload.pod_count }} pod{% if workload.pod_count != 1 %}s{% endif %}</span>{% endset %}
+    {% set pods %}<c-tag type="default" label="{{ workload.pod_count }} pod{% if workload.pod_count != 1 %}s{% endif %}"/>{% endset %}
     {% call panel(workload_name, "rectangle-stack", aside=pods) %}
-        <div class="charts-container">
+        <c-auto-grid min="220px" gap="sm">
             {# CPU Chart #}
             <div class="chart-item">
                 <div class="chart-label">CPU (millicores){% if m.cpu_limit %} - Limit: {{ m.cpu_limit|int }}m{% endif %}</div>
@@ -202,10 +205,10 @@
                 <div class="chart-current no-data">No data</div>
                 {% endif %}
             </div>
-        </div>
+        </c-auto-grid>
     {% endcall %}
     {% endfor %}
-</div>
+</c-stack>
 {% else %}
 <c-alert type="info" heading="Geen components in deze deployment" />
 {% endif %}
@@ -217,7 +220,8 @@
         <c-heading type="h4" size="5" label="Persistent Storage" />
         <c-paragraph size="sm">PVC disk usage</c-paragraph>
     </div>
-    <div class="metrics-grid">
+    {# .metrics-grid uit metrics-charts.css was een flexkolom met een gat: <c-stack>. #}
+<c-stack gap="lg">
         {% for pvc_name, pvc_data in pvc_storage.items() %}
         {% call panel(pvc_name, "database") %}
             <div class="chart-item">
@@ -243,7 +247,7 @@
             </div>
         {% endcall %}
         {% endfor %}
-    </div>
+    </c-stack>
 </div>
 {% endif %}
 

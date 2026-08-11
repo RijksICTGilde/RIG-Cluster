@@ -13,43 +13,28 @@
    /admin/usage.
 
    Alleen dit fragment. Het is met opzet geen kopie van project-details.css: die brengt
-   honderden regels mee die op deze pagina aan niets hangen, of erger, aan iets anders. */
+   honderden regels mee die op deze pagina aan niets hangen, of erger, aan iets anders.
 
-.metrics-toolbar {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 8px;
-}
+   RC-74 heeft dit bestand langs de componenten gelegd. Weg zijn:
 
-.metrics-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-}
+   - .metrics-toolbar (flex met een klein gat) -> <c-cluster gap="xs">.
+   - .metrics-grid (flexkolom met een gat) -> <c-stack gap="lg">.
+   - .metrics-component-header (icoon en kop naast elkaar) -> <c-cluster align="center">.
+   - .charts-container met zijn twee media queries -> <c-auto-grid min="220px">. Het raster
+     stond op drie vaste kolommen, twee onder 1024px en een onder 640px; auto-fit doet
+     datzelfde zonder query.
+   - .pod-count-chip (een grijs pilletje met een aantal erin) -> <c-tag>.
 
-.metrics-component-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
+   Wat hieronder OVERBLIJFT hoort bij de <canvas>-elementen, en daar bestaat geen
+   component voor: het thema tekent geen grafieken. De maten moeten met de hand, want
+   Chart.js draait hier met maintainAspectRatio:false en vult zijn wikkel - zonder hoogte
+   staat er een canvas van nul pixels. */
 
-.charts-container {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.75rem;
-}
 
-@media (max-width: 1024px) {
-    .charts-container {
-        grid-template-columns: repeat(2, 1fr);
-    }
-}
 
-@media (max-width: 640px) {
-    .charts-container {
-        grid-template-columns: 1fr;
-    }
-}
+
+
+
 
 .chart-item {
     display: flex;
@@ -102,14 +87,6 @@
     border-radius: 4px;
 }
 
-.pod-count-chip {
-    background: var(--nldd-color-surface-alt, #e6e6e6);
-    color: var(--nldd-color-text, #1a1a1a);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 0.7rem;
-    margin-left: 8px;
-}
 
 .pvc-storage-section {
     margin-top: 24px;
