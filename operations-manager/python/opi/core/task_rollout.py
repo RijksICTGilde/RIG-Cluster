@@ -45,6 +45,10 @@ NON_DEFERRABLE_REASONS: dict[str, str] = {
         "deleting removes cluster resources; a later refresh reprocesses what the project "
         "file declares and would never perform the deletion"
     ),
+    "delete_component": (
+        "removing the component from the project file is half the job; the reprocess that "
+        "takes it out of the cluster runs inside this task and cannot be deferred"
+    ),
     "clone_database": "cloning acts on the cluster directly and writes nothing to the project file",
     "clone_bucket": "cloning acts on the cluster directly and writes nothing to the project file",
 }
