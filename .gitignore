@@ -65,3 +65,6 @@ secrets-overview-*.yaml
 /operations-manager/docs/
 /operations-manager/python/tests/e2e/artifacts/
 /.env
+
+# Sleutelmateriaal hoort nooit in de repo.
+*agekey*.txt
