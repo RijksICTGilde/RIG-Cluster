@@ -80,9 +80,13 @@ class DeploymentHealthService(Service):
                 DeploymentStateFact(
                     service=self.service_type.value,
                     summary=(
-                        "Deze deployment staat uit: alle "
-                        f"{state.total_count} componenten zijn uitgeschakeld en blijven uit "
-                        "tot iemand ze weer aanzet."
+                        "Deze deployment staat uit: "
+                        + (
+                            "het component is uitgeschakeld en blijft uit tot iemand het weer aanzet."
+                            if state.total_count == 1
+                            else f"alle {state.total_count} componenten zijn uitgeschakeld en blijven uit "
+                            "tot iemand ze weer aanzet."
+                        )
                     ),
                     expects_no_application_pods=True,
                     badge="Uitgeschakeld",
@@ -95,7 +99,8 @@ class DeploymentHealthService(Service):
                     service=self.service_type.value,
                     summary=(
                         f"{state.disabled_count} van de {state.total_count} componenten van deze "
-                        "deployment zijn uitgeschakeld; de rest draait gewoon."
+                        + ("deployment is" if state.disabled_count == 1 else "deployment zijn")
+                        + " uitgeschakeld; de rest draait gewoon."
                     ),
                     expects_no_application_pods=False,
                     # No ``expects_no_application_pods``, so this word stands NEXT to the
