@@ -2,16 +2,17 @@
   Eén aanvinkvakje voor de LOTC-bouwlijn.
 
   <c-checkbox-field> is de vorm van een aanvinkvakje, hier en in checkbox_group.html.j2:
-  onder NLDD wordt het een <nldd-checkbox-field>, een form-associated element zonder
-  eigen <input>. Het levert zijn waarde via ElementInternals, en alleen als het aanstaat.
-  Wat dat betekent voor htmx, voor het terugvinden van het vakje en waarom hier geen kaal
-  <input> staat: features/aanvinkvakje.md. Dat is het enige verhaal over dit component -
-  hier stonden er twee, en die spraken elkaar tegen.
+  onder NLDD wordt het een <nldd-checkbox-field>, een form-associated element dat zijn
+  waarde via ElementInternals levert en alleen als het aanstaat. In de lichte boom staat
+  geen invoerveld; de echte <input> zit twee schaduwbomen diep. Wat dat betekent voor
+  htmx, voor het terugvinden van het vakje en waarom hier geen kaal <input> staat:
+  features/aanvinkvakje.md. Dat is het enige verhaal over dit component - hier stonden er
+  twee, en die spraken elkaar tegen.
 
-  De id gaat via de attribuutbundel mee zodat hij op het BESTURINGSELEMENT landt: de
-  component zelf gebruikt hem alleen om zijn hulptekst en foutmelding aan te knopen
-  (<nldd-form-field-help-text id="...-help">), zodat het vakje anders het enige element
-  rond dit veld zou zijn zonder id.
+  De id gaat via de attribuutbundel mee zodat hij op het BESTURINGSELEMENT landt. Dat is
+  wat het vakje vindbaar maakt: de component zet de id verder alleen op zijn hulptekst en
+  foutmelding (``id="...-help"``), en zijn name draagt hij ook aan zijn schaduwelementen
+  door, dus ``[id='<pad>']`` is de enige selector die precies dit vakje oplevert.
 
   Het verborgen veld bij readonly blijft: dat vakje wordt niet verstuurd omdat de
   verwerker readonly-velden overslaat, en zonder deze regel zou opslaan de stand wissen.

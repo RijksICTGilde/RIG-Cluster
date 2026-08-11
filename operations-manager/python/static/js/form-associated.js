@@ -4,9 +4,11 @@
  * HET PROBLEEM, IN DE BROWSER GEMETEN (lord-of-the-components @ 4307413, NLDD-thema).
  *
  * <c-checkbox-field> wordt onder NLDD een <nldd-checkbox-field>. Dat element is
- * form-associated: het heeft HELEMAAL GEEN <input>, niet in de lichte boom en niet in de
- * schaduwboom, en levert zijn waarde via ElementInternals. Het doet dat correct - het
- * geeft zijn waarde alleen als het aangevinkt staat:
+ * form-associated en levert zijn waarde via ElementInternals. In de LICHTE boom staat
+ * geen enkel invoerveld; de echte <input> zit twee schaduwbomen diep
+ * (nldd-checkbox-field -> schaduw -> nldd-checkbox -> schaduw -> input), dus een gewone
+ * querySelector('input[type="checkbox"]') vindt hem nooit. Het element geeft zijn waarde
+ * correct af - alleen als het aangevinkt staat:
  *
  *     vakje UIT : new FormData(form) bevat de sleutel niet
  *     vakje AAN : new FormData(form) bevat de sleutel met value="true"
@@ -67,6 +69,13 @@
         var fd = new FormData(form);
         for (var i = 0; i < namen.length; i++) {
             var naam = namen[i];
+            /* Alleen CORRIGEREN wat htmx zelf al meestuurt, nooit iets toevoegen. Htmx
+               laat de waarden van het omliggende formulier bij een GET bewust weg (alleen
+               bij een POST loopt het de form.elements langs), en een veld daar alsnog
+               inhangen maakt van "Vorige" - een hx-get in het formulier - een verzoek met
+               formuliervelden in de URL. De wizard weigert dat terecht met een 400: zo
+               ziet een formulier eruit dat naar een GET is teruggevallen. */
+            if (!Object.prototype.hasOwnProperty.call(parameters, naam)) continue;
             var waarden = fd.getAll(naam);
             if (waarden.length === 0) {
                 /* Niets aangevinkt / niets ingevuld: het veld hoort niet mee te gaan.
