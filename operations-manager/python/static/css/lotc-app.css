@@ -5,6 +5,12 @@
  * wat hier staat is wat wij nodig hebben en wat een design system niet voor ons kan
  * bedenken. Groeit dit bestand, dan is dat een signaal dat er iets nagebouwd wordt wat
  * bij het thema of bij een component thuishoort.
+ *
+ * RC-74 is dit bestand langsgelopen met dezelfde vraag als de andere stijlbladen, en er
+ * viel niets weg: elk blok hieronder staat er al met de meting en de reden erbij, en de
+ * twee die om een component vroegen staan als punt 8 in request_for_components.md. Wat
+ * die ronde WEL opleverde staat in de variabelenlijst verderop - zie de opmerking daar
+ * over krimpen.
  */
 
 /* De opmaak voor .lotc-checkbox-regel stond hier omdat de groep aanvinkvakjes kale

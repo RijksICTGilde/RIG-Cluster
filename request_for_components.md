@@ -138,3 +138,77 @@ er toch al stond.
 
 **Voorstel.** Een `stretch`-stand op `c-auto-grid`/`c-grid` die zijn kaarten uitrekt, of
 een hoogte-attribuut op `c-card`.
+
+---
+
+## 9. `c-bar` zet zijn end-slot in de MIDDELSTE kolom
+
+**Wat er gebeurt.** `.lotc-bar` is een grid met `grid-template-columns: 1fr auto 1fr` en
+`justify-self: start/center/end` op de drie regio's. Maar het sjabloon rendert de
+middelste `<div class="lotc-bar__center">` alleen `{% if slots.get('center') %}`. Zonder
+center-slot heeft het grid dus twee kinderen, en autoplaatsing zet het tweede - het
+end-slot - in kolom TWEE (`auto`). `justify-self: end` lijnt het dan uit op de
+rechterkant van die middelste kolom.
+
+**Wat je ziet.** "Links dit, rechts dat" wordt "links dit, midden dat". Gemeten op
+`/lotc/pagina/admin/users`: balk 992px breed, het end-blok liep van x=781 tot x=914 in
+plaats van tot 1344.
+
+**Waarom dat pijn doet.** Dit is precies het geval waarvoor je `c-bar` pakt - een titel
+links en een knop rechts - en het faalt STIL: de pagina rendert, alles staat er, het
+staat alleen op de verkeerde plek. Geen enkele markupcontrole slaat erop aan.
+
+**Wat wij intussen doen.** `<c-cluster justify="between">`. Dat is flex met
+`space-between` en doet precies wat er bedoeld werd.
+
+**Voorstel.** De center-div altijd renderen (leeg is prima, hij is `auto` breed), of het
+grid teruggeven op `1fr auto` als er geen center-slot is.
+
+---
+
+## 10. `c-avatar-group` rendert een element dat NLDD niet kent
+
+**Wat er gebeurt.** `<c-avatar-group>` rendert `<nldd-avatar-group>`, en dat custom
+element wordt door de meegeleverde `nldd.js` niet gedefinieerd. Gemeten in de browser:
+het bleef als enige over in
+`document.querySelectorAll('*:not(:defined)')`.
+
+**Wat je ziet.** Niets bijzonders - en dat is het probleem. Een niet-gedefinieerd custom
+element geeft geen fout en verdwijnt niet; het is een inline wrapper die niets doet. De
+avatars erin blijven staan, maar de groepering en het "+N" dat de groep zelf zou tellen
+komen er nooit. Je ziet alle vier de bolletjes naast elkaar in plaats van drie plus een
+telbol.
+
+**Waar.** Het projectoverzicht, de teamkolom.
+
+**Wat wij intussen doen.** `<c-avatar>` in een `<c-cluster>`, en het aftellen naar "+N"
+met de hand in het sjabloon.
+
+**Voorstel.** Het element registreren in de bundel, of - als het bewust niet meekomt -
+`avatar-group` uit de registry halen, zodat het als niet-geimplementeerd component
+opvalt in plaats van stil niets te doen.
+
+---
+
+## 11. `c-code-viewer` toont geen tekst die er later in gezet wordt
+
+**Wat er gebeurt.** `<c-code-viewer>` is een CodeMirror-weergave die zijn inhoud
+overneemt bij het opbouwen. Zet je de tekst er daarna in met `.textContent`, dan gebeurt
+er niets.
+
+**Wat je ziet.** Een leeg blok. Gemeten op de toolspagina: met
+`<c-code-viewer id="output-text">` en `outputText.textContent = '...'` bleef de zichtbare
+tekst leeg; met een gewone `<pre>` op dezelfde plek staat hij er.
+
+**Waarom dat pijn doet.** "Een blok code met een kopieerknop" is precies waar je dit
+component voor pakt, en het halve gebruik ervan is een resultaat dat pas NA een
+serververzoek binnenkomt.
+
+**Waar.** De toolspagina (`opi/templates_lotc/tools.html.j2`), het resultaat van
+encrypt/decrypt. Het logpaneel liep tegen dezelfde grens aan, om een andere reden
+(regels die er een voor een bij komen).
+
+**Wat wij intussen doen.** Een eigen `<pre>` met een klasse in `static/css/tools.css`.
+
+**Voorstel.** De inhoud volgen met een `MutationObserver`, of een publieke
+`setValue()`/`value` op het component.
