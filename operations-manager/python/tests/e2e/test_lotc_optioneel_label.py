@@ -36,6 +36,15 @@ def _open(page: Page, app_server: str) -> None:
     page.wait_for_function("() => document.querySelectorAll('nldd-form-field:not(:defined)').length === 0")
 
 
+@pytest.mark.xfail(
+    reason=(
+        "data-no-optional-badge werkt nog niet op een c-select-field: het attribuut landt "
+        "op de omhullende nldd-form-field terwijl nldd_field het in de BESTURING zoekt. "
+        "De omweg (required=true) is bewust niet gebruikt, want die zegt tegen een "
+        "schermlezer dat er iets ingevuld moet worden. Zie request_for_components.md."
+    ),
+    strict=True,
+)
 def test_de_kiezer_draagt_geen_optioneel(app_server: str, auth_page: Page) -> None:
     """Het veld eromheen is niet als optioneel gemarkeerd, en toont de badge dus niet."""
     _open(auth_page, app_server)
