@@ -115,6 +115,22 @@ class UpdateImageResult(BaseModel):
     actions_performed: list[str] = Field(default_factory=list)
 
 
+class DeleteComponentResult(BaseModel):
+    """Result of a delete_component task."""
+
+    status: str
+    message: str = ""
+    project: str = ""
+    component: str = ""
+    uncoupled_from: list[dict[str, Any]] = Field(default_factory=list)
+    """The places the component was removed from along with its definition.
+
+    Empty unless ``confirm_in_use=true`` was needed: a component nothing referenced is
+    simply gone, while a confirmed deletion also changed deployments and dependency
+    declarations, and the caller should learn which ones."""
+    processing: ProcessingStatus | None = None
+
+
 class DeleteDeploymentResult(BaseModel):
     """Result of a delete_deployment task."""
 
