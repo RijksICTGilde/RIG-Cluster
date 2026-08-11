@@ -18,13 +18,15 @@
         <div class="service-card{% if card.checked %} service-card--selected{% endif %}{% if card.is_locked %} service-card--locked-checked{% endif %}" data-service="{{ card.value|e }}"{% if card.data_requires %} data-requires='{{ card.data_requires }}'{% endif %}{% if card.server_locked %} data-locked="true"{% endif %}>
             {# EEN GEWOON <input>, EN DAT IS HIER GEEN LUIHEID.
 
-               Onder NLDD wordt <c-checkbox> een <nldd-checkbox-field>, en die zet zijn
-               invoerveld in de SCHADUWBOOM. static/js/wizard.js zoekt het besturingselement
-               met card.querySelector('input[type="checkbox"]') - een gewone zoekopdracht,
-               die niet door een schaduwboom heen kijkt. Gevolg, in de browser gemeten: een
-               klik op een kaart vinkte NIETS aan, en het formulier verstuurde vervolgens
-               ALLE veertien diensten in plaats van geen enkele. Precies omgekeerd aan wat
-               de gebruiker aanwees, en volkomen onzichtbaar in de HTML.
+               Onder NLDD wordt <c-checkbox> een <nldd-checkbox-field>, en dat element
+               heeft GEEN <input> - niet in de lichte boom en niet in de schaduwboom; het
+               levert zijn waarde via ElementInternals (gemeten, zie
+               features/aanvinkvakje.md). static/js/wizard.js zoekt het besturingselement
+               met card.querySelector('input[type="checkbox"]') en vindt dan dus niets.
+               Gevolg, in de browser gemeten: een klik op een kaart vinkte NIETS aan, en
+               het formulier verstuurde vervolgens ALLE veertien diensten in plaats van
+               geen enkele. Precies omgekeerd aan wat de gebruiker aanwees, en volkomen
+               onzichtbaar in de HTML.
 
                De kaart is bovendien ons eigen onderdeel met onze eigen CSS
                (static/css/wizard.css, .service-card): het vakje wordt daar opgemaakt, niet
@@ -33,9 +35,9 @@
                met het formulier meegaat.
 
                OPNIEUW GEPROBEERD MET EEN COMPONENT, EN GEMETEN DAT HET NIET KAN.
-               <nldd-checkbox> is form-associated en stuurt zijn waarde netjes mee - dat
-               alleen is dus niet genoeg. Met de kaart op <c-checkbox> en wizard.js
-               aangepast om ook nldd-checkbox te vinden:
+               Het element is form-associated en stuurt zijn waarde netjes mee (sinds
+               RC-71 ook via htmx) - dat alleen is dus niet genoeg. Met de kaart op
+               <c-checkbox> en wizard.js aangepast om ook nldd-checkbox-field te vinden:
 
                    oude vormgeving : 9 van de 9 tests groen
                    nieuwe vormgeving: 7 van de 9 GEFAALD
