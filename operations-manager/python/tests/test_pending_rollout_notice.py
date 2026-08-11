@@ -11,17 +11,15 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from opi.core.templates import get_templates
+from opi.core.templates_lotc import templates_lotc
 
-_SECTION = "project-details/section-pending-rollout.html.j2"
-_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "opi" / "templates"
+_SECTION = "bg/_pending-rollout.html.j2"
+_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "opi" / "templates_lotc"
 
 
 def _render(pending: dict | None, user_role: str = "admin") -> str:
-    return (
-        get_templates()
-        .get_template(_SECTION)
-        .render({"pending_rollout": pending, "user_role": user_role, "project": {"name": "wies"}})
+    return templates_lotc.get_template(_SECTION).render(
+        {"pending_rollout": pending, "user_role": user_role, "project": {"name": "wies"}}
     )
 
 
@@ -66,10 +64,10 @@ def test_a_reader_sees_the_drift_but_not_the_button() -> None:
 
 def test_the_notice_is_rendered_above_the_tabs() -> None:
     """Drift is about the whole project; it must not hide behind the right tab."""
-    page = (_TEMPLATE_DIR / "project-details.html.j2").read_text()
+    page = (_TEMPLATE_DIR / "bg" / "project-tabs.html.j2").read_text()
 
     assert _SECTION in page
-    assert page.index(_SECTION) < page.index("<c-tabs>")
+    assert page.index(_SECTION) < page.index("<c-tabs")
 
 
 def test_the_page_handler_measures_the_drift() -> None:

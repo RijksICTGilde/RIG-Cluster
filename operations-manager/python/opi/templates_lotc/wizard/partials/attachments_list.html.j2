@@ -1,10 +1,9 @@
 {# Unified attachments list: existing catalog entries (removable, applied on save) plus
    files staged this session (removable via unstage). Swapped into #wiz-att-list. #}
 {% if error %}
-{# style= blijft hier staan: c-alert zet een meegegeven style= op twee elementen en een
-   meegegeven class= op maar een. Dit overzetten naar een klasse zou de marge dus
-   verplaatsen in plaats van verhuizen. #}
-<c-alert/>
+{# De TEKST hoort in de melding. De automatische omzetting liet content= vallen, en dan
+   staat er een lege rode balk waar de reden hoort te staan. #}
+<c-alert type="error">{{ error }}</c-alert>
 {% endif %}
 {% set ns = namespace(items=[]) %}
 {% for s in services | default([]) %}
@@ -18,7 +17,17 @@
     <c-card padding="sm" background-color="grijs-050" outline="true">
         <div class="attachment-row">
             <div><strong>{{ att.filename | default(att.id) }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }})</span></div>
-            <c-button type="button" size="xs" label="Verwijderen"/>
+            {# Zie attachments_upload.html.j2: de htmx-bedrading gaat via :attrs, want een
+               componenttag laat een los hx-attribuut niet door. #}
+            {% set verwijderen_attrs = {
+                'hx-post': '/forms/wizard/create-project/attachments/remove-existing/' ~ att.id,
+                'hx-ext': 'ignore:json-enc',
+                'hx-include': '#wiz-att-token',
+                'hx-target': '#wiz-att-list',
+                'hx-swap': 'innerHTML',
+                'hx-disabled-elt': 'this',
+            } %}
+            <c-button type="secondary" size="xs" label="Verwijderen" :attrs="verwijderen_attrs"/>
         </div>
     </c-card>
     {% endfor %}
@@ -26,7 +35,15 @@
     <c-card padding="sm" background-color="grijs-050" outline="true">
         <div class="attachment-row">
             <div><strong>{{ att.filename }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }}, nog niet opgeslagen)</span></div>
-            <c-button type="button" size="xs" label="Verwijderen"/>
+            {% set unstage_attrs = {
+                'hx-post': '/forms/wizard/create-project/attachments/unstage/' ~ att.id,
+                'hx-ext': 'ignore:json-enc',
+                'hx-include': '#wiz-att-token',
+                'hx-target': '#wiz-att-list',
+                'hx-swap': 'innerHTML',
+                'hx-disabled-elt': 'this',
+            } %}
+            <c-button type="secondary" size="xs" label="Verwijderen" :attrs="unstage_attrs"/>
         </div>
     </c-card>
     {% endfor %}

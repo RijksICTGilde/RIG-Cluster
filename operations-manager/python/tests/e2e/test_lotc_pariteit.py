@@ -16,7 +16,7 @@ geklikt en echt getypt wordt.
     5. De snapshotlijst van de backups kwam midden in de hertekende pagina binnen in de
        oude vormgeving, met de herstelknop erin.
 
-?layout=nldd staat overal in de URL: die wint van het koekje, dus deze tests staan los
+ staat overal in de URL: die wint van het koekje, dus deze tests staan los
 van wat de browser onthoudt.
 """
 
@@ -47,7 +47,7 @@ def test_de_infoknop_opent_een_dialoog_met_de_uitleg_van_die_dienst(app_server: 
     opgehaald: list[str] = []
     auth_page.on("request", lambda r: opgehaald.append(r.url) if "/forms/wizard/help/" in r.url else None)
 
-    auth_page.goto(f"{app_server}/services?layout=nldd")
+    auth_page.goto(f"{app_server}/services")
     auth_page.wait_for_load_state("networkidle")
 
     knop = auth_page.locator(".service-card__help-btn").first
@@ -81,7 +81,7 @@ def test_de_infoknop_opent_een_dialoog_met_de_uitleg_van_die_dienst(app_server: 
 
 def test_elke_dienst_heeft_een_infoknop_en_geen_help_link_meer(app_server: str, auth_page: Page) -> None:
     """De ?help=-omweg is weg: geen enkele bestemming op de pagina wijst er nog naar."""
-    auth_page.goto(f"{app_server}/services?layout=nldd")
+    auth_page.goto(f"{app_server}/services")
     auth_page.wait_for_load_state("networkidle")
 
     kaarten = auth_page.locator("nldd-card")
@@ -95,7 +95,7 @@ def test_elke_dienst_heeft_een_infoknop_en_geen_help_link_meer(app_server: str, 
 
 def test_de_dialoog_sluit_met_de_sluitknop(app_server: str, auth_page: Page) -> None:
     """Sluiten is gedrag, geen vormgeving: de knop hangt aan closeServiceHelp()."""
-    auth_page.goto(f"{app_server}/services?layout=nldd")
+    auth_page.goto(f"{app_server}/services")
     auth_page.wait_for_load_state("networkidle")
 
     auth_page.locator(".service-card__help-btn").first.click()
@@ -153,7 +153,7 @@ def test_het_resourcegebruik_wordt_nog_steeds_apart_opgehaald(app_server: str, a
     opgehaald: list[str] = []
     auth_page.on("request", lambda r: opgehaald.append(r.url) if "/dashboard/resource-usage" in r.url else None)
 
-    auth_page.goto(f"{app_server}/dashboard?layout=nldd")
+    auth_page.goto(f"{app_server}/dashboard")
     auth_page.wait_for_load_state("networkidle")
 
     assert opgehaald, "het resourcegebruik wordt niet apart opgehaald (hx-get is weg)"
@@ -167,7 +167,7 @@ def test_de_meters_worden_getekend_zoals_op_de_bestaande_pagina(app_server: str,
     getoetst en niet op aanwezigheid.
     """
     _serveer_fragment(auth_page)
-    auth_page.goto(f"{app_server}/dashboard?layout=nldd")
+    auth_page.goto(f"{app_server}/dashboard")
     auth_page.wait_for_load_state("networkidle")
 
     for canvas_id in ("cpu-gauge", "memory-gauge", "storage-gauge", "network-chart"):
@@ -201,7 +201,7 @@ def test_de_netwerkgrafiek_wordt_door_chart_js_getekend(app_server: str, auth_pa
     woorden in plaats van te falen op iets wat niet over de omzetting gaat.
     """
     _serveer_fragment(auth_page)
-    auth_page.goto(f"{app_server}/dashboard?layout=nldd")
+    auth_page.goto(f"{app_server}/dashboard")
     auth_page.wait_for_load_state("networkidle")
 
     try:
@@ -232,7 +232,7 @@ def test_het_kostenfilter_heeft_zijn_velden_terug_en_rekent_opnieuw(app_server: 
     een filter en deed niets. Hier wordt getypt, op Toepassen geklikt, en gekeken of de
     pagina met de nieuwe waarden terugkomt.
     """
-    auth_page.goto(f"{app_server}/admin/usage?layout=nldd")
+    auth_page.goto(f"{app_server}/admin/usage")
     auth_page.wait_for_load_state("networkidle")
 
     for veld in ("namespace", "price", "year"):
@@ -335,7 +335,7 @@ def test_de_grafieken_van_een_deployment_worden_echt_getekend(app_server: str, a
     nog steeds, met zes lege vlakken. Vandaar dat hier op pixels getoetst wordt.
     """
     _serveer(auth_page, "**/metrics/dep1*", _metrics_fragment())
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}/metrics/dep1?layout=nldd")
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}/metrics/dep1")
 
     canvassen = [
         "cpu-chart-dep1-web",
@@ -371,7 +371,7 @@ def test_de_grafieken_van_een_deployment_worden_echt_getekend(app_server: str, a
 def test_de_tijdvakknoppen_halen_hetzelfde_blok_opnieuw_op(app_server: str, auth_page: Page) -> None:
     """De knop mikt op het blok van DEZE deployment, en dat is het id dat bestaat."""
     _serveer(auth_page, "**/metrics/dep1*", _metrics_fragment())
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}/metrics/dep1?layout=nldd")
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}/metrics/dep1")
 
     doelen = auth_page.eval_on_selector_all(
         "[hx-target]", "els => Array.from(new Set(els.map(e => e.getAttribute('hx-target'))))"
@@ -404,7 +404,7 @@ SNAPSHOT = {
 def _backups_fragment(deployment: str) -> str:
     from opi.core.templates_lotc import templates_lotc
 
-    return templates_lotc.env.get_template("shared/_backup-snapshots-lotc.html.j2").render(
+    return templates_lotc.env.get_template("shared/_backup-snapshots.html.j2").render(
         deployments=[{"name": deployment}],
         backups_by_deployment={deployment: [dict(SNAPSHOT, deployment_name=deployment)]},
         backups_error=None,
@@ -415,7 +415,7 @@ def test_de_snapshotlijst_komt_in_de_nieuwe_vormgeving_binnen(app_server: str, a
     """Het blok wordt buiten de band gevuld, en wat er komt draagt geen rvo-markup meer."""
     _serveer(auth_page, "**/backups", _backups_fragment("default"))
 
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=deployments&layout=nldd")
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=deployments")
     auth_page.wait_for_load_state("networkidle")
     scroll_backupblok_in_beeld(auth_page)
 
@@ -435,7 +435,7 @@ def test_de_herstelknop_opent_de_gedeelde_dialoog(app_server: str, auth_page: Pa
     """
     _serveer(auth_page, "**/backups", _backups_fragment("default"))
 
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=deployments&layout=nldd")
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=deployments")
     auth_page.wait_for_load_state("networkidle")
     scroll_backupblok_in_beeld(auth_page)
 
@@ -445,20 +445,6 @@ def test_de_herstelknop_opent_de_gedeelde_dialoog(app_server: str, auth_page: Pa
 
     aanroep = auth_page.evaluate("() => window.__aanroep")
     assert aanroep == ["modal-restore", "Backup herstellen", {"deployment": "default"}], aanroep
-
-
-def test_de_bestaande_pagina_laadt_dezelfde_tekencode(app_server: str, auth_page: Page) -> None:
-    """De verhuizing mag de OUDE pagina niet stilzwijgend zijn grafieken kosten.
-
-    De tekencode stond daar inline en staat nu in static/js/metrics_charts.js. Staat dat
-    script niet meer in de pagina, of is het pad fout, dan merkt niemand dat: de pagina
-    laadt, en pas het metingenblok - dat zijn eigen verzoek doet - blijft leeg.
-    """
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?layout=roos")
-    auth_page.wait_for_load_state("networkidle")
-
-    assert auth_page.evaluate("() => typeof initMetricsCharts") == "function"
-    assert auth_page.evaluate("() => typeof timestampsToLocalLabels") == "function"
 
 
 def test_de_projectkop_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth_page: Page) -> None:
@@ -472,7 +458,7 @@ def test_de_projectkop_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth
     naam en titel moeten die van project-details/section-header.html.j2 zijn. Toetsen dat
     er "een knop Bewerken" staat zou niets bewijzen: op deze pagina staan er vijf.
     """
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=project&layout=nldd")
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=project")
     auth_page.wait_for_load_state("networkidle")
 
     kop = auth_page.locator("nldd-title:has-text('Detail Test Project')").first
@@ -498,7 +484,7 @@ def test_de_projectpagina_laat_geen_sluitknop_zweven(app_server: str, auth_page:
     los kruisje onderaan de pagina - zichtbaar op een screenshot, onzichtbaar voor elke
     markupcontrole, want de HTML klopte.
     """
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=project&layout=nldd")
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=project")
     auth_page.wait_for_load_state("networkidle")
 
     dialoog = auth_page.locator("#service-help-modal")
@@ -520,7 +506,7 @@ def test_de_voettekst_heeft_zijn_kop_links_en_versieregel(app_server: str, auth_
     hier ooit weer een uitklapmenu van maakt. Daar navigeert een item namelijk NIET op
     zijn href.
     """
-    auth_page.goto(f"{app_server}/projects?layout=nldd")
+    auth_page.goto(f"{app_server}/projects")
     auth_page.wait_for_load_state("networkidle")
 
     voet = auth_page.locator("nldd-page-footer")
@@ -558,7 +544,7 @@ def test_het_gebruikersmenu_bevat_alles_en_zet_de_weergave_echt_om(app_server: s
     Vandaar dat deze test uitklapt, kijkt of het item ZICHTBAAR is, erop klikt, en daarna
     meet of `data-scheme` op <html> staat. Elk van die stappen ving een van de drie.
     """
-    auth_page.goto(f"{app_server}/dashboard?layout=nldd")
+    auth_page.goto(f"{app_server}/dashboard")
     auth_page.wait_for_load_state("networkidle")
 
     # De hulplinks zijn sinds de omzetting naar de menubalk van bg.rijks.app geen enkele

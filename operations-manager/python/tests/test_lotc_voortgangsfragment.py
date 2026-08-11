@@ -1,19 +1,18 @@
-"""Het gedeelde voortgangsfragment volgt de vormgeving van de pagina eromheen (RC-64).
+"""Het gedeelde voortgangsfragment (RC-64).
 
 Waarom dit een eigen poort verdient: ``render_progress_fragment`` rendert het antwoord op
 elke bevestigde actie op de projectpagina (verwerken, slapen, verwijderen). Het rendert
 NIET de pagina, dus het valt niet op als het scheef staat - het komt na een klik binnen,
-midden in een dialoog die er verder goed uitziet. Tot RC-64 koos het altijd de
-roos-omgeving, ook in een LOTC-pagina, en dat leverde een knop met rvo-klassen op die daar
-door geen enkel stijlblad opgemaakt wordt: ``lotc_rvo`` staat niet in ``DESIGN_SYSTEMS``.
+midden in een dialoog die er verder goed uitziet.
 
 Twee dingen worden gemeten, en het tweede is de reden dat de eerste alleen niet genoeg is:
 
-1. De keuze valt goed - het LOTC-verzoek krijgt geen roos-HTML.
-2. De knop in het LOTC-fragment WERKT. De LOTC-tegenhanger zette ``on_complete`` in een
-   variabele en hing hem nergens aan, dus de knop kwam zonder klikafhandeling op het
-   scherm. Overschakelen zonder die reparatie ruilt een lelijke werkende knop in voor een
-   mooie dode knop, en dat is geen vooruitgang.
+1. Er komt geen markup van het oude componentensysteem uit. Tot RC-64 rendeerde dit
+   fragment altijd in de roos-omgeving, ook in een LOTC-pagina, en dat leverde een knop
+   met rvo-klassen op die daar door geen enkel stijlblad opgemaakt werd.
+2. De knop WERKT. Het omgezette sjabloon zette ``on_complete`` in een variabele en hing
+   hem nergens aan, dus de knop kwam zonder klikafhandeling op het scherm. Een mooie dode
+   knop is geen vooruitgang op een lelijke werkende.
 """
 
 import json
@@ -24,15 +23,15 @@ from types import SimpleNamespace
 import pytest
 from opi.web.task_progress import render_progress_fragment
 
-#: Wat de roos-omgeving in elke gerenderde component achterlaat. Op een LOTC-pagina is dit
-#: het bewijs dat er HTML uit de andere omgeving is binnengekomen; LOTC zet
-#: ``data-lotc-component``.
+#: Wat het OUDE componentensysteem in elke gerenderde component achterliet. Een enkel
+#: voorkomen bewijst dat er HTML uit een tweede renderomgeving is binnengekomen; dit
+#: systeem zet ``data-lotc-component``.
 ROOS_MARKER = "data-roos-component"
 
 
-def _request(layout: str) -> SimpleNamespace:
-    """Het kleinste dat de schakelaar van een verzoek nodig heeft."""
-    return SimpleNamespace(query_params={"layout": layout}, cookies={})
+def _request() -> SimpleNamespace:
+    """Het kleinste dat het fragment van een verzoek nodig heeft."""
+    return SimpleNamespace(query_params={}, cookies={})
 
 
 def _context(**overrides) -> dict:
@@ -52,25 +51,17 @@ def _context(**overrides) -> dict:
 
 
 @pytest.mark.parametrize("status", ["running", "completed", "failed"])
-def test_het_lotc_verzoek_krijgt_geen_roos_html(status: str) -> None:
-    rendered = render_progress_fragment(_request("nldd"), _context(status=status))
+def test_het_fragment_bevat_geen_markup_van_het_oude_systeem(status: str) -> None:
+    rendered = render_progress_fragment(_request(), _context(status=status))
 
-    assert ROOS_MARKER not in rendered, f"roos-HTML in het LOTC-fragment bij status={status}"
-    assert "rvo-" not in rendered, f"rvo-klasse in het LOTC-fragment bij status={status}"
-
-
-@pytest.mark.parametrize("status", ["running", "completed", "failed"])
-def test_het_roos_verzoek_krijgt_nog_steeds_roos_html(status: str) -> None:
-    """De oude weg blijft intact; de schakelaar kiest, hij vervangt niet."""
-    rendered = render_progress_fragment(_request("roos"), _context(status=status))
-
-    assert ROOS_MARKER in rendered
+    assert ROOS_MARKER not in rendered, f"markup uit een tweede omgeving bij status={status}"
+    assert "rvo-" not in rendered, f"rvo-klasse in het fragment bij status={status}"
 
 
 @pytest.mark.parametrize("status", ["completed", "failed"])
 def test_de_afsluitknop_voert_on_complete_uit(status: str) -> None:
     """Zonder dit is de knop mooi en dood: de dialoog gaat niet dicht."""
-    rendered = render_progress_fragment(_request("nldd"), _context(status=status, on_complete="location.reload()"))
+    rendered = render_progress_fragment(_request(), _context(status=status, on_complete="location.reload()"))
 
     assert 'onclick="location.reload()"' in rendered, f"knop zonder klikafhandeling bij status={status}"
 
@@ -81,7 +72,7 @@ def test_de_iconen_van_de_takenlijst_bestaan_in_de_nldd_woordenschat() -> None:
     icons = json.loads((Path(lotc.__file__).parent / "icons.json").read_text())
     woordenschat = set(icons["sets"]["nldd"]) | set(icons["aliases"])
     rendered = render_progress_fragment(
-        _request("nldd"),
+        _request(),
         _context(tasks=[{"name": "a", "status": s, "subtasks": []} for s in ("completed", "failed", "running", "")]),
     )
 
@@ -95,7 +86,7 @@ def test_de_foutmelding_toont_de_suggestie_en_een_werkende_logboeklink() -> None
     dode link. Aanzetten zonder dat te repareren zou een gebruiker met een mislukte taak
     een melding zonder inhoud opleveren."""
     rendered = render_progress_fragment(
-        _request("nldd"),
+        _request(),
         _context(
             status="failed",
             component_failures=[

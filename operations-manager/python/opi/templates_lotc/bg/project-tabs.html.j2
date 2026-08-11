@@ -98,6 +98,8 @@
         {% endif %}
     </c-stack>
 
+    {% include "bg/_pending-rollout.html.j2" %}
+
     <c-tabs aria-label="Aanzichten van dit project">
         {% for key, tab in tabs.items() %}
             <c-tab label="{{ tab.label }}" href="?tab={{ key }}" :active="key == active_tab" />
@@ -256,24 +258,15 @@
 
         {# ---- De secties die de DIENSTEN zelf leveren ------------------------- #}
         {# De blokken die de DIENSTEN leveren (de Keycloak-realm, de uitnodigingen, de
-           bijlagen). Ze staan bij hun dienst, en elke dienst levert er twee: een in
-           roos-componenten en een in LOTC-componenten. Dat is geen dubbel werk om het
-           dubbele werk: twee componentsystemen kunnen niet in een Jinja-omgeving, want de
-           eerst geregistreerde voorbewerker eist alle c-tags op (gemeten in
-           docs/lotc-samenleven-met-jinja-roos.md).
+           bijlagen). Ze staan bij hun dienst, in zijn eigen map.
 
-           Hier stond render_roos() als terugval voor een dienst zonder tegenhanger, met
-           als verantwoording "lelijk is beter dan weg". Die terugval is weg, en niet omdat
-           de regel erachter niet meer geldt: de roos-omgeving zelf gaat weg, dus er valt
-           niets meer op terug te vallen. Wat ervoor in de plaats komt is de {% raw %}{% if %}{% endraw %}
-           hieronder - een blok zonder tegenhanger blijft leeg in plaats van dat de pagina
-           omvalt - plus tests/test_lotc_dienstblokken.py, dat elk sjabloon in de catalogus
-           op zijn tegenhanger toetst en leeg daarmee onbereikbaar maakt. #}
+           Hier stond eerst render_roos() als terugval voor een dienst zonder eigen
+           sjabloon, en daarna lotc_counterpart(), dat een blok OVERSLOEG als er geen
+           ``-lotc``-versie naast lag. Allebei waren ze er zolang er twee bouwlijnen
+           waren; nu heeft elke dienst nog EEN sjabloon en wordt dat gewoon gerenderd.
+           Dat het er ook echt is, toetst tests/test_lotc_dienstblokken.py. #}
         {% for section in service_detail_sections | default([]) %}
-            {% set lotc_sjabloon = lotc_counterpart(section.template) %}
-            {% if lotc_sjabloon %}
-                {% include lotc_sjabloon %}
-            {% endif %}
+            {% include section.template %}
         {% endfor %}
 
         {# ---- Danger zone (section-danger-zone.html.j2) ----------------------- #}
@@ -652,7 +645,7 @@
         {# ---- Per deployment: CPU, geheugen, netwerk en disk over de tijd ---------
 
            Deze grafieken hingen aan de metrics-scraper-DIENST
-           (metrics_scraper/section-deployment-lotc.html.j2), waardoor een project zonder die dienst
+           (metrics_scraper/section-deployment.html.j2), waardoor een project zonder die dienst
            op dit tabblad alleen een teller zag. CPU- en geheugengebruik zijn geen
            dienst-extraatje maar de basisvraag die je op een tabblad Metrics komt stellen,
            dus staan ze hier voor ELK project met deployments.

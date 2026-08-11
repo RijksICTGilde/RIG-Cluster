@@ -127,7 +127,6 @@ async def project_tasks(request: Request, project_name: str) -> HTMLResponse:
 
     return render(
         request,
-        roos="project-details/section-tasks.html.j2",
-        lotc="bg/_tasks.html.j2",
+        template="bg/_tasks.html.j2",
         context={"request": request, "project_name": project_name, "items": items},
     )

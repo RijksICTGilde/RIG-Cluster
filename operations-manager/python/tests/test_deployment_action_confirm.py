@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 import opi
 import pytest
 from fastapi import HTTPException
-from opi.core.templates import templates
+from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.registry import (
     SERVICES,
     collect_deployment_actions,
@@ -44,7 +44,7 @@ PROJECT = "demo"
 DEPLOYMENT = "dep-1"
 CSRF = "csrf-token-value"
 
-_TEMPLATE_ROOT = pathlib.Path(opi.__file__).parent / "templates"
+_TEMPLATE_ROOT = pathlib.Path(opi.__file__).parent / "templates_lotc"
 # static/ staat naast opi/, niet erin.
 _STATIC_ROOT = pathlib.Path(opi.__file__).parent.parent / "static"
 
@@ -207,14 +207,17 @@ async def test_the_route_takes_no_endpoint_from_the_request(service_with_an_acti
 
 
 def _fragment(action: DeploymentAction) -> str:
-    template = templates.env.get_template("project-details/action-confirm.html.j2")
+    # bg/_action-confirm.html.j2 en niet project-details/action-confirm.html.j2: het
+    # eerste is wat de route rendert (zie deployment_action_confirm), het tweede is de
+    # eerste automatische omzetting van het oude sjabloon, die aan geen enkele route hangt.
+    template = templates.env.get_template("bg/_action-confirm.html.j2")
     return template.render(request=_request(), action=action, key="fake-key", message=action.confirm_message)
 
 
-def test_the_csrf_header_is_not_an_attribute_of_a_roos_button() -> None:
-    """A ROOS <c-button> re-emits attribute values in double quotes, which mangles the
-    JSON of hx-headers (this cost us a 403 three times). The header therefore sits on
-    the plain wrapper, where htmx inherits it from."""
+def test_the_csrf_header_is_not_an_attribute_of_a_component_button() -> None:
+    """Een componentknop schrijft attribuutwaarden opnieuw uit met dubbele aanhalingstekens,
+    en dat verminkt de JSON van hx-headers (dat kostte ons drie keer een 403). De header
+    staat daarom op de kale wikkel, waar htmx hem van erft."""
     html = _fragment(FAKE_ACTION)
 
     assert f'hx-headers=\'{{"X-CSRF-Token": "{CSRF}"}}\'' in html
@@ -255,8 +258,8 @@ def test_sleeping_and_waking_run_as_followable_tasks() -> None:
 
 
 def test_the_page_no_longer_confirms_in_the_browser_dialog() -> None:
-    page = (_TEMPLATE_ROOT / "project-details.html.j2").read_text(encoding="utf-8")
-    section = (_TEMPLATE_ROOT / "project-details" / "section-deployment-actions.html.j2").read_text(encoding="utf-8")
+    page = (_TEMPLATE_ROOT / "bg" / "project-tabs.html.j2").read_text(encoding="utf-8")
+    section = (_TEMPLATE_ROOT / "bg" / "_deployment-actions.html.j2").read_text(encoding="utf-8")
 
     assert "runDeploymentAction" not in page
     assert "runDeploymentAction" not in section
@@ -273,9 +276,14 @@ def test_the_page_no_longer_confirms_in_the_browser_dialog() -> None:
 
 
 def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:
-    """Rendered through the app env, so the ROOS handling of @click is exercised: the
-    URL must come out intact and single-quoted."""
-    template = templates.env.get_template("project-details/section-deployment-actions.html.j2")
+    """Rendered through the app env, so the component handling of the click is exercised:
+    the URL must come out intact.
+
+    De aanhalingstekens om het adres staan als ``&#39;`` in het attribuut. Dat is de
+    escaping van het componentensysteem en geen verminking: de browser leest er weer een
+    apostrof van. Wat hier telt is dat het ADRES heel blijft.
+    """
+    template = templates.env.get_template("bg/_deployment-actions.html.j2")
     html = template.render(
         request=_request(),
         project={"name": PROJECT, "deployments": [{"name": DEPLOYMENT}]},
@@ -284,5 +292,5 @@ def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:
     )
 
     expected = f"/projects/{PROJECT}/deployments/{DEPLOYMENT}/actions/cache-legen/confirm"
-    assert f"openServiceModal('{expected}'" in html
+    assert f"openServiceModal(&#39;{expected}&#39;" in html
     assert FAKE_ACTION.endpoint not in html, "the endpoint belongs in the confirmation, not on the page"
