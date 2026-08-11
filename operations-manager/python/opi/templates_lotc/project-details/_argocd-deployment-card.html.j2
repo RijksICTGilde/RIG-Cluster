@@ -109,8 +109,19 @@
         </div>
         {% else %}
         {# Deployment is on current cluster - show ArgoCD status #}
-        {# Status Badges Row #}
-        <div class="argo-card__badges">
+        {# Status Badges Row.
+
+           De badges waren <span class="argo-badge argo-badge--degraded"> met een eigen
+           kleurenset in project-details.css: elf selectors voor wat in feite vier verdicten
+           zijn. Dat is <c-tag>, waar het TYPE de kleur bepaalt. bg/_argocd-deployment-card
+           deed het al zo, met dezelfde afbeelding van verdict op kleur.
+
+           De iconen in de badges zijn vervallen. <c-tag> heeft geen icoonstand, en het icoon
+           herhaalde alleen wat de tekst al zei - een schermlezer las de klasse toch al niet.
+           De KLEUR blijft het verschil dragen, en die komt nu van het thema.
+
+           .argo-card__badges (flex met een gat) is <c-cluster gap="xs">. #}
+        <c-cluster gap="xs" align="center">
             {# State badges (RC-31, generic since RC-35). A deployment that is off or asleep
                has zero replicas and ArgoCD calls that Healthy; the green badge is the
                sentence the user reads to know whether things are going well, and it was
@@ -118,54 +129,24 @@
                report: a deployment that is off AND degraded shows both, or switching
                something off would hide a real failure. #}
             {% for badge in state_badges %}
-            <span class="argo-badge argo-badge--state">
-                <c-icon icon="moon" size="sm"/>
-                {{ badge }}
-            </span>
+            <c-tag type="info" label="{{ badge }}"/>
             {% endfor %}
 
-            {# Health Badge #}
             {% if not state_replaces_health %}
-            {% set health_modifier = 'healthy' if health == 'Healthy' else ('progressing' if health == 'Progressing' else ('degraded' if health == 'Degraded' else 'unhealthy')) %}
-            <span class="argo-badge argo-badge--{{ health_modifier }}">
-                {% if health == 'Healthy' %}
-                <c-icon icon="check-mark-circle" size="sm"/>
-                {% elif health == 'Progressing' %}
-                <c-icon icon="timer" size="sm"/>
-                {% elif health == 'Degraded' %}
-                <c-icon icon="exclamation-triangle" size="sm"/>
-                {% else %}
-                <c-icon icon="exclamation-triangle" size="sm"/>
-                {% endif %}
-                {{ health }}
-            </span>
+            <c-tag type="{{ 'success' if health == 'Healthy' else 'warning' if health == 'Progressing' else 'error' }}"
+                   label="{{ health }}"/>
             {% endif %}
 
             {# Sync Badge. Unknown means ArgoCD cannot compare desired vs live state (often a
                render/CMP error) - show it red, not neutral grey, so it does not read as
                "still working on it". #}
-            {% set sync_modifier = 'synced' if sync == 'Synced' else ('outofsync' if sync == 'OutOfSync' else ('sync-unknown' if sync == 'Unknown' else 'neutral')) %}
-            <span class="argo-badge argo-badge--{{ sync_modifier }}">
-                {% if sync == 'Synced' %}
-                <c-icon icon="check-mark-circle" size="sm"/>
-                {% elif sync == 'OutOfSync' %}
-                <c-icon icon="exclamation-triangle" size="sm"/>
-                {% elif sync == 'Unknown' %}
-                <c-icon icon="exclamation-triangle" size="sm"/>
-                {% else %}
-                <c-icon icon="info" size="sm"/>
-                {% endif %}
-                {{ sync }}
-            </span>
+            <c-tag type="{{ 'success' if sync == 'Synced' else 'warning' if sync == 'OutOfSync' else 'error' if sync == 'Unknown' else 'default' }}"
+                   label="{{ sync }}"/>
 
-            {# Revision Badge (if available) #}
             {% if status.get('revision') %}
-            <span class="argo-badge--revision">
-                <c-icon icon="file-text" size="sm"/>
-                {{ status.revision }}
-            </span>
+            <c-tag type="default" label="{{ status.revision }}"/>
             {% endif %}
-        </div>
+        </c-cluster>
 
         {# Last Sync Time #}
         {% if status.get('last_sync') %}

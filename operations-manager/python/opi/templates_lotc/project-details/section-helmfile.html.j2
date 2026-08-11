@@ -9,7 +9,7 @@
             {% for helmfile in project.helmfile %}
             <c-card class="helmfile-card" padding="lg" background-color="grijs-050" outline="true">
                 <c-layout-flow gap="md">
-                    <div class="helmfile-header">
+                    <c-cluster justify="between" align="center" class="helmfile-header">
                         <c-icon icon="rectangle-stack" size="lg" color="oranje"/>
                         <div>
                             <c-heading type="h3" label="{{ helmfile.name }}"/>
@@ -17,7 +17,7 @@
                             <div>{{ helmfile.repository }}</div>
                             {% endif %}
                         </div>
-                    </div>
+                    </c-cluster>
 
                     <div class="helmfile-specs">
                         {% if helmfile.get('path') %}
