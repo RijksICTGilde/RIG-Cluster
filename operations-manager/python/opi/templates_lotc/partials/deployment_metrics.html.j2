@@ -3,7 +3,8 @@
 {% set durations = [(60, "1 uur"), (120, "2 uur"), (360, "6 uur"), (720, "12 uur"), (1440, "24 uur")] %}
 <div class="metrics-toolbar">
     {% for value, label in durations %}
-    <c-button size="xs">{{ label }}</c-button>
+    {# label= en niet als inhoud: nldd-button toont alleen zijn text-attribuut. #}
+    <c-button size="xs" label="{{ label }}"/>
     {% endfor %}
 </div>
 {% if deployment.components %}

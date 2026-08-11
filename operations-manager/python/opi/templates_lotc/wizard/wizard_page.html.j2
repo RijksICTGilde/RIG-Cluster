@@ -4,18 +4,18 @@
 
 {% block content %}
 <c-layout-flow gap="lg" size="lg">
-    {# Breadcrumb #}
-    <nav aria-label="Breadcrumb">
-        <ol class="lotc-breadcrumb">
-            <li><a href="/projects">Projecten</a></li>
-            {% if project_name %}
-            <li><a href="/projects/details/{{ project_name }}">{{ project_name }}</a></li>
-            <li aria-current="page">Bewerken</li>
-            {% else %}
-            <li aria-current="page">Nieuw project</li>
-            {% endif %}
-        </ol>
-    </nav>
+    {# Het kruimelpad. Was een eigen <ol class="lotc-breadcrumb"> met opmaak uit
+       wizard-start.css; <c-breadcrumbs> levert hetzelfde en verandert mee met het thema.
+       Een item zonder href is de huidige pagina. #}
+    <c-breadcrumbs aria-label="Kruimelpad">
+        <c-breadcrumbs-item label="Projecten" href="/projects" />
+        {% if project_name %}
+        <c-breadcrumbs-item label="{{ project_name }}" href="/projects/details/{{ project_name }}" />
+        <c-breadcrumbs-item label="Bewerken" />
+        {% else %}
+        <c-breadcrumbs-item label="Nieuw project" />
+        {% endif %}
+    </c-breadcrumbs>
 
     <c-heading type="h1" label="{{ flow_title }}"/>
 
