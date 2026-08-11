@@ -259,12 +259,13 @@ class FieldWidgetAdapter(WidgetAdapter):
     def render_flow(self, children_html: list[str]) -> str:
         """De buitenste verticale stapel om de velden van een stap.
 
-        Stond als kale tekst in de renderer. Hij hoort bij de adapter omdat het een
-        COMPONENTaanroep is: de roos-versie laat hem als tag staan (``process_components``
-        zet hem later om), en de LOTC-adapter rendert hem meteen.
+        Hoort bij de adapter en niet bij de renderer omdat het een COMPONENTaanroep is;
+        WELKE component, en of hij meteen gerenderd wordt, hangt van het componentensysteem
+        af. Hier stond de kale ``<c-layout-flow>``-tag die de roos-adapter opleverde en die
+        ``process_components`` later omzette. Die weg is er niet meer, dus dit is geen
+        werkende ondergrens meer maar een val: de subklasse hoort hem te leveren.
         """
-        inner = "\n".join(children_html)
-        return f'<c-layout-flow gap="lg">\n{inner}\n</c-layout-flow>'
+        raise NotImplementedError
 
     def render_div(self, div: Div, children_html: list[str]) -> str:
         return self._render_template("div.html.j2", {"div": div, "children_content": "\n".join(children_html)})

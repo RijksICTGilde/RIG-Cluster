@@ -258,52 +258,6 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
     return HTMLResponse(content=render_fragment(request, template="bg/_task-progress.html.j2", context=context))
 
 
-@web_router.get("/projects/roos", response_class=HTMLResponse)
-@requires_sso
-async def roos_project_form(request: Request):
-    """
-    Serve the ROOS-based project creation form using jinja-roos-components.
-
-    Returns:
-        HTML response with the ROOS component-based form
-    """
-    try:
-        from opi.core.cluster_config import get_selectable_clusters
-
-        user = get_current_user(request)
-        return templates_lotc.TemplateResponse(
-            request,
-            "roos-form-improved.html.j2",
-            {
-                "request": request,
-                "title": "Project Aanmaken",
-                # Only the clusters this environment offers: production shows just
-                # odcn-production, development a configurable set.
-                "clusters": get_selectable_clusters(),
-                "menu_items": get_menu_items(user),
-            },
-        )
-    except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving ROOS project form: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
-
-
 @web_router.post("/projects/delete/{project_name}", response_class=HTMLResponse)
 @requires_sso
 async def delete_project_web(request: Request, project_name: str) -> HTMLResponse:
