@@ -156,23 +156,4 @@
         {% include "bg/_projects-lijst.html.j2" %}
     </div>
 
-    {# ---- Samenvatting (projects-overview/_samenvatting.html.j2) -------------
-       Telt over ALLE projecten van deze gebruiker, niet over wat het zoekveld
-       overlaat: "Je projecten" hoort niet te dalen omdat je iets intypt. #}
-    {% if projects_all %}
-        <c-auto-grid min="200px" gap="md">
-            <c-metric icon="rectangle-stack"
-                      value="{{ projects_all | length }}"
-                      label="Je projecten" sub="Waar je toegang toe hebt" />
-            <c-metric icon="person-2"
-                      value="{{ projects_all | map(attribute='users') | map('length') | sum }}"
-                      label="Teamleden totaal" sub="In al je projecten" />
-            <c-metric icon="cylinder-split"
-                      value="{{ projects_all | map(attribute='services') | map('length') | sum }}"
-                      label="Services actief" sub="In alle projecten" />
-            <c-metric icon="person"
-                      value="{{ user.role | default('User', true) | title }}"
-                      label="Je rol" sub="{{ user.email }}" />
-        </c-auto-grid>
-    {% endif %}
 {% endblock %}
