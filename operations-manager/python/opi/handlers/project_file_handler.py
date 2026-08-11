@@ -3734,6 +3734,137 @@ def remove_attachment_references(project_data: dict[str, Any], attachment_id: st
     return removed
 
 
+#: A deployment lists the component among the things it deploys. Removing that entry takes
+#: the component out of one deployment and leaves the deployment itself intact.
+COMPONENT_USAGE_DEPLOYMENT = "deployment"
+
+#: Another component names it in ``uses-components``. Removing that entry drops a declared
+#: dependency and changes nothing else.
+COMPONENT_USAGE_DEPENDENCY = "dependency"
+
+#: A deployment's web address is built around it (``root-component`` or
+#: ``expose-component-on-bare-domain``). That is not a reference that can be dropped: it
+#: decides how the site is served, so it is refused rather than cleaned up -- the same rule
+#: publish-on-web certificates get in ``remove_attachment``.
+COMPONENT_USAGE_WEB_ADDRESS = "web-address"
+
+
+@dataclass(frozen=True)
+class ComponentUsageSite:
+    """One place that references a component: where it is, and what kind of use it is.
+
+    The component counterpart of :class:`AttachmentUsageSite`. The delete guard, the
+    confirmation dialog and the API delete all ask "where is this component used", and one
+    walk producing one record type is what keeps them from disagreeing about whether a
+    component is free.
+    """
+
+    #: The deployment the use sits in; None for a dependency declared by another component.
+    deployment: str | None
+    #: The component that declares the dependency; None for a deployment or web-address use.
+    component: str | None
+    #: One of the ``COMPONENT_USAGE_*`` kinds.
+    kind: str
+
+    @property
+    def label(self) -> str:
+        """This site in one phrase, as the portal and the error texts name it."""
+        if self.kind == COMPONENT_USAGE_DEPENDENCY:
+            return f"component '{self.component}'"
+        if self.kind == COMPONENT_USAGE_WEB_ADDRESS:
+            return f"het webadres van deployment '{self.deployment}'"
+        return f"deployment '{self.deployment}'"
+
+    def as_dict(self) -> dict[str, Any]:
+        """This site as an API client reads it."""
+        return {
+            "deployment": self.deployment,
+            "component": self.component,
+            "kind": self.kind,
+            "label": self.label,
+        }
+
+
+def component_usage_sites(project_data: dict[str, Any]) -> dict[str, list[ComponentUsageSite]]:
+    """Map each component name to the sites that reference it.
+
+    Covers the three places a component name appears outside its own definition: a
+    deployment's component list, another component's ``uses-components``, and the two
+    web-address settings that name a component (``root-component`` and
+    ``expose-component-on-bare-domain``).
+    """
+    from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+
+    usage: dict[str, list[ComponentUsageSite]] = {}
+
+    def add(name: Any, site: ComponentUsageSite) -> None:
+        if not isinstance(name, str) or not name:
+            return
+        sites = usage.setdefault(name, [])
+        if site not in sites:
+            sites.append(site)
+
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        for dependency in component.get("uses-components", []) or []:
+            add(dependency, ComponentUsageSite(None, component.get("name", ""), COMPONENT_USAGE_DEPENDENCY))
+
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        dep_name = deployment.get("name") or None
+        for comp in deployment.get("components", []) or []:
+            if isinstance(comp, dict):
+                add(comp.get("reference"), ComponentUsageSite(dep_name, None, COMPONENT_USAGE_DEPLOYMENT))
+        for setting in (DomainSetting.ROOT_COMPONENT, DomainSetting.BARE_DOMAIN_COMPONENT):
+            add(
+                get_domain_setting(deployment, setting),
+                ComponentUsageSite(dep_name, None, COMPONENT_USAGE_WEB_ADDRESS),
+            )
+
+    return usage
+
+
+def remove_component_references(project_data: dict[str, Any], component_name: str) -> list[ComponentUsageSite]:
+    """Drop every deployment entry and dependency declaration naming one component.
+
+    The cleanup half of a confirmed delete: the definition is about to go, so every
+    reference to it has to go with it -- a deployment left referencing a component that no
+    longer exists makes the project file invalid (``validate_component_references`` rejects
+    it at save, which is the check that catches a cleanup this function missed).
+
+    Web-address uses are deliberately NOT touched: they are refused up front, because
+    deciding how a site should be served instead is not a decision a delete gets to make.
+
+    Returns the sites it actually changed, so the caller can report what it did.
+    """
+    removed: list[ComponentUsageSite] = []
+
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        dependencies = component.get("uses-components")
+        if not isinstance(dependencies, list) or component_name not in dependencies:
+            continue
+        component["uses-components"] = [d for d in dependencies if d != component_name]
+        removed.append(ComponentUsageSite(None, component.get("name", ""), COMPONENT_USAGE_DEPENDENCY))
+
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        refs = deployment.get("components")
+        if not isinstance(refs, list):
+            continue
+        remaining = [c for c in refs if not (isinstance(c, dict) and c.get("reference") == component_name)]
+        if len(remaining) == len(refs):
+            continue
+        deployment["components"] = remaining
+        removed.append(ComponentUsageSite(deployment.get("name") or None, None, COMPONENT_USAGE_DEPLOYMENT))
+
+    return removed
+
+
 def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:
     """
     Extract service names from a component's services list.

@@ -364,7 +364,11 @@ async def delete_component_web(request: Request, project_name: str, component_na
         request=request,
         project_name=project_name,
         task_type="delete_component",
-        payload={"project_name": project_name, "component_name": component_name},
+        # The confirmation dialog names every deployment and component that references this
+        # one and says those references go with it, so the user who clicked through it has
+        # confirmed exactly what confirm_in_use states. Without it the portal could only
+        # delete components nothing uses, which is nearly none of them.
+        payload={"project_name": project_name, "component_name": component_name, "confirm_in_use": True},
         current_step=f"Component '{component_name}' verwijderen gestart...",
         success_message=f"Component '{component_name}' succesvol verwijderd",
     )
