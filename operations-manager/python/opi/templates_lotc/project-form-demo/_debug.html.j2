@@ -1,0 +1,41 @@
+{# De twee debugblokken van de demopagina: de uitgelezen velden en de projectgegevens.
+
+   Ze staan apart omdat de pagina zelf een samenstelling hoort te zijn - zie
+   tests/test_template_structure.py, test_content_blocks_are_compositions. Inhoudelijk
+   horen ze ook bij elkaar: allebei tonen ze wat het formuliersysteem ERVAN GEMAAKT heeft,
+   niet het formulier zelf. #}
+
+{# Debug: Show extracted fields.
+
+   Was een kale <table class="lotc-table"> met eigen randen, eigen kopregelkleur en
+   een <div class="debug-fields"> eromheen om te kunnen scrollen. Dat is <c-table>:
+   de opmaak komt uit het thema en een grid-tabel voegt zich naar de breedte, dus het
+   scrollvenster is overbodig. De veldnaam is <c-code> in plaats van een <code> met
+   een eigen achtergrondje. #}
+<c-fieldset legend="Debug: Extracted Fields">
+    <c-table columns="2fr 2fr 1fr 2fr">
+        <c-table-head>
+            <c-th>Field Name</c-th>
+            <c-th>Widget Type</c-th>
+            <c-th>Required</c-th>
+            <c-th>Label</c-th>
+        </c-table-head>
+        {% for field in fields %}
+        <c-table-row>
+            <c-td><c-code>{{ field.name }}</c-code></c-td>
+            <c-td>{{ field.widget_type }}</c-td>
+            <c-td>{{ "Ja" if field.required else "Nee" }}</c-td>
+            <c-td>{{ field.label }}</c-td>
+        </c-table-row>
+        {% endfor %}
+    </c-table>
+</c-fieldset>
+
+{# Debug: Show project data.
+
+   Was een <pre class="debug-json"> met een eigen grijze achtergrond. Een blok code
+   om naar te kijken is <c-code-viewer>; die brengt de opmaak EN een kopieerknop mee,
+   wat op een debugblok met JSON precies is wat je wilt. #}
+<c-fieldset legend="Debug: Project Data (JSON)">
+    <c-code-viewer language="json">{{ project_data | tojson(indent=2) }}</c-code-viewer>
+</c-fieldset>
