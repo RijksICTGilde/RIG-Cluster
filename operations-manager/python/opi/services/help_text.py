@@ -1,14 +1,13 @@
 """A service's long-form explanation, written once and read by both a human and a client.
 
 Every service carries a prose explanation of what it is and when you would use it. It was
-written for one reader: a popup in the portal, in ROOS component markup
-(``<c-heading>``, ``<c-p>``, ``<c-ul>``). That made it unusable for the other reader RC-59
-is about -- a client or an agent asking the API what a service does gets markup full of
-``utrecht-*`` classes and sentences that point at buttons.
+written for one reader: a popup in the portal, in component markup
+(``<c-heading>``, ``<c-paragraph>``, ``<c-list>``). That made it unusable for the other
+reader RC-59 is about -- a client or an agent asking the API what a service does gets
+markup full of classes and sentences that point at buttons.
 
 The prose is now markdown, and that is the single source. The portal renders it (this
-module turns it into the same ROOS components it always used, so the popup looks the same)
-and ``GET /api/v2/services/{name}`` returns it as-is. Two renderings, one file: the
+module turns it into the components the popup is built from) and ``GET /api/v2/services/{name}`` returns it as-is. Two renderings, one file: the
 alternative -- a ``help.md`` next to a ``help.html.j2`` -- is drift with extra steps.
 
 **The supported markdown is deliberately small**, exactly the shapes the 21 explanations
@@ -18,8 +17,8 @@ text in one of the two readers is worse than a syntax that does not exist.
 
     # Title             -> <c-heading type="h2"> with the service's own icon
     ## Section          -> <c-heading type="h3">
-    A paragraph.        -> <c-p>
-    - a bullet          -> <c-ul><c-li>
+    A paragraph.        -> <c-paragraph>
+    - a bullet          -> <c-list><c-list-item>
     **bold**            -> <c-strong>
 
 The icon is not in the markdown. It is on the service definition, where it already is for
@@ -33,7 +32,6 @@ import re
 from typing import TYPE_CHECKING
 
 import opi
-from opi.core.templates import get_templates
 from opi.services.services import ServiceAdapter
 
 if TYPE_CHECKING:
@@ -43,8 +41,8 @@ if TYPE_CHECKING:
 #: templates tree. The same three roots the Jinja loader searches.
 _ROOTS = (
     pathlib.Path(opi.__file__).parent / "services" / "catalog",
-    pathlib.Path(opi.__file__).parent / "templates",
-    pathlib.Path(opi.__file__).parent / "templates" / "help",
+    pathlib.Path(opi.__file__).parent / "templates_lotc",
+    pathlib.Path(opi.__file__).parent / "templates_lotc" / "help",
 )
 
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
@@ -124,8 +122,8 @@ def _inline(raw: str) -> str:
     return rendered
 
 
-def markdown_to_roos(source: str, *, icon: str | None = None, color: str | None = None) -> str:
-    """Turn a help markdown document into the ROOS component markup the portal renders.
+def markdown_to_components(source: str, *, icon: str | None = None, color: str | None = None) -> str:
+    """Turn a help markdown document into the component markup the portal renders.
 
     ``icon`` and ``color`` decorate the title, and come from the service definition; a
     document rendered without them simply gets a title with no icon.
@@ -138,11 +136,11 @@ def markdown_to_roos(source: str, *, icon: str | None = None, color: str | None 
     def flush() -> None:
         nonlocal bullets, paragraph
         if bullets:
-            items = "".join(f"<c-li>{item}</c-li>" for item in bullets)
-            out.append(f"<c-ul>{items}</c-ul>")
+            items = "".join(f"<c-list-item>{item}</c-list-item>" for item in bullets)
+            out.append(f"<c-list>{items}</c-list>")
             bullets = []
         if paragraph:
-            out.append(f"<c-p>{' '.join(paragraph)}</c-p>")
+            out.append(f"<c-paragraph>{' '.join(paragraph)}</c-paragraph>")
             paragraph = []
 
     for line in source.splitlines():
@@ -185,9 +183,13 @@ def render_service_help(help_template: str) -> str:
         (d for d in ServiceAdapter.SERVICE_DEFINITIONS.values() if d.help_template == help_template),
         None,
     )
-    markup = markdown_to_roos(
+    # De import staat binnenin om een kringloop te vermijden: de templateomgeving leunt op
+    # de dienstenregistry, en die brengt de dienstpakketten mee die deze module lezen.
+    from opi.core.templates_lotc import templates_lotc
+
+    markup = markdown_to_components(
         read_help_markdown(help_template),
         icon=definition.icon if definition else None,
         color=definition.color if definition else None,
     )
-    return get_templates().env.from_string(markup).render()
+    return templates_lotc.env.from_string(markup).render()

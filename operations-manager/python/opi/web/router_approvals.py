@@ -21,9 +21,9 @@ from starlette.responses import Response
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.core.templates import get_templates
-from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
+from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.visualizers.flows import get_flow
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_sections,
@@ -36,7 +36,7 @@ from opi.forms.wizard.session import (
 )
 from opi.services.approvals import collect_approval_items
 from opi.services.project_store import get_project_store
-from opi.web.lotc_switch import render_fragment, wants_lotc
+from opi.web.lotc_switch import render_fragment
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import to_nldd_icon
 from opi.web.router_wizard import _apply_literal_scalars
@@ -53,22 +53,15 @@ FLOW_ID = "admin-approval"
 # ---------------------------------------------------------------------------
 
 
-def _create_renderer(lotc: bool = False) -> FormRenderer:
+def _create_renderer() -> FormRenderer:
     """De formulierrenderer voor dit verzoek; alleen de adapter wisselt.
 
     Zelfde keuze als in ``opi/web/router_detail_edit.py``: dezelfde editables, dezelfde
     waarden, dezelfde foutmeldingen, andere widgets. Een dialoog uit twee
     componentsystemen rendert niet.
     """
-    if lotc:
-        from opi.forms.widgets.lotc import LOTCWidgetAdapter
-
-        return FormRenderer(
-            widget_adapter=LOTCWidgetAdapter(),
-            translator=get_default_nl_translator(),
-        )
     return FormRenderer(
-        widget_adapter=ROOSWidgetAdapter(),
+        widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
     )
 
@@ -77,14 +70,13 @@ def _render_section_html(
     section: Any,
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
-    lotc: bool = False,
 ) -> str:
     """Render form fields for a section.
 
-    De LOTC-adapter rendert meteen af; die HTML mag daarna NIET nog een keer door een
+    De adapter rendert meteen af; die HTML mag daarna NIET nog een keer door een
     sjabloonrender, want hij draagt wat iemand in het formulier heeft getypt.
     """
-    renderer = _create_renderer(lotc=lotc)
+    renderer = _create_renderer()
     if not section.layout:
         return ""
     html = renderer.render_fields_from_editables(
@@ -94,12 +86,6 @@ def _render_section_html(
         errors=errors,
         edit_mode=True,
     )
-    if lotc:
-        return html
-    templates = get_templates()
-    process_components_filter = templates.env.filters.get("process_components")
-    if process_components_filter is not None:
-        html = str(process_components_filter(html))
     return html
 
 
@@ -139,8 +125,7 @@ def _render_modal_step(
     }
     return render_fragment(
         request,
-        roos="wizard/modal_wizard_step.html.j2",
-        lotc="bg/_modal-wizard-step.html.j2",
+        template="bg/_modal-wizard-step.html.j2",
         context=context,
     )
 
@@ -189,14 +174,13 @@ async def list_subdomains(request: Request) -> Response:
 
     return render(
         request,
-        roos="admin/approvals.html.j2",
-        lotc="bg/admin-approvals.html.j2",
+        template="bg/admin-approvals.html.j2",
         context={
             "request": request,
             "menu_items": get_menu_items(user),
             "projects_data": projects_data,
             "success_message": request.query_params.get("success"),
-            **build_lotc_admin(request, user=user, current_path="/admin/approvals"),
+            **build_lotc_admin(user=user, current_path="/admin/approvals"),
         },
     )
 
@@ -239,7 +223,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     save_modal_state_by_token(wizard_token, state)
 
     yaml_data = state.get_merged_data()
-    step_html = _render_section_html(first_section, yaml_data, lotc=wants_lotc(request))
+    step_html = _render_section_html(first_section, yaml_data)
 
     rendered = _render_modal_step(request, wizard_token, state, first_section, step_html, project_name)
     return HTMLResponse(content=rendered)
@@ -385,7 +369,7 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
             logger.warning("Domain approval save rejected by validation for %s: %s", project_name, e)
             first_section = active_sections[0]
             render_data = _reseed_approval_items(state.get_merged_data(), project_name)
-            step_html = _render_section_html(first_section, render_data, lotc=wants_lotc(request))
+            step_html = _render_section_html(first_section, render_data)
             # Say what was blocked. The bare validation message describes the resulting
             # state ("het subdomein is afgewezen"), which reads as a report of the
             # approver's own action instead of a refusal to record it.
@@ -426,8 +410,7 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
 
     rendered = render_fragment(
         request,
-        roos="wizard/modal_wizard_progress.html.j2",
-        lotc="bg/_modal-wizard-progress.html.j2",
+        template="bg/_modal-wizard-progress.html.j2",
         context={"task_id": task_id, "project_name": project_name},
     )
 

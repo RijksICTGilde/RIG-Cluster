@@ -1,27 +1,15 @@
-"""De schakelaar waarmee een ECHTE route zijn pagina door LOTC laat renderen.
+"""Hoe een route zijn pagina rendert, en wat de hertekende pagina's aan gegevens vragen.
 
-Tot nu toe stond de bouwlijn los: eigen routes onder ``/lotc/``, gevoed met
-voorbeeldprojecten. Dat was goed om de vorm te kiezen, maar het is niet het doel. Het
-doel is dat ZAD zelf op LOTC draait.
+Hier stond een SCHAKELAAR. Zolang de omzetting per pagina liep, koos ``?layout=`` (of het
+koekje ``zad_layout``) tussen de bestaande roos-pagina en de hertekende LOTC-pagina, en
+noemde elke route allebei de sjablonen:
 
-Deze module is de eerste stap daarheen, en hij is met opzet klein: een bestaande route
-bouwt zijn gegevens op zoals altijd, en kiest daarna welk sjabloon ze rendert. Dezelfde
-route, dezelfde gegevens, dezelfde rechten - alleen een andere weergave.
+    return render(request, roos="services-overview.html.j2", lotc="bg/services.html.j2", ...)
 
-    return render(request, roos="services-overview.html.j2", lotc="bg/services.html.j2",
-                  context={...})
-
-Waarom een schakelaar en niet gewoon omzetten:
-
-- **Pagina voor pagina.** De omzetting gaat per pagina; een schakelaar houdt de oude weg
-  intact tot de nieuwe aantoonbaar beter is, zodat de omzetting niet in een keer hoeft.
-- **Vergelijken op DEZELFDE gegevens.** Dat is de enige eerlijke toets. Twee pagina's
-  naast elkaar met verschillende data vertelt niets; ``?ui=lotc`` op dezelfde route wel.
-- **Terugvallen kost niets.** Gaat er iets mis in productie, dan is het weghalen van een
-  querystring genoeg - geen terugdraaien, geen tweede deploy.
-
-Zodra een pagina af is, verdwijnt de keuze: dan noemt de route alleen nog het
-LOTC-sjabloon, en uiteindelijk verdwijnt deze module met de laatste pagina.
+Die keuze is er niet meer. Er wordt overgestapt en niet parallel gedraaid: de roos-weg is
+weg, dus er valt niets meer te kiezen en een route noemt nog EEN sjabloon. Wat blijft is
+het saaie deel dat altijd al nuttig was - de gegevens van een route in de vorm zetten die
+de hertekende pagina leest - plus de weergavekeuze licht/donker onderaan.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -30,119 +18,45 @@ if TYPE_CHECKING:
     from fastapi import Request
     from starlette.responses import Response
 
-#: Het koekje waarin de keuze bewaard blijft.
-COOKIE_NAME = "zad_layout"
 
-#: De waarden die het koekje kan hebben. Zonder koekje geldt de standaard, en die is de
-#: nieuwe vormgeving: we zijn aan het overgaan, niet aan het uitproberen.
-LAYOUT_LOTC = "nldd"
-LAYOUT_ROOS = "roos"
-DEFAULT_LAYOUT = LAYOUT_LOTC
-
-#: De querystring blijft bestaan om de keuze te ZETTEN (``?layout=roos``). Handig om in
-#: een melding een link mee te sturen, en om eenmalig te vergelijken.
-QUERY_PARAM = "layout"
-
-
-def chosen_layout(request: Request) -> str:
-    """Welke vormgeving dit verzoek krijgt.
-
-    Volgorde: de querystring wint van het koekje, en het koekje van de standaard. Zo kun
-    je met een link laten zien wat je bedoelt zonder de voorkeur van de ander te
-    overschrijven; die komt pas vast te staan als hij zelf wisselt.
-    """
-    requested = request.query_params.get(QUERY_PARAM)
-    if requested in (LAYOUT_LOTC, LAYOUT_ROOS):
-        return requested
-
-    stored = request.cookies.get(COOKIE_NAME)
-    if stored in (LAYOUT_LOTC, LAYOUT_ROOS):
-        return stored
-
-    return DEFAULT_LAYOUT
-
-
-def wants_lotc(request: Request) -> bool:
-    """Of dit verzoek de nieuwe vormgeving krijgt."""
-    return chosen_layout(request) == LAYOUT_LOTC
-
-
-def render(
-    request: Request,
-    *,
-    roos: str,
-    lotc: str,
-    context: dict[str, Any],
-) -> Response:
-    """Render ``context`` met het LOTC-sjabloon als daarom gevraagd is, anders met roos.
+def render(request: Request, *, template: str, context: dict[str, Any]) -> Response:
+    """Render ``context`` met ``template`` uit ``opi/templates_lotc/``.
 
     Args:
-        request: het binnenkomende verzoek; bepaalt de keuze.
-        roos: de bestaande template, in ``opi/templates/``.
-        lotc: de LOTC-template, in ``opi/templates_lotc/``.
-        context: de gegevens, identiek voor beide.
+        request: het binnenkomende verzoek.
+        template: de template, in ``opi/templates_lotc/``.
+        context: de gegevens.
 
     De import staat binnenin en niet bovenaan om een kringloop te vermijden: de
-    LOTC-omgeving leent zijn filters en globals van de roos-omgeving, en die wordt door de
-    routes geimporteerd die deze module gebruiken.
+    templateomgeving leunt op de formulierlaag, en die wordt door de routes geimporteerd
+    die deze module gebruiken.
     """
-    if wants_lotc(request):
-        from opi.core.templates_lotc import templates_lotc
+    from opi.core.templates_lotc import templates_lotc
 
-        return remember_layout(request, templates_lotc.TemplateResponse(request, lotc, context))
-
-    from opi.core.templates import setup_templates
-
-    return remember_layout(request, setup_templates().TemplateResponse(request, roos, context))
+    return templates_lotc.TemplateResponse(request, template, context)
 
 
-def render_fragment(
-    request: Request,
-    *,
-    roos: str,
-    lotc: str,
-    context: dict[str, Any],
-    process_roos: bool = True,
-) -> str:
-    """Render een FRAGMENT als HTML-string, in de weergave die dit verzoek gekozen heeft.
+def render_fragment(request: Request, *, template: str, context: dict[str, Any]) -> str:
+    """Render een FRAGMENT als HTML-string.
 
     De tegenhanger van :func:`render` voor stukken die geen ``TemplateResponse`` worden
     maar een string die de route zelf in een ``HTMLResponse`` zet - de inhoud van de
-    gedeelde dialoog, bijvoorbeeld. Zelfde keuze, zelfde gegevens, ander sjabloon.
+    gedeelde dialoog, bijvoorbeeld.
 
-    Args:
-        request: het binnenkomende verzoek; bepaalt de keuze.
-        roos: het bestaande sjabloon, in ``opi/templates/``.
-        lotc: het LOTC-sjabloon, in ``opi/templates_lotc/``.
-        context: de gegevens, identiek voor beide.
-        process_roos: of de roos-uitvoer nog door ``process_components`` moet. Dat is
-            daar nodig zolang er onvertaalde ``<c-*>``-tekst in kan zitten, maar niet
-            overal: de voortgangsfragmenten renderen met opzet EEN keer.
+    Er gaat NOOIT een tweede slag overheen. De sjablonen hier zijn bestanden, dus hun
+    componenttags zijn al bij het compileren vervangen, en de formulier-HTML die erin komt
+    is door de formulierlaag al afgerenderd. Een tweede Jinja-render zou de ingevulde
+    waarden alsnog als sjabloon uitvoeren; dat is in deze codebase eerder een lek geweest.
 
-    Onder LOTC gaat er NOOIT een tweede slag overheen. De sjablonen hier zijn bestanden,
-    dus hun componenttags zijn al bij het compileren vervangen, en de formulier-HTML die
-    erin komt is door de LOTC-adapter al afgerenderd. Een tweede Jinja-render zou de
-    ingevulde waarden alsnog als sjabloon uitvoeren; dat is in deze codebase eerder een
-    lek geweest.
+    ``request`` wordt niet gebruikt en staat er omdat elke aanroeper hem heeft: het houdt
+    deze functie gelijkvormig aan :func:`render`.
     """
-    if wants_lotc(request):
-        from opi.core.templates_lotc import templates_lotc
+    from opi.core.templates_lotc import templates_lotc
 
-        return templates_lotc.env.get_template(lotc).render(context)
-
-    from opi.core.templates import get_templates
-
-    templates = get_templates()
-    rendered = templates.get_template(roos).render(context)
-    if process_roos:
-        process_components = templates.env.filters.get("process_components")
-        if process_components:
-            rendered = str(process_components(rendered))
-    return rendered
+    return templates_lotc.env.get_template(template).render(context)
 
 
 def build_lotc_services(
-    request: Request,
     services_info: list[dict[str, Any]],
     user: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -151,13 +65,7 @@ def build_lotc_services(
     Dit is de kern van "echt omzetten" en niet "een voorbeeld maken": de route bouwt zijn
     gegevens op zoals altijd, uit de registry, en hier worden ze alleen in de vorm gezet
     die het nieuwe sjabloon leest. Er komt geen tweede bron bij.
-
-    Levert niets op als de LOTC-weergave niet gevraagd is; dan is dit werk voor niets en
-    hoeft de bestaande pagina er niet mee lastiggevallen te worden.
     """
-    if not wants_lotc(request):
-        return {}
-
     from opi.web.navigation_lotc import get_navigation, to_nldd_icon
 
     # Elke dienst die de route aanlevert komt op de pagina, ook de dienst met
@@ -200,7 +108,7 @@ def build_lotc_services(
     }
 
 
-def build_lotc_dashboard(request: Request, *, user: dict[str, Any] | None, **_ongebruikt: Any) -> dict[str, Any]:
+def build_lotc_dashboard(*, user: dict[str, Any] | None, **_ongebruikt: Any) -> dict[str, Any]:
     """Wat het dashboard extra nodig heeft: alleen de navigatie.
 
     De route levert alle gegevens al - kerncijfers, gezondheid, metrics, projecten - en
@@ -208,15 +116,12 @@ def build_lotc_dashboard(request: Request, *, user: dict[str, Any] | None, **_on
     dezelfde gegevens opleveren, en dan gaat de nieuwe pagina iets anders tonen dan de
     bestaande zodra er een veld bijkomt.
     """
-    if not wants_lotc(request):
-        return {}
-
     from opi.web.navigation_lotc import get_navigation
 
     return {"navigation": get_navigation(user, current_path="/dashboard")}
 
 
-def build_lotc_admin(request: Request, *, user: dict[str, Any] | None, current_path: str) -> dict[str, Any]:
+def build_lotc_admin(*, user: dict[str, Any] | None, current_path: str) -> dict[str, Any]:
     """Wat een beheerpagina extra nodig heeft: alleen de navigatie.
 
     Een functie voor alle vier de beheerpagina's (gebruikers, het gebruikersformulier,
@@ -228,9 +133,6 @@ def build_lotc_admin(request: Request, *, user: dict[str, Any] | None, current_p
     ``current_path`` bepaalt welk item in de zijkolom actief is en verschilt dus wel per
     pagina.
     """
-    if not wants_lotc(request):
-        return {}
-
     from opi.web.navigation_lotc import get_navigation
 
     return {"navigation": get_navigation(user, current_path=current_path)}
@@ -265,9 +167,6 @@ def build_lotc_projects(
     JavaScript, is een gefilterde lijst deelbaar als URL, en blijft de telling onder de
     tabel kloppen met wat er staat.
     """
-    if not wants_lotc(request):
-        return {}
-
     from opi.web.navigation_lotc import get_navigation
 
     return {
@@ -370,9 +269,6 @@ def build_lotc_project_details(
     zodat een trage Prometheus de pagina niet ophoudt, en dat blijft zo - het fragment
     kent zijn eigen LOTC-weergave.
     """
-    if not wants_lotc(request):
-        return {}
-
     from opi.web.navigation_lotc import get_navigation
 
     requested = request.query_params.get("tab", "")
@@ -382,26 +278,6 @@ def build_lotc_project_details(
         "active_tab": requested if requested in PROJECT_TABS else next(iter(PROJECT_TABS)),
         "project": project,
     }
-
-
-def remember_layout(request: Request, response: Response) -> Response:
-    """Bewaar een expliciete keuze uit de querystring in het koekje.
-
-    Alleen bij een EXPLICIETE keuze: wie de standaard krijgt, krijgt geen koekje. Anders
-    zou iedereen die een keer een pagina opent zijn voorkeur vastzetten op wat toevallig
-    de standaard was, en dan verandert een latere wijziging van die standaard niets meer
-    voor hem.
-    """
-    requested = request.query_params.get(QUERY_PARAM)
-    if requested in (LAYOUT_LOTC, LAYOUT_ROOS):
-        response.set_cookie(
-            COOKIE_NAME,
-            requested,
-            max_age=60 * 60 * 24 * 365,
-            httponly=False,
-            samesite="lax",
-        )
-    return response
 
 
 #: Het koekje waarin de weergavekeuze (licht/donker) bewaard blijft.

@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from opi.core.auth_decorators import requires_sso
-from opi.core.templates import get_templates
+from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.pipeline import validate_field
 from opi.forms.wizard.session import (
     get_modal_state_by_token,
@@ -89,10 +89,9 @@ def _attachments_list_response(
     ``reset`` adds out-of-band swaps that clear the inputs and flash a success tick after a
     successful upload so the form is ready for the next one.
     """
-    templates = get_templates()
     staged = _staged(state) if state else {}
     staged_items = [{"id": att_id, "filename": info.get("filename", att_id)} for att_id, info in staged.items()]
-    return templates.TemplateResponse(
+    return templates_lotc.TemplateResponse(
         "wizard/partials/attachments_list.html.j2",
         {
             "request": request,
@@ -107,8 +106,7 @@ def _attachments_list_response(
 
 def _id_field_response(request: Request, error: str | None, attachment_id: str):
     """Re-render the identifier field with the standard field-error state (invalid + errorText)."""
-    templates = get_templates()
-    return templates.TemplateResponse(
+    return templates_lotc.TemplateResponse(
         "wizard/partials/attachments_id_field.html.j2",
         {"request": request, "error": error, "attachment_id": attachment_id},
     )

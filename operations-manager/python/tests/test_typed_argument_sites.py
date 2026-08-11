@@ -189,7 +189,7 @@ class TestRenderFieldsWithoutLayout:
         from opi.forms.editables.editable import Editable, WidgetType
         from opi.forms.renderer import FormRenderer
         from opi.forms.visualizers.visualizer import EditableVisualizer
-        from opi.forms.widgets.roos import ROOSWidgetAdapter
+        from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
         editables = [
             EditableVisualizer(editable=Editable(yaml_path="display-name"), label="Naam", widget=WidgetType.TEXT),
@@ -197,7 +197,7 @@ class TestRenderFieldsWithoutLayout:
                 editable=Editable(yaml_path="description"), label="Omschrijving", widget=WidgetType.TEXT
             ),
         ]
-        renderer = FormRenderer(ROOSWidgetAdapter())
+        renderer = FormRenderer(LOTCWidgetAdapter())
 
         html = renderer.render_fields_from_editables(
             editables=editables,
