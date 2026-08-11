@@ -22,6 +22,14 @@ Gevolg: elke sandboxbuild haalt die drie apt-rondes opnieuw op. Dat is normaal t
 
 4. **Opschrijven hoe een uitrol op de server hoort te gaan**, in `docs/`. Er is nu geen weg beschreven, en daardoor verzint iedereen er een. Dat is precies hoe dit ontstond.
 
+## Een dclaude-sessie is geen ontsnapping aan de cyclus
+
+Dit ontstond mede door een verkeerde aanname. Een `orch ship` doorloopt bouwen, review en security, en dat is te veel voor een uitrol: er valt geen diff na te kijken. De uitwijk was een losse `dclaude --detach`-sessie.
+
+Die uitwijk werkt niet. Een gedetachte sessie meldt bij het starten `Task registered: <naam>`, en de orkestrator zet daar een reviewronde op; hier leverde dat een reviewsessie op PR #57 op, die met de hand gestopt moest worden. Het verschil dat de uitwijk moest maken bestaat dus niet.
+
+Zoek uit wat er WEL is voor een handeling zonder cyclus, of maak het. Zolang dat er niet is, is de eerlijke conclusie dat een uitrol met de hand hoort te gebeuren en niet door een sessie.
+
 ## De vraag die er echt onder ligt
 
 **Moet er op die machine wel gebouwd worden?** Er staat al een image `operations-manager:rc-66-` van een uur eerder; de bouw is niet het doel, een draaiende versie is het doel. Bouwen op een andere plek en het cluster laten trekken haalt dit probleem structureel weg.
