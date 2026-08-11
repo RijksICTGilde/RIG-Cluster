@@ -262,7 +262,7 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
 # member. This test pins the route -> gate wiring so a future refactor
 # cannot silently drop the gate call from `wizard_edit_page` without a test
 # failure. The route does light setup (get_flow / get_current_user /
-# get_templates) before calling the gate, all mocked here.
+# de templateomgeving) before calling the gate, all mocked here.
 # ---------------------------------------------------------------------------
 
 
@@ -284,7 +284,7 @@ async def test_wizard_edit_page_invokes_role_gate(project_service: ProjectServic
         ) as gate,
         patch("opi.web.router_wizard.get_current_user", return_value={"email": MEMBER_EMAIL}),
         patch("opi.web.router_wizard.get_flow", return_value=MagicMock()),
-        patch("opi.web.router_wizard.get_templates", return_value=MagicMock()),
+        patch("opi.web.router_wizard.templates_lotc", MagicMock()),
         pytest.raises(HTTPException) as exc,
     ):
         await wizard_edit_page(  # @requires_sso just delegates; calling the wrapper is fine

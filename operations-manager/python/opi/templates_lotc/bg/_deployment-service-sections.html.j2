@@ -1,31 +1,22 @@
 {#
-  De blokken die de DIENSTEN per deployment leveren, in de nieuwe vormgeving.
+  De blokken die de DIENSTEN per deployment leveren.
 
-  Hier stond een TABEL die per dienstsjabloon zijn LOTC-tegenhanger aanwees, met als
+  Hier stond een TABEL die per dienstsjabloon zijn tegenhanger aanwees, met als
   verantwoording dat die sjablonen bij hun dienst liggen en die map niet op het zoekpad van
-  de LOTC-omgeving stond. Die verantwoording klopt niet meer: opi/core/templates_lotc.py
-  hangt CATALOG_DIR achteraan op de searchpath, precies zoals de roos-omgeving dat doet.
+  deze omgeving stond. Die verantwoording klopte niet: opi/core/templates_lotc.py hangt
+  CATALOG_DIR achteraan op de searchpath.
 
   Waarom de tabel weg MOEST en niet alleen mocht: het was handwerk op de verkeerde plek.
-  Een dienst draagt alles wat hij is in zijn eigen map (RC-36), dus ook zijn LOTC-sjabloon.
-  Met een tabel hier moest een nieuwe dienst een bestand BUITEN zijn eigen map bijwerken,
-  en vergat hij dat, dan viel zijn blok stilzwijgend terug op de roos-weergave - kale,
-  onopgemaakte HTML midden op de pagina, want lotc_rvo staat niet in DESIGN_SYSTEMS.
+  Een dienst draagt alles wat hij is in zijn eigen map (RC-36), dus ook zijn sjabloon. Met
+  een tabel hier moest een nieuwe dienst een bestand BUITEN zijn eigen map bijwerken, en
+  vergat hij dat, dan viel zijn blok stilzwijgend terug op de oude weergave - kale,
+  onopgemaakte HTML midden op de pagina.
 
-  Nu geldt dezelfde afspraak als op het projecttabblad: naast ``section-x.html.j2`` legt de
-  dienst ``section-x-lotc.html.j2``, en lotc_counterpart() vindt hem. Geen tabel, geen
-  dienstnaam in dit sjabloon.
-
-  De ``{% if %}`` is de ondergrens die render_roos() hiervoor was. Die terugval kan niet
-  blijven bestaan - de roos-omgeving gaat weg - maar de regel erachter wel: een dienst die
-  een blok aankondigt dat er niet is, mag de projectpagina niet meenemen in zijn val. Het
-  blok blijft dan leeg in plaats van dat de pagina omvalt.
-  tests/test_lotc_dienstblokken.py zorgt dat leeg onbereikbaar is: elk sectiesjabloon in de
-  catalogus moet zijn tegenhanger hebben.
+  Daarna stond hier lotc_counterpart(), dat een blok OVERSLOEG als er geen
+  ``-lotc``-versie naast het roos-sjabloon lag. Ook dat was er zolang er twee bouwlijnen
+  waren. Elke dienst heeft nu nog EEN sjabloon, onder zijn eigen naam, en dat wordt gewoon
+  gerenderd; dat het er ook echt is toetst tests/test_lotc_dienstblokken.py.
 #}
 {% for section in sections %}
-    {% set lotc_sjabloon = lotc_counterpart(section.template) %}
-    {% if lotc_sjabloon %}
-        {% include lotc_sjabloon %}
-    {% endif %}
+    {% include section.template %}
 {% endfor %}

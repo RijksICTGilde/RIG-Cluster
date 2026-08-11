@@ -1,115 +1,93 @@
-{# Keycloak detail-page section (WP2).
+{# De LOTC-tegenhanger van section-detail.html.j2 (RC-64).
 
-   Owned by the keycloak service: KeycloakService.realm_block builds the
-   ``realms`` context and gates on the viewer's role, so this block no longer lives
-   hardcoded in the general project-details template and no longer drifts away from the
-   config when it moves (as it did in RC-5). Rendered via a ``section`` loop var, so it
-   reads its data from ``section.context``. #}
-<c-card outline="true" padding="xl" backgroundColor="wit">
-    <c-layout-flow gap="lg">
-        <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="beveiligingsscan" size="xl" color="hemelblauw" />Keycloak</c-heading>
-        <p class="rvo-text--subtle">Keycloak realm configuratie en admin toegang</p>
+   Waarom een tweede bestand en niet een gedeeld sjabloon: zie de kop van
+   attachments/section-detail.html.j2.
 
-        <div class="config-section">
-            {% for kc_config in section.context.realms %}
-            {% if not loop.first %}
-            <div style="margin-top: var(--rvo-space-lg); padding-top: var(--rvo-space-lg); border-top: 1px solid var(--rvo-color-grijs-200);"></div>
-            {% endif %}
-            <c-heading type="h3" style="margin-bottom: var(--rvo-space-md);"><c-icon icon="beveiligingsscan" size="md" color="hemelblauw" />Realm: {{ kc_config.realm }}</c-heading>
-            <div class="config-item">
-                <div class="config-label">
-                    <c-icon icon="server" size="md" color="hemelblauw" />
-                    <strong>Admin Console</strong>
-                </div>
-                <div class="config-value config-value--inline">
-                    <code class="config-code">{{ kc_config.host }}</code>
-                    <c-button
-                        kind="tertiary"
-                        size="sm"
-                        label="Kopieer"
-                        showIcon="before"
-                        icon="document-blanco"
-                        class="copy-btn"
-                        @click="copyToClipboard('.config-code', event, '.config-item')" />
-                </div>
-                <c-button
-                    label="Open Admin Console"
-                    kind="secondary"
-                    size="sm"
-                    showIcon="after"
-                    icon="externe-link"
-                    data-url="{{ kc_config.host }}/admin/master/console/#/{{ kc_config.realm }}"
-                    @click="window.open(this.dataset.url, '_blank')" />
-            </div>
-            <div class="config-item">
-                <div class="config-label">
-                    <c-icon icon="applicatie" size="md" color="grijs-600" />
-                    <strong>Realm</strong>
-                </div>
-                <div class="config-value config-value--inline">
-                    <code class="config-code">{{ kc_config.realm }}</code>
-                    <c-button
-                        kind="tertiary"
-                        size="sm"
-                        label="Kopieer"
-                        showIcon="before"
-                        icon="document-blanco"
-                        class="copy-btn"
-                        @click="copyToClipboard('.config-code', event, '.config-item')" />
-                </div>
-            </div>
-            <div class="config-item">
-                <div class="config-label">
-                    <c-icon icon="user" size="md" color="grijs-600" />
-                    <strong>Admin Gebruikersnaam</strong>
-                </div>
-                <div class="config-value config-value--inline">
-                    <code class="config-code">{{ kc_config.username }}</code>
-                    <c-button
-                        kind="tertiary"
-                        size="sm"
-                        label="Kopieer"
-                        showIcon="before"
-                        icon="document-blanco"
-                        class="copy-btn"
-                        @click="copyToClipboard('.config-code', event, '.config-item')" />
-                </div>
-            </div>
-            <div class="config-item">
-                <div class="config-label">
-                    <c-icon icon="sleutel" size="md" color="rood" />
-                    <strong>Admin Wachtwoord</strong>
-                </div>
-                <div class="config-value">
-                    <c-secret-field value="{{ kc_config.password }}" />
-                </div>
-            </div>
-            {% if kc_config.has_totp %}
-            <div class="config-item">
-                <div class="config-label">
-                    <c-icon icon="sleutel" size="md" color="rood" />
-                    <strong>Gedeelde OTP</strong>
-                </div>
-                <p class="rvo-text--subtle" style="margin: 0 0 var(--rvo-space-2xs) 0;">
-                    Alle realm-admins delen deze OTP. De sleutel zelf blijft op de server; hier zie je
-                    alleen de code van dit moment, die je meteen invult bij het inloggen.
-                </p>
-                {# Keyed on the realm, not loop.index: the swapped-in fragment has to
-                   name this same container for its "Nieuwe code" button. #}
-                <div id="otp-code-{{ kc_config.realm }}">
-                    <c-button
-                        kind="tertiary"
-                        size="sm"
-                        label="Toon code"
-                        showIcon="before"
-                        icon="sleutel"
-                        hx-get="/projects/{{ project.name }}/keycloak/{{ kc_config.realm }}/otp-code"
-                        hx-target="#otp-code-{{ kc_config.realm }}"
-                        hx-swap="innerHTML" />
-                </div>
-            </div>
-            {% endif %}
-            {% endfor %}
-        </div>
-    </c-layout-flow>
+   Dezelfde gegevens uit dezelfde ``section.context``, dezelfde teksten, dezelfde knoppen
+   met dezelfde aanroepen en hetzelfde htmx-gedrag.
+
+   WAT LETTERLIJK GELIJK MOET BLIJVEN, want er hangt gedrag aan:
+     - ``id="otp-code-<realm>"``: het fragment dat de knop ophaalt vervangt de INHOUD van
+       die container en noemt daarin dezelfde id voor zijn eigen "Nieuwe code"-knop. Het is
+       op de realm gesleuteld en niet op loop.index, precies daarom.
+     - de klassen config-item / config-code / copy-btn: daar hangt copyToClipboard() aan.
+     - het wachtwoord blijft een <c-secret-field>; de waarde staat ontsleuteld in de
+       context, dus hem als gewone tekst tonen zou hem op het scherm zetten.
+
+   De aanroepen gaan via :attrs; <c-button> laat geen onclick als los attribuut toe. De
+   "Open Admin Console"-knop houdt zijn window.open() met data-url in plaats van een href:
+   de meetlat tussen de twee bouwlijnen kijkt naar welke JS-functie een knop aanroept. #}
+{% set kopieer = "copyToClipboard('.config-code', event, '.config-item')" %}
+{% set console_openen = "window.open(this.dataset.url, '_blank')" %}
+<c-card outline padding="lg">
+    <c-stack gap="md">
+        <c-section-head title="Keycloak" icon="shield-check-mark" />
+        <c-paragraph size="sm">Keycloak realm configuratie en admin toegang</c-paragraph>
+
+        {% for kc_config in section.context.realms %}
+            <c-card outline padding="md">
+                <c-stack gap="sm">
+                    <c-heading type="h3" size="6" label="Realm: {{ kc_config.realm }}" />
+
+                    <div class="config-item">
+                        <c-stack gap="xs">
+                            <strong>Admin Console</strong>
+                            <c-cluster gap="sm" align="center">
+                                <c-code class="config-code">{{ kc_config.host }}</c-code>
+                                <c-button type="tertiary" size="sm" label="Kopieer" show-icon="before" icon="file-text"
+                                          class="copy-btn" :attrs="{'onclick': kopieer}" />
+                            </c-cluster>
+                            {% set console_url = kc_config.host ~ '/admin/master/console/#/' ~ kc_config.realm %}
+                            {% set console_attrs = {'data-url': console_url, 'onclick': console_openen} %}
+                            <c-button type="secondary" size="sm" label="Open Admin Console" show-icon="after" icon="link"
+                                      :attrs="console_attrs" />
+                        </c-stack>
+                    </div>
+
+                    <div class="config-item">
+                        <c-stack gap="xs">
+                            <strong>Realm</strong>
+                            <c-cluster gap="sm" align="center">
+                                <c-code class="config-code">{{ kc_config.realm }}</c-code>
+                                <c-button type="tertiary" size="sm" label="Kopieer" show-icon="before" icon="file-text"
+                                          class="copy-btn" :attrs="{'onclick': kopieer}" />
+                            </c-cluster>
+                        </c-stack>
+                    </div>
+
+                    <div class="config-item">
+                        <c-stack gap="xs">
+                            <strong>Admin Gebruikersnaam</strong>
+                            <c-cluster gap="sm" align="center">
+                                <c-code class="config-code">{{ kc_config.username }}</c-code>
+                                <c-button type="tertiary" size="sm" label="Kopieer" show-icon="before" icon="file-text"
+                                          class="copy-btn" :attrs="{'onclick': kopieer}" />
+                            </c-cluster>
+                        </c-stack>
+                    </div>
+
+                    <c-stack gap="xs">
+                        <strong>Admin Wachtwoord</strong>
+                        <c-secret-field value="{{ kc_config.password }}" show-copy="true" />
+                    </c-stack>
+
+                    {% if kc_config.has_totp %}
+                        <c-stack gap="xs">
+                            <strong>Gedeelde OTP</strong>
+                            <c-paragraph size="sm">Alle realm-admins delen deze OTP. De sleutel zelf blijft op de server; hier zie je alleen de code van dit moment, die je meteen invult bij het inloggen.</c-paragraph>
+                            {% set otp_attrs = {
+                                'hx-get': '/projects/' ~ project.name ~ '/keycloak/' ~ kc_config.realm ~ '/otp-code',
+                                'hx-target': '#otp-code-' ~ kc_config.realm,
+                                'hx-swap': 'innerHTML'
+                            } %}
+                            <div id="otp-code-{{ kc_config.realm }}">
+                                <c-button type="tertiary" size="sm" label="Toon code" show-icon="before" icon="lock-closed"
+                                          :attrs="otp_attrs" />
+                            </div>
+                        </c-stack>
+                    {% endif %}
+                </c-stack>
+            </c-card>
+        {% endfor %}
+    </c-stack>
 </c-card>

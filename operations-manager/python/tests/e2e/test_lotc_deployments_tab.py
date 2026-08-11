@@ -36,7 +36,7 @@ pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
 ROOS_URL = f"/projects/details/{PROJECT}?layout=roos"
-LOTC_URL = f"/projects/details/{PROJECT}?tab=deployments&layout=nldd"
+LOTC_URL = f"/projects/details/{PROJECT}?tab=deployments"
 
 # Op de bestaande pagina staan alle drie de tabbladen in EEN document; alleen wat binnen
 # #tab-deployments staat hoort bij dit tabblad. De hertekende pagina heeft een eigen URL

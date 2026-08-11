@@ -17,9 +17,11 @@ import re
 from typing import Any
 
 import pytest
-from opi.core.templates import get_service_definition_for_entry, templates
+from opi.core.template_helpers import get_service_definition_for_entry
+from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
+from opi.web.navigation_lotc import to_nldd_icon
 
 
 def _render(services: list[Any]) -> str:
@@ -73,7 +75,7 @@ def test_a_service_shows_its_icon_description_and_explanation() -> None:
 
     assert definition.name in html
     assert definition.description in html
-    assert f"rvo-icon-{definition.icon}" in html
+    assert f'name="{to_nldd_icon(definition.icon)}"' in html
     assert f"openServiceHelp('{definition.help_template}')" in html
 
 

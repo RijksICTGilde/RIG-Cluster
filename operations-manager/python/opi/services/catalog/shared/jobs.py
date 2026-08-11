@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 jobs_router = APIRouter(prefix="/projects", tags=["jobs"])
 
 _MODAL_TEMPLATE = "shared/_job-modal.html.j2"
-_MODAL_TEMPLATE_LOTC = "shared/_job-modal-lotc.html.j2"
 
 
 async def _render(
@@ -76,7 +75,7 @@ async def _render(
     # staat niet in DESIGN_SYSTEMS.
     return render(
         request,
-        template=_MODAL_TEMPLATE_LOTC,
+        template=_MODAL_TEMPLATE,
         context={
             "request": request,
             "project_name": project_name,

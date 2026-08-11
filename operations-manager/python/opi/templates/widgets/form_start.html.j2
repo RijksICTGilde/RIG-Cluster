@@ -1,3 +1,0 @@
-{% from "widgets/_macros.html.j2" import html_attributes %}
-<form id="{{ form_id|e }}" method="{{ method|e }}" action="{{ action|e }}"{% if enctype %} enctype="{{ enctype|e }}"{% endif %} {{ html_attributes(htmx_attrs) }} autocomplete="off">
-    <c-layout-flow gap="xl">

@@ -1,10 +1,10 @@
 """
-Tests for opi.core.templates module.
+Tests for the opi.core.template_helpers module.
 
 Tests format_dutch_date and get_service_name utility functions.
 """
 
-from opi.core.templates import format_dutch_date, get_service_name
+from opi.core.template_helpers import format_dutch_date, get_service_name
 
 
 class TestFormatDutchDate:
