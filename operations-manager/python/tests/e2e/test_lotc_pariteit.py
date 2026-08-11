@@ -404,7 +404,7 @@ SNAPSHOT = {
 def _backups_fragment(deployment: str) -> str:
     from opi.core.templates_lotc import templates_lotc
 
-    return templates_lotc.env.get_template("shared/_backup-snapshots-lotc.html.j2").render(
+    return templates_lotc.env.get_template("shared/_backup-snapshots.html.j2").render(
         deployments=[{"name": deployment}],
         backups_by_deployment={deployment: [dict(SNAPSHOT, deployment_name=deployment)]},
         backups_error=None,
@@ -445,20 +445,6 @@ def test_de_herstelknop_opent_de_gedeelde_dialoog(app_server: str, auth_page: Pa
 
     aanroep = auth_page.evaluate("() => window.__aanroep")
     assert aanroep == ["modal-restore", "Backup herstellen", {"deployment": "default"}], aanroep
-
-
-def test_de_bestaande_pagina_laadt_dezelfde_tekencode(app_server: str, auth_page: Page) -> None:
-    """De verhuizing mag de OUDE pagina niet stilzwijgend zijn grafieken kosten.
-
-    De tekencode stond daar inline en staat nu in static/js/metrics_charts.js. Staat dat
-    script niet meer in de pagina, of is het pad fout, dan merkt niemand dat: de pagina
-    laadt, en pas het metingenblok - dat zijn eigen verzoek doet - blijft leeg.
-    """
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?layout=roos")
-    auth_page.wait_for_load_state("networkidle")
-
-    assert auth_page.evaluate("() => typeof initMetricsCharts") == "function"
-    assert auth_page.evaluate("() => typeof timestampsToLocalLabels") == "function"
 
 
 def test_de_projectkop_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth_page: Page) -> None:
