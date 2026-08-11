@@ -1,0 +1,9 @@
+{# Debug: de JSON van het project.
+
+   Was een <pre class="debug-json"> met een eigen grijze achtergrond. Een blok code om
+   naar te kijken is <c-code-viewer>; die brengt de opmaak EN een kopieerknop mee, wat op
+   een debugblok met JSON precies is wat je wilt. Deze JSON wordt in zijn geheel
+   server-side gerenderd, en dat is de vorm die code-viewer aankan. #}
+<c-fieldset legend="Debug: Project Data (JSON)">
+    <c-code-viewer language="json">{{ project_data | tojson(indent=2) }}</c-code-viewer>
+</c-fieldset>
