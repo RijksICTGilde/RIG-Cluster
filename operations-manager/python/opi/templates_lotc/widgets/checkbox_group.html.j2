@@ -1,48 +1,41 @@
 {#
   Groep aanvinkvakjes voor de LOTC-bouwlijn.
 
-  De losse label-span met rvo-klassen is een c-fieldset geworden: die levert de
-  groepskop in de vormgeving van het thema in plaats van in de onze.
+  Dezelfde vorm als het enkele vakje: <c-checkbox-field>, met een <c-checkbox> per keuze
+  als kind. Beide worden onder NLDD hetzelfde <nldd-checkbox-field>, dus een groepsvakje
+  en een enkel vakje gedragen zich ook hetzelfde. De veldomlijsting (groepskop,
+  hulptekst, foutmelding) komt van het component, niet van onze eigen span en CSS.
 
-  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
-  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
-  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+  HIER STONDEN KALE <input>'s, met als reden: "c-checkbox wordt een webcomponent die zijn
+  invoerveld in de schaduwboom zet, dus het formulier serialiseert hem niet". Opnieuw
+  gemeten en dat klopt niet: er is helemaal geen invoerveld, het element is
+  form-associated, en FormData krijgt hem gewoon mee. Wat wel misging zat in htmx, dat
+  zijn parameters niet uit FormData haalt - dat is nu bij de bron opgelost
+  (static/js/form-associated.js). Het hele verhaal, met de meting:
+  features/aanvinkvakje.md.
+
+  De dienstkaarten in service_cards.html.j2 houden hun eigen <input>; die uitzondering
+  staat daar toegelicht en is daar gemeten.
+
+  De id gaat mee in de attribuutbundel zodat hij op het besturingselement landt; de
+  component gebruikt hem verder om hulptekst en foutmelding aan te knopen.
 #}
-{% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, html_attributes %}
-{# De attributen van het veld op een GEWONE div, met de macro en niet met de
-   :attrs-spread. Die spread hoort bij een componenttag: de voorbewerker leest hem daar,
-   en op een <div> laat hij hem staan - dan kwam er letterlijk :attrs="field_attrs(field)"
-   in de HTML en waren de htmx- en data-attributen van dit veld verdwenen. #}
-<div {{ html_attributes(field_attrs(field)) }}>
-    <span class="utrecht-form-label">{{ field.label|e }}</span>
-    {{ helper_text(field) }}
-    {{ render_examples(field) }}
-    <c-layout-flow gap="md">
-        {% for option in options %}
-        {# EEN GEWOON <input>, met dezelfde reden als bij de servicekaarten.
-
-           <c-checkbox> wordt onder NLDD een <nldd-checkbox-field> die zijn invoerveld in
-           de SCHADUWBOOM zet. Alles wat het vakje moet kunnen vinden kijkt daar niet:
-           static/js/wizard.js zoekt met querySelector('input[type="checkbox"]'), en het
-           formulier serialiseert wat er in de lichte boom staat. In de browser gemeten op
-           de Keycloak-stap: drie vakjes, alle drie onbereikbaar - aanvinken deed niets en
-           het formulier stuurde de verkeerde waarden mee.
-
-           Dit is een gebrek van het componentensysteem, geen keuze van ons: c-select-field
-           heeft er al een native-stand voor gekregen om precies deze reden. Zodra
-           c-checkbox die ook heeft, hoort dit weer een component te worden. Gemeld. #}
-        <label class="lotc-checkbox-regel">
-            <input
-                type="checkbox"
-                id="{{ field.path|e }}-{{ option.value|e }}"
-                name="{{ field.path|e }}[]"
-                value="{{ option.value|e }}"
-                {% if option.value in selected_values %}checked{% endif %}
-                {% if field.readonly %}disabled{% endif %}
-            />
-            <span>{{ option.label|e }}</span>
-        </label>
-        {% endfor %}
-    </c-layout-flow>
-    {{ render_errors(field.errors) }}
-</div>
+{% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
+<c-checkbox-field
+    id="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    :help="combined_helper(field)|trim or none"
+    :required="field.required"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="dict(field_attrs(field), id=field.path)">
+    {% for option in options %}
+    <c-checkbox
+        name="{{ field.path|e }}[]"
+        value="{{ option.value|e }}"
+        label="{{ option.label|e }}"
+        :checked="option.value in selected_values"
+        :disabled="field.readonly"
+        :attrs="{'id': field.path + '-' + option.value}" />
+    {% endfor %}
+</c-checkbox-field>
+{{ render_examples(field) }}
