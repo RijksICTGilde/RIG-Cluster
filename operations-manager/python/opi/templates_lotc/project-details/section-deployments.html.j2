@@ -6,7 +6,7 @@
     <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="deployment-{{ deployment.name }}">
     <c-card class="deployment-card" padding="lg" background-color="grijs-050" outline="true">
         <c-layout-flow gap="md">
-            <div class="deployment-header">
+            <c-cluster justify="between" align="center" class="deployment-header">
                 <div>
                     <c-heading type="h3">Deployment: {{ deployment.name }}</c-heading>
                 </div>
@@ -17,7 +17,7 @@
                     {% set lotc_onclick_3 %}openServiceModal('/projects/{{ project.name }}/actions/delete-deployment/confirm?target={{ deployment.name | urlencode }}', 'Deployment verwijderen'){% endset %}<c-button size="sm" label="Verwijderen" show-icon="before" icon="trash"/>
                     {% endif %}
                 </div>
-            </div>
+            </c-cluster>
 
             {# Ungranted approvals, as reported by the owning service #}
             {% for notice in approval_notices.get(deployment.name, []) %}

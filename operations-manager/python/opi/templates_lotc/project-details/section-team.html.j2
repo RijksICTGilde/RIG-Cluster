@@ -13,9 +13,9 @@
             {% for user in project.users | sort(attribute='email') %}
             <c-card padding="md" outline="true" background-color="grijs-050">
                 <c-cluster gap="md">
-                    <div class="team-avatar">
-                        {{ user.email[:2]|upper }}
-                    </div>
+                    {# .team-avatar was een eigen 48px-rondje met initialen erin. Dat is
+                       <c-avatar>, met size="48" - dezelfde maat als de eigen regel had. #}
+                    <c-avatar size="48" initials="{{ user.email[:2]|upper }}" name="{{ user.email }}"/>
                     <c-layout-flow gap="xs">
                         <div class="team-email">{{ user.email }}</div>
                         <div class="team-role">{{ user.role|title }}</div>

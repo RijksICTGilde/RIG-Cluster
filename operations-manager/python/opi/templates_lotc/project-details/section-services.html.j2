@@ -14,13 +14,13 @@
             {% for service in project.services %}
             <c-card class="service-detail-card" padding="lg" background-color="wit" outline="true">
                 <c-layout-flow gap="md">
-                    <div class="service-header">
+                    <c-cluster justify="between" align="center" class="service-header">
                         {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
                         <div>
                             <c-heading type="h3"><c-icon icon="{{ service_def.icon }}" size="xl" color="{{ service_def.color }}"/>{{ service_def.name }}</c-heading>
                             <div class="service-scope">{{ service_binding_label(service.enum) }}</div>
                         </div>
-                    </div>
+                    </c-cluster>
                     <p>{{ service_def.description }}</p>
                     {% set config_hint = service_config_hint(service.enum) %}
                     {% if config_hint %}
