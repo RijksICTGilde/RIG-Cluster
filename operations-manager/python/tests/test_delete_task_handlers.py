@@ -94,7 +94,7 @@ async def test_component_delete_also_reprocesses_the_project() -> None:
     ):
         result = await handle_delete_component({"project_name": "demo", "component_name": "web"}, progress)
 
-    pm.delete_component.assert_awaited_once_with("web")
+    pm.delete_component.assert_awaited_once_with("web", confirm_in_use=False)
     pm.close.assert_awaited_once()
     assert refresh.await_args.args[0] == {"project_name": "demo", "force_clone": True}
     assert result["status"] == "completed"
@@ -117,6 +117,65 @@ async def test_a_failed_reprocess_after_a_component_delete_stays_visible() -> No
 
     assert result["status"] == "failed"
     assert result["message"] == "kapot"
+
+
+async def test_the_confirmation_travels_to_the_write_layer() -> None:
+    """The flag is the caller's statement that they have seen what the deletion takes with
+    it. A handler that dropped it would either refuse every deletion the portal starts or
+    clean up references nobody confirmed."""
+    from opi.core.task_handlers_components import handle_delete_component
+
+    progress = _progress()
+    pm = AsyncMock()
+    pm.delete_component = AsyncMock(return_value={"success": True, "uncoupled_from": [{"label": "deployment 'x'"}]})
+    refresh = AsyncMock(return_value={"status": "success", "processing": {"status": "completed"}})
+
+    with (
+        patch(PM_PATH, return_value=pm),
+        patch("opi.core.task_handlers_operations.handle_refresh_project", refresh),
+    ):
+        result = await handle_delete_component(
+            {"project_name": "demo", "component_name": "web", "confirm_in_use": True}, progress
+        )
+
+    assert pm.delete_component.await_args.kwargs == {"confirm_in_use": True}
+    # What went with it, so the caller is not left guessing which deployments changed.
+    assert result["uncoupled_from"] == [{"label": "deployment 'x'"}]
+
+
+async def test_without_the_confirmation_the_write_layer_hears_no() -> None:
+    """Absent means no, not 'unspecified': the guard has to decide on a fact."""
+    from opi.core.task_handlers_components import handle_delete_component
+
+    progress = _progress()
+    pm = AsyncMock()
+    pm.delete_component = AsyncMock(return_value={"success": True})
+    refresh = AsyncMock(return_value={"status": "success"})
+
+    with (
+        patch(PM_PATH, return_value=pm),
+        patch("opi.core.task_handlers_operations.handle_refresh_project", refresh),
+    ):
+        await handle_delete_component({"project_name": "demo", "component_name": "web"}, progress)
+
+    assert pm.delete_component.await_args.kwargs == {"confirm_in_use": False}
+
+
+async def test_a_component_still_in_use_fails_the_task() -> None:
+    """The endpoint refuses it up front, but the guard in the manager is what decides --
+    the project can have changed between the check and the task running."""
+    from opi.core.task_handlers_components import handle_delete_component
+
+    progress = _progress()
+    pm = AsyncMock()
+    pm.delete_component = AsyncMock(
+        return_value={"success": False, "error": "Component 'web' is in gebruik door: deployment 'staging'"}
+    )
+
+    with patch(PM_PATH, return_value=pm), pytest.raises(RuntimeError, match="in gebruik"):
+        await handle_delete_component({"project_name": "demo", "component_name": "web"}, progress)
+
+    progress.fail_project.assert_called_once()
 
 
 async def test_an_unknown_component_fails_the_task() -> None:
