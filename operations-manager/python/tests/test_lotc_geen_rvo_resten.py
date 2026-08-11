@@ -53,6 +53,13 @@ ARCHITECTURE_OVERVIEW = "architecture-overview.html.j2"
 #:
 #: Deze test houdt de lijst vast: het aantal mag alleen omlaag.
 NOG_MET_KLASSEN = {
+    # Onze kopie van components/_forms.j2 uit lotc-forms. Die is met opzet LETTERLIJK
+    # overgenomen op een macro na (zie tests/test_lotc_foutmelding_veld.py, dat hem naast
+    # de geinstalleerde legt), en het origineel draagt de rvo-vormen van elk veld voor
+    # het geval lotc_rvo als thema aan staat. Ze poetsen zou de kopie laten afwijken van
+    # de bron - en zou de applicatie stukmaken op de dag dat dat thema wel aangaat.
+    # Verdwijnt zodra lotc-forms de foutmelding zelf bedraadt en dit bestand weg kan.
+    "components/_forms.j2": 15,
     "example.html.j2": 2,
     "formulier-template.html.j2": 13,
     "invite-error.html.j2": 5,
