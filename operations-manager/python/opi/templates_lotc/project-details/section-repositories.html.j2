@@ -9,13 +9,13 @@
             {% for repo in project.repositories %}
             <c-card class="repository-card" padding="lg" background-color="grijs-050" outline="true">
                 <c-layout-flow gap="md">
-                    <div class="repo-header">
+                    <c-cluster justify="between" align="center" class="repo-header">
                         <c-icon icon="chevron-left-forward-slash-chevron-right" size="lg" color="oranje"/>
                         <div>
                             <c-heading type="h3" label="{{ repo.name }}"/>
                             <div class="repo-url">{{ repo.url }}</div>
                         </div>
-                    </div>
+                    </c-cluster>
 
                     <div class="repo-details">
                         <div class="repo-item"><strong>Branch:</strong> {{ repo.branch }}</div>

@@ -9,7 +9,7 @@
             {% for helm_chart in project.helm_charts %}
             <c-card class="helm-chart-card" padding="lg" background-color="grijs-050" outline="true">
                 <c-layout-flow gap="md">
-                    <div class="helm-chart-header">
+                    <c-cluster justify="between" align="center" class="helm-chart-header">
                         <c-icon icon="rectangle-stack" size="lg" color="groen"/>
                         <div>
                             <c-heading type="h3" label="{{ helm_chart.name }}"/>
@@ -17,7 +17,7 @@
                             <div>{{ helm_chart.repository }}</div>
                             {% endif %}
                         </div>
-                    </div>
+                    </c-cluster>
 
                     <div class="helm-chart-specs">
                         {% if helm_chart.get('chart') %}

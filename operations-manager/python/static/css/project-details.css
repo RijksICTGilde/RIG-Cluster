@@ -1,46 +1,56 @@
 /* Vormgeving van de projectdetailpagina en de fragmenten die erin geladen worden.
-   Stond als <style>-blok van 1.100 regels in project-details.html.j2. */
+   Stond als <style>-blok van 1.100 regels in project-details.html.j2.
 
-/* Project Badge */
-.project-badge {
-    background: var(--rvo-color-grijs-100);
-    color: var(--rvo-color-grijs-700);
-    padding: var(--rvo-space-xs) var(--rvo-space-sm);
-    border-radius: 4px;
-    font-size: 0.875rem;
-    font-family: monospace;
-}
+   RC-74 heeft dit bestand langs de componenten gelegd: 192 selectors -> 156. Wat weg is:
 
-/* Overview Grid */
-.overview-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: var(--rvo-space-lg);
-}
+   DOOD (geen enkele lezer meer in sjablonen, JS of tests - ook niet samengesteld):
+   .project-badge, .overview-grid/-icon/-number/-label/-detail, .namespace-badge,
+   .clone-badge, .domain-badge, .status-badge, .status-running, .deployments-section,
+   .deployment-meta. Resten van de RVO-versie van deze pagina.
 
-.overview-icon {
-    text-align: center;
-    margin-bottom: var(--rvo-space-xs);
-}
+   VERVANGEN DOOR EEN COMPONENT:
+   - De elf .argo-badge*-selectors waren in feite vier verdicten met een eigen kleurenset.
+     Dat is <c-tag>, waar het type de kleur bepaalt; bg/_argocd-deployment-card deed het al
+     zo. De iconen in die badges zijn vervallen: <c-tag> heeft geen icoonstand en het icoon
+     herhaalde alleen wat de tekst zei. De KLEUR draagt het verschil, en die komt nu uit het
+     thema.
+   - .argo-card__badges en de negen "header"-rijen (.section-header-row,
+     .deployment-header, .service-header, .repo-header, .helm-chart-header,
+     .helmfile-header, .danger-action-row, .env-vars-scope-header,
+     .env-vars-deployment-header) waren allemaal flex met space-between of een gat. Dat is
+     <c-cluster>.
+   - .backup-table/.tasks-table is <c-table>, met de status als <c-tag>.
+   - .team-avatar (een eigen 48px-rondje met initialen) is <c-avatar size="48">.
 
-.overview-number {
-    font-size: 2.5rem;
-    font-weight: 700;
-    color: var(--rvo-color-hemelblauw);
-    text-align: center;
-}
+   WAT BLIJFT, en waarom - zodat de volgende niet opnieuw zoekt:
 
-.overview-label {
-    font-weight: 600;
-    text-align: center;
-    color: var(--rvo-color-grijs-700);
-}
+   - Het LOGPANEEL (.log-viewer-*, .log-line en zijn kleuren, .log-status-indicator).
+     Het thema heeft <c-code-viewer>, maar dat is een CodeMirror-weergave van EEN tekst die
+     je in zijn geheel meegeeft; deze bak krijgt losse regels aangeschoven, verbergt er een
+     deel van per niveau en markeert zoektreffers binnen een regel. Diezelfde afweging staat
+     uitgeschreven in bg/_log-viewer.html.j2. Bovendien hangt static/js/log_viewer.js aan
+     deze klassen.
+   - De GRAFIEKEN (.chart-*, .metrics-chart, .gauge-achtige maten). <canvas>-elementen die
+     Chart.js tekent hebben een afmeting nodig; zonder hoogte zie je niets. Het thema
+     tekent geen grafieken.
+   - De SKELETONS (.argocd-skeleton*). Een laadplaatshouder in de vorm van de kaart die
+     komt; <c-activity-indicator> is een molentje en zegt niets over die vorm.
+   - .config-item, .config-code, .copy-btn, .deployment-actions, .component-item en
+     .is-hidden. Die ZIEN eruit als opmaak en zijn het niet: er hangt JavaScript aan (zie
+     de waarschuwing in de opdracht van RC-74; ze zijn in RC-70 al eens bijna gesneuveld).
+   - .usage-bar__fill--cpu/--memory. Het thema heeft <c-progress-bar>, maar dat is EEN balk
+     met EEN vordering; hier staan twee gekleurde balken naast elkaar waarvan het script de
+     breedte zet.
+   - .argo-errors__* - het uitklapbare foutenpaneel wordt door een eigen functie open- en
+     dichtgezet. bg/ heeft hier <c-accordion> van gemaakt (een <details>, dus zonder JS);
+     dat is voor deze pagina een gedragswijziging en hoort bij het omzetten van de kaart
+     zelf, niet bij een stijlbladronde.
+*/
 
-.overview-detail {
-    font-size: 0.875rem;
-    text-align: center;
-    color: var(--rvo-color-grijs-600);
-}
+
+
+
+
 
 
 /* Team Grid - Replaced with c-grid component */
@@ -156,11 +166,6 @@
     min-height: 150px;
 }
 
-.service-header {
-    display: flex;
-    align-items: center;
-    gap: var(--rvo-space-md);
-}
 
 .service-scope {
     font-size: 0.875rem;
@@ -169,28 +174,12 @@
 }
 
 /* Deployments Section */
-.deployments-section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--rvo-space-lg);
-}
 
 .deployment-card {
     border-left: 4px solid var(--rvo-color-oranje);
 }
 
-.deployment-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-}
 
-.deployment-meta {
-    display: flex;
-    gap: var(--rvo-space-sm);
-    margin-top: var(--rvo-space-xs);
-    flex-wrap: wrap;
-}
 
 .cluster-badge {
     background: var(--rvo-color-hemelblauw-50);
@@ -201,23 +190,7 @@
     font-weight: 600;
 }
 
-.namespace-badge {
-    background: var(--rvo-color-groen-50);
-    color: var(--rvo-color-groen);
-    padding: var(--rvo-space-xs) var(--rvo-space-sm);
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
 
-.clone-badge {
-    background: var(--rvo-color-paars-50);
-    color: var(--rvo-color-paars);
-    padding: var(--rvo-space-xs) var(--rvo-space-sm);
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
 
 .deployment-components {
     margin-top: var(--rvo-space-md);
@@ -303,11 +276,6 @@
     border-left: 4px solid var(--rvo-color-groen);
 }
 
-.helm-chart-header {
-    display: flex;
-    align-items: center;
-    gap: var(--rvo-space-md);
-}
 
 .helm-chart-specs {
     display: flex;
@@ -326,11 +294,6 @@
     border-left: 4px solid var(--rvo-color-oranje);
 }
 
-.helmfile-header {
-    display: flex;
-    align-items: center;
-    gap: var(--rvo-space-md);
-}
 
 .helmfile-specs {
     display: flex;
@@ -339,21 +302,7 @@
 }
 
 /* Status Badges */
-.status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--rvo-space-sm);
-    padding: var(--rvo-space-xs) var(--rvo-space-sm);
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-}
 
-.status-running {
-    background: var(--rvo-color-groen-50);
-    color: var(--rvo-color-groen);
-}
 
 /* Configuration Section */
 .config-section {
@@ -421,20 +370,7 @@
     border: 1px solid var(--rvo-color-grijs-100);
 }
 
-.env-vars-scope-header {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--rvo-space-md);
-    margin-bottom: var(--rvo-space-md);
-}
 
-.env-vars-deployment-header,
-.env-vars-component-header {
-    display: flex;
-    align-items: center;
-    gap: var(--rvo-space-sm);
-    flex-wrap: wrap;
-}
 
 .env-vars-count-badge {
     background: var(--rvo-color-hemelblauw-50);
@@ -490,11 +426,6 @@
     border-left: 4px solid var(--rvo-color-oranje);
 }
 
-.repo-header {
-    display: flex;
-    align-items: center;
-    gap: var(--rvo-space-md);
-}
 
 .repo-url {
     font-family: monospace;
@@ -524,15 +455,6 @@
 }
 
 /* Backup Table */
-.backup-table th,
-.backup-table td {
-    padding: 8px 12px;
-    text-align: left;
-}
-.backup-table th {
-    font-weight: 600;
-    color: var(--rvo-color-grijs-700);
-}
 
 /* ArgoCD status skeleton (lazy-load placeholder) */
 .argocd-skeleton {
@@ -773,14 +695,6 @@
     padding: 0 2px;
 }
 
-.domain-badge {
-    background: var(--rvo-color-hemelblauw-100);
-    color: var(--rvo-color-hemelblauw-700);
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-}
 
 .deployment-actions {
     display: flex;
@@ -848,72 +762,17 @@
     border-radius: 4px;
 }
 
-.argo-card__badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
 
-.argo-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    border-radius: 16px;
-    font-size: 0.8rem;
-    font-weight: 500;
-}
 
-.argo-badge--state {
-    background: var(--rvo-color-grijs-200);
-    color: var(--rvo-color-grijs-700);
-}
 
-.argo-badge--healthy,
-.argo-badge--synced {
-    background: #c8e6c9;
-    color: #1b5e20;
-}
 
-.argo-badge--progressing {
-    background: #bbdefb;
-    color: #0d47a1;
-}
 
-.argo-badge--degraded,
-.argo-badge--outofsync {
-    background: #ffe0b2;
-    color: #e65100;
-}
 
-.argo-badge--unhealthy {
-    background: #ffcdd2;
-    color: #b71c1c;
-}
 
 /* Unknown bij sync betekent dat ArgoCD gewenst en werkelijk niet kan vergelijken:
    rood, zodat het niet leest als "nog bezig". */
-.argo-badge--sync-unknown {
-    background: #ffebee;
-    color: #c62828;
-}
 
-.argo-badge--neutral {
-    background: var(--rvo-color-grijs-200);
-    color: var(--rvo-color-grijs-700);
-}
 
-.argo-badge--revision {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-family: monospace;
-    background: var(--rvo-color-grijs-200);
-    color: var(--rvo-color-grijs-700);
-}
 
 .argo-card__logs {
     margin-top: var(--rvo-space-sm);
@@ -1030,9 +889,6 @@
     color: var(--rvo-color-rood-600);
 }
 
-.section-header-row {
-    margin-bottom: var(--rvo-space-md);
-}
 
 /* Een alinea zonder eigen marge, omdat de omliggende layout de ruimte al bepaalt. */
 .text-flush {
@@ -1120,13 +976,6 @@
 }
 
 /* Danger zone */
-.danger-action-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--rvo-space-md);
-}
 
 .danger-action-title {
     color: var(--rvo-color-rood-600);
@@ -1154,28 +1003,12 @@
 }
 
 /* Takenlijst */
-.tasks-table {
-    width: 100%;
-    border-collapse: collapse;
-}
 
 .task-step {
     color: var(--rvo-color-grijs-700);
 }
 
 /* Teamleden */
-.team-avatar {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: var(--rvo-color-hemelblauw);
-    color: white;
-    font-weight: 600;
-    font-size: 1.125rem;
-}
 
 .team-email {
     font-weight: 500;
