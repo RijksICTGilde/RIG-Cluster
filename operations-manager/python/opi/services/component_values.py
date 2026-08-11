@@ -179,53 +179,60 @@ def locate(
     )
 
 
-def decode(raw: Any, storage: ValueStorage, project_data: dict[str, Any]) -> dict[str, str]:
+def decode(
+    raw: Any, storage: ValueStorage, project_data: dict[str, Any], private_key: str | None = None
+) -> dict[str, str]:
     """The plaintext values currently stored under a component's owned property.
 
     *raw* is whatever the project file holds there: absent, an AGE block, a plain
     ``KEY=value`` block, or a mapping (encrypted per value or legacy plaintext). An
     empty/absent property is an empty map, not an error -- "nothing set yet" is the
     normal starting point for an add.
+
+    *private_key* is the project's decoded AGE private key when the caller already holds
+    it. Without it the key is decoded from *project_data*, which needs the system key --
+    a read path that already resolved the key (the project read endpoints) must pass it
+    rather than make this module resolve it a second way.
     """
     if raw is None or raw == "" or raw == {}:
         return {}
     if storage is ValueStorage.BLOCK:
-        return _decode_block(raw, project_data)
-    return _decode_per_value(raw, project_data)
+        return _decode_block(raw, project_data, private_key)
+    return _decode_per_value(raw, project_data, private_key)
 
 
-def _decode_block(raw: Any, project_data: dict[str, Any]) -> dict[str, str]:
+def _decode_block(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:
     if isinstance(raw, dict):
         # Legacy mapping shape, from before the value became a single string.
         return {str(key): str(value) for key, value in raw.items()}
     text = str(raw)
     if is_age_encrypted(text):
-        text = _decrypt(text, project_data, "user-env-vars")
+        text = _decrypt(text, project_data, "user-env-vars", private_key)
     try:
         return validate_and_parse_env_vars(text)
     except ValueError as error:
         raise ComponentValuesError(f"De opgeslagen omgevingsvariabelen zijn niet te lezen: {error}") from error
 
 
-def _decode_per_value(raw: Any, project_data: dict[str, Any]) -> dict[str, str]:
+def _decode_per_value(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:
     if not isinstance(raw, dict):
         raise ComponentValuesError("De opgeslagen waarden hebben niet de verwachte vorm van een mapping.")
     values: dict[str, str] = {}
     for key, value in raw.items():
         text = str(value)
-        values[str(key)] = _decrypt(text, project_data, str(key)) if is_age_encrypted(text) else text
+        values[str(key)] = _decrypt(text, project_data, str(key), private_key) if is_age_encrypted(text) else text
     return values
 
 
-def _decrypt(ciphertext: str, project_data: dict[str, Any], label: str) -> str:
+def _decrypt(ciphertext: str, project_data: dict[str, Any], label: str, private_key: str | None = None) -> str:
     """Decrypt one stored ciphertext, or raise.
 
     Fail-closed on purpose: returning the armored block as if it were the value would
     hand the ciphertext back to the caller and then re-store it as plaintext on the
     next write.
     """
-    private_key = get_decoded_project_private_key_sync(project_data)
-    plaintext = decrypt_age_content_sync(ciphertext, private_key)
+    key = private_key or get_decoded_project_private_key_sync(project_data)
+    plaintext = decrypt_age_content_sync(ciphertext, key)
     if plaintext is None:
         raise ComponentValuesError(f"De opgeslagen waarde van '{label}' is niet te ontsleutelen met de projectsleutel.")
     return plaintext

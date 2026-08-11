@@ -56,6 +56,9 @@ from opi.api.v2.models import (
     StatusError,
 )
 from opi.api.v2.project_read import (
+    REDACTED as REDACTED_VALUE,
+)
+from opi.api.v2.project_read import (
     ComponentDetail,
     ProjectServiceUsages,
     build_component_details,
@@ -90,6 +93,7 @@ from opi.services.catalog.postgresql_database.config_model import schema_descrip
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, ValuesOperation
+from opi.services.component_values import decode as decode_values
 from opi.services.component_values import locate as locate_values_node
 from opi.services.component_values import validate_key as validate_values_key
 from opi.services.component_values import validate_value as validate_values_value
@@ -3080,8 +3084,14 @@ def _values_route(layer: ConfigLayer) -> tuple[str, tuple[str, ...]]:
     raise ValueError(f"No values route for layer {layer!r}")
 
 
-def _values_signature(name_params: tuple[str, ...], body_model: type | None, *, keyed: bool) -> Signature:
-    """The signature FastAPI introspects for a values route."""
+def _values_signature(
+    name_params: tuple[str, ...], body_model: type | None, *, keyed: bool, rollout: bool = True
+) -> Signature:
+    """The signature FastAPI introspects for a values route.
+
+    ``rollout=False`` for the read route: it changes nothing, so a rollout switch on it
+    would be a promise the endpoint cannot keep.
+    """
     params = [
         Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
         Parameter("project_name", Parameter.POSITIONAL_OR_KEYWORD, annotation=ProjectNamePath),
@@ -3100,7 +3110,8 @@ def _values_signature(name_params: tuple[str, ...], body_model: type | None, *, 
         )
     if body_model is not None:
         params.append(Parameter("body", Parameter.POSITIONAL_OR_KEYWORD, annotation=body_model, default=Body(...)))
-    params.append(Parameter("rollout", Parameter.POSITIONAL_OR_KEYWORD, annotation=RolloutQuery, default=True))
+    if rollout:
+        params.append(Parameter("rollout", Parameter.POSITIONAL_OR_KEYWORD, annotation=RolloutQuery, default=True))
     return Signature(params, return_annotation=JSONResponse)
 
 
@@ -3155,6 +3166,7 @@ async def _enqueue_values_write(
 
 def _make_values_endpoint(
     service_name: str,
+    service,
     storage: ValueStorage,
     layer: ConfigLayer,
     operation: ValuesOperation,
@@ -3173,6 +3185,9 @@ def _make_values_endpoint(
             try:
                 for key, value in body.values.items():
                     validate_values_value_for_storage(key, value, storage)
+                    # And the service's own rule: an alias has to point at a platform
+                    # variable that exists, where an own env-var may hold anything.
+                    service.validate_owned_value(key, value)
             except ComponentValuesError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
         if operation is ValuesOperation.DELETE:
@@ -3211,6 +3226,99 @@ def _make_values_endpoint(
         f"{service_name}_values_{layer.value}"
     ).replace("-", "_")
     return endpoint
+
+
+class ServiceValuesRead(BaseModel):
+    """The values stored at one layer, as far as they may be shown."""
+
+    service: str = Field(..., description="Service identifier, as used in the values endpoints.")
+    target: ConfigLayer = Field(..., description="The layer these values sit on.")
+    component: str = Field(..., description="The component carrying them.")
+    deployment: str | None = Field(default=None, description="The deployment, for a deployment-component layer.")
+    values: dict[str, str] = Field(
+        ...,
+        description=(
+            "Name -> value, in the same shape a POST to this path writes. A value that is a "
+            "secret comes back as '***': the names are what makes the map readable, the secrets "
+            "stay where they are. An alias value is NOT a secret -- it is a reference to a "
+            "platform variable, and the reference is exactly what a reader is checking -- so it "
+            "comes back as stored."
+        ),
+        examples=[{"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}],
+    )
+
+
+def _make_values_read_endpoint(service_name: str, service, storage: ValueStorage, layer: ConfigLayer):
+    """Build the GET that reads back what the writes on this path put there (RC-66).
+
+    Synchronous: it reads the project file, so there is nothing to enqueue. Which values
+    may be shown is the owning service's call (``owned_value_is_secret``), asked per
+    value on the decrypted map -- everything in the file is encrypted, so the stored
+    form cannot tell a secret from a reference.
+    """
+
+    async def endpoint(**kwargs: Any) -> JSONResponse:
+        project_name: str = kwargs["project_name"]
+        component_name: str = kwargs["component_name"]
+        deployment_name: str | None = kwargs.get("deployment_name")
+        if not validate_project_name(project_name):
+            raise HTTPException(status_code=400, detail="Invalid project name format.")
+        project = get_project_store().get(project_name)
+        if not project or not project.data:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        node = locate_values_node(project.data, layer, component_name, deployment_name)
+        if node is None:
+            where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
+            raise HTTPException(status_code=404, detail=f"No {where} in project '{project_name}'")
+        try:
+            stored = decode_values(node.get(service.owned_property), storage, project.data)
+        except ComponentValuesError as error:
+            # Stored values that will not decrypt or parse. Not "none set": saying so is
+            # the difference between an empty map and one nobody can read.
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return JSONResponse(
+            ServiceValuesRead(
+                service=service_name,
+                target=layer,
+                component=component_name,
+                deployment=deployment_name,
+                values={
+                    key: (REDACTED_VALUE if service.owned_value_is_secret(key, value) else value)
+                    for key, value in sorted(stored.items())
+                },
+            ).model_dump(mode="json")
+        )
+
+    endpoint.__signature__ = _values_signature(_values_route(layer)[1], None, keyed=False, rollout=False)
+    endpoint.__name__ = f"get_{service_name}_values_{layer.value}".replace("-", "_")
+    return endpoint
+
+
+def _values_read_description(service_name: str, storage: ValueStorage, layer: ConfigLayer) -> str:
+    """What a values read gives back, and what it deliberately does not."""
+    secrets = (
+        "Every value here is a secret (the whole set is stored as one AGE-encrypted block), "
+        "so every value comes back as `***` and the names are the readable part."
+        if storage is ValueStorage.BLOCK
+        else "A value that is a reference to a platform variable comes back as stored -- that "
+        "reference IS the coupling and is what makes this readable at all. A value stored as "
+        "something else is treated as a secret and comes back as `***`."
+    )
+    return "\n".join(
+        [
+            f"Read the `{service_name}` values on {_VALUES_PLACE[layer]}, as they stand in the "
+            "project's YAML file in `zad-projects`.",
+            "",
+            secrets,
+            "",
+            "Synchronous: this reads the project file, so the answer is the answer -- no task, "
+            "no polling. It describes the FILE, which after a write with `rollout=false` is not "
+            "yet what runs on the cluster.",
+            "",
+            "A component (or deployment) that does not exist is a 404. Values that are stored "
+            "but cannot be decrypted are a 422, because that is not the same as having none.",
+        ]
+    )
 
 
 #: Where the values land, per layer, in the caller's terms.
@@ -3314,13 +3422,29 @@ def _register_service_values_routes(router: APIRouter) -> None:
             for route_path, method, operation, keyed, summary in routes:
                 router.add_api_route(
                     route_path,
-                    validate_api_token(_make_values_endpoint(service_name, storage, layer, operation, keyed=keyed)),
+                    validate_api_token(
+                        _make_values_endpoint(service_name, service, storage, layer, operation, keyed=keyed)
+                    ),
                     methods=[method],
                     tags=[service_name],
                     responses=_VALUES_RESPONSES,
                     summary=summary,
                     description=_values_description(service_name, storage, layer, operation),
                 )
+
+            # The read side of the same path (RC-66, bevinding 3). Without it the values
+            # written here could not be checked at all: the generic config reader has
+            # nothing to report for a service that owns a plain property, so a client
+            # could see THAT a component had variables and never which.
+            router.add_api_route(
+                path,
+                validate_api_token(_make_values_read_endpoint(service_name, service, storage, layer)),
+                methods=["GET"],
+                tags=[service_name],
+                response_model=ServiceValuesRead,
+                summary=f"Read {service_name} values ({layer.value})",
+                description=_values_read_description(service_name, storage, layer),
+            )
 
 
 _register_service_values_routes(v2_router)

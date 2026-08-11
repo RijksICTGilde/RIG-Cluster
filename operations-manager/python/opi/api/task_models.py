@@ -122,6 +122,14 @@ class DeleteDeploymentResult(BaseModel):
     message: str = ""
     project: str = ""
     deployment: str = ""
+    deleted: bool = True
+    """Whether this call is what removed the deployment.
+
+    False together with ``already_absent`` means the deployment was not there to begin
+    with. Deleting is idempotent on purpose, but "it is gone" and "it was never here"
+    are different facts and a script has to be able to tell them apart (RC-66)."""
+    already_absent: bool = False
+    """The deployment was not in the project; nothing was removed by this call."""
     deletion_results: dict[str, Any] = Field(default_factory=dict)
     warning: str = ""
 

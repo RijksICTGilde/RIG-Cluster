@@ -19,9 +19,10 @@ answer describes the file and silently claims to describe what runs.
 
 **Nothing decrypted leaves this module.** Reading env-var *names* means decrypting the
 block they live in, so the risk is real and it is handled per kind of content rather
-than by one blanket filter: values never ship, alias values ship only when they were
-stored in plain text, an attachment's coupling ships but its content never does, and any
-value stored as an encrypted or ``plain:``-marked secret is replaced by ``***``.
+than by one blanket filter: env-var values never ship, an alias value ships when it is a
+reference to a platform variable and is masked when it is anything else (the owning
+service decides -- RC-66), an attachment's coupling ships but its content never does, and
+any value stored as an encrypted or ``plain:``-marked secret is replaced by ``***``.
 """
 
 from __future__ import annotations
@@ -29,9 +30,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.base import ConfigLayer, ValueStorage
+from opi.services.component_values import ComponentValuesError
+from opi.services.component_values import decode as decode_values
 from opi.services.project_env_vars import read_user_env_vars
+from opi.services.registry import get_service
 from opi.services.services import service_entry_config, service_entry_data, service_entry_name
+from opi.services.services_enums import ServiceType
 from opi.utils.age import carries_encrypted_value
 from pydantic import BaseModel, Field
 
@@ -66,13 +71,18 @@ def redact_secrets(value: Any) -> Any:
 
 
 def _shows_value(value: str) -> bool:
-    """Whether an alias value may be shown as stored.
+    """Whether a DECRYPTED alias value may be shown.
 
     An alias is normally a reference to a platform variable (``$DATABASE_SERVER_HOST``),
-    and hiding that would defeat the point of asking. The model allows a secret there
-    too, and a secret is recognisable by how it is stored, so that is the test.
+    and hiding that would defeat the point of asking. The owning service makes that call
+    (``AliasesService.owned_value_is_secret``), because only it knows what its values
+    mean; the storage form cannot answer it, since aliases are AGE-encrypted per value
+    and by that rule every alias came back as ``***`` (RC-66, bevinding 4). A value that
+    is still stored plainly with the ``plain:`` marker is a password all the same.
     """
-    return not carries_encrypted_value(value) and not value.strip().startswith(PLAIN_PREFIX)
+    if value.strip().startswith(PLAIN_PREFIX):
+        return False
+    return not get_service(ServiceType.ALIASES).owned_value_is_secret("", value)
 
 
 class ServiceUsage(BaseModel):
@@ -149,8 +159,10 @@ class ComponentDetail(BaseModel):
     aliases: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Alias name -> what it points at. A value stored as a secret is returned as '***'; a plain "
-            "reference such as $DATABASE_SERVER_HOST is returned as stored."
+            "Alias name -> what it points at. A reference to a platform variable such as "
+            "$DATABASE_SERVER_HOST is returned as stored -- that reference is the coupling and is "
+            "the whole reason to ask. A value that is anything else may hold a secret and is "
+            "returned as '***'."
         ),
     )
     attachments: list[ComponentAttachment] = Field(
@@ -237,12 +249,32 @@ def _component_attachments(component: dict[str, Any]) -> list[ComponentAttachmen
     return []
 
 
-def _component_aliases(component: dict[str, Any]) -> dict[str, str]:
-    """A component's aliases, with secret-stored values replaced by ``***``."""
+def _component_aliases(
+    component: dict[str, Any], project_data: dict[str, Any], project_private_key: str
+) -> dict[str, str]:
+    """A component's aliases, with values that are not a reference replaced by ``***``.
+
+    The stored values are decrypted first: an alias is written AGE-encrypted per value,
+    so without decrypting there is nothing to judge and nothing to show. Values that
+    cannot be decrypted keep their names and lose their values -- "unreadable" is not
+    the same as "not there".
+    """
     aliases = component.get("aliases")
     if not isinstance(aliases, dict):
         return {}
-    return {str(key): (str(value) if _shows_value(str(value)) else REDACTED) for key, value in aliases.items()}
+    shown: dict[str, str] = {}
+    for key, raw in aliases.items():
+        name = str(key)
+        try:
+            # Per entry, so one unreadable value costs its own value and not the whole
+            # map. Through the shared decoder, so this reads exactly what a write wrote.
+            value = decode_values({name: raw}, ValueStorage.PER_VALUE, project_data, project_private_key)[name]
+        except (ComponentValuesError, ValueError) as error:
+            logger.warning(f"Alias '{name}' of component '{component.get('name', '')}' could not be read: {error}")
+            shown[name] = REDACTED
+            continue
+        shown[name] = value if _shows_value(value) else REDACTED
+    return shown
 
 
 async def build_component_details(
@@ -273,7 +305,7 @@ async def build_component_details(
                 ],
                 # Names only. The values were just decrypted to get here and go no further.
                 env_var_names=sorted(env_vars) if env_vars is not None else None,
-                aliases=_component_aliases(component),
+                aliases=_component_aliases(component, project_data, project_private_key),
                 attachments=_component_attachments(component),
             )
         )

@@ -1041,6 +1041,9 @@ class DeleteProjectManager:
             "errors": [],
             "service_results": {},
             "force_mode": force,
+            # "It is gone" and "it was never there" are both success, and a script
+            # cannot act on the difference unless the answer states it (RC-66).
+            "already_absent": False,
         }
 
         if force:
@@ -1771,6 +1774,17 @@ class DeleteProjectManager:
                         f"({http_error.detail}) - treating as deleted"
                     )
                     deletion_results["success"] = True
+                    # Idempotent, and visibly so: the caller asked to remove something
+                    # that was not there, and gets told that instead of "deleted".
+                    deletion_results["already_absent"] = True
+                    deletion_results["operations"].append(
+                        {
+                            "type": "deployment_deletion",
+                            "target": deployment_name,
+                            "status": "not_found",
+                            "reason": str(http_error.detail),
+                        }
+                    )
                     return deletion_results
                 deletion_results["success"] = False
                 deletion_results["errors"].append(f"HTTP error during deployment deletion (force mode): {http_error}")
