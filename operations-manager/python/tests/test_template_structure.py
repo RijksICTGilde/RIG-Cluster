@@ -99,10 +99,6 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
         "De tussenruimte van de stapel wordt als custom property gezet omdat het "
         "componentensysteem er geen klasse voor kent.",
     ),
-    "wizard/wizard_steps_indicator.html.j2": (
-        1,
-        "De breedte van de voortgangsbalk is het percentage voltooide stappen.",
-    ),
     "widgets/button_group.html.j2": (
         1,
         "De tussenruimte tussen de knoppen is een instelling van het veld en komt uit de "

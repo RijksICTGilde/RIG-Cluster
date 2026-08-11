@@ -1,0 +1,10 @@
+{# Het gegenereerde formulier zelf.
+
+   Stond in een <div class="project-form-container"> die zelf een witte achtergrond,
+   padding, een hoekstraal en een schaduw meebracht. Dat is een kaart, en daar is
+   <c-card> voor. #}
+<c-card padding="lg" background-color="wit" outline="true">
+    <form method="POST" action="/projects/form-demo" autocomplete="off">
+        {{ form_html | process_components }}
+    </form>
+</c-card>

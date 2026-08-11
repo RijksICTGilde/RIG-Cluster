@@ -188,11 +188,11 @@ c-fieldset c-fieldset {
 }
 .service-card--selected {
     border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: var(--rvo-color-hemelblauw-100, #E5F0F9);
+    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
 }
 .service-card--locked-checked {
     border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: var(--rvo-color-hemelblauw-100, #E5F0F9);
+    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
     opacity: 0.85;
 }
 /* Read-only card (project details): same look as the picker, but nothing to pick. */
