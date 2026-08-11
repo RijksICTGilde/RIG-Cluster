@@ -17,7 +17,13 @@
 
    LET OP bij .metrics-grid: die naam bestaat ook in metrics-charts.css, waar hij iets
    ANDERS is (een flexkolom voor het metingenfragment). Op het dashboard is hij nu een
-   component, dus die botsing speelt hier niet meer. */
+   component, dus die botsing speelt hier niet meer.
+
+   De KLASSE staat wel nog op dat component, en met opzet: tests/e2e/test_lotc_pariteit.py
+   leest de meters uit met locator(".metrics-grid"). Er hangt geen opmaak meer aan - hij is
+   alleen nog een haak. Dat is deze ronde twee keer misgegaan (hier en bij
+   .edit-modal-close-btn in modal.css) en het is steeds dezelfde les: grep de LEZERS
+   voordat een klasse verdwijnt, en tests zijn ook lezers. */
 
 /* De kaarten die oplichten als je eroverheen gaat.
 

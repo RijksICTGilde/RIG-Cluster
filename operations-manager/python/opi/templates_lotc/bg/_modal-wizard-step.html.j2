@@ -122,7 +122,7 @@
                 {{ step_html | safe }}
             </div>
 
-            <div class="wizard-step__actions" id="edit-section-actions">
+            <c-cluster justify="between" align="center" class="wizard-step__actions" id="edit-section-actions">
                 <c-action-group align="between">
                     {% if not steps.is_first %}
                         <c-button
@@ -163,7 +163,7 @@
                         {% endif %}
                     </c-cluster>
                 </c-action-group>
-            </div>
+            </c-cluster>
         </form>
     </c-stack>
 </div>

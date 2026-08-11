@@ -9,7 +9,9 @@
   middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
 #}
 {% if preset_states %}
-<div class="service-cards-grid">
+{# Zelfde raster als bij de dienstkaarten: <c-auto-grid min="300px">, met de klasse
+   erop als haak voor wizard.js. #}
+<c-auto-grid min="300px" gap="md" class="service-cards-grid">
     {% for state in preset_states %}
     {% set preset = state.preset %}
     {% set applied = state.applied %}
@@ -44,5 +46,5 @@
         </div>
     </div>
     {% endfor %}
-</div>
+</c-auto-grid>
 {% endif %}

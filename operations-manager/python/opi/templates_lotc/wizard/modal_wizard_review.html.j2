@@ -95,13 +95,13 @@
     <div class="wizard-step__actions rvo-layout-margin-vertical--xl">
         {% set lotc_onclick_1 %}closeEditModal(){% endset %}<c-button label="Annuleren"/>
 
-        <div class="wizard-step__actions-right">
+        <c-cluster gap="xs" align="center">
             <c-button label="Vorige" show-icon="before" icon="caret-left"/>
             {% if wizard_token %}<input type="hidden" id="modal-wizard-confirm-token" name="_wizard_token" value="{{ wizard_token }}" />{% endif %}
             <span id="modal-wizard-confirm-saving" aria-hidden="true">
                 <c-icon icon="refresh" size="sm"/>Bezig&hellip;
             </span>
             <c-button label="{{ action_label }}" show-icon="before" icon="file-text"/>
-        </div>
+        </c-cluster>
     </div>
 </div>
