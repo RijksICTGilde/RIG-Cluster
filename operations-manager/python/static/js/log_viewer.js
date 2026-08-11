@@ -76,6 +76,16 @@
      */
     let panelOpen = false;
 
+    // Staat het paneel niet op deze pagina, dan houdt het hier op. Dat moet EXPLICIET:
+    // hieronder wordt meteen een luisteraar op het paneel gezet, en op null gooit dat een
+    // TypeError die de rest van dit bestand meesleurt - inclusief window.openLogViewer,
+    // dat dan nergens meer bestaat. Voorheen viel dat niet op omdat alle verwijzingen pas
+    // binnen een functie werden aangeraakt.
+    if (!panel) {
+        console.warn('log_viewer.js: het logpaneel staat niet op deze pagina');
+        return;
+    }
+
     /**
      * Ruim de stroom op. Loopt via het 'close'-event van de sheet, zodat het niet
      * uitmaakt HOE hij dichtgaat: de knop, Escape en een klik ernaast komen hier
