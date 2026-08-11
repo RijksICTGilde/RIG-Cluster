@@ -1,9 +1,12 @@
 {# De lijst met projecten van de gebruiker. #}
 <c-layout-flow gap="lg">
-    <div class="page-header-row">
+    {# .page-header-row uit base.css was display:flex + space-between + align-items:center
+       voor "titel links, actie rechts". Dat is <c-cluster justify="between">. NIET
+       <c-bar>: zonder center-slot valt zijn end-slot in de middelste gridkolom. #}
+    <c-cluster justify="between" align="center">
         <c-heading type="h2" label="Mijn Projecten"/>
         {% set lotc_onclick_1 %}window.location.href='/projects/new'{% endset %}<c-button label="Nieuw Project" size="md" show-icon="before" icon="plus"/>
-    </div>
+    </c-cluster>
 
     {% if projects %}
     <div class="projects-grid">
