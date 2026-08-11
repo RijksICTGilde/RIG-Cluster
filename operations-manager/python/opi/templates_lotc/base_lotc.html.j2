@@ -93,46 +93,48 @@
                    de items staan wel in de DOM maar blijven onzichtbaar. Op een
                    <nldd-button expandable popup-type="menu"> werkt hij wel, en dat is ook
                    de vorm die de gebruiker aanleverde. #}
-                <div slot="utility">
-                    <nldd-button variant="tertiary" expandable popup-type="menu"
-                                 start-icon="person" text="{{ gebruikersnaam }}" type="button" size="md">
-                        {# De items dragen hun bestemming twee keer: href zodat hij in de
-                           markup staat en zichtbaar is waar hij heen gaat, en onclick omdat
-                           een <nldd-menu-item> NIET uit zichzelf op zijn href navigeert.
-                           Gemeten: het menu ging open, het item was zichtbaar en klikbaar,
-                           en de pagina bleef staan. Een menu-BAR-item doet dat wel - die
-                           twee lijken op elkaar en gedragen zich anders.
+                {# De hulplinks als MENUBALK, zoals bg.rijks.app ze heeft: losse items met
+                   een icoon naast elkaar, in plaats van een knop met de gebruikersnaam
+                   erin. Die knop kwam uit een andere applicatie mee en werd hier het
+                   breedste element van de kop.
 
-                           location.href is hier geen nieuw gereedschap: de bestaande pagina
-                           navigeert met @click="window.location.href=..." op precies deze
-                           manier. #}
-                        <nldd-menu slot="popup" placement="bottom-end">
-                            <nldd-menu-item text="Profiel" href="/account" onclick="location.href='/account'"></nldd-menu-item>
+                   De balk is <c-menu>; de items eronder zijn ruwe <nldd-menu-bar-item>
+                   omdat <c-menu-item> zelfsluitend rendert en dus geen uitklapmenu kan
+                   dragen. Waar dat niet nodig is (een gewone link) kan het component wel.
 
-                            <nldd-menu-divider></nldd-menu-divider>
-                            <nldd-menu-group text="Weergave">
-                                {% for waarde, weergave_label in [("", "Systeem"), ("light", "Licht"), ("dark", "Donker")] %}
-                                    <nldd-menu-item type="radio" text="{{ weergave_label }}"
-                                                    href="/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}"
-                                                    onclick="location.href='/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}'"
-                                                    {% if waarde == gekozen_weergave %}selected{% endif %}></nldd-menu-item>
+                   LET OP het verschil dat hier al twee keer beet: een menu-BAR-item
+                   navigeert WEL op zijn href, een <nldd-menu-item> in een uitklapmenu
+                   niet - vandaar de onclick daar, en niet hier. #}
+                <c-menu slot="utility" aria-label="Hulplinks">
+                    <nldd-menu-bar-item text="Weergave" icon="sun" expandable>
+                        <nldd-menu placement="bottom-start" variant="menu">
+                            {% for waarde, weergave_label in [("", "Systeem"), ("light", "Licht"), ("dark", "Donker")] %}
+                                <nldd-menu-item type="radio" text="{{ weergave_label }}"
+                                                href="/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}"
+                                                onclick="location.href='/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}'"
+                                                {% if waarde == gekozen_weergave %}selected{% endif %}></nldd-menu-item>
+                            {% endfor %}
+                        </nldd-menu>
+                    </nldd-menu-bar-item>
+
+                    {% if navigation.beheer %}
+                        <nldd-menu-bar-item text="Beheer" icon="gear" expandable>
+                            <nldd-menu placement="bottom-start" variant="menu">
+                                {% for item in navigation.beheer %}
+                                    <nldd-menu-item text="{{ item.label }}" href="{{ item.link }}" onclick="location.href='{{ item.link }}'"></nldd-menu-item>
                                 {% endfor %}
-                            </nldd-menu-group>
+                            </nldd-menu>
+                        </nldd-menu-bar-item>
+                    {% endif %}
 
-                            {% if navigation.beheer %}
-                                <nldd-menu-divider></nldd-menu-divider>
-                                <nldd-menu-group text="Beheer">
-                                    {% for item in navigation.beheer %}
-                                        <nldd-menu-item text="{{ item.label }}" href="{{ item.link }}" onclick="location.href='{{ item.link }}'"></nldd-menu-item>
-                                    {% endfor %}
-                                </nldd-menu-group>
-                            {% endif %}
-
+                    <nldd-menu-bar-item text="{{ gebruikersnaam }}" icon="person-circle" expandable>
+                        <nldd-menu placement="bottom-start" variant="menu">
+                            <nldd-menu-item text="Profiel" href="/account" onclick="location.href='/account'"></nldd-menu-item>
                             <nldd-menu-divider></nldd-menu-divider>
                             <nldd-menu-item text="Uitloggen" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>
                         </nldd-menu>
-                    </nldd-button>
-                </div>
+                    </nldd-menu-bar-item>
+                </c-menu>
 
             </c-header>
         </template>
@@ -180,66 +182,69 @@
             {% endblock %}
         </c-stack>
 
-        {# De voettekst stond er niet, en daarmee waren "Over het platform", de
-           architectuurpagina, de API-referentie en de versievermelding op ELKE pagina
-           onbereikbaar - vier bestemmingen die de bestaande schil wel heeft. Dit is
-           dezelfde inhoud als in base.html.j2; de vorm volgt het thema. #}
-        {% set vi = version_info() %}
-        {% set version_label = 'ZAD ' + vi.version
-            + (' @ ' + vi.branch if vi.branch else '')
-            + (' *' if vi.dirty else '')
-            + (' (' + vi.build_date + ')' if vi.build_date else '') %}
-        {% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
-        {# HET BLAUWE BLOKJE onderaan de voettekst is NIET van ons, en het is ook geen fout.
-           Het is `.page-footer::after` in de schaduwboom van nldd-page-footer: een
-           decoratief vlakje van 48 bij 24 in rgb(21, 66, 115). Het staat op elke pagina en
-           het is drie keer aangezien voor een kapot element - onvindbaar met elke
-           DOM-controle, want een pseudo-element komt in geen enkele querySelector voor.
-           Wie het weg wil, moet dat bij het thema aankaarten.
-
-           De voettekst heeft drie slots: breadcrumbs, de hoofdinhoud, en een legal-bar
-           onderaan. De links horen in de hoofdinhoud, de versievermelding erbij.
-
-           Hier stonden twee <c-menu>'s. Een c-menu rendert ALTIJD een <nldd-menu-bar>, en
-           dat is een horizontale navigatiebalk: hij meet zichzelf op en hangt er een
-           overloopknop ("Meer opties") aan als hij denkt dat de inhoud niet past. Voor
-           een rijtje voetteksmenu-items is dat het verkeerde gereedschap, en de kop
-           "Platform" die base.html.j2 wel heeft (als label van de primaryMenu) kan er
-           helemaal niet in.
-
-           LET OP, want dit is een val waar deze omzetting al twee keer in trapte: een
-           <nldd-menu-BAR-item> navigeert WEL gewoon op zijn href. Het is de
-           <nldd-menu-item> in een uitklapmenu die dat niet doet (zie bg/projects.html.j2).
-           Die twee lijken op elkaar en gedragen zich anders. #}
-        <c-footer>
-            <c-stack gap="xs">
-                <c-heading type="h2" size="6" label="Platform" />
-                <c-link href="/about" label="Over het platform" />
-                {# /docs en niet /api: dat laatste stond hier en levert een 404. De
-                   bestaande voettekst (base.html.j2) wijst naar /docs, de door FastAPI
-                   geserveerde Swagger-pagina; bij het omzetten is dat /api geworden. Het
-                   staat in base_lotc, dus het was op ELKE pagina fout, en niets sloeg erop
-                   aan: een link controleert niemand tot iemand erop klikt. Sinds RC-65
-                   loopt tests/e2e/test_lotc_links.py elke interne link na. #}
-                <c-link href="/docs" label="API Referentie" />
-            </c-stack>
-
-                {# De versievermelding staat BIJ de links en niet in de legal-bar-slot.
-                   Die slot leek de aangewezen plek, maar een
-                   <nldd-page-footer-legal-bar-item> toont zijn text= niet: wat er
-                   overbleef was een leeg donkerblauw blokje onder een scheidingslijn,
-                   op elke pagina. Dat blokje was er al voordat ik hieraan begon en het
-                   is precies dit. #}
-                {% if commit_ref %}
-                    <c-link href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}"
-                            label="{{ version_label }}" />
-                {% else %}
-                    <c-paragraph size="sm">{{ version_label }}</c-paragraph>
-                {% endif %}
-        </c-footer>
-
         {% block additional_styles %}{% endblock %}
         {% block additional_scripts %}{% endblock %}
+
+    <template slot="footer">
+
+            {# De voettekst stond er niet, en daarmee waren "Over het platform", de
+               architectuurpagina, de API-referentie en de versievermelding op ELKE pagina
+               onbereikbaar - vier bestemmingen die de bestaande schil wel heeft. Dit is
+               dezelfde inhoud als in base.html.j2; de vorm volgt het thema. #}
+            {% set vi = version_info() %}
+            {% set version_label = 'ZAD ' + vi.version
+                + (' @ ' + vi.branch if vi.branch else '')
+                + (' *' if vi.dirty else '')
+                + (' (' + vi.build_date + ')' if vi.build_date else '') %}
+            {% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
+            {# HET BLAUWE BLOKJE onderaan de voettekst is NIET van ons, en het is ook geen fout.
+               Het is `.page-footer::after` in de schaduwboom van nldd-page-footer: een
+               decoratief vlakje van 48 bij 24 in rgb(21, 66, 115). Het staat op elke pagina en
+               het is drie keer aangezien voor een kapot element - onvindbaar met elke
+               DOM-controle, want een pseudo-element komt in geen enkele querySelector voor.
+               Wie het weg wil, moet dat bij het thema aankaarten.
+
+               De voettekst heeft drie slots: breadcrumbs, de hoofdinhoud, en een legal-bar
+               onderaan. De links horen in de hoofdinhoud, de versievermelding erbij.
+
+               Hier stonden twee <c-menu>'s. Een c-menu rendert ALTIJD een <nldd-menu-bar>, en
+               dat is een horizontale navigatiebalk: hij meet zichzelf op en hangt er een
+               overloopknop ("Meer opties") aan als hij denkt dat de inhoud niet past. Voor
+               een rijtje voetteksmenu-items is dat het verkeerde gereedschap, en de kop
+               "Platform" die base.html.j2 wel heeft (als label van de primaryMenu) kan er
+               helemaal niet in.
+
+               LET OP, want dit is een val waar deze omzetting al twee keer in trapte: een
+               <nldd-menu-BAR-item> navigeert WEL gewoon op zijn href. Het is de
+               <nldd-menu-item> in een uitklapmenu die dat niet doet (zie bg/projects.html.j2).
+               Die twee lijken op elkaar en gedragen zich anders. #}
+            <c-footer>
+                <c-stack gap="xs">
+                    <c-heading type="h2" size="6" label="Platform" />
+                    <c-link href="/about" label="Over het platform" />
+                    {# /docs en niet /api: dat laatste stond hier en levert een 404. De
+                       bestaande voettekst (base.html.j2) wijst naar /docs, de door FastAPI
+                       geserveerde Swagger-pagina; bij het omzetten is dat /api geworden. Het
+                       staat in base_lotc, dus het was op ELKE pagina fout, en niets sloeg erop
+                       aan: een link controleert niemand tot iemand erop klikt. Sinds RC-65
+                       loopt tests/e2e/test_lotc_links.py elke interne link na. #}
+                    <c-link href="/docs" label="API Referentie" />
+                </c-stack>
+
+                    {# De versievermelding staat BIJ de links en niet in de legal-bar-slot.
+                       Die slot leek de aangewezen plek, maar een
+                       <nldd-page-footer-legal-bar-item> toont zijn text= niet: wat er
+                       overbleef was een leeg donkerblauw blokje onder een scheidingslijn,
+                       op elke pagina. Dat blokje was er al voordat ik hieraan begon en het
+                       is precies dit. #}
+                    {% if commit_ref %}
+                        <c-link href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}"
+                                label="{{ version_label }}" />
+                    {% else %}
+                        <c-paragraph size="sm">{{ version_label }}</c-paragraph>
+                    {% endif %}
+            </c-footer>
+    </template>
 
     </c-app-shell>
 </c-page>
