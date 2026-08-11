@@ -3131,18 +3131,22 @@ tasks:
       - |
         # numfmt wil hoofdletters (4G), docker accepteert beide - vandaar de tr.
         WANT="$(echo "{{.SANDBOX_BUILD_MEMORY}}" | tr '[:lower:]' '[:upper:]' | numfmt --from=iec)"
-        HAVE="$(docker inspect {{.BUILDER_CONTAINER}} 2>/dev/null | jq -r '.[0].HostConfig.Memory' 2>/dev/null || echo "")"
-        if [ "$HAVE" != "$WANT" ]; then
+        STATE="$(docker inspect {{.BUILDER_CONTAINER}} 2>/dev/null | jq -r '"\(.[0].HostConfig.Memory) \(.[0].HostConfig.NetworkMode)"' 2>/dev/null || echo "")"
+        if [ "$STATE" != "$WANT host" ]; then
           # Bestaat hij met een andere (of geen) grens, dan is opnieuw aanmaken de enige
           # manier: een draaiende buildkit-container krijgt geen nieuwe limiet.
-          if [ -n "$HAVE" ]; then
-            echo "Builder {{.SANDBOX_BUILDER_NAME}} heeft grens '$HAVE', gewenst '$WANT' - opnieuw aanmaken..."
+          if [ -n "$STATE" ]; then
+            echo "Builder {{.SANDBOX_BUILDER_NAME}} staat op '$STATE', gewenst '$WANT host' - opnieuw aanmaken..."
           fi
           docker buildx rm {{.SANDBOX_BUILDER_NAME}} >/dev/null 2>&1 || true
+          # network=host om dezelfde reden als --network=host in sandbox-deploy: zonder
+          # host-netwerk komt de builder niet bij de DNS van de server en strandt de
+          # eerste regel van de Dockerfile al op "no route to host".
           docker buildx create \
             --name {{.SANDBOX_BUILDER_NAME}} \
             --driver docker-container \
             --driver-opt memory={{.SANDBOX_BUILD_MEMORY}} \
+            --driver-opt network=host \
             --bootstrap >/dev/null
           echo "Builder {{.SANDBOX_BUILDER_NAME}} aangemaakt met geheugengrens {{.SANDBOX_BUILD_MEMORY}}"
         else
