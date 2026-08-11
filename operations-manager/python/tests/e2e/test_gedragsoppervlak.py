@@ -154,6 +154,27 @@ def test_de_lijst_bestaat_en_dekt_elk_pad(vastgelegd: dict[str, dict[str, list[s
     )
 
 
+#: Wat er per pad NIET vastgelegd wordt, met de reden.
+#:
+#: De bewerkdialoog van een component toont per DIENST die dat component gebruikt een
+#: configuratieblok, en welke diensten dat zijn staat in het projectbestand. Andere tests
+#: in deze suite bewerken datzelfde project, dus die blokken verschillen tussen een run
+#: van dit bestand alleen en een run van de hele suite. Een lijst die daarvan afhangt
+#: piept willekeurig, en een meetlat die willekeurig piept ga je negeren.
+#:
+#: De rest van die dialogen - naam, image, poorten, het opslaan-adres - ligt gewoon vast.
+NIET_VASTLEGGEN = {
+    "_services-config{": "hangt af van de diensten die een ander testgeval op dit project zette",
+}
+
+
+def _vastlegbaar(lijsten: dict[str, list[str]]) -> dict[str, list[str]]:
+    return {
+        categorie: [item for item in items if not any(sleutel in item for sleutel in NIET_VASTLEGGEN)]
+        for categorie, items in lijsten.items()
+    }
+
+
 @pytest.mark.parametrize("pad", PADEN)
 def test_de_pagina_kan_nog_alles_wat_er_vastligt(
     client: httpx.Client,
@@ -167,7 +188,7 @@ def test_de_pagina_kan_nog_alles_wat_er_vastligt(
     gemeten = meet(response.text)
 
     if SCHRIJVEN:
-        geschreven[pad] = als_lijsten(gemeten)
+        geschreven[pad] = _vastlegbaar(als_lijsten(gemeten))
         return
 
     weg = ontbreekt(vastgelegd.get(pad, {}), gemeten)

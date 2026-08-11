@@ -34,12 +34,20 @@
 
                     <c-textarea-field id="input_text" name="input_text" label="Input Text" rows="8" placeholder="Enter text here..."/>
 
-                    {% set lotc_onclick_1 %}handleSubmit(event){% endset %}<c-button label="Process"/>
+                    {# De knop draagt zijn id EN zijn klikafhandeling. De omzetter maakte
+                       er een <c-button label="Process"/> van met de aanroep in een
+                       {% raw %}{% set %}{% endraw %}-blok dat nergens aan hing, en liet
+                       het id vallen: het script zoekt #submit-btn op, kreeg null, en de
+                       knop deed niets. #}
+                    {% set verwerken %}handleSubmit(event){% endset %}
+                    <c-button id="submit-btn" label="Process" :attrs="{'onclick': verwerken}"/>
                 </c-layout-flow>
             </form>
         </c-card>
 
-        <c-card padding="md" class="is-hidden">
+        {# id="output-card": het script maakt deze kaart zichtbaar zodra er een resultaat
+           is. Ook dat id liet de omzetter vallen. #}
+        <c-card id="output-card" padding="md" class="is-hidden">
             <c-heading type="h2">Output</c-heading>
             <div id="error-message" class="rvo-alert rvo-alert--error tool-error-message is-hidden">
                 <span id="error-text"></span>
