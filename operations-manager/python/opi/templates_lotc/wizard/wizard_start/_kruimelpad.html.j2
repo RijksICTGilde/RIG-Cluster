@@ -1,7 +1,11 @@
-{# Het kruimelpad terug naar het projectoverzicht. #}
-<nav aria-label="Breadcrumb">
-    <ol class="lotc-breadcrumb">
-        <li><a href="/projects">Projecten</a></li>
-        <li aria-current="page">Nieuw project</li>
-    </ol>
-</nav>
+{# Het kruimelpad terug naar het projectoverzicht.
+
+   Dit was een <nav> met een eigen <ol class="lotc-breadcrumb">, opgemaakt door
+   wizard-start.css. Daar bestaat een component voor: <c-breadcrumbs> met
+   <c-breadcrumbs-item>-kinderen. Het scheidingsteken tussen de kruimels komt nu van het
+   thema in plaats van uit een ::after met een schuine streep, en een item zonder href
+   rendert vanzelf als huidige pagina. #}
+<c-breadcrumbs aria-label="Kruimelpad">
+    <c-breadcrumbs-item label="Projecten" href="/projects" />
+    <c-breadcrumbs-item label="Nieuw project" />
+</c-breadcrumbs>
