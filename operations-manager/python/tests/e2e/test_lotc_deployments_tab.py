@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
-ROOS_URL = f"/projects/details/{PROJECT}?layout=roos"
 LOTC_URL = f"/projects/details/{PROJECT}?tab=deployments"
 
 # Op de bestaande pagina staan alle drie de tabbladen in EEN document; alleen wat binnen
@@ -46,7 +45,6 @@ LOTC_URL = f"/projects/details/{PROJECT}?tab=deployments"
 # klikbaars stond, en dat veranderde toen de knop "Bewerken" in de gedeelde kop terugkwam:
 # die telde dan mee als inhoud van het tabblad en de vergelijking meldde een verschil dat
 # er niet was. Een vergelijking moet aan beide kanten hetzelfde AFBAKENEN.
-ROOS_SCOPE = "#tab-deployments"
 LOTC_SCOPE = "#tab-deployments"
 
 # De aanroepen die uit de DOM geplukt worden, per scope.
@@ -71,29 +69,44 @@ def _surface(page: Page, app_server: str, url: str, scope: str) -> dict[str, lis
     return surface
 
 
-def test_dezelfde_bestemmingen_als_het_bestaande_tabblad(app_server: str, auth_page: Page) -> None:
-    """Elke dialoog en elk endpoint van het oude tabblad staat ook op het nieuwe.
+#: Wat het tabblad Deployments moet kunnen aanroepen, voor de twee deployments van het
+#: testproject. Hier stond een vergelijking met het oude tabblad; dat is er niet meer.
+#: Genoteerd per deployment, want dat is waar een omzetting er een vergeet.
+AANROEPEN_VAN_HET_DEPLOYMENTTABBLAD = {
+    "openEditModal('modal-add-deployment-2', 'Deployment toevoegen')",
+    *[
+        aanroep.format(index=index, naam=naam)
+        for index, naam in enumerate(("default", "tweede"))
+        for aanroep in (
+            "openEditModal('modal-backup', 'Backup aanmaken', {{deployment: '{naam}'}})",
+            "openEditModal('modal-edit-backup-schedule-{index}', 'Backup schema instellen')",
+            "openEditModal('modal-edit-deployment-{index}', 'Deployment bewerken - {naam}')",
+            "openEditModal('modal-edit-deployment-{index}', 'Images bewerken - {naam}')",
+            "openEditModal('modal-edit-domain-{index}', 'Webadres bewerken - {naam}')",
+            "openServiceModal('/projects/test-project-detail/actions/delete-deployment/confirm?target={naam}', "
+            "'Deployment verwijderen')",
+            "openServiceModal('/projects/test-project-detail/actions/refresh-deployment/confirm?target={naam}', "
+            "'Deployment herverwerken')",
+            "openServiceModal('/projects/test-project-detail/db-console/{naam}/modal', 'Databaseconsole - {naam}')",
+            "openServiceModal('/projects/test-project-detail/jobs/{naam}/modal', 'Job uitvoeren - {naam}')",
+        )
+    ],
+}
 
-    Gelijkheid van de VERZAMELING, niet van de volgorde of van het aantal: dezelfde
-    flow-id's (modal-edit-deployment-<index>, modal-backup, modal-edit-backup-schedule-N)
-    en dezelfde bevestigings-URL's. Een knop die op de nieuwe pagina naar iets anders
-    wijst - of er niet meer is - valt hier om.
-    """
-    oud = _surface(auth_page, app_server, ROOS_URL, ROOS_SCOPE)
+#: Het blok dat dit tabblad zelf inlaadt. Verdwijnt dit adres, dan blijft de skeletweergave
+#: van de snapshotlijst staan zonder dat er iets misgaat.
+INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD = {"/projects/details/test-project-detail/backups"}
+
+
+def test_geen_enkele_bestemming_van_het_deploymenttabblad_is_verdwenen(app_server: str, auth_page: Page) -> None:
+    """Elke dialoog en elk endpoint uit de lijst hierboven staat op het tabblad."""
     nieuw = _surface(auth_page, app_server, LOTC_URL, LOTC_SCOPE)
 
-    # Insluiting en geen gelijkheid: het nieuwe tabblad MAG meer aanbieden. Het draagt
-    # sinds de opdeling zijn eigen knop "Deployment toevoegen" - op het oude tabblad
-    # stond die bij Project, en zonder hem heeft een project zonder deployments hier
-    # geen uitweg. Wat deze test bewaakt is dat er niets VERDWIJNT.
-    assert set(oud["calls"]) <= set(nieuw["calls"]), (
-        "de knoppen op het hertekende tabblad wijzen niet naar dezelfde dialogen/acties.\n"
-        f"alleen oud: {sorted(set(oud['calls']) - set(nieuw['calls']))}"
-    )
-    assert set(nieuw["hx"]) == set(oud["hx"]), (
-        "de blokken die zichzelf inladen halen niet dezelfde adressen op.\n"
-        f"alleen oud: {sorted(set(oud['hx']) - set(nieuw['hx']))}\n"
-        f"alleen nieuw: {sorted(set(nieuw['hx']) - set(oud['hx']))}"
+    weg = AANROEPEN_VAN_HET_DEPLOYMENTTABBLAD - set(nieuw["calls"])
+    assert not weg, "verdwenen van het tabblad Deployments:\n  " + "\n  ".join(sorted(weg))
+
+    assert set(nieuw["hx"]) >= INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD, (
+        f"het tabblad laadt niet meer in: {sorted(INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD - set(nieuw['hx']))}"
     )
 
 

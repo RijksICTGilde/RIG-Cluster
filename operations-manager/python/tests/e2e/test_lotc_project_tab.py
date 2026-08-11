@@ -35,7 +35,6 @@ pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
 NLDD_URL = f"/projects/details/{PROJECT}?tab=project"
-ROOS_URL = f"/projects/details/{PROJECT}?layout=roos"
 
 # De aanroepen die bij de WIDGET horen en niet bij de pagina: het geheimveld van ROOS
 # bedraadt zijn eigen oog- en kopieerknop met inline handlers. Het geheimveld van LOTC
@@ -111,25 +110,41 @@ def _wait_for(recorded: list[str], timeout: float = 10.0) -> str:
     raise AssertionError("de knop heeft geen enkel verzoek afgevuurd")
 
 
-def test_geen_enkele_aanroep_van_het_oude_tabblad_is_verdwenen(app_server: str, auth_page: Page) -> None:
-    """Alles wat het oude tabblad Project kon aanroepen, kan het nieuwe ook.
+#: Wat het tabblad Project - opgedeeld in Overzicht, Componenten en Services - moet kunnen
+#: aanroepen. Hier stond een VERGELIJKING met het oude tabblad; die pagina is er niet meer,
+#: dus dit is de lijst. Hij noemt alleen wat over het PROJECT gaat: de weergavekeuze, het
+#: gebruikersmenu en de logviewer staan op elke pagina en zeggen niets over dit tabblad.
+#:
+#: Een lijst veroudert waar een vergelijking dat niet deed. Dat is de prijs; wat hij koopt
+#: is dat een knop die verdwijnt hier omvalt in plaats van pas als iemand hem zoekt.
+AANROEPEN_VAN_HET_PROJECTTABBLAD = {
+    "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')",
+    "openEditModal('modal-edit-team', 'Projectleden beheren')",
+    "openEditModal('modal-edit-services', 'Services beheren')",
+    "openEditModal('modal-edit-component-0', 'Component bewerken - web-app')",
+    "openEditModal('modal-edit-component-1', 'Component bewerken - worker')",
+    "openEditModal('modal-edit-component-2', 'Component toevoegen')",
+    "openEditModal('modal-edit-keycloak-config', 'Keycloak Authentication configuratie')",
+    "openEditModal('modal-edit-postgresql-schemas', 'PostgreSQL Database configuratie')",
+    "openServiceModal('/projects/test-project-detail/actions/delete-component/confirm?target=web-app', "
+    "'Component verwijderen')",
+    "openServiceModal('/projects/test-project-detail/actions/delete-component/confirm?target=worker', "
+    "'Component verwijderen')",
+    "openServiceModal('/projects/test-project-detail/actions/refresh-project/confirm', 'Project herverwerken')",
+    "openServiceModal('/projects/test-project-detail/actions/delete-project/confirm', 'Project verwijderen')",
+    "copyToClipboard('.config-code', event, '.config-item')",
+}
 
-    Dit is de kern van de opdracht, en het is een vergelijking en geen lijstje: een
-    handmatige opsomming veroudert zodra iemand een knop toevoegt, deze meting niet.
-    """
-    auth_page.goto(f"{app_server}{ROOS_URL}")
-    auth_page.wait_for_load_state("networkidle")
-    oud = _page_handlers(auth_page, "#tab-project")
 
-    # Over de drie tabbladen samen, want het oude tabblad Project is opgedeeld: wat er
-    # verdwenen zou zijn, is wat op GEEN van de drie meer staat.
-    nieuw: set[str] = set()
+def test_geen_enkele_aanroep_van_het_projecttabblad_is_verdwenen(app_server: str, auth_page: Page) -> None:
+    """Alles uit de lijst hierboven staat op een van de drie tabbladen."""
+    aanwezig: set[str] = set()
     for tab in ("project", "componenten", "services"):
         _open_project_tab(auth_page, app_server, tab)
-        nieuw |= _page_handlers(auth_page, "body")
+        aanwezig |= _page_handlers(auth_page, "body")
 
-    assert oud, "de oude pagina leverde geen enkele aanroep - dan meet deze test niets"
-    assert oud <= nieuw, f"verdwenen van het tabblad Project: {sorted(oud - nieuw)}"
+    weg = AANROEPEN_VAN_HET_PROJECTTABBLAD - aanwezig
+    assert not weg, f"verdwenen van het tabblad Project: {sorted(weg)}"
 
 
 @pytest.mark.parametrize(

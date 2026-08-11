@@ -35,9 +35,7 @@ pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
 
-#: ?layout=... wint van de cookie, dus deze toetsen staan los van wat de browser onthoudt.
 NLDD_URL = f"/projects/details/{PROJECT}?tab=project"
-ROOS_URL = f"/projects/details/{PROJECT}?layout=roos"
 
 #: De knop op het tabblad Project die de dialoog opent, en de flow die erachter zit.
 TEAM_KNOP = "Projectleden beheren"
@@ -122,17 +120,14 @@ def _pad(url: str) -> str:
     return url.split("?", 1)[0].split("://", 1)[-1].split("/", 1)[-1]
 
 
-@pytest.mark.parametrize("layout_url", [NLDD_URL, ROOS_URL], ids=["nldd", "roos"])
-def test_opslaan_post_naar_hetzelfde_adres_in_beide_weergaven(
-    app_server: str, auth_page: Page, layout_url: str
-) -> None:
-    """De verzendknop gaat in beide weergaven naar dezelfde route.
+def test_opslaan_post_naar_het_verwachte_adres(app_server: str, auth_page: Page) -> None:
+    """De verzendknop gaat naar de route die de flow hoort te posten.
 
-    Deze test draait twee keer met dezelfde bewering, en dat is met opzet: de waarde
-    ernaast (het verwachte pad) is in beide gevallen dezelfde constante. Zou de omzetting
-    de knop naar een ander adres laten wijzen, of hem helemaal niet laten afvuren, dan
-    valt precies een van de twee om en zie je meteen aan welke kant het misging.
+    Deze test draaide twee keer, met dezelfde bewering voor beide weergaven: zou de knop
+    naar een ander adres wijzen, of helemaal niet afvuren, dan viel precies een van de
+    twee om. Er is er nog een, en het verwachte pad is nog steeds dezelfde constante.
     """
+    layout_url = NLDD_URL
     opgevangen: list[str] = []
     _onderschep_posts(auth_page, opgevangen)
 
