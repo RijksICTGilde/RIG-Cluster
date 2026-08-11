@@ -10,10 +10,10 @@ from sqlalchemy.exc import IntegrityError
 from starlette.responses import Response
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso
-from opi.core.templates import get_templates
-from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
+from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.user_editables import USER_SECTION
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.services.user_admin_service import UserAdminService
 from opi.services.user_service import get_user_service
 from opi.utils.csrf import ensure_csrf_token
@@ -35,7 +35,7 @@ def _get_service() -> UserAdminService:
 
 def _create_renderer() -> FormRenderer:
     return FormRenderer(
-        widget_adapter=ROOSWidgetAdapter(),
+        widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
     )
 
@@ -44,27 +44,14 @@ def _render_form_html(
     data: dict,
     errors: dict | None = None,
     edit_mode: bool = False,
-    lotc: bool = False,
 ) -> str:
     """Render the user form fields HTML from editables.
 
-    ``lotc`` bepaalt uit welk componentensysteem de velden komen. Dezelfde editables,
-    dezelfde waarden en dezelfde foutmeldingen; alleen de widgets en de omgeving waarin ze
-    renderen verschillen. Zonder deze keuze zou de LOTC-pagina roos-velden tonen, en dan
-    is de omzetting van het formulier alleen de omlijsting.
-
-    Het verschil zit niet alleen in de widgets maar ook in het aantal renderslagen. De
-    roos-widgets leveren een string met ``<c-*>``-tags op, die daarna alsnog door
-    ``process_components`` moet. De LOTC-adapter rendert meteen af, ook de stapel eromheen
-    (``render_flow``), dus die string mag NIET nog een keer door een sjabloonrender: hij
-    draagt wat iemand in het formulier heeft getypt, en dat hoort geen Jinja te worden.
+    De adapter rendert meteen af, ook de stapel eromheen (``render_flow``), dus die string
+    mag NIET nog een keer door een sjabloonrender: hij draagt wat iemand in het formulier
+    heeft getypt, en dat hoort geen Jinja te worden.
     """
-    if lotc:
-        from opi.forms.widgets.lotc import LOTCWidgetAdapter
-
-        renderer = FormRenderer(widget_adapter=LOTCWidgetAdapter(), translator=get_default_nl_translator())
-    else:
-        renderer = _create_renderer()
+    renderer = _create_renderer()
 
     html = renderer.render_fields_from_editables(
         editables=USER_SECTION.editables,
@@ -73,12 +60,6 @@ def _render_form_html(
         errors=errors,
         edit_mode=edit_mode,
     )
-    if lotc:
-        return html
-
-    process_components = get_templates().env.filters.get("process_components")
-    if process_components is not None:
-        html = str(process_components(html))
     return html
 
 
@@ -97,20 +78,19 @@ def _user_form_response(
     het met fouten terugkomt) lopen hierlangs, zodat de keuze tussen de twee weergaven op
     een plek staat en niet vijf keer meegeschreven hoeft te worden.
     """
-    from opi.web.lotc_switch import build_lotc_admin, render, wants_lotc
+    from opi.web.lotc_switch import build_lotc_admin, render
 
     return render(
         request,
-        roos="admin/user-form.html.j2",
-        lotc="bg/admin-user-form.html.j2",
+        template="bg/admin-user-form.html.j2",
         context={
             "request": request,
             "menu_items": get_menu_items(user),
             "page_heading": page_heading,
             "form_action": form_action,
-            "form_html": _render_form_html(data=data, errors=errors, edit_mode=edit_mode, lotc=wants_lotc(request)),
+            "form_html": _render_form_html(data=data, errors=errors, edit_mode=edit_mode),
             "csrf_token": ensure_csrf_token(request),
-            **build_lotc_admin(request, user=user, current_path="/admin/users"),
+            **build_lotc_admin(user=user, current_path="/admin/users"),
         },
     )
 
@@ -137,15 +117,14 @@ async def list_users(request: Request) -> Response:
 
     return render(
         request,
-        roos="admin/users.html.j2",
-        lotc="bg/admin-users.html.j2",
+        template="bg/admin-users.html.j2",
         context={
             "request": request,
             "menu_items": get_menu_items(user),
             "users": users,
             "csrf_token": csrf_token,
             "success_message": success_message,
-            **build_lotc_admin(request, user=user, current_path="/admin/users"),
+            **build_lotc_admin(user=user, current_path="/admin/users"),
         },
     )
 

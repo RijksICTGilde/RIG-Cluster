@@ -76,8 +76,7 @@ async def _render(
     # staat niet in DESIGN_SYSTEMS.
     return render(
         request,
-        roos=_MODAL_TEMPLATE,
-        lotc=_MODAL_TEMPLATE_LOTC,
+        template=_MODAL_TEMPLATE_LOTC,
         context={
             "request": request,
             "project_name": project_name,

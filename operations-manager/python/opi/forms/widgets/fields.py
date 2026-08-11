@@ -1,8 +1,13 @@
-"""
-ROOS Widget Adapter for form rendering.
+"""De veldvoorbereiding die elke widgetadapter deelt.
 
-Renders FormField instances to ROOS (RVO Open Source) component library HTML
-using Jinja2 templates from ``templates/widgets/``.
+Per veldtype staat hier WAT er gerenderd wordt: welke opties een keuzelijst krijgt, hoe
+een waarde in tekst komt, hoe een reeks zijn items opbouwt. Dat is bedrijfslogica en
+verandert niet mee met het componentensysteem.
+
+WAAR het mee gerenderd wordt, staat in de subklasse: die kiest de sjabloonmap en de
+omgeving. Vandaag is dat er een - :class:`opi.forms.widgets.lotc.LOTCWidgetAdapter`.
+Dit bestand heette ``roos.py`` en droeg daarnaast een eigen kale Jinja-omgeving op
+``opi/templates/``; die is met de roos-bouwlijn verdwenen.
 """
 
 from __future__ import annotations
@@ -13,8 +18,6 @@ from typing import TYPE_CHECKING, Any
 from opi.forms.widgets.base import WidgetAdapter
 
 if TYPE_CHECKING:
-    from jinja2 import Environment
-
     from opi.forms.field import FormField
     from opi.forms.layout import (
         ButtonGroup,
@@ -27,54 +30,15 @@ if TYPE_CHECKING:
     from opi.forms.presets.loader import Preset
 
 
-def _attr_escape(value: object) -> str:
-    """Escape a value for use inside a double-quoted HTML attribute.
+class FieldWidgetAdapter(WidgetAdapter):
+    """De gedeelde veldvoorbereiding; een subklasse levert de render.
 
-    Unlike Jinja2's built-in ``|e`` filter, this does NOT escape single
-    quotes.  ROOS web components read attribute values as plain strings,
-    so ``&#39;`` would appear literally in the UI.  Since attributes are
-    always double-quoted in our templates, escaping ``'`` is unnecessary.
+    Zelf niet bruikbaar: :meth:`_render_template` kiest de sjabloonmap en de omgeving en
+    hoort daarom bij het componentensysteem, niet hier.
     """
-    s = str(value)
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-
-
-def _get_widget_env() -> Environment:
-    """Get a plain Jinja2 environment for widget templates.
-
-    Widget templates output ROOS component tags (``<c-text-input-field>``, etc.)
-    as raw strings.  These are later processed by the ``process_components``
-    filter in ``wizard_step.html.j2``.  Using the main environment (which has
-    ``ComponentExtension``) would cause the preprocessor to fail on Jinja2
-    expressions inside component attributes, so we use a plain environment that
-    shares the same template directory.
-    """
-    from jinja2 import Environment, FileSystemLoader
-
-    from opi.core.templates import TEMPLATES_DIR
-
-    env = Environment(
-        loader=FileSystemLoader(str(TEMPLATES_DIR)),
-        autoescape=False,
-    )
-    env.filters["attr_escape"] = _attr_escape
-    return env
-
-
-class ROOSWidgetAdapter(WidgetAdapter):
-    """
-    ROOS component library widget adapter.
-
-    Renders form fields using Jinja2 templates that emit ROOS web component
-    tags (c-text-input-field, c-select-field, etc.).
-    """
-
-    def __init__(self) -> None:
-        self._env = _get_widget_env()
 
     def _render_template(self, template_name: str, ctx: dict[str, object]) -> str:
-        template = self._env.get_template(f"widgets/{template_name}")
-        return template.render(**ctx)
+        raise NotImplementedError
 
     # ------------------------------------------------------------------
     # Field rendering methods
@@ -365,7 +329,6 @@ def render_preset_cards(
     yaml_data: dict | None = None,
     locked_presets: dict[str, str] | None = None,
     csrf_token: str = "",
-    env: Environment | None = None,
 ) -> str:
     """Render preset cards using the same visual style as service cards.
 
@@ -378,11 +341,11 @@ def render_preset_cards(
             cannot be toggled (e.g. forced by a service dependency).
         csrf_token: CSRF token rendered into the cards' hx-post header so
             the preset POST passes central CSRF enforcement.
-        env: Jinja-omgeving waarin het kaarttemplate rendert. Standaard de kale
-            roos-omgeving; de LOTC-bouwlijn geeft hier zijn eigen omgeving mee, zodat
-            dezelfde voorbereiding het omgezette template voedt in plaats van dat er
-            een tweede kopie van deze functie naast komt te staan.
+
+    Het kaarttemplate rendert in de templateomgeving. Die import staat binnenin om een
+    kringloop te vermijden: de omgeving leunt via de dienstenregistry op deze pakketmap.
     """
+    from opi.core.templates_lotc import templates_lotc
     if not presets:
         return ""
 
@@ -401,8 +364,7 @@ def render_preset_cards(
             }
         )
 
-    env = env or _get_widget_env()
-    template = env.get_template("widgets/preset_cards.html.j2")
+    template = templates_lotc.env.get_template("widgets/preset_cards.html.j2")
     return template.render(
         preset_states=preset_states,
         flow_id=flow_id,
