@@ -61,6 +61,14 @@ Een bijlage die nog gekoppeld is, is `blocked_reason`: de dialoog legt uit waaro
 kan en toont geen knop. De taak weigert het daarna alsnog zelf -- de dialoog is de
 vriendelijke helft, niet de rem.
 
+Bij een component ligt het net anders, omdat vrijwel elk component in een deployment zit.
+De dialoog **noemt** de deployments en componenten die eraan verwijzen en zegt dat die
+verwijzingen meegaan; de POST draagt daarom de bevestiging (`confirm_in_use`). Alleen een
+component waar het webadres van een deployment omheen gebouwd is (`root-component`,
+`expose-component-on-bare-domain`) krijgt een `blocked_reason` en geen knop -- dat weigert
+de delete-guard ook mét bevestiging. Zie
+[component-verwijderen-api](component-verwijderen-api.md).
+
 ## Waarom een sleutel en geen endpoint
 
 Een parameter waar een URL in past is een open POST-doel. Dit pad verwijdert projecten,
