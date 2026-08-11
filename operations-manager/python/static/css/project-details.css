@@ -182,7 +182,7 @@
 
 
 .cluster-badge {
-    background: var(--rvo-color-hemelblauw-50);
+    background: #E5F0F9;  /* hemelblauw-50 staat niet in lotc-app.css; vaste lichtste tint */
     color: var(--rvo-color-hemelblauw);
     padding: var(--rvo-space-xs) var(--rvo-space-sm);
     border-radius: 4px;
@@ -227,7 +227,7 @@
 
 
 .component-card {
-    border-left: 4px solid var(--rvo-color-paars);
+    border-left: 4px solid #6B4C9A;  /* --rvo-color-paars staat niet in lotc-app.css */
 }
 
 .component-header {
@@ -247,7 +247,7 @@
     align-items: center;
     gap: var(--rvo-space-sm);
     padding: var(--rvo-space-sm) var(--rvo-space-md);
-    background: var(--rvo-color-hemelblauw-50);
+    background: #E5F0F9;  /* hemelblauw-50 staat niet in lotc-app.css; vaste lichtste tint */
     border-radius: 4px;
     font-size: 0.875rem;
     color: var(--rvo-color-hemelblauw);
@@ -318,7 +318,7 @@
     padding: var(--rvo-space-md);
     border: 1px solid var(--rvo-color-grijs-200);
     border-radius: 4px;
-    background: var(--rvo-color-grijs-25);
+    background: #F8FAFC;  /* grijs-25 staat niet in lotc-app.css; gelijk aan grijs-050 */
 }
 
 .config-label {
@@ -365,7 +365,7 @@
 /* Environment Variables Section */
 .env-vars-scope-section {
     padding: var(--rvo-space-md);
-    background: var(--rvo-color-grijs-025);
+    background: #F8FAFC;  /* grijs-025 staat niet in lotc-app.css; gelijk aan grijs-050 */
     border-radius: 8px;
     border: 1px solid var(--rvo-color-grijs-100);
 }
@@ -373,7 +373,7 @@
 
 
 .env-vars-count-badge {
-    background: var(--rvo-color-hemelblauw-50);
+    background: #E5F0F9;  /* hemelblauw-50 staat niet in lotc-app.css; vaste lichtste tint */
     color: var(--rvo-color-hemelblauw);
     padding: var(--rvo-space-xs) var(--rvo-space-sm);
     border-radius: 4px;
