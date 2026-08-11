@@ -36,9 +36,14 @@ def test_detail_page_renders(app_server: str, auth_page: Page) -> None:
 
 
 def test_detail_page_shows_components(app_server: str, auth_page: Page) -> None:
-    """Verify component section shows component names."""
+    """Verify component section shows component names.
+
+    Componenten stonden op het tabblad Project en hebben sinds de opdeling een eigen
+    tabblad; wie hun inhoud meet, moet daarheen.
+    """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
+    open_tab(auth_page, "componenten")
 
     toon_tekst(auth_page, "web-app")
     toon_tekst(auth_page, "worker")
@@ -54,9 +59,13 @@ def test_detail_page_shows_team(app_server: str, auth_page: Page) -> None:
 
 
 def test_detail_page_shows_services(app_server: str, auth_page: Page) -> None:
-    """Verify service badges appear for configured services."""
+    """Verify service badges appear for configured services.
+
+    Diensten hebben sinds de opdeling hun eigen tabblad.
+    """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
+    open_tab(auth_page, "services")
 
     body = auth_page.text_content("body") or ""
     # The project has keycloak and publish-on-web services
@@ -89,7 +98,9 @@ def test_service_contributed_blocks_render(app_server: str, auth_page: Page) -> 
     """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
-    toon_tekst(auth_page.locator("#tab-project"), "Keycloak")
+    # Het Keycloak-blok is een dienstsectie en staat op het tabblad Services.
+    open_tab(auth_page, "services")
+    toon_tekst(auth_page.locator("#tab-services"), "Keycloak")
 
     open_tab(auth_page, "deployments")
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
