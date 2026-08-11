@@ -15,7 +15,10 @@
                     {% endif %}
                 {% endfor %}
             </div>
-            <div class="resource-legend">
+            {# .resource-legend was flex + wrap + gap: <c-cluster>. De items zelf blijven
+               een eigen <a> met eigen flex - een cluster rendert een <div>, en daar mag
+               geen link omheen die zelf weer een klikbaar geheel is. #}
+            <c-cluster gap="md">
                 {% for project in projects %}
                     {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
                     <a href="/projects/details/{{ project.name }}" class="resource-legend-item">
@@ -25,7 +28,7 @@
                     </a>
                     {% endif %}
                 {% endfor %}
-            </div>
+            </c-cluster>
         </c-layout-flow>
     </c-card>
 </c-layout-flow>
