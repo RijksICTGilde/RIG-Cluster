@@ -70,9 +70,10 @@ jobs:
         working-directory: operations-manager/python
         run: uv run pyright
 
-  # NOTE: Pre-existing unit tests in tests/*.py have broken dependencies on
-  # jinja-roos-components templates. These need to be fixed in a separate PR.
-  # For now, we skip unit tests and only run integration tests.
+  # NOTE: deze workflow draait de unit tests in tests/*.py niet. Dat stond hier omdat ze
+  # afhingen van jinja-roos-components-templates; die afhankelijkheid is met RC-67
+  # verdwenen, dus de reden geldt niet meer. Ze aanzetten is een eigen wijziging aan deze
+  # workflow (looptijd, markers, browsers voor e2e) en hoort niet bij die opruiming.
 
   integration-tests-mock:
     name: Integration Tests (Mock)
