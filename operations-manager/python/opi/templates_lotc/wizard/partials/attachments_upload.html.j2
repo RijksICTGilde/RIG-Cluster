@@ -38,7 +38,19 @@
             <label class="utrecht-form-label attachment-upload__label" for="wiz-att-file">Bestand</label>
             <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
             <div class="attachment-upload__row">
-                <c-button type="button" size="sm" label="Uploaden"/>
+                {# De htmx-bedrading gaat via :attrs. Een componenttag laat een los
+                   hx-attribuut niet door - de automatische omzetting liet ze daarom
+                   allemaal vallen, en de knop stond er wel maar stuurde niets. #}
+                {% set uploaden_attrs = {
+                    'hx-post': '/forms/wizard/create-project/attachments/stage',
+                    'hx-ext': 'ignore:json-enc',
+                    'hx-encoding': 'multipart/form-data',
+                    'hx-include': '#wiz-att-id, #wiz-att-file, #wiz-att-token',
+                    'hx-target': '#wiz-att-list',
+                    'hx-swap': 'innerHTML',
+                    'hx-disabled-elt': 'this',
+                } %}
+                <c-button type="secondary" size="sm" label="Uploaden" :attrs="uploaden_attrs"/>
                 <span id="wiz-att-feedback"></span>
             </div>
         </c-layout-flow>
