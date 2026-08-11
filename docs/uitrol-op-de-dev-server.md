@@ -76,6 +76,20 @@ dat: apt kon een spiegel niet bereiken). De builder houdt zijn cache vast tussen
 door, en met `SANDBOX_CACHE_IMAGE` kun je er een registry-cache naast zetten, dezelfde vorm
 als `publish-operations-manager` al gebruikt.
 
+### De builder wordt gedeeld, de buildx-store niet
+
+De buildkit-container draait in de docker-daemon en die is van de machine: alle sessies
+delen dus dezelfde builder en dezelfde buildcache. Wat NIET gedeeld is, is de buildx-store
+waarin hij geregistreerd staat (`~/.docker/buildx`) - die is van de sessie. Een sessie die
+de builder niet zelf aanmaakte kent hem daarom niet, en `docker buildx build --builder`
+faalt daar met `no builder "rig-sandbox-builder" found` terwijl de container gewoon draait.
+
+`task sandbox:build-builder` vangt dat op: hij kijkt naast `docker inspect` (de daemon) ook
+naar `docker buildx inspect` (de store van deze sessie), en registreert de builder alsnog
+met `docker buildx create --bootstrap`. Dat neemt een bestaande container met dezelfde naam
+over, dus de buildcache blijft staan. Draai die taak (of gewoon de bouwtaak, die roept hem
+aan) één keer in elke nieuwe sessie.
+
 ### De toets of de cache pakt
 
 Bouw twee keer achter elkaar. De tweede build hoort merkbaar sneller te zijn en **geen
