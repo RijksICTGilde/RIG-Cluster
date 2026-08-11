@@ -1,12 +1,24 @@
 /* Vormgeving van de metrics explorer.
-   Stond als <style>-blok in opi/templates/metrics-explorer.html.j2. */
+   Stond als <style>-blok in opi/templates/metrics-explorer.html.j2.
 
-.metrics-controls__row {
-    display: flex;
-    gap: 1.5rem;
-    align-items: flex-end;
-    flex-wrap: wrap;
-}
+   RC-74 heeft dit bestand langs de componenten gelegd. Weg zijn:
+
+   - .metrics-controls__row - flex met een gat, onderaan uitgelijnd en afbrekend. Dat is
+     <c-cluster gap="lg" align="end">.
+   - De drie flexregels van .metrics-controls__filter (display, align-items, gap) - ook
+     <c-cluster>. Alleen de marge erboven bleef hieronder staan.
+   - .rvo-select / .lotc-select / .rvo-input / .lotc-input - eigen padding, rand en
+     hoekstraal op kale <select>- en <input>-elementen. De keuzelijsten zijn nu
+     <c-select-field ... native> en brengen die opmaak zelf mee. Wat overblijft is het
+     ene filterveld hieronder.
+   - .metrics-error-text - een rode <p> in een kaart is <c-alert type="error">. */
+
+/* De velden in de bedieningsstrook.
+
+   GEEN component. Dit is "een kolom die meegroeit maar niet smaller wordt dan 200px", en
+   dat is een maatvoering die geen enkel layoutcomponent aanbiedt: <c-cluster> zet items
+   naast elkaar maar zegt niets over hun breedte. Zonder deze regel krimpen de twee
+   keuzelijsten tot de breedte van hun langste optie. */
 .metrics-controls__field {
     display: flex;
     flex-direction: column;
@@ -14,36 +26,30 @@
     min-width: 200px;
     flex: 1;
 }
-.metrics-controls__field--button {
-    flex: 0;
-    min-width: auto;
-}
+
+/* De marge boven de filterregel. De rest van dit blok is <c-cluster> geworden. */
 .metrics-controls__filter {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
     margin-top: 0.75rem;
 }
-.metrics-controls__filter input {
+
+/* Het losse filterveld. GEEN component: het is geen formulierveld met een eigen label
+   eronder maar een filter dat bij de lijst ernaast hoort, en het script hangt aan zijn id
+   en zijn oninput. Wat blijft is de maat - zonder max-width loopt het over de halve
+   pagina. */
+.metrics-filter-input {
     max-width: 300px;
-}
-.rvo-select,
-.lotc-select,
-.rvo-input,
-.lotc-input {
     padding: 0.5rem;
     border: 1px solid var(--rvo-color-grijs-400, #999);
     border-radius: 4px;
     font-size: 0.95rem;
-    width: 100%;
 }
 
-/* De foutmelding en het ingesloten Prometheus-venster. Stonden als style= in de markup;
-   het aan- en uitzetten gaat via .is-hidden uit base.css. */
-.metrics-error-text {
-    color: var(--rvo-color-error, #d33);
-}
+/* Het ingesloten Prometheus-venster.
 
+   GEEN component. Een <iframe> naar een andere applicatie is geen inhoud die het thema
+   kan vormgeven, en de hoogte MOET hier staan: een iframe zonder hoogte is 150px en dan
+   zie je een strookje grafiek. Zelfde soort reden als bij de <canvas>-elementen in
+   metrics-charts.css. */
 .prometheus-frame {
     width: 100%;
     height: 600px;
