@@ -23,6 +23,7 @@ STYLE_BLOCK = re.compile(r"<style[\s>]")
 BLOCK_START = re.compile(r"{%-?\s*block\s+(\w+)")
 BLOCK_END = re.compile(r"{%-?\s*endblock")
 JINJA_SYNTAX = re.compile(r"{{|{%")
+CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 HTML_TAG = re.compile(r"<[a-zA-Z][^>]*>", re.DOTALL)
 CLASS_ATTRIBUTE = re.compile(r'\bclass="')
 # Een Jinja-blok mag alles bevatten, ook een ``>`` (``{% if a|length > 1 %}``). Zolang die
@@ -98,10 +99,6 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
         1,
         "De tussenruimte van de stapel wordt als custom property gezet omdat het "
         "componentensysteem er geen klasse voor kent.",
-    ),
-    "wizard/wizard_steps_indicator.html.j2": (
-        1,
-        "De breedte van de voortgangsbalk is het percentage voltooide stappen.",
     ),
     "widgets/button_group.html.j2": (
         1,
@@ -211,10 +208,18 @@ def test_stylesheets_contain_no_jinja() -> None:
     Dat rendert daar naar het goede, maar een bestand onder static/ komt nooit langs
     Jinja: daar blijft de accolade letterlijk staan en valt de regel stil weg. Precies
     het soort verlies dat je bij het verplaatsen niet ziet.
+
+    COMMENTAAR TELT NIET MEE. Een /* */-blok wordt door geen enkele renderer aangeraakt,
+    dus daar kan niets stil wegvallen - en juist in commentaar hoort te staan dat een
+    klassenaam in het sjabloon wordt samengesteld (``resource-color-{{ loop.index0 }}``).
+    Zonder deze uitzondering straft deze poort precies de uitleg af die ze nodig maakt.
     """
     offenders: list[str] = []
     for stylesheet in sorted((STATIC_DIR / "css").glob("*.css")):
-        for number, line in enumerate(stylesheet.read_text().splitlines(), start=1):
+        # Commentaar leeggehaald, maar de regelovergangen blijven staan: de regelnummers
+        # in de melding moeten die van het bestand zelf zijn.
+        zonder_commentaar = CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), stylesheet.read_text())
+        for number, line in enumerate(zonder_commentaar.splitlines(), start=1):
             if JINJA_SYNTAX.search(line):
                 offenders.append(f"{stylesheet.name}:{number}: {line.strip()}")
 

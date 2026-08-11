@@ -1,8 +1,13 @@
-{# De balk die het resourcegebruik over de projecten verdeelt. #}
+{# De balk die het resourcegebruik over de projecten verdeelt.
+
+   De kop staat IN de kaart: dit is een kop van EEN blok, en die hoort in dat blok. Hij
+   stond ernaast, als losse <c-heading> boven de kaart, waardoor hij bij het wegvallen
+   van de eigen afstanden tegen de kaartrand plakte. panel() uit bg/_patterns.html.j2 is
+   wat het thema daarvoor levert (c-card + c-section-head), dezelfde als op de andere
+   dashboardblokken. #}
+{% from "bg/_patterns.html.j2" import panel %}
 {% if prometheus_available and total_cpu_usage is defined and total_cpu_usage > 0 %}
-<c-layout-flow gap="lg">
-    <c-heading type="h2" label="Resource Verdeling"/>
-    <c-card outline="true" padding="lg" background-color="wit">
+    {% call panel("Resource Verdeling", "chart-x-y-axis-line") %}
         <c-layout-flow gap="md">
             <p>CPU gebruik per project</p>
             <div class="resource-bar">
@@ -30,6 +35,5 @@
                 {% endfor %}
             </c-cluster>
         </c-layout-flow>
-    </c-card>
-</c-layout-flow>
+    {% endcall %}
 {% endif %}
