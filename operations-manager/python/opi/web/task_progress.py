@@ -90,8 +90,6 @@ def render_progress_fragment(request: Request, context: dict) -> str:
     """
     return render_fragment(
         request,
-        roos="partials/task_progress_fragment.html.j2",
-        lotc="partials/task_progress_fragment.html.j2",
+        template="partials/task_progress_fragment.html.j2",
         context=context,
-        process_roos=False,
     )

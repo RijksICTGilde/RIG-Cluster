@@ -19,6 +19,23 @@ rijen) en die horen niet in de HTML terecht te komen.
 
 from typing import Any
 
+
+def attr_escape(value: object) -> str:
+    """Escape een waarde voor gebruik binnen een dubbel aangehaald HTML-attribuut.
+
+    Anders dan het ingebouwde ``|e``-filter van Jinja2 escapet dit GEEN enkele
+    aanhalingstekens. Web-componenten lezen een attribuutwaarde als platte tekst, dus
+    ``&#39;`` zou letterlijk op het scherm komen; onze attributen staan altijd tussen
+    dubbele aanhalingstekens, dus ``'`` escapen is niet nodig.
+
+    Staat hier en niet bij de widgets omdat de templateomgeving hem als filter
+    registreert: importeren uit ``opi.forms.widgets`` zou die omgeving via het
+    ``__init__`` van dat pakket naar zichzelf laten terugwijzen.
+    """
+    tekst = str(value)
+    return tekst.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
 # Sleutels in field.attributes die de velddefinitie beschrijven en geen HTML-attribuut
 # zijn. Overgenomen uit de extra_attrs-macro in templates/widgets/_macros.html.j2, die
 # tot nu toe dezelfde scheiding maakte. Wijzigt die lijst, dan hoort hij hier mee te

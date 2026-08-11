@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.templates import get_templates
+from opi.core.templates_lotc import templates_lotc
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
@@ -47,7 +47,6 @@ from opi.web.lotc_switch import (
     build_lotc_projects,
     render,
     render_fragment,
-    wants_lotc,
 )
 from opi.web.menu import get_menu_items
 from opi.web.project_actions import build_project_action
@@ -130,8 +129,7 @@ async def permission_denied(request: Request) -> HTMLResponse:
 
     return render(
         request,
-        roos="permission-denied.html.j2",
-        lotc="bg/permission-denied.html.j2",
+        template="bg/permission-denied.html.j2",
         context={
             "request": request,
             "user": user,
@@ -192,15 +190,13 @@ async def project_progress_page(request: Request, task_id: str):
         task_service = get_task_service(request)
         task = await task_service.get_task(task_id)
         user = get_current_user(request)
-        templates = get_templates()
 
         from opi.web.navigation_lotc import get_navigation
 
         if not task:
             return render(
                 request,
-                roos="project-progress-done.html.j2",
-                lotc="bg/project-progress-done.html.j2",
+                template="bg/project-progress-done.html.j2",
                 context={
                     "request": request,
                     "title": "Taak niet beschikbaar",
@@ -223,8 +219,7 @@ async def project_progress_page(request: Request, task_id: str):
         context["navigation"] = get_navigation(user, current_path="/projects")
         return render(
             request,
-            roos="project-progress.html.j2",
-            lotc="bg/project-progress.html.j2",
+            template="bg/project-progress.html.j2",
             context=context,
         )
 
@@ -256,15 +251,11 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
     # Rendered once on purpose -- see render_progress_fragment for why a second pass
     # over the rendered HTML would execute task text as Jinja.
     #
-    # Het fragment volgt dezelfde keuze als de pagina eromheen. Zonder dat zou de pagina
-    # in de nieuwe vormgeving staan en er na de eerste poll roos-markup in verschijnen.
-
+    # Het eigen fragment van de voortgangsPAGINA, en niet het gedeelde uit
+    # task_progress.py: de pagina zet bg/_task-progress.html.j2 neer en dit is de
+    # pollroute die datzelfde blok vervangt.
     context = _progress_page_context(task, task_id)
-    if wants_lotc(request):
-        from opi.core.templates_lotc import templates_lotc
-
-        return HTMLResponse(content=templates_lotc.env.get_template("bg/_task-progress.html.j2").render(context))
-    return HTMLResponse(content=render_progress_fragment(request, context))
+    return HTMLResponse(content=render_fragment(request, template="bg/_task-progress.html.j2", context=context))
 
 
 @web_router.get("/projects/roos", response_class=HTMLResponse)
@@ -279,13 +270,13 @@ async def roos_project_form(request: Request):
     try:
         from opi.core.cluster_config import get_selectable_clusters
 
-        templates = get_templates()
         user = get_current_user(request)
-        return templates.TemplateResponse(
+        return templates_lotc.TemplateResponse(
+            request,
             "roos-form-improved.html.j2",
             {
                 "request": request,
-                "title": "Project Aanmaken - ROOS",
+                "title": "Project Aanmaken",
                 # Only the clusters this environment offers: production shows just
                 # odcn-production, development a configurable set.
                 "clusters": get_selectable_clusters(),
@@ -469,13 +460,8 @@ async def keycloak_otp_code_web(request: Request, project_name: str, realm_name:
     return HTMLResponse(
         content=render_fragment(
             request,
-            roos="keycloak/otp-code.html.j2",
-            lotc="keycloak/otp-code-lotc.html.j2",
+            template="keycloak/otp-code-lotc.html.j2",
             context={"code": code, "project_name": project_name, "realm": realm_name},
-            # Rendert EEN keer. Het is een sjabloonbestand, dus de componenttags zijn al
-            # bij het compileren vervangen; een tweede slag zou de gerenderde HTML nog
-            # eens als Jinja lezen.
-            process_roos=False,
         )
     )
 
@@ -696,8 +682,7 @@ async def deployment_action_confirm(
 
     return render(
         request,
-        roos="project-details/action-confirm.html.j2",
-        lotc="bg/_action-confirm.html.j2",
+        template="bg/_action-confirm.html.j2",
         context={
             "request": request,
             "action": action,
@@ -745,8 +730,7 @@ async def project_action_confirm(
 
     return render(
         request,
-        roos="project-details/action-confirm.html.j2",
-        lotc="bg/_action-confirm.html.j2",
+        template="bg/_action-confirm.html.j2",
         context={
             "request": request,
             "action": action,
@@ -757,25 +741,17 @@ async def project_action_confirm(
     )
 
 
-@web_router.get("/test-architecture", response_class=HTMLResponse)
-@requires_sso
-async def test_architecture(request: Request):
-    """Test route for architecture components."""
-    try:
-        templates = get_templates()
-        return templates.TemplateResponse("test-architecture.html.j2", {"request": request})
-    except Exception as e:
-        logger.error(f"Error serving test architecture: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Template error: {e!s}")
-
-
 @web_router.get("/test-hero", response_class=HTMLResponse)
 @requires_sso
 async def test_hero(request: Request):
     """Test route for hero component."""
     try:
-        templates = get_templates()
-        return templates.TemplateResponse("test-hero.html.j2", {"request": request})
+        from opi.web.navigation_lotc import get_navigation
+
+        user = get_current_user(request)
+        return templates_lotc.TemplateResponse(
+            request, "test-hero.html.j2", {"request": request, "navigation": get_navigation(user, current_path="")}
+        )
     except Exception as e:
         logger.error(f"Error serving test hero: {e!s}")
         raise HTTPException(status_code=500, detail=f"Template error: {e!s}")
@@ -794,9 +770,8 @@ async def formulier_demo_form(request: Request):
         HTML response with the formulier demo form
     """
     try:
-        templates = get_templates()
-        return templates.TemplateResponse(
-            "formulier-template.html.j2", {"request": request, "title": "Formulier Template - RVO Demo"}
+        return templates_lotc.TemplateResponse(
+            request, "formulier-template.html.j2", {"request": request, "title": "Formulier Template"}
         )
     except Exception as e:
         import traceback
@@ -1115,7 +1090,6 @@ async def dashboard(request: Request):
         HTML response with the dashboard showing project overview, metrics, and activity
     """
     try:
-        templates = get_templates()
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
 
@@ -1175,20 +1149,13 @@ async def dashboard(request: Request):
         #
         # Zes queries achter elkaar, plus een per project. Dat is wat het dashboard traag
         # maakt, en het is precies waarom de RVO-pagina hier lazy loading voor had. De
-        # nieuwe weergave doet dat ook: die haalt dit blok apart op via
-        # /dashboard/resource-usage, zodat de pagina er meteen staat en een trage of
-        # afwezige Prometheus hem niet ophoudt.
+        # De pagina haalt dit blok apart op via /dashboard/resource-usage, zodat de pagina
+        # er meteen staat en een trage of afwezige Prometheus hem niet ophoudt. Hier
+        # blijven ze dus leeg; het sjabloon leest ze wel.
 
         metrics: dict = {}
         prometheus_available = False
         pod_count = 0
-        ns_regex = "|".join(all_namespaces)
-
-        metrics, prometheus_available, pod_count = (
-            await collect_dashboard_metrics(all_namespaces, user_projects)
-            if not wants_lotc(request)
-            else ({}, False, 0)
-        )
 
         total_cpu_usage = sum(p.get("cpu_cores", 0) for p in user_projects)
 
@@ -1251,8 +1218,7 @@ async def dashboard(request: Request):
 
         return render(
             request,
-            roos="dashboard.html.j2",
-            lotc="bg/dashboard.html.j2",
+            template="bg/dashboard.html.j2",
             context={
                 "request": request,
                 "menu_items": get_menu_items(user),
@@ -1267,7 +1233,7 @@ async def dashboard(request: Request):
                 "health_counts": health_counts,
                 "health_banner": health_banner,
                 "total_cpu_usage": total_cpu_usage,
-                **build_lotc_dashboard(request, user=user),
+                **build_lotc_dashboard(user=user),
             },
         )
 
@@ -1309,7 +1275,6 @@ async def project_details(request: Request, project_name: str):
     try:
         from opi.services.services import ServiceAdapter
 
-        templates = get_templates()
         user = get_current_user(request)
 
         # Generate CSRF token for form protection (domain settings modal)
@@ -1686,8 +1651,7 @@ async def project_details(request: Request, project_name: str):
 
         return render(
             request,
-            roos="project-details.html.j2",
-            lotc="bg/project-tabs.html.j2",
+            template="bg/project-tabs.html.j2",
             context={
                 "request": request,
                 "title": f"Project Details - {project_details['display_name']}",
@@ -1900,8 +1864,7 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
 
     return render(
         request,
-        roos="dashboard/_resourcegebruik.html.j2",
-        lotc="bg/_dashboard-usage.html.j2",
+        template="bg/_dashboard-usage.html.j2",
         context={
             "request": request,
             "metrics": metrics,
@@ -2004,8 +1967,7 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
 
     return render(
         request,
-        roos="project-details/_resource-usage.html.j2",
-        lotc="bg/_resource-usage.html.j2",
+        template="bg/_resource-usage.html.j2",
         context=ctx,
     )
 
@@ -2048,8 +2010,7 @@ async def argocd_status_fragment(
 
     return render(
         request,
-        roos="project-details/_argocd-deployment-card.html.j2",
-        lotc="bg/_argocd-deployment-card.html.j2",
+        template="bg/_argocd-deployment-card.html.j2",
         context={
             "request": request,
             "project": project,
@@ -2086,7 +2047,6 @@ async def deployment_metrics_fragment(
     else:
         step = 60
 
-    templates = get_templates()
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
 
@@ -2177,8 +2137,7 @@ async def deployment_metrics_fragment(
 
     return render(
         request,
-        roos="partials/deployment_metrics.html.j2",
-        lotc="bg/_deployment-metrics.html.j2",
+        template="bg/_deployment-metrics.html.j2",
         context={
             "request": request,
             "project_name": project_name,
@@ -2924,7 +2883,6 @@ async def projects_overview(request: Request):
         HTML response with a table showing user's projects and their status
     """
     try:
-        templates = get_templates()
         # `or {}` omdat get_current_user None kan geven. Dat valt hier veilig uit: een lege
         # gebruiker heeft geen e-mailadres, is_platform_admin weigert een lege string en
         # geen enkel projectlidmaatschap matcht erop, dus de lijst wordt leeg in plaats van
@@ -2934,8 +2892,7 @@ async def projects_overview(request: Request):
 
         return render(
             request,
-            roos="projects-overview.html.j2",
-            lotc="bg/projects.html.j2",
+            template="bg/projects.html.j2",
             context={
                 "request": request,
                 "menu_items": get_menu_items(user),
@@ -2991,8 +2948,7 @@ def _wegwijzer(request: Request, roos: str, lotc: str, pad: str):
 
     return render(
         request,
-        roos=roos,
-        lotc=lotc,
+        template=lotc,
         context={
             "request": request,
             "menu_items": get_menu_items(user),
@@ -3015,8 +2971,7 @@ async def account_pagina(request: Request):
 
     return render(
         request,
-        roos="account.html.j2",
-        lotc="bg/account.html.j2",
+        template="bg/account.html.j2",
         context={
             "request": request,
             "menu_items": get_menu_items(user),
@@ -3060,14 +3015,12 @@ async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
 async def about_platform(request: Request):
     """Serve the 'About the platform' page."""
     try:
-        templates = get_templates()
         user = get_current_user(request)
         from opi.web.navigation_lotc import get_navigation
 
         return render(
             request,
-            roos="about.html.j2",
-            lotc="bg/about.html.j2",
+            template="bg/about.html.j2",
             context={
                 "request": request,
                 "menu_items": get_menu_items(user),
@@ -3084,10 +3037,17 @@ async def about_platform(request: Request):
 async def test_template_variables(request: Request):
     """Test route for debugging Jinja variables in ROOS components."""
     try:
-        templates = get_templates()
+        from opi.web.navigation_lotc import get_navigation
+
         user = get_current_user(request)
-        return templates.TemplateResponse(
-            "test-template-variables.html.j2", {"request": request, "menu_items": get_menu_items(user)}
+        return templates_lotc.TemplateResponse(
+            request,
+            "test-template-variables.html.j2",
+            {
+                "request": request,
+                "menu_items": get_menu_items(user),
+                "navigation": get_navigation(user, current_path=""),
+            },
         )
     except Exception as e:
         logger.error(f"Error serving test template variables: {e!s}")
@@ -3104,10 +3064,11 @@ async def example_page(request: Request):
         HTML response with a basic c-page template
     """
     try:
-        templates = get_templates()
         user = get_current_user(request)
-        return templates.TemplateResponse(
-            "example.html.j2", {"request": request, "title": "Example Page", "menu_items": get_menu_items(user)}
+        return templates_lotc.TemplateResponse(
+            request,
+            "example.html.j2",
+            {"request": request, "title": "Example Page", "menu_items": get_menu_items(user)},
         )
 
     except Exception as e:
@@ -3141,10 +3102,11 @@ async def tools_page(request: Request):
         HTML response with AGE tooling interface
     """
     try:
-        templates = get_templates()
         user = get_current_user(request)
-        return templates.TemplateResponse(
-            "tools.html.j2", {"request": request, "title": "AGE Encryption Tools", "menu_items": get_menu_items(user)}
+        return templates_lotc.TemplateResponse(
+            request,
+            "tools.html.j2",
+            {"request": request, "title": "AGE Encryption Tools", "menu_items": get_menu_items(user)},
         )
 
     except Exception as e:

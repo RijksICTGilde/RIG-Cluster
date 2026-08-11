@@ -34,8 +34,7 @@ from opi.core.templates import (
     get_version_info,
     static_url,
 )
-from opi.forms.lotc_attrs import field_attrs
-from opi.forms.widgets.roos import _attr_escape as attr_escape
+from opi.forms.lotc_attrs import attr_escape, field_attrs
 
 logger = logging.getLogger(__name__)
 

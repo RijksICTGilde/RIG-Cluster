@@ -1,16 +1,18 @@
-"""Tests that rendered wizard HTML passes ROOS component validation.
+"""Tests that rendered wizard HTML passes component validation.
 
-These tests render each wizard section with sample data and pass the
-resulting HTML through the ROOS component preprocessor.  If any
-``c-*`` tag uses an invalid attribute, the preprocessor raises a
-``RuntimeError`` - catching these errors at test time rather than at
-runtime.
+Elke wizardsectie wordt met voorbeeldgegevens gerenderd. De adapter rendert meteen in de
+LOTC-omgeving, dus de voorbewerker van de extensie loopt over elke componenttag: een tag
+met een attribuut dat de component niet kent, breekt HIER en niet pas in de browser.
+
+Dit bestand heette ``test_roos_component_validation.py`` en liet de gerenderde string
+daarna nog eens door de voorbewerker van jinja-roos. Die stap kan niet meer - de adapter
+levert geen ``<c-*>``-tags meer op maar afgerenderde HTML - en hij is ook niet meer nodig:
+het renderen zelf is de controle.
 """
 
 from __future__ import annotations
 
 import pytest
-from opi.core.templates import _component_ext
 from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.wizard_sections import (
@@ -28,19 +30,23 @@ from opi.forms.visualizers.wizard_sections import (
     TEAM_SECTION,
     WIZARD_DEPLOYMENT_SECTION,
 )
-from opi.forms.widgets.roos import ROOSWidgetAdapter
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
 
 def _create_renderer() -> FormRenderer:
     return FormRenderer(
-        widget_adapter=ROOSWidgetAdapter(),
+        widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
     )
 
 
-def _validate_roos_html(html: str, label: str = "test") -> None:
-    """Pass HTML through the ROOS preprocessor; raises on invalid components."""
-    _component_ext.preprocess(html, name=f"roos_validation_{label}", filename=None)
+def _validate_html(html: str, label: str = "test") -> None:
+    """De render is de controle; wat hier overblijft is dat er ook echt iets uitkwam.
+
+    Een lege string zou elke andere assertie in dit bestand gratis groen maken.
+    """
+    assert html.strip(), f"{label} leverde lege HTML op"
+    assert "<c-" not in html, f"{label} bevat een niet-verwerkte componenttag"
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +213,7 @@ class TestROOSComponentValidation:
         )
 
         assert html, f"Section {section_id} rendered empty HTML"
-        _validate_roos_html(html, label=section_id)
+        _validate_html(html, label=section_id)
 
     @pytest.mark.parametrize(
         "section_id",
@@ -228,10 +234,10 @@ class TestROOSComponentValidation:
         )
 
         assert html
-        _validate_roos_html(html, label=f"{section_id}-edit")
+        _validate_html(html, label=f"{section_id}-edit")
 
     def test_full_form_renders_valid_html(self) -> None:
-        """The full project form with all data should produce valid ROOS HTML."""
+        """The full project form with all data should produce valid HTML."""
         from opi.forms.visualizers.project_registry import get_all_project_editables, get_project_form_layout
 
         all_data = {
@@ -256,16 +262,16 @@ class TestROOSComponentValidation:
         )
 
         assert html
-        _validate_roos_html(html, label="full-form")
+        _validate_html(html, label="full-form")
 
 
 class TestPresetCardValidation:
-    """Preset card HTML must pass ROOS component validation."""
+    """Preset card HTML must pass component validation."""
 
     def test_preset_cards_unapplied(self) -> None:
-        """Clickable (unapplied) preset cards produce valid ROOS HTML."""
+        """Clickable (unapplied) preset cards produce valid HTML."""
         from opi.forms.presets.loader import Preset
-        from opi.forms.widgets.roos import render_preset_cards
+        from opi.forms.widgets.fields import render_preset_cards
 
         presets = [
             Preset(
@@ -279,12 +285,12 @@ class TestPresetCardValidation:
         ]
         html = render_preset_cards(presets, flow_id="test-flow", section_id="test-section")
         assert html
-        _validate_roos_html(html, label="preset-cards-unapplied")
+        _validate_html(html, label="preset-cards-unapplied")
 
     def test_preset_cards_applied(self) -> None:
-        """Applied preset cards (disabled state) produce valid ROOS HTML."""
+        """Applied preset cards (disabled state) produce valid HTML."""
         from opi.forms.presets.loader import Preset
-        from opi.forms.widgets.roos import render_preset_cards
+        from opi.forms.widgets.fields import render_preset_cards
 
         presets = [
             Preset(
@@ -307,12 +313,12 @@ class TestPresetCardValidation:
         assert html
         assert "service-card--selected" in html
         assert "checked" in html
-        _validate_roos_html(html, label="preset-cards-applied")
+        _validate_html(html, label="preset-cards-applied")
 
     def test_preset_cards_mixed(self) -> None:
         """A mix of applied and unapplied presets produces valid ROOS HTML."""
         from opi.forms.presets.loader import Preset
-        from opi.forms.widgets.roos import render_preset_cards
+        from opi.forms.widgets.fields import render_preset_cards
 
         presets = [
             Preset(
@@ -342,12 +348,12 @@ class TestPresetCardValidation:
         assert html
         assert "service-card--selected" in html
         assert "hx-post" in html  # second preset is still clickable
-        _validate_roos_html(html, label="preset-cards-mixed")
+        _validate_html(html, label="preset-cards-mixed")
 
     def test_real_keycloak_presets(self) -> None:
         """The actual keycloak-config presets file produces valid ROOS HTML."""
         from opi.forms.presets.loader import load_presets
-        from opi.forms.widgets.roos import render_preset_cards
+        from opi.forms.widgets.fields import render_preset_cards
 
         presets = load_presets("keycloak-config")
         if not presets:
@@ -356,7 +362,7 @@ class TestPresetCardValidation:
         # Test without any data applied
         html = render_preset_cards(presets, flow_id="new-project", section_id="keycloak-config")
         assert html
-        _validate_roos_html(html, label="keycloak-presets-fresh")
+        _validate_html(html, label="keycloak-presets-fresh")
 
         # Test with restrict-access already enabled (simulating authorization-wall)
         yaml_data = {
@@ -381,4 +387,4 @@ class TestPresetCardValidation:
             yaml_data=yaml_data,
         )
         assert html
-        _validate_roos_html(html, label="keycloak-presets-with-restrict")
+        _validate_html(html, label="keycloak-presets-with-restrict")

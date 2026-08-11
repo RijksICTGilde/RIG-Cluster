@@ -15,7 +15,7 @@ from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.providers import PROVIDER_REGISTRY
 from opi.forms.visualizers.visualizer import EditableVisualizer
-from opi.forms.widgets.roos import ROOSWidgetAdapter
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
 _SEEN: list[dict[str, Any] | None] = []
 
@@ -49,7 +49,7 @@ def _render(items: list[dict[str, Any]]) -> None:
     _SEEN.clear()
     PROVIDER_REGISTRY["_RecordingProvider"] = _RecordingProvider
     try:
-        renderer = FormRenderer(widget_adapter=ROOSWidgetAdapter())
+        renderer = FormRenderer(widget_adapter=LOTCWidgetAdapter())
         renderer._build_sequence_field(_sequence(), {"rules": items}, {}, edit_mode=False)
     finally:
         del PROVIDER_REGISTRY["_RecordingProvider"]
