@@ -7,9 +7,9 @@
   hulptekst, foutmelding) komt van het component, niet van onze eigen span en CSS.
 
   HIER STONDEN KALE <input>'s, met als reden: "c-checkbox wordt een webcomponent die zijn
-  invoerveld in de schaduwboom zet, dus het formulier serialiseert hem niet". Opnieuw
-  gemeten en dat klopt niet: er is helemaal geen invoerveld, het element is
-  form-associated, en FormData krijgt hem gewoon mee. Wat wel misging zat in htmx, dat
+  invoerveld in de schaduwboom zet, dus het formulier serialiseert hem niet". Het eerste
+  klopt (de <input> zit zelfs twee schaduwbomen diep), het tweede niet: het element is
+  form-associated en FormData krijgt hem gewoon mee. Wat wel misging zat in htmx, dat
   zijn parameters niet uit FormData haalt - dat is nu bij de bron opgelost
   (static/js/form-associated.js). Het hele verhaal, met de meting:
   features/aanvinkvakje.md.
@@ -17,8 +17,8 @@
   De dienstkaarten in service_cards.html.j2 houden hun eigen <input>; die uitzondering
   staat daar toegelicht en is daar gemeten.
 
-  De id gaat mee in de attribuutbundel zodat hij op het besturingselement landt; de
-  component gebruikt hem verder om hulptekst en foutmelding aan te knopen.
+  Elk vakje krijgt zijn eigen id (<pad>-<waarde>) op het besturingselement, zodat het net
+  als het enkele vakje met ``[id='...']`` precies terug te vinden is.
 #}
 {% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
 <c-checkbox-field

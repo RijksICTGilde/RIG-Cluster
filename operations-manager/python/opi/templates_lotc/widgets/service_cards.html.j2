@@ -19,8 +19,8 @@
             {# EEN GEWOON <input>, EN DAT IS HIER GEEN LUIHEID.
 
                Onder NLDD wordt <c-checkbox> een <nldd-checkbox-field>, en dat element
-               heeft GEEN <input> - niet in de lichte boom en niet in de schaduwboom; het
-               levert zijn waarde via ElementInternals (gemeten, zie
+               heeft geen <input> in de LICHTE boom: die zit twee schaduwbomen diep, en
+               de waarde loopt via ElementInternals (gemeten, zie
                features/aanvinkvakje.md). static/js/wizard.js zoekt het besturingselement
                met card.querySelector('input[type="checkbox"]') en vindt dan dus niets.
                Gevolg, in de browser gemeten: een klik op een kaart vinkte NIETS aan, en
