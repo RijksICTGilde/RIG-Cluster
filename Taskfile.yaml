@@ -108,6 +108,16 @@ tasks:
       - sh: command -v yq
         msg: |
           🚨 yq is not installed! Install with 'brew install yq' on MacOS or 'apt-get install yq' on Linux.
+      # jq en numfmt worden gebruikt door sandbox:build-builder om de geheugengrens van de
+      # bestaande builder uit te lezen en te vergelijken. Zonder ze leest de taak een lege
+      # staat en maakt hij de builder elke keer opnieuw aan - inclusief het verlies van de
+      # buildcache die dit hele bouwpad bij elkaar houdt.
+      - sh: command -v jq
+        msg: |
+          🚨 jq is not installed! Install with 'brew install jq' on MacOS or 'apt-get install jq' on Linux.
+      - sh: command -v numfmt
+        msg: |
+          🚨 numfmt is not installed! It ships with GNU coreutils: 'brew install coreutils' on MacOS (as gnumfmt) or 'apt-get install coreutils' on Linux.
     cmds:
       - echo -e "\n✅  All preconditions have been met.\n"
     silent: true
@@ -3132,11 +3142,20 @@ tasks:
         # numfmt wil hoofdletters (4G), docker accepteert beide - vandaar de tr.
         WANT="$(echo "{{.SANDBOX_BUILD_MEMORY}}" | tr '[:lower:]' '[:upper:]' | numfmt --from=iec)"
         STATE="$(docker inspect {{.BUILDER_CONTAINER}} 2>/dev/null | jq -r '"\(.[0].HostConfig.Memory) \(.[0].HostConfig.NetworkMode)"' 2>/dev/null || echo "")"
-        if [ "$STATE" != "$WANT host" ]; then
+        # De container in de daemon is niet waar `docker buildx build --builder` kijkt: die
+        # leest de buildx-store van de SESSIE (~/.docker/buildx). Op de gedeelde server heeft
+        # elke sessie een eigen store bij dezelfde daemon, dus een container die er staat kan
+        # in deze sessie onbekend zijn - en dan valt de build om met 'no builder found' nadat
+        # deze taak "staat klaar" meldde. Daarom beide voorwaarden.
+        if ! docker buildx inspect {{.SANDBOX_BUILDER_NAME}} >/dev/null 2>&1 || [ "$STATE" != "$WANT host" ]; then
           # Bestaat hij met een andere (of geen) grens, dan is opnieuw aanmaken de enige
-          # manier: een draaiende buildkit-container krijgt geen nieuwe limiet.
-          if [ -n "$STATE" ]; then
+          # manier: een draaiende buildkit-container krijgt geen nieuwe limiet. Staat hij
+          # goed maar kent deze sessie hem niet, dan neemt `create --bootstrap` de bestaande
+          # container met dezelfde naam over (exit 0) en blijft de buildcache staan.
+          if [ -n "$STATE" ] && [ "$STATE" != "$WANT host" ]; then
             echo "Builder {{.SANDBOX_BUILDER_NAME}} staat op '$STATE', gewenst '$WANT host' - opnieuw aanmaken..."
+          elif [ -n "$STATE" ]; then
+            echo "Builder {{.SANDBOX_BUILDER_NAME}} draait wel, maar staat niet in de buildx-store van deze sessie - overnemen..."
           fi
           docker buildx rm {{.SANDBOX_BUILDER_NAME}} >/dev/null 2>&1 || true
           # network=host om dezelfde reden als --network=host in sandbox-deploy: zonder
@@ -3148,7 +3167,7 @@ tasks:
             --driver-opt memory={{.SANDBOX_BUILD_MEMORY}} \
             --driver-opt network=host \
             --bootstrap >/dev/null
-          echo "Builder {{.SANDBOX_BUILDER_NAME}} aangemaakt met geheugengrens {{.SANDBOX_BUILD_MEMORY}}"
+          echo "Builder {{.SANDBOX_BUILDER_NAME}} klaargezet met geheugengrens {{.SANDBOX_BUILD_MEMORY}}"
         else
           echo "Builder {{.SANDBOX_BUILDER_NAME}} staat klaar met geheugengrens {{.SANDBOX_BUILD_MEMORY}}"
         fi
