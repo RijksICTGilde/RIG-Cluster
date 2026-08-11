@@ -69,7 +69,9 @@
     left: 50%;
     transform: translate(-50%, -50%) scale(0.95);
     background: var(--rvo-color-wit);
-    border-radius: var(--rvo-border-radius-lg);
+    /* Vaste waarde: --rvo-border-radius-lg staat niet in lotc-app.css en leverde dus
+       geen hoekstraal op. 8px is wat die token in het oude thema was. */
+    border-radius: 8px;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     width: 80%;
     max-width: 80vw;
@@ -108,8 +110,11 @@
 }
 
 .edit-section-error {
-    background: var(--rvo-color-rood-100);
-    color: var(--rvo-color-rood-800);
+    /* rood-100 en rood-800 staan niet in lotc-app.css: de foutmelding kwam zonder
+       achtergrond EN zonder tekstkleur op het scherm - witte doos, zwarte tekst. Vaste
+       waarden in dezelfde familie als de rood-tinten die er wel zijn. */
+    background: #FDF2F2;
+    color: #8B1A17;
     border: 1px solid var(--rvo-color-rood-300);
     padding: var(--rvo-space-md);
     border-radius: 4px;
@@ -160,7 +165,8 @@
 }
 
 .edit-progress-step.edit-progress-error {
-    color: var(--rvo-color-rood-700);
+    /* rood-700 bestaat niet; vaste waarde, zelfde familie als rood-750. */
+    color: #C0392B;
 }
 
 /* Hier stond de takenlijst: .edit-progress-tasks, -task-item, -subtask en -task-error.
