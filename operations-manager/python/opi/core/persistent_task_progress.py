@@ -17,6 +17,7 @@ from opi.core.task_manager import (
     TaskProgressManager,
     TaskStatus,
     _projects,
+    format_step_line,
 )
 
 if TYPE_CHECKING:
@@ -110,6 +111,7 @@ class PersistentTaskProgressManager:
                 "status": info["status"],
                 "error": info.get("error"),
                 "parent_id": info.get("parent_id"),
+                "subject": info.get("subject"),
             }
             for subtask_id, info in self._subtasks.items()
         ]
@@ -173,20 +175,26 @@ class PersistentTaskProgressManager:
     # Public interface -- mirrors TaskProgressManager
     # ------------------------------------------------------------------
 
-    def add_task(self, name: str) -> str:
-        """Add a task and start it immediately. Returns task ID."""
+    def add_task(self, name: str, subject: str | None = None) -> str:
+        """Add a task and start it immediately. Returns task ID.
+
+        ``subject`` says what the step runs for -- a deployment, component or service
+        name -- for steps that run more than once per project. It is kept next to the
+        name instead of inside it, so the page can show and group them separately.
+        """
         task_id = str(uuid.uuid4())
         self._subtasks[task_id] = {
             "name": name,
             "status": TaskStatus.RUNNING.value,
             "error": None,
             "parent_id": None,
+            "subject": subject,
         }
         logger.info("Task %s: Added task: %s (%s)", self._task_id, name, task_id)
-        self.update_current_step(name)
+        self.update_current_step(format_step_line(name, subject))
         return task_id
 
-    def add_subtask(self, parent_task_id: str, name: str) -> str:
+    def add_subtask(self, parent_task_id: str, name: str, subject: str | None = None) -> str:
         """Add a subtask under a parent task. Returns subtask ID."""
         subtask_id = str(uuid.uuid4())
         self._subtasks[subtask_id] = {
@@ -194,6 +202,7 @@ class PersistentTaskProgressManager:
             "status": TaskStatus.RUNNING.value,
             "error": None,
             "parent_id": parent_task_id,
+            "subject": subject,
         }
         logger.info(
             "Task %s: Added subtask: %s (%s) under %s",
@@ -202,7 +211,7 @@ class PersistentTaskProgressManager:
             subtask_id,
             parent_task_id,
         )
-        self.update_current_step(name)
+        self.update_current_step(format_step_line(name, subject))
         return subtask_id
 
     def update_task(self, task_id: str, message: str) -> None:
