@@ -288,3 +288,44 @@ class TestExtractComponentPathBackwardCompatibility:
         project_data = {"components": [{"name": "api"}]}
         result = self.handler.extract_component_path(project_data, "api", default_path="/default")
         assert result == "/default"
+
+
+class TestNonRootPathIngressRule:
+    """What a component with a path other than '/' actually gets served.
+
+    Asked by the zad-cli project: a component created with ``path: /api`` looked
+    healthy and answered 404 everywhere. Measured on the sandbox, the rule is
+    generated and does route - but only for its own prefix, and it forwards the
+    request path to the container unchanged. An application that serves ``/status``
+    at its root therefore answers 404 on ``/api``, and ``/status`` has no rule at
+    all. These renders pin both halves of that answer.
+    """
+
+    def _render(self, **overrides: object) -> str:
+        from opi.generation.manifests import render_template
+
+        values: dict[str, object] = {
+            "name": "productie-api-api",
+            "service_name": "productie-api",
+            "hostname": "api-productie-p0.sandbox.rijksapp.dev",
+            "path": "/api",
+            "rewrite": None,
+            "service_port": 8080,
+            "namespace": "rig-p0",
+        }
+        values.update(overrides)
+        return render_template("ingress.yaml.jinja", values)
+
+    def test_non_root_path_produces_a_prefix_rule_on_its_own_host(self):
+        rendered = self._render()
+        assert 'path: "/api"' in rendered
+        assert "pathType: Prefix" in rendered
+        assert 'host: "api-productie-p0.sandbox.rijksapp.dev"' in rendered
+
+    def test_without_rewrite_the_path_reaches_the_container_unchanged(self):
+        """No rewrite configured means no nginx rewrite directive is emitted."""
+        assert 'rewrite "^' not in self._render()
+
+    def test_rewrite_strips_the_prefix_when_it_is_configured(self):
+        rendered = self._render(rewrite="/")
+        assert 'rewrite "^/api/?(.*)$" "/$1" break;' in rendered
