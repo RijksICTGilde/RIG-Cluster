@@ -25,7 +25,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers import sandbox_api, service_config
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, read_api_key_with_retry
-from tests.e2e.helpers.wizard import WizardHelper, veldbesturing
+from tests.e2e.helpers.wizard import WizardHelper, aanvinkvakje_eindigend_op, veldbesturing, zet_aan
 
 if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Page
@@ -71,17 +71,17 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
             wizard.fill_team(email=_USER_EMAIL)
         if page.locator("[name='components[0]/name']").count() > 0:
             wizard.fill_component(name="web", image=RUNNABLE_IMAGE)
-        acl = page.locator("[name*='acl-key-prefix']")
+        # Op het VAKJE en niet op [name*=...]: dat laatste levert het custom element op,
+        # en is_checked()/check() daarop is een harde fout. Zie aanvinkvakje_eindigend_op.
+        acl = aanvinkvakje_eindigend_op(page, "acl-key-prefix")
         if acl.count() > 0:
             saw_redis_step = True
             # Default is on; untick it, so the file has to carry an explicit false.
-            if acl.first.is_checked():
-                acl.first.uncheck()
-        versioning = page.locator("[name*='enable-versioning']")
+            zet_aan(acl.first, False)
+        versioning = aanvinkvakje_eindigend_op(page, "enable-versioning")
         if versioning.count() > 0:
             saw_minio_step = True
-            if not versioning.first.is_checked():
-                versioning.first.check()
+            zet_aan(versioning.first, True)
         wizard.click_next()
 
     assert saw_redis_step, "the redis config step never appeared in the create wizard"
@@ -177,8 +177,7 @@ def test_redis_config_modal_saves_to_the_project_file(
     # assertion is the YAML in Forgejo and not the page.
     service_config.open_detail(sandbox_page, sandbox_url, config_project)
     service_config.open_service_config_modal(sandbox_page, "Redis")
-    checkbox = service_config.modal_field(sandbox_page, "acl-key-prefix").first
-    checkbox.check()
+    zet_aan(aanvinkvakje_eindigend_op(sandbox_page, "acl-key-prefix").first, True)
     capture(sandbox_page, "redis-config-modal-filled")
     service_config.modal_submit(sandbox_page)
     assert _wait_for_config(forgejo, config_project, "redis", "acl-key-prefix", True) is True, (
