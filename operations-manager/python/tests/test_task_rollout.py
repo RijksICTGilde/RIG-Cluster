@@ -150,7 +150,7 @@ class TestAddComponentRollout:
             await handle_add_component({**payload, "rollout": False}, progress)
 
         labels = _step_labels(progress)
-        assert "Project processing" not in labels
+        assert "Project verwerken" not in labels
         assert SKIPPED_STEP_LABEL in labels
 
 

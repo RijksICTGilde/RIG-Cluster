@@ -25,6 +25,7 @@ class SubtaskStatus(BaseModel):
     status: str  # pending, running, completed, failed
     error: str | None = None
     parent_id: str | None = None
+    subject: str | None = None  # What the step runs for, e.g. the deployment name
 
 
 class DeploymentUrls(BaseModel):

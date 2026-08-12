@@ -45,7 +45,7 @@ async def handle_sleep_transition(payload: dict[str, Any], progress: Any) -> dic
     # The flow itself names each step it takes (loading, committing) and the
     # reprocessing it triggers names the manifest and ArgoCD work, so the wait is
     # accounted for instead of sitting behind one bar.
-    heading = progress.add_task(f"{running}: {deployment_name}")
+    heading = progress.add_task(running, subject=deployment_name)
     try:
         result = (
             await flow.sleep(project_name, deployment_name, progress=progress)
