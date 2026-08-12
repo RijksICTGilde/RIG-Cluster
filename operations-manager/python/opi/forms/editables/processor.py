@@ -16,6 +16,7 @@ from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
 from opi.forms.editables.editable import ContextAwareEditableValidator, WidgetType, apply_virtualize
 from opi.forms.editables.merge import deep_merge_into
 from opi.forms.editables.path import get_value, resolve_path
+from opi.forms.editables.rendered_sequences import sequence_was_not_drawn
 from opi.forms.editables.service_path import (
     is_service_config_path,
     smart_delete_value,
@@ -595,6 +596,14 @@ class EditableFormProcessor:
         if not isinstance(items, list):
             items = []
 
+        # Niets ingediend EN het formulier heeft deze reeks niet getekend: dan zegt de
+        # inzending er niets over en blijft staan wat er stond. Zonder dit onderscheid
+        # is "de gebruiker haalde de laatste regel weg" niet te scheiden van "deze
+        # sectie ging er niet over", en wist elke opslag de lijst. Zie
+        # ``editables/rendered_sequences.py``.
+        if not items and sequence_was_not_drawn(submitted, read_path, ed.yaml_path):
+            return
+
         # Empty sequence + remove_when_none: don't persist an empty list (e.g. an
         # attachments coupling with no entries). For a plain path this removes the key;
         # skipping the write below avoids writing a fresh empty list.
@@ -612,18 +621,41 @@ class EditableFormProcessor:
         # fields are pruned from the original first, so user-removed values are not
         # re-introduced; the per-child processing below sets the managed values.
         prefix = f"{ed.yaml_path}[*]/"
-        managed_rel = [
-            child.editable.yaml_path.removeprefix(prefix)
+        managed_children = [
+            child
             for child in (vis.children or [])
             if not (child.readonly or (child.readonly_on_edit and edit_mode))
             and child.editable.yaml_path.startswith(prefix)
         ]
+
+        def _managed_rel(idx: int) -> list[str]:
+            """Wat er in rij *idx* van het origineel weg mag voor de overlay.
+
+            Een genest REEKS-kind dat het formulier voor deze rij niet tekende hoort
+            daar niet bij: het snoeien zou de lijst weghalen, en het kind zelf schrijft
+            hem niet terug (het houdt zich aan dezelfde regel). Samen zou dat de lijst
+            alsnog wissen langs de andere kant.
+            """
+            rel = []
+            for child in managed_children:
+                if child.widget == WidgetType.SEQUENCE:
+                    child_real = resolve_path(child.editable.yaml_path, idx)
+                    child_virt = (
+                        apply_virtualize(child_real, child.editable.virtualize)
+                        if child.editable.virtualize
+                        else child_real
+                    )
+                    if sequence_was_not_drawn(submitted, child_real, child_virt):
+                        continue
+                rel.append(child.editable.yaml_path.removeprefix(prefix))
+            return rel
+
         merged_items: list[Any] = []
         originals = original_items if isinstance(original_items, list) else []
         for idx, item in enumerate(items):
             orig = _match_original_item(item, originals, idx)
             if isinstance(item, dict) and isinstance(orig, dict):
-                base = _prune_paths(copy.deepcopy(orig), managed_rel)
+                base = _prune_paths(copy.deepcopy(orig), _managed_rel(idx))
                 merged_items.append(deep_merge_into(base, copy.deepcopy(item)))
             else:
                 merged_items.append(copy.deepcopy(item))
@@ -769,6 +801,11 @@ class EditableFormProcessor:
             items = smart_get_value(submitted, real_seq_path)
         if not isinstance(items, list):
             items = []
+
+        # Zelfde regel als bij de reeks op het bovenste niveau: een geneste reeks die
+        # het formulier niet tekende, mag hij niet vervangen.
+        if not items and sequence_was_not_drawn(submitted, virtual_seq_path, real_seq_path):
+            return
 
         # Capture the pre-edit list as the field-order reference before overwriting it.
         original_nested = smart_get_value(result, real_seq_path)
