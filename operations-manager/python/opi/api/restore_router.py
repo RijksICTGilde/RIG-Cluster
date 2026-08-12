@@ -1359,8 +1359,14 @@ async def restore_database(
     Args:
         cluster: Cluster name where backup was made
         namespace: Kubernetes namespace for the restore pod (must be the authenticated project's own namespace)
-        reference_name: Logical name of the database backup to restore
-        body: Target database connection parameters
+        reference_name: Logical name of the database backup to restore. This is the
+            ``reference_name`` of the backup as listed by
+            ``GET /api/v1/backup/runs/{project}/{deployment}``; the snapshot listing
+            (``GET /api/v1/restore/snapshots/...``) reports the same value in its
+            ``pvc_name`` field, which carries every backed-up resource regardless of kind.
+        body: Target database connection parameters. Required - a request without a JSON
+            body is answered with 422 naming the missing fields, not with a 404 on the
+            reference name.
         project_name: Project name matching the API key (required)
 
     Headers:
@@ -1472,8 +1478,10 @@ async def restore_bucket(
     Args:
         cluster: Cluster name where backup was made
         namespace: Kubernetes namespace for the restore pod (must be the authenticated project's own namespace)
-        reference_name: Logical name of the bucket backup to restore
-        body: Target MinIO connection parameters
+        reference_name: Logical name of the bucket backup to restore. Same value as the
+            ``reference_name`` of the backup run, reported as ``pvc_name`` in the snapshot listing.
+        body: Target MinIO connection parameters. Required - a request without a JSON body
+            is answered with 422 naming the missing fields.
         project_name: Project name matching the API key (required)
 
     Headers:

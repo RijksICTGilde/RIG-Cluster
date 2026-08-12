@@ -25,6 +25,7 @@ from opi.connectors.subdomain import (
 )
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
+from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_store import get_project_store
@@ -900,7 +901,17 @@ class AddComponentRequest(BaseModel):
         None,
         description="Inbound ports as an array, e.g. [8443, 9443]. Use either 'port' or 'ports', not both. The first port is used for the ingress.",
     )
-    path: str = Field("/", max_length=256, description="Ingress path (only relevant with publish-on-web service)")
+    path: str = Field(
+        "/",
+        max_length=256,
+        description=(
+            "Ingress path (only relevant with publish-on-web service). The component gets its own "
+            "hostname, and this is the path prefix it answers on there. A non-root path is passed "
+            "to the application unchanged: with path '/api' the request https://<host>/api/status "
+            "reaches the container as /api/status, and anything outside the prefix (https://<host>/status) "
+            "has no rule and answers 404. Use '/' unless the application itself serves the prefix."
+        ),
+    )
     services: list[str] | None = Field(
         None,
         description="Component services list (e.g. ['postgresql-database']), bare names only. NOT inherited from "
@@ -2798,9 +2809,7 @@ async def validate_clone_configuration(
         project_data = await project_manager.get_contents()
 
         # Execute validation (no actual cloning)
-        validation_result = await project_manager._clone_manager.validate_clone_readiness(
-            project_data=project_data, deployment_name=deployment_name
-        )
+        validation_result = validate_clone_readiness(project_data=project_data, deployment_name=deployment_name)
 
         # Determine status code based on validation result
         if validation_result.get("validation", {}).get("passed"):
