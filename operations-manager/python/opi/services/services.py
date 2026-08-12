@@ -827,15 +827,13 @@ class ServiceAdapter:
         )
         key = "name" if layer.value == "project" else "reference"
 
-        # Configuring on a component/deployment implicitly selects the service at the
-        # project level, so the caller need not add it to the root services list
-        # first. A structural check requires every component service to resolve to a
-        # project-level service (project_validation); this keeps a component-only
-        # config write self-contained. If the service genuinely needs project-level
-        # config, the bare selection fails validation there -- a clear signal, not a
-        # silent gap.
+        # Configuring on a component/deployment selects the service at the project level
+        # too -- but only if the service allows that (RC-84). A structural check requires
+        # every component service to resolve to a project-level service
+        # (project_validation), and a service that needs a project-level decision has to
+        # get one instead of a blank block nobody filled in.
         if layer.value != "project":
-            cls._ensure_project_selection(project_data, service_name)
+            cls.ensure_project_selection(project_data, service_name)
 
         for index, entry in enumerate(target_list):
             if service_entry_name(entry) == service_name:
@@ -852,16 +850,47 @@ class ServiceAdapter:
         target_list.append({key: service_name, "config": config})
 
     @classmethod
-    def _ensure_project_selection(cls, project_data: dict[str, Any], service_name: str) -> None:
-        """Add ``service_name`` as a bare project-level selection if absent.
+    def ensure_project_selection(cls, project_data: dict[str, Any], *service_names: str) -> None:
+        """Select these services at project level where they are not there yet (RC-84).
 
-        Never duplicates and never demotes an existing configured project entry --
-        an entry already present (bare or with config) is left untouched.
+        Whether that may happen without anyone asking is each service's own answer
+        (``Service.implicit_project_entry``): a service with nothing to decide at project
+        level enrols itself with the entry it names, a service that needs a decision --
+        which domains, which realm, an administrator's approval -- refuses, and the caller
+        is told to select it at project level first.
+
+        Never duplicates and never demotes an existing project entry: an entry already
+        present (bare or with config) is left untouched. Nothing is written unless every
+        name is allowed, so a rejected list leaves the project file as it was.
+
+        Raises ``ServiceValidationError`` for an unknown service name, or when a service
+        may not enrol itself.
         """
+        cls.parse_services_from_strings(list(service_names))  # rejects an unknown service name
+
+        # Lazy: the registry imports this module, so it cannot be imported at load time.
+        from opi.services.registry import get_service
+
         services = project_data.setdefault("services", [])
-        if any(service_entry_name(entry) == service_name for entry in services):
-            return
-        services.append(service_name)
+        present = {service_entry_name(entry) for entry in services}
+        new_entries: list[str | dict[str, Any]] = []
+        refused: list[str] = []
+        for service_name in service_names:
+            if service_name in present:
+                continue
+            present.add(service_name)
+            entry = get_service(ServiceType(service_name)).implicit_project_entry()
+            if entry is None:
+                refused.append(service_name)
+            else:
+                new_entries.append(entry)
+
+        if refused:
+            raise ServiceValidationError(
+                f"Services that must be enabled at project level first: {refused}. They need project-level "
+                f"configuration that cannot be assumed, so they are not added automatically."
+            )
+        services.extend(new_entries)
 
     @classmethod
     def remove_service_config(

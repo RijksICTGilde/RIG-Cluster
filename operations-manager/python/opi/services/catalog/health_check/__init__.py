@@ -38,6 +38,9 @@ class HealthCheckService(Service):
     )
     config_model = HealthCheckConfig
     config_schema_version = "1.0"
+    # May enrol itself (RC-84): the probe is configured on the component and there is
+    # nothing at project level to choose.
+    allows_implicit_project_selection = True
     # Runs after the secret services (10-50). This provider only overrides probe_*
     # template vars that no other service touches, so the order is not load-bearing.
     manifest_order = 55

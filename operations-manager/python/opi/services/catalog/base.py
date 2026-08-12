@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
+from pydantic import ValidationError
+
 from opi.services.catalog.events import collect_event_handlers
 from opi.services.services import ServiceDefinition
 
@@ -905,6 +907,77 @@ class Service(ABC):
             if self.config_editables(layer) or self.config_api_fields(layer) or has_layout:
                 layers.append(layer)
         return layers
+
+    # --- implicit project selection (RC-84 "a service that may enrol itself") -----
+    # Hanging a service on a component or deployment while the project has not selected
+    # it is either a needless extra step or a missing decision, and which of the two it
+    # is depends on the service. The base answer is the safe one -- no, select it at
+    # project level first -- so a new service is never implicitly enrolled because
+    # nobody thought about it. A service that may enrol itself says so, and says what
+    # its project-level entry then contains.
+
+    #: Whether hanging this service on a component/deployment may also add it to the
+    #: project's ``services`` list, without anyone selecting it there. False (the safe
+    #: answer) for every service that does not say otherwise; a service that declares
+    #: approvals is never implicit, whatever it sets here.
+    allows_implicit_project_selection: ClassVar[bool] = False
+
+    def implicit_project_config(self) -> ServiceConfigData | None:
+        """The project-level config this service starts with when enrolled implicitly.
+
+        None (the default) means "a bare selection": the service's name in the project's
+        ``services`` list and no config block, which is right for a service whose config
+        model is all defaults or that carries no project-level config at all. A service
+        that needs content in the project file to be meaningful returns it here.
+
+        Only consulted when ``allows_implicit_project_selection`` is set; whatever it
+        returns must validate against the service's project-layer model, which
+        ``implicit_project_entry`` checks.
+        """
+        return None
+
+    def implicit_project_entry(self) -> str | dict[str, Any] | None:
+        """This service's project-file entry when it is enrolled implicitly, or None.
+
+        None means "not allowed": the caller has to select the service at project level
+        first, and says so in its error. Otherwise the entry is the bare service name,
+        or a ``{name, config}`` record when the service supplies a default config.
+
+        Two rules are enforced here rather than left to each service:
+
+        * a service that declares approvals (``config_approvals``) is never implicit --
+          enrolling itself would enrol the thing an administrator has to approve, so the
+          approval wins over whatever the service declares;
+        * a service that says yes must produce an entry that validates. If its default
+          project config does not pass its own project-layer model, that is a programming
+          error in the service and it fails loudly here instead of writing a project file
+          that the save chokepoint will reject.
+        """
+        if not self.allows_implicit_project_selection or self.approval_specs():
+            return None
+
+        config = self.implicit_project_config()
+        model = self.config_model_for(ConfigLayer.PROJECT) if ConfigLayer.PROJECT in self.config_layers() else None
+        if model is None:
+            if config is not None:
+                raise TypeError(
+                    f"{type(self).__name__} supplies an implicit project config but carries no config at the "
+                    f"project layer, so the config has nowhere to go."
+                )
+            return self.service_type.value
+
+        try:
+            model.model_validate({} if config is None else config)
+        except ValidationError as exc:
+            raise TypeError(
+                f"{type(self).__name__} allows implicit project selection but its default project config does "
+                f"not validate against {model.__name__}; a service can only enrol itself with a config that "
+                f"keeps the project file valid."
+            ) from exc
+
+        if config is None:
+            return self.service_type.value
+        return {"name": self.service_type.value, "config": config}
 
     def web_routers(self) -> list[Any]:
         """The ``APIRouter``s carrying this service's own web endpoints (default none).
