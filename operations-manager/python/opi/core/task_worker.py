@@ -42,8 +42,8 @@ def reported_failure(result: object, progress: object = None) -> str | None:
     1. ``{"success": False, "error": ...}`` - de vorm van de backup- en herstelhandlers;
     2. ``{"status": "failed", "error": ...}`` - de vorm van de component- en
        dienstenhandlers, en precies de vorm uit de meting;
-    3. hij roept ``progress.fail_project(...)`` aan en geeft daarnaast iets teruggeeft dat
-       op succes lijkt. Dat markeerde de taak in de database wel als mislukt, maar
+    3. hij roept ``progress.fail_project(...)`` aan en geeft daarnaast iets terug dat op
+       succes lijkt. Dat markeerde de taak in de database wel als mislukt, maar
        fire-and-forget, waarna de worker er ``completed`` overheen schreef.
 
     Args:
