@@ -340,8 +340,12 @@ async def handle_restore(
 
                 progress.complete_project()
             else:
+                # Het antwoord moet zeggen wat er gebeurde: hieronder stond
+                # onvoorwaardelijk {"success": True}, dus een half mislukt herstel meldde
+                # zich als geslaagd terwijl zijn eigen stap op "failed" stond.
                 progress.fail_task(restore_task, "Een of meer herstelbewerkingen zijn mislukt")
                 progress.fail_project("Herstel gedeeltelijk mislukt")
+                return {"success": False, "error": "Herstel gedeeltelijk mislukt"}
 
         return {"success": True}
 

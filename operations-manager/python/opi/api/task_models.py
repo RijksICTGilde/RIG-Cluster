@@ -334,11 +334,21 @@ class TaskResponse[TResult: BaseModel](BaseModel):
 
     task_id: str = Field(..., description="Unique task identifier (UUID)")
     task_type: TaskType = Field(..., description="Type of operation being performed")
-    status: str = Field(..., description="Task status: pending, claimed, running, completed, failed, cancelled")
+    status: str = Field(
+        ...,
+        description=(
+            "Task status: pending, claimed, running, completed, failed, cancelled. "
+            "A task whose work failed reports 'failed' here, also when it failed part-way; "
+            "'completed' means the whole task succeeded."
+        ),
+    )
     progress_percent: int = Field(default=0, description="Completion percentage (0-100)")
     current_step: str = Field(default="", description="Human-readable description of the current step")
     subtasks: list[SubtaskStatus] | None = Field(default=None, description="Progress subtasks")
-    result: TResult | None = Field(default=None, description="Task result, populated when status is 'completed'")
+    result: TResult | None = Field(
+        default=None,
+        description="Task result, populated when the task finished — on 'completed' and on 'failed'",
+    )
     error_message: str | None = Field(default=None, description="Error details when status is 'failed'")
     created_at: str = Field(..., description="ISO 8601 timestamp when the task was created")
     started_at: str | None = Field(default=None, description="ISO 8601 timestamp when execution started")
