@@ -319,3 +319,35 @@ class ButtonGroup(LayoutElement):
     buttons: list[Submit] = field(default_factory=list)
     alignment: str = "start"
     gap: str = "md"
+
+
+def layout_field_names(layout: LayoutChild | list[LayoutChild] | None) -> set[str]:
+    """Every field name *layout* places on the screen.
+
+    A layout refers to fields by name: bare strings, ``Sequence.field_name`` and
+    ``Hidden.field_name``. Containers (Row/Column/Fieldset/Div) contribute what
+    their children contribute. Everything else draws no field.
+
+    This exists so "is this editable actually drawn" is answerable without
+    rendering. An editable registered on a section but absent from its layout is
+    the worst of both: the flow counts it as writable, and the form never shows
+    it, so every save submits it empty and wipes what was there.
+    """
+    if layout is None:
+        return set()
+    if isinstance(layout, str):
+        return {layout}
+    if isinstance(layout, list):
+        names: set[str] = set()
+        for child in layout:
+            names |= layout_field_names(child)
+        return names
+    if isinstance(layout, Column):
+        return layout_field_names(layout.child)
+    if isinstance(layout, (Row, Fieldset, Div)):
+        return layout_field_names(layout.children)
+    if isinstance(layout, Sequence):
+        return {layout.field_name} | layout_field_names(layout.child_layout)
+    if isinstance(layout, Hidden):
+        return {layout.field_name}
+    return set()
