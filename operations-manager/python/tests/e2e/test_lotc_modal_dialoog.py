@@ -35,7 +35,7 @@ pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
 
-NLDD_URL = f"/projects/details/{PROJECT}?tab=project"
+NLDD_URL = f"/projects/details/{PROJECT}"
 
 #: De knop op het tabblad Project die de dialoog opent, en de flow die erachter zit.
 TEAM_KNOP = "Projectleden beheren"

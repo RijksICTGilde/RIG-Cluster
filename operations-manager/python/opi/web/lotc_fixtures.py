@@ -31,6 +31,7 @@ import yaml
 from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
+from opi.web.lotc_switch import PROJECT_TABS
 
 FIXTURES_DIR = Path(__file__).parent / "lotc_fixtures"
 
@@ -402,18 +403,11 @@ def page_data(slug: str) -> dict[str, Any]:
 
     if slug in ("project-details", "project-tabs", "project-context"):
         context = build_details_context(available_projects()[-1]) or {}
-        # De tabbladen. Zes, en dat is de bovengrens van deze vorm: daarna wordt de balk
-        # te vol. Repositories staat er bewust NIET bij - die stond op de oude pagina
-        # omdat hij in het projectbestand staat, niet omdat iemand hem nodig heeft.
-        # Dezelfde tabs als de bestaande projectpagina (Project, Deployments, Taken),
-        # met Metrics erbij. Niet zelf bedacht: die verdeling scheidt "wat is dit
-        # project", "waar draait het" en "wat is er aan de hand", en die scheiding werkt.
-        context["tabs"] = {
-            "project": {"label": "Project"},
-            "deployments": {"label": "Deployments"},
-            "metrics": {"label": "Metrics"},
-            "taken": {"label": "Taken"},
-        }
+        # De tabbladen komen uit PROJECT_TABS, dezelfde lijst die de echte pagina gebruikt.
+        # Hier stond een eigen kopie met vier tabbladen; die liep achter (Componenten en
+        # Services ontbraken) en dat is precies wat een tweede lijst doet. De proefopstelling
+        # hoort dezelfde pagina te tonen, alleen met andere gegevens.
+        context["tabs"] = {sleutel: dict(tab) for sleutel, tab in PROJECT_TABS.items()}
         # De proefopstelling heeft geen cluster, dus geen metingen. Dat is dezelfde stand
         # die een echte instantie doorgeeft als Prometheus niet bereikbaar is.
         context["usage"] = None

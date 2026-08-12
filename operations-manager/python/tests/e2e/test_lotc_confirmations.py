@@ -21,6 +21,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.web.lotc_switch import project_tab_url
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page, Request, Route
@@ -54,7 +55,7 @@ def _wait_for_request(recorded: list[tuple[str, str]], timeout: float = 10.0) ->
 
 def _open(page: Page, app_server: str, trigger: str, *, tab: str = "project") -> None:
     """Klik een gevaarlijke actie aan en wacht tot de dialoog zijn bevestiging draagt."""
-    page.goto(f"{app_server}/projects/details/{PROJECT}?tab={tab}")
+    page.goto(f"{app_server}{project_tab_url(PROJECT, tab)}")
     page.wait_for_load_state("networkidle")
 
     page.locator(f"nldd-button:has-text('{trigger}')").first.click()
