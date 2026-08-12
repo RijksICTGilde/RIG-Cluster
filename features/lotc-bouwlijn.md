@@ -223,7 +223,9 @@ attribuut niet op het component, en liet het vallen. Wat overbleef was een kale 
 tag. **58 keer, in 35 bestanden** - knoppen die keurig renderen en zwijgen.
 
 De omzetter maakt er nu een echte `onclick` van via LOTC's `:attrs`-spread, met de aanroep
-in een `{% set %}`-blok vlak voor de tag. Dat blok is er om twee redenen: een genest
+in een `{% set %}`-blok vlak voor de tag. Dat is meteen het antwoord op "hier hoort een
+kale `<button>` want die heeft een onclick": nee, dat kan gewoon op een `<c-button>`.
+Welke maat en welk `type` een knop draagt staat in `features/knopmaten.md`. Dat blok is er om twee redenen: een genest
 aanhalingsteken binnen `:attrs` leest de voorbewerker als het einde van het attribuut, en
 de blokvorm rendert de Jinja die in zo'n aanroep zit gewoon mee.
 

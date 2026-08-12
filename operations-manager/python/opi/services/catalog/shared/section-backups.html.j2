@@ -48,12 +48,12 @@
                 {% if ctx.schedule %}
                 <c-icon icon="check-mark-circle" size="md" />
                 <c-span>Backups ingeschakeld: {{ ctx.schedule | rrule_schedule }}</c-span>
-                <c-button type="secondary" size="xs" show-icon="before" icon="gear"
+                <c-button type="secondary" size="sm" show-icon="before" icon="gear"
                           label="Schema wijzigen" :attrs="{'onclick': schema_instellen}" />
                 {% else %}
                 <c-icon icon="info-circle" size="md" />
                 <c-span>Geen backup schema ingesteld</c-span>
-                <c-button type="secondary" size="xs" show-icon="before" icon="gear"
+                <c-button type="secondary" size="sm" show-icon="before" icon="gear"
                           label="Schema instellen" :attrs="{'onclick': schema_instellen}" />
                 {% endif %}
             </c-cluster>

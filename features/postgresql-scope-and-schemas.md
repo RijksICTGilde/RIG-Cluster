@@ -91,6 +91,31 @@ Een schema uit de lijst halen zou data weggooien. In plaats daarvan is er per sc
 verdwijnt, maar het schema en zijn data blijven in de database staan. Verwijderen gebeurt
 nooit automatisch.
 
+#### Waarom dat vinkje in de wizard staat
+
+De vraag is terecht: als markeren de manier is waarop het systeem een verwijdering veilig
+afhandelt, dan is het een gevolg van een handeling en geen keuze die je aanvinkt. Voor de
+API klopt dat ook - `DELETE .../schemas/{postfix}` MARKEERT, de client hoeft het veld niet
+te kennen, en `manage_database_schemas` in `project_manager.py` legt uit waarom die
+bescherming daar zit en niet bij de client.
+
+In de wizard ligt het andersom, en dat is gemeten aan de verwerker: de reeksverwerker
+(`_process_sequence_json`) schrijft de INGEDIENDE lijst weg. Een rij die de gebruiker uit
+het formulier haalt is daarmee echt weg uit het projectbestand - niet gemarkeerd. Het
+vinkje is dus de enige manier waarop een wizardgebruiker een schema kan markeren, en
+daarmee een keuze die hij zelf maakt. Het weghalen ervan zou "de rij weggooien" de enige
+overgebleven weg maken, en dat is precies de weg die RC-17 wilde vermijden.
+
+Dat een rij uit het bestand verdwijnt is overigens iets anders dan dat een schema
+verdwijnt: nergens in de code staat een DROP van een extra schema. Het projectbestand
+weet er dan alleen niets meer van (hetzelfde als wat `DELETE ...?forget=true` doet).
+
+En één ding dat er echt fout was: het vinkje stond AAN bij een schema dat niet gemarkeerd
+is. De oorzaak zat niet in dit model maar in de formulierbrug, die voor een aanvinkvakje
+de MENSELIJKE weergave van de waarde pakte ("Nee") in plaats van de waarde zelf - en "Nee"
+is een niet-lege tekst, dus waar. Zie `features/aanvinkvakje.md` en
+`tests/forms/test_aanvinkvakje_stand.py`.
+
 ## Generaties, klonen en backups
 
 Extra schema's leven in dezelfde database als het standaardschema. De generatie zit in de
