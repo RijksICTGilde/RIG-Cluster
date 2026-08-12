@@ -49,8 +49,10 @@
         "services/keycloak/config/additional_redirect_uris",
         "services/keycloak/config/restrict-access/enabled",
         "services/keycloak/config/restrict-access/realm-role",
+        "services/keycloak/config/restrict-access/role",
         "services/keycloak/config/restrict-access/error-message",
-        "services/keycloak/config/additional-clients"
+        "services/keycloak/config/additional-clients",
+        "services/keycloak/config/account-link"
       ],
       "post_save_action": "process_project",
       "section_id": "keycloak-config",
@@ -326,8 +328,10 @@
         "services/keycloak/config/additional_redirect_uris",
         "services/keycloak/config/restrict-access/enabled",
         "services/keycloak/config/restrict-access/realm-role",
+        "services/keycloak/config/restrict-access/role",
         "services/keycloak/config/restrict-access/error-message",
-        "services/keycloak/config/additional-clients"
+        "services/keycloak/config/additional-clients",
+        "services/keycloak/config/account-link"
       ],
       "post_save_action": "process_project",
       "section_id": "keycloak-config",
