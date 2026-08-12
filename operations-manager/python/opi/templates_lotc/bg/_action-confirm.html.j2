@@ -24,11 +24,11 @@
 
   WAAROM ANNULEREN GEEN <c-button> IS
 
-  <c-button> laat geen onclick toe, en annuleren is precies dat: closeEditModal() van de
-  gedeelde modal-schil waarin dit fragment geladen wordt. Er is geen href die hetzelfde
-  doet - de dialoog moet dicht, de pagina eronder moet blijven staan. Dus een gewone
-  <button> met dezelfde aanroep. Hij komt en gaat met de schil: bestaat die niet, dan
-  bestaat dit fragment ook niet op het scherm.
+  Annuleren roept closeEditModal() aan van de gedeelde modal-schil waarin dit fragment
+  geladen wordt; er is geen href die hetzelfde doet, want de dialoog moet dicht en de pagina
+  eronder moet blijven staan. Dat gaat via :attrs op <c-button>, net als bij de
+  deploymentacties. Hier stond een kale <button> met de toelichting dat <c-button> geen
+  onclick toeliet - dat klopte niet, en het kostte die knop al zijn vormgeving.
 #}
 <div data-confirm-action="{{ key }}"
      hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
@@ -47,7 +47,12 @@
         <div id="confirm-action-error" class="edit-section-error is-hidden"></div>
 
         <c-action-group align="end">
-            <button type="button" onclick="closeEditModal()">Annuleren</button>
+            {# Een <c-button> en GEEN kale <button>: die laatste krijgt geen enkele
+               stijlklasse en stond er kaal bij. De toelichting hierboven zei dat
+               <c-button> geen onclick toelaat; dat klopt niet, :attrs zet het attribuut
+               wel door - zo openen de deploymentacties hun dialogen ook. #}
+            {% set annuleren = "closeEditModal()" %}
+            <c-button type="secondary" label="Annuleren" :attrs="{'onclick': annuleren}" />
             {# Niets te bevestigen als de actie vooraf geweigerd is; de dialoog legt dan
                alleen uit waarom (de server weigert hem ook). #}
             {% if not blocked_reason %}
