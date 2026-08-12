@@ -93,6 +93,35 @@ def aanvinkvakje(page: Page, pad: str) -> Locator:
     return page.locator(f"[id='{pad}']")
 
 
+def aanvinkvakje_eindigend_op(page: Page, staart: str) -> Locator:
+    """Het aanvinkvakje waarvan het pad hierop EINDIGT; voor dienstconfiguratievelden.
+
+    Die staan onder een virtueel pad (``_services-config/<dienst>/config/...``). Zoeken op
+    ``[name*='...']`` levert het custom element op, en ``is_checked()`` of ``check()``
+    daarop is een harde fout ("Not a checkbox or radio button") - gemeten in de sandbox op
+    ``acl-key-prefix``, waar de opzet van vijf tests erop strandde.
+
+    De hulptekst en de foutmelding dragen ``-help`` en ``-error`` achteraan en vallen dus
+    buiten een suffix op de veldnaam zelf.
+    """
+    return page.locator(f"[id$='{staart}']")
+
+
+def staat_aan(vakje: Locator) -> bool:
+    """De stand van een aanvinkvakje.
+
+    Via ``.checked`` op het element en niet via ``is_checked()``: dat laatste wil een
+    echte ``<input>`` en het vakje is een form-associated custom element.
+    """
+    return bool(vakje.evaluate("el => !!el.checked"))
+
+
+def zet_aan(vakje: Locator, aan: bool) -> None:
+    """Klik het vakje alleen als het nog niet in de gevraagde stand staat."""
+    if staat_aan(vakje) != aan:
+        vakje.click()
+
+
 def aanvinkvakjes(page: Page, pad: str) -> Locator:
     """Alle vakjes van de GROEP met dit pad, in de volgorde waarin ze staan.
 
