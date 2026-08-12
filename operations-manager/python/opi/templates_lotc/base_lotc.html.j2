@@ -88,10 +88,11 @@
        laatste is het mechanisme van <c-app-shell> en niet van een NLDD-component.
        <c-app-shell> houdt wat er overblijft, de zijkolom en de inhoud.
 
-       De benoemde container blijft er staan: NLDD heeft 28 regels van de vorm
-       `@container layout-container (min-width: ...)`, en gemeten droeg geen enkel element
-       op onze pagina die naam. #}
-    <nldd-page style="container: layout-container / inline-size;" background="inherit">
+       De benoemde layout-container stond hier eerst met de hand bij, omdat NLDD 28 regels
+       van de vorm `@container layout-container (min-width: ...)` heeft en gemeten geen enkel
+       element op onze pagina die naam droeg. Sinds LOTC 7ee5efa zet <c-page> hem zelf neer
+       zodra het nldd-designsysteem actief is, dus dat handwerk is weg. #}
+    <nldd-page background="inherit">
         <div slot="header">
             <c-header
                 text="Zelfservice voor Applicatie Deployment"
