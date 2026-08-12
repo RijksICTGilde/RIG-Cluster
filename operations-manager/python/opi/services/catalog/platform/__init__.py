@@ -23,3 +23,6 @@ class PlatformService(Service):
         # also keeps it out of the picker, so an explicit hidden is not needed.
         kind=ServiceKind.SYSTEM,
     )
+    # May enrol itself (RC-84): a system service is not a user choice, so there is no
+    # project-level decision to make first.
+    allows_implicit_project_selection = True

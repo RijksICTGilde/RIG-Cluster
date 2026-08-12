@@ -39,6 +39,10 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
     cleanup_manager_key = ManagerKey.DATABASE
     config_model = NamespacePostgresConfig
     config_schema_version = "1.0"
+    # May enrol itself (RC-84): every field of the project-level config reproduces
+    # DatabaseManager.DEFAULT_CONFIG, so an empty config is the same cluster the wizard
+    # would have created.
+    allows_implicit_project_selection = True
     config_section_id = "postgresql-config"
     modal_flow_id = "modal-edit-postgresql-config"
 

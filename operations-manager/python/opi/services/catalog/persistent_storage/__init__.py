@@ -34,6 +34,9 @@ class PersistentStorageService(BackupsPageMixin, Service):
     cleanup_manager_key = ManagerKey.PVC
     config_model = StorageConfig
     config_schema_version = "1.0"
+    # May enrol itself (RC-84): the mounts live on the component; the project layer holds
+    # no storage decision.
+    allows_implicit_project_selection = True
     config_component_order = 10
 
     # Component-level service: hooks a storage-mounts sequence into the component form.

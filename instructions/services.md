@@ -610,6 +610,7 @@ Every hook a service may implement, so a new service knows what it can own:
 | `config_component_layout()` / `config_component_visualizers()` | per-component form fields |
 | `web_routers()` | the endpoints those blocks need (fragments, modals) |
 | `config_approvals(layer)` | values that need approval before taking effect |
+| `allows_implicit_project_selection` / `implicit_project_config()` | whether binding the service to a component/deployment may also select it at project level, and with what project-level config (RC-84, `features/impliciete-dienstselectie.md`) |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
@@ -829,6 +830,13 @@ record a revocation on a domain that is already in use. Enforcement happens at p
 8. Manifest contribution? `manifest_secret_class` for the simple case, otherwise override
    `contribute_manifest_context` / `build_secret_files` and set `manifest_order`.
 9. Needs approval? Add `ApprovalSpec`s from `config_approvals(layer)`.
+9b. **Decide whether it may enrol itself.** Someone binding your service to a component
+   without having selected it at project level gets an error by default. If the service has
+   nothing to decide at project level, set `allows_implicit_project_selection = True` (and
+   `implicit_project_config()` if a bare selection is not enough) and record the reason in
+   the table in `features/impliciete-dienstselectie.md`. If it does need a decision, leave
+   it alone and record *that* -- a service that enrols itself with an invented default is
+   worse than an error message.
 10. Walk the UI you claim to have built: open `/projects/<name>/modal-wizard/modal-edit-services`
    and the create wizard, and check the card, the config step and the modal button are really
    there. "The code is complete" and "a user can reach it" are two different statements.

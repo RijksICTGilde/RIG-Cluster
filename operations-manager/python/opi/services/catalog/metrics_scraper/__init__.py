@@ -38,6 +38,9 @@ class MetricsScraperService(Service):
     )
     config_model = MetricsScraperConfig
     config_schema_version = "1.0"
+    # May enrol itself (RC-84): scraping is configured on the component and there is
+    # nothing at project level to choose.
+    allows_implicit_project_selection = True
     manifest_secret_class = MetricsAuthSecret
     manifest_order = 50
     config_component_order = 40

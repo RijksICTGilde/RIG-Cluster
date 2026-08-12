@@ -23,3 +23,6 @@ class NamespaceRedisService(Service):
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
     )
     cleanup_manager_key = ManagerKey.REDIS
+    # May enrol itself (RC-84): carries no project-level config at all, so an explicit
+    # project selection would record a decision that was never made.
+    allows_implicit_project_selection = True
