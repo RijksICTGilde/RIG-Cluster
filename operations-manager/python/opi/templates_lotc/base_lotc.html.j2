@@ -69,6 +69,23 @@
 
 <c-page title="{{ page_title_value }}" lang="nl" head="{{ lotc_head }}">
 
+    {# TUSSENSTAP, en de bedoeling is dat <c-page> dit gaat renderen.
+
+       NLDD heeft 28 regels van de vorm `@container layout-container (min-width: ...)`
+       waarmee zijn componenten zich op de beschikbare breedte afstemmen. Een containerquery
+       zonder container matcht niet en klaagt daar niet over; gemeten droeg geen enkel
+       element op onze pagina de naam layout-container, dus die 28 regels deden hier niets.
+       Een werkende NLDD-pagina zet hem op <nldd-page>, dat de inhoud omvat en zelf
+       beeldvullend is.
+
+       Waarom dit hier met de hand staat: <nldd-page> is in onze lotc-nldd GEEN gedefinieerd
+       custom element (alleen nldd-page-footer-legal-bar en zijn item bestaan), en <c-page>
+       rendert enkel <html>/<head>/<body>. Het style-attribuut werkt op een onbekend element
+       wel, dus de container komt er; `background="inherit"` doet nog niets tot het element
+       bestaat. Het verzoek staat in request_for_components.md - zodra <c-page> of
+       <c-app-shell> dit draagt, kan deze wikkel weg. #}
+    <nldd-page style="container: layout-container / inline-size;" background="inherit">
+
     {# width is de breedte van de zijkolom; bg gebruikt 16rem. #}
     <c-app-shell width="16rem">
 
@@ -246,4 +263,5 @@
     </template>
 
     </c-app-shell>
+    </nldd-page>
 </c-page>

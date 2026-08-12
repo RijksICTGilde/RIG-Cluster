@@ -128,8 +128,12 @@ def test_deployment_delete_posts_the_right_deployment(app_server: str, auth_page
     open_tab(auth_page, "deployments")
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
 
-    card = auth_page.locator("#tab-deployments .deployment-card").first
-    knop(card, "Verwijderen").first.click()
+    # De knop staat sinds vandaag in de Acties-kaart en niet meer los in het
+    # deploymentpaneel: het is een actie, dus hij hoort bij de acties. Het label zegt nu ook
+    # WAAROP hij slaat ("Deployment verwijderen"), want "Verwijderen" naast "Images
+    # bewerken" liet in het midden wat er weg zou gaan.
+    acties = auth_page.locator("#tab-deployments [id^='deployment-actions-']:not(.is-hidden)").first
+    knop(acties, "Deployment verwijderen").first.click()
     auth_page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=10000)
     auth_page.locator("#edit-section-inner [data-confirm-action]").wait_for(state="visible", timeout=10000)
 
