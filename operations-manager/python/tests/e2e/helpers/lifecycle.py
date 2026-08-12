@@ -94,7 +94,6 @@ def walk_create_wizard(
     body_text = page.text_content("body") or ""
     assert project_name in body_text, f"Project '{project_name}' not visible on review page"
     wizard.submit_wizard()
-    page.wait_for_load_state("networkidle")
     assert_progress_page_is_server_rendered(page)
 
 
@@ -272,7 +271,6 @@ def walk_create_wizard_with_services(
     body_text = page.text_content("body") or ""
     assert project_name in body_text, f"Project '{project_name}' not visible on review page"
     wizard.submit_wizard()
-    page.wait_for_load_state("networkidle")
 
 
 def create_project_with_services(

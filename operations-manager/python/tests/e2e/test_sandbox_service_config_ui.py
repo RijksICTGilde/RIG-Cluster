@@ -87,7 +87,6 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
     assert saw_redis_step, "the redis config step never appeared in the create wizard"
     assert saw_minio_step, "the minio-storage config step never appeared in the create wizard"
     wizard.submit_wizard()
-    page.wait_for_load_state("networkidle")
     name = forgejo.wait_for_new_project(before, timeout=240)
     assert name, "no project appeared in Forgejo"
     return name, read_api_key_with_retry(page, sandbox_url, name)

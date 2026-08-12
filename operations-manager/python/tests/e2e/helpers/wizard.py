@@ -288,15 +288,61 @@ class WizardHelper:
         review_btn = self.page.locator("button:has-text('Controleren'), button[type='submit']").last
         self._click_and_wait_for_step_change(review_btn)
 
-    def submit_wizard(self) -> None:
-        """Click the final submit button on the review page."""
+    #: De markering die de laatste wizardstap krijgt VOOR de verzendknop wordt ingedrukt,
+    #: zodat "de stap is vervangen" te onderscheiden is van "de stap staat er nog".
+    VOOR_VERZENDEN = "zadVoorVerzenden"
+
+    def submit_wizard(self, timeout: float = 30000) -> None:
+        """Dien de wizard in en wacht tot hij ergens geland is.
+
+        WAAROM DIT NIET OP ``networkidle`` WACHT. Dat deed het wel, plus wachten tot er
+        weer een ``#wizard-step-inner`` in de pagina stond, en daar strandden op de
+        sandbox 25 tests in hun OPZET (generale repetitie, bevinding 7). Twee dingen
+        gingen daar mis, en allebei zijn ze eigen aan juist deze klik:
+
+        1. De laatste verzendknop verlaat de wizardpagina: hij landt op
+           ``/projects/progress/<id>``. Daar IS geen ``#wizard-step-inner``, dus die
+           voorwaarde kon per definitie niet meer waar worden.
+        2. Die voortgangspagina peilt zichzelf met htmx. Een pagina die blijft peilen
+           wordt nooit ``networkidle``, dus ook die wachtvoorwaarde loopt af.
+
+        Het bewijs dat het de TOETS was en niet de wizard: de projecten die deze
+        fixtures aanmaakten stonden na afloop gewoon in ``zad-projects``, met een
+        ArgoCD-applicatie op ``Synced``/``Healthy``. De wizard doorliep de keten; de
+        test gaf te vroeg op.
+
+        Er zijn drie landingen mogelijk en alle drie zijn ze een afloop:
+
+        - de voortgangspagina (aanmaken geaccepteerd);
+        - een ingeswapte voortgangsweergave, als de flow in de pagina blijft;
+        - een NIEUWE wizardstap, als de server iets afkeurde - dat is een echte
+          uitkomst en geen wachtfout, en de aanroeper ziet hem aan de foutmelding.
+
+        Om de derde te kunnen zien wordt de huidige stap eerst gemarkeerd: zonder dat is
+        "de stap staat er nog" niet te onderscheiden van "de stap is vervangen", en dan
+        keert de wachtvoorwaarde meteen terug.
+        """
+        self.page.evaluate(
+            "(sleutel) => { const el = document.querySelector('#wizard-step-inner');"
+            " if (el) el.dataset[sleutel] = '1'; }",
+            self.VOOR_VERZENDEN,
+        )
         submit_btn = self.page.locator("button:has-text('Project aanmaken'), button:has-text('Indienen')")
         if submit_btn.count() > 0:
             submit_btn.first.click()
         else:
             # Fallback: any primary submit button
             self.page.locator("button[type='submit']").last.click()
-        self._wait_for_htmx()
+        self.page.wait_for_function(
+            """(sleutel) => {
+                if (location.pathname.startsWith('/projects/progress/')) return true;
+                if (document.querySelector('#project-progress')) return true;
+                const el = document.querySelector('#wizard-step-inner');
+                return el !== null && !el.dataset[sleutel];
+            }""",
+            arg=self.VOOR_VERZENDEN,
+            timeout=timeout,
+        )
 
     def wait_for_step(self, step_title: str, timeout: float = 10000) -> None:
         """Wait for a specific step to be loaded by checking the page content."""
@@ -434,27 +480,6 @@ class WizardHelper:
             if text:
                 titles.append(text.strip())
         return titles
-
-    def _wait_for_htmx(self, timeout: float = 10000) -> None:
-        """Wait for HTMX request + DOM swap to complete.
-
-        networkidle fires when the XHR finishes, but HTMX still needs to
-        swap the response HTML into the DOM.  We capture the form's hx-post
-        before the click and wait until it changes - that proves the new
-        step content has been swapped in.
-        """
-        self.page.wait_for_load_state("networkidle", timeout=timeout)
-        # Give HTMX time to swap the response into the DOM
-        self.page.wait_for_function(
-            """() => {
-                // htmx fires a 'htmx:afterSettle' event when done.
-                // As a proxy, check that the wizard step inner element exists
-                // (it's recreated on each swap).
-                const el = document.querySelector('#wizard-step-inner');
-                return el !== null;
-            }""",
-            timeout=timeout,
-        )
 
     def wait_for_htmx_quiet(self, quiet_ms: int = 400) -> None:
         """Wacht tot er geen htmx-swap meer landt; zie helpers/htmx.py."""
