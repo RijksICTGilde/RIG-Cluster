@@ -69,65 +69,29 @@
 
 <c-page title="{{ page_title_value }}" lang="nl" head="{{ lotc_head }}">
 
-    {# GEEN <nldd-page> hier, en dat is een MEETUITKOMST en geen smaak.
+{# DE PAGINA-INDELING, zoals het LOTC-project hem heeft aangereikt en geverifieerd.
 
-       Hij stond er als wikkel om <c-app-shell>, om NLDD's benoemde layout-container neer te
-       zetten: NLDD heeft 28 regels van de vorm `@container layout-container (min-width: ...)`
-       en gemeten droeg geen enkel element op onze pagina die naam. Twee dingen maakten hem
-       overbodig en schadelijk:
+   Hier stond <c-app-shell>, en dat gaf geen bovengrens aan de inhoud: <main> had
+   `max-width: none` en groeide lineair mee, 1008px bij een viewport van 1280 maar 2288px
+   bij 2560. Tekstregels van 2288 pixels leest niemand.
 
-       * Sinds LOTC 7ee5efa zet <c-page> die container zelf neer zodra het nldd-designsysteem
-         actief is. Het handwerk is dus niet meer nodig.
-       * <nldd-page> is `display: flex` met sticky-header/sticky-footer, dus hij maakt van de
-         pagina een vaste hoogte met een eigen scrollgebied binnenin. Het VENSTER scrolt dan
-         niet meer. Dat is precies wat er gebeurde.
+   De bovengrens komt uit `width="1920px"` op de DRIE regio's (kopbalk, sidebar-section,
+   voettekst): dat zet --_max-width, waardoor de achtergrond tot de rand doorloopt en de
+   inhoud afkapt. Het getal is een keuze en staat hier een keer per regio.
 
-       Aan de breedte veranderde hij niets: main was 1008 bij 1280 en 2288 bij 2560, met en
-       zonder. Hetzelfde geldt voor <c-container max-width> en <c-simple-section>: allebei
-       gemeten, allebei `max-width: none`. De maximale inhoudsbreedte staat dus nog open en
-       ligt bij het LOTC-project. #}
+   Wat wij zelf uitprobeerden en wat NIET werkte, zodat niemand het opnieuw doet:
+   <c-container max-width> en <c-simple-section> houden allebei `max-width: none`, en
+   <nldd-page> als kale wikkel OM <c-app-shell> heen deed niets aan de breedte terwijl hij
+   wel het venster-scrollen brak. De sleutel is de vlakverdeling hieronder, niet een wikkel.
 
-    {# width is de breedte van de zijkolom; bg gebruikt 16rem. #}
-    <c-app-shell width="16rem">
+   nldd-top-navigation-bar, nldd-page-footer en nldd-menu-bar zijn nog rauwe tags: die zijn
+   nog niet als c-* gemapt. Dat werkt sinds de slot-fix in LOTC 7ee5efa. #}
+<nldd-page style="container: layout-container / inline-size;" background="inherit">
 
-        <template slot="header">
-            <c-header
-                text="Zelfservice voor Applicatie Deployment"
-                subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
-                link="/">
+    <nldd-top-navigation-bar slot="header" width="1920px"
+        website-title="Zelfservice voor Applicatie Deployment" website-href="/">
+        <nldd-menu-bar slot="utility" accessible-label="Gebruikersmenu">
 
-                {# De balk in de header is hier GEEN hoofdnavigatie meer maar een
-                   hulpbalk (account, in- en uitloggen), net als bij bg. De
-                   hoofdnavigatie staat in de zijkolom hieronder. #}
-                {# HET GEBRUIKERSMENU. Hier stonden de hulplinks los naast elkaar; nu
-                   hangen ze onder een uitklapper met de naam van de gebruiker, met de
-                   weergavekeuze en het beheer erbij.
-
-                   De uitklapper is nldd-markup en geen component, om dezelfde reden als
-                   op de projectenpagina: <c-menu> rendert altijd een menuBALK, en een
-                   balk in een balk is niet wat hier hoort. De items in een uitklapmenu
-                   navigeren bovendien NIET op hun href - dat doet alleen een
-                   menu-BAR-item - dus ze dragen hun bestemming in een onclick. Dat is
-                   geen nieuw gereedschap: de bestaande pagina doet het met
-                   @click="window.location.href=..." precies zo. #}
-                {# Een nldd-BUTTON met een popup-menu, en niet een menu-bar-item met een
-                   popup. Gemeten: op een <nldd-menu-bar-item> gaat de popup niet open -
-                   de items staan wel in de DOM maar blijven onzichtbaar. Op een
-                   <nldd-button expandable popup-type="menu"> werkt hij wel, en dat is ook
-                   de vorm die de gebruiker aanleverde. #}
-                {# De hulplinks als MENUBALK, zoals bg.rijks.app ze heeft: losse items met
-                   een icoon naast elkaar, in plaats van een knop met de gebruikersnaam
-                   erin. Die knop kwam uit een andere applicatie mee en werd hier het
-                   breedste element van de kop.
-
-                   De balk is <c-menu>; de items eronder zijn ruwe <nldd-menu-bar-item>
-                   omdat <c-menu-item> zelfsluitend rendert en dus geen uitklapmenu kan
-                   dragen. Waar dat niet nodig is (een gewone link) kan het component wel.
-
-                   LET OP het verschil dat hier al twee keer beet: een menu-BAR-item
-                   navigeert WEL op zijn href, een <nldd-menu-item> in een uitklapmenu
-                   niet - vandaar de onclick daar, en niet hier. #}
-                <c-menu slot="utility" aria-label="Hulplinks">
                     <nldd-menu-bar-item text="Weergave" icon="sun" expandable>
                         <nldd-menu placement="bottom-start" variant="menu">
                             {% for waarde, weergave_label in [("", "Systeem"), ("light", "Licht"), ("dark", "Donker")] %}
@@ -156,12 +120,13 @@
                             <nldd-menu-item text="Uitloggen" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>
                         </nldd-menu>
                     </nldd-menu-bar-item>
-                </c-menu>
+                
+        </nldd-menu-bar>
+    </nldd-top-navigation-bar>
 
-            </c-header>
-        </template>
+    <c-sidebar-section width="1920px" sidebar-label="Navigatie" sticky-top>
+        <nldd-container slot="sidebar" padding="16">
 
-        <template slot="sidebar">
             {# <c-sidenav-group> is een BROER van de items die eronder horen, geen
                ouder die ze omvat. De groepering zit dus in de volgorde, en daarom
                levert navigation_lotc de zijkolom al als (kopje, items)-paren in
@@ -188,8 +153,10 @@
                 {% endfor %}
             </c-sidenav>
             {% endblock %}
-        </template>
+                </nldd-container>
 
+        {# tabindex zodat de skip-link hier kan landen. #}
+        <div id="hoofdinhoud" tabindex="-1">
         <c-stack gap="lg">
             {% block content %}
                 <c-stack gap="xs">
@@ -198,11 +165,12 @@
                 </c-stack>
             {% endblock %}
         </c-stack>
+        </div>
+    </c-sidebar-section>
 
-        {% block additional_styles %}{% endblock %}
-        {% block additional_scripts %}{% endblock %}
+    <nldd-page-footer slot="footer" width="1920px">
+        <nldd-container>
 
-    <template slot="footer">
 
             {# De voettekst stond er niet, en daarmee waren "Over het platform", de
                architectuurpagina, de API-referentie en de versievermelding op ELKE pagina
@@ -261,7 +229,11 @@
                         <c-paragraph size="sm">{{ version_label }}</c-paragraph>
                     {% endif %}
             </c-footer>
-    </template>
+            </nldd-container>
+    </nldd-page-footer>
 
-    </c-app-shell>
+</nldd-page>
+
+    {% block additional_styles %}{% endblock %}
+    {% block additional_scripts %}{% endblock %}
 </c-page>
