@@ -26,7 +26,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class AccountLink(StrEnum):
@@ -112,6 +112,15 @@ class KeycloakConfig(BaseModel):
     )
     additional_redirect_uris: list[str] = Field(
         default_factory=list,
+        # Het enige samengestelde veld hier zonder koppelteken-schrijfwijze; alle broers
+        # en zussen (restrict-access, additional-clients, realm-roles, account-link)
+        # hebben er wel een. Twee schrijfwijzen door elkaar in hetzelfde blok is precies
+        # waar iemand een keer de andere typt, en ``extra="allow"`` slikt die stil.
+        #
+        # Beide worden dus gelezen, en het pythonpad blijft leidend: de veldNAAM
+        # verandert niet, dus bestaande bestanden blijven zoals ze zijn en de API blijft
+        # dezelfde sleutel noemen. Een migratie die bestanden herschrijft hoort hier niet.
+        validation_alias=AliasChoices("additional_redirect_uris", "additional-redirect-uris"),
         description="Extra redirect URIs the client accepts, on top of the deployment URLs (e.g. localhost for development).",
     )
     restrict_access: RestrictAccessConfig | None = Field(

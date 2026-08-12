@@ -5,6 +5,7 @@ from __future__ import annotations
 from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.keycloak.editables import (
+    KEYCLOAK_ACCOUNT_LINK_EDITABLE,
     KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
     KEYCLOAK_CLIENT_NAME_EDITABLE,
     KEYCLOAK_CLIENT_REDIRECT_URI_EDITABLE,
@@ -12,6 +13,7 @@ from opi.services.catalog.keycloak.editables import (
     KEYCLOAK_REALM_ROLES_EDITABLE,
     KEYCLOAK_REDIRECT_URI_ITEM_EDITABLE,
     KEYCLOAK_REDIRECT_URIS_EDITABLE,
+    KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE_EDITABLE,
     KEYCLOAK_RESTRICT_ACCESS_EDITABLE,
     KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE,
     KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE,
@@ -68,6 +70,27 @@ KEYCLOAK_RESTRICT_ACCESS_ROLE = EditableVisualizer(
         "Elke gebruiker met deze rol mag de applicatie gebruiken. "
         "De rol wordt door de projectbeheerder aan gebruikers toegekend; "
         "de exacte naam maakt niet uit. Bij twijfel: gebruik de standaardwaarde."
+    ),
+)
+
+KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE = EditableVisualizer(
+    editable=KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Client rol",
+    help_text=(
+        "Optioneel, naast de realm-rol hierboven. Een clientrol hoort bij een enkele "
+        "Keycloak-client in plaats van bij de hele realm. Laat leeg tenzij de applicatie "
+        "haar rollen per client toekent."
+    ),
+)
+
+KEYCLOAK_ACCOUNT_LINK = EditableVisualizer(
+    editable=KEYCLOAK_ACCOUNT_LINK_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Account koppelen",
+    help_text=(
+        "Wat er gebeurt wanneer iemand via SSO Rijk inlogt en er al een account met "
+        "hetzelfde e-mailadres in dit realm bestaat."
     ),
 )
 

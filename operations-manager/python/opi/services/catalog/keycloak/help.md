@@ -16,3 +16,17 @@ Er wordt een realm aangemaakt met een client voor je applicatie. Je component kr
 In de configuratie kies je een template (welke inlogmanieren aanstaan), extra redirect-URI's, eigen realm-rollen en of toegang beperkt wordt tot gebruikers met een bepaalde rol.
 
 **Let op:** deze service vereist **Publiceren op het web**, dat automatisch wordt meegeselecteerd. Wil je niet zelf het inloggen in je applicatie bouwen, kijk dan naar de **Authorization Wall**.
+
+## Wat je in het scherm instelt
+
+- **Template** -- welke inlogmanieren aanstaan
+- **Extra redirect URI's** -- adressen waar je applicatie na het inloggen op terugkomt, naast de deployment-URL's zelf
+- **Toegangsbeperking** -- alleen gebruikers met een realm-rol of clientrol mogen de applicatie openen, met de foutmelding die de rest te zien krijgt
+- **Account koppelen** -- wat er gebeurt als iemand via SSO Rijk inlogt terwijl er al een account met hetzelfde e-mailadres in de realm bestaat
+- **Extra Keycloak clients** -- voor externe applicaties of microservices die dezelfde realm delen
+
+## Wat bewust niet in het scherm staat
+
+`variables` in het configuratieblok vult de plaatshouders van de realm-template in, en die waarden worden OVER de door het platform berekende waarden heen gelegd (`context.update(user_variables)` in `KeycloakManager`). Daar zitten namen tussen die niet van het project zijn: `realm_name`, `project_realm_name`, `platform_realm_name` en `platform_client_id`. Een vrij invulveld daarvoor zou een projectbeheerder de realm-template op de platformrealm kunnen laten richten, en dat is een andere beslissing dan een instelling van je eigen project.
+
+Het blijft daarom een sleutel die alleen in het projectbestand gezet kan worden, buiten de zelfbediening om. Heb je hem nodig, vraag het aan het platformteam.

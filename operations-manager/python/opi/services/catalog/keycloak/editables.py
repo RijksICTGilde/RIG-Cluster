@@ -46,6 +46,23 @@ KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE = Editable(
     virtualize=SERVICE_VIRTUALIZE,
 )
 
+KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE_EDITABLE = Editable(
+    yaml_path="services/keycloak/config/restrict-access/role",
+    depends_on="services/keycloak/config/restrict-access/enabled",
+    validator=RealmRoleValidator(),
+    converter=EmptyToNoneConverter(),
+    remove_when_none=True,
+    virtualize=SERVICE_VIRTUALIZE,
+)
+
+KEYCLOAK_ACCOUNT_LINK_EDITABLE = Editable(
+    yaml_path="services/keycloak/config/account-link",
+    values_provider="KeycloakAccountLinkOptionsProvider",
+    converter=EmptyToNoneConverter(),
+    remove_when_none=True,
+    virtualize=SERVICE_VIRTUALIZE,
+)
+
 KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE = Editable(
     yaml_path="services/keycloak/config/restrict-access/error-message",
     default="${accessDeniedNoPermission}",
