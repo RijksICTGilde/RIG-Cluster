@@ -9,23 +9,21 @@
   features/aanvinkvakje.md. Dat is het enige verhaal over dit component - hier stonden er
   twee, en die spraken elkaar tegen.
 
-  De id gaat via de attribuutbundel mee zodat hij op het BESTURINGSELEMENT landt. Dat is
-  wat het vakje vindbaar maakt: de component zet de id verder alleen op zijn hulptekst en
-  foutmelding (``id="...-help"``), en zijn name draagt hij ook aan zijn schaduwelementen
-  door, dus ``[id='<pad>']`` is de enige selector die precies dit vakje oplevert.
-
-  Het ``id``-attribuut zelf gaat NIET naar het besturingselement maar naar de omhulling
-  eromheen, en daarom staat daar ``-veld`` achter. Stond het pad er kaal, dan droegen de
-  omhulling en het vakje dezelfde id: ``[id='<pad>']`` leverde er dan twee op, en dat is
-  waar de toetsenbordtest over struikelde. De omhulling houdt wel een id, want daar leidt
-  de component ``<pad>-veld-help`` en ``<pad>-veld-error`` uit af.
+  De id gaat ALLEEN als prop mee, niet ook in de attribuutbundel. Sinds LOTC 762e570 zet
+  de component hem zelf op het BESTURINGSELEMENT (``<nldd-checkbox-field>``) in plaats van
+  op de omhullende div; daarvoor deden wij dat via de bundel en stond hij op allebei, dus
+  op elk aanvinkvakje twee elementen met dezelfde id (ongeldige HTML, en een risico voor
+  ``aria-describedby`` en ``label for=``). De afgeleide id's van de hulptekst en de
+  foutmelding (``id="...-help"``) blijven werken: die worden uit de prop samengesteld.
+  ``[id='<pad>']`` levert nu precies een element op, en dat is het element dat ``.checked``
+  draagt.
 
   Het verborgen veld bij readonly blijft: dat vakje wordt niet verstuurd omdat de
   verwerker readonly-velden overslaat, en zonder deze regel zou opslaan de stand wissen.
 #}
 {% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
 <c-checkbox-field
-    id="{{ field.path|e }}-veld"
+    id="{{ field.path|e }}"
     name="{{ field.path|e }}"
     label="{{ field.label|e }}"
     value="true"
@@ -33,7 +31,7 @@
     :help="combined_helper(field)|trim or none"
     :required="field.required"
     :error="(field.errors[0] if field.errors else none)"
-    :attrs="dict(field_attrs(field), id=field.path)" />
+    :attrs="field_attrs(field)" />
 {% if field.readonly and field.value %}
 <input type="hidden" name="{{ field.path|e }}" value="true" />
 {% endif %}

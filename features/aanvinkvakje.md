@@ -14,7 +14,7 @@ aanvinkvakje terugkwam.
 ```jinja
 {# een enkel vakje - templates_lotc/widgets/checkbox.html.j2 #}
 <c-checkbox-field id="{{ pad }}" name="{{ pad }}" label="..." value="true"
-                  :checked="field.value" :attrs="dict(field_attrs(field), id=field.path)" />
+                  :checked="field.value" :attrs="field_attrs(field)" />
 
 {# een groep - templates_lotc/widgets/checkbox_group.html.j2 #}
 <c-checkbox-field id="{{ pad }}" label="...">
@@ -157,9 +157,11 @@ Hier hoorde nog een tweede fout bij, die de toetsenbordtest hierboven al liet va
 namelijk op de omhulling, en de attribuutbundel (`:attrs`) op het besturingselement - en
 in beide stond het veldpad.
 
-De omhulling draagt nu `<pad>-veld`, het vakje zelf `<pad>`. De omhulling houdt een id
-omdat de component daar zijn hulptekst en foutmelding aan ophangt; die heten daarom
-`<pad>-veld-help` en `<pad>-veld-error`.
+Dat is bij de BRON opgelost en niet met een tweede id aan onze kant: sinds LOTC `762e570`
+zet het component de id zelf op het besturingselement (`<nldd-checkbox-field>`) in plaats
+van op de omhulling, en wij geven hem alleen nog als prop mee - niet ook in `:attrs`. Het
+vakje draagt dus `<pad>` en niets anders draagt dat pad; de hulptekst en de foutmelding
+heten `<pad>-help` en `<pad>-error`, want die worden uit dezelfde prop samengesteld.
 
 ## Het vakje terugvinden
 
@@ -175,9 +177,17 @@ INPUT                 (schaduw van NLDD-CHECKBOX)
 ```
 
 Op `input[id=...]` zoeken - wat `veldbesturing()` voor tekstvelden doet - kan ook niet: de
-`<input>` zit in de schaduwboom en draagt geen id. Daarom zetten de widgets de id via de
-attribuutbundel op het besturingselement zelf; de component gebruikt hem verder alleen om
-zijn hulptekst en foutmelding aan te knopen.
+`<input>` zit in de schaduwboom en draagt geen id.
+
+De id landt daarom op het besturingselement, en op niets anders. Dat was een tijd lang
+niet zo: het component zette hem op de omhullende `div.lotc-checkbox-field` en wij zetten
+hem daarnaast via de attribuutbundel op `<nldd-checkbox-field>`, dus ELK enkel vakje leverde
+twee elementen met dezelfde id op (gemeten in de generale repetitie,
+`docs/generale-repetitie-2026-08-12.md`, bevinding 2). Dat is ongeldige HTML en het breekt
+`label for=` en `aria-describedby`. Sinds LOTC `762e570` zet het component de id zelf op
+`<nldd-checkbox-field>`; wij geven hem alleen nog als prop mee. De hulptekst en de
+foutmelding houden hun `<pad>-help` / `<pad>-error`, want die worden uit de prop
+samengesteld. De vangrail staat in `tests/test_lotc_aanvinkvakje_id.py`.
 
 Voor tests staan er twee helpers in `tests/e2e/helpers/wizard.py`:
 
@@ -187,7 +197,7 @@ aanvinkvakjes(page, "resource_types")                                          #
 ```
 
 `aanvinkvakjes` matcht op naam EN id: een prefixselector op `<pad>-` pikt ook de hulptekst
-(`<pad>-veld-help`) mee en telt dan een vakje te veel.
+(`<pad>-help`) mee en telt dan een vakje te veel.
 
 De stand lees je van het element: `el.checked`. Niet `is_checked()`, want dat wil een
 `<input>` zien.
