@@ -35,7 +35,7 @@
     /**
      * De gekozen deployment, onthouden zolang het browsertabblad open is.
      *
-     * Elk tabblad van de projectpagina is een eigen URL (?tab=...), dus de keuze in de
+     * Elk tabblad van de projectpagina is een eigen pad (/projects/<tabblad>/<naam>), dus de keuze in de
      * URL-hash overleeft het wisselen van tabblad niet. Zonder dit moest je op Metrics
      * opnieuw kiezen wat je op Deployments net had gekozen. De sleutel is het pad, zodat
      * twee projecten elkaars keuze niet overschrijven.
@@ -107,7 +107,7 @@
     // Restore tab and deployment state from URL hash on page load.
     //
     // Stond als IIFE onderaan het script van project-details.html.j2. switchTab() bestaat
-    // alleen op die pagina - de hertekende pagina heeft echte tab-URL's (?tab=...) - dus
+    // alleen op die pagina - de hertekende pagina heeft echte tab-paden - dus
     // de aanroep is achter een typeof-controle gezet. Verder ongewijzigd.
     //
     // Draait op DOMContentLoaded en niet direct, want dit bestand wordt in de <head>
@@ -124,6 +124,28 @@
         } else if (hash === 'taken') {
             if (typeof switchTab === 'function') switchTab('taken');
         }
+        // Heeft de SERVER een deployment opengezet? Dan is dat de keuze. Sinds de
+        // deploymenttabel op Overzicht de ingang is, opent een rij met een gewone link
+        // (/projects/deployments/<project>?deployment=<naam>) en rendert de server dat
+        // paneel zichtbaar. De opgeslagen keuze hieronder zou daar overheen gaan: je
+        // klikt een rij aan en ziet een ander paneel.
+        //
+        // Alleen de HASH wint hier nog van, want die staat net zo expliciet in de URL en
+        // wordt door switchDeployment() zelf geschreven bij het wisselen zonder herladen.
+        var weergave = document.getElementById('deployments-weergave');
+        var vanServer = weergave && weergave.getAttribute('data-deployment-open');
+        if (vanServer && heeftBlok(vanServer)) {
+            // De server heeft het paneel al zichtbaar gezet; dit zet de kiezer en de
+            // opgeslagen keuze gelijk, zodat het tabblad Metrics dezelfde deployment
+            // toont. De kiezer moet mee: hij benoemde anders een andere deployment dan er
+            // open stond, en een <select> vuurt geen change op de al getoonde optie -
+            // waarmee die deployment via de kiezer onbereikbaar werd.
+            var gsel2 = document.getElementById('global-deployment-selector');
+            if (gsel2) gsel2.value = vanServer;
+            bewaar(vanServer);
+            return;
+        }
+
         // Geen deployment in de URL: pak de keuze van het vorige tabblad, als die er is
         // en als hij op deze pagina bestaat. De hash wint, want die staat er expliciet.
         var eerder = bewaarde();

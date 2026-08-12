@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from opi.core.templates_lotc import templates_lotc as templates
+
 WORTEL = Path(__file__).resolve().parent.parent
 TABS = WORTEL / "opi" / "templates_lotc" / "bg" / "project-tabs.html.j2"
 KIEZER = WORTEL / "opi" / "templates_lotc" / "bg" / "_deployment-selector.html.j2"
@@ -73,3 +75,34 @@ def test_de_hash_blijft_bij_het_tabblad_deployments() -> None:
     script = SCRIPT.read_text()
     kern = script[script.index("bewaar(deploymentName);") : script.index("// Restore tab and deployment")]
     assert "if (document.getElementById('deployment-' + deploymentName))" in kern
+
+
+def test_de_kiezer_wijst_de_deployment_aan_die_de_server_opende() -> None:
+    """De server bepaalt welk paneel open staat (``deployment_open``, uit ?deployment=).
+
+    Zonder ``selected`` bleef de kiezer op de eerste optie staan: hij benoemde een andere
+    deployment dan er open stond, en een native <select> vuurt geen change op de al
+    getoonde optie - waardoor die eerste deployment via de kiezer onbereikbaar werd.
+    """
+    html = templates.env.get_template("bg/_deployment-selector.html.j2").render(
+        {
+            "project": {
+                "name": "demo",
+                "deployments": [
+                    {"name": "default", "cluster": "odcn-production"},
+                    {"name": "tweede", "cluster": "odcn-production"},
+                ],
+            },
+            "deployment_open": "tweede",
+        }
+    )
+    assert '<option value="tweede" selected>' in html
+    assert html.count("selected") == 1, "er staat meer dan een optie voorgeselecteerd"
+
+
+def test_het_script_zet_de_kiezer_gelijk_aan_wat_de_server_opende() -> None:
+    """Dezelfde eis in de browser: de servertak van restoreFromHash liet de kiezer staan."""
+    script = SCRIPT.read_text()
+    tak = script[script.index("var vanServer") : script.index("var eerder = bewaarde();")]
+    assert "global-deployment-selector" in tak
+    assert "= vanServer" in tak

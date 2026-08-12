@@ -243,14 +243,221 @@ def filter_lotc_projects(request: Request, projects: list[dict[str, Any]]) -> di
 #:
 #: Helm charts en helmfiles staan bij Componenten en niet bij Overzicht: het zijn net zo
 #: goed draaiende onderdelen die je op projectniveau declareert.
+#: Waarop de deploymenttabel gesorteerd kan worden. Zelfde vorm als
+#: :data:`PROJECT_SORTERINGEN` - sleutel in de URL (``?dsort=cluster``), label in het
+#: menu, sorteersleutel als derde - en om dezelfde reden een LIJST: de volgorde hier is
+#: de volgorde in het menu.
+#:
+#: Er wordt niet op STATUS gesorteerd. Die staat wel in de tabel (hij komt uit de
+#: gebundelde bevraging in ``opi/services/argocd_overview.py``), maar sorteren erop zou
+#: betekenen dat de sortering afhangt van een antwoord van een ander systeem: dezelfde
+#: URL geeft dan morgen een andere volgorde, en een rij verspringt terwijl je kijkt.
+#: Sorteren gebeurt daarom op wat in het projectbestand staat.
+DEPLOYMENT_SORTERINGEN: list[tuple[str, str, Any]] = [
+    ("naam", "Naam (A-Z)", lambda d: d["name"].lower()),
+    ("naam-af", "Naam (Z-A)", lambda d: d["name"].lower()),
+    ("cluster", "Cluster", lambda d: ((d.get("cluster") or "").lower(), d["name"].lower())),
+    ("componenten", "Meeste componenten", lambda d: (-len(d.get("components") or []), d["name"].lower())),
+]
+
+
+def filter_lotc_deployments(request: Request, deployments: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pas ``?q=`` en ``?dsort=`` toe op de deployments van een project.
+
+    Zelfde opzet als :func:`filter_lotc_projects`, en om dezelfde reden SERVER-SIDE: dan
+    werkt zoeken en sorteren ook zonder JavaScript, is een gefilterde lijst deelbaar als
+    URL, en kan de telling boven de tabel niet uit de pas lopen met de rijen eronder.
+
+    ``dsort`` en niet ``sort``: de projectenlijst gebruikt ``sort`` al, en beide namen
+    kunnen in een en dezelfde URL staan zodra iemand een link deelt. Het ZOEKveld heet
+    wel gewoon ``q`` - die twee lijsten staan nooit op dezelfde pagina.
+
+    ``?deployment=`` hoort bij het TABBLAD DEPLOYMENTS en niet bij de tabel: daar wordt er
+    een getoond, en de rij in de tabel is de link die hem aanwijst. Hij wordt hier bepaald
+    omdat hier bekend is welke deployments er zijn; een naam die niets oplevert (een
+    verwijderde deployment in een oude link) valt terug op de eerste, net als
+    switchDeployment() in de browser doet.
+    """
+    zoekterm = (request.query_params.get("q") or "").strip()
+    if zoekterm:
+        naald = zoekterm.lower()
+        gevonden = [
+            deployment
+            for deployment in deployments
+            if naald in deployment["name"].lower() or naald in (deployment.get("cluster") or "").lower()
+        ]
+    else:
+        gevonden = list(deployments)
+
+    # Een onbekende ``dsort`` valt terug op de EERSTE sortering, en die naam gaat ook
+    # terug de pagina in. Hij bleef hier eerst staan zoals hij binnenkwam, waardoor het
+    # verborgen veld en hx-push-url een sortering beloofden die niet gebruikt werd: de
+    # URL zei ``dsort=onzin`` terwijl de lijst op naam stond.
+    gevraagd_sort = request.query_params.get("dsort") or ""
+    bekend = {k for k, _, _ in DEPLOYMENT_SORTERINGEN}
+    gekozen = gevraagd_sort if gevraagd_sort in bekend else DEPLOYMENT_SORTERINGEN[0][0]
+    sleutel = next(s for k, _, s in DEPLOYMENT_SORTERINGEN if k == gekozen)
+    gevonden.sort(key=sleutel)
+    if gekozen == "naam-af":
+        gevonden.reverse()
+
+    gevraagd = request.query_params.get("deployment") or ""
+    # Alfabetisch, want zo staan de panelen op het tabblad Deployments onder elkaar: de
+    # terugval hoort de deployment te zijn die je daar als eerste ziet.
+    alle_namen = sorted(deployment["name"] for deployment in deployments)
+    expliciet = gevraagd if gevraagd in alle_namen else ""
+    open_deployment = expliciet or (alle_namen[0] if alle_namen else "")
+
+    return {
+        "deployments_zichtbaar": gevonden,
+        # De telling boven de tabel volgt de zoekterm ("3 van 12"); daarvoor is het
+        # totaal over ALLE deployments nodig, niet over wat het zoekveld overlaat.
+        "deployments_alle": deployments,
+        "deployment_query": zoekterm,
+        "deployment_sort": gekozen,
+        "deployment_sorteringen": [(sleutel, label) for sleutel, label, _ in DEPLOYMENT_SORTERINGEN],
+        "deployment_open": open_deployment,
+        # Of die keuze GEVRAAGD is (?deployment=<naam>) of alleen de terugval. Het
+        # verschil telt in de browser: een gevraagde keuze overrulet wat er van het vorige
+        # tabblad onthouden is, de terugval niet - anders zou elke paginaverversing de
+        # onthouden keuze terugzetten naar de eerste deployment.
+        "deployment_gevraagd": expliciet,
+    }
+
+
+def deployment_status_tags(
+    *,
+    replacing_badges: list[str],
+    accompanying_badges: list[str],
+    argocd: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    """De statuslabels van EEN rij in de deploymenttabel: ``[{'label': .., 'type': ..}]``.
+
+    Twee bronnen, en ze horen bij elkaar in een kolom:
+
+      - wat de DIENSTEN melden (slaapstand, uitgeschakeld). Die berekent de pagina toch
+        al, per deployment, zonder een enkel extra verzoek.
+      - de gezondheid en de sync van ARGOCD, uit de gebundelde bevraging
+        (``opi/services/argocd_overview.py``): een verzoek voor het hele project, dus
+        twintig rijen kosten er nog steeds een.
+
+    De REGEL waarmee ze samenkomen is die van de statuskaart in het paneel (RC-31/RC-35),
+    en staat hier in Python in plaats van in twee sjablonen: een dienstbadge neemt de
+    plaats in van precies EEN verdict, de groene "Healthy" die nul replicas oplevert. Elk
+    ander verdict - Degraded, Progressing, Unknown - heeft ArgoCD echt waargenomen en
+    houdt zijn badge, anders verbergt het uitzetten van een component een echte storing.
+
+    ``argocd`` is ``None`` als ArgoCD niet verbonden is. Dan staan hier alleen de
+    dienstbadges: de pagina zegt er in gewone taal bij dat de status ontbreekt, en daar
+    een verzonnen "Unknown" per rij overheen zetten maakt dat onleesbaar.
+    """
+    tags: list[dict[str, str]] = [{"label": badge, "type": "info"} for badge in accompanying_badges]
+    tags += [{"label": badge, "type": "info"} for badge in replacing_badges]
+
+    if argocd is None:
+        return tags
+
+    if not argocd.get("available"):
+        # ArgoCD kent deze applicatie niet. Dat is iets anders dan "ongezond": er is nog
+        # niets uitgerold, of de uitrol is er nog niet doorheen.
+        return [*tags, {"label": "Niet in ArgoCD", "type": "default"}]
+
+    health = argocd.get("health", "Unknown")
+    sync = argocd.get("sync", "Unknown")
+
+    if not (replacing_badges and health == "Healthy"):
+        tags.append(
+            {
+                "label": health,
+                "type": "success" if health == "Healthy" else "warning" if health == "Progressing" else "error",
+            }
+        )
+
+    # Unknown betekent dat ArgoCD gewenste en werkelijke staat niet kan vergelijken (vaak
+    # een render- of CMP-fout) - rood dus, niet neutraal grijs, anders leest het als "nog
+    # mee bezig".
+    tags.append(
+        {
+            "label": sync,
+            "type": "success"
+            if sync == "Synced"
+            else "warning"
+            if sync == "OutOfSync"
+            else "error"
+            if sync == "Unknown"
+            else "default",
+        }
+    )
+    return tags
+
+
+def build_deployment_status_column(
+    deployments: list[dict[str, Any]],
+    deployment_states: dict[str, Any],
+    argocd_statuses: dict[str, dict[str, Any]],
+) -> dict[str, list[dict[str, str]]]:
+    """De statuskolom van de hele tabel: deploymentnaam -> labels.
+
+    Een dict en geen berekening in het sjabloon, zodat de regel uit
+    :func:`deployment_status_tags` op EEN plek staat en te toetsen is zonder een pagina
+    te renderen.
+    """
+    return {
+        naam: deployment_status_tags(
+            replacing_badges=state.replacing_badges if state else [],
+            accompanying_badges=state.accompanying_badges if state else [],
+            argocd=argocd_statuses.get(naam) if argocd_statuses else None,
+        )
+        for deployment in deployments
+        for naam in (deployment["name"],)
+        for state in (deployment_states.get(naam),)
+    }
+
+
+#:
+#: Elk tabblad heeft een EIGEN PAD, geen ``?tab=``-parameter. Een querystring leest als
+#: een filter op een pagina ("laat hiervan alleen dit zien"), en dat is een tabblad niet:
+#: het is een andere pagina over hetzelfde project. Het pad zegt dat, een parameter niet.
+#:
+#: ``path`` staat naast het label omdat het adres NIET af te leiden is uit de sleutel:
+#: Overzicht heet ``project`` en woont op ``details``.
+#:
+#: Overzicht houdt ``/projects/details/<naam>``. Dat is het adres waar de projectpagina al
+#: jaren staat en waar alles heen wijst - de projectenlijst, het dashboard, de e-mails van
+#: de uitnodigingsdienst. Dat adres verhuizen zou van alles breken en niets opleveren.
 PROJECT_TABS = {
-    "project": {"label": "Overzicht"},
-    "componenten": {"label": "Componenten"},
-    "services": {"label": "Services"},
-    "deployments": {"label": "Deployments"},
-    "metrics": {"label": "Metrics"},
-    "taken": {"label": "Taken"},
+    "project": {"label": "Overzicht", "path": "details"},
+    "componenten": {"label": "Componenten", "path": "componenten"},
+    "services": {"label": "Services", "path": "services"},
+    "deployments": {"label": "Deployments", "path": "deployments"},
+    "metrics": {"label": "Metrics", "path": "metrics"},
+    "taken": {"label": "Taken", "path": "taken"},
 }
+
+#: Het tabblad waar een onbekend (of ontbrekend) tabblad op uitkomt.
+STANDAARD_TAB = next(iter(PROJECT_TABS))
+
+
+def project_tab_url(project_name: str, tab: str, query: str = "") -> str:
+    """Het adres van een tabblad van een project.
+
+    Op een plek berekend, zodat de tabbalk, de kruimels, de kerncijfers en de router het
+    over hetzelfde adres hebben. Een onbekend tabblad valt terug op Overzicht in plaats
+    van een pad te verzinnen dat geen route heeft.
+    """
+    pad = PROJECT_TABS.get(tab, PROJECT_TABS[STANDAARD_TAB])["path"]
+    return f"/projects/{pad}/{project_name}" + (f"?{query}" if query else "")
+
+
+def tab_from_path(path: str) -> str:
+    """Welk tabblad hoort bij dit pad? ``/projects/deployments/<naam>`` -> ``deployments``.
+
+    Leest het tweede segment en niet de naam van de route, zodat een pad dat er niet bij
+    hoort op Overzicht uitkomt in plaats van een fout te geven.
+    """
+    delen = path.strip("/").split("/")
+    segment = delen[1] if len(delen) > 1 else ""
+    return next((tab for tab, gegevens in PROJECT_TABS.items() if gegevens["path"] == segment), STANDAARD_TAB)
 
 
 def build_lotc_project_details(
@@ -265,18 +472,26 @@ def build_lotc_project_details(
     sjabloon leest precies die sleutels. Wat hier gebeurt is de navigatie en het actieve
     tabblad bepalen.
 
+    Het actieve tabblad komt uit het PAD (``/projects/deployments/<naam>``) en niet meer
+    uit ``?tab=``. Die oude vorm is weg, ook als doorverwijzing: hij heeft nooit buiten
+    deze applicatie geleefd, en een tweede adres dat niemand gebruikt is onderhoud zonder
+    lezer. Een achtergebleven ``?tab=`` wordt genegeerd.
+
     Het resourcegebruik zit hier NIET in. De bestaande pagina laadt dat apart met htmx,
     zodat een trage Prometheus de pagina niet ophoudt, en dat blijft zo - het fragment
     kent zijn eigen LOTC-weergave.
     """
     from opi.web.navigation_lotc import get_navigation
 
-    requested = request.query_params.get("tab", "")
+    active_tab = tab_from_path(request.url.path)
     return {
         "navigation": get_navigation(user, current_path="/projects"),
-        "tabs": PROJECT_TABS,
-        "active_tab": requested if requested in PROJECT_TABS else next(iter(PROJECT_TABS)),
+        "tabs": {
+            tab: {**gegevens, "url": project_tab_url(project["name"], tab)} for tab, gegevens in PROJECT_TABS.items()
+        },
+        "active_tab": active_tab,
         "project": project,
+        **filter_lotc_deployments(request, project.get("deployments") or []),
     }
 
 
