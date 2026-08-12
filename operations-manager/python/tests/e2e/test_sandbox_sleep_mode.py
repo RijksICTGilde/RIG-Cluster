@@ -18,6 +18,14 @@ Prerequisites on the sandbox OPI (so the sweep is observable within the test tim
   - ``SLEEP_MODE_SWEEP_MINUTES`` should be small (1) so the deadline is swept promptly.
 
 The test skips cleanly when ``E2E_BASE_URL`` is unset (no sandbox running).
+
+**Eigen tijdsbudget.** De suite draait met ``--timeout=300`` per test, en dat is voor deze
+test te krap: alleen de eigen begrensde wachtmomenten tellen al op tot ruim daarboven
+(ingress 180s, app serveert 300s, in slaap 360s, pods weg 360s, wakerpagina 180s, wakker
+300s, terug naar awake 120s), en daarna volgt de opruimende DELETE die tot 180s op de
+verwijdertaak wacht. Zonder eigen markering viel de test daardoor om in de opruiming
+NADAT alle toetsen geslaagd waren - een te klein budget, geen vastloper. De lange suites
+(``test_sandbox_reallife.py``, ``test_sandbox_all_services.py``) doen hetzelfde.
 """
 
 from __future__ import annotations
@@ -119,6 +127,7 @@ def _service_name(entry: object) -> str | None:
     return None
 
 
+@pytest.mark.timeout(2400)
 def test_sleep_then_wake_via_waker_page(
     sandbox_url: str,
     sandbox_page: Page,
