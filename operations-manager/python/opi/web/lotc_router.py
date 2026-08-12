@@ -194,5 +194,9 @@ async def lotc_redesigned_page(request: Request, slug: str) -> HTMLResponse:
     if tabs:
         requested = request.query_params.get("tab", "")
         data["active_tab"] = requested if requested in tabs else next(iter(tabs))
+        # De ECHTE pagina geeft elk tabblad een eigen pad (/projects/deployments/<naam>).
+        # Deze proefopstelling heeft geen project en dus geen zulke paden; hier blijft het
+        # ?tab= op deze ene demo-URL. Het sjabloon leest in beide gevallen ``tab.url``.
+        data["tabs"] = {sleutel: {**tab, "url": f"/lotc/bg/{slug}?tab={sleutel}"} for sleutel, tab in tabs.items()}
 
     return templates_lotc.TemplateResponse(request, template_name, _context(request, **data))
