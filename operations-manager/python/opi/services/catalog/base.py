@@ -119,7 +119,13 @@ _LAYER_PATH_PREFIX: dict[ConfigLayer, str] = {
     ConfigLayer.PROJECT: "services/{svc}",
     ConfigLayer.COMPONENT: "components[*]/services{{{svc}}}",
     ConfigLayer.DEPLOYMENT: "deployments[*]/services{{{svc}}}",
-    ConfigLayer.DEPLOYMENT_COMPONENT: "deployments[*]/components[*]/services{{{svc}}}",
+    # No braces on the deployment-component layer: its ``services`` is a real map keyed by
+    # service name (``$defs/deployment-component/properties/services``), not the mixed
+    # string/dict LIST the project and component layers carry, so the path resolves by
+    # plain traversal and needs no virtualization. Every deployment-component path written
+    # by hand already had this shape; the prefix said otherwise, which made the layer's
+    # documented ``yaml_path`` describe a location the file never has.
+    ConfigLayer.DEPLOYMENT_COMPONENT: "deployments[*]/components[*]/services/{svc}",
 }
 
 
