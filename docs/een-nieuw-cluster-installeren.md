@@ -122,17 +122,26 @@ Dit is het gevaarlijke deel: een nieuw cluster erft ze stilzwijgend.
 #### a. `opi/core/config.py:438` — `BACKUP_SNAPSHOT_CLASS: str = "ocs-storagecluster-rbdplugin-snapclass"`
 
 Een ODCN/OpenShift-Data-Foundation-naam als **default van een globale setting**. Op een cluster
-zonder ODF bestaat die VolumeSnapshotClass niet en faalt elke snapshot-back-up, zonder dat
+zonder ODF bestaat die VolumeSnapshotClass niet.
+
+Het vangnet bestaat al, en in de goede volgorde: `opi/manager/backup/base.py:490` doet
+`snapshot_class = get_volume_snapshot_class(settings.CLUSTER_MANAGER) or settings.BACKUP_SNAPSHOT_CLASS`.
+Een fundament-clusterblok dat `storage.volume_snapshot_class` invult raakt deze default dus
+nooit. Het faalscenario is **voorwaardelijk**: alleen als het clusterblok die sleutel weglaat
+valt de back-upketen stil terug op de ODCN-naam, en faalt elke snapshot-back-up zonder dat
 iemand de setting bewust heeft aangeraakt.
 
-**Oordeel: naar configuratie.** De waarde staat al per cluster in
-`cluster_config.py:157` (`storage.volume_snapshot_class`). Dit is een tweede bron voor
-dezelfde waarde. Laat de setting default `""` zijn en val terug op de clusterwaarde, of laat
-hem weg. *Losse taak.*
+**Oordeel: naar configuratie, prioriteit midden.** Dezelfde string staat op drie plaatsen —
+hier, in (b), en per cluster in `cluster_config.py:157` (`storage.volume_snapshot_class`). Het
+probleem is niet dat de terugval ontbreekt, maar dat het vangnet een ODCN-waarde is in plaats
+van leeg: een vergeten sleutel zwijgt dan in plaats van te klagen. Maak de default `""` (of
+laat de setting weg) zodat een ontbrekende clusterwaarde een duidelijke fout geeft. *Losse taak.*
 
 #### b. `opi/manager/backup/base.py:467` — `snapshot_class: str = "ocs-storagecluster-rbdplugin-snapclass"`
 
-Dezelfde string, nu als defaultargument in een dataclass/functiesignatuur — een **derde** bron.
+Dezelfde string, nu als defaultveld op de `BackupConfig`-dataclass — een **derde** bron. In de
+praktijk wordt hij overschreven door `from_settings()` (regel 490, zie (a)), dus hij bijt
+alleen wanneer een `BackupConfig` buiten `from_settings()` om wordt gebouwd.
 
 **Oordeel: naar configuratie**, samen met (a). Eén bron: `get_storage_config(cluster)`.
 *Losse taak, hoort bij (a).*
@@ -155,8 +164,8 @@ want de volgende platformafspraak heet anders. *Losse taak — de eerste die af 
 #### d. `manifests/ingress.yaml.jinja:15,16,20,23,28` — `haproxy.router.openshift.io/*` en `route.openshift.io/termination`
 
 Vijf OpenShift-Router-annotaties op **elke** gegenereerde Ingress: `ip_whitelist`, `timeout`,
-`termination: passthrough`, `rewrite-target`, `hsts_header`. Direct daaronder (regels 30-35)
-staan de nginx-equivalenten. `manifests/issuer-letsencrypt.yaml.jinja:22` heeft dezelfde
+`termination: passthrough`, `rewrite-target`, `hsts_header`. Direct daaronder (regels 33-38,
+onder de commentaarbanner op 30-32) staan de nginx-equivalenten. `manifests/issuer-letsencrypt.yaml.jinja:22` heeft dezelfde
 `ip_whitelist`-annotatie.
 
 Nginx negeert onbekende annotaties, dus dit **breekt niets** op een vanilla-cluster — het
@@ -244,15 +253,18 @@ ODCN bereikbaar is.
 (`registry.k8s.io/external-dns/external-dns:v0.15.0`), en de odcn-overlay patcht de mirror
 erin. Dit is de bestaande conventie; hier is hij één keer overgeslagen. *Losse taak.*
 
-#### j. `opi/api/router.py:3386` — `"url": "rcr.rijksapps.nl/rig"`
+#### j. `opi/api/router.py:3386` — `"url": "rcr.rijksapps.nl/rig"` in een docstring
 
-Een ODCN-registry-URL in een API-antwoord. Naar behoren hoort dit uit `settings.REGISTRY_URL`
-(`opi/core/config.py:291`) te komen, dat de odcn-configmap wél zet
-(`bootstrap/.../odcn-production/configmap.yaml:53`).
+Een ODCN-registry-URL in het `curl`-voorbeeld in de docstring van
+`POST /api/projects/{project}/registries/by-secret`. Het is **geen codepad**: de waarde wordt
+nergens teruggegeven, hij staat als voorbeeldpayload in de endpointbeschrijving en komt zo in
+de OpenAPI-spec en de API-documentatie terecht.
 
-**Oordeel: naar configuratie.** Lees `settings.REGISTRY_URL`/`REGISTRY_ORG`. *Losse taak.*
-Let op: dit is een hardcode in een codepad, niet in een template — hij overleeft dus ook een
-correcte fundament-configmap.
+**Oordeel: blijft staan, hooguit kosmetisch.** Een docstring kan geen `settings.REGISTRY_URL`
+lezen, dus "naar configuratie" is hier niet van toepassing. Wat wel kan: het voorbeeld
+neutraler schrijven (`registry.example.internal/<org>`), zodat een fundament-lezer de
+ODCN-mirror niet voor de standaardwaarde aanziet. Lage prioriteit — het beïnvloedt geen enkel
+gegenereerd manifest en geen enkel antwoord. *Optioneel, bij het volgende docs-rondje.*
 
 #### k. `opi/core/config.py:501-502` — `DB_CONSOLE_PGWEB_IMAGE` / `DB_CONSOLE_DBGATE_IMAGE`
 
@@ -339,20 +351,21 @@ Fundament krijgt een eigen recipient; dat is precies het punt van (p).
 | 1 | egress-annotatie op namespace | `manifests/namespace.yaml.jinja:10` | **blokkerend** — kan namespace-creatie laten falen |
 | 2 | AGE-sleutel per cluster | `Taskfile.yaml:842,924,974` | **blokkerend** — versleutelt anders met de ODCN-sleutel |
 | 3 | UID/SCC-keuze op eigenschap i.p.v. clusternaam | `manifests/pod-security-context.yaml.jinja:8` | hoog |
-| 4 | snapshotclass uit één bron | `opi/core/config.py:438`, `opi/manager/backup/base.py:467` | hoog |
+| 4 | snapshotclass uit één bron; vangnet leeg i.p.v. de ODCN-waarde | `opi/core/config.py:438`, `opi/manager/backup/base.py:467` | midden — de terugval op de clusterwaarde bestaat al (`base.py:490`) |
 | 5 | external-dns-image uit de mirror in de base | `infrastructure/.../external-dns/controller/base/deployment.yaml:28` | midden |
-| 6 | registry-URL uit settings | `opi/api/router.py:3386` | midden |
-| 7 | `select-cluster` niet met hardgecodeerde cases | `Taskfile.yaml:33` (menu `:41-45`, cases `:49-61`) | laag — handwerk, maar zichtbaar |
-| 8 | `publish`/`pin-operations-manager-image` clusteronafhankelijk | `Taskfile.yaml:1209`, `:1249` | laag — pas nodig als fundament eigen images pint |
-| 9 | `ip_whitelist` zonder nginx-equivalent | `manifests/ingress.yaml.jinja:15` | voorwaardelijk — alleen als fundament op IP wil afschermen |
-| 10 | dode verwijzing `docs/knowledge/odcn-ingress-controller.md` | `opi/core/cluster_config.py:627` | opruimen |
+| 6 | `select-cluster` niet met hardgecodeerde cases | `Taskfile.yaml:33` (menu `:41-45`, cases `:49-61`) | laag — handwerk, maar zichtbaar |
+| 7 | `publish`/`pin-operations-manager-image` clusteronafhankelijk | `Taskfile.yaml:1209`, `:1249` | laag — pas nodig als fundament eigen images pint |
+| 8 | `ip_whitelist` zonder nginx-equivalent | `manifests/ingress.yaml.jinja:15` | voorwaardelijk — alleen als fundament op IP wil afschermen |
+| 9 | dode verwijzing `docs/knowledge/odcn-ingress-controller.md` | `opi/core/cluster_config.py:627` | opruimen |
 
 Wat **blijft staan**, met reden: de OpenShift-router-annotaties (inert op nginx, en een
 per-cluster if in vijf takken kost meer dan het oplevert), het
 `openshift-monitoring`-Prometheusfilter (no-op buiten OpenShift), de Capsule-wachtlus (zit al
 achter `uses_capsule`), de UID-defaults in `deployment.yaml.jinja` (het projectbestand kan ze
 overschrijven), de docker.io-defaults voor de console-images (de default is de neutrale kant en
-het comment zegt het), en alle waarden in de odcn-overlays (die horen daar).
+het comment zegt het), de `rcr.rijksapps.nl/rig`-URL in het curl-voorbeeld in de docstring van
+`opi/api/router.py:3386` (documentatie, geen codepad — hooguit kosmetisch neutraler te
+schrijven, zie 2.2j), en alle waarden in de odcn-overlays (die horen daar).
 
 ---
 
@@ -478,9 +491,9 @@ nieuw yaml-bestand naast `operations-manager/python/extensions/odcn-registry-rew
 | 1 | Punt 2.3-1 uitvoeren: egress-annotatie configureerbaar per cluster | een nieuw cluster krijgt geen ODCN-annotatie meer op zijn namespaces |
 | 2 | Punt 2.3-2 uitvoeren: AGE-sleutelbestand uit `.env-taskfile-<cluster>` | fundament kan niet per ongeluk met de ODCN-sleutel versleutelen |
 | 3 | Punt 2.3-3 uitvoeren: `pod-security-context` op een clustereigenschap i.p.v. een namenlijst | een nieuw cluster krijgt niet stil de OpenShift-tak |
-| 4 | Punt 2.3-4 uitvoeren: snapshotclass uit `cluster_config`, de twee andere defaults weg | één bron voor de snapshotclass |
-| 5 | Punt 2.3-5 en 2.3-6 uitvoeren: mirror uit de external-dns-base, registry-URL uit settings | geen ODCN-registry meer buiten de odcn-overlays |
-| 6 | Punt 2.3-10: de dode `docs/knowledge/`-verwijzing opruimen (of het bestand alsnog schrijven) | geen verwijzing naar een niet-bestaand bestand |
+| 4 | Punt 2.3-4 uitvoeren: snapshotclass alleen uit `cluster_config`, het vangnet leeg maken | één bron voor de snapshotclass, en een ontbrekende clusterwaarde klaagt in plaats van te zwijgen |
+| 5 | Punt 2.3-5 uitvoeren: mirror uit de external-dns-base | geen ODCN-registry meer buiten de odcn-overlays |
+| 6 | Punt 2.3-9: de dode `docs/knowledge/`-verwijzing opruimen (of het bestand alsnog schrijven) | geen verwijzing naar een niet-bestaand bestand |
 | 7 | Een lege `fundament`-overlayskeletons voorbereiden als kopie van odcn, met elke ODCN-waarde vervangen door een `TODO:`-markering | de installatie wordt invullen, niet zoeken |
 | 8 | De vragenlijst uit paragraaf 3 versturen | het pad vrijmaken voor 4.2 |
 | 9 | De beslissingen uit 5.6 agenderen | hub-en-spoke-richting vastgelegd vóór de installatie |
@@ -506,8 +519,8 @@ te voorkomen.
 | 17 | `infrastructure/bootstrap/clusters/fundament/kustomization.yaml` samenstellen — begin bij de 9 componenten die op ODCN echt draaien | 3.2-5 (wat levert het platform zelf) |
 | 18 | Per meegaand component een `overlays/fundament/` aanmaken; let op de vijf storageclass-plaatsen (2.2n) en de tenant-selector in de backup-networkpolicy (2.2o) | 3.5, 3.2-6 |
 | 19 | Registry-extensie: `extensions/fundament-registry-rewrite.yaml` óf `extensions: []` | 3.4 |
-| 20 | `ip_whitelist`-equivalent bouwen (punt 2.3-9) | 3.3-12, alleen als afgeschermd |
-| 21 | Publish/pin-taken clusteronafhankelijk maken (punt 2.3-8) | alleen als fundament eigen image-pins krijgt |
+| 20 | `ip_whitelist`-equivalent bouwen (punt 2.3-8) | 3.3-12, alleen als afgeschermd |
+| 21 | Publish/pin-taken clusteronafhankelijk maken (punt 2.3-7) | alleen als fundament eigen image-pins krijgt |
 | 22 | Hub-en-spoke inrichten, of niet | paragraaf 5, beslissing 5.6 |
 
 ### 4.3 Volgorde van installeren
