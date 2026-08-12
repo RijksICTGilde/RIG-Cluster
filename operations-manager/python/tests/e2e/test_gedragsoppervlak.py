@@ -166,6 +166,11 @@ def test_de_lijst_bestaat_en_dekt_elk_pad(vastgelegd: dict[str, dict[str, list[s
 #: De rest van die dialogen - naam, image, poorten, het opslaan-adres - ligt gewoon vast.
 NIET_VASTLEGGEN = {
     "_services-config{": "hangt af van de diensten die een ander testgeval op dit project zette",
+    # De voettekst linkt naar de commit waarvan deze build is gemaakt. Die verandert per
+    # definitie bij elke commit, dus vastleggen zou betekenen dat de EERSTVOLGENDE commit
+    # "verdwenen gedrag" meldt - een poort die altijd rood staat leert niemand meer iets.
+    # Dat de link er is, is trouwens niet ongemeten: /version heeft zijn eigen toets.
+    "/commit/": "wijst naar de commit van deze build en verandert dus elke commit",
 }
 
 
