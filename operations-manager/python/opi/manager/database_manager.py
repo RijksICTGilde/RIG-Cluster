@@ -154,7 +154,7 @@ class DatabaseManager:
         progress_manager = self.project_manager.get_progress_manager()
         database_task = None
         if progress_manager:
-            database_task = progress_manager.add_task("Database klaarmaken")
+            database_task = progress_manager.add_task("Database klaarmaken", subject=deployment_name)
 
         try:
             # Determine placement: a dedicated (project-scoped) cluster or the shared
