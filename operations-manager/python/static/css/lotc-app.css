@@ -145,3 +145,24 @@ form.is-bezig {
 nldd-page {
     overscroll-behavior-y: auto;
 }
+
+/* De navigatie zonder eigen vlak.
+ *
+ * <nldd-sidebar-section> tekent zijn zijkolom in een `div.sidebar-section__sidebar-box` in
+ * zijn schaduwboom, met een grijze achtergrond en 10px ronde hoeken. Wij willen alleen de
+ * vlakverdeling met ons eigen menu erin, dus dat vlak moet weg.
+ *
+ * Dit is GEEN hack op een schaduwboom: dat kan niet met gewone CSS, en hoeft ook niet. Het
+ * component leest zijn kleuren uit eigen custom properties, en die erven wel naar binnen.
+ * We zetten dus zijn eigen tokens, wat de bedoelde weg is:
+ *
+ *   --components-sidebar-section-sidebar-box-background-color
+ *   --components-sidebar-section-sidebar-box-highlight-border-color   (de inset-rand)
+ *
+ * De hoekradius laten we staan: die komt uit --semantics-surfaces-corner-radius, een
+ * GLOBAAL token dat ook andere vlakken bedient, en op een doorzichtig vlak is hij onzichtbaar.
+ */
+nldd-sidebar-section {
+    --components-sidebar-section-sidebar-box-background-color: transparent;
+    --components-sidebar-section-sidebar-box-highlight-border-color: transparent;
+}
