@@ -13,6 +13,8 @@ from __future__ import annotations
 from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.publish_on_web.editables import (
+    DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
+    DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
     DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE,
     DOMAIN_BASE_DOMAIN_EDITABLE,
     DOMAIN_CONFIG_EDITABLE,
@@ -45,6 +47,37 @@ PUBLISH_ON_WEB_ATTACHMENT = EditableVisualizer(
     widget=WidgetType.SELECT,
     label="Certificaat (bijlage)",
     help_text="De PEM-bijlage (cert + key) die als certificaat op de ingress komt.",
+)
+
+
+# --- the deployment-component layer: the same pair, as an override (RC-78) ------------
+#
+# Both labels say what the field is an override OF, because at this layer an empty value
+# does not mean "no TLS" -- it means "whatever the component says". The inherit option
+# names the inherited mode (and its certificate) rather than only "erven", so the reader
+# can see whether they are looking at a setting or at an inheritance before they change it.
+
+DEPLOYMENT_COMP_PUBLISH_TLS = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="TLS-modus (deze deployment)",
+    help_text=(
+        "Leeg laten betekent: volg het component. Kies je hier wel iets, dan geldt dat alleen "
+        "voor deze deployment -- zo kan productie een eigen certificaat hebben terwijl acceptatie "
+        "op het platformcertificaat blijft. Een keuze hier vervangt de instelling van het "
+        "component volledig, ook een aangeleverd certificaat."
+    ),
+    attributes={"data-rerender": "true"},
+)
+
+DEPLOYMENT_COMP_PUBLISH_ATTACHMENT = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Certificaat (bijlage)",
+    help_text=(
+        "De PEM-bijlage (cert + key) die voor deze deployment als certificaat op de ingress komt. "
+        "Verplicht bij 'aangeleverd': het certificaat van het component wordt niet meegeerfd."
+    ),
 )
 
 

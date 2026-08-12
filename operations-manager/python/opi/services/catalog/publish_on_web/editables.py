@@ -9,12 +9,20 @@ for one path, in two flows, which is exactly the kind of duplication where conve
 leaves the other writing the old shape. There is one set now, it belongs to the service
 that owns the values, and both flows use it.
 
+Deployment-component level (RC-78): the same ``tls``/``attachment`` pair once more, as an
+override for one component inside one deployment -- which is what the deployment-component
+entry exists for. It is declared here, not in the forms layer, so the deployment form picks
+it up through ``deployment_component_service_visualizers()`` without knowing this service
+exists.
+
 Every deployment-level path is built with ``config_path(ConfigLayer.DEPLOYMENT, ...)``
 rather than written out, so the storage location is stated once (in
 ``catalog/base.py``) and this file cannot drift from ``domain_config.py``.
 """
 
 from __future__ import annotations
+
+import dataclasses
 
 from opi.forms.editables.conditions import (
     DomainNeedsRequestCondition,
@@ -33,7 +41,9 @@ from opi.forms.editables.validators import (
     DomainFormatValidator,
     SubdomainValidator,
 )
+from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
+from opi.services.services_enums import ServiceType
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS, SUBDOMAIN_FORMAT_IDS
 
 PUBLISH_ON_WEB_TLS_EDITABLE = Editable(
@@ -53,6 +63,65 @@ PUBLISH_ON_WEB_ATTACHMENT_EDITABLE = Editable(
     depends_on="components[*]/services{publish-on-web}/config/tls",
     show_when={"value": ["provided"]},
 )
+
+
+# --- the deployment-component layer: the same pair, as an override (RC-78) ------------
+#
+# The model is the same one (``PublishOnWebComponentConfig``, twice): the entry exists
+# precisely to override the component's. The fields are therefore DERIVED from the two
+# above rather than written a second time -- a validator or a provider added there arrives
+# here without anyone remembering to copy it.
+#
+# What a plain segment swap cannot do is the path. The component layer stores its services
+# as the mixed string/dict LIST, so its path carries ``services{publish-on-web}`` plus
+# ``virtualize``; the deployment component stores them as a real MAP, so the path is plain
+# ``services/publish-on-web`` and virtualization would break it. The relocation goes
+# through ``config_path`` for that reason, and the four remaining differences are the
+# deliberate ones:
+#
+# * no ``default``: an empty value here means "follow the component", not "standard". A
+#   default would silently write an override the moment a deployment form is saved.
+# * ``remove_when_none``: emptying the field removes the override rather than storing an
+#   empty string the cascade would then have to interpret.
+# * a different provider: the override list leads with the inherit option, which names
+#   what the component actually says (``PublishTlsOverrideOptionsProvider``).
+# * no ``depends_on`` on the mode: "does this component use publish-on-web" is answered by
+#   the component's own services list, which is not a field of this form. The layout
+#   fieldset carries that condition instead.
+
+
+def _as_deployment_component_override(editable: Editable, key: str, **overrides: object) -> Editable:
+    """Relocate a component-level editable onto the deployment-component layer."""
+    return dataclasses.replace(
+        editable,
+        yaml_path=config_path(ConfigLayer.DEPLOYMENT_COMPONENT, ServiceType.PUBLISH_ON_WEB, "config", key),
+        virtualize=None,
+        default=None,
+        remove_when_none=True,
+        **{"depends_on": None, "show_when": None, **overrides},  # type: ignore[arg-type]
+    )
+
+
+DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE = _as_deployment_component_override(
+    PUBLISH_ON_WEB_TLS_EDITABLE,
+    "tls",
+    values_provider="PublishTlsOverrideOptionsProvider",
+)
+
+DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE = _as_deployment_component_override(
+    PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
+    "attachment",
+    # The mode it belongs to is a sibling on this same layer, so the dependency relocates
+    # with it: 'provided' without a certificate is what the model refuses.
+    depends_on=config_path(ConfigLayer.DEPLOYMENT_COMPONENT, ServiceType.PUBLISH_ON_WEB, "config", "tls"),
+    show_when={"value": ["provided"]},
+)
+
+#: Both override fields, for ``config_editables(ConfigLayer.DEPLOYMENT_COMPONENT)``.
+PUBLISH_ON_WEB_DEPLOYMENT_COMPONENT_EDITABLES = [
+    DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
+    DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
+]
 
 
 # --- the deployment layer: the web address ------------------------------------------

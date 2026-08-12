@@ -88,8 +88,9 @@ class TestSequenceEditables:
         assert len(nested_seq) == 1
         assert nested_seq[0].editable.yaml_path == "deployments[*]/components"
         assert nested_seq[0].children is not None
-        # reference, image, pullPolicy, user-env-vars, per-deployment attachments sequence
-        assert len(nested_seq[0].children) == 5
+        # reference, image, pullPolicy, user-env-vars, the publish-on-web certificate
+        # override (tls + attachment, RC-78), per-deployment attachments sequence
+        assert len(nested_seq[0].children) == 7
 
 
 class TestReadonlyEditables:
