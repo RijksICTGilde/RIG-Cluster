@@ -181,11 +181,11 @@ def _ids(html: str) -> list[str]:
 def test_het_vakje_en_zijn_omhulling_dragen_niet_dezelfde_id() -> None:
     """Waarom ``[id='<pad>']`` er precies een oplevert, en niet twee.
 
-    Het ``id``-attribuut van ``<c-checkbox-field>`` landt op de omhulling, de bundel bij
-    ``:attrs`` op het besturingselement. Stond het veldpad in allebei, dan stonden er twee
-    elementen met dezelfde id in de pagina: ongeldige HTML, en de gedocumenteerde selector
-    (features/aanvinkvakje.md) leverde er twee op. Precies daar liep de toetsenbordtest op
-    vast.
+    Sinds LOTC ``762e570`` zet het component de id zelf op het besturingselement in plaats
+    van op de omhulling. Zetten wij hem daarnaast ook nog via ``:attrs``, dan stonden er
+    twee elementen met dezelfde id in de pagina: ongeldige HTML, en de gedocumenteerde
+    selector (features/aanvinkvakje.md) leverde er twee op. Precies daar liep de
+    toetsenbordtest op vast.
     """
     veld = editable_to_form_field(SCHEMA_MARKED, _project([{"postfix": "a"}]), index=0)
     html = _vakje_html(veld)
@@ -196,8 +196,8 @@ def test_het_vakje_en_zijn_omhulling_dragen_niet_dezelfde_id() -> None:
 
 
 def test_de_hulptekst_hangt_nog_aan_het_veld() -> None:
-    """De omhulling houdt een id, want daar leidt het component zijn hulptekst uit af."""
+    """De hulptekst houdt zijn afgeleide id: het component stelt hem uit de prop samen."""
     veld = editable_to_form_field(SCHEMA_MARKED, _project([{"postfix": "a"}]), index=0)
     html = _vakje_html(veld)
 
-    assert f'id="{veld.path}-veld-help"' in html
+    assert f'id="{veld.path}-help"' in html

@@ -67,13 +67,14 @@ def aanvinkvakje(page: Page, pad: str) -> Locator:
         NLDD-CHECKBOX        (schaduw van NLDD-CHECKBOX-FIELD)
         INPUT                (schaduw van NLDD-CHECKBOX)
 
-    Het veldpad gaat via de attribuutbundel naar het BESTURINGSELEMENT
-    (widgets/checkbox.html.j2), en de omhulling eromheen draagt ``<pad>-veld``. Zo levert
-    ``[id='<pad>']`` er precies een op - en wel het vakje zelf. Toen die twee allebei het
-    kale pad droegen waren het er twee, en viel deze helper om.
+    De id staat op het besturingselement en nergens anders: het component zet hem daar
+    sinds LOTC 762e570, en ons sjabloon geeft hem alleen nog als prop mee. Daarvoor stond
+    hij ook op de omhullende div en leverde ``[id='<pad>']`` er twee op. Nu is het er
+    precies een - en wel het vakje zelf, dat ``.checked`` draagt.
+
     Voor een groep is dat ``<pad>-<waarde>`` per keuze; gebruik daarvoor
     :func:`aanvinkvakjes`, want op ``<pad>-`` matchen vindt ook de hulptekst
-    (``<pad>-veld-help``).
+    (``<pad>-help``).
     """
     return page.locator(f"[id='{pad}']")
 
@@ -82,7 +83,7 @@ def aanvinkvakjes(page: Page, pad: str) -> Locator:
     """Alle vakjes van de GROEP met dit pad, in de volgorde waarin ze staan.
 
     Twee dingen worden hier bewust uitgesloten. De hulptekst en de foutmelding van het
-    veld dragen ``<pad>-veld-help`` en ``<pad>-veld-error``, dus een prefixselector op de id pikt
+    veld dragen ``<pad>-help`` en ``<pad>-error``, dus een prefixselector op de id pikt
     die mee (en telt dan een vakje te veel). De schaduwelementen dragen wel de name maar
     geen id. Naam EN id samen laat precies de vakjes over.
     """
