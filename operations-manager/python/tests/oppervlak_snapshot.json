@@ -468,7 +468,6 @@
       "closeEditModal",
       "closeServiceHelp",
       "copyLogs",
-      "copyToClipboard",
       "downloadLogs",
       "filterLogs",
       "handleEditBackdropClick",
