@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
 from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath
+from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
@@ -41,7 +42,8 @@ from opi.utils.naming import (
     generate_storage_name,
     generate_unique_name,
 )
-from pydantic import BaseModel, Field
+from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -237,15 +239,60 @@ class BackupRunRestoreResponse(BaseModel):
 # Database Restore Models
 
 
+def _require_all_or_no_target(fields: dict[str, str | None]) -> None:
+    """Reject a half-filled target: either every field is given, or none of them is.
+
+    A request that names three of the four connection fields is a mistake on the caller's
+    side, and guessing the fourth would silently restore somewhere the caller did not
+    ask for. The error names the fields that are missing so the caller can see which one
+    it forgot. Only field NAMES are reported, never the values that were supplied.
+    """
+    missing = sorted(name for name, value in fields.items() if value is None)
+    if missing and len(missing) != len(fields):
+        given = sorted(name for name, value in fields.items() if value is not None)
+        raise ValueError(
+            "Specify all target fields or none of them (omit them all to restore into the "
+            f"project's own service). Given: {', '.join(given)}. Missing: {', '.join(missing)}"
+        )
+
+
 class DatabaseRestoreRequest(BaseModel):
-    """Request body for database restore operations."""
+    """Request body for database restore operations.
+
+    The four target fields describe an EXTERNAL destination and are optional. Leave them
+    all out and the platform restores into the database of the project the API key belongs
+    to -- the credentials for that database are injected into the project's pods and are
+    not retrievable by the caller, so requiring them would make the normal restore
+    impossible to perform (RC-81). Supplying a SUBSET is a mistake, not a request to fill
+    in the rest: it is rejected naming the fields that are missing.
+    """
 
     snapshot_id: str | None = Field(default=None, description="Specific snapshot ID to restore (default: latest)")
-    target_database_host: str = Field(..., description="Target database host address")
+    target_database_host: str | None = Field(
+        default=None, description="Target database host address (omit to restore into the project's own database)"
+    )
     target_database_port: int = Field(default=5432, description="Target database port")
-    target_database_name: str = Field(..., description="Target database name")
-    target_database_user: str = Field(..., description="Target database username")
-    target_database_password: str = Field(..., description="Target database password")
+    target_database_name: str | None = Field(
+        default=None, description="Target database name (omit to restore into the project's own database)"
+    )
+    target_database_user: str | None = Field(
+        default=None, description="Target database username (omit to restore into the project's own database)"
+    )
+    target_database_password: str | None = Field(
+        default=None, description="Target database password (omit to restore into the project's own database)"
+    )
+
+    @model_validator(mode="after")
+    def check_target_is_all_or_nothing(self) -> DatabaseRestoreRequest:
+        _require_all_or_no_target(
+            {
+                "target_database_host": self.target_database_host,
+                "target_database_name": self.target_database_name,
+                "target_database_user": self.target_database_user,
+                "target_database_password": self.target_database_password,
+            }
+        )
+        return self
 
     model_config = {
         "json_schema_extra": {
@@ -285,14 +332,39 @@ class DatabaseRestoreResponse(BaseModel):
 
 
 class BucketRestoreRequest(BaseModel):
-    """Request body for bucket restore operations."""
+    """Request body for bucket restore operations.
+
+    Same rule as ``DatabaseRestoreRequest``: the four target fields are optional and
+    describe an external destination; omit them all to restore into the bucket of the
+    project the API key belongs to. A subset is rejected naming what is missing.
+    """
 
     snapshot_id: str | None = Field(default=None, description="Specific snapshot ID to restore (default: latest)")
-    target_minio_endpoint: str = Field(..., description="Target MinIO endpoint URL")
-    target_bucket_name: str = Field(..., description="Target bucket name")
-    target_access_key: str = Field(..., description="Target MinIO access key")
-    target_secret_key: str = Field(..., description="Target MinIO secret key")
+    target_minio_endpoint: str | None = Field(
+        default=None, description="Target MinIO endpoint URL (omit to restore into the project's own bucket)"
+    )
+    target_bucket_name: str | None = Field(
+        default=None, description="Target bucket name (omit to restore into the project's own bucket)"
+    )
+    target_access_key: str | None = Field(
+        default=None, description="Target MinIO access key (omit to restore into the project's own bucket)"
+    )
+    target_secret_key: str | None = Field(
+        default=None, description="Target MinIO secret key (omit to restore into the project's own bucket)"
+    )
     clear_target: bool = Field(default=False, description="Clear target bucket before restore")
+
+    @model_validator(mode="after")
+    def check_target_is_all_or_nothing(self) -> BucketRestoreRequest:
+        _require_all_or_no_target(
+            {
+                "target_minio_endpoint": self.target_minio_endpoint,
+                "target_bucket_name": self.target_bucket_name,
+                "target_access_key": self.target_access_key,
+                "target_secret_key": self.target_secret_key,
+            }
+        )
+        return self
 
     model_config = {
         "json_schema_extra": {
@@ -1326,6 +1398,190 @@ async def restore_backup_run(
         raise HTTPException(status_code=500, detail=f"Error restoring backup run: {e}") from e
 
 
+# Resolving the project's own service as restore target
+#
+# The normal restore puts a backup back into the project's OWN database or bucket. Those
+# credentials are platform-managed: they are injected into the project's pods and are not
+# published through any API, so a caller cannot name them (RC-81). When the request omits
+# the target fields, the platform resolves them here, from the deployment secret in the
+# project's own namespace -- the same secret the backup side reads. This can only ever
+# reach the authenticated project's own namespace: ``_require_namespace_owned_by_project``
+# has already pinned ``namespace`` to ``get_prefixed_namespace(cluster, project_name)``.
+# The resolved credentials stay inside the request; they are never logged and never
+# repeated in an error message.
+
+_DATABASE_SERVICE_TYPES = [
+    ServiceType.POSTGRESQL_DATABASE.value,
+    ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
+]
+_MINIO_SERVICE_TYPES = [ServiceType.MINIO_STORAGE.value]
+
+
+@dataclass
+class _DatabaseTarget:
+    """Connection details of the database a restore writes into."""
+
+    host: str
+    port: int
+    database: str
+    username: str
+    password: str
+
+
+@dataclass
+class _BucketTarget:
+    """Connection details of the bucket a restore writes into."""
+
+    endpoint: str
+    bucket_name: str
+    access_key: str
+    secret_key: str
+
+
+def _explicit_database_target(body: DatabaseRestoreRequest) -> _DatabaseTarget | None:
+    """Return the external target the caller named, or None when it named none."""
+    if (
+        body.target_database_host is None
+        or body.target_database_name is None
+        or body.target_database_user is None
+        or body.target_database_password is None
+    ):
+        return None
+    return _DatabaseTarget(
+        host=body.target_database_host,
+        port=body.target_database_port,
+        database=body.target_database_name,
+        username=body.target_database_user,
+        password=body.target_database_password,
+    )
+
+
+def _explicit_bucket_target(body: BucketRestoreRequest) -> _BucketTarget | None:
+    """Return the external target the caller named, or None when it named none."""
+    if (
+        body.target_minio_endpoint is None
+        or body.target_bucket_name is None
+        or body.target_access_key is None
+        or body.target_secret_key is None
+    ):
+        return None
+    return _BucketTarget(
+        endpoint=body.target_minio_endpoint,
+        bucket_name=body.target_bucket_name,
+        access_key=body.target_access_key,
+        secret_key=body.target_secret_key,
+    )
+
+
+def _require_project_data(project_name: str) -> dict[str, Any]:
+    """Return the project definition, or a 404 that says which part is missing."""
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    if not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' has no data loaded")
+    return project.data
+
+
+def _find_deployment_for_reference(
+    project_data: dict[str, Any], reference_name: str, service_types: list[str], default_suffix: str
+) -> str | None:
+    """Find the deployment whose backup of this kind is named ``reference_name``.
+
+    A backup is registered either under the reference of the component service or, when no
+    component carries one, under the deployment-level fallback ``{deployment}-{suffix}``
+    (see ``backup_router``). Both are checked, component references first.
+    """
+    project_file_handler = create_project_file_handler()
+    deployment_names = [
+        str(deployment["name"])
+        for deployment in (project_data.get("deployments") or [])
+        if isinstance(deployment, dict) and deployment.get("name")
+    ]
+
+    for deployment_name in deployment_names:
+        for component_info in project_file_handler.get_components_using_service(
+            project_data, deployment_name, service_types
+        ):
+            if component_info.get("reference_name") == reference_name:
+                return deployment_name
+
+    for deployment_name in deployment_names:
+        if reference_name == f"{deployment_name}-{default_suffix}":
+            return deployment_name
+
+    return None
+
+
+async def _resolve_own_database_target(project_name: str, namespace: str, reference_name: str) -> _DatabaseTarget:
+    """Resolve the project's own database as the restore target."""
+    project_data = _require_project_data(project_name)
+    deployment_name = _find_deployment_for_reference(project_data, reference_name, _DATABASE_SERVICE_TYPES, "database")
+    if not deployment_name:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No deployment of project '{project_name}' has a database backup named "
+                f"'{reference_name}'. Supply the target_database_* fields to restore into an "
+                "external database."
+            ),
+        )
+
+    secret = await DatabaseSecret.get_data(
+        kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
+    )
+    if secret is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Deployment '{deployment_name}' has no database credentials in namespace "
+                f"'{namespace}'; the database may not be provisioned yet."
+            ),
+        )
+
+    return _DatabaseTarget(
+        host=secret.host,
+        port=secret.port,
+        database=secret.database,
+        username=secret.username,
+        password=secret.password,
+    )
+
+
+async def _resolve_own_bucket_target(project_name: str, namespace: str, reference_name: str) -> _BucketTarget:
+    """Resolve the project's own bucket as the restore target."""
+    project_data = _require_project_data(project_name)
+    deployment_name = _find_deployment_for_reference(project_data, reference_name, _MINIO_SERVICE_TYPES, "minio")
+    if not deployment_name:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No deployment of project '{project_name}' has a bucket backup named "
+                f"'{reference_name}'. Supply the target_minio_endpoint, target_bucket_name, "
+                "target_access_key and target_secret_key fields to restore into an external bucket."
+            ),
+        )
+
+    secret = await MinIOSecret.get_data(
+        kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
+    )
+    if secret is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Deployment '{deployment_name}' has no storage credentials in namespace "
+                f"'{namespace}'; the bucket may not be provisioned yet."
+            ),
+        )
+
+    return _BucketTarget(
+        endpoint=secret.endpoint_url,
+        bucket_name=secret.bucket_name,
+        access_key=secret.access_key,
+        secret_key=secret.secret_key,
+    )
+
+
 # Database Restore Endpoints
 
 
@@ -1336,7 +1592,7 @@ async def restore_database(
     cluster: ClusterPath,
     namespace: NamespacePath,
     reference_name: str,
-    body: DatabaseRestoreRequest,
+    body: DatabaseRestoreRequest | None = None,
     project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
     """
@@ -1364,9 +1620,12 @@ async def restore_database(
             ``GET /api/v1/backup/runs/{project}/{deployment}``; the snapshot listing
             (``GET /api/v1/restore/snapshots/...``) reports the same value in its
             ``pvc_name`` field, which carries every backed-up resource regardless of kind.
-        body: Target database connection parameters. Required - a request without a JSON
-            body is answered with 422 naming the missing fields, not with a 404 on the
-            reference name.
+        body: Target database connection parameters. Optional as a whole: omit the four
+            target_database_* fields and the restore goes into the database of the project
+            the API key belongs to (the platform reads those credentials itself; they are
+            not retrievable through the API). Supply all four to restore into an external
+            database. A request that supplies only some of them is answered with 422
+            naming the fields that are missing.
         project_name: Project name matching the API key (required)
 
     Headers:
@@ -1374,7 +1633,13 @@ async def restore_database(
 
     Example:
     ```bash
-    # Restore latest snapshot
+    # Restore the latest snapshot into the project's own database (no credentials needed)
+    curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \\
+      -H "X-API-Key: your-api-key" \\
+      -H "Content-Type: application/json" \\
+      -d '{}'
+
+    # Restore latest snapshot into an external database
     curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
@@ -1403,6 +1668,13 @@ async def restore_database(
     # and would otherwise be swallowed by the generic 500 handler below.
     _require_namespace_owned_by_project(project_name, cluster, namespace)
 
+    # No body at all means the same as a body without target fields: restore into the
+    # project's own database.
+    body = body or DatabaseRestoreRequest()
+    target = _explicit_database_target(body) or await _resolve_own_database_target(
+        project_name, namespace, reference_name
+    )
+
     try:
         logger.info(f"Database restore request for {cluster}/{namespace}/{reference_name}")
 
@@ -1411,18 +1683,18 @@ async def restore_database(
             cluster=cluster,
             namespace=namespace,
             reference_name=reference_name,
-            target_database_host=body.target_database_host,
-            target_database_port=body.target_database_port,
-            target_database_name=body.target_database_name,
-            target_database_user=body.target_database_user,
-            target_database_password=body.target_database_password,
+            target_database_host=target.host,
+            target_database_port=target.port,
+            target_database_name=target.database,
+            target_database_user=target.username,
+            target_database_password=target.password,
             snapshot_id=body.snapshot_id,
             project_name=project_name,
         )
 
         status = "success" if result.success else "failed"
         if result.success:
-            message = f"Restored database {reference_name} to {body.target_database_name}"
+            message = f"Restored database {reference_name} to {target.database}"
         else:
             message = f"Failed to restore database {reference_name}: {result.error}"
 
@@ -1456,7 +1728,7 @@ async def restore_bucket(
     cluster: ClusterPath,
     namespace: NamespacePath,
     reference_name: str,
-    body: BucketRestoreRequest,
+    body: BucketRestoreRequest | None = None,
     project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
     """
@@ -1480,8 +1752,10 @@ async def restore_bucket(
         namespace: Kubernetes namespace for the restore pod (must be the authenticated project's own namespace)
         reference_name: Logical name of the bucket backup to restore. Same value as the
             ``reference_name`` of the backup run, reported as ``pvc_name`` in the snapshot listing.
-        body: Target MinIO connection parameters. Required - a request without a JSON body
-            is answered with 422 naming the missing fields.
+        body: Target MinIO connection parameters. Optional as a whole: omit the four target
+            fields and the restore goes into the bucket of the project the API key belongs
+            to. Supply all four to restore into an external bucket. A request that supplies
+            only some of them is answered with 422 naming the fields that are missing.
         project_name: Project name matching the API key (required)
 
     Headers:
@@ -1489,7 +1763,13 @@ async def restore_bucket(
 
     Example:
     ```bash
-    # Restore latest snapshot
+    # Restore the latest snapshot into the project's own bucket (no credentials needed)
+    curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \\
+      -H "X-API-Key: your-api-key" \\
+      -H "Content-Type: application/json" \\
+      -d '{}'
+
+    # Restore latest snapshot into an external bucket
     curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
@@ -1518,6 +1798,10 @@ async def restore_bucket(
     # and would otherwise be swallowed by the generic 500 handler below.
     _require_namespace_owned_by_project(project_name, cluster, namespace)
 
+    # No body at all means the same as a body without target fields.
+    body = body or BucketRestoreRequest()
+    target = _explicit_bucket_target(body) or await _resolve_own_bucket_target(project_name, namespace, reference_name)
+
     try:
         logger.info(f"Bucket restore request for {cluster}/{namespace}/{reference_name}")
 
@@ -1526,10 +1810,10 @@ async def restore_bucket(
             cluster=cluster,
             namespace=namespace,
             reference_name=reference_name,
-            target_minio_endpoint=body.target_minio_endpoint,
-            target_bucket_name=body.target_bucket_name,
-            target_access_key=body.target_access_key,
-            target_secret_key=body.target_secret_key,
+            target_minio_endpoint=target.endpoint,
+            target_bucket_name=target.bucket_name,
+            target_access_key=target.access_key,
+            target_secret_key=target.secret_key,
             snapshot_id=body.snapshot_id,
             clear_target=body.clear_target,
             project_name=project_name,
@@ -1537,7 +1821,7 @@ async def restore_bucket(
 
         status = "success" if result.success else "failed"
         if result.success:
-            message = f"Restored bucket {reference_name} to {body.target_bucket_name}"
+            message = f"Restored bucket {reference_name} to {target.bucket_name}"
         else:
             message = f"Failed to restore bucket {reference_name}: {result.error}"
 
