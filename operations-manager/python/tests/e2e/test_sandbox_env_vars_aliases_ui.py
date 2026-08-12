@@ -133,6 +133,16 @@ def _wait_for(check, timeout_s: float = 120):
     return value
 
 
+def _save_component_env_vars(
+    page: Page, sandbox_url: str, forgejo: ForgejoClient, project_name: str, text: str
+) -> str | None:
+    """Write component-level user-env-vars through the modal; return what was stored."""
+    modal = _open_components_modal(page, sandbox_url, project_name)
+    modal.fill_codemirror_kv("components[0]/user-env-vars", text)
+    modal.submit_step_expect_progress()
+    return _wait_for(lambda: (_component(forgejo, project_name, "web") or {}).get("user-env-vars"))
+
+
 def test_component_aliases_save_through_the_ui(
     envali_project: str, sandbox_url: str, sandbox_page: Page, forgejo: ForgejoClient, capture
 ) -> None:
@@ -145,6 +155,17 @@ def test_component_aliases_save_through_the_ui(
     stored = _wait_for(lambda: (_component(forgejo, envali_project, "web") or {}).get("aliases"))
     assert stored, "the alias never reached the project file"
     assert "POSTGRES_HOST" in stored, f"unexpected alias map: {stored}"
+
+    # En dan de weg die daarna kapot was: modal opnieuw openen, IETS ANDERS wijzigen,
+    # opslaan. Een alias wordt per waarde versleuteld onder zijn eigen naam, dus de
+    # redactie van de wizardsessie gaf de plaatshouder terug in het veld en de validator
+    # weigerde elke volgende opslag met "Alias(sen) zonder verwijzing" - de modal was
+    # daarna niet meer op te slaan, ook niet voor een gewone gebruiker.
+    again = _save_component_env_vars(sandbox_page, sandbox_url, forgejo, envali_project, "NA_ALIAS=rc88-tweede-opslag")
+    capture(sandbox_page, "aliases-second-save")
+    assert again, "de tweede opslag van de componenten-modal kwam nooit in het projectbestand"
+    kept = (_component(forgejo, envali_project, "web") or {}).get("aliases") or {}
+    assert "POSTGRES_HOST" in kept, f"de alias overleefde de tweede opslag niet: {kept}"
 
 
 def test_component_env_vars_save_encrypted_through_the_ui(
@@ -172,6 +193,15 @@ def test_deployment_component_env_vars_override_saves(
     collected by ``_service_deployment_component_layouts()``. Nothing but a browser proves
     that swap kept the field on screen and saving.
     """
+    # Deze test toetst aan het eind dat de twee lagen APART blijven staan, en heeft
+    # daarvoor een component-laag nodig. Die kwam eerder van de vorige test in deze
+    # module, waarmee dit mat in welke volgorde pytest draait (en die is willekeurig).
+    # Nu zorgt de test zelf voor zijn uitgangspunt, en alleen als het er nog niet is.
+    if not (_component(forgejo, envali_project, "web") or {}).get("user-env-vars"):
+        assert _save_component_env_vars(
+            sandbox_page, sandbox_url, forgejo, envali_project, "E2E_TOKEN=rc25-secret-value"
+        ), "kon de component-laag niet klaarzetten voor deze test"
+
     modal = EditModalHelper(sandbox_page, sandbox_url, envali_project)
     modal.open_detail_page()
     modal.open_edit_modal("modal-edit-deployment-0", "Deployment bewerken")
@@ -202,7 +232,7 @@ def test_deployment_component_env_vars_override_saves(
     # (deployment-component wins per key, ProjectManager), and that merge only means
     # anything while both values are still stored in their own place. One service owning
     # both layers is exactly the arrangement that could accidentally write them to one
-    # spot, so assert the component-level value written by the previous test survived.
+    # spot, so assert the component-level value (zie boven) survived this save.
     component_level = (_component(forgejo, envali_project, "web") or {}).get("user-env-vars")
     assert component_level, (
         "writing the deployment-component override wiped the component-level user-env-vars; "
