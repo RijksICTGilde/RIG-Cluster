@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
 from opi.forms.widgets.base import WidgetAdapter
 
 if TYPE_CHECKING:
@@ -227,7 +228,10 @@ class FieldWidgetAdapter(WidgetAdapter):
         return self._render_template("nested.html.j2", {"field": field, "children_html": children_html})
 
     def render_sequence(self, field: FormField, items_html: list[str]) -> str:
-        return self._render_template("sequence.html.j2", {"field": field, "items_html": items_html})
+        return self._render_template(
+            "sequence.html.j2",
+            {"field": field, "items_html": items_html, "gerenderde_reeksen_veld": GERENDERDE_REEKSEN_VELD},
+        )
 
     def _is_simple_sequence(self, field: FormField) -> bool:
         if not field.children:
