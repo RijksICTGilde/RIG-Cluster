@@ -68,7 +68,10 @@ class KeycloakService(Service):
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.keycloak.editables import (
+            KEYCLOAK_ACCOUNT_LINK_EDITABLE,
             KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
+            KEYCLOAK_REDIRECT_URIS_EDITABLE,
+            KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE,
@@ -77,10 +80,13 @@ class KeycloakService(Service):
 
         return [
             KEYCLOAK_TEMPLATE_EDITABLE,
+            KEYCLOAK_REDIRECT_URIS_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE,
+            KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE,
             KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
+            KEYCLOAK_ACCOUNT_LINK_EDITABLE,
         ]
 
     @on(UIEvent.PROJECT_SECTIONS)
@@ -109,9 +115,11 @@ class KeycloakService(Service):
             from opi.forms.layout import Fieldset, Sequence
             from opi.forms.visualizers.sections import FormSection
             from opi.services.catalog.keycloak.visualizers import (
+                KEYCLOAK_ACCOUNT_LINK,
                 KEYCLOAK_ADDITIONAL_CLIENTS,
                 KEYCLOAK_REDIRECT_URIS,
                 KEYCLOAK_RESTRICT_ACCESS,
+                KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE,
                 KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
                 KEYCLOAK_RESTRICT_ACCESS_ROLE,
                 KEYCLOAK_TEMPLATE,
@@ -132,19 +140,38 @@ class KeycloakService(Service):
                     KEYCLOAK_REDIRECT_URIS,
                     KEYCLOAK_RESTRICT_ACCESS,
                     KEYCLOAK_RESTRICT_ACCESS_ROLE,
+                    KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE,
                     KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
                     KEYCLOAK_ADDITIONAL_CLIENTS,
+                    KEYCLOAK_ACCOUNT_LINK,
                 ],
                 layout=[
                     Fieldset(legend="Template", children=[cp("template")]),
+                    Fieldset(
+                        legend="Extra redirect URI's",
+                        description=(
+                            "Naast de URL's van de deployments zelf. Nodig voor lokale ontwikkeling "
+                            "of voor externe integraties die op een eigen adres terugkomen."
+                        ),
+                        children=[Sequence(field_name=cp("additional_redirect_uris"))],
+                    ),
                     Fieldset(
                         legend="Toegangsbeperking",
                         description="Beperk toegang tot de applicatie op basis van Keycloak realm-rollen.",
                         children=[
                             cp("restrict-access", "enabled"),
                             cp("restrict-access", "realm-role"),
+                            cp("restrict-access", "role"),
                             cp("restrict-access", "error-message"),
                         ],
+                    ),
+                    Fieldset(
+                        legend="Inloggen via SSO Rijk",
+                        description=(
+                            "Wat er gebeurt met een bestaand account in dit realm wanneer iemand "
+                            "via een identity provider inlogt."
+                        ),
+                        children=[cp("account-link")],
                     ),
                     Fieldset(
                         legend="Extra Keycloak clients",

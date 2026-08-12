@@ -20,6 +20,12 @@
 {% set fixed_size = max_items is not none and min_items == max_items|int %}
 <div id="{{ field.path|e }}-container"
      data-min-items="{{ min_items }}" data-max-items="{{ max_items|default('', true) }}" data-current-count="{{ current_count }}">
+    {# Deze reeks staat op het scherm, en dat moet de inzending zeggen. Een reeks die de
+       gebruiker leegmaakt stuurt niets mee, en een reeks die dit formulier nooit toonde
+       ook niet - zonder dit veld schreef de verwerker in beide gevallen een lege lijst
+       over de opgeslagen waarde heen. De haakjes achter de naam laat json-enc vallen, zodat
+       de meerdere reeksen als lijst aankomen. Zie opi/forms/editables/rendered_sequences.py. #}
+    <input type="hidden" name="{{ gerenderde_reeksen_veld }}[]" value="{{ field.path|e }}">
     <span class="utrecht-form-label">{{ field.label|e }}</span>
     {{ helper_text(field) }}
     {# De items in een c-stack, zodat de tussenruimte van het COMPONENT komt en niet uit
