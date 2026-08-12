@@ -3248,7 +3248,14 @@ def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
     main_tasks = []
     children: dict[str, list] = {}
     for st in subtasks:
-        entry = {"name": st.get("name", ""), "status": st.get("status", "pending"), "error": st.get("error")}
+        # ``subject`` is absent from steps written before it existed, and from every
+        # step that runs once per project; .get keeps both cases a plain None.
+        entry = {
+            "name": st.get("name", ""),
+            "status": st.get("status", "pending"),
+            "error": st.get("error"),
+            "subject": st.get("subject"),
+        }
         parent = st.get("parent_id")
         if parent:
             children.setdefault(parent, []).append(entry)
