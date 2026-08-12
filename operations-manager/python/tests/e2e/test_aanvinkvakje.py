@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from opi.services.project_service import get_project_service
+from opi.web.lotc_switch import project_tab_url
 from tests.e2e.helpers.edit_modal import EditModalHelper
 from tests.e2e.helpers.htmx import wait_for_htmx_quiet
 from tests.e2e.helpers.service_config import modal_advance_to_field
@@ -207,7 +208,7 @@ def _open_keycloak_config(page: Page, base_url: str) -> EditModalHelper:
     Services - niet op de landingspagina van het project.
     """
     modal = EditModalHelper(page, base_url, PROJECT)
-    page.goto(f"/projects/services/{modal.project_name}", wait_until="networkidle")
+    page.goto(f"{base_url}{project_tab_url(modal.project_name, 'services')}", wait_until="networkidle")
     modal.open_edit_modal("modal-edit-keycloak-config", "Keycloak Authentication configuratie")
     assert modal_advance_to_field(page, "restrict-access/enabled"), "de stap met 'Toegang beperken' is niet bereikt"
     return modal
