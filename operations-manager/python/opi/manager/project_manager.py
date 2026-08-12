@@ -7161,6 +7161,7 @@ class ProjectManager:
         port: int | None = None,
         ports: list[int] | None = None,
         path: str = "/",
+        rewrite: str | None = None,
         services: list[str] | None = None,
         cpu_limit: str | None = None,
         memory_limit: str | None = None,
@@ -7178,6 +7179,8 @@ class ProjectManager:
             component_type: Component type (e.g. "single", "frontend", "backend")
             port: Inbound port (None for background workers that don't serve HTTP)
             path: Ingress path (only relevant if publish-on-web is in services)
+            rewrite: Path the ingress rewrites `path` to before the request reaches the
+                container (None keeps the path unchanged)
             services: Component's services list (e.g. ["postgresql-database"])
             cpu_limit: CPU limit (e.g. "500m")
             memory_limit: Memory limit (e.g. "512Mi")
@@ -7291,6 +7294,7 @@ class ProjectManager:
                     port=port,
                     ports=ports,
                     path=path,
+                    rewrite=rewrite,
                     services=services or [],
                     cpu_limit=cpu_limit,
                     memory_limit=memory_limit,
@@ -7434,6 +7438,7 @@ class ProjectManager:
         port: int | None = None,
         ports: list[int] | None = None,
         path: str | None = None,
+        rewrite: str | None = None,
         services: list[str] | None = None,
         cpu_limit: str | None = None,
         memory_limit: str | None = None,
@@ -7483,8 +7488,23 @@ class ProjectManager:
                 port_block["inbound"] = inbound
                 port_block.setdefault("outbound", [80, 443])
 
-            if path is not None:
-                component["path"] = [{"match": path}]
+            # match and rewrite are two halves of one path entry, so each is written into
+            # the entry that is already there instead of replacing it: updating only the
+            # rewrite must leave the match alone, and the other way round.
+            if path is not None or rewrite:
+                existing = component.get("path")
+                if isinstance(existing, list) and existing and isinstance(existing[0], dict):
+                    entry = dict(existing[0])
+                elif isinstance(existing, str):
+                    entry = {"match": existing}
+                else:
+                    entry = {}
+                if path is not None:
+                    entry["match"] = path
+                if rewrite:
+                    entry["rewrite"] = rewrite
+                entry.setdefault("match", "/")
+                component["path"] = [entry]
 
             if services is not None:
                 project_service_names = set(
