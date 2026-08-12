@@ -89,7 +89,7 @@ class TestTheBannerSentence:
         assert banner["heading"] == "1 van de 4 projecten is gezond"
         assert banner["lines"] == [
             "2 projecten hebben een uitgeschakelde deployment",
-            "1 project heeft een deployment die tijdelijk niet actief is",
+            "1 project heeft een slapende deployment",
         ]
 
     def test_no_healthy_projects_at_all_is_stated_plainly(self) -> None:
@@ -97,5 +97,24 @@ class TestTheBannerSentence:
 
         assert banner["heading"] == "Geen van je 2 projecten is gezond"
 
-    def test_nothing_to_say_yields_no_banner(self) -> None:
-        assert _dashboard_health_banner(_counts(Unknown=2)) is None
+    def test_onbekend_wordt_benoemd_en_niet_verzwegen(self) -> None:
+        """Alleen onbekende projecten leveren nu WEL een banner op.
+
+        Hier stond dat dit None hoort te geven, en dat stilzwijgen was precies het
+        probleem: bij twee gezonde en een leeg project sloeg de tak "geen uitgeschakelde
+        en geen slapende" aan en stond er "Alle 2 projecten zijn gezond" terwijl het er
+        drie waren. Een project zonder draaiende deployment is geen reden om te zwijgen,
+        het is iets om te noemen.
+        """
+        banner = _dashboard_health_banner(_counts(Unknown=2))
+
+        assert banner is not None
+        assert banner["lines"] == ["2 projecten hebben nog geen deployment die iets draait"]
+
+    def test_alle_geldt_alleen_als_het_er_alle_zijn(self) -> None:
+        """Twee gezond naast een onbekend project: geen "alle", en het totaal klopt."""
+        banner = _dashboard_health_banner(_counts(Healthy=2, Unknown=1))
+
+        assert banner is not None
+        assert banner["heading"] == "2 van de 3 projecten zijn gezond"
+        assert banner["lines"] == ["1 project heeft nog geen deployment die iets draait"]
