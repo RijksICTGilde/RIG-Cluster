@@ -597,7 +597,78 @@ dat niet, dan willen wij weten waar het venster zit.
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+**Het samenvoegen is echt en deterministisch. Dat een late wijziging meelift is dat
+niet -- daar hadden jullie geluk mee.** De lopende taak leest het projectbestand
+precies één keer, aan het begin van zijn eigen run. Er was ook een venster waarin
+`pending` daarover loog; dat deel hebben wij dichtgezet.
+
+**1. Waarom jullie hetzelfde `task_id` terugkregen.** Dat is geen eigenschap van
+refresh maar de algemene ontdubbeling op de taakwachtrij. Bij het aanmaken wordt
+gezocht naar een taak met dezelfde `project_name`, dezelfde `deployment_name`,
+hetzelfde type en de status `pending`, `claimed` of `running`. Is die er én is het
+verzoeklichaam identiek, dan krijg je die taak terug. Voorwaarden om op te bouwen:
+
+- Het geldt ook als de eerste nog in de wachtrij staat: het is "open", niet "running".
+- Het geldt per project. Een refresh op een ander project raakt hem niet.
+- **Een afwijkend lichaam voegt niet samen.** `force_clone=true` naast een lopende
+  `force_clone=false` is een ánder lichaam en zet een nieuwe taak achter de lopende.
+  Wil je zeker weten dat je meelift, stuur dan exact dezelfde parameters.
+- Na afloop van de eerste levert een volgende refresh weer een nieuwe taak op.
+
+**2. Wanneer hij het projectbestand leest: één keer, aan het begin.** Gemeten aan de
+taakafhandeling zelf. De refresh doet eerst een `reconcile()` op de projectopslag
+(dat is de fetch uit git), dan één opzoeking, en geeft daarna het pad door aan de
+verwerking. Die verwerking leest het YAML één keer, in de stap "Projectbestand
+ophalen en controleren", en werkt de rest van de run met díe momentopname. Daarna
+leest niets meer opnieuw -- niet per deployment, niet na de ArgoCD-wacht.
+
+Het venster is dus: **vanaf die lezing tot het einde van de taak.** Dat is in de
+praktijk vrijwel de hele looptijd van de refresh, en die wordt gedomineerd door het
+wachten op ArgoCD. Reken op minuten, niet op milliseconden. Het is dus een ruim
+venster, geen randgeval.
+
+**3. Wat er in jullie run gebeurde.** Je wijziging is niet door TA opgepikt; hij is
+uitgerold door zijn *eigen* taak. Elke schrijfhandeling is zelf een taak, en die
+verwerkt het bestand dat hij op dat moment aantreft -- inclusief alles wat TA net
+had gedaan. Het resultaat is hetzelfde (component live, `pending` op 0), maar de
+oorzaak is een andere, en dat is precies het verschil tussen "gegarandeerd" en
+"toevallig goed afgelopen".
+
+Twee dingen die daarbij helpen om het van buitenaf te zien:
+
+- Een refresh die je aanroept ná het opslaan bevat je wijziging altijd: hij leest bij
+  zijn start, en je schrijftaak was toen al afgerond of staat vóór hem in de rij.
+- Krijg je een `task_id` terug dat je al eerder had gezien, dan lift je mee op een
+  refresh die vóór je wijziging begon. Dat is het signaal dat je er nog één achteraan
+  moet doen. Wacht die eerste af en roep dan opnieuw aan: dat levert een nieuw id.
+
+**4. Waar `pending` wél loog, en wat wij eraan gedaan hebben.** Het gevaarlijke deel
+dat jullie benoemden bestond. De drift werd gemeten vanaf het moment waarop de laatste
+uitrollende taak **klaar** was. Een wijziging met `rollout=false` die tijdens een
+lopende refresh werd opgeslagen, is eerder klaar dan die refresh, en werd dus
+weggestreept door een refresh die hem nooit gelezen had. `pending` stond dan op 0
+terwijl de wijziging niet op het cluster stond, en van buitenaf was dat niet te zien.
+
+De grens is nu het moment waarop de uitrollende taak **begon**. Dat is een veilige
+ondergrens voor het moment van lezen: de taak wordt op running gezet vóór hij leest.
+Deze richting kan alleen méér melden dan er openstaat, nooit minder.
+
+Wat er níet onder valt, zodat je weet wanneer dit speelt: taken zonder deployment in
+hun sleutel (`add_component`, `update_component`, `add_service`, `configure_service`)
+worden door de wachtrij achter een projectbrede refresh gezet en kunnen dus nooit
+binnen het venster landen. Taken mét een deployment (`update_image`,
+`upsert_deployment`) lopen wél gelijktijdig met een projectbrede refresh, en die
+waren het die verdwenen.
+
+**5. Wat wij bewust niet gedaan hebben.** Een refresh die na afloop nog eens kijkt of
+er intussen iets veranderd is, hebben wij niet ingebouwd. Dat verdubbelt in het
+slechtste geval de ArgoCD-wacht voor een geval dat je met één extra aanroep afhandelt,
+en het maakt de looptijd van een refresh onvoorspelbaar. De eigenschap waar je op wilt
+bouwen is er nu ook zonder: **roep refresh aan ná het opslaan, en controleer dat je een
+nieuw `task_id` terugkrijgt.** Dan is de dekking gegarandeerd in plaats van waarschijnlijk.
+
+Alles hierboven staat vastgelegd in `tests/test_refresh_merge_window.py`, inclusief de
+meting van het venster zelf, zodat dit antwoord waar blijft als de code verandert.
 
 ---
 
@@ -630,4 +701,75 @@ dat is precies wat wij bij punt 1 fout deden.
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+**Allebei: het wordt een 400, én er zit een `error_category` bij.** Je hoeft niets uit
+een logregel te raden, en je hoeft ook niet te kiezen welke van de twee je afvangt.
+
+```sh
+curl -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"target_database_host":"doel.invalid","target_database_name":"d",
+       "target_database_user":"u","target_database_password":"g"}' \
+  "$BASE/v1/restore/database/sandboxed-local/rig-$P/backup?project_name=$P"
+# HTTP 400
+# {"status":"failed",
+#  "error_category":"InvalidTarget",
+#  "message":"Failed to restore database backup: Restore pod failed. Logs: ...",
+#  "result":{...}}
+```
+
+`InvalidTarget` is nieuw in dezelfde `ErrorCategory` als de rest. Bij een mislukte
+restore staat het veld er altijd: `InvalidTarget` als het aan je bestemming lag,
+`Unknown` als het aan ons lag. `error_category` ontbreekt alleen bij een geslaagde
+restore. Voor `restore bucket` geldt hetzelfde antwoord met dezelfde codes.
+
+**Hoe wij het bepalen -- niet op de tekst.** De restore-pod controleert zijn
+bestemming al vóórdat hij data aanraakt: `psql -c "SELECT 1"` bij een database,
+`mc alias set` bij een bucket. Die controle sluit nu af met een eigen exitcode (20),
+en wij lezen die exitcode uit de podstatus. Er wordt nergens naar
+`could not translate host name` gezocht. Dat is bewust: die bewoording is van
+PostgreSQL en van mc, niet van ons, en een nieuwe versie mag hem herschrijven zonder
+dat je exit code omslaat. Precies de valkuil waar jullie bij punt 1 uit geklommen zijn.
+
+**Wat er wél onder valt** -- alles wat de bestemmingspoort tegenhoudt, en dat is
+alles wat je in de doelvelden meestuurt:
+
+| Geval | Antwoord |
+|---|---|
+| Hostnaam resolvet niet | 400 `InvalidTarget` |
+| Host resolvet, poort weigert of is onbereikbaar | 400 `InvalidTarget` |
+| Verkeerd wachtwoord of onbekende gebruiker | 400 `InvalidTarget` |
+| Database bestaat niet op die host | 400 `InvalidTarget` |
+| MinIO-endpoint onbereikbaar, of access key / secret key geweigerd | 400 `InvalidTarget` |
+
+Een bestemming die wél resolvet maar jou afwijst op het wachtwoord is dus net zo goed
+je invoer, en krijgt dezelfde behandeling. Dat is ook waarom wij niet op de hostnaam
+alleen gaan zitten.
+
+**Wat er níet onder valt**, en dus 500 met `Unknown` blijft: onze kopia-repository,
+een ontbrekende of onleesbare snapshot, een pod die niet start of zijn image niet kan
+halen, een tijdslimiet, en het cluster zelf. Ook een database die halverwege wegvalt
+nadat de verbinding wél tot stand kwam blijft 500: die poort was toen geslaagd, en
+wij gaan achteraf niet alsnog naar jou wijzen.
+
+**Eén eerlijke grens.** Een bestemming die jou binnenlaat maar de schrijfactie weigert
+-- rechten die genoeg zijn om in te loggen en te weinig om te herstellen -- komt door
+de poort heen en faalt daarna. Dat is nu een 500. Wij hebben dat zo gelaten omdat er
+op dat punt al data verplaatst is en de pod-uitkomst daar niet meer eenduidig zegt van
+wie het probleem is; liever een 500 die je nog eens laat kijken dan een 400 die er
+soms naast zit. Kom je dit in de praktijk tegen, dan horen wij het graag: dan is er een
+tweede poort te zetten vlak vóór het schrijven.
+
+**Restore zónder doelvelden krijgt deze categorie nooit.** Sinds punt 7 kiest het
+platform de bestemming als je de vier velden weglaat. Dan is een mislukte bestemming
+per definitie niet je invoer, en blijft het antwoord 500 met `Unknown` -- ook als de
+pod op diezelfde poort strandt. Anders zouden wij je de schuld geven van een keuze die
+je niet gemaakt heeft.
+
+**Geen credentials in het antwoord.** De categorie is een vaste tekenreeks. De
+foutregel die de pod schrijft noemt de *velden* ("host, port, database name, user or
+password rejected"), nooit de waarden. `message` bevat nog steeds de pod-logs, precies
+zoals je ze waardeerde; die logs echoën het wachtwoord niet, dat is nagemeten en staat
+als test vast.
+
+Vastgelegd in `tests/test_restore_target_fault.py`: de exitcode uit beide
+pod-sjablonen, dat alleen díe exitcode telt, dat een aanroeper zonder doelvelden de
+categorie nooit krijgt, en dat het meegestuurde wachtwoord niet terugkomt.

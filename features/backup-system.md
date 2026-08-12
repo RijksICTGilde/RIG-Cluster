@@ -338,6 +338,35 @@ snapshots — see "Trigger metadata and retention isolation" below.
 }
 ```
 
+### Failed restore: whose fault was it?
+
+`POST /api/v1/restore/database/...` and `POST /api/v1/restore/bucket/...` answer a failure
+with an `error_category` next to `message`, so a client does not have to read the pod log
+text to decide whether retrying makes sense:
+
+| Situation | Status | `error_category` |
+|---|---|---|
+| The destination the caller supplied is unusable: host does not resolve, port refuses, database/bucket unknown, or the credentials are rejected | `400` | `InvalidTarget` |
+| Anything on our side: the Kopia repository, a missing snapshot, a pod that will not start, a timeout, the cluster | `500` | `Unknown` |
+| Success | `200` | field absent |
+
+**How that is decided — never on the log text.** Both restore pods probe their destination
+before touching any data (`psql -c "SELECT 1"`, `mc alias set`). That gate exits with the
+dedicated `RESTORE_TARGET_UNUSABLE_EXIT_CODE` (`opi/core/backup_constants.py`), and the
+manager reads the exit code from the pod status into `RestoreResult.target_unusable`.
+Matching on `could not translate host name` would break the moment PostgreSQL or mc rewords
+its error; an exit code we choose ourselves does not.
+
+**A restore without target fields never gets `InvalidTarget`.** Omit the four target fields
+and the platform picks the project's own service (see "Restore a Database" below),
+so a destination failure cannot be the caller's input — it stays `500`/`Unknown`.
+
+Known limit: a destination that lets you in but refuses the write (enough rights to connect,
+too few to restore) passes the gate and fails afterwards, which is a `500`.
+
+The category never carries a value the caller supplied — the pod's error line names the
+fields, not their contents. Pinned in `tests/test_restore_target_fault.py`.
+
 ## Configuration
 
 ### project.yaml Backup Configuration

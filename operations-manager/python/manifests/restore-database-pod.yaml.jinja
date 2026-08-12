@@ -74,11 +74,17 @@ spec:
           echo "Snapshot details:"
           kopia show "$SNAPSHOT_ID" || true
 
-          # Test database connectivity
+          # Test database connectivity. This is the destination gate: if it fails, the
+          # target the caller named is unusable (host, port, database, user or password),
+          # and nothing of ours is broken. Exit with the dedicated code so the caller can
+          # be told that without anyone parsing this log text.
           echo "Testing target database connectivity..."
-          PGPASSWORD="${TARGET_DB_PASSWORD}" psql \
+          if ! PGPASSWORD="${TARGET_DB_PASSWORD}" psql \
             -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
-            -c "SELECT 1" > /dev/null
+            -c "SELECT 1" > /dev/null; then
+            echo "ERROR: target database is not usable (host, port, database name, user or password rejected)"
+            exit {{ target_unusable_exit_code }}
+          fi
 
           echo "Target database connection successful"
 
