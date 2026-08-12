@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
 from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath
+from opi.api.v2.models import ErrorCategory
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
@@ -326,6 +327,17 @@ class DatabaseRestoreResponse(BaseModel):
     status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: DatabaseRestoreResultModel
+    error_category: ErrorCategory | None = Field(
+        default=None,
+        description=(
+            "Present when the restore failed. 'InvalidTarget' means the destination you "
+            "supplied could not be used (it did not resolve, refused the connection, or "
+            "rejected the credentials) -- retrying the same request will not help. Any "
+            "other value means the failure was on the platform side. Never set for a "
+            "restore into the project's own service, because then you did not choose the "
+            "destination."
+        ),
+    )
 
 
 # Bucket Restore Models
@@ -398,6 +410,17 @@ class BucketRestoreResponse(BaseModel):
     status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: BucketRestoreResultModel
+    error_category: ErrorCategory | None = Field(
+        default=None,
+        description=(
+            "Present when the restore failed. 'InvalidTarget' means the destination you "
+            "supplied could not be used (it did not resolve, refused the connection, or "
+            "rejected the credentials) -- retrying the same request will not help. Any "
+            "other value means the failure was on the platform side. Never set for a "
+            "restore into the project's own service, because then you did not choose the "
+            "destination."
+        ),
+    )
 
 
 # Deployment Restore Models (supports PVC, database, and bucket with versioning)
@@ -493,6 +516,18 @@ def _result_to_model(result: RestoreResult) -> RestoreResultModel:
         error=result.error,
         duration_seconds=result.duration_seconds,
     )
+
+
+def _failed_restore_status(target_unusable: bool, caller_named_target: bool) -> tuple[int, ErrorCategory]:
+    """Status code and category for a failed restore.
+
+    A destination fault is only ever the caller's when the caller chose the destination.
+    Omit the target fields and the platform picks the project's own service (RC-81); a
+    failure there is ours no matter what the pod reported, so it stays a 500/Unknown.
+    """
+    if target_unusable and caller_named_target:
+        return 400, ErrorCategory.InvalidTarget
+    return 500, ErrorCategory.Unknown
 
 
 def _database_result_to_model(result: DatabaseRestoreResult) -> DatabaseRestoreResultModel:
@@ -1628,6 +1663,16 @@ async def restore_database(
             naming the fields that are missing.
         project_name: Project name matching the API key (required)
 
+    Failure codes:
+        400 with ``error_category: InvalidTarget`` -- the destination you supplied could
+            not be used: the host did not resolve, the port refused, or the database name,
+            user or password was rejected. Your input; retrying is pointless. Only possible
+            when you supplied the target yourself.
+        500 with ``error_category: Unknown`` -- the failure was on the platform side (the
+            backup repository, the snapshot, the cluster). Retrying may help.
+        The category is machine-readable on purpose: there is no need to read the pod log
+            text in ``message`` to tell the two apart.
+
     Headers:
         X-API-Key: The API key (required)
 
@@ -1671,9 +1716,8 @@ async def restore_database(
     # No body at all means the same as a body without target fields: restore into the
     # project's own database.
     body = body or DatabaseRestoreRequest()
-    target = _explicit_database_target(body) or await _resolve_own_database_target(
-        project_name, namespace, reference_name
-    )
+    explicit_target = _explicit_database_target(body)
+    target = explicit_target or await _resolve_own_database_target(project_name, namespace, reference_name)
 
     try:
         logger.info(f"Database restore request for {cluster}/{namespace}/{reference_name}")
@@ -1698,13 +1742,18 @@ async def restore_database(
         else:
             message = f"Failed to restore database {reference_name}: {result.error}"
 
-        content = {
+        content: dict[str, Any] = {
             "status": status,
             "message": message,
             "result": _database_result_to_model(result).model_dump(),
         }
 
-        status_code = 200 if result.success else 500
+        if result.success:
+            status_code = 200
+        else:
+            status_code, category = _failed_restore_status(result.target_unusable, explicit_target is not None)
+            content["error_category"] = category.value
+
         return JSONResponse(content=content, status_code=status_code)
 
     except RuntimeError as e:
@@ -1758,6 +1807,13 @@ async def restore_bucket(
             only some of them is answered with 422 naming the fields that are missing.
         project_name: Project name matching the API key (required)
 
+    Failure codes:
+        400 with ``error_category: InvalidTarget`` -- the destination you supplied could
+            not be used: the endpoint was unreachable or the access key or secret key was
+            rejected. Your input; retrying is pointless. Only possible when you supplied
+            the target yourself.
+        500 with ``error_category: Unknown`` -- the failure was on the platform side.
+
     Headers:
         X-API-Key: The API key (required)
 
@@ -1800,7 +1856,8 @@ async def restore_bucket(
 
     # No body at all means the same as a body without target fields.
     body = body or BucketRestoreRequest()
-    target = _explicit_bucket_target(body) or await _resolve_own_bucket_target(project_name, namespace, reference_name)
+    explicit_target = _explicit_bucket_target(body)
+    target = explicit_target or await _resolve_own_bucket_target(project_name, namespace, reference_name)
 
     try:
         logger.info(f"Bucket restore request for {cluster}/{namespace}/{reference_name}")
@@ -1825,13 +1882,18 @@ async def restore_bucket(
         else:
             message = f"Failed to restore bucket {reference_name}: {result.error}"
 
-        content = {
+        content: dict[str, Any] = {
             "status": status,
             "message": message,
             "result": _bucket_result_to_model(result).model_dump(),
         }
 
-        status_code = 200 if result.success else 500
+        if result.success:
+            status_code = 200
+        else:
+            status_code, category = _failed_restore_status(result.target_unusable, explicit_target is not None)
+            content["error_category"] = category.value
+
         return JSONResponse(content=content, status_code=status_code)
 
     except RuntimeError as e:

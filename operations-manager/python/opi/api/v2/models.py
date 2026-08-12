@@ -43,6 +43,12 @@ class ErrorCategory(StrEnum):
 
     ImagePull = "ImagePull"
     CrashLoop = "CrashLoop"
+    # The destination the caller named could not be used: it did not resolve, refused
+    # the connection, or rejected the credentials. Not a cluster state at all -- it is
+    # what makes "your input" separable from "our platform" on a failed restore, so a
+    # pipeline can stop retrying a typo (RC-82). Only ever set when the caller supplied
+    # the destination; a restore into the project's own service can never be this.
+    InvalidTarget = "InvalidTarget"
     OutOfMemory = "OutOfMemory"
     HealthCheck = "HealthCheck"
     SyncFailed = "SyncFailed"
