@@ -135,8 +135,13 @@
         var weergave = document.getElementById('deployments-weergave');
         var vanServer = weergave && weergave.getAttribute('data-deployment-open');
         if (vanServer && heeftBlok(vanServer)) {
-            // De server heeft het paneel al zichtbaar gezet; dit zet alleen de opgeslagen
-            // keuze gelijk, zodat het tabblad Metrics dezelfde deployment toont.
+            // De server heeft het paneel al zichtbaar gezet; dit zet de kiezer en de
+            // opgeslagen keuze gelijk, zodat het tabblad Metrics dezelfde deployment
+            // toont. De kiezer moet mee: hij benoemde anders een andere deployment dan er
+            // open stond, en een <select> vuurt geen change op de al getoonde optie -
+            // waarmee die deployment via de kiezer onbereikbaar werd.
+            var gsel2 = document.getElementById('global-deployment-selector');
+            if (gsel2) gsel2.value = vanServer;
             bewaar(vanServer);
             return;
         }

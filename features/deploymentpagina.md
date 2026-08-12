@@ -113,6 +113,13 @@ Zo opent een rij uit de tabel het juiste paneel, ook zonder JavaScript. Is er ni
 gevraagd, dan blijft de keuze staan die `static/js/deployment_switch.js` per project
 onthoudt.
 
+**De kiezer volgt die keuze.** De optie die bij `deployment_open` hoort krijgt `selected`
+(`bg/_deployment-selector.html.j2`), en de servertak van `restoreFromHash()` zet
+`#global-deployment-selector` op dezelfde naam. Zonder dat benoemde de kiezer een andere
+deployment dan er open stond, en - erger - vuurt een native `<select>` geen `change` op de
+al getoonde optie, waardoor de eerste deployment bij twee deployments via de kiezer
+onbereikbaar was.
+
 ## Klassen die geen vormgeving zijn
 
 `deployment-section`, `deployment-<naam>`, `deployment-actions-<naam>`, `argocd-<naam>`,
@@ -128,6 +135,7 @@ onthouden keuze.
 | Bestand | Wat het bewaakt |
 |---|---|
 | `tests/test_lotc_deploymentstabel.py` | zoeken, sorteren, de statusregel (RC-31/RC-35), en dat de tabel `columns` draagt |
+| `tests/test_lotc_deploymentkiezer.py` | de kiezer staat op een plek, en wijst de door de server geopende deployment aan |
 | `tests/test_argocd_overview.py` | twintig rijen = een bevraging; de cache vervalt echt |
 | `tests/test_lotc_tabbladen_url.py` | elk tabblad heeft een pad dat bij `project_details` uitkomt |
 | `tests/e2e/test_lotc_deploymentstabel.py` | GEOMETRIE in de browser, plus screenshots |
