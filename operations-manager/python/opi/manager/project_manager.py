@@ -7262,18 +7262,15 @@ class ProjectManager:
                             "error_type": "validation_error",
                         }
 
-            # Validate requested services against project-level services
+            # A service the project has not selected is added here when the service allows
+            # it (RC-84), and refused with a message naming it when it needs a project-level
+            # decision first. The write goes through save_and_commit_project below, like
+            # every other change to the project file.
             if services:
-                project_service_names = set(
-                    ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
-                )
-                invalid_services = [s for s in services if s not in project_service_names]
-                if invalid_services:
-                    return {
-                        "success": False,
-                        "error": f"Services not defined on project: {invalid_services}. Available services: {sorted(project_service_names) if project_service_names else 'none'}",
-                        "error_type": "invalid_services",
-                    }
+                try:
+                    ServiceAdapter.ensure_project_selection(project_data, *services)
+                except ServiceValidationError as e:
+                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
 
             # Normalize the image, if there is one. The image lives on the deployment
             # reference and nowhere else -- build_component_config below does not carry it --
@@ -7507,16 +7504,12 @@ class ProjectManager:
                 component["path"] = [entry]
 
             if services is not None:
-                project_service_names = set(
-                    ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
-                )
-                invalid_services = [s for s in services if s not in project_service_names]
-                if invalid_services:
-                    return {
-                        "success": False,
-                        "error": f"Services not defined on project: {invalid_services}. Available services: {sorted(project_service_names) if project_service_names else 'none'}",
-                        "error_type": "invalid_services",
-                    }
+                # As in add_component: a service that may enrol itself is added at project
+                # level here (RC-84), one that may not is refused by name.
+                try:
+                    ServiceAdapter.ensure_project_selection(project_data, *services)
+                except ServiceValidationError as e:
+                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
                 component["services"] = ServiceAdapter.build_component_service_entries(services)
 
             if cpu_limit is not None or memory_limit is not None:

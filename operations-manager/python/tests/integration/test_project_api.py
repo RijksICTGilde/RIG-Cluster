@@ -1282,11 +1282,14 @@ class TestAddComponentEndpoint:
         test_client: TestClient,
         mock_auth_project_service: Any,
     ) -> None:
-        """Test that requesting a service not defined on the project returns 400."""
+        """Test that requesting a service that may not enrol itself returns 400."""
         mock_pm = create_mock_project_manager(
             add_component_result={
                 "success": False,
-                "error": "Services not defined on project: ['postgresql-database']. Available services: ['keycloak', 'persistent-storage']",
+                "error": (
+                    "Services that must be enabled at project level first: ['keycloak']. They need "
+                    "project-level configuration that cannot be assumed, so they are not added automatically."
+                ),
                 "error_type": "invalid_services",
             }
         )
@@ -1299,7 +1302,7 @@ class TestAddComponentEndpoint:
                     "name": "worker",
                     "image": "nginx:latest",
                     "deployment_names": ["main"],
-                    "services": ["postgresql-database"],
+                    "services": ["keycloak"],
                 },
             )
 
@@ -1307,7 +1310,7 @@ class TestAddComponentEndpoint:
         data = response.json()
         assert data["status"] == "failed"
         assert data["error_type"] == "invalid_services"
-        assert "not defined on project" in data["error"]
+        assert "must be enabled at project level first" in data["error"]
 
 
 @pytest.mark.integration
