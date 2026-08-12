@@ -99,6 +99,36 @@ def lifecycle_project(
             sandbox_api.delete_project_via_api(sandbox_url, created.name, created.api_key, verify_ssl=_API_VERIFY_SSL)
 
 
+@pytest.fixture
+def disposable_project(
+    sandbox_context: BrowserContext,
+    sandbox_url: str,
+    forgejo: ForgejoClient,
+) -> Generator[CreatedProject]:
+    """Een eigen project voor de verwijdertest, los van ``lifecycle_project``.
+
+    De verwijdertest deelde eerder het project van de andere tests in deze module en
+    haalde het onder ze weg: draaide hij eerst (pytest-randomly bepaalt de volgorde),
+    dan kregen add-component en delete-component een 401 op een project dat niet meer
+    bestond. Wie een project weggooit, maakt zijn eigen.
+    """
+    page = sandbox_context.new_page()
+    created: CreatedProject | None = None
+    try:
+        created = create_project_via_wizard(
+            page,
+            sandbox_url,
+            forgejo,
+            _unique_project_name(),
+            user_email=SANDBOX_TEST_USER["email"],
+        )
+        yield created
+    finally:
+        page.close()
+        if created is not None:
+            sandbox_api.delete_project_via_api(sandbox_url, created.name, created.api_key, verify_ssl=_API_VERIFY_SSL)
+
+
 def test_create_project_via_ui(
     lifecycle_project: CreatedProject,
     sandbox_url: str,
@@ -118,20 +148,17 @@ def test_create_project_via_ui(
     )
 
 
-def test_add_component_via_api(
-    lifecycle_project: CreatedProject,
-    sandbox_url: str,
-    forgejo: ForgejoClient,
-) -> None:
-    """Adding a component via the v2 API lands it in the project file."""
-    component_name = "apiworker"  # component names allow only lowercase letters and digits
+_COMPONENT_NAME = "apiworker"  # component names allow only lowercase letters and digits
+
+
+def _add_component(project: CreatedProject, sandbox_url: str) -> None:
     sandbox_api.add_component(
         sandbox_url,
-        lifecycle_project.name,
-        lifecycle_project.api_key,
-        component_name=component_name,
+        project.name,
+        project.api_key,
+        component_name=_COMPONENT_NAME,
         image=_RUNNABLE_IMAGE,
-        deployment_names=[lifecycle_project.deployment_name],
+        deployment_names=[project.deployment_name],
         verify_ssl=_API_VERIFY_SSL,
         # Adding a component re-syncs the deployment, which re-refreshes the
         # user-applications app-of-apps (~90 child apps, issue #130) and waits for
@@ -139,8 +166,17 @@ def test_add_component_via_api(
         # 180s default.
         timeout=360.0,
     )
-    assert forgejo.wait_for_component(lifecycle_project.name, component_name, timeout=120), (
-        f"Component '{component_name}' did not appear in the Forgejo project file"
+
+
+def test_add_component_via_api(
+    lifecycle_project: CreatedProject,
+    sandbox_url: str,
+    forgejo: ForgejoClient,
+) -> None:
+    """Adding a component via the v2 API lands it in the project file."""
+    _add_component(lifecycle_project, sandbox_url)
+    assert forgejo.wait_for_component(lifecycle_project.name, _COMPONENT_NAME, timeout=120), (
+        f"Component '{_COMPONENT_NAME}' did not appear in the Forgejo project file"
     )
 
 
@@ -161,7 +197,15 @@ def test_delete_component_via_api(
        file in Forgejo. A reference left behind would make the project invalid, and the
        save is what would have rejected it.
     """
-    component_name = "apiworker"
+    component_name = _COMPONENT_NAME
+
+    # Het onderwerp van deze test wordt door de vorige test toegevoegd, en pytest-randomly
+    # bepaalt of die al gedraaid heeft. Dus: zelf zorgen dat er iets te verwijderen is.
+    if not forgejo.wait_for_component(lifecycle_project.name, component_name, timeout=10):
+        _add_component(lifecycle_project, sandbox_url)
+        assert forgejo.wait_for_component(lifecycle_project.name, component_name, timeout=120), (
+            f"kon '{component_name}' niet klaarzetten voor deze test"
+        )
 
     # The endpoint answers from the same read cache the delete guard itself uses, and that
     # cache trails the commit by a moment: right after the add-component task the file in
@@ -212,13 +256,18 @@ def test_delete_component_via_api(
 
 
 def test_delete_project_via_ui(
-    lifecycle_project: CreatedProject,
+    disposable_project: CreatedProject,
     sandbox_url: str,
     sandbox_page: Page,
     forgejo: ForgejoClient,
     capture,
 ) -> None:
-    """Deleting the project through the danger-zone modal removes its Forgejo file."""
+    """Deleting the project through the danger-zone modal removes its Forgejo file.
+
+    Op een EIGEN project (zie ``disposable_project``): deze test maakt zijn onderwerp
+    kapot, dus delen zou meten in welke volgorde pytest draait.
+    """
+    lifecycle_project = disposable_project
     delete_project_via_ui(sandbox_page, sandbox_url, lifecycle_project.name)
     capture(sandbox_page, "delete-started")
 
