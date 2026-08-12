@@ -32,12 +32,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers import sandbox_api, service_config
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, read_api_key_with_retry
-from tests.e2e.helpers.wizard import (
-    WizardHelper,
-    veldbesturing,
-    veldbesturing_eindigend_op,
-    voeg_reeksitem_toe,
-)
+from tests.e2e.helpers.wizard import WizardHelper, veldbesturing, veldbesturing_eindigend_op
 
 if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Page
@@ -89,11 +84,16 @@ def _keycloak_client_names(forgejo: ForgejoClient, project_name: str) -> list[st
 
 
 def _add_wizard_invite(page: Page) -> None:
-    """On the invite config step: add one item and fill its key + contact, then continue."""
-    # Add a row (create-wizard context: the button triggers an HTMX form re-render).
-    voeg_reeksitem_toe(page, "active")
-    page.wait_for_load_state("networkidle")
+    """On the invite config step: fill the invite's key + contact.
+
+    Hier werd eerst op "Item toevoegen" geklikt. Die knop is er niet, en met opzet: de
+    ``active``-reeks van deze dienst staat op ``min_items=1``, ``max_items=1`` en
+    ``add_remove=False`` (opi/services/catalog/invite/editables.py), dus de ene rij staat
+    er al zodra de stap opent. Gemeten op de sandbox liep de opzet van alle vijf de tests
+    dood op het wachten op die knop.
+    """
     # Op de BESTURING en niet op [name$=...]: zie veldbesturing_eindigend_op.
+    veldbesturing_eindigend_op(page, "active[0]/key").first.wait_for(state="visible", timeout=15000)
     veldbesturing_eindigend_op(page, "active[0]/key").first.fill(_WIZARD_KEY)
     veldbesturing_eindigend_op(page, "active[0]/contact-email").first.fill(_CONTACT)
 
