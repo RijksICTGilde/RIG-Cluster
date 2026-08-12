@@ -42,6 +42,29 @@
 {%- endfor -%}
 {%- endmacro %}
 
+{# Read-only copyable value box — same chrome as secret-field (value + in-field
+   clipboard), so a stack of secret and non-secret copyable values lines up. Under
+   NLDD it uses the same nldd-icon clipboard as secret-field; under other themes an
+   inline SVG (no clean copy glyph in the RVO set). The copy handler is delegated and
+   initialised once (guard), so N boxes on a page share it. Styling is in forms.css. #}
+{% macro copy_value_box(value) -%}
+<div class="lotc-copyfield">
+  <code class="lotc-copyfield__value" data-value="{{ value | e }}">{{ value }}</code>
+  <button type="button" class="lotc-copyfield__btn" data-lotc-copy aria-label="Kopiëren" title="Kopiëren">
+    {% if 'nldd' in lotc_design_systems %}<nldd-icon name="clipboard" size="20"></nldd-icon>{% else %}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" role="img" aria-label="Kopiëren"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>{% endif %}
+  </button>
+</div>
+<script>
+(function(){if(window.__lotcCopyFieldInit)return;window.__lotcCopyFieldInit=1;
+document.addEventListener('click',function(e){
+  var b=e.target.closest('[data-lotc-copy]');if(!b)return;
+  var box=b.closest('.lotc-copyfield'),v=box&&box.querySelector('.lotc-copyfield__value');if(!v)return;
+  if(navigator.clipboard)navigator.clipboard.writeText(v.dataset.value);
+  var t=b.getAttribute('title');b.setAttribute('title','Gekopieerd');setTimeout(function(){b.setAttribute('title',t);},1200);
+});})();
+</script>
+{%- endmacro %}
+
 {# space-joined describedby target ids, only for the parts actually rendered #}
 {% macro describedby(id, help, error) -%}
 {%- if help and error -%}{{ id }}-help {{ id }}-error
