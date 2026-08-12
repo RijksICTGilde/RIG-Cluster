@@ -299,16 +299,10 @@
             {% call panel("Configuratie & Secrets", "lock-closed", info_text="Project configuratie en gevoelige informatie") %}
                     <c-stack gap="xs">
                         <c-heading type="h3" size="6" label="Project Naam" />
-                        {# Zelfde veldbeeld als de geheime velden hieronder, maar de waarde
-                           is zichtbaar en er is GEEN oogje: een projectnaam is niet geheim,
-                           dus onthullen heeft geen betekenis. Alleen kopieren als handeling.
-                           <c-secret-field> kan dit niet - die kent geen stand waarin de
-                           waarde getoond wordt (alleen value, mask-length, show-copy,
-                           value-type, content-width) - dus een readonly tekstveld. #}
-                        <c-cluster gap="sm" align="center">
-                            <c-text-field readonly value="{{ project.name }}" accessible-label="Project Naam" />
-                            <c-icon-button icon="clipboard" accessible-label="Kopieer" class="copy-btn" :attrs="{'onclick': kopieer}" />
-                        </c-cluster>
+                        {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
+                           en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
+                           dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
+                        <c-secret-field value="{{ project.name }}" revealed show-copy />
                     </c-stack>
 
                 {% if project.config %}
@@ -322,12 +316,10 @@
                     {% if project.config.get('age-public-key') %}
                             <c-stack gap="xs">
                                 <c-heading type="h3" size="6" label="Age Public Key" />
-                                {# Een PUBLIEKE sleutel is niet geheim; zelfde veldbeeld als de
-                                   geheime velden, waarde zichtbaar, alleen kopieren. #}
-                                <c-cluster gap="sm" align="center">
-                                    <c-text-field readonly value="{{ project.config['age-public-key'] }}" accessible-label="Age Public Key" />
-                                    <c-icon-button icon="clipboard" accessible-label="Kopieer" class="copy-btn" :attrs="{'onclick': kopieer}" />
-                                </c-cluster>
+                                {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
+                                   en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
+                                   dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
+                                <c-secret-field value="{{ project.config['age-public-key'] }}" revealed show-copy />
                             </c-stack>
                     {% endif %}
 
