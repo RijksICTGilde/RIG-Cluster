@@ -87,16 +87,20 @@ For a component named `api` in deployment `main` with paths `/api` and `/v1`:
 | `/v1` | `main-api-v1` | `api-ingress-v1.yaml` |
 | `/v1/users` | `main-api-v1users` | `api-ingress-v1users.yaml` |
 
-## Path rewrite (not yet implemented)
+## Path rewrite
 
-The YAML syntax supports a `rewrite` option for path prefix stripping, but this is not yet implemented:
+A path entry may carry a `rewrite` next to its `match`. The ingress then rewrites the
+external path before the request reaches the container:
 
 ```yaml
-# NOT YET IMPLEMENTED - will raise NotImplementedError
 path:
   - match: "/api"
-    rewrite: "/"    # Would strip /api prefix before forwarding
+    rewrite: "/"    # https://<host>/api/status arrives as /status
 ```
+
+Without `rewrite` the path is passed on unchanged, which is what a component that serves
+its own prefix needs. There is no default, so existing components keep their behaviour.
+The field can also be set through the API - see `component-path-rewrite-api.md`.
 
 ## Dependencies
 

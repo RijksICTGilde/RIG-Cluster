@@ -105,6 +105,53 @@ async def test_update_ports_empty_clears_inbound() -> None:
     assert data["components"][0]["ports"]["inbound"] == []
 
 
+async def test_update_rewrite_keeps_the_match() -> None:
+    """Updating only the rewrite leaves the path's match as it was."""
+    data = _project_with_component()
+    data["components"][0]["path"] = [{"match": "/api"}]
+    pm = _pm(data)
+
+    result = await ProjectManager.update_component(pm, name="mgr", rewrite="/")
+
+    assert result["success"] is True
+    assert data["components"][0]["path"] == [{"match": "/api", "rewrite": "/"}]
+
+
+async def test_update_path_keeps_the_rewrite() -> None:
+    """And the other way round: a new match does not drop the rewrite."""
+    data = _project_with_component()
+    data["components"][0]["path"] = [{"match": "/api", "rewrite": "/"}]
+    pm = _pm(data)
+
+    result = await ProjectManager.update_component(pm, name="mgr", path="/v2")
+
+    assert result["success"] is True
+    assert data["components"][0]["path"] == [{"match": "/v2", "rewrite": "/"}]
+
+
+async def test_update_rewrite_on_a_string_path() -> None:
+    """Pre-migration files store a bare string; it becomes an entry, keeping the match."""
+    data = _project_with_component()
+    data["components"][0]["path"] = "/api"
+    pm = _pm(data)
+
+    result = await ProjectManager.update_component(pm, name="mgr", rewrite="/")
+
+    assert result["success"] is True
+    assert data["components"][0]["path"] == [{"match": "/api", "rewrite": "/"}]
+
+
+async def test_update_without_path_or_rewrite_leaves_the_path_alone() -> None:
+    data = _project_with_component()
+    data["components"][0]["path"] = [{"match": "/api", "rewrite": "/"}]
+    pm = _pm(data)
+
+    result = await ProjectManager.update_component(pm, name="mgr", image="example.com/mgr:v2")
+
+    assert result["success"] is True
+    assert data["components"][0]["path"] == [{"match": "/api", "rewrite": "/"}]
+
+
 def test_request_rejects_port_and_ports_together() -> None:
     import pytest
     from opi.api.router import AddComponentRequest, UpdateComponentRequest
