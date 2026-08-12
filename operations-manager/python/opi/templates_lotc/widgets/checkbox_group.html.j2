@@ -19,10 +19,14 @@
 
   Elk vakje krijgt zijn eigen id (<pad>-<waarde>) op het besturingselement, zodat het net
   als het enkele vakje met ``[id='...']`` precies terug te vinden is.
+
+  De omhulling krijgt ``<pad>-veld`` en niet ``<pad>``: het ``id``-attribuut landt op de
+  omhulling en de attribuutbundel op de besturing, dus met hetzelfde pad droegen die twee
+  dezelfde id. Zie widgets/checkbox.html.j2.
 #}
 {% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
 <c-checkbox-field
-    id="{{ field.path|e }}"
+    id="{{ field.path|e }}-veld"
     label="{{ field.label|e }}"
     :help="combined_helper(field)|trim or none"
     :required="field.required"
