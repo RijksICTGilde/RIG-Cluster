@@ -185,7 +185,7 @@ async def test_sleep_task_names_every_step_it_takes(monkeypatch: pytest.MonkeyPa
 
     assert result["changed"] is True
     assert _steps(progress) == [
-        ("Deployment in slaapstand zetten: dev", TaskStatus.COMPLETED.value),
+        ("Deployment in slaapstand zetten", TaskStatus.COMPLETED.value),
         ("Projectgegevens ophalen", TaskStatus.COMPLETED.value),
         ("Slaaptoestand vastleggen in git", TaskStatus.COMPLETED.value),
     ]
@@ -206,7 +206,7 @@ async def test_wake_task_names_its_own_commit_step(monkeypatch: pytest.MonkeyPat
     )
 
     assert _names(progress) == [
-        "Deployment wekken: dev",
+        "Deployment wekken",
         "Projectgegevens ophalen",
         "Wektoestand vastleggen in git",
     ]
@@ -227,7 +227,7 @@ async def test_noop_says_so_instead_of_ticking_off_work_it_skipped(
 
     assert result["changed"] is False
     assert _steps(progress) == [
-        ("Deployment in slaapstand zetten: dev", TaskStatus.COMPLETED.value),
+        ("Deployment in slaapstand zetten", TaskStatus.COMPLETED.value),
         ("Projectgegevens ophalen", TaskStatus.COMPLETED.value),
         ("Geen wijziging nodig, de deployment is al sleeping", TaskStatus.COMPLETED.value),
     ]
@@ -315,6 +315,6 @@ async def test_failure_marks_the_step_failed(monkeypatch: pytest.MonkeyPatch) ->
         )
 
     steps = dict(_steps(progress))
-    assert steps["Deployment in slaapstand zetten: dev"] == TaskStatus.FAILED.value
+    assert steps["Deployment in slaapstand zetten"] == TaskStatus.FAILED.value
     # The step that did finish keeps its honest result.
     assert steps["Slaaptoestand vastleggen in git"] == TaskStatus.COMPLETED.value

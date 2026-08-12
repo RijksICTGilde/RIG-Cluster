@@ -229,7 +229,7 @@ class MinioManager:
         progress_manager = self.project_manager.get_progress_manager()
         minio_task = None
         if progress_manager:
-            minio_task = progress_manager.add_task("Creating MinIO storage resources")
+            minio_task = progress_manager.add_task("MinIO-opslag klaarmaken", subject=deployment_name)
 
         try:
             minio_connector = create_minio_connector()
