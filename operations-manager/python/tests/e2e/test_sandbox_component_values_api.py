@@ -92,10 +92,20 @@ def test_env_vars_round_trip_on_the_component(values_project, sandbox_url: str, 
     )
 
 
-def test_aliases_are_encrypted_per_value_with_readable_names(
+def test_aliases_keep_readable_names_and_refuse_a_value_without_a_reference(
     values_project, sandbox_url: str, forgejo: ForgejoClient
 ) -> None:
-    """The other storage shape, on the layer that is the only one aliases have."""
+    """The other storage shape, op de laag die aliassen als enige hebben.
+
+    Deze test eiste dat elke aliaswaarde AGE-versleuteld in het bestand stond, met
+    ``_SECRET`` als waarde. Dat kan niet meer, en met opzet: een alias IS een verwijzing
+    naar een platformvariabele (``validate_alias_value``), een waarde zonder ``$VAR``
+    wordt geweigerd, en een verwijzing is de koppeling zelf en dus geen geheim
+    (``owned_value_is_secret``). Gemeten op de sandbox gaf de oude vorm een 422 met precies
+    die uitleg. Wat de vangrail nu bewaakt is wat er WEL geldt: de namen blijven leesbaar,
+    elke waarde staat op zichzelf in het bestand, en een waarde zonder verwijzing komt er
+    niet in.
+    """
     base = f"/api/v2/projects/{values_project.name}/services/aliases/values/component/web"
 
     _call(
@@ -103,17 +113,30 @@ def test_aliases_are_encrypted_per_value_with_readable_names(
         sandbox_url,
         "POST",
         f"{base}?rollout=false",
-        {"values": {"ONE": _SECRET, "TWO": _SECRET}},
+        {"values": {"ONE": "$DATABASE_DB", "TWO": "$OIDC_URL"}},
     )
 
     stored = _component(forgejo, values_project.name).get("aliases")
     assert stored, "the aliases never reached the project file"
     assert sorted(stored) == ["ONE", "TWO"], f"alias names must stay readable: {sorted(stored)}"
-    assert all(_AGE_ARMOR in str(value) for value in stored.values()), "an alias value is not encrypted"
-    # Two identical plaintexts: AGE is not deterministic, so equal ciphertext would mean
-    # the set was encrypted as a whole rather than value by value.
-    assert stored["ONE"] != stored["TWO"], "identical ciphertext suggests the map was encrypted as one block"
-    assert _SECRET not in str(stored)
+    # Per waarde opgeslagen en niet als een blok: de tweede waarde hoort de eerste niet
+    # te overschrijven of eraan vast te zitten.
+    assert stored["ONE"] == "$DATABASE_DB", f"de verwijzing is onderweg veranderd: {stored['ONE']!r}"
+    assert stored["TWO"] == "$OIDC_URL", f"de verwijzing is onderweg veranderd: {stored['TWO']!r}"
+
+    # De harde regel, op de echte schrijfweg: geen verwijzing, geen alias.
+    afgewezen = httpx.request(
+        "POST",
+        f"{sandbox_url.rstrip('/')}{base}?rollout=false",
+        json={"values": {"DRIE": _SECRET}},
+        headers={"X-API-Key": values_project.api_key, "Content-Type": "application/json"},
+        verify=_VERIFY_SSL,
+        timeout=30.0,
+    )
+    assert afgewezen.status_code == 422, (
+        f"een aliaswaarde zonder platformverwijzing hoort geweigerd te worden, kreeg {afgewezen.status_code}"
+    )
+    assert "DRIE" not in (_component(forgejo, values_project.name).get("aliases") or {})
 
     _call(values_project, sandbox_url, "POST", f"{base}/:delete?rollout=false", {"keys": ["ONE", "TWO"]})
     assert "aliases" not in _component(forgejo, values_project.name)
