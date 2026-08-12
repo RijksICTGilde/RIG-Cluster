@@ -533,9 +533,14 @@ class KeycloakManager:
                 raise ValueError(f"Template variables must be a dict, got {type(variables).__name__}")
             merged_config["variables"] = variables
 
-        # Extract and validate additional_redirect_uris
-        if "additional_redirect_uris" in user_config:
-            additional_uris = user_config["additional_redirect_uris"]
+        # Extract and validate additional_redirect_uris. Beide schrijfwijzen, net als het
+        # configmodel: een alias die alleen valideert maar hier niet gelezen wordt, maakt
+        # de koppeltekenvorm een stille no-op -- erger dan geen alias.
+        redirect_uris_key = next(
+            (key for key in ("additional_redirect_uris", "additional-redirect-uris") if key in user_config), None
+        )
+        if redirect_uris_key is not None:
+            additional_uris = user_config[redirect_uris_key]
             if not isinstance(additional_uris, list):
                 raise ValueError(f"additional_redirect_uris must be a list, got {type(additional_uris).__name__}")
             # Validate all entries are strings
