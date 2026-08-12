@@ -11,6 +11,7 @@ we scrape it from there, then use it for the async API call.
 from __future__ import annotations
 
 import contextlib
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -21,21 +22,43 @@ if TYPE_CHECKING:
     from playwright.sync_api import Page
 
 
+#: Hoe een projectsleutel eruitziet: 32 tekens uit het tokenalfabet.
+_API_KEY_VORM = re.compile(r"[A-Za-z0-9_-]{32}")
+
+
 def read_api_key(page: Page, base_url: str, project_name: str) -> str:
     """Scrape the decrypted project API key from the project-details page.
 
     The details page renders the key in a LOTC secret-field: the element TEXT is a row
     of bullets and the plaintext sits in its `data-value` attribute, so the attribute is
-    what we read. We scope to the stack carrying the "API Key" heading, otherwise the
-    first match on the page is the project's AGE private key.
+    what we read.
+
+    HET VELD MOET PRECIES AANGEWEZEN WORDEN. Hier stond
+    ``.lotc-stack:has(h3:text-is("API Key")) .lotc-secret__value`` met ``.first``. De kop
+    staat in de sandbox in VIER geneste ``.lotc-stack``-divs, dus die selector matcht ze
+    alle vier en ``.first`` is de BUITENSTE - en het eerste geheimveld daarbinnen is de
+    projectnaam. Deze functie gaf dus de projectnaam terug als sleutel, en elke
+    API-aanroep in de opruiming kreeg daarop 401. Zo bleven er projecten op de sandbox
+    achter. Vandaar de xpath naar de DICHTSTBIJZIJNDE omhullende stack, plus de controle
+    op de vorm eronder: een verkeerde waarde hoort hier hard te falen en niet stil door
+    te gaan.
     """
     page.goto(f"{base_url.rstrip('/')}/projects/details/{project_name}")
     page.wait_for_load_state("networkidle")
-    value = page.locator('.lotc-stack:has(h3:text-is("API Key")) .lotc-secret__value').first
+    stack = (
+        "xpath=(//h3[normalize-space(text())='API Key']"
+        "/ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' lotc-stack ')])[last()]"
+    )
+    value = page.locator(stack).locator(".lotc-secret__value").first
     value.wait_for(state="attached", timeout=10000)
     api_key = (value.get_attribute("data-value") or "").strip()
     if not api_key:
         raise AssertionError(f"Could not read API key for project '{project_name}' from details page")
+    if not _API_KEY_VORM.fullmatch(api_key):
+        raise AssertionError(
+            f"Wat op de detailpagina van '{project_name}' als API-sleutel stond heeft niet de vorm "
+            f"van een sleutel: {api_key!r}. Waarschijnlijk wijst de selector het verkeerde veld aan."
+        )
     return api_key
 
 
