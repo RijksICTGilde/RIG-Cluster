@@ -60,9 +60,10 @@
     {# switchDeployment(): dezelfde functie als op de bestaande pagina, sinds deze
        omzetting in een eigen bestand omdat beide pagina's hem nodig hebben. #}
     <script src="{{ static_url('js/deployment_switch.js') }}"></script>
-    {# copyToClipboard(): de kopieerknop naast de projectnaam en de age-sleutel. Stond
-       inline op de bestaande pagina; sinds deze omzetting in een eigen bestand omdat
-       beide pagina's en de dienstblokken hem aanroepen. #}
+    {# copyToClipboard(): de kopieerknoppen van de DIENSTBLOKKEN (keycloak, invite, de
+       OTP-code). Onder "Configuratie & Secrets" hangt hij niet meer: die waarden staan in
+       een <c-secret-field>, dat zijn eigen kopieerknop meebrengt. Stond inline op de
+       bestaande pagina; sinds deze omzetting in een eigen bestand. #}
     <script src="{{ static_url('js/copy_to_clipboard.js') }}"></script>
     {# De key-value editors (omgevingsvariabelen, aliassen) in de bewerkdialoog. De
        bestaande pagina laadt deze twee ook; hier ontbraken ze, en dan blijft er in de
@@ -288,14 +289,13 @@
         {% endcall %}
 
         {# ---- Configuratie & Secrets (section-config.html.j2) ----------------- #}
-        {# De klassen config-item / config-code / copy-btn zijn GEEN vormgeving: daar
-           hangt copyToClipboard() aan. Hij zoekt vanaf de aangeklikte knop de
-           dichtstbijzijnde .config-item en pakt daarbinnen de .config-code. Daarom
-           staan ze hier letterlijk, net als bij de gedeelde dialoog. De functie zelf
-           staat sinds deze omzetting in /static/js/copy_to_clipboard.js - hij werd al
-           door vier templates aangeroepen en stond inline op de oude pagina. #}
+        {# Elke waarde staat in een <c-secret-field>, dat zijn eigen kopieerknop meebrengt.
+           Hier stond een losse knop met een inline copyToClipboard() erop, die vanaf de
+           knop de dichtstbijzijnde .config-item zocht en daarbinnen de .config-code;
+           daarom moesten die twee klassen letterlijk overgenomen worden. Dat is niet meer
+           nodig - de knop en de klassen zijn weg, het kopieren zit in het veld. De functie
+           zelf blijft bestaan voor de dienstblokken, in /static/js/copy_to_clipboard.js. #}
         {% if user_role in ["admin", "owner"] %}
-            {% set kopieer = "copyToClipboard('.config-code', event, '.config-item')" %}
             {% call panel("Configuratie & Secrets", "lock-closed", info_text="Project configuratie en gevoelige informatie") %}
                     <c-stack gap="xs">
                         <c-heading type="h3" size="6" label="Project Naam" />

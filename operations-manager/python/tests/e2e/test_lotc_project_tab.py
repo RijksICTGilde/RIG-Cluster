@@ -37,11 +37,11 @@ pytestmark = pytest.mark.e2e
 PROJECT = "test-project-detail"
 NLDD_URL = f"/projects/details/{PROJECT}"
 
-# De aanroepen die bij de WIDGET horen en niet bij de pagina: het geheimveld van ROOS
-# bedraadt zijn eigen oog- en kopieerknop met inline handlers. Het geheimveld van LOTC
-# doet hetzelfde met zijn eigen code (show-copy="true"), dus die namen horen niet in een
-# vergelijking van wat de PAGINA doet.
-WIDGET_HANDLERS = ("applyRules(", "copyToClipboard('.roos-secret-field__value'")
+# De aanroepen die bij een WIDGET horen en niet bij de pagina, en dus niet meetellen in
+# een vergelijking van wat de PAGINA doet. Hier stond ook het geheimveld van ROOS, dat zijn
+# oog- en kopieerknop met een inline handler bedraadde; het geheimveld van LOTC gebruikt
+# een gedelegeerde afhandeling zonder onclick, dus daar valt niets meer uit te filteren.
+WIDGET_HANDLERS = ("applyRules(",)
 
 # Verzamelt elke inline klikafhandeling binnen een deel van de pagina.
 COLLECT_ONCLICK = """
@@ -133,8 +133,13 @@ AANROEPEN_VAN_HET_PROJECTTABBLAD = {
     "'Component verwijderen')",
     "openServiceModal('/projects/test-project-detail/actions/refresh-project/confirm', 'Project herverwerken')",
     "openServiceModal('/projects/test-project-detail/actions/delete-project/confirm', 'Project verwijderen')",
-    "copyToClipboard('.config-code', event, '.config-item')",
 }
+#: Hier stond ``copyToClipboard('.config-code', event, '.config-item')``. Die aanroep is
+#: bewust weg: onder "Configuratie & Secrets" staat elke waarde nu in een
+#: ``<c-secret-field ... show-copy />``, dat het klembord IN het veld heeft en er geen
+#: inline klikafhandeling meer voor nodig heeft. Het VERMOGEN is niet verdwenen en wordt
+#: hieronder getoetst (``test_de_kopieerknop_kopieert_echt``) - op wat de gebruiker
+#: overhoudt, niet op de naam van een verdwenen functie.
 
 
 def test_geen_enkele_aanroep_van_het_projecttabblad_is_verdwenen(app_server: str, auth_page: Page) -> None:
@@ -205,17 +210,23 @@ def test_component_verwijderen_bevestigt_voor_het_juiste_component(app_server: s
     assert _wait_for(recorded) == (f"{app_server}/projects/{PROJECT}/actions/delete-component/confirm?target=web-app")
 
 
-def test_de_kopieerknop_kopieert_echt(app_server: str, klembord_page: Page) -> None:
-    """De knop naast de projectnaam zet die naam op het klembord.
+#: De kopieerknop IN het geheimveld. Er stond een losse ``nldd-button.copy-btn`` naast de
+#: waarde, met een inline ``copyToClipboard(...)`` erop; sinds de omzetting naar
+#: ``<c-secret-field ... show-copy />`` zit het klembord in het veld zelf. Wat er getoetst
+#: wordt verandert daarmee niet: klikken hoort de WAARDE op het klembord te zetten.
+KOPIEERKNOP = ".lotc-secret__btn[data-act='copy']"
 
-    Niet "de knop staat er": copyToClipboard() zoekt vanaf de knop de dichtstbijzijnde
-    .config-item en daarbinnen de .config-code. Die twee klassen zijn bij de omzetting
-    letterlijk overgenomen omdat de JavaScript eraan hangt, en of dat gelukt is blijkt
-    alleen uit wat er na de klik op het klembord staat.
+
+def test_de_kopieerknop_kopieert_echt(app_server: str, klembord_page: Page) -> None:
+    """De kopieerknop bij de projectnaam zet die naam op het klembord.
+
+    Niet "de knop staat er": het geheimveld toont een AFGESCHERMDE waarde en houdt de
+    echte in ``data-value``. Of de knop de goede waarde te pakken heeft - en niet de
+    bolletjes - blijkt alleen uit wat er na de klik op het klembord staat.
     """
     _open_project_tab(klembord_page, app_server)
 
-    knop = klembord_page.locator("nldd-button.copy-btn").first
+    knop = klembord_page.locator(KOPIEERKNOP).first
     knop.click()
 
     klembord_page.wait_for_function("() => navigator.clipboard.readText().then(t => t.length > 0)")
@@ -223,21 +234,20 @@ def test_de_kopieerknop_kopieert_echt(app_server: str, klembord_page: Page) -> N
 
 
 def test_de_kopieerknop_meldt_dat_hij_gekopieerd_heeft(app_server: str, klembord_page: Page) -> None:
-    """De terugmelding komt mee naar het nieuwe thema.
+    """De terugmelding blijft: zonder haar weet de gebruiker niet of er iets gebeurd is.
 
-    Ze werd gezet met setAttribute('label', ...) - de naam die de ROOS-knop leest. De
-    knop van dit thema is een <nldd-button> en leest zijn opschrift uit 'text', dus zonder
-    aanpassing zou de knop wel kopieren en niets zeggen.
+    Het geheimveld meldt het op zijn knop in ``title`` (en zet die na 1,2 seconde terug),
+    waar de losse knop het in zijn opschrift zette.
     """
     _open_project_tab(klembord_page, app_server)
 
-    knop = klembord_page.locator("nldd-button.copy-btn").first
+    knop = klembord_page.locator(KOPIEERKNOP).first
+    assert knop.get_attribute("title") == "Kopieren", "de knop begint al op de terugmelding"
     knop.click()
 
     klembord_page.wait_for_function(
-        "() => document.querySelector('nldd-button.copy-btn').getAttribute('text') === 'Gekopieerd!'"
+        "(sel) => document.querySelector(sel).getAttribute('title') === 'Gekopieerd'", arg=KOPIEERKNOP
     )
-    assert "is-copied" in (knop.get_attribute("class") or "")
 
 
 def test_de_teruggebrachte_secties_staan_er_met_echte_gegevens(app_server: str, auth_page: Page) -> None:
