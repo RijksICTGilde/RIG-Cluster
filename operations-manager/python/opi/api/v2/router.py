@@ -68,6 +68,7 @@ from opi.api.v2.project_read import (
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
+    UPDATE_COMPONENT_VALIDATORS,
     UPDATE_IMAGE_VALIDATORS,
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
@@ -1406,6 +1407,7 @@ async def add_component_v2(
             "port": component_data.port,
             "ports": component_data.ports,
             "path": component_data.path,
+            "rewrite": component_data.rewrite,
             "services": component_data.services,
             "cpu_limit": component_data.cpu_limit,
             "memory_limit": component_data.memory_limit,
@@ -1451,6 +1453,12 @@ async def update_component_v2(
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
+    # Validate fields using editable validators
+    await validate_api_payload(
+        component_data.model_dump(),
+        UPDATE_COMPONENT_VALIDATORS,
+    )
+
     task = await create_async_task(
         request=request,
         task_type="update_component",
@@ -1462,6 +1470,7 @@ async def update_component_v2(
             "port": component_data.port,
             "ports": component_data.ports,
             "path": component_data.path,
+            "rewrite": component_data.rewrite,
             "services": component_data.services,
             "cpu_limit": component_data.cpu_limit,
             "memory_limit": component_data.memory_limit,
