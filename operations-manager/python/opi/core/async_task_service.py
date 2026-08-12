@@ -580,11 +580,19 @@ class AsyncTaskService:
         Returns ``{"count": int, "since": str | None, "task_types": list[str]}``. ``since``
         is the ISO timestamp of the oldest change still waiting, so the UI can say how long
         the project has been running ahead of the cluster rather than only that it is.
+
+        The cutoff is when the rolling-out task STARTED, not when it completed (RC-82). A
+        refresh reads the project file once, at the beginning of its own run, and processes
+        that snapshot for the rest of its duration. A change committed while it was still
+        running is therefore not in it -- and measuring against ``completed_at`` cleared
+        exactly those changes, so ``pending`` reported 0 for a change that never reached the
+        cluster. Falling back to ``completed_at`` keeps tasks that recorded no start (older
+        rows, and anything completed without going through the worker) behaving as before.
         """
         async with session_scope() as session:
             last_rollout_at = (
                 await session.execute(
-                    select(func.max(AsyncTask.completed_at)).where(
+                    select(func.max(func.coalesce(AsyncTask.started_at, AsyncTask.completed_at))).where(
                         AsyncTask.project_name == project_name,
                         AsyncTask.status == "completed",
                         _rolled_out(),
