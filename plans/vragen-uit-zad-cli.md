@@ -345,6 +345,9 @@ Wat wij wél doen: `/version` zegt nu wie er antwoordt.
   het cluster (een pod wisselt niet van image, dus vaker vragen levert hetzelfde op). Dat is de
   enige waarheid over welke code draait; `commit` is een afgeleide van de build.
 - Buiten Kubernetes blijven beide velden leeg — leeg is eerlijker dan geraden.
+- `dirty: true` (en een image-tag die op `-dirty` eindigt) betekent dat er ongecommitte
+  wijzigingen in de build zaten. Dan zegt `commit` niet welke code draait, en is `image` het
+  enige waarop je je kunt baseren.
 
 Jullie omweg via `/openapi.json` kan daarmee weg. Wat wij zelf als regel aanhouden: eerst kijken of
 de podnaam over twee calls gelijk blijft, en dan pas het commit vergelijken.
