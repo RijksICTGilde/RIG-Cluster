@@ -141,7 +141,7 @@ class KeycloakManager:
         progress_manager = self.project_manager.get_progress_manager()
         keycloak_task = None
         if progress_manager:
-            keycloak_task = progress_manager.add_task("Creating Keycloak SSO resources")
+            keycloak_task = progress_manager.add_task("Keycloak-SSO klaarmaken", subject=deployment_name)
 
         try:
             # Handle external keycloak (credentials from Kubernetes secret)

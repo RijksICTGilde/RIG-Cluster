@@ -68,7 +68,7 @@ class RedisManager:
         progress_manager = self.project_manager.get_progress_manager()
         redis_task = None
         if progress_manager:
-            redis_task = progress_manager.add_task("Creating Redis cache resources")
+            redis_task = progress_manager.add_task("Redis-cache klaarmaken", subject=deployment_name)
 
         try:
             uses_namespace_redis = self._project_uses_namespace_redis(project_data)

@@ -40,6 +40,32 @@ Dit is de kern van de functie, niet een detail.
   deployment die al slaapt levert de regel "Geen wijziging nodig, de deployment is al
   sleeping" op, geen reeks afgevinkte stappen.
 - De namen staan in gewone taal en in het Nederlands, zoals de rest van de interface.
+  `tests/test_task_step_subject.py` scant daarvoor de bron van alle stapnamen, zodat een
+  Engelse regel er niet ongemerkt bij komt, en meet dat een stap die op meerdere plekken
+  gezet wordt overal hetzelfde heet.
+
+## Een stap zegt waarvoor hij loopt
+
+Stappen die per deployment draaien -- de database, de opslag, de cache, Keycloak, de
+bootstrap-acties -- stonden bij twee deployments twee keer identiek onder elkaar. Ze
+dragen daarom een **onderwerp** naast hun naam:
+
+```python
+progress_manager.add_task("Database klaarmaken", subject=deployment_name)
+```
+
+Het onderwerp staat NAAST de naam en niet erin. De naam blijft zo bruikbaar om op te
+groeperen of te vergelijken, en de weergave kiest zelf hoe ze getoond worden: in de
+takenlijst is het de tweede regel onder de naam (samen met de foutreden, als die er is),
+in de eenregelige "huidige stap" worden ze samengevoegd tot `naam - onderwerp`.
+
+Een stap die een keer per project loopt (`Project aanmaken`,
+`Kubernetes namespace(s) aanmaken`) krijgt GEEN onderwerp; dat maakt de lijst alleen
+langer. `update_task` schrijft alleen de naam, dus een stap die zichzelf gaandeweg
+hernoemt houdt zijn onderwerp.
+
+Taken die al liepen voor dit veld bestond hebben geen `subject` in de opgeslagen
+subtaken; de weergave leest het met `.get` en toont dan gewoon geen tweede regel.
 
 ## Hoe je een stap toevoegt
 
