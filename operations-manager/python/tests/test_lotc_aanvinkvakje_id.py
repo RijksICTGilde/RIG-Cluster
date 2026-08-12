@@ -80,13 +80,36 @@ def test_hulptekst_en_foutmelding_houden_hun_afgeleide_ids() -> None:
     assert len(ids) == len(set(ids)), f"er staan dubbele id's in: {ids}"
 
 
-def test_groep_levert_ook_geen_dubbele_ids() -> None:
-    """Dezelfde componentvorm, dezelfde poort - een groep hoort het ook te halen."""
-    veld = _veld(
+def _groepsveld() -> FormField:
+    return _veld(
         widget_type="checkbox_group",
         options=[{"value": "keycloak", "label": "Keycloak"}, {"value": "minio", "label": "MinIO"}],
         value=["keycloak"],
     )
-    html = LOTCWidgetAdapter().render_checkbox_group(veld)
+
+
+def test_groep_levert_ook_geen_dubbele_ids() -> None:
+    """Dezelfde componentvorm, dezelfde poort - een groep hoort het ook te halen."""
+    html = LOTCWidgetAdapter().render_checkbox_group(_groepsveld())
     ids = _ids(html)
     assert len(ids) == len(set(ids)), f"er staan dubbele id's in: {ids}"
+
+
+def test_de_groep_draagt_het_veldpad_ook_echt_als_id() -> None:
+    """De tweede helft: geen dubbele id's is ook waar als de id HELEMAAL verdwijnt.
+
+    Dat is precies wat er gebeurde toen de ``id`` uit de attribuutbundel werd gehaald: de
+    groep rendert een andere componentvorm (``<nldd-form-field>``) dan het enkele vakje en
+    die zet de id-prop nergens neer, dus ``[id='<pad>']`` had niets meer om aan te haken.
+    Vier tests in ``tests/e2e/test_gedragsoppervlak.py`` vielen daarop om.
+    """
+    html = LOTCWidgetAdapter().render_checkbox_group(_groepsveld())
+    assert _ids(html).count(PAD) == 1, f"verwacht precies een id={PAD}, kreeg: {_ids(html)}\n{html}"
+
+
+def test_elke_keuze_in_de_groep_houdt_zijn_eigen_id() -> None:
+    """En de vakjes zelf blijven per waarde vindbaar."""
+    html = LOTCWidgetAdapter().render_checkbox_group(_groepsveld())
+    ids = _ids(html)
+    for waarde in ("keycloak", "minio"):
+        assert ids.count(f"{PAD}-{waarde}") == 1, f"de keuze {waarde} mist zijn id: {ids}"
