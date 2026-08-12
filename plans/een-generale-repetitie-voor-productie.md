@@ -16,9 +16,25 @@ Noem dit niet compleet, maar dit is wat het meest aan de keten raakt en dus de a
 * **Een stap in de voortgang draagt zijn onderwerp** en de regels zijn Nederlands (RC-83).
 * **TLS per deployment-component** (RC-78) en **de deploymentpagina opnieuw** (RC-76).
 
+## Begin bij een SCHONE sandbox
+
+Ga er niet van uit dat de projecten van een vorige run nog goed staan. Er is deze week veel
+doorheen gegaan, er draaien meer sessies tegen dezelfde omgeving, en een halve toestand geeft
+een uitkomst waar je niets aan hebt. Zet de sandbox opnieuw op met `task sandbox:setup`, en
+gebruik `task sandbox:sync` voor infrastructuurwijzigingen.
+
+Controleer daarbij expliciet dat de sleutels en instellingen kloppen voordat je begint: de
+AGE-sleutel voor de sandbox is een eigen sleutel (`security/sandbox-key.txt`, niet
+`security/key.txt`), en de omgeving draait op `*.sandbox.rijksapp.dev`. Klopt dat niet, dan
+faalt alles daarna om de verkeerde reden.
+
 ## Wat de doorloop moet aandoen
 
-Doe dit op de sandbox op de server, met de bestaande `@pytest.mark.sandbox`-suite als basis (`tests/e2e/test_sandbox_flows.py`, `test_sandbox_all_services.py`, `test_sandbox_component_values_api.py`, `test_sandbox_lotc.py`) en met de hand waar die suite niet komt.
+Doe dit op de sandbox op de server. Draai daar **de volledige e2e-suite**, dus zowel de lokale (`-m "e2e and not sandbox"`) als de sandbox-gebonden (`-m "e2e and sandbox"`, met `E2E_BASE_URL` gezet) -- niet de gerichte selectie die tijdens het bouwen volstaat. Dit is de ene keer dat alles moet draaien; dat kost minuten en dat is hier de bedoeling.
+
+De sandbox-suite (`tests/e2e/test_sandbox_flows.py`, `test_sandbox_all_services.py`, `test_sandbox_component_values_api.py`, `test_sandbox_lotc.py`) is de basis; doe met de hand wat die suite niet aandoet.
+
+Twee tests staan al rood en dat is bekend: `test_lotc_paginamarge.py` bewaakt een kolombreedte onder 1400 terwijl de gekozen bovengrens 1440 oplevert. Dat is een getal en geen fout; noem het in het verslag en laat het niet als verrassing terugkomen.
 
 1. **Conversie van bestaande projectbestanden.** Neem projectbestanden zoals ze vandaag in de projects-repo staan, dus niet alleen een vers aangemaakt project. Toets dat ze migreren naar de huidige schemaversie en dáárna valideren. Let op de bekende valkuil: valideer op de GEMIGREERDE gegevens, niet op de rauwe; dat is precies waar dp-bn7 op strandde en wat stil elke reprocess blokkeerde.
 2. **Een project aanmaken via de wizard**, met meerdere diensten aan, en het door de hele keten volgen tot de pods draaien.
