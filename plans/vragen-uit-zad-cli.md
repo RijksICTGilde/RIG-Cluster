@@ -511,7 +511,61 @@ over de API opvraagbaar is. Dat is een echte verruiming, en wij vragen er niet o
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+**Optie 1, om precies de reden die jullie zelf noemen: er gaan geen credentials over de
+lijn.** De vier doelvelden zijn optioneel geworden. Laat je ze alle vier weg, dan zet het
+platform terug in de dienst van het project waar de API-sleutel bij hoort. Dat geldt voor
+database en bucket, met dezelfde regels.
+
+```sh
+# terugzetten in je eigen database: leeg lichaam volstaat
+curl -X POST "$BASE/v1/restore/database/$CLUSTER/$NAMESPACE/$REFERENCE?project_name=$PROJECT" \
+  -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{}'
+
+# hetzelfde voor een bucket
+curl -X POST "$BASE/v1/restore/bucket/$CLUSTER/$NAMESPACE/$REFERENCE?project_name=$PROJECT" \
+  -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{}'
+```
+
+Een verzoek zonder lichaam werkt ook; `{}` en "geen lichaam" betekenen hetzelfde. Wil je een
+snapshot kiezen, dan mag `{"snapshot_id": "..."}` erbij zonder dat er een doel bij hoeft.
+
+Wat er verder geldt:
+
+- **Een volledig ingevuld doel doet exact wat het altijd deed.** Bestaande aanroepen naar een
+  externe bestemming veranderen niet van gedrag.
+- **Half ingevuld is een fout, geen gok.** Geef je drie van de vier velden, dan volgt een 422
+  die zegt welke velden ontbreken. Wij vullen het vierde niet aan: dan zou je terugzetten op
+  een plek waar je niet om vroeg. De melding noemt alleen veldnamen, nooit de waarden die je
+  meestuurde.
+- **De verwijzing bepaalt de deployment.** `reference_name` is de naam waaronder de backup
+  geregistreerd staat -- de servicereferentie van het component (`{deployment}-postgresql`,
+  `{deployment}-minio`) of de deployment-brede terugval (`{deployment}-database`). Uit die
+  naam volgt de deployment, en daaruit het secret in je eigen namespace.
+- **Geen dienst, geen stacktrace.** Kent geen enkele deployment die verwijzing, of is de
+  database of bucket nog niet uitgerold, dan is het antwoord een 404 die zegt wat er mist.
+
+Optie 2 hebben wij niet gedaan, om de reden die jullie er zelf bij zetten: het zou van een
+wachtwoord dat nu alleen in de pod staat iets maken dat met een gestolen sleutel op te halen
+is. Optie 3 evenmin: twee endpoints die op een haar na hetzelfde doen lopen uit de pas zodra
+er iets aan verandert.
+
+**En de vraag die daaronder zit: mag een sleutel terugzetten in de dienst van een ander
+project?** Gemeten, en het antwoord is genuanceerd:
+
+- De **bron** was en blijft dichtgezet. De namespace in het pad moet die van het
+  geauthenticeerde project zijn, anders volgt een 403; je kunt dus alleen je eigen backups
+  lezen.
+- Het **doel** was en blijft vrij als je het expliciet opgeeft. Er is geen controle dat de
+  opgegeven host bij jou hoort. Dat is geen rechtenverruiming: je moet de gebruiker en het
+  wachtwoord van die database al kennen om er iets in te mogen schrijven, en de restore-pod
+  draait in je eigen namespace, dus onder je eigen NetworkPolicy. Wat je ermee kunt, kun je
+  met een `psql` in je eigen pod net zo goed.
+- De **nieuwe weg is strikt smaller**: zonder doelvelden komt het platform nooit ergens
+  anders uit dan bij de dienst van het project bij de sleutel.
+
+Wij hebben het expliciete pad daarom gelaten zoals het was. Zou je daar een eigenaarscontrole
+op zetten, dan verdwijnt het legitieme geval -- terugzetten in een database buiten ZAD --
+zonder dat er iets dichtgaat wat nu openstaat.
 
 ---
 
