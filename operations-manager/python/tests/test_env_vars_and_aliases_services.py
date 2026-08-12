@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from opi.core.project_schema import ProjectIntegrityError
+from opi.forms.wizard.secrets import REDACTED
 from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.aliases.config_model import AliasesConfig
 from opi.services.catalog.aliases.editables import AliasMapValidator
@@ -162,6 +163,19 @@ class TestAliasMapValidator:
 
     def test_says_nothing_about_an_empty_field(self) -> None:
         assert AliasMapValidator().validate("") == []
+
+    def test_says_nothing_about_a_redacted_value(self) -> None:
+        # Alias values are encrypted per value under their own name, so the wizard
+        # session redaction hands the form back a placeholder. Judging it as a
+        # reference-free constant blocked every following save of the components modal.
+        assert AliasMapValidator().validate(f"POSTGRES_HOST={REDACTED}") == []
+
+    def test_still_judges_the_aliases_next_to_a_redacted_one(self) -> None:
+        messages = AliasMapValidator().validate(f"POSTGRES_HOST={REDACTED}\nMODE=production")
+        assert messages
+        named = messages[0].split(":")[1].split(".")[0]
+        assert "MODE" in named
+        assert "POSTGRES_HOST" not in named
 
 
 def _project(**component_extra) -> dict:

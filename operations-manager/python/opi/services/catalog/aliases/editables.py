@@ -13,8 +13,14 @@ from typing import Any
 
 from opi.forms.editables.converters import KeyValueConverter
 from opi.forms.editables.editable import Editable
+from opi.forms.wizard.secrets import REDACTED
 from opi.utils.age import is_age_encrypted
 from opi.utils.env_vars import extract_variable_references, validate_and_parse_env_vars
+
+
+def _is_untouched(template: str) -> bool:
+    """Whether this alias value is one the author never saw: stored, not re-entered."""
+    return template.strip() == REDACTED or is_age_encrypted(template)
 
 
 class AliasMapValidator:
@@ -31,6 +37,16 @@ class AliasMapValidator:
     (``substitute_variables`` passes a reference-free template through untouched), so
     rejecting it at file level would break working projects. Here the author still has
     the value on screen.
+
+    A value the author does NOT have on screen cannot be judged, and there are two of
+    those. An AGE block is one. The other is the ``REDACTED`` placeholder: alias values
+    are encrypted per value under their own (dynamic) name, so the wizard session
+    redaction replaces them one by one and the form shows the placeholder back. Judging
+    it as a reference-free constant made every following save of the components modal
+    fail with "Alias(sen) zonder verwijzing" -- for any component that had ever stored
+    an alias, and for a plain user editing something else entirely. The placeholder is
+    put back from the stored project at save (``restore_redacted_secrets``), so what is
+    written is the original value, which was validated when it was entered.
     """
 
     def validate(self, value: Any) -> list[str]:
@@ -40,7 +56,11 @@ class AliasMapValidator:
             aliases = validate_and_parse_env_vars(value)
         except (ValueError, TypeError) as e:
             return [str(e)]
-        without = [name for name, template in aliases.items() if not extract_variable_references(str(template))]
+        without = [
+            name
+            for name, template in aliases.items()
+            if not _is_untouched(str(template)) and not extract_variable_references(str(template))
+        ]
         if not without:
             return []
         return [
