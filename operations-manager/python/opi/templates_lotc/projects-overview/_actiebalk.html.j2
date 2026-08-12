@@ -10,8 +10,8 @@
    de rechterkant midden op de balk. Gemeten in de browser. #}
 <c-cluster justify="between" align="center">
     <c-cluster gap="md" align="center">
-        {% set lotc_onclick_1 %}window.location.href='/projects/new'{% endset %}<c-button label="Nieuw Project" size="md" show-icon="before" icon="plus"/>
-        {% set lotc_onclick_2 %}window.location.href='/projects?refresh=true'{% endset %}<c-button label="Vernieuwen" size="md" show-icon="before" icon="refresh"/>
+        {% set lotc_onclick_1 %}window.location.href='/projects/new'{% endset %}<c-button label="Nieuw Project" show-icon="before" icon="plus"/>
+        {% set lotc_onclick_2 %}window.location.href='/projects?refresh=true'{% endset %}<c-button label="Vernieuwen" show-icon="before" icon="refresh"/>
     </c-cluster>
 
     {# .filter-row was flex + gap + align-items:center, oftewel <c-cluster>. #}
