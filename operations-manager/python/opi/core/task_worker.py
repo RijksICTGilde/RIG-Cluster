@@ -26,6 +26,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def reported_failure(result: object, progress: object = None) -> str | None:
+    """Wat de handler over zijn eigen afloop zegt: de foutmelding, of ``None``.
+
+    De taakstatus is het veld waar een aanroeper als EERSTE op kijkt, dus die moet zeggen
+    wat er gebeurde. Dat deed hij niet: gemeten in de generale repetitie
+    (``docs/generale-repetitie-2026-08-12.md``, bevinding 5) meldde een afgewezen
+    dienstselectie ``status: completed`` terwijl zijn eigen ``result`` ``failed`` droeg,
+    er een ``error_message`` stond en de subtaak "Component toevoegen" was gefaald. Wie op
+    ``status`` polt - de voor de hand liggende manier, en wat de zad-cli doet - zag een
+    afgewezen wijziging aan voor een geslaagde.
+
+    Er zijn DRIE manieren waarop een handler faalt, en alleen de eerste werd gelezen:
+
+    1. ``{"success": False, "error": ...}`` - de vorm van de backup- en herstelhandlers;
+    2. ``{"status": "failed", "error": ...}`` - de vorm van de component- en
+       dienstenhandlers, en precies de vorm uit de meting;
+    3. hij roept ``progress.fail_project(...)`` aan en geeft daarnaast iets teruggeeft dat
+       op succes lijkt. Dat markeerde de taak in de database wel als mislukt, maar
+       fire-and-forget, waarna de worker er ``completed`` overheen schreef.
+
+    Args:
+        result: wat de handler teruggaf.
+        progress: de voortgangsmanager van deze taak, voor geval 3.
+
+    Returns:
+        De foutmelding als de handler faalde, anders ``None``.
+    """
+    if isinstance(result, dict):
+        if result.get("success") is False:
+            return str(result.get("error") or "Task reported failure")
+        if result.get("status") == "failed":
+            return str(result.get("error") or result.get("message") or "Task reported failure")
+
+    reason = getattr(progress, "project_failure", None)
+    if isinstance(reason, str) and reason:
+        return reason
+    return None
+
+
 class TaskWorker:
     """Background worker that claims and executes tasks from the async_tasks table.
 
@@ -212,15 +251,19 @@ class TaskWorker:
                 # Close progress manager (final flush)
                 await progress.close()
 
-                # Check if the handler reported failure via its return value
-                if isinstance(result, dict) and result.get("success") is False:
-                    error_msg = result.get("error", "Task reported failure")
-                    # Handler already decided this is a permanent failure — no retries
+                # Check if the handler reported failure — via its return value, or by
+                # marking the project failed while still returning a success-shaped dict.
+                error_msg = reported_failure(result, progress)
+                if error_msg is not None:
+                    # Handler already decided this is a permanent failure — no retries.
+                    # The result is kept: it carries error_type and the parts that DID
+                    # succeed, and a client that only reads `status` now sees the failure.
                     await self._task_service.fail_task(
                         task_id=task_id,
                         error_message=error_msg,
                         attempt_count=1,
                         max_attempts=0,
+                        result=result if isinstance(result, dict) else None,
                     )
                     progress.mark_legacy_failed(error_msg)
                     logger.warning(
