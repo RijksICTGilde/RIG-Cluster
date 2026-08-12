@@ -326,11 +326,17 @@ class AsyncTaskService:
         error_message: str,
         attempt_count: int,
         max_attempts: int,
+        result: dict | None = None,
     ) -> None:
         """Mark a task as failed or re-queue it for retry.
 
         If the attempt count is below max_attempts, the task is reset to pending so it
         can be retried. Otherwise it is marked as permanently failed.
+
+        ``result`` is the handler's own answer and is stored on permanent failure. Without
+        it a client that sees ``status: failed`` loses the ``error_type`` and the parts of
+        the work that did succeed; a retry does not store it, because the next attempt
+        writes its own.
         """
         # Truncate to fit the DB column (varchar 255).
         if len(error_message) > 255:
@@ -357,11 +363,14 @@ class AsyncTaskService:
                     error_message,
                 )
             else:
-                await session.execute(
-                    update(AsyncTask)
-                    .where(AsyncTask.id == uuid.UUID(task_id))
-                    .values(status="failed", error_message=error_message, completed_at=func.now())
-                )
+                values: dict[str, Any] = {
+                    "status": "failed",
+                    "error_message": error_message,
+                    "completed_at": func.now(),
+                }
+                if result is not None:
+                    values["result"] = result
+                await session.execute(update(AsyncTask).where(AsyncTask.id == uuid.UUID(task_id)).values(**values))
                 logger.info(
                     "Task %s permanently failed after %d attempts: %s",
                     task_id,
