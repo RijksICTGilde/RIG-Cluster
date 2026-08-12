@@ -76,6 +76,16 @@ opgeslagen alias zonder verwijzing deployt prima (`substitute_variables` laat he
 dus hem op bestandsniveau afkeuren zou werkende projecten breken. Op het formulier heeft de
 auteur de waarde nog voor zich.
 
+En dus alleen dan. Aliaswaarden worden per waarde versleuteld onder hun eigen (dynamische)
+naam, dus de redactie van de wizardsessie (`opi/forms/wizard/secrets.py`) vervangt ze een
+voor een door de plaatshouder `__opi-redacted-secret__`. Die kwam terug in het veld en werd
+gelezen als een constante zonder verwijzing, waarna elke volgende opslag van de
+componenten-modal werd geweigerd -- voor elk component dat ooit een alias had opgeslagen,
+ook voor een gewone gebruiker die iets heel anders wilde wijzigen. De validator slaat de
+plaatshouder nu over, net als een AGE-blok: allebei waarden die de invuller niet op het
+scherm heeft en dus niet bedoeld kan hebben. Bij opslag zet `restore_redacted_secrets` de
+opgeslagen waarde terug.
+
 ## De haak voor de deployment-componentlaag
 
 Tot RC-25 had `ConfigLayer.DEPLOYMENT_COMPONENT` als enige laag geen enkele dienst-eigen
