@@ -23,6 +23,7 @@ from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
 from opi.forms.renderer import FormRenderer
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.forms.wizard.state import WizardState
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
 from opi.services.catalog.base import ConfigLayer
 from opi.services.registry import get_service
@@ -94,8 +95,6 @@ async def _save(submission: dict[str, Any]) -> dict[str, Any]:
     assert not errors, errors
     sectiegegevens = _extract_section_data(section.editables, verwerkt)
     # Wat de sectie bewaart is virtueel; devirtualiseer zoals get_merged_data doet.
-    from opi.forms.wizard.state import WizardState
-
     state = WizardState(flow_id="modal-edit-keycloak-config", current_step=section.section_id)
     state.base_data = copy.deepcopy(opgeslagen)
     state.active_sections = [section.section_id]

@@ -1400,6 +1400,43 @@ def _peer_component_ports(project_data: dict[str, Any] | None, component_name: s
     return []
 
 
+class KeycloakAccountLinkOptionsProvider:
+    """Hoe een bestaand account gekoppeld wordt als iemand via een identity provider inlogt.
+
+    De waarden komen uit ``AccountLink`` in het configmodel; ``build_project_realm_context``
+    geeft ze als ``account_link`` door aan de realm-template. Niets ingevuld is de
+    Keycloak-standaard, en die is hetzelfde als ``verify`` -- daarom draagt de lege keuze
+    dat ook als label, in plaats van te doen alsof er een verschil is.
+    """
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "value": "",
+                "label": "Standaard (verificatie via e-mail)",
+                "description": "De gebruiker bevestigt de koppeling via een e-mail. De keuze van Keycloak zelf.",
+            },
+            {
+                "value": "automatic",
+                "label": "Automatisch koppelen",
+                "description": (
+                    "Het bestaande account wordt zonder tussenstap gekoppeld. Kies dit alleen wanneer "
+                    "de identity provider het e-mailadres al heeft geverifieerd."
+                ),
+            },
+            {
+                "value": "confirm",
+                "label": "Bevestigen op het scherm",
+                "description": "De gebruiker bevestigt de koppeling in de browser, zonder e-mail.",
+            },
+            {
+                "value": "verify",
+                "label": "Verificatie via e-mail",
+                "description": "Expliciet dezelfde weg als de standaard.",
+            },
+        ]
+
+
 class InviteLanguageOptionsProvider:
     """The two languages an invite's default-language can take."""
 
@@ -1554,6 +1591,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,
+    "KeycloakAccountLinkOptionsProvider": KeycloakAccountLinkOptionsProvider,
     "PullPolicyOptionsProvider": PullPolicyOptionsProvider,
     "BaseDomainOptionsProvider": BaseDomainOptionsProvider,
     "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,

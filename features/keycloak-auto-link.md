@@ -33,7 +33,10 @@ No invite link, email verification, or password step is required.
 Auto-link is **opt-in per project realm** (each ZAD project is one realm). It is a project-only
 feature: the platform realm always keeps Keycloak's stock flow.
 
-In the project file under the Keycloak service:
+In the portal: **Keycloak configuratie -> Inloggen via SSO Rijk -> Account koppelen**. The
+three modes below are the choices in that dropdown; leaving it on "Standaard" omits the key.
+
+Or in the project file under the Keycloak service:
 
 ```yaml
 services:
