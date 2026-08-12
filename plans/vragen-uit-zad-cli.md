@@ -351,3 +351,58 @@ Wat wij wél doen: `/version` zegt nu wie er antwoordt.
 
 Jullie omweg via `/openapi.json` kan daarmee weg. Wat wij zelf als regel aanhouden: eerst kijken of
 de podnaam over twee calls gelijk blijft, en dan pas het commit vergelijken.
+
+---
+
+# Terug van zad-cli, 12 augustus
+
+Dank, dit is per punt te gebruiken. Hieronder het antwoord op de vraag die jullie bij punt 1
+terugstelden, en per punt wat wij aan onze kant doen.
+
+## Op de vraag bij punt 1: ja, we willen `rewrite`
+
+Graag, en het is bij ons meer dan een gemak. Onze CLI heeft `zad component add --path /api`, en
+iedereen die dat intikt bedoelt hetzelfde: dit component hangt extern onder `/api`, en de
+applicatie erin luistert op `/`. Dat is de standaardvorm van een image die je niet zelf schrijft;
+onze eigen testimage is er een. Zonder herschrijving is `--path` daarvoor onbruikbaar, en dat is
+precies hoe wij erin liepen.
+
+**Wat wij nodig hebben is het kleine veld.** Een `rewrite` naast `path`, allebei losse strings, en
+jullie maken er `[{"match": path, "rewrite": rewrite}]` van zoals je nu `[{"match": path}]` maakt.
+Meer niet.
+
+Twee dingen die wij er expliciet **niet** bij vragen:
+
+- **Geen standaardwaarde.** Laat `rewrite` weg betekenen: pad gaat ongewijzigd door, zoals nu.
+  Een impliciete `/` zou het gedrag van bestaande componenten veranderen, en dat is voor een
+  component dat zijn eigen prefix afhandelt precies verkeerd. Wij zetten het veld alleen als de
+  gebruiker het intikt.
+- **Nog geen samengestelde vorm.** `path` als lijst van objecten, met meerdere paden per
+  component, is een grotere wijziging en wij hebben er nu geen gebruiker voor. Als jullie het
+  toch die kant op willen, prima, maar wacht daar dit veld niet op.
+
+Wat wij doen zodra het er is: `--rewrite` erbij op `component add` en `component update`, met in de
+hulptekst het verschil in één zin. Tot die tijd zegt onze hulptekst bij `--path` dat het pad
+ongewijzigd bij de container aankomt, zodat niemand er nog in loopt.
+
+## Punt 4 was van ons
+
+Kort, zodat het genoteerd staat: onze client stuurde bij `restore database` en `restore bucket`
+helemaal geen body. Het stond gewoon in de spec die wij zelf gevendord hebben, `DatabaseRestoreRequest`
+met vier verplichte velden, en wij zijn er met een verkeerd spoor (`pvc_name` versus `reference_name`)
+langsheen gekeken. Excuus voor de verkeerde afslag; dat had ons eigen huiswerk moeten zijn. Wij
+repareren het.
+
+Dat het bij ons niet opviel heeft dezelfde vorm als jullie mock bij punt 3: onze dekkingscontrole
+vergelijkt welke **paden** de client aanroept met de spec, en niet wat hij in het lichaam stuurt.
+Een aanroep zonder verplichte body ziet er in die controle uit als volledige dekking. We nemen mee
+of dat mee te controleren valt.
+
+## Wat wij verder oppakken
+
+| Punt | Bij ons |
+|---|---|
+| 1 | Hulptekst van `--path` scherpstellen; `--rewrite` zodra het veld er is. Onze conclusie "er zit geen backend achter" was voor twee van de vier URL's fout, en wij hadden dat aan de 404-body kunnen zien |
+| 2 | De expliciete wachtlus uit de draaiboeken, en `project create` wacht nu zelf op `poll_url` met het bearer-token |
+| 3 | Klonen staat bij ons als niet-getest; wij draaien dat draaiboek opnieuw zodra jullie PR erop staat |
+| 5 | `zad version` toont `pod` en `image`, en onze controle "draait mijn wijziging al" kijkt eerst of de podnaam over twee calls gelijk blijft |
