@@ -212,6 +212,7 @@ async def build_component_config(
     port: int | None,
     path: str,
     services: list[str],
+    rewrite: str | None = None,
     cpu_limit: str | None = None,
     memory_limit: str | None = None,
     env_vars: str | None = None,
@@ -232,6 +233,9 @@ async def build_component_config(
         port: Inbound port (None for background workers)
         path: Ingress path (e.g., "/", "/api")
         services: Component's services list as strings
+        rewrite: Path the ingress rewrites the match to before the request reaches the
+            container (e.g. "/" for a component that listens on the root). Left out
+            entirely when not given, which keeps the path unchanged.
         cpu_limit: CPU limit (e.g., "1", "500m")
         memory_limit: Memory limit (e.g., "256Mi", "1Gi")
         env_vars: Environment variables in KEY=value format (will be encrypted)
@@ -249,6 +253,13 @@ async def build_component_config(
     # Build services list in v2 format (mixed string/dict)
     services_list = ServiceAdapter.build_component_service_entries(services)
 
+    # A rewrite is only written when the caller asked for one. Absent means "pass the
+    # path on unchanged", which is what a component that serves its own prefix needs;
+    # an empty value would render as a rewrite to the root in the ingress snippet.
+    path_entry: dict[str, str] = {"match": path}
+    if rewrite:
+        path_entry["rewrite"] = rewrite
+
     component_config: dict[str, Any] = {
         "name": name,
         "type": component_type,
@@ -257,7 +268,7 @@ async def build_component_config(
         # $defs/component-path and the COMPONENT_PATH editable's [{match}] shape),
         # not a bare string. Emitting the string here made add-component/creation
         # produce files their own schema rejects at process time.
-        "path": [{"match": path}],
+        "path": [path_entry],
         "services": services_list,
         "uses-components": [],
     }

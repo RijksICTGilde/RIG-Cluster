@@ -12,6 +12,7 @@ from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
     CREATE_PROJECT_DOMAIN_VALIDATORS,
+    UPDATE_COMPONENT_VALIDATORS,
     UPDATE_IMAGE_VALIDATORS,
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
@@ -909,7 +910,18 @@ class AddComponentRequest(BaseModel):
             "hostname, and this is the path prefix it answers on there. A non-root path is passed "
             "to the application unchanged: with path '/api' the request https://<host>/api/status "
             "reaches the container as /api/status, and anything outside the prefix (https://<host>/status) "
-            "has no rule and answers 404. Use '/' unless the application itself serves the prefix."
+            "has no rule and answers 404. Use '/' unless the application itself serves the prefix, "
+            "or set 'rewrite' to strip the prefix before the request reaches the container."
+        ),
+    )
+    rewrite: str | None = Field(
+        None,
+        max_length=256,
+        description=(
+            "Path the ingress rewrites 'path' to before the request reaches the container. With "
+            "path '/api' and rewrite '/' the request https://<host>/api/status arrives as /status, "
+            "which is what an application that listens on the root needs. Leave it out to pass the "
+            "path on unchanged; there is no default, so existing components keep their behaviour."
         ),
     )
     services: list[str] | None = Field(
@@ -1251,6 +1263,15 @@ class UpdateComponentRequest(BaseModel):
         description="Inbound ports as an array; replaces the component's inbound ports (use [] to clear). Use either 'port' or 'ports', not both.",
     )
     path: str | None = Field(None, max_length=256, description="Ingress path (only relevant with publish-on-web).")
+    rewrite: str | None = Field(
+        None,
+        max_length=256,
+        description=(
+            "Path the ingress rewrites 'path' to before the request reaches the container "
+            "(e.g. '/' to strip an '/api' prefix). Leaving it out keeps the component's current "
+            "rewrite; the path's 'match' and 'rewrite' can be updated independently."
+        ),
+    )
     services: list[str] | None = Field(
         None,
         description="Component services list (replaces the existing list), bare names only. Per-service config is "
@@ -1343,6 +1364,7 @@ async def add_component(
                 "port": component_data.port,
                 "ports": component_data.ports,
                 "path": component_data.path,
+                "rewrite": component_data.rewrite,
                 "services": component_data.services,
                 "cpu_limit": component_data.cpu_limit,
                 "memory_limit": component_data.memory_limit,
@@ -1373,6 +1395,7 @@ async def add_component(
             port=component_data.port,
             ports=component_data.ports,
             path=component_data.path,
+            rewrite=component_data.rewrite,
             services=component_data.services,
             cpu_limit=component_data.cpu_limit,
             memory_limit=component_data.memory_limit,
@@ -1473,6 +1496,12 @@ async def update_component(
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
+    # Validate fields using editable validators
+    await validate_api_payload(
+        component_data.model_dump(),
+        UPDATE_COMPONENT_VALIDATORS,
+    )
+
     # Async path (default): create a task and return 202. Use ?sync=true to block.
     if not sync:
         task = await create_async_task(
@@ -1486,6 +1515,7 @@ async def update_component(
                 "port": component_data.port,
                 "ports": component_data.ports,
                 "path": component_data.path,
+                "rewrite": component_data.rewrite,
                 "services": component_data.services,
                 "cpu_limit": component_data.cpu_limit,
                 "memory_limit": component_data.memory_limit,
@@ -1508,6 +1538,7 @@ async def update_component(
             port=component_data.port,
             ports=component_data.ports,
             path=component_data.path,
+            rewrite=component_data.rewrite,
             services=component_data.services,
             cpu_limit=component_data.cpu_limit,
             memory_limit=component_data.memory_limit,
