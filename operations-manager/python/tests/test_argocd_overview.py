@@ -15,6 +15,7 @@ Wat deze toetsen bewaken:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -101,6 +102,28 @@ async def test_zonder_verbinding_komt_er_niets_terug(monkeypatch) -> None:
 
     assert await argocd_overview.get_project_argocd_statuses("demo", ["productie"]) == {}
     assert dubbel.aanroepen == 0
+
+
+async def test_een_trage_argocd_sleept_de_pagina_niet_mee(monkeypatch) -> None:
+    """Deze bevraging staat op het renderpad van de projectpagina.
+
+    Zonder grens houdt een ArgoCD die niet antwoordt de hele pagina op - de connector zelf
+    wacht tot dertig seconden. De tabel hoort dan zonder statuskolom te verschijnen, niet
+    weg te blijven.
+    """
+
+    class _TraagDubbel(_ArgoDubbel):
+        async def list_applications(self) -> list[dict[str, Any]]:
+            self.aanroepen += 1
+            await asyncio.sleep(3600)
+            return []
+
+    dubbel = _TraagDubbel([])
+    monkeypatch.setattr(argocd_overview, "create_argo_connector", lambda: dubbel)
+    monkeypatch.setattr(argocd_overview, "BEVRAGING_TIMEOUT_SECONDS", 0.05)
+
+    assert await argocd_overview.get_project_argocd_statuses("demo", ["productie"]) == {}
+    assert dubbel.aanroepen == 1
 
 
 async def test_een_project_zonder_deployments_bevraagt_niets(argo) -> None:
