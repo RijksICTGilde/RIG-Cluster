@@ -21,7 +21,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, read_api_key_with_retry
-from tests.e2e.helpers.wizard import WizardHelper
+from tests.e2e.helpers.wizard import WizardHelper, veldbesturing, veldbesturing_eindigend_op
 
 if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Page
@@ -60,7 +60,9 @@ def _add_wizard_schema(page: Page) -> None:
     """On the schemas step: add one item and fill its postfix, then continue."""
     page.locator("button:has-text('Item toevoegen'), a:has-text('Item toevoegen')").last.click()
     page.wait_for_load_state("networkidle")
-    page.locator("[name$='schemas[0]/postfix']").first.fill(_POSTFIX)
+    # Op de BESTURING en niet op [name$=...]: dat laatste levert het custom element op
+    # en fill() daarop is een harde fout, geen leeg veld.
+    veldbesturing_eindigend_op(page, "schemas[0]/postfix").first.fill(_POSTFIX)
 
 
 def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) -> tuple[str, str]:
@@ -77,7 +79,7 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
         page.wait_for_load_state("networkidle")
         if page.locator("button:has-text('Project aanmaken'), button:has-text('Indienen')").count() > 0:
             break
-        email = page.locator("[name='users[0]/email']")
+        email = veldbesturing(page, "users[0]/email")
         if email.count() > 0 and (email.first.input_value() or "") == "":
             wizard.fill_team(email=_USER_EMAIL)
         if page.locator("[name='components[0]/name']").count() > 0:

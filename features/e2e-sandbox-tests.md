@@ -80,6 +80,14 @@ fails halfway.
   truth. **Don't** assert on deployment/pod health unless that's the point of the test.
 - **Do** reuse `WizardHelper` / helpers. **Don't** hard-code DOM selectors in the test if a helper
   already encapsulates them.
+- **Do** reach a form control with `veldbesturing(page, pad)` (or `veldbesturing_eindigend_op`
+  for a service-config field, whose path carries a `_services-config/...` prefix).
+  **Don't** write `page.locator("[name='...']")` and `fill()` it: under NLDD that resolves to
+  the custom element (`<nldd-text-field>`), and `fill()`/`input_value()` on it is a hard error
+  ("Element is not an `<input>`"), not an empty field. This cost a whole suite its setup.
+- **Don't** wait for `networkidle` after an action that lands on a page which polls itself
+  (the progress page after creating a project polls with htmx, so the network never goes
+  idle and the wait always times out). Wait for the landing itself - `submit_wizard()` does.
 - **Do** name projects with `_unique_project_name()` and register cleanup. **Don't** leave test
   projects on the sandbox.
 - **Do** keep new tests behind the right marker(s) so they never run in the default suite.

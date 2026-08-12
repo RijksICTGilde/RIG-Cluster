@@ -32,7 +32,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers import sandbox_api, service_config
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, read_api_key_with_retry
-from tests.e2e.helpers.wizard import WizardHelper
+from tests.e2e.helpers.wizard import WizardHelper, veldbesturing, veldbesturing_eindigend_op
 
 if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Page
@@ -88,8 +88,9 @@ def _add_wizard_invite(page: Page) -> None:
     # Add a row (create-wizard context: the button triggers an HTMX form re-render).
     page.locator("button:has-text('Item toevoegen'), a:has-text('Item toevoegen')").last.click()
     page.wait_for_load_state("networkidle")
-    page.locator("[name$='active[0]/key']").first.fill(_WIZARD_KEY)
-    page.locator("[name$='active[0]/contact-email']").first.fill(_CONTACT)
+    # Op de BESTURING en niet op [name$=...]: zie veldbesturing_eindigend_op.
+    veldbesturing_eindigend_op(page, "active[0]/key").first.fill(_WIZARD_KEY)
+    veldbesturing_eindigend_op(page, "active[0]/contact-email").first.fill(_CONTACT)
 
 
 def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) -> tuple[str, str]:
@@ -109,7 +110,7 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
         page.wait_for_load_state("networkidle")
         if page.locator("button:has-text('Project aanmaken'), button:has-text('Indienen')").count() > 0:
             break
-        email = page.locator("[name='users[0]/email']")
+        email = veldbesturing(page, "users[0]/email")
         if email.count() > 0 and (email.first.input_value() or "") == "":
             wizard.fill_team(email=_USER_EMAIL)
         if page.locator("[name='components[0]/name']").count() > 0:
