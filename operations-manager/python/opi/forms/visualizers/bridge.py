@@ -95,6 +95,21 @@ def editable_to_form_field(
         else:
             display_value = converter.view(raw_value, context_data=yaml_data)
 
+    # 3a. Een aanvinkvakje staat aan of uit, dus zijn waarde is een ECHTE boolean.
+    #
+    # Hier ging het mis: een vakje is geen select/text/textarea/radio, dus het viel in de
+    # tak hierboven die ``view()`` gebruikt - de MENSELIJKE weergave. Een BooleanConverter
+    # levert daar "Ja" of "Nee" op, en het sjabloon toetst ``:checked="field.value"``: een
+    # niet-lege tekst, dus ook "Nee" zette het vakje aan. Elk vakje stond aan, ook bij een
+    # opgeslagen ``false``. Zichtbaar bij "Markeer voor verwijdering" van een databaseschema
+    # en bij "Versiebeheer op de bucket".
+    #
+    # De waarheid staat in de opgeslagen waarde, niet in de weergave ervan; de reeks
+    # hieronder is dezelfde als die BooleanConverter.write() gebruikt, zodat tonen en
+    # opslaan het over hetzelfde eens zijn.
+    if widget == "checkbox":
+        display_value = raw_value in (True, "true", "on", "yes", "1")
+
     # 3b. Auto-detect KV format from stored value so the toggle matches
     if converter and hasattr(converter, "detect_format") and raw_value is not None:
         detected_fmt = converter.detect_format(raw_value)
