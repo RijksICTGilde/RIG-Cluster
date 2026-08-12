@@ -207,7 +207,7 @@ def _open_keycloak_config(page: Page, base_url: str) -> EditModalHelper:
     Services - niet op de landingspagina van het project.
     """
     modal = EditModalHelper(page, base_url, PROJECT)
-    page.goto(f"{modal.detail_url}?tab=services", wait_until="networkidle")
+    page.goto(f"/projects/services/{modal.project_name}", wait_until="networkidle")
     modal.open_edit_modal("modal-edit-keycloak-config", "Keycloak Authentication configuratie")
     assert modal_advance_to_field(page, "restrict-access/enabled"), "de stap met 'Toegang beperken' is niet bereikt"
     return modal

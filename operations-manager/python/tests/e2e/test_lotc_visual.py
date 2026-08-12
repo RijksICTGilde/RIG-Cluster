@@ -33,6 +33,7 @@ missen.
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.web.lotc_switch import project_tab_url
 from playwright.sync_api import expect
 
 if TYPE_CHECKING:
@@ -388,10 +389,10 @@ def test_real_project_page_renders_lotc(app_server: str, auth_page: Page) -> Non
     link = page.locator("a[href*='/projects/details/']").first
     href = link.get_attribute("href")
     assert href, "geen enkel project om te openen"
-    base = href.split("?")[0]
+    projectnaam = href.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
 
     for tab in ["project", "deployments", "metrics", "taken"]:
-        page.goto(f"{app_server}{base}?tab={tab}")
+        page.goto(f"{app_server}{project_tab_url(projectnaam, tab)}")
         _wait_for_nldd(page)
 
         unimplemented = page.locator(".lotc-unimplemented")

@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
 from datetime import UTC
-from urllib.parse import urlencode
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates_lotc import templates_lotc
@@ -48,7 +47,6 @@ from opi.web.lotc_switch import (
     build_lotc_dashboard,
     build_lotc_project_details,
     build_lotc_projects,
-    project_tab_url,
     render,
     render_fragment,
     tab_from_path,
@@ -1257,16 +1255,11 @@ async def project_details(request: Request, project_name: str):
     Returns:
         HTML response with detailed project information
     """
-    # De oude vorm blijft werken. Een gedeelde link naar ``?tab=deployments`` hoort niet
-    # dood te gaan, en twee adressen voor dezelfde pagina naast elkaar laten bestaan
-    # levert twee waarheden op - dus een doorverwijzing, geen tweede weg. De overige
-    # parameters (?q=, ?dsort=, ?deployment=) reizen mee.
-    gevraagd_tab = request.query_params.get("tab")
-    if gevraagd_tab is not None and tab_from_path(request.url.path) == STANDAARD_TAB:
-        overige = [(sleutel, waarde) for sleutel, waarde in request.query_params.multi_items() if sleutel != "tab"]
-        doel = project_tab_url(project_name, gevraagd_tab, urlencode(overige))
-        return RedirectResponse(url=doel, status_code=307)
-
+    # ``?tab=`` bestaat niet meer, ook niet als doorverwijzing. Er is bewust GEEN
+    # overgangspad: de oude vorm heeft nooit buiten deze applicatie geleefd (de links
+    # erheen staan in deze sjablonen en in de tests, en die wijzen nu naar de paden), en
+    # een doorverwijzing die niemand gebruikt is een tweede adres dat onderhouden moet
+    # worden. Een ?tab= in de URL wordt dus gewoon genegeerd; je krijgt Overzicht.
     try:
         from opi.services.services import ServiceAdapter
 
