@@ -46,6 +46,9 @@ class AliasesService(Service):
     )
     config_model = AliasesConfig
     config_schema_version = "1.0"
+    # May enrol itself (RC-84): a system service whose values are a property of the
+    # component, so there is no project-level decision to make first.
+    allows_implicit_project_selection = True
     owned_property = "aliases"
     # A mapping with readable names and each value encrypted on its own: an alias value
     # may hold a secret, but the names are what makes the map readable in the file.

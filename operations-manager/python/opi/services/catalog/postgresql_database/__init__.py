@@ -52,6 +52,10 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
     # project model so its committed fragment documents the user config.
     config_model = PostgresqlDatabaseProjectConfig
     config_schema_version = "1.0"
+    # May enrol itself (RC-84): with no config the database is a shared-scope database,
+    # which is the default a project gets when it selects the service by hand. Choosing
+    # project scope or extra schemas stays an explicit act.
+    allows_implicit_project_selection = True
     config_section_id = "postgresql-schemas-config"
     modal_flow_id = "modal-edit-postgresql-schemas"
     cleanup_manager_key = ManagerKey.DATABASE
