@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
-URL = f"/projects/details/{PROJECT}?tab=deployments"
+URL = f"/projects/deployments/{PROJECT}"
 
 KIEZER = "#global-deployment-selector"
 

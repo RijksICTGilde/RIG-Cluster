@@ -419,6 +419,9 @@ def build_deployment_status_column(
 #: een filter op een pagina ("laat hiervan alleen dit zien"), en dat is een tabblad niet:
 #: het is een andere pagina over hetzelfde project. Het pad zegt dat, een parameter niet.
 #:
+#: ``path`` staat naast het label omdat het adres NIET af te leiden is uit de sleutel:
+#: Overzicht heet ``project`` en woont op ``details``.
+#:
 #: Overzicht houdt ``/projects/details/<naam>``. Dat is het adres waar de projectpagina al
 #: jaren staat en waar alles heen wijst - de projectenlijst, het dashboard, de e-mails van
 #: de uitnodigingsdienst. Dat adres verhuizen zou van alles breken en niets opleveren.
@@ -470,8 +473,9 @@ def build_lotc_project_details(
     tabblad bepalen.
 
     Het actieve tabblad komt uit het PAD (``/projects/deployments/<naam>``) en niet meer
-    uit ``?tab=``. De oude vorm blijft werken: de route stuurt hem door naar het nieuwe
-    adres, zodat een gedeelde link niet doodloopt.
+    uit ``?tab=``. Die oude vorm is weg, ook als doorverwijzing: hij heeft nooit buiten
+    deze applicatie geleefd, en een tweede adres dat niemand gebruikt is onderhoud zonder
+    lezer. Een achtergebleven ``?tab=`` wordt genegeerd.
 
     Het resourcegebruik zit hier NIET in. De bestaande pagina laadt dat apart met htmx,
     zodat een trage Prometheus de pagina niet ophoudt, en dat blijft zo - het fragment
