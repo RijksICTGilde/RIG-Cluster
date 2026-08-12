@@ -5,8 +5,10 @@ weinige echte gedragsverschillen van de omzetting:
 
 - De bestaande pagina zet ALLE tabbladen in een document en wisselt ze in de browser met
   ``switchTab('deployments')``.
-- De nieuwe pagina geeft elk tabblad een eigen URL (``?tab=deployments``). Daardoor is een
-  tab deelbaar, werkt de terugknop, en doet de pagina het zonder JavaScript.
+- De nieuwe pagina geeft elk tabblad een eigen PAD (``/projects/deployments/<naam>``).
+  Daardoor is een tab deelbaar, werkt de terugknop, en doet de pagina het zonder
+  JavaScript. Sinds RC-76 is dat een pad en geen ``?tab=``-parameter, en er is bewust geen
+  doorverwijzing van de oude vorm: die heeft nooit buiten deze applicatie geleefd.
 
 Tests die ``switchTab`` aanroepen falen op de nieuwe weergave met "switchTab is not
 defined". Dat is geen storing in de applicatie: de functie hoort daar niet te bestaan.
@@ -16,6 +18,9 @@ Deze helper vraagt de PAGINA wat ze kan, in plaats van aan te nemen wat er is.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
+
+from opi.web.lotc_switch import project_tab_url
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -24,19 +29,18 @@ if TYPE_CHECKING:
 def open_tab(page: Page, tab: str) -> None:
     """Open het tabblad ``tab`` op de projectdetailpagina die al open staat.
 
-    Gebruikt ``switchTab()`` als die er is, en navigeert anders naar ``?tab=<naam>`` op
-    de pagina waar de browser al staat. Zo hoeft een test niet te weten welke weergave
-    hij meet.
+    Gebruikt ``switchTab()`` als die er is, en navigeert anders naar het PAD van dat
+    tabblad. Zo hoeft een test niet te weten welke weergave hij meet.
+
+    De projectnaam komt uit het pad van de huidige pagina: elk tabbladadres eindigt erop
+    (``/projects/<tabblad>/<naam>``), dus dat is het laatste segment.
     """
     heeft_switch = page.evaluate("() => typeof window.switchTab === 'function'")
     if heeft_switch:
         page.evaluate(f"switchTab({tab!r})")
         return
 
-    from urllib.parse import urlencode, urlparse, urlunparse
-
     stukken = urlparse(page.url)
-    query = dict(pair.split("=", 1) for pair in stukken.query.split("&") if "=" in pair)
-    query["tab"] = tab
-    page.goto(urlunparse(stukken._replace(query=urlencode(query))))
+    projectnaam = stukken.path.rstrip("/").rsplit("/", 1)[-1]
+    page.goto(f"{stukken.scheme}://{stukken.netloc}{project_tab_url(projectnaam, tab)}")
     page.wait_for_load_state("networkidle")
