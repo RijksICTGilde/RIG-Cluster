@@ -86,9 +86,13 @@
 
    nldd-top-navigation-bar, nldd-page-footer en nldd-menu-bar zijn nog rauwe tags: die zijn
    nog niet als c-* gemapt. Dat werkt sinds de slot-fix in LOTC 7ee5efa. #}
-<nldd-page style="container: layout-container / inline-size;" background="inherit">
+<nldd-page background="inherit">
 
+    {# logo-title is de tweede regel naast het logo; die droegen wij eerder als subtitle=
+       op <c-header> en waren we kwijt. Wies zet hem hier, en zonder valt de kopbalk uit
+       elkaar omdat er maar een van de twee regels is. #}
     <nldd-top-navigation-bar slot="header" width="1920px"
+        logo-title="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
         website-title="Zelfservice voor Applicatie Deployment" website-href="/">
         <nldd-menu-bar slot="utility" accessible-label="Gebruikersmenu">
 

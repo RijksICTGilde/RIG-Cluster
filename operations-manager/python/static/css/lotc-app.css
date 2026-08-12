@@ -128,3 +128,20 @@ form.is-bezig {
     opacity: 0.6;
     cursor: progress;
 }
+
+/* Het muiswiel moet het venster kunnen bereiken.
+ *
+ * <nldd-page> draagt `overflow-y: auto` EN `overscroll-behavior-y: contain`. Die combinatie
+ * maakt hem een scrollgebied dat wielgebeurtenissen opvangt en NIET doorgeeft aan het
+ * venster. In onze pagina heeft hij zelf niets te scrollen (scrollHeight == clientHeight),
+ * dus het wiel ging nergens heen: slepen aan de vensterscrollbalk werkte wel, het wiel niet.
+ *
+ * Gemeten met de keten onder de muis: div > div > nldd-sidebar-section > nldd-page
+ * (oy=auto, ob=contain) > body > html. Alleen nldd-page onderbreekt de keten.
+ *
+ * Dit is een pleister op een component en hoort daar opgelost te worden; gemeld aan het
+ * LOTC-project. Weghalen zodra <nldd-page> het wiel doorgeeft.
+ */
+nldd-page {
+    overscroll-behavior-y: auto;
+}
