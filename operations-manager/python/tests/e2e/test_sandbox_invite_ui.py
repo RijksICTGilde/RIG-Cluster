@@ -47,7 +47,6 @@ _USER_EMAIL = os.environ.get("E2E_SANDBOX_USER", "admin@sandbox.rijksapp.dev")
 # so a leftover project from an interrupted run would otherwise block every later create.
 _RUN = uuid.uuid4().hex[:8]
 _WIZARD_KEY = f"probe-invite-wizard-{_RUN}"
-_MODAL_KEY = f"probe-invite-modal-{_RUN}"
 _CONTACT = "invite-contact@sandbox.rijksapp.dev"
 
 
@@ -72,6 +71,11 @@ def _invite_config(forgejo: ForgejoClient, project_name: str) -> dict:
 def _invite_keys(forgejo: ForgejoClient, project_name: str) -> list[str]:
     active = _invite_config(forgejo, project_name).get("active") or []
     return [item.get("key") for item in active if isinstance(item, dict)]
+
+
+def _invite_contacts(forgejo: ForgejoClient, project_name: str) -> list[str]:
+    active = _invite_config(forgejo, project_name).get("active") or []
+    return [item.get("contact-email") for item in active if isinstance(item, dict)]
 
 
 def _keycloak_client_names(forgejo: ForgejoClient, project_name: str) -> list[str]:
@@ -164,27 +168,30 @@ def test_wizard_wrote_invite_active(invite_project: str, forgejo: ForgejoClient)
     assert _WIZARD_KEY in keys, f"invite key not persisted to services/invite/config/active: {keys}"
 
 
-def test_configure_modal_adds_invite(
+def test_configure_modal_writes_the_invite(
     invite_project: str, sandbox_url: str, sandbox_page: Page, forgejo: ForgejoClient, capture
 ) -> None:
-    # (B) the per-service 'Configureer' button opens the invite config modal; adding a second
-    # invite through it must land in the file too.
+    """(B) De 'Configureer'-knop opent de invite-modal, en wat je daar wijzigt komt in het bestand.
+
+    Deze test voegde een TWEEDE uitnodiging toe. Dat kan niet meer, en met opzet: de
+    ``active``-reeks staat op ``min_items=1``, ``max_items=1``, ``add_remove=False``
+    (opi/services/catalog/invite/editables.py), dus er is geen toevoegknop en er is altijd
+    precies een uitnodiging. Wat de vangrail moet bewaken is ongewijzigd - de modal schrijft
+    naar het projectbestand - en dat wordt hier op de bestaande uitnodiging gemeten.
+    """
     service_config.open_detail(sandbox_page, sandbox_url, invite_project)
     service_config.open_service_config_modal(sandbox_page, "Uitnodiging")
     assert "Uitnodiging" in service_config.modal_heading(sandbox_page)
 
-    service_config.modal_add_sequence_item(sandbox_page)
-    sandbox_page.locator(
-        "#edit-section-inner [name$='active[1]/key'], #edit-section-inner [name$='active[0]/key']"
-    ).last.fill(_MODAL_KEY)
-    sandbox_page.locator(
-        "#edit-section-inner [name$='active[1]/contact-email'], #edit-section-inner [name$='active[0]/contact-email']"
-    ).last.fill(_CONTACT)
+    nieuw_contact = f"modal-{_RUN}@sandbox.rijksapp.dev"
+    veld = veldbesturing_eindigend_op(sandbox_page, "active[0]/contact-email")
+    veld.first.wait_for(state="visible", timeout=15000)
+    veld.first.fill(nieuw_contact)
     capture(sandbox_page, "invite-configure-modal")
     service_config.modal_submit(sandbox_page)
 
-    keys = _poll(lambda: _invite_keys(forgejo, invite_project), lambda ks: _MODAL_KEY in ks)
-    assert _MODAL_KEY in keys, f"invite added via Configureer modal not persisted: {keys}"
+    contacts = _poll(lambda: _invite_contacts(forgejo, invite_project), lambda cs: nieuw_contact in cs)
+    assert nieuw_contact in contacts, f"wijziging via de Configureer-modal niet opgeslagen: {contacts}"
 
 
 def test_configure_modal_adds_keycloak_client(
