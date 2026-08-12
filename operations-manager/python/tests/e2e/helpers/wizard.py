@@ -52,6 +52,20 @@ def veldbesturing(page: Page, naam: str) -> Locator:
     return page.locator(", ".join(f"{tag}[id='{naam}']" for tag in FIELD_TAGS))
 
 
+def veldbesturing_eindigend_op(page: Page, staart: str) -> Locator:
+    """Dezelfde besturing, maar op het EINDE van het pad.
+
+    Voor velden van een dienstconfiguratie: die staan onder een virtueel pad
+    (``_services-config/<dienst>/config/...``) dat de test niet hoeft te kennen. De reden
+    om ook hier op het id te gaan en niet op de naam is dezelfde als bij
+    :func:`veldbesturing`, en de val was in de sandbox meetbaar: ``[name$='...']``
+    resolvet naar het ``<nldd-text-field>`` en ``fill()`` daarop is een harde fout
+    ("Element is not an <input>"), waardoor de opzet van de test nooit voorbij die stap
+    kwam.
+    """
+    return page.locator(", ".join(f"{tag}[id$='{staart}']" for tag in FIELD_TAGS))
+
+
 def aanvinkvakje(page: Page, pad: str) -> Locator:
     """Het aanvinkvakje met dit pad: precies een element, met een bruikbare ``.checked``.
 
