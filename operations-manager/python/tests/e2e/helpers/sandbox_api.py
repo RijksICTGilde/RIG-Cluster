@@ -213,6 +213,7 @@ def delete_project_via_api(
     base = base_url.rstrip("/")
     headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
     body = {"confirmDeletion": True, "force": force}
+    accepted = False
     with contextlib.suppress(httpx.HTTPError), httpx.Client(verify=verify_ssl, timeout=30.0) as client:
         response = client.request(
             "DELETE",
@@ -220,6 +221,7 @@ def delete_project_via_api(
             json=body,
             headers=headers,
         )
+        accepted = response.is_success
         if response.status_code == 202:
             location = response.headers.get("Location")
             task_id = location.rsplit("/", 1)[-1] if location else None
@@ -231,7 +233,15 @@ def delete_project_via_api(
     # ArgoCD app deletion is confirmed, which frequently times out on a busy
     # sandbox and leaves an empty namespace + dangling app that pile up across
     # runs. Reclaim them directly so test projects never accumulate.
-    cluster.force_cleanup_project(project_name)
+    #
+    # ONLY when OPI actually accepted the delete. A 401/403/404 means we never had
+    # the authority to remove this project (an empty api_key after a failed setup
+    # fixture is the usual cause), and tearing the ArgoCD app and namespace out
+    # from under it then leaves the WORST state there is: gone from the cluster,
+    # still present in ZAD and in the projects repo. That half-state is not
+    # self-healing and the next run inherits it.
+    if accepted:
+        cluster.force_cleanup_project(project_name)
 
 
 def _wait_for_task(
