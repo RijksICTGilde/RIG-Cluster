@@ -5,7 +5,7 @@
 <c-cluster gap="xs">
     {% for value, label in durations %}
     {# label= en niet als inhoud: nldd-button toont alleen zijn text-attribuut. #}
-    <c-button size="xs" label="{{ label }}"/>
+    <c-button size="sm" label="{{ label }}"/>
     {% endfor %}
 </c-cluster>
 {% if deployment.components %}

@@ -9,6 +9,6 @@
    kolom en staat het rechteruiteinde midden op de balk. Gemeten in de browser, niet
    beredeneerd. #}
 <c-cluster justify="between" align="center">
-    {% set lotc_onclick_1 %}window.location.href='/admin/users/create'{% endset %}<c-button label="Gebruiker toevoegen" size="md" show-icon="before" icon="plus"/>
+    {% set lotc_onclick_1 %}window.location.href='/admin/users/create'{% endset %}<c-button label="Gebruiker toevoegen" show-icon="before" icon="plus"/>
     <span>Totaal: <strong>{{ users|length }} gebruiker{% if users|length != 1 %}s{% endif %}</strong></span>
 </c-cluster>
