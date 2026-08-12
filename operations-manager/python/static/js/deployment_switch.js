@@ -124,6 +124,23 @@
         } else if (hash === 'taken') {
             if (typeof switchTab === 'function') switchTab('taken');
         }
+        // Heeft de SERVER een deployment opengezet? Dan is dat de keuze. Sinds de
+        // deploymenttabel op Overzicht de ingang is, opent een rij met een gewone link
+        // (/projects/deployments/<project>?deployment=<naam>) en rendert de server dat
+        // paneel zichtbaar. De opgeslagen keuze hieronder zou daar overheen gaan: je
+        // klikt een rij aan en ziet een ander paneel.
+        //
+        // Alleen de HASH wint hier nog van, want die staat net zo expliciet in de URL en
+        // wordt door switchDeployment() zelf geschreven bij het wisselen zonder herladen.
+        var weergave = document.getElementById('deployments-weergave');
+        var vanServer = weergave && weergave.getAttribute('data-deployment-open');
+        if (vanServer && heeftBlok(vanServer)) {
+            // De server heeft het paneel al zichtbaar gezet; dit zet alleen de opgeslagen
+            // keuze gelijk, zodat het tabblad Metrics dezelfde deployment toont.
+            bewaar(vanServer);
+            return;
+        }
+
         // Geen deployment in de URL: pak de keuze van het vorige tabblad, als die er is
         // en als hij op deze pagina bestaat. De hash wint, want die staat er expliciet.
         var eerder = bewaarde();

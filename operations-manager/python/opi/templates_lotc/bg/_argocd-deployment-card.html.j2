@@ -57,26 +57,29 @@
    component een echte storing. #}
 {% set state_replaces_health = state_badges and health == 'Healthy' %}
 
-<c-card outline padding="lg">
-    <c-stack gap="md">
-        {# De kop van de kaart: naam, cluster en de chips die naast het verdict staan. #}
-        <c-cluster gap="sm" align="center">
-            <c-icon icon="rectangle-stack" size="md" />
-            <c-heading type="h4" size="5" label="{{ deployment.name }}" />
-            <c-tag type="default" label="{{ deployment.cluster }}" />
-            {# Een badge die het verdict NIET vervangt hoort hier: er wordt nog verkeer
-               afgehandeld, dus de gezondheidsbadge blijft en dit zegt wat er daarnaast waar
-               is. Een vervangende badge hoeft hier alleen een chip als er geen badgerij
-               onder staat om hem te dragen. #}
-            {% for badge in accompanying_badges %}
-                <c-tag type="info" label="{{ badge }}" />
-            {% endfor %}
-            {% if not shows_argocd_status %}
-                {% for badge in state_badges %}
+{# GEEN EIGEN KAART MEER, EN GEEN EIGEN KOP.
+
+   Dit fragment stond in een <c-card> met de naam en het cluster van de deployment erboven,
+   en die kaart stond op zijn beurt boven het paneel "Deployment: <naam>". Dezelfde
+   deployment dus twee keer, met de kop twee keer. Sinds RC-76 laadt dit fragment BINNEN
+   dat paneel, dat de naam al in zijn kop draagt en het cluster erbij zet. Wat hier
+   overblijft is de stand zelf. #}
+<c-stack gap="md">
+        {# De badges die naast het verdict staan: er wordt nog verkeer afgehandeld, dus de
+           gezondheidsbadge blijft en dit zegt wat er daarnaast waar is. Een vervangende
+           badge hoort hier alleen als er geen badgerij onder staat om hem te dragen. #}
+        {% if accompanying_badges or (not shows_argocd_status and state_badges) %}
+            <c-cluster gap="sm" align="center">
+                {% for badge in accompanying_badges %}
                     <c-tag type="info" label="{{ badge }}" />
                 {% endfor %}
-            {% endif %}
-        </c-cluster>
+                {% if not shows_argocd_status %}
+                    {% for badge in state_badges %}
+                        <c-tag type="info" label="{{ badge }}" />
+                    {% endfor %}
+                {% endif %}
+            </c-cluster>
+        {% endif %}
 
         {# Automatisch uitgeschakelde componenten: EEN melding per oorzaak, niet een per
            component.
@@ -295,5 +298,4 @@
                 {% endif %}
             {% endif %}
         {% endif %}
-    </c-stack>
-</c-card>
+</c-stack>
