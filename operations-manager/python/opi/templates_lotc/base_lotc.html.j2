@@ -69,31 +69,28 @@
 
 <c-page title="{{ page_title_value }}" lang="nl" head="{{ lotc_head }}">
 
-    {# DE PAGINA IS <nldd-page>, met de koptekst en de voettekst in ZIJN slots.
+    {# GEEN <nldd-page> hier, en dat is een MEETUITKOMST en geen smaak.
 
-       Hier stond <nldd-page> als wikkel OM <c-app-shell> heen, en toen deed hij niets:
-       gemeten was main even breed met en zonder (1008 bij 1280, 2288 bij 2560). De reden
-       is dat hij zo een enkel kind kreeg dat zijn eigen indeling meebrengt, waardoor er
-       voor hem niets in te delen viel. Twee indelingen over elkaar.
+       Hij stond er als wikkel om <c-app-shell>, om NLDD's benoemde layout-container neer te
+       zetten: NLDD heeft 28 regels van de vorm `@container layout-container (min-width: ...)`
+       en gemeten droeg geen enkel element op onze pagina die naam. Twee dingen maakten hem
+       overbodig en schadelijk:
 
-       De vorm hieronder is die uit het NLDD-storybook (components/layout/page):
+       * Sinds LOTC 7ee5efa zet <c-page> die container zelf neer zodra het nldd-designsysteem
+         actief is. Het handwerk is dus niet meer nodig.
+       * <nldd-page> is `display: flex` met sticky-header/sticky-footer, dus hij maakt van de
+         pagina een vaste hoogte met een eigen scrollgebied binnenin. Het VENSTER scrolt dan
+         niet meer. Dat is precies wat er gebeurde.
 
-           <nldd-page sticky-header sticky-footer>
-             <nav slot="header">...</nav>
-             ...inhoud...
-             <div slot="footer">...</div>
-           </nldd-page>
+       Aan de breedte veranderde hij niets: main was 1008 bij 1280 en 2288 bij 2560, met en
+       zonder. Hetzelfde geldt voor <c-container max-width> en <c-simple-section>: allebei
+       gemeten, allebei `max-width: none`. De maximale inhoudsbreedte staat dus nog open en
+       ligt bij het LOTC-project. #}
 
-       Koptekst en voettekst zijn dus DIRECTE kinderen met een slot=, geen <template>: dat
-       laatste is het mechanisme van <c-app-shell> en niet van een NLDD-component.
-       <c-app-shell> houdt wat er overblijft, de zijkolom en de inhoud.
+    {# width is de breedte van de zijkolom; bg gebruikt 16rem. #}
+    <c-app-shell width="16rem">
 
-       De benoemde layout-container stond hier eerst met de hand bij, omdat NLDD 28 regels
-       van de vorm `@container layout-container (min-width: ...)` heeft en gemeten geen enkel
-       element op onze pagina die naam droeg. Sinds LOTC 7ee5efa zet <c-page> hem zelf neer
-       zodra het nldd-designsysteem actief is, dus dat handwerk is weg. #}
-    <nldd-page background="inherit">
-        <div slot="header">
+        <template slot="header">
             <c-header
                 text="Zelfservice voor Applicatie Deployment"
                 subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
@@ -162,10 +159,7 @@
                 </c-menu>
 
             </c-header>
-        </div>
-    {# width is de breedte van de zijkolom; bg gebruikt 16rem. #}
-    <c-app-shell width="16rem">
-
+        </template>
 
         <template slot="sidebar">
             {# <c-sidenav-group> is een BROER van de items die eronder horen, geen
@@ -208,8 +202,7 @@
         {% block additional_styles %}{% endblock %}
         {% block additional_scripts %}{% endblock %}
 
-    </c-app-shell>
-    <div slot="footer">
+    <template slot="footer">
 
             {# De voettekst stond er niet, en daarmee waren "Over het platform", de
                architectuurpagina, de API-referentie en de versievermelding op ELKE pagina
@@ -268,6 +261,7 @@
                         <c-paragraph size="sm">{{ version_label }}</c-paragraph>
                     {% endif %}
             </c-footer>
-    </div>
-    </nldd-page>
+    </template>
+
+    </c-app-shell>
 </c-page>
