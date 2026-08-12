@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
 from opi.core.config import settings
 from opi.manager.backup.base import (
     BackupConfig,
@@ -413,8 +414,11 @@ class DatabaseBackupManager(BaseBackupManager):
             success = await self._wait_for_pod(namespace, pod_name)
 
             if not success:
+                target_unusable = await self._restore_target_was_unusable(namespace, pod_name)
                 logs = await self._get_pod_logs(namespace, pod_name)
-                logger.error(f"Database restore pod {pod_name} failed. Full logs:\n{logs}")
+                logger.error(
+                    f"Database restore pod {pod_name} failed (target_unusable={target_unusable}). Full logs:\n{logs}"
+                )
                 return DatabaseRestoreResult(
                     namespace=namespace,
                     pvc_name=reference_name,
@@ -424,6 +428,7 @@ class DatabaseBackupManager(BaseBackupManager):
                     snapshot_id=snapshot_id,
                     error=f"Restore pod failed. Logs: {logs[-500:] if logs else 'no logs'}",
                     duration_seconds=(utc_now() - start_time).total_seconds(),
+                    target_unusable=target_unusable,
                 )
 
             duration = (utc_now() - start_time).total_seconds()
@@ -502,6 +507,7 @@ class DatabaseBackupManager(BaseBackupManager):
                 "kopia_password": kopia_password,
                 "snapshot_id": snapshot_id or "",
                 "timeout_seconds": self.config.timeout_seconds,
+                "target_unusable_exit_code": RESTORE_TARGET_UNUSABLE_EXIT_CODE,
             },
         )
 
