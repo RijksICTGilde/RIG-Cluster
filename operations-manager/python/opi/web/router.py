@@ -20,6 +20,7 @@ from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates_lotc import templates_lotc
+from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
@@ -42,11 +43,14 @@ from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.lotc_switch import (
+    STANDAARD_TAB,
+    build_deployment_status_column,
     build_lotc_dashboard,
     build_lotc_project_details,
     build_lotc_projects,
     render,
     render_fragment,
+    tab_from_path,
 )
 from opi.web.menu import get_menu_items
 from opi.web.project_actions import build_project_action
@@ -1227,11 +1231,23 @@ async def dashboard(request: Request):
 
 
 @web_router.get("/projects/details/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/componenten/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/services/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/deployments/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/metrics/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/taken/{project_name}", response_class=HTMLResponse)
 @requires_sso
 async def project_details(request: Request, project_name: str):
     """
     Serve the project details page showing comprehensive project information.
     Shows detailed project data including services, components, deployments, and configuration.
+
+    Elk tabblad heeft een EIGEN PAD - ``/projects/deployments/<naam>`` en zo voor de
+    andere - in plaats van ``?tab=deployments`` op een gedeeld adres. Een querystring
+    leest als een filter, terwijl een tabblad een pagina is. De paden staan hierboven
+    letterlijk en niet als ``/projects/{tab}/{project_name}``: dat laatste zou ook
+    ``/projects/<naam>/tasks`` opvangen, en dan hangt het van de volgorde van registreren
+    af welke route wint.
 
     Args:
         request: The FastAPI request object
@@ -1240,6 +1256,11 @@ async def project_details(request: Request, project_name: str):
     Returns:
         HTML response with detailed project information
     """
+    # ``?tab=`` bestaat niet meer, ook niet als doorverwijzing. Er is bewust GEEN
+    # overgangspad: de oude vorm heeft nooit buiten deze applicatie geleefd (de links
+    # erheen staan in deze sjablonen en in de tests, en die wijzen nu naar de paden), en
+    # een doorverwijzing die niemand gebruikt is een tweede adres dat onderhouden moet
+    # worden. Een ?tab= in de URL wordt dus gewoon genegeerd; je krijgt Overzicht.
     try:
         from opi.services.services import ServiceAdapter
 
@@ -1573,10 +1594,28 @@ async def project_details(request: Request, project_name: str):
         # deployment with nothing running and no explanation why.
         from opi.services.deployment_state import collect_deployment_state
 
-        deployment_state_facts = {
-            dep.get("name"): collect_deployment_state(project_data_decrypted, dep.get("name", "")).facts
+        deployment_states = {
+            dep.get("name"): collect_deployment_state(project_data_decrypted, dep.get("name", ""))
             for dep in project_data_decrypted.get("deployments", [])
         }
+        deployment_state_facts = {name: state.facts for name, state in deployment_states.items()}
+
+        # De statuskolom van de deploymenttabel op het tabblad Overzicht. Twee bronnen die
+        # allebei per PROJECT worden opgehaald en niet per rij: de feiten van de diensten
+        # (hierboven al berekend) en EEN gebundelde bevraging bij ArgoCD. Twintig rijen
+        # leveren dus geen twintig ArgoCD-verzoeken op - zie
+        # opi/services/argocd_overview.py voor de bevraging en de vervaltijd.
+        #
+        # Alleen voor het tabblad dat de tabel toont: de andere tabbladen hebben de kolom
+        # niet, en dan hoeft ArgoCD er ook niet voor bevraagd te worden.
+        argocd_statuses: dict[str, dict[str, Any]] = {}
+        if argocd_available and tab_from_path(request.url.path) == STANDAARD_TAB:
+            argocd_statuses = await get_project_argocd_statuses(
+                project_name, [name for name in deployment_states if name]
+            )
+        deployment_status_tags = build_deployment_status_column(
+            project_details["deployments"], deployment_states, argocd_statuses
+        )
 
         # A viewer whose role could not be determined is not a member with a role; the
         # services gate on the role string, and an empty one matches no gate.
@@ -1643,6 +1682,10 @@ async def project_details(request: Request, project_name: str):
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
                 "deployment_state_facts": deployment_state_facts,
+                # De statuslabels per rij van de deploymenttabel (Overzicht), en de
+                # gebundelde ArgoCD-stand waar de kolom "Laatste sync" uit leest.
+                "deployment_status_tags": deployment_status_tags,
+                "deployment_argocd": argocd_statuses,
                 # Per-deployment service-owned blocks (RC-24), keyed by deployment name.
                 "deployment_service_sections": deployment_service_sections,
                 # Detail-page sections the project's services own (WP2). Replaces the

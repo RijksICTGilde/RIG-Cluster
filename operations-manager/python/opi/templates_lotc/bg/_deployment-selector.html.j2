@@ -20,6 +20,12 @@
   een native select een <nldd-menu-item>, en daar maakt een <select> niets van - de lijst
   blijft dan leeg. Gemeten.
 
+  ``selected`` STAAT OP DE OPTIE die de server heeft opengezet (``deployment_open``, uit
+  ?deployment=). Zonder dat wees de kiezer een andere deployment aan dan er open stond
+  zodra je een rij uit de tabel op Overzicht aanklikte. Erger nog: een <select> vuurt geen
+  change als je de al getoonde optie kiest, dus bij twee deployments was de eerste via de
+  kiezer niet meer te bereiken.
+
   Geen class in :attrs: het component zet er zelf al een op, en twee class-attributen op
   een tag betekent dat de browser de tweede negeert.
 
@@ -43,7 +49,7 @@
         data-no-optional-badge="true"
         :attrs="kiezer_gedrag">
         {% for deployment in project.deployments | sort(attribute='name') %}
-            <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
+            <option value="{{ deployment.name }}"{% if deployment.name == deployment_open %} selected{% endif %}>{{ deployment.name }} ({{ deployment.cluster }})</option>
         {% endfor %}
     </c-select-field>
 {% endif %}

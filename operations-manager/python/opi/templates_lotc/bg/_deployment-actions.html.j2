@@ -13,6 +13,10 @@
   De wikkel is letterlijk overgenomen: ``class="deployment-section"`` en
   ``id="deployment-actions-<naam>"``. switchDeployment() zoekt op precies die id.
 
+  WELKE ER OPEN STAAT bepaalt de server (``deployment_open``, uit ?deployment=) en niet
+  "de eerste": een rij uit de deploymenttabel op Overzicht wijst een deployment aan, en
+  die hoort ook zonder JavaScript de zijne te zijn.
+
   De aanroep wordt met {% set %} BOVEN de tag opgebouwd: <c-button> laat geen onclick toe,
   :attrs zet het attribuut wel door, en een genest aanhalingsteken binnen :attrs leest de
   voorbewerker als het einde van het attribuut.
@@ -26,7 +30,7 @@
 {% if user_role in ["admin", "owner"] and project.deployments %}
     {% for deployment in project.deployments | sort(attribute='name') %}
     {% set original_index = project.deployments.index(deployment) %}
-    <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="deployment-actions-{{ deployment.name }}">
+    <div class="deployment-section{% if deployment.name != deployment_open %} is-hidden{% endif %}" id="deployment-actions-{{ deployment.name }}">
         <c-card outline padding="lg">
             <c-stack gap="md">
                 <c-section-head title="Acties" icon="gear" />

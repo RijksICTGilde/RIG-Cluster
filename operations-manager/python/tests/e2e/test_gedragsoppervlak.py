@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pytest
+from opi.web.lotc_switch import project_tab_url
 from tests.e2e.conftest import TEST_USER, _sign_session
 from tests.oppervlak import als_lijsten, meet, ontbreekt
 
@@ -113,7 +114,7 @@ FRAGMENTEN = [
     *[f"/projects/{PROJECT}/modal-wizard/{flow}" for flow in FLOWS],
 ]
 
-PADEN = [*ROUTES, *[f"/projects/details/{PROJECT}?tab={tab}" for tab in TABBLADEN], *FRAGMENTEN]
+PADEN = [*ROUTES, *[project_tab_url(PROJECT, tab) for tab in TABBLADEN], *FRAGMENTEN]
 
 
 @pytest.fixture(scope="module")
@@ -165,6 +166,11 @@ def test_de_lijst_bestaat_en_dekt_elk_pad(vastgelegd: dict[str, dict[str, list[s
 #: De rest van die dialogen - naam, image, poorten, het opslaan-adres - ligt gewoon vast.
 NIET_VASTLEGGEN = {
     "_services-config{": "hangt af van de diensten die een ander testgeval op dit project zette",
+    # De voettekst linkt naar de commit waarvan deze build is gemaakt. Die verandert per
+    # definitie bij elke commit, dus vastleggen zou betekenen dat de EERSTVOLGENDE commit
+    # "verdwenen gedrag" meldt - een poort die altijd rood staat leert niemand meer iets.
+    # Dat de link er is, is trouwens niet ongemeten: /version heeft zijn eigen toets.
+    "/commit/": "wijst naar de commit van deze build en verandert dus elke commit",
 }
 
 
