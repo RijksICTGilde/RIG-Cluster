@@ -37,7 +37,7 @@
             <c-icon icon="puzzle-piece" size="lg" />
             <c-stack gap="xs">
                 <c-heading type="h3" size="5" label="Component niveau" />
-                <c-paragraph size="sm">Standaard variabelen per component (gelden voor alle deployments)</c-paragraph>
+                <c-span>Standaard variabelen per component (gelden voor alle deployments)</c-span>
             </c-stack>
         </c-cluster>
 
@@ -69,7 +69,7 @@
             <c-icon icon="cylinder-split" size="lg" />
             <c-stack gap="xs">
                 <c-heading type="h3" size="5" label="Deployment niveau" />
-                <c-paragraph size="sm">Deployment-specifieke variabelen (overschrijven component niveau)</c-paragraph>
+                <c-span>Deployment-specifieke variabelen (overschrijven component niveau)</c-span>
             </c-stack>
         </c-cluster>
 
@@ -96,7 +96,7 @@
                     <c-stack gap="sm">
                         <c-cluster gap="sm" align="center">
                             <c-icon icon="puzzle-piece" size="sm" />
-                            <c-paragraph size="sm">{{ dep_component.reference }}</c-paragraph>
+                            <c-span>{{ dep_component.reference }}</c-span>
                             <c-tag type="default" label="{{ dep_component['user-env-vars']|length }} variabele{{ 'n' if dep_component['user-env-vars']|length != 1 else '' }}" />
                         </c-cluster>
                         {% for key, value in dep_component['user-env-vars'].items() %}

@@ -24,7 +24,7 @@
         <c-icon icon="info-circle" size="lg" />
         <c-stack gap="xs">
             <strong>Backups niet beschikbaar</strong>
-            <c-paragraph size="sm">De backup service is niet verbonden. Backup informatie wordt getoond wanneer de service beschikbaar is.</c-paragraph>
+            <c-span>De backup service is niet verbonden. Backup informatie wordt getoond wanneer de service beschikbaar is.</c-span>
         </c-stack>
     </c-cluster>
 </c-card>
@@ -47,12 +47,12 @@
             <c-cluster gap="sm" align="center">
                 {% if ctx.schedule %}
                 <c-icon icon="check-mark-circle" size="md" />
-                <c-paragraph size="sm">Backups ingeschakeld: {{ ctx.schedule | rrule_schedule }}</c-paragraph>
+                <c-span>Backups ingeschakeld: {{ ctx.schedule | rrule_schedule }}</c-span>
                 <c-button type="secondary" size="xs" show-icon="before" icon="gear"
                           label="Schema wijzigen" :attrs="{'onclick': schema_instellen}" />
                 {% else %}
                 <c-icon icon="info-circle" size="md" />
-                <c-paragraph size="sm">Geen backup schema ingesteld</c-paragraph>
+                <c-span>Geen backup schema ingesteld</c-span>
                 <c-button type="secondary" size="xs" show-icon="before" icon="gear"
                           label="Schema instellen" :attrs="{'onclick': schema_instellen}" />
                 {% endif %}

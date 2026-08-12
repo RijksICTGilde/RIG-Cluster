@@ -115,8 +115,11 @@ def test_paragraphs_and_bullets_become_their_components() -> None:
     rendered = _render("Eerste regel\nvan een alinea.\n\n- een\n- twee\n\nEen tweede alinea.")
 
     assert rendered.count('data-lotc-component="paragraph"') == 2
-    assert 'data-lotc-component="list"' in rendered
-    assert rendered.count('data-lotc-component="list-item"') == 2
+    # Een opsomming is een <ul> in rich-text en GEEN <c-list>: dat laatste is NLDD's
+    # interactieve rijenlijst, die lijntjes tekent waar opsommingstekens horen.
+    assert 'data-lotc-component="rich-text"' in rendered
+    assert 'data-lotc-component="list-item"' not in rendered
+    assert rendered.count("<li>") == 2
     assert "Eerste regel van een alinea." in rendered, "wrapped lines are one paragraph"
 
 

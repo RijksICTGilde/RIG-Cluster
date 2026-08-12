@@ -60,19 +60,6 @@
         <c-tag type="default" label="{{ deployment.cluster }}" />
     </c-cluster>
 
-    {# Wat de DIENSTEN over deze deployment melden (RC-28): slaapstand, uitgeschakeld. Uit
-       het projectbestand en niet uit het cluster, dus dit staat er ook als ArgoCD niets
-       zegt. Stond in een eigen kaart boven het paneel; die kaart is deze regels. #}
-    {% for fact in (deployment_state_facts | default({})).get(deployment.name, []) %}
-        <c-cluster gap="md" align="center">
-            <c-icon icon="info-circle" size="lg" />
-            <c-stack gap="xs">
-                <strong>{{ ServiceAdapter.get_service_definition(ServiceAdapter.get_service_by_value(fact.service)).name }}</strong>
-                <c-paragraph size="sm">{{ fact.summary }}</c-paragraph>
-            </c-stack>
-        </c-cluster>
-    {% endfor %}
-
     {% if argocd_available | default(false) %}
         <div id="argocd-{{ deployment.name }}"
              hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
@@ -82,17 +69,6 @@
         </div>
     {% endif %}
 
-    {% if user_role in ['admin', 'owner'] %}
-        {% set original_index = project.deployments.index(deployment) %}
-        {% set bewerken = "openEditModal('modal-edit-deployment-" ~ original_index ~ "', 'Deployment bewerken - " ~ deployment.name ~ "')" %}
-        {% set webadres = "openEditModal('modal-edit-domain-" ~ original_index ~ "', 'Webadres bewerken - " ~ deployment.name ~ "')" %}
-        {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-deployment/confirm?target=" ~ (deployment.name | urlencode) ~ "', 'Deployment verwijderen')" %}
-        <c-action-group align="start">
-            <c-button type="secondary" size="sm" label="Bewerken" icon="pencil" :attrs="{'onclick': bewerken}" />
-            <c-button type="secondary" size="sm" label="Webadres" icon="globe" :attrs="{'onclick': webadres}" />
-            <c-button type="warning" size="sm" label="Verwijderen" icon="trash" :attrs="{'onclick': verwijderen}" />
-        </c-action-group>
-    {% endif %}
     {# Goedkeuringen die nog niet verleend zijn, zoals de eigenaardienst ze meldt. #}
     {% for notice in approval_notices.get(deployment.name, []) %}
         <c-alert type="{{ 'error' if notice.status == 'denied' else 'warning' }}" heading="{{ notice.text }}">
@@ -111,10 +87,27 @@
         <c-heading type="h4" size="5" label="Componenten" />
         <c-stack gap="sm">
             {% for component in deployment.components | sort(attribute='reference') %}
-                <c-layer
-                    icon="puzzle-piece"
-                    title="{{ component.reference }}"
-                    sub="{{ component.image or 'Geen container image geconfigureerd - dit component wordt niet gedeployd' }}" />
+                {# De rij droeg een chevron maar deed niets: een pijl die nergens heen wijst
+                   belooft iets dat er niet is. Hij opent nu het bewerkscherm van DEZE
+                   deployment, want daar staan sinds RC-78 de instellingen per component
+                   binnen deze deployment (het certificaat, de bijlage). Een eigen scherm
+                   voor alleen dit component binnen deze deployment bestaat nog niet; de
+                   titel zegt daarom waar je terechtkomt in plaats van iets anders te
+                   beloven. Alleen klikbaar voor wie mag bewerken. #}
+                {% if user_role in ['admin', 'owner'] %}
+                    {% set comp_index = project.deployments.index(deployment) %}
+                    {% set comp_bewerken = "openEditModal('modal-edit-deployment-" ~ comp_index ~ "', 'Deployment bewerken - " ~ deployment.name ~ " (" ~ component.reference ~ ")')" %}
+                    <c-layer
+                        icon="puzzle-piece"
+                        title="{{ component.reference }}"
+                        sub="{{ component.image or 'Geen container image geconfigureerd - dit component wordt niet gedeployd' }}"
+                        :attrs="{'onclick': comp_bewerken, 'style': 'cursor: pointer'}" />
+                {% else %}
+                    <c-layer
+                        icon="puzzle-piece"
+                        title="{{ component.reference }}"
+                        sub="{{ component.image or 'Geen container image geconfigureerd - dit component wordt niet gedeployd' }}" />
+                {% endif %}
             {% endfor %}
         </c-stack>
     {% endif %}
@@ -133,7 +126,7 @@
                             {% set waarden = helm_chart['helm-values'] | length %}
                             <c-cluster gap="sm" align="center">
                                 <c-icon icon="lock-closed" size="sm" />
-                                <c-paragraph size="sm">Helm Values</c-paragraph>
+                                <c-span>Helm Values</c-span>
                                 <c-tag type="default" label="{{ waarden }} waarde{{ 'n' if waarden != 1 else '' }}" />
                             </c-cluster>
                             <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) | forceescape }}" value-type="json" />
@@ -158,7 +151,7 @@
                             {% set waarden = helmfile['helm-values'] | length %}
                             <c-cluster gap="sm" align="center">
                                 <c-icon icon="lock-closed" size="sm" />
-                                <c-paragraph size="sm">Helm Values</c-paragraph>
+                                <c-span>Helm Values</c-span>
                                 <c-tag type="default" label="{{ waarden }} waarde{{ 'n' if waarden != 1 else '' }}" />
                             </c-cluster>
                             <c-secret-field
@@ -172,22 +165,6 @@
         </c-stack>
     {% endif %}
 
-    {% if deployment.ingress_links %}
-        <c-heading type="h4" size="5" label="Publieke links" />
-        <c-cluster gap="sm">
-            {% for link in deployment.ingress_links %}
-                {% set link_label = link.component_name ~ (' ' ~ link.path if link.path and link.path != '/' else '') %}
-                <c-button
-                    type="secondary"
-                    size="sm"
-                    show-icon="after"
-                    icon="link"
-                    label="{{ link_label }}"
-                    href="{{ link.url }}"
-                    target="_blank" />
-            {% endfor %}
-        </c-cluster>
-    {% endif %}
 
     {# De configuratievariabelen van de deployment zelf staan hier bewust niet; dat besluit
        (hoe geheimen getoond worden) staat nog open, net als op de bestaande pagina. #}
@@ -217,7 +194,7 @@
                         {% for key, value in variabelen.items() %}
                             <c-cluster gap="sm" align="center">
                                 <c-icon icon="lock-closed" size="sm" />
-                                <c-paragraph size="sm">{{ key }}</c-paragraph>
+                                <c-span>{{ key }}</c-span>
                             </c-cluster>
                             <c-secret-field value="{{ value }}" />
                         {% endfor %}

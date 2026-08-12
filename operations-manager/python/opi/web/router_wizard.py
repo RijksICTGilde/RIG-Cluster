@@ -1200,9 +1200,26 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
 
     if is_markdown_help(template_name):
         try:
-            return HTMLResponse(render_service_help(template_name))
+            markup = render_service_help(template_name)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Help template not found") from None
+        # htmx laadt dit in een dialoog en wil het kale fragment; een browser die de URL
+        # rechtstreeks opent krijgt datzelfde fragment ZONDER <head>, dus zonder stylesheets
+        # en zonder marges. Vandaar de splitsing: dezelfde inhoud, twee omhulsels.
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(markup)
+        from opi.web.navigation_lotc import get_menu_items, get_navigation
+
+        user = request.session.get("user")
+        return templates_lotc.TemplateResponse(
+            "help_page.html.j2",
+            {
+                "request": request,
+                "help_markup": markup,
+                "menu_items": get_menu_items(user),
+                "navigation": get_navigation(user, current_path=request.url.path),
+            },
+        )
 
     template_path = template_name if "/" in template_name else f"help/{template_name}"
     try:
