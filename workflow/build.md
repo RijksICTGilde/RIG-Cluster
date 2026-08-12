@@ -7,3 +7,10 @@
   - Use the waits that already exist rather than building your own: `kubectl wait --for=condition=Ready pod/... --timeout=120s`, `kubectl rollout status deployment/... --timeout=120s`, `wait_for_task()` in the test helpers. They return on success instead of on the clock.
   - **A timeout is a safety net, not a waiting mechanism.** `--timeout=600` means "something is wrong if it takes this long", never "come back in ten minutes". If your wait only ever ends at the timeout, you are not waiting, you are guessing.
   - Waiting on something that reports progress? Read the progress, do not re-check on a timer. A rollout, a task and a pod all say when they are done.
+- **Ask the thing that knows, not the clock.** Sleeping until something is "probably done" is guessing twice: about the time, and about the outcome. Every state you might sleep on has an owner that will tell you:
+  - a task → the task endpoint (`wait_for_task()` in the test helpers wraps it, and returns the *outcome*, not just "finished");
+  - a deployment's health and sync → ArgoCD, via `opi/services/argocd_overview.py` for a whole project in one query;
+  - a pod → `kubectl wait` / `kubectl rollout status`;
+  - a project's state → the API, which is also what the zad-cli talks to and will keep talking to.
+
+  This is not only about speed. E2E wizard tests once checked the *file state* instead of asking the task how it ended, and stayed green through a broken create — a sleep long enough to "be safe" hides a failure exactly as well as it hides a delay.
