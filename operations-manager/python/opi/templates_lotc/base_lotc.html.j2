@@ -125,7 +125,10 @@
     </nldd-top-navigation-bar>
 
     <c-sidebar-section width="1920px" sidebar-label="Navigatie" sticky-top>
-        <nldd-container slot="sidebar" padding="16">
+        {# De navigatie ZONDER <nldd-container> eromheen: die gaf hem een eigen vlak met
+           achtergrond en ronde hoeken, en dat is niet wat wij willen. We gebruiken de
+           vlakverdeling van NLDD met ons eigen menu erin, dus <c-sidenav> hangt
+           rechtstreeks in het slot. #}
 
             {# <c-sidenav-group> is een BROER van de items die eronder horen, geen
                ouder die ze omvat. De groepering zit dus in de volgorde, en daarom
@@ -138,7 +141,7 @@
                c-sidenav-group is een KOPJE en geen uitklapbare ouder - het is een broer
                van de items eronder. #}
             {% block sidenav %}
-            <c-sidenav>
+            <c-sidenav slot="sidebar">
                 {% for label, items in navigation.sidebar %}
                     {% if label %}
                         <c-sidenav-group label="{{ label }}" />
@@ -153,8 +156,7 @@
                 {% endfor %}
             </c-sidenav>
             {% endblock %}
-                </nldd-container>
-
+        
         {# tabindex zodat de skip-link hier kan landen. #}
         <div id="hoofdinhoud" tabindex="-1">
         <c-stack gap="lg">
