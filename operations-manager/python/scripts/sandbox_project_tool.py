@@ -69,13 +69,14 @@ def _request(
 def get_api_key(project: str) -> str:
     """Scrape a project's decrypted API key from its details page (session-cookie auth).
 
-    The key is a 32-char token rendered in a ROOS secret-field; the AGE key on the same
-    page is longer, so a strict 32-char match picks the API key unambiguously.
+    The key is a 32-char token rendered in a LOTC secret-field. The element TEXT is a row
+    of bullets, so the plaintext has to come from the `data-value` attribute; the AGE key
+    on the same page is longer, so a strict 32-char match picks the API key unambiguously.
     """
     status, html = _request(f"/projects/details/{project}")
     if status != 200:
         raise SystemExit(f"details page for '{project}' returned {status}")
-    for value in (v.strip() for v in re.findall(r"roos-secret-field__value[^>]*>(.*?)</", html, re.DOTALL)):
+    for value in (v.strip() for v in re.findall(r'lotc-secret__value[^>]*?data-value="([^"]*)"', html)):
         if re.fullmatch(r"[A-Za-z0-9_\-]{32}", value):
             return value
     raise SystemExit(f"no API key found on the details page for '{project}'")
