@@ -1012,6 +1012,36 @@ class KubectlConnector:
             logger.error(f"Error getting namespace events: {e}")
             return []
 
+    async def get_pod_container_image(self, namespace: str, pod_name: str, container_name: str) -> str | None:
+        """Get the image a running container was started from.
+
+        Read from ``.spec.containers[]`` rather than from a deployment or an overlay:
+        the pod is what is actually running, and during a rolling update the two pods
+        behind one Service differ exactly here.
+
+        Args:
+            namespace: Namespace the pod runs in
+            pod_name: Name of the pod
+            container_name: Name of the container within the pod
+
+        Returns:
+            The image reference, or None when the pod or container cannot be read.
+        """
+        args = [
+            "get",
+            "pod",
+            pod_name,
+            "-n",
+            namespace,
+            "-o",
+            f"jsonpath={{.spec.containers[?(@.name=='{container_name}')].image}}",
+        ]
+        stdout, stderr, code = await self._run_kubectl_command(args, timeout=15)
+        if code != 0:
+            logger.warning(f"Could not read image of pod {namespace}/{pod_name}: {stderr}")
+            return None
+        return stdout.strip() or None
+
     async def get_deployment_status(self, namespace: str, deployment_name: str | None = None) -> list[dict[str, str]]:
         """
         Get status of deployments in a namespace, optionally filtered by deployment name.

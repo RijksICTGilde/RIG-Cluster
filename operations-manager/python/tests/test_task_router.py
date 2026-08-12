@@ -5,7 +5,7 @@ Tests cover GET /api/tasks/{id}, GET /api/tasks, and POST /api/tasks/{id}/:cance
 with various task states and error conditions.
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -34,6 +34,7 @@ def _make_task(
     started_at: str | None = "2026-03-01T10:00:02+00:00",
     completed_at: str | None = None,
     project_name: str = SAMPLE_PROJECT,
+    created_by: str | None = None,
 ) -> dict[str, Any]:
     """Build a task dict as returned by the mock task service."""
     return {
@@ -49,6 +50,7 @@ def _make_task(
         "started_at": started_at,
         "completed_at": completed_at,
         "project_name": project_name,
+        "created_by": created_by,
     }
 
 
@@ -230,6 +232,113 @@ class TestGetTask:
             response = test_client_with_task_service.get(
                 f"/api/tasks/{SAMPLE_TASK_ID}", headers={"X-API-Key": "wrong-key"}
             )
+
+        assert response.status_code == 401
+
+
+class TestGetTaskWithBearerToken:
+    """Tests for polling a task with the token of whoever started it.
+
+    A create-project task hands back an API key that the server does not accept yet:
+    the project it belongs to is still being written. Without a second way in, the
+    client that just created a project has nothing to poll and no signal to wait for.
+    The task records who started it, so that person's SSO token is that second way.
+    """
+
+    CREATOR = "creator@example.com"
+    BEARER: ClassVar[dict[str, str]] = {"Authorization": "Bearer a.valid.token"}
+
+    def _accept_token_as(self, email: str):
+        """Patch token verification so the bearer resolves to this user."""
+        return (
+            patch("opi.api.task_router.verify_user_token", new=AsyncMock(return_value={"email": email})),
+            patch("opi.api.task_router.authorize_claims", return_value={"email": email}),
+        )
+
+    def test_creator_token_polls_task_whose_project_does_not_exist_yet(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """The exact create-project case: no usable API key, project not in the store."""
+        mock_task_service.get_task.return_value = _make_task(
+            task_type="create_project", status="running", created_by=self.CREATOR
+        )
+
+        verify, authorize = self._accept_token_as(self.CREATOR)
+        with verify, authorize:
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=self.BEARER)
+
+        assert response.status_code == 202
+        assert response.json()["task_id"] == SAMPLE_TASK_ID
+
+    def test_creator_token_is_accepted_next_to_a_key_that_is_not_valid_yet(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """The fresh API key comes back with the 202, so clients do send it."""
+        mock_task_service.get_task.return_value = _make_task(status="running", created_by=self.CREATOR)
+
+        unknown_project = MagicMock()
+        unknown_project.get.return_value = None
+
+        verify, authorize = self._accept_token_as(self.CREATOR)
+        with (
+            verify,
+            authorize,
+            patch("opi.api.task_router.get_project_store", return_value=unknown_project),
+        ):
+            response = test_client_with_task_service.get(
+                f"/api/tasks/{SAMPLE_TASK_ID}",
+                headers={**self.BEARER, "X-API-Key": "key-that-is-not-accepted-yet"},
+            )
+
+        assert response.status_code == 202
+
+    def test_another_users_token_is_refused(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """A valid token says who you are, not that this task is yours."""
+        mock_task_service.get_task.return_value = _make_task(status="running", created_by=self.CREATOR)
+
+        verify, authorize = self._accept_token_as("someone.else@example.com")
+        with verify, authorize:
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=self.BEARER)
+
+        assert response.status_code == 401
+
+    def test_task_without_creator_is_not_openable_by_a_token(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """No recorded creator means nobody matches - not everybody matches."""
+        mock_task_service.get_task.return_value = _make_task(status="running", created_by=None)
+
+        verify, authorize = self._accept_token_as(self.CREATOR)
+        with verify, authorize:
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=self.BEARER)
+
+        assert response.status_code == 401
+
+    def test_unverifiable_token_is_refused(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """A token that does not verify is no token at all."""
+        from opi.api.user_token_auth import UserTokenError
+
+        mock_task_service.get_task.return_value = _make_task(status="running", created_by=self.CREATOR)
+
+        with patch(
+            "opi.api.task_router.verify_user_token",
+            new=AsyncMock(side_effect=UserTokenError("token verification failed")),
+        ):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=self.BEARER)
 
         assert response.status_code == 401
 

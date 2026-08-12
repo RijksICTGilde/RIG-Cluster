@@ -29,7 +29,7 @@ from tenacity import (
 
 from opi.bootstrap.keycloak_setup import setup_keycloak
 from opi.connectors.keycloak import create_keycloak_connector
-from opi.connectors.kubectl import create_kubectl_connector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError, create_kubectl_connector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_prefixed_namespace
@@ -37,6 +37,7 @@ from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
 from opi.core.project_schema import check_schema_versions
+from opi.core.version import set_running_image
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import initialize_project_service
 from opi.services.project_store import get_project_store
@@ -44,6 +45,9 @@ from opi.services.schema_migration import SCHEMA_VERSIONS
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
+
+# Name of this application's container in its own pod (bootstrap/rig-system deployment).
+CONTAINER_NAME = "operations-manager"
 
 
 def _run_alembic_migrations() -> None:
@@ -632,6 +636,33 @@ async def _startup_retry_loop(app: FastAPI, skip_checks: bool) -> None:
     logger.info("All services are now ready - startup retry loop complete")
 
 
+async def _resolve_running_image() -> None:
+    """Ask the cluster which image this pod runs and hand it to ``/version``.
+
+    Once, at startup: a pod's image cannot change while it runs, so a later lookup
+    would answer the same thing at the cost of a kubectl call on a public endpoint.
+    Outside Kubernetes (docker-compose, tests) there is no pod name and nothing to
+    ask, and the field stays empty rather than guessing from an env var.
+    """
+    pod_name = os.environ.get("POD_NAME", "")
+    namespace = os.environ.get("POD_NAMESPACE", "")
+    if not pod_name or not namespace:
+        logger.debug("No POD_NAME/POD_NAMESPACE in the environment; /version reports no image")
+        return
+
+    try:
+        image = await create_kubectl_connector().get_pod_container_image(
+            namespace=namespace, pod_name=pod_name, container_name=CONTAINER_NAME
+        )
+    except (KubectlConnectionError, KubectlExecutionError) as exc:
+        # Not being able to read its own pod is not a reason to refuse to start.
+        logger.warning("Could not resolve the running image for pod %s/%s: %s", namespace, pod_name, exc)
+        return
+
+    if image:
+        set_running_image(image)
+
+
 async def run_startup_tasks(app: FastAPI) -> bool:
     """
     Run all startup tasks for the application.
@@ -672,6 +703,9 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # Phase 2: Project files (requires database)
     if readiness.database.ready:
         await _setup_projects(readiness, app, skip_checks)
+
+    # Resolve which image this pod runs, so /version can say who is answering.
+    await _resolve_running_image()
 
     # Phase 3: MinIO check (non-critical, no retry)
     if not skip_checks:
