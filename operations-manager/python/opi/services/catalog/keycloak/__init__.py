@@ -138,6 +138,14 @@ class KeycloakService(Service):
                 layout=[
                     Fieldset(legend="Template", children=[cp("template")]),
                     Fieldset(
+                        legend="Extra redirect URI's",
+                        description=(
+                            "Naast de URL's van de deployments zelf. Nodig voor lokale ontwikkeling "
+                            "of voor externe integraties die op een eigen adres terugkomen."
+                        ),
+                        children=[Sequence(field_name=cp("additional_redirect_uris"))],
+                    ),
+                    Fieldset(
                         legend="Toegangsbeperking",
                         description="Beperk toegang tot de applicatie op basis van Keycloak realm-rollen.",
                         children=[
