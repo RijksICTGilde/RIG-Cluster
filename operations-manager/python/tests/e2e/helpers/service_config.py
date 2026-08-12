@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
+from opi.web.lotc_switch import project_tab_url
 from playwright.sync_api import Error as PlaywrightError
 
 if TYPE_CHECKING:
@@ -31,21 +32,41 @@ _INNER = "#edit-section-inner"
 
 
 def open_detail(page: Page, base_url: str, project_name: str) -> None:
-    page.goto(f"{base_url}/projects/details/{project_name}", wait_until="networkidle", timeout=30000)
+    """Open de pagina waar de dienstkaarten staan: het tabblad Services.
+
+    Dat was de landingspagina van het project; sinds de opdeling in tabbladen staan de
+    kaarten op hun eigen tabblad, en op de landingspagina staat er dus geen enkele.
+    """
+    page.goto(f"{base_url}{project_tab_url(project_name, 'services')}", wait_until="networkidle", timeout=30000)
     page.wait_for_load_state("networkidle")
+
+
+def service_card(page: Page, service_display_name: str) -> Locator:
+    """De kaart van EEN dienst.
+
+    Op ``data-lotc-component='card'`` en niet op de klasse ``.service-detail-card``: die
+    hoorde bij de oude sectie en staat niet meer op de pagina die geserveerd wordt.
+    ``.last`` omdat het paneel zelf ook een kaart is en de naam van elke dienst bevat -
+    de buitenste match is dus het paneel en de binnenste de kaart die we zoeken.
+    """
+    return page.locator("[data-lotc-component='card']").filter(has_text=service_display_name).last
 
 
 def open_service_config_modal(page: Page, service_display_name: str) -> None:
     """Click the 'Configureer' button on a service's card, wait for its config modal."""
-    card = page.locator(".service-detail-card").filter(has_text=service_display_name)
-    card.get_by_role("button", name="Configureer").click()
+    knop = service_card(page, service_display_name).locator(
+        "nldd-button[text='Configureer'], button:has-text('Configureer')"
+    )
+    knop.first.click()
     page.wait_for_selector(_MODAL, timeout=10000)
     page.wait_for_selector(f"{_INNER} form", timeout=15000)
 
 
 def open_services_modal(page: Page) -> None:
     """Click the 'Bewerken' button on the Services & Integraties section (services modal)."""
-    page.locator("button[onclick*='modal-edit-services']").click()
+    # Zonder tagnaam: de knop is een <nldd-button> en geen <button>, dus "button[onclick]"
+    # vond hem niet meer.
+    page.locator("[onclick*='modal-edit-services']").first.click()
     page.wait_for_selector(_MODAL, timeout=10000)
     page.wait_for_selector(f"{_INNER} input[name='services[]']", timeout=15000)
 
