@@ -21,7 +21,6 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
-from opi.web.lotc_switch import project_tab_url
 from playwright.sync_api import Error as PlaywrightError
 
 if TYPE_CHECKING:
@@ -32,12 +31,28 @@ _INNER = "#edit-section-inner"
 
 
 def open_detail(page: Page, base_url: str, project_name: str) -> None:
-    """Open de pagina waar de dienstkaarten staan: het tabblad Services.
+    """Open de landingspagina van het project (het tabblad Overzicht).
 
-    Dat was de landingspagina van het project; sinds de opdeling in tabbladen staan de
-    kaarten op hun eigen tabblad, en op de landingspagina staat er dus geen enkele.
+    Daar staan de blokken die de DIENSTEN zelf leveren (de Keycloak-realm, de
+    uitnodigingen). De configuratiekaarten staan op het tabblad Services; de helpers
+    hieronder gaan daar zelf naartoe, zodat een test die alleen het overzicht nodig heeft
+    niet ergens anders uitkomt.
     """
-    page.goto(f"{base_url}{project_tab_url(project_name, 'services')}", wait_until="networkidle", timeout=30000)
+    page.goto(f"{base_url}/projects/details/{project_name}", wait_until="networkidle", timeout=30000)
+    page.wait_for_load_state("networkidle")
+
+
+def open_services_tab(page: Page) -> None:
+    """Ga naar het tabblad Services, waar de dienstkaarten staan.
+
+    Die kaarten stonden op de landingspagina en hebben sinds de opdeling een eigen
+    tabblad. De tabbladen zijn gewone links (``<c-tab href=...>`` rendert een ``<a>``),
+    dus dit is dezelfde navigatie als een gebruiker doet.
+    """
+    if "/projects/services/" in page.url:
+        return
+    page.locator("a[href*='/projects/services/']").first.click()
+    page.wait_for_url("**/projects/services/**", timeout=15000)
     page.wait_for_load_state("networkidle")
 
 
@@ -54,6 +69,7 @@ def service_card(page: Page, service_display_name: str) -> Locator:
 
 def open_service_config_modal(page: Page, service_display_name: str) -> None:
     """Click the 'Configureer' button on a service's card, wait for its config modal."""
+    open_services_tab(page)
     knop = service_card(page, service_display_name).locator(
         "nldd-button[text='Configureer'], button:has-text('Configureer')"
     )
@@ -64,6 +80,7 @@ def open_service_config_modal(page: Page, service_display_name: str) -> None:
 
 def open_services_modal(page: Page) -> None:
     """Click the 'Bewerken' button on the Services & Integraties section (services modal)."""
+    open_services_tab(page)
     # Zonder tagnaam: de knop is een <nldd-button> en geen <button>, dus "button[onclick]"
     # vond hem niet meer.
     page.locator("[onclick*='modal-edit-services']").first.click()
