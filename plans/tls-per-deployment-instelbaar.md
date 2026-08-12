@@ -15,7 +15,9 @@ En er is een vierde laag die precies voor deze vraag bestaat. Uit de code: *"Com
 | deployment | `PublishOnWebDeploymentConfig` | 8 |
 | **deployment-component** | `PublishOnWebComponentConfig` | **0** |
 
-Daar zit het gat. Het **model** accepteert `tls` en `attachment` op de deployment-component, maar er is geen enkele editable, dus geen formulier biedt het aan. Op die laag levert alleen `user-env-vars` een veld (gemeten: één van de één).
+Daar zit het gat, en het is kleiner dan het lijkt: **de velden bestaan al**. Op de componentlaag zijn er twee editables voor `tls` en `attachment`, en die zie je bij het aanmaken van een project. Ze zijn alleen niet voor de deployment-component-laag gedeclareerd, terwijl het model daar hetzelfde is (`PublishOnWebComponentConfig`, tweemaal in de tabel hierboven).
+
+Dit is dus geen ontbrekend vermogen maar een ontbrekende declaratie voor één laag. Kijk eerst of `config_editables(ConfigLayer.DEPLOYMENT_COMPONENT)` de bestaande twee kan hergebruiken met een verlegd pad, zoals `replace_segment_visualizer` elders doet, in plaats van nieuwe te schrijven. Twee kopieën van hetzelfde veld lopen uit de pas zodra er iets aan verandert.
 
 **Gevolg:** de override is te zetten via de API en door het projectbestand te bewerken, maar niet in `modal-edit-deployment-<n>`, en daar wordt hij verwacht.
 
