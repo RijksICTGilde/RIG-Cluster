@@ -35,7 +35,7 @@
     /**
      * De gekozen deployment, onthouden zolang het browsertabblad open is.
      *
-     * Elk tabblad van de projectpagina is een eigen URL (?tab=...), dus de keuze in de
+     * Elk tabblad van de projectpagina is een eigen pad (/projects/<tabblad>/<naam>), dus de keuze in de
      * URL-hash overleeft het wisselen van tabblad niet. Zonder dit moest je op Metrics
      * opnieuw kiezen wat je op Deployments net had gekozen. De sleutel is het pad, zodat
      * twee projecten elkaars keuze niet overschrijven.
@@ -107,7 +107,7 @@
     // Restore tab and deployment state from URL hash on page load.
     //
     // Stond als IIFE onderaan het script van project-details.html.j2. switchTab() bestaat
-    // alleen op die pagina - de hertekende pagina heeft echte tab-URL's (?tab=...) - dus
+    // alleen op die pagina - de hertekende pagina heeft echte tab-paden - dus
     // de aanroep is achter een typeof-controle gezet. Verder ongewijzigd.
     //
     // Draait op DOMContentLoaded en niet direct, want dit bestand wordt in de <head>

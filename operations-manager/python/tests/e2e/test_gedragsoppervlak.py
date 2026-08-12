@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pytest
+from opi.web.lotc_switch import project_tab_url
 from tests.e2e.conftest import TEST_USER, _sign_session
 from tests.oppervlak import als_lijsten, meet, ontbreekt
 
@@ -113,7 +114,7 @@ FRAGMENTEN = [
     *[f"/projects/{PROJECT}/modal-wizard/{flow}" for flow in FLOWS],
 ]
 
-PADEN = [*ROUTES, *[f"/projects/details/{PROJECT}?tab={tab}" for tab in TABBLADEN], *FRAGMENTEN]
+PADEN = [*ROUTES, *[project_tab_url(PROJECT, tab) for tab in TABBLADEN], *FRAGMENTEN]
 
 
 @pytest.fixture(scope="module")

@@ -25,6 +25,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.web.lotc_switch import project_tab_url
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
-NLDD_URL = f"/projects/details/{PROJECT}?tab=project"
+NLDD_URL = f"/projects/details/{PROJECT}"
 
 # De aanroepen die bij de WIDGET horen en niet bij de pagina: het geheimveld van ROOS
 # bedraadt zijn eigen oog- en kopieerknop met inline handlers. Het geheimveld van LOTC
@@ -74,7 +75,7 @@ def _open_project_tab(page: Page, app_server: str, tab: str = "project") -> None
     Componenten en Services stonden op het tabblad Project en hebben sinds de opdeling
     een eigen tabblad; wie hun inhoud meet, moet daar dus naartoe.
     """
-    page.goto(f"{app_server}/projects/details/{PROJECT}?tab={tab}")
+    page.goto(f"{app_server}{project_tab_url(PROJECT, tab)}")
     page.wait_for_load_state("networkidle")
 
 
