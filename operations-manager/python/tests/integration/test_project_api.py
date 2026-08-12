@@ -716,36 +716,43 @@ class TestDeleteDeploymentEndpoint:
 
 @pytest.mark.integration
 class TestValidateCloneEndpoint:
-    """Tests for the validate clone endpoint."""
+    """Tests for the validate clone endpoint.
+
+    These deliberately do NOT mock the validation itself. The previous version mocked
+    ``project_manager._clone_manager``, an attribute that had been gone for months, so
+    the tests stayed green while every real call answered
+    "'ProjectManager' object has no attribute '_clone_manager'". Only the project file
+    is faked here; the check that runs is the one the endpoint runs in production.
+    """
+
+    def _project_manager_returning(self, project_data: dict[str, Any]) -> MagicMock:
+        mock_pm = MagicMock()
+
+        async def mock_get_contents() -> dict[str, Any]:
+            return project_data
+
+        async def mock_close() -> None:
+            pass
+
+        mock_pm.get_contents = mock_get_contents
+        mock_pm.close = mock_close
+        return mock_pm
 
     def test_validate_clone_success(
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
     ) -> None:
-        """Test successful clone validation."""
-        mock_pm = MagicMock()
-
-        # Mock what the route actually calls. Mocking get_contents' internals
-        # (get_project_full_file_path + _project_file_handler) coupled this test
-        # to an implementation that now reads through the ProjectStore instead.
-        async def mock_get_contents() -> dict[str, Any]:
-            return {"name": "test-project", "deployments": []}
-
-        mock_pm.get_contents = mock_get_contents
-
-        mock_clone_manager = MagicMock()
-
-        async def mock_validate(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {"validation": {"passed": True, "checks": []}}
-
-        mock_clone_manager.validate_clone_readiness = mock_validate
-        mock_pm._clone_manager = mock_clone_manager
-
-        async def mock_close() -> None:
-            pass
-
-        mock_pm.close = mock_close
+        """A deployment cloning from a deployment that exists validates."""
+        mock_pm = self._project_manager_returning(
+            {
+                "name": "test-project",
+                "deployments": [
+                    {"name": "productie"},
+                    {"name": "staging", "clone-from": {"type": "deployment", "reference": "productie"}},
+                ],
+            }
+        )
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
@@ -756,40 +763,22 @@ class TestValidateCloneEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "valid"
+        assert data["validation"]["passed"] is True
 
     def test_validate_clone_failure(
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
     ) -> None:
-        """Test clone validation failure."""
-        mock_pm = MagicMock()
-
-        # Mock what the route actually calls. Mocking get_contents' internals
-        # (get_project_full_file_path + _project_file_handler) coupled this test
-        # to an implementation that now reads through the ProjectStore instead.
-        async def mock_get_contents() -> dict[str, Any]:
-            return {"name": "test-project", "deployments": []}
-
-        mock_pm.get_contents = mock_get_contents
-
-        mock_clone_manager = MagicMock()
-
-        async def mock_validate(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {
-                "validation": {
-                    "passed": False,
-                    "errors": ["Source deployment not found"],
-                }
+        """A clone source that is not in the project fails, with the reason named."""
+        mock_pm = self._project_manager_returning(
+            {
+                "name": "test-project",
+                "deployments": [
+                    {"name": "staging", "clone-from": {"type": "deployment", "reference": "verdwenen"}},
+                ],
             }
-
-        mock_clone_manager.validate_clone_readiness = mock_validate
-        mock_pm._clone_manager = mock_clone_manager
-
-        async def mock_close() -> None:
-            pass
-
-        mock_pm.close = mock_close
+        )
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
@@ -800,6 +789,26 @@ class TestValidateCloneEndpoint:
         assert response.status_code == 422
         data = response.json()
         assert data["status"] == "invalid"
+        messages = " ".join(check["message"] for check in data["validation"]["checks"])
+        assert "verdwenen" in messages
+
+    def test_validate_clone_without_clone_configuration_is_a_user_error(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """A deployment that clones from nothing answers 422, not 500."""
+        mock_pm = self._project_manager_returning({"name": "test-project", "deployments": [{"name": "staging"}]})
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/deployments/staging/:validate-clone",
+                headers={"X-API-Key": "test-api-key-12345"},
+            )
+
+        assert response.status_code == 422
+        data = response.json()
+        assert data["validation"]["checks"][0]["name"] == "clone_configuration"
 
 
 @pytest.mark.integration

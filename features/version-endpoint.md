@@ -14,11 +14,30 @@ useful in the sandbox, where skaffold hot-syncs source and it is otherwise hard 
     "commit": "25c6aa29b9d118b5afcd19305ad7eae199c0ce21",
     "branch": "main",
     "build_date": "2026-07-17T18:36:43Z",
-    "dirty": true
+    "dirty": true,
+    "pod": "operations-manager-64884cd948-ngwjz",
+    "image": "operations-manager:rc-77"
   }
   ```
 - **Footer**: renders `ZAD <version> @ <branch> [*] (<build_date>)` and links to the GitHub commit
   (`*` = the working tree was dirty when the version was generated). Location can be moved later.
+
+## Who is answering: `pod` and `image`
+
+A commit alone cannot answer "which build is running" during a rolling update. The deployment runs
+`maxSurge: 1, maxUnavailable: 0`, so for a while two pods sit behind one Service and consecutive
+calls can return two different commits. That reads as a broken build; it is a rollout.
+
+- **`pod`** - the pod name, from the downward API (`POD_NAME`, set in
+  `bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml`). **Two different pod
+  names across two calls means a rollout is in progress**: wait, do not rebuild.
+- **`image`** - the container image the kubelet actually started, read once at startup from the
+  pod's own spec (`KubectlConnector.get_pod_container_image`, called by `startup._resolve_running_image`).
+  A pod cannot change its image while it runs, so it is resolved once. This is the only field that is
+  true by construction; `commit` is derived from the build and can be wrong if the build went wrong.
+  Falls back to the `ZAD_IMAGE` env var when set, and is empty outside Kubernetes.
+
+Both fields are empty rather than guessed when there is no pod to ask (docker-compose, tests).
 
 ## How the value is resolved
 
