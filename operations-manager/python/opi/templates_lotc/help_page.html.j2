@@ -1,0 +1,20 @@
+{% extends "base_lotc.html.j2" %}
+
+{# Dezelfde hulptekst als in de modal, maar dan als hele pagina.
+
+   Waarom dit bestaat: /forms/wizard/help/<...> gaf altijd een FRAGMENT terug, want het
+   wordt met htmx in een dialoog geladen en die levert de marges. Wie de URL rechtstreeks
+   opende - en dat gebeurt, hij staat in de wizard en is deelbaar - kreeg datzelfde
+   fragment zonder <head>: geen stylesheets, geen paginakader, en dus alles tegen de
+   linkerrand. Dat was niet met CSS te repareren, want er zat geen pagina omheen.
+
+   De route kiest nu op HX-Request: htmx krijgt het fragment dat het verwacht, een browser
+   krijgt deze pagina. Eén bron voor de inhoud, twee omhulsels. #}
+
+{% block page_title %}{{ page_title_value | default("Uitleg") }} - ZAD{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="lg">
+    {{ help_markup | safe }}
+</c-layout-flow>
+{% endblock %}

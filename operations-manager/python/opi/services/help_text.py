@@ -138,8 +138,14 @@ def markdown_to_components(source: str, *, icon: str | None = None, color: str |
     def flush() -> None:
         nonlocal bullets, paragraph
         if bullets:
-            items = "".join(f"<c-list-item>{item}</c-list-item>" for item in bullets)
-            out.append(f"<c-list>{items}</c-list>")
+            # Een <ul> in een <c-rich-text> en NIET <c-list>: dat laatste is NLDD's
+            # interactieve rijenlijst, die scheidingslijnen tekent en geen opsommingstekens.
+            # Voor een opsomming in lopende tekst is rich-text het component - dat rendert
+            # gewone <ul>/<ol>/<li> met de bullets die erbij horen. En het moet rich-text
+            # zijn en niet <c-paragraph>: die wikkelt zijn inhoud in een <p>, en een lijst
+            # in een alinea is geen geldige HTML.
+            items = "".join(f"<li>{item}</li>" for item in bullets)
+            out.append(f"<c-rich-text><ul>{items}</ul></c-rich-text>")
             bullets = []
         if paragraph:
             out.append(f"<c-paragraph>{' '.join(paragraph)}</c-paragraph>")
@@ -164,7 +170,18 @@ def markdown_to_components(source: str, *, icon: str | None = None, color: str |
                 # het nldd_icon-filter dit; hier wordt de markup zelf opgebouwd, en zonder
                 # deze regel kreeg elke uitleg een LEEG icoon boven zijn titel - stil, want
                 # een onbekende naam levert geen fout op.
-                title = f'<c-icon icon="{to_nldd_icon(icon)}" size="xl" color="{color or ""}"/>{title}'
+                #
+                # Het icoon staat NAAST de kop en niet erin: een xl-icoon binnen een
+                # <c-heading> valt over de tekst heen, want een kop legt zijn kinderen niet
+                # naast elkaar. Een cluster doet dat wel.
+                out.append(
+                    f'<c-cluster gap="sm" align="center">'
+                    f'<c-icon icon="{to_nldd_icon(icon)}" size="xl" color="{color or ""}"/>'
+                    f'<c-heading type="h2">{title}</c-heading>'
+                    f"</c-cluster>"
+                )
+                title_done = True
+                continue
             title_done = True
             out.append(f'<c-heading type="h2">{title}</c-heading>')
         elif stripped.startswith("- "):
