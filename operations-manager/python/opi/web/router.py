@@ -20,6 +20,7 @@ from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates_lotc import templates_lotc
+from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
@@ -1609,8 +1610,6 @@ async def project_details(request: Request, project_name: str):
         # niet, en dan hoeft ArgoCD er ook niet voor bevraagd te worden.
         argocd_statuses: dict[str, dict[str, Any]] = {}
         if argocd_available and tab_from_path(request.url.path) == STANDAARD_TAB:
-            from opi.services.argocd_overview import get_project_argocd_statuses
-
             argocd_statuses = await get_project_argocd_statuses(
                 project_name, [name for name in deployment_states if name]
             )
