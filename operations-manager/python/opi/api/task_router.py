@@ -6,6 +6,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_master_api_key
 from opi.api.task_models import TaskResponse, task_response_from_dict
+from opi.api.user_token_auth import (
+    UserTokenError,
+    authorize_claims,
+    extract_bearer_token,
+    verify_user_token,
+)
 from opi.services.project_store import get_project_store
 from pydantic import BaseModel
 
@@ -53,15 +59,53 @@ def _get_task_service(request: Request):
     return task_service
 
 
-def _validate_task_api_key(request: Request, task: dict) -> None:
-    """Validate the API key in the request against the task's project.
+async def _caller_started_this_task(request: Request, task: dict) -> bool:
+    """Whether a valid bearer token belongs to the person who started this task.
 
-    Tasks store project_name, so we look up the project and verify the
-    X-API-Key header matches. Raises HTTPException on failure.
+    Creating a project is the one task whose own API key cannot poll it: the key comes
+    back with the 202, but it is only accepted once the project file exists, which is
+    exactly what the task is still doing. Until then every poll answers 401 and a client
+    has nothing to wait for. The task records who started it (``created_by``), so the
+    token that started it is the honest second key: it says who the caller is, and the
+    task itself says whether that person may follow it.
+
+    Absence of a token is not an error here - the caller may be presenting an API key
+    instead - so this answers False rather than raising.
+    """
+    try:
+        token = extract_bearer_token(request)
+        claims = await verify_user_token(token)
+        user = authorize_claims(claims)
+    except UserTokenError:
+        return False
+
+    created_by = task.get("created_by")
+    return bool(created_by) and created_by == user.get("email")
+
+
+async def _validate_task_access(request: Request, task: dict) -> None:
+    """Validate that this caller may see this task.
+
+    Two ways in, in this order:
+
+    1. The project's own ``X-API-Key``. Tasks store ``project_name``, so we look up the
+       project and compare.
+    2. An ``Authorization: Bearer`` token belonging to the person who started the task.
+       This is what makes a create-project task pollable before its project exists.
+
+    Raises HTTPException on failure.
     """
     api_key = request.headers.get("X-API-Key")
     if not api_key:
-        raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
+        if await _caller_started_this_task(request, task):
+            return
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Authentication required - provide X-API-Key header, or the Bearer token "
+                "of the user who started this task"
+            ),
+        )
 
     project_name = task.get("project_name")
     if not project_name:
@@ -69,6 +113,11 @@ def _validate_task_api_key(request: Request, task: dict) -> None:
 
     project = get_project_store().get(project_name)
     if not project or not secrets.compare_digest(project.api_key, api_key):
+        # A create-project task holds a key that is not accepted yet: the project it
+        # belongs to is still being written. The bearer token of whoever started it is
+        # the way to follow it in the meantime.
+        if await _caller_started_this_task(request, task):
+            return
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
@@ -97,6 +146,11 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
     Requires the project's API key (X-API-Key header). The task's
     project_name is validated against the key to prevent unauthorized access.
 
+    One task cannot be followed that way: the one that creates a project. Its key
+    only starts working once the project file it is writing exists, so this route
+    also accepts ``Authorization: Bearer <SSO access token>`` from the user who
+    started the task - the same token that was used to create the project.
+
     Returns 202 with Location and Retry-After headers while the task is
     in progress (pending, claimed, or running), and 200 when the task
     reaches a terminal state (completed, failed, or cancelled).
@@ -116,7 +170,7 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
             logger.info("Task not found: %s", task_id)
             raise HTTPException(status_code=404, detail="Task not found")
 
-    _validate_task_api_key(request, task)
+    await _validate_task_access(request, task)
 
     response_body = task_response_from_dict(task)
     status = task.get("status", "")
@@ -205,7 +259,7 @@ async def cancel_task(request: Request, task_id: str) -> JSONResponse:
         logger.info("Cannot cancel task %s: not found", task_id)
         raise HTTPException(status_code=404, detail="Task not found")
 
-    _validate_task_api_key(request, task)
+    await _validate_task_access(request, task)
 
     if task.get("status") != "pending":
         logger.info("Cannot cancel task %s: status is %s", task_id, task.get("status"))
