@@ -38,3 +38,5 @@ If a PR changes an endpoint, a project-file write, or a UI/wizard flow without a
 A single lint error, type error, or failing touched-test is **red → rework**, never approve. Do not wave red checks through as "non-blocking" or "minor": if it isn't green, it isn't mergeable.
 
 Genuine improvements that are **not** defects (nice-to-haves, future refactors, follow-up ideas) may be left as suggestions on the PR without blocking — that is the *only* thing "non-blocking" covers. It never covers something that is actually broken or red.
+
+- **Wachten is geen werk.** Zie de regel in `build.md`: wacht op de voorwaarde, niet op de klok. Een `sleep 300` kost vijf minuten ook als het na tien seconden klaar was. Gebruik `until <check>; do sleep 5; done`, of de wachtfuncties die er al zijn (`kubectl wait`, `kubectl rollout status`, `wait_for_task()`). Een time-out is een vangnet en geen wachtmethode: eindigt jouw wachten altijd op de time-out, dan wacht je niet maar gok je.
