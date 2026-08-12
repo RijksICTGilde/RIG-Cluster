@@ -574,8 +574,21 @@ on the caller's side.
 
 ### Restore a Database
 
+The four `target_database_*` fields are optional. Omit them all and the restore goes
+into the database of the project the API key belongs to: OPI reads those credentials
+from the deployment secret in the project's own namespace, because they are injected
+into the project's pods and are published by no API. Supply all four to restore into
+an external database. Supplying only some of them is answered with 422 naming the
+fields that are missing — OPI does not guess the rest.
+
 ```bash
-# Restore latest snapshot
+# Restore the latest snapshot into the project's OWN database (no credentials needed)
+curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Restore latest snapshot into an external database
 curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
@@ -605,7 +618,13 @@ curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project
 - `namespace`: Kubernetes namespace for the restore pod
 - `reference_name`: Logical name of the database backup to restore
 - `snapshot_id`: Optional specific snapshot ID (default: latest)
-- `target_database_*`: Connection parameters for the target database
+- `target_database_*`: Connection parameters for the target database. Optional as a
+  group: omit `target_database_host`, `target_database_name`, `target_database_user`
+  and `target_database_password` to restore into the project's own database. A partial
+  set is a 422. `reference_name` decides which deployment's database that is: it is
+  either a component service reference (`{deployment}-postgresql`) or the
+  deployment-wide fallback (`{deployment}-database`). An unknown reference, or a
+  database that is not provisioned yet, answers 404.
 
 ### Database Backup Response
 
@@ -643,8 +662,17 @@ S3 credentials alone can't decrypt them.
 
 ### Restore a Bucket
 
+The four target fields are optional, exactly as for databases: omit them all and the
+restore goes into the bucket of the project the API key belongs to.
+
 ```bash
-# Restore latest snapshot
+# Restore the latest snapshot into the project's OWN bucket (no credentials needed)
+curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Restore latest snapshot into an external bucket
 curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
@@ -674,7 +702,9 @@ curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/m
 - `namespace`: Kubernetes namespace for the restore pod
 - `reference_name`: Logical name of the bucket backup to restore
 - `snapshot_id`: Optional specific snapshot ID (default: latest)
-- `target_minio_endpoint`: Target MinIO endpoint URL
+- `target_minio_endpoint`: Target MinIO endpoint URL. This field and the three below
+  are optional as a group: omit them all to restore into the project's own bucket; a
+  partial set is a 422 naming what is missing
 - `target_bucket_name`: Target bucket name (can be different from source)
 - `target_access_key`: Target MinIO access key
 - `target_secret_key`: Target MinIO secret key
