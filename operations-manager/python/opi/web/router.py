@@ -821,13 +821,26 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
     healthy = health_counts.get("Healthy", 0)
     disabled = health_counts.get("Disabled", 0)
     inactive = health_counts.get("Inactive", 0)
-    if not (healthy or disabled or inactive):
+    unknown = health_counts.get("Unknown", 0)
+    if not (healthy or disabled or inactive or unknown):
         return None
 
-    if not disabled and not inactive:
+    total = sum(health_counts.values())
+
+    # "Alle" mag alleen staan als het er ook echt alle zijn. Hier stond
+    # `if not disabled and not inactive`, en die tak sloeg dus ook aan met projecten in een
+    # VIERDE toestand: Unknown, wat een project is dat geen enkele deployment met een status
+    # heeft. Gevolg: bij twee gezonde en een leeg project stond er "Alle 2 projecten zijn
+    # gezond" terwijl het er drie waren. De voorwaarde toetst nu het totaal, dus elke
+    # toestand die er later bij komt valt vanzelf in de eerlijke tak.
+    if healthy == total:
         heading = "Het project is gezond" if healthy == 1 else f"Alle {healthy} projecten zijn gezond"
         return {"kind": "success", "heading": heading, "lines": []}
 
+    # Elke toestand krijgt zijn eigen regel, in eigen woorden: uitgeschakeld blijft uit tot
+    # iemand het aanzet, slapend komt vanzelf terug, en onbekend betekent dat er niets
+    # draait om iets over te zeggen. Een gedeelde grijze regel voor alle drie zou de lezer
+    # niet vertellen of hij iets moet doen.
     lines: list[str] = []
     if disabled:
         lines.append(
@@ -837,9 +850,13 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
     if inactive:
         lines.append(
             f"{inactive} project{'' if inactive == 1 else 'en'} "
-            f"{'heeft' if inactive == 1 else 'hebben'} een deployment die tijdelijk niet actief is"
+            f"{'heeft' if inactive == 1 else 'hebben'} een slapende deployment"
         )
-    total = sum(health_counts.values())
+    if unknown:
+        lines.append(
+            f"{unknown} project{'' if unknown == 1 else 'en'} "
+            f"{'heeft' if unknown == 1 else 'hebben'} nog geen deployment die iets draait"
+        )
     # Vier gevallen, want "0 van de 1 projecten zijn gezond" is op drie manieren fout:
     # het telwoord voor een enkelvoud, het meervoud "projecten", en het werkwoord.
     if total == 1:
