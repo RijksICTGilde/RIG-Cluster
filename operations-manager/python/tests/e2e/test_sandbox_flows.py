@@ -51,14 +51,21 @@ _RUNNABLE_IMAGE = RUNNABLE_IMAGE
 
 
 def test_version_endpoint(sandbox_url: str) -> None:
-    """The public /version endpoint reports which build is running (commit/branch/dirty)."""
+    """The public /version endpoint reports which build is running, and which pod answered.
+
+    ``pod`` and ``image`` are what make two different commits across two calls readable as
+    a rollout instead of as a failed build, so their presence is part of the contract. Their
+    values are logged, not asserted: they are filled from the downward API and the pod spec,
+    and a sandbox deployed with a bare ``kubectl set image`` (the session helper) does not
+    carry the POD_NAME env from the kustomize base. Empty there is a deploy path, not a bug.
+    """
     with httpx.Client(verify=_API_VERIFY_SSL, timeout=30.0) as client:
         response = client.get(f"{sandbox_url}/version")
     assert response.status_code == 200, response.text
     info = response.json()
-    for key in ("name", "version", "commit", "branch", "build_date", "dirty"):
+    for key in ("name", "version", "commit", "branch", "build_date", "dirty", "pod", "image"):
         assert key in info, f"missing '{key}' in /version response: {info}"
-    logger.info("Sandbox is running build: %s", info)
+    logger.info("Sandbox is running build: %s (pod=%s, image=%s)", info, info["pod"], info["image"])
 
 
 @pytest.fixture(scope="module")
