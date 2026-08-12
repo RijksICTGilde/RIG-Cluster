@@ -512,3 +512,68 @@ over de API opvraagbaar is. Dat is een echte verruiming, en wij vragen er niet o
 ### Antwoord
 
 <!-- ruimte voor RIG-Cluster -->
+
+---
+
+## 8. Twee refreshes over elkaar heen: samengevoegd, en is dat veilig?
+
+Playbook 04 doet dit sinds vandaag bewust, en het gedrag verraste ons positief. De vraag is
+of we erop mogen bouwen.
+
+```sh
+TA=$(zad --no-wait project refresh -o json | jq -r .task_id)
+# ... terwijl TA loopt, een wijziging opslaan zonder uitrol ...
+TB=$(zad --no-wait project refresh -o json | jq -r .task_id)
+test "$TA" = "$TB"     # klopt: hetzelfde task_id
+```
+
+De tweede refresh start dus geen tweede taak en breekt de eerste niet af; hij levert de
+lopende op. Wat wij vervolgens maten: de wijziging die **na** de start van TA werd opgeslagen
+(een component toevoegen en koppelen, met `--no-rollout`) was na afloop wel degelijk
+uitgerold. Het component had een adres en antwoordde 200, en `project pending` stond op 0.
+
+**Onze vraag:** is dat gegarandeerd, of hadden wij geluk met de timing? Concreet: leest de
+lopende taak het projectbestand opnieuw, of bestaat er een venster waarin een wijziging die
+net te laat komt stilzwijgend buiten die refresh valt terwijl `pending` op 0 gaat? Van
+buitenaf is dat verschil niet te zien, en dat is precies het soort fout dat pas opvalt als
+iemand zich afvraagt waarom zijn wijziging niet live is.
+
+Is het gegarandeerd, dan is dit een prettige eigenschap die wij graag documenteren. Is het
+dat niet, dan willen wij weten waar het venster zit.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
+
+---
+
+## 9. Een restore naar een onbereikbare doelhost is een 500 zonder categorie
+
+Klein, maar het raakt CI/CD.
+
+```sh
+curl -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"target_database_host":"doel.invalid","target_database_name":"d",
+       "target_database_user":"u","target_database_password":"g"}' \
+  "$BASE/v1/restore/database/sandboxed-local/rig-$P/backup?project_name=$P"
+# HTTP 500
+# {"status":"failed","message":"Failed to restore database backup: Restore pod failed.
+#   Logs: ... psql: error: could not translate host name \"doel.invalid\" to address ..."}
+```
+
+De pod-logs zijn uitstekend: daar staat precies wat er misging. Maar de statuscode is 500 en
+er zit geen `ErrorCategory` bij, terwijl de oorzaak de invoer van de aanroeper is: een
+hostnaam die niet resolvet.
+
+Bij ons betekent dat exit code 2, "platform, probeer later opnieuw". Voor een pijplijn is dat
+het verkeerde signaal: die blijft een typefout in `--target-host` opnieuw proberen. Wij
+kennen die code toe op de statuscode, en wij gaan niet raden op de tekst van een logregel —
+dat is precies wat wij bij punt 1 fout deden.
+
+**Onze vraag:** kan een restore die faalt op de door de aanroeper opgegeven bestemming een
+4xx worden, of anders een `ErrorCategory` meekrijgen? Eén van beide is genoeg; dan zeggen wij
+"jouw invoer" en exit 1.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
