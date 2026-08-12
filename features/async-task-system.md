@@ -394,6 +394,23 @@ POST /api/tasks                    -- Create task directly (used by federation, 
 
 Clients use the HTTP status code to decide whether to keep polling: `202` means retry, `200` means done (check `status` for success vs failure).
 
+### Who may poll a task
+
+`GET /api/tasks/{task_id}` and `POST /api/tasks/{task_id}/:cancel` accept two credentials:
+
+1. The **project's `X-API-Key`**, compared against the project the task belongs to. This is the
+   normal path.
+2. An **`Authorization: Bearer <SSO token>`** whose email equals the task's `created_by`.
+
+The second exists for exactly one case: `POST /api/v2/projects` returns the new project's API key
+with its `202`, but that key is only accepted once the project file exists - which is what the task
+is still doing. Without a second way in, a client that just created a project has nothing to poll
+and no signal to wait for. The task records who started it, so that person's token is that signal.
+
+A valid token says who the caller is, not that the task is theirs: a task without `created_by`
+cannot be opened with any token, and another user's token is refused. See
+`opi/api/task_router.py::_validate_task_access` and `tests/test_task_router.py::TestGetTaskWithBearerToken`.
+
 ### Response Format
 
 **In-progress** (returns `202`):
