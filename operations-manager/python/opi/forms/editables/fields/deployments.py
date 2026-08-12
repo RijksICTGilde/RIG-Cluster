@@ -15,6 +15,8 @@ from opi.forms.editables.validators import (
     PathValidator,
 )
 from opi.services.catalog.publish_on_web.editables import (
+    DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
+    DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
     DOMAIN_BASE_DOMAIN_EDITABLE,
     DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
     DOMAIN_FORMAT_EDITABLE,
@@ -191,28 +193,15 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
     ],
 )
 
-# Per-deployment publish-on-web TLS override. Empty value = "erven" (no override):
-# resolution falls back to the component/root setting. Stored under
-# ``services.publish-on-web.config`` on the deployment component (services is a map;
-# this sits next to the system revision-map entries). See
-# features/publish-on-web-tls-modes.md.
-DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/services/publish-on-web/config/tls",
-    values_provider="PublishTlsOverrideOptionsProvider",
-    remove_when_none=True,
-)
-
-DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/services/publish-on-web/config/attachment",
-    values_provider="AttachmentOptionsProvider",
-    remove_when_none=True,
-    depends_on="deployments[*]/components[*]/services/publish-on-web/config/tls",
-    show_when={"value": ["provided"]},
-)
-
 # Focused, read-only-component sequence for the domain wizard's per-component TLS step.
 # Reuses the deployment-components path; the reference is shown read-only (you only pick
 # the TLS mode here, you do not add/remove components).
+#
+# The two override fields it shows are publish-on-web's, declared in the service package
+# (RC-78) and imported here rather than defined a second time. They used to be written out
+# in this module, which is why they existed on this step only: the deployment form gathers
+# the deployment-component layer from the registry, and a field the service never declared
+# could not arrive there.
 DEPLOYMENT_CERT_COMPONENTS_SEQ_EDITABLE = Editable(
     yaml_path="deployments[*]/components",
     min_items=0,

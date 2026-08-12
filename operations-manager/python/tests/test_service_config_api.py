@@ -374,8 +374,10 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "persistent-storage": ["component"],
     "platform": [],
     "postgresql-database": ["project"],
-    # RC-60: the web address is deployment-level config of this service.
-    "publish-on-web": ["component", "deployment"],
+    # RC-60: the web address is deployment-level config of this service. RC-78: the
+    # certificate is overridable per component per deployment, so that layer is now an
+    # API target too -- the model always accepted it, only the declaration was missing.
+    "publish-on-web": ["component", "deployment", "deployment-component"],
     "redis": ["project"],
     "resource-tuning": [],
     "sleep-mode": ["project"],
