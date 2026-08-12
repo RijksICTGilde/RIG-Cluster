@@ -36,6 +36,9 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 _API_VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
 _USER_EMAIL = os.environ.get("E2E_SANDBOX_USER", "admin@sandbox.rijksapp.dev")
 
+#: De dienstconfig die de wizard achterliet, vastgelegd door de fixture. Zie daar waarom.
+_WIZARD_STAND: dict[str, dict] = {"redis": {}, "minio-storage": {}}
+
 
 def _select_service(page: Page, name: str) -> None:
     checkbox = page.locator(f"input[name='services[]'][value='{name}']").first
@@ -115,6 +118,13 @@ def config_project(sandbox_context: BrowserContext, sandbox_url: str, forgejo: F
             page.close()
     if not name or not api_key:
         pytest.fail(f"create wizard did not complete after retries: {last_error}")
+    # De stand ZOALS DE WIZARD HEM ACHTERLIET, hier vastgelegd. Er is per dienst een
+    # config, dus elke schrijfactie van een van de andere tests in deze module VERVANGT
+    # hem: ``test_redis_config_modal_saves_to_the_project_file`` zet ``acl-key-prefix``
+    # juist weer aan. Wie daarna nog naar de stand van de wizard zoekt, meet de volgorde
+    # waarin pytest draait (en die is willekeurig). Vandaar deze momentopname.
+    _WIZARD_STAND["redis"] = _service_config(forgejo, name, "redis")
+    _WIZARD_STAND["minio-storage"] = _service_config(forgejo, name, "minio-storage")
     try:
         yield name
     finally:
@@ -143,8 +153,11 @@ def _wait_for_config(forgejo: ForgejoClient, project_name: str, service: str, ke
 def test_wizard_wrote_both_configs(config_project: str, forgejo: ForgejoClient) -> None:
     # Both settings were unreachable before RC-25; the wizard walk set them, so the file
     # must now carry exactly what was ticked (and unticked).
-    assert _service_config(forgejo, config_project, "redis").get("acl-key-prefix") is False
-    assert _service_config(forgejo, config_project, "minio-storage").get("enable-versioning") is True
+    #
+    # Op de momentopname uit de fixture en niet op het bestand van NU: zie daar.
+    del config_project, forgejo
+    assert _WIZARD_STAND["redis"].get("acl-key-prefix") is False
+    assert _WIZARD_STAND["minio-storage"].get("enable-versioning") is True
 
 
 def test_configure_button_opens_redis_config_modal(
