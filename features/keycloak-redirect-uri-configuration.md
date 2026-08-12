@@ -6,6 +6,16 @@ Configure custom redirect URIs for Keycloak clients, such as localhost URLs for 
 
 ## How to Use
 
+### In the portal
+
+**Keycloak configuratie -> Extra redirect URI's** on the project's service configuration.
+Add one row per URI.
+
+> The field was registered on the section but missing from its layout, so it never rendered
+> and every save wrote an empty list over whatever was there (RC-79). Both halves are now
+> in place, and `tests/test_service_config_layout_coverage.py` fails for any service whose
+> editables and layout drift apart again.
+
 ### Adding Localhost URLs for Development
 
 Add `additional_redirect_uris` to your project's Keycloak configuration:
@@ -32,6 +42,9 @@ deployments:
 ### Configuration Options
 
 - `additional_redirect_uris` - List of additional redirect URIs
+  - `additional-redirect-uris` (hyphenated) is read as well, so the config block can use one
+    spelling throughout. Neither form is rewritten on disk; existing files stay as they are
+    and the API keeps naming `additional_redirect_uris`.
   - Must be a YAML list
   - Each URI should include protocol and `/*` wildcard suffix
   - Commonly used for localhost URLs during local development
