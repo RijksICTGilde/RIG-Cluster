@@ -32,7 +32,12 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers import sandbox_api, service_config
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, read_api_key_with_retry
-from tests.e2e.helpers.wizard import WizardHelper, veldbesturing, veldbesturing_eindigend_op
+from tests.e2e.helpers.wizard import (
+    WizardHelper,
+    veldbesturing,
+    veldbesturing_eindigend_op,
+    voeg_reeksitem_toe,
+)
 
 if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Page
@@ -86,7 +91,7 @@ def _keycloak_client_names(forgejo: ForgejoClient, project_name: str) -> list[st
 def _add_wizard_invite(page: Page) -> None:
     """On the invite config step: add one item and fill its key + contact, then continue."""
     # Add a row (create-wizard context: the button triggers an HTMX form re-render).
-    page.locator("button:has-text('Item toevoegen'), a:has-text('Item toevoegen')").last.click()
+    voeg_reeksitem_toe(page, "active")
     page.wait_for_load_state("networkidle")
     # Op de BESTURING en niet op [name$=...]: zie veldbesturing_eindigend_op.
     veldbesturing_eindigend_op(page, "active[0]/key").first.fill(_WIZARD_KEY)

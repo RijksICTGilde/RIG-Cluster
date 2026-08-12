@@ -34,6 +34,10 @@ _AGE_ARMOR = "-----BEGIN AGE ENCRYPTED FILE-----"
 #: Distinctive enough that finding it anywhere in the repo is unambiguous.
 _SECRET = "rc55-plaintext-must-never-appear"
 
+#: Een geldige aliaswaarde: een verwijzing naar een platformvariabele die de platformlaag
+#: kent (``known_variable_names``). Zonder verwijzing weigert de dienst de schrijfactie.
+_REFERENTIE = "$DATABASE_DB"
+
 
 @pytest.fixture(scope="module")
 def values_project(sandbox_context, sandbox_url: str, forgejo: ForgejoClient):
@@ -92,39 +96,39 @@ def test_env_vars_round_trip_on_the_component(values_project, sandbox_url: str, 
     )
 
 
-def test_aliases_keep_readable_names_and_refuse_a_value_without_a_reference(
+def test_aliases_are_encrypted_per_value_with_readable_names(
     values_project, sandbox_url: str, forgejo: ForgejoClient
 ) -> None:
     """The other storage shape, op de laag die aliassen als enige hebben.
 
-    Deze test eiste dat elke aliaswaarde AGE-versleuteld in het bestand stond, met
-    ``_SECRET`` als waarde. Dat kan niet meer, en met opzet: een alias IS een verwijzing
-    naar een platformvariabele (``validate_alias_value``), een waarde zonder ``$VAR``
-    wordt geweigerd, en een verwijzing is de koppeling zelf en dus geen geheim
-    (``owned_value_is_secret``). Gemeten op de sandbox gaf de oude vorm een 422 met precies
-    die uitleg. Wat de vangrail nu bewaakt is wat er WEL geldt: de namen blijven leesbaar,
-    elke waarde staat op zichzelf in het bestand, en een waarde zonder verwijzing komt er
-    niet in.
+    De waarden zijn hier VERWIJZINGEN (``$DATABASE_DB``) en geen los verzonnen tekst.
+    Dat is geen detail van de test maar de regel van de dienst: een alias koppelt een
+    eigen naam aan een platformvariabele, en ``validate_alias_value`` weigert sinds RC-79
+    een waarde zonder verwijzing. Met de oude vorm (een willekeurig geheim als waarde)
+    kwam deze test niet verder dan een 422 - hij toetste een vorm die met opzet niet meer
+    mag. De opslagvorm zelf is ongewijzigd en is nog steeds wat hier bewaakt wordt: per
+    waarde versleuteld, met de namen leesbaar in het bestand.
     """
     base = f"/api/v2/projects/{values_project.name}/services/aliases/values/component/web"
 
+    # Twee keer DEZELFDE verwijzing: AGE is niet deterministisch, dus gelijke cijfertekst
+    # zou betekenen dat de map als een blok is versleuteld in plaats van per waarde.
     _call(
         values_project,
         sandbox_url,
         "POST",
         f"{base}?rollout=false",
-        {"values": {"ONE": "$DATABASE_DB", "TWO": "$OIDC_URL"}},
+        {"values": {"ONE": _REFERENTIE, "TWO": _REFERENTIE}},
     )
 
     stored = _component(forgejo, values_project.name).get("aliases")
     assert stored, "the aliases never reached the project file"
     assert sorted(stored) == ["ONE", "TWO"], f"alias names must stay readable: {sorted(stored)}"
-    # Per waarde opgeslagen en niet als een blok: de tweede waarde hoort de eerste niet
-    # te overschrijven of eraan vast te zitten.
-    assert stored["ONE"] == "$DATABASE_DB", f"de verwijzing is onderweg veranderd: {stored['ONE']!r}"
-    assert stored["TWO"] == "$OIDC_URL", f"de verwijzing is onderweg veranderd: {stored['TWO']!r}"
+    assert all(_AGE_ARMOR in str(value) for value in stored.values()), "an alias value is not encrypted"
+    assert stored["ONE"] != stored["TWO"], "identical ciphertext suggests the map was encrypted as one block"
+    assert _REFERENTIE not in str(stored)
 
-    # De harde regel, op de echte schrijfweg: geen verwijzing, geen alias.
+    # De harde regel erbij, op de echte schrijfweg: geen verwijzing, geen alias.
     afgewezen = httpx.request(
         "POST",
         f"{sandbox_url.rstrip('/')}{base}?rollout=false",

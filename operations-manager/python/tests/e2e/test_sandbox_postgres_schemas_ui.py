@@ -21,7 +21,12 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, read_api_key_with_retry
-from tests.e2e.helpers.wizard import WizardHelper, veldbesturing, veldbesturing_eindigend_op
+from tests.e2e.helpers.wizard import (
+    WizardHelper,
+    veldbesturing,
+    veldbesturing_eindigend_op,
+    voeg_reeksitem_toe,
+)
 
 if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Page
@@ -58,7 +63,7 @@ def _schema_postfixes(forgejo: ForgejoClient, project_name: str) -> list[str]:
 
 def _add_wizard_schema(page: Page) -> None:
     """On the schemas step: add one item and fill its postfix, then continue."""
-    page.locator("button:has-text('Item toevoegen'), a:has-text('Item toevoegen')").last.click()
+    voeg_reeksitem_toe(page, "schemas")
     page.wait_for_load_state("networkidle")
     # Op de BESTURING en niet op [name$=...]: dat laatste levert het custom element op
     # en fill() daarop is een harde fout, geen leeg veld.

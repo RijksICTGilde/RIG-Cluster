@@ -122,6 +122,19 @@ def zet_aan(vakje: Locator, aan: bool) -> None:
         vakje.click()
 
 
+def voeg_reeksitem_toe(page: Page, pad_bevat: str = "") -> None:
+    """Druk op "Item toevoegen" van een reeksveld.
+
+    Niet op ``button:has-text('Item toevoegen')``: die knop is een ``<nldd-button>`` dat
+    zijn opschrift in het attribuut ``text`` draagt, dus een tekstselector op een
+    ``<button>`` vindt hem niet en de klik verloopt. Wat hem wel eenduidig aanwijst is
+    zijn eigen aanroep, ``sequenceAdd('<pad>')``; met ``pad_bevat`` is er een reeks uit te
+    kiezen als er meer dan een op de stap staat.
+    """
+    knop = page.locator(f"[onclick*=\"sequenceAdd('\"][onclick*='{pad_bevat}']")
+    knop.last.click()
+
+
 def aanvinkvakjes(page: Page, pad: str) -> Locator:
     """Alle vakjes van de GROEP met dit pad, in de volgorde waarin ze staan.
 
