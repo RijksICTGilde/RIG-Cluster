@@ -227,6 +227,33 @@ def test_de_rij_opent_de_deployment_op_zijn_eigen_tabblad(app_server: str, auth_
     assert not auth_page.locator("#deployment-default").is_visible()
 
 
+def test_de_kiezer_benoemt_de_deployment_die_open_staat(app_server: str, auth_page: Page) -> None:
+    """De kiezer volgt de SERVER.
+
+    De server bepaalt welk paneel open staat (?deployment=<naam>, sinds een rij uit de
+    tabel de ingang is). De kiezer bleef op de eerste optie staan, en dat is twee keer
+    fout: hij benoemt een andere deployment dan er open staat, en een native <select>
+    vuurt geen change als je de al getoonde optie kiest - waardoor 'default' bij twee
+    deployments via de kiezer niet meer te bereiken was.
+
+    Daarom legt deze toets de kiezerwaarde naast het ZICHTBARE paneel, en loopt daarna de
+    weg terug.
+    """
+    auth_page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}?deployment=tweede")
+    _wacht_op_nldd(auth_page)
+
+    kiezer = auth_page.locator("#global-deployment-selector")
+    assert auth_page.locator("#deployment-tweede").is_visible()
+    assert kiezer.input_value() == "tweede", "de kiezer benoemt een andere deployment dan er open staat"
+
+    # En terug: 'default' kiezen verandert de waarde ECHT, dus de change vuurt en het
+    # andere paneel komt tevoorschijn.
+    kiezer.select_option("default")
+    assert auth_page.locator("#deployment-default").is_visible()
+    assert not auth_page.locator("#deployment-tweede").is_visible()
+
+
 def test_zoeken_werkt_via_de_url(app_server: str, auth_page: Page) -> None:
     """Server-side: de URL draagt de keuze, dus het werkt zonder JavaScript en een
     gefilterde lijst is deelbaar."""
