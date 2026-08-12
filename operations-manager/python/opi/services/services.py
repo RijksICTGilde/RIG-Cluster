@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from opi.core.buttons import check_button_variant
 from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
 
 if TYPE_CHECKING:
@@ -37,7 +38,9 @@ class DeploymentAction:
 
     label: str
     icon: str
-    #: ROOS button kind: "primary" | "secondary" | "warning" | "subtle" | ...
+    #: LOTC-knopvariant: "primary" | "secondary" | "warning" | "subtle" | ...
+    #: Het sjabloon zet hem rechtstreeks in ``type``, en het component slaat een woord
+    #: dat het niet kent stil over -- zie ``check_button_variant`` in __post_init__.
     kind: str
     #: Web-route path the POST targets (CSRF handled by the template).
     endpoint: str | None = None
@@ -51,6 +54,7 @@ class DeploymentAction:
     visible: bool = True
 
     def __post_init__(self) -> None:
+        check_button_variant(self.kind, f"DeploymentAction '{self.label}'")
         if bool(self.endpoint) == bool(self.modal_endpoint):
             raise ValueError(f"DeploymentAction '{self.label}' needs exactly one of endpoint / modal_endpoint")
         if self.modal_endpoint and not self.modal_title:

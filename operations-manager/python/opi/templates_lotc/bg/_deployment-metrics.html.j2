@@ -64,7 +64,7 @@
        metrics_scraper/section-deployment.html.j2 het neerzet. Hier stond #metrics-content, en dat
        id bestaat nergens - de tijdvakknoppen deden dus niets. Dezelfde fout stond in het
        roos-origineel en is daar op dezelfde manier gerepareerd. #}
-    <c-button size="xs"
+    <c-button size="sm"
               type="{{ 'primary' if value == active_duration else 'secondary' }}"
               label="{{ label }}"
               hx-get="/projects/details/{{ project_name }}/metrics/{{ deployment.name }}?duration={{ value }}"

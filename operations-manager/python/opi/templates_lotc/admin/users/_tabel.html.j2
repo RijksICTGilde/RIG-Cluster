@@ -40,7 +40,7 @@
                             <form method="post" action="/admin/users/{{ user.id }}/delete"
                                   onsubmit="return confirm('Weet u zeker dat u {{ user.full_name }} wilt verwijderen?');">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                                <c-button label="Verwijderen" size="sm" show-icon="before" icon="trash" type="submit"/>
+                                <c-button label="Verwijderen" size="sm" show-icon="before" icon="trash" html-type="submit" type="warning"/>
                             </form>
                         </c-cluster>
                     </c-td>

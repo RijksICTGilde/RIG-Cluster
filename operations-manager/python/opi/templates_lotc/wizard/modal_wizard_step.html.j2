@@ -93,9 +93,9 @@
                     <c-icon icon="refresh" size="sm"/>Bezig met opslaan&hellip;
                 </span>
                 {% endif %}
-                <c-button type="submit" show-icon="before" icon="file-text" :label="('Verder') if (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) else ('Opslaan')"/>
+                <c-button html-type="submit" type="primary" show-icon="before" icon="file-text" :label="('Verder') if (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) else ('Opslaan')"/>
                 {% else %}
-                <c-button type="submit" label="Volgende" show-icon="after" icon="caret-right"/>
+                <c-button html-type="submit" type="primary" label="Volgende" show-icon="after" icon="caret-right"/>
                 {% endif %}
             </c-cluster>
         </c-cluster>

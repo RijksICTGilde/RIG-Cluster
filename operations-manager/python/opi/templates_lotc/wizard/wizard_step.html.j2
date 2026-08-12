@@ -77,12 +77,12 @@
 
                 {% if steps.is_last %}
                     {% if show_review %}
-                    <c-button type="submit" label="Controleren" show-icon="after" icon="caret-right"/>
+                    <c-button html-type="submit" type="primary" label="Controleren" show-icon="after" icon="caret-right"/>
                     {% else %}
-                    <c-button type="submit" label="Opslaan" show-icon="before" icon="file-text"/>
+                    <c-button html-type="submit" type="primary" label="Opslaan" show-icon="before" icon="file-text"/>
                     {% endif %}
                 {% else %}
-                <c-button type="submit" label="Volgende" show-icon="after" icon="caret-right"/>
+                <c-button html-type="submit" type="primary" label="Volgende" show-icon="after" icon="caret-right"/>
                 {% endif %}
             </c-cluster>
         </c-cluster>

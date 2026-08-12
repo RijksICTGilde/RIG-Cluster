@@ -4,11 +4,15 @@
   Twee naamsverschillen die makkelijk verwarren: onze "kind" (primair, secundair) heet
   in LOTC "type", en het HTML-type submit heet daar "html-type". In de roos-versie zat
   submit in "type" en de soort in "kind".
+
+  Geen size: een verzendknop hoort onder een formulier en draagt dus de standaardmaat.
+  Hier stond size="{{ submit.size }}", een maat die van buiten kwam en die niemand ooit
+  zette - de enige waarde die er ooit uit kwam was de standaard. Zie
+  features/knopmaten.md.
 #}
 <c-button
     html-type="submit"
     type="{{ submit.kind|e }}"
-    size="{{ submit.size|e }}"
     label="{{ submit.label|e }}"
     :show-icon="(submit.icon_position if submit.icon else none)"
     :icon="submit.icon or none"
