@@ -65,7 +65,7 @@
    verzamelt voor web-componenten die hun waarde via ElementInternals leveren (elk
    aanvinkvakje van het thema). Naast htmx en niet naast json-enc, want het geldt voor elk
    htmx-verzoek uit een formulier, ongeacht de codering. Zie features/aanvinkvakje.md. #}
-{% set lotc_head %}<script src="{{ static_url('js/htmx.min.js') }}"></script><script src="{{ static_url('js/form-associated.js') }}"></script><link rel="stylesheet" href="{{ static_url('css/lotc-app.css') }}">{{ scheme_script }}{% block head_extra %}{% endblock %}{% endset %}
+{% set lotc_head %}<script src="{{ static_url('js/htmx.min.js') }}"></script><script src="{{ static_url('js/form-associated.js') }}"></script><script src="{{ static_url('js/htmx-formgedrag.js') }}"></script><link rel="stylesheet" href="{{ static_url('css/lotc-app.css') }}">{{ scheme_script }}{% block head_extra %}{% endblock %}{% endset %}
 
 <c-page title="{{ page_title_value }}" lang="nl" head="{{ lotc_head }}">
 
