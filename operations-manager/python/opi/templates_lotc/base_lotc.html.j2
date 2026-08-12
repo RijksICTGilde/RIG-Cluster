@@ -96,7 +96,7 @@
         {# website-title is de KORTE naam van de site, als link linksboven; Wies zet daar
            "Wies". De volledige zin stond hier eerst en las als een lap tekst in een link.
            De organisatie hoort in logo-title hierboven. #}
-        website-title="ZAD" website-href="/">
+        website-title="Zelfservice Applicatie Deployment (ZAD)" website-href="/">
         <nldd-menu-bar slot="utility" accessible-label="Gebruikersmenu">
 
                     <nldd-menu-bar-item text="Weergave" icon="sun" expandable>
@@ -212,7 +212,10 @@
                <nldd-menu-BAR-item> navigeert WEL gewoon op zijn href. Het is de
                <nldd-menu-item> in een uitklapmenu die dat niet doet (zie bg/projects.html.j2).
                Die twee lijken op elkaar en gedragen zich anders. #}
-            <c-footer>
+            {# GEEN <c-footer> hier: die zit binnen <nldd-page-footer> en dan render je twee
+               voetteksten in elkaar - zichtbaar als het Rijkswapen dat onderaan twee keer
+               staat. De buitenste is de juiste, want die draagt slot="footer" en de
+               1920-grens. Wat hier stond is de INHOUD van onze voettekst; die blijft. #}
                 <c-stack gap="xs">
                     <c-heading type="h2" size="6" label="Platform" />
                     <c-link href="/about" label="Over het platform" />
@@ -237,7 +240,6 @@
                     {% else %}
                         <c-paragraph size="sm">{{ version_label }}</c-paragraph>
                     {% endif %}
-            </c-footer>
             </nldd-container>
     </nldd-page-footer>
 
