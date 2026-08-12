@@ -33,6 +33,55 @@
 
 {% macro deployment_panel(deployment, project, approval_notices={}, user_role='') %}
 {% call panel("Deployment: " ~ deployment.name, "arrow-up-arrow-down") %}
+    {# ---- De stand van deze deployment ------------------------------------------
+
+       Hier stonden twee blokken boven dit paneel: een statuskaart (naam, cluster, de rode
+       melding over uitgeschakelde componenten, Uitgeschakeld/Synced, laatste sync) en dan
+       pas "Deployment: <naam>" met de acties en de inhoud. Dezelfde deployment, twee keer
+       onder elkaar, met de naam er twee keer boven. Ze zijn samengevoegd, met DIT paneel
+       als uitgangspunt omdat het de acties en de inhoud draagt; de statusgegevens staan er
+       nu bovenin.
+
+       De ArgoCD-kant laadt zichzelf, net als voorheen: de volledige diagnose kost een
+       bevraging bij ArgoCD plus een bij kubectl, en die hoort de pagina niet op te houden.
+       Er staat er precies EEN open (switchDeployment toont een deployment tegelijk), dus
+       dit is geen bevraging per rij - de tabel op Overzicht heeft zijn eigen, gebundelde
+       bron. hx-trigger="intersect once" en niet "load", en dat is precies waarom: de
+       verborgen panelen staan op display:none, komen dus nooit in beeld, en halen niets
+       op. Met "load" zou elk paneel op de pagina alsnog zijn eigen bevraging doen.
+
+       De prefix is de KALE deploymentnaam; die houdt de id's van de foutenlijst in de
+       kaart uniek.
+
+       Het cluster stond in de kop van de weggevallen kaart en hoort bij de stand: het
+       zegt WAAR dit draait, en de kaart hieronder meldt alleen iets als dat het cluster
+       van deze instantie is. #}
+    <c-cluster gap="sm" align="center">
+        <c-tag type="default" label="{{ deployment.cluster }}" />
+    </c-cluster>
+
+    {# Wat de DIENSTEN over deze deployment melden (RC-28): slaapstand, uitgeschakeld. Uit
+       het projectbestand en niet uit het cluster, dus dit staat er ook als ArgoCD niets
+       zegt. Stond in een eigen kaart boven het paneel; die kaart is deze regels. #}
+    {% for fact in (deployment_state_facts | default({})).get(deployment.name, []) %}
+        <c-cluster gap="md" align="center">
+            <c-icon icon="info-circle" size="lg" />
+            <c-stack gap="xs">
+                <strong>{{ ServiceAdapter.get_service_definition(ServiceAdapter.get_service_by_value(fact.service)).name }}</strong>
+                <c-paragraph size="sm">{{ fact.summary }}</c-paragraph>
+            </c-stack>
+        </c-cluster>
+    {% endfor %}
+
+    {% if argocd_available | default(false) %}
+        <div id="argocd-{{ deployment.name }}"
+             hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
+             hx-trigger="intersect once"
+             hx-swap="innerHTML">
+            {% include "bg/_argocd-status-skeleton.html.j2" %}
+        </div>
+    {% endif %}
+
     {% if user_role in ['admin', 'owner'] %}
         {% set original_index = project.deployments.index(deployment) %}
         {% set bewerken = "openEditModal('modal-edit-deployment-" ~ original_index ~ "', 'Deployment bewerken - " ~ deployment.name ~ "')" %}

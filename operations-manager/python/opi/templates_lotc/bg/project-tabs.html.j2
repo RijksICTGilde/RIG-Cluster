@@ -18,9 +18,14 @@
 
   WAT ER ANDERS IS DAN DE OUDE PAGINA
 
-  De tabs zijn ECHTE LINKS met een eigen URL (?tab=deployments), waar de oude versie ze in
-  de browser wisselt met switchTab(). Daardoor is een tab deelbaar, werkt de terugknop, en
-  doet de pagina het zonder JavaScript.
+  De tabs zijn ECHTE LINKS met een eigen PAD (/projects/deployments/<naam>), waar de oude
+  versie ze in de browser wisselt met switchTab(). Daardoor is een tab deelbaar, werkt de
+  terugknop, en doet de pagina het zonder JavaScript.
+
+  Het pad en niet ?tab=: een querystring leest als een filter op een pagina, terwijl een
+  tabblad een andere pagina over hetzelfde project is. De oude vorm blijft werken - de
+  route stuurt hem door - zodat een gedeelde link niet doodloopt. De adressen staan in
+  opi/web/lotc_switch.py (PROJECT_TABS, project_tab_url).
 
   De balken voor CPU en geheugen waren eigen div's met een breedte in een style-attribuut
   (usage-bar__fill). Dat is nu c-progress-bar: hetzelfde beeld, met de toegankelijkheid die
@@ -28,7 +33,10 @@
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head, info, explainer %}
-{% from "bg/_section-deployments.html.j2" import deployment_panel %}
+{# "with context": het paneel toont ook de stand die de diensten melden, en dat leest de
+   dienstnaam via ServiceAdapter uit de context. Zonder deze toevoeging ziet een macro
+   alleen zijn eigen argumenten. #}
+{% from "bg/_section-deployments.html.j2" import deployment_panel with context %}
 
 {% block head_extra %}
     {# De gedeelde dialoog: zijn vormgeving (modal.css) en zijn gedrag (edit_modal.js:
@@ -72,7 +80,7 @@
     {# Het kruimelpad zegt waar je bent; de tabbalk zegt alleen welk aanzicht je hebt. #}
     <c-breadcrumbs aria-label="Kruimelpad">
         <c-breadcrumbs-item label="Projecten" href="/projects" />
-        <c-breadcrumbs-item label="{{ project.display_name }}" href="?tab=project" />
+        <c-breadcrumbs-item label="{{ project.display_name }}" href="{{ tabs['project'].url }}" />
         <c-breadcrumbs-item label="{{ tabs[active_tab].label }}" />
     </c-breadcrumbs>
 
@@ -102,7 +110,7 @@
 
     <c-tabs aria-label="Aanzichten van dit project">
         {% for key, tab in tabs.items() %}
-            <c-tab label="{{ tab.label }}" href="?tab={{ key }}" :active="key == active_tab" />
+            <c-tab label="{{ tab.label }}" href="{{ tab.url }}" :active="key == active_tab" />
         {% endfor %}
     </c-tabs>
 
@@ -132,9 +140,9 @@
            De kerncijfers bovenaan zijn nieuw. Ze tonen niets dat er niet al staat: het
            zijn de aantallen van de secties eronder, als ingang. #}
         <c-auto-grid min="200px" gap="md">
-            <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" href="?tab=componenten" />
-            <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" href="?tab=deployments" />
-            <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Services" href="?tab=services" />
+            <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" href="{{ tabs['componenten'].url }}" />
+            <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" href="{{ tabs['deployments'].url }}" />
+            <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Services" href="{{ tabs['services'].url }}" />
             <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
         </c-auto-grid>
 
@@ -147,32 +155,108 @@
             {% endcall %}
         {% endif %}
 
-        {# ---- Deployment Status (section-deployment-status.html.j2) ----------- #}
-        {# De statuskaarten halen zichzelf op, precies zoals op de bestaande pagina:
-           dezelfde URL, dezelfde prefix (de KALE deploymentnaam - het tabblad
-           Deployments gebruikt dep-<naam>, en die twee mogen niet door elkaar lopen
-           omdat de prefix de id's van de foutenlijst uniek houdt), intersect once en
-           hx-swap="innerHTML". Intersect once en niet load: elke kaart kost een
-           ArgoCD-aanroep. #}
-        {% if argocd_available and project.deployments %}
-            {% call panel("Deployment Status", "arrow-up-arrow-down", info_text="ArgoCD synchronisatie en health status per deployment") %}
-                {# Het id staat er zoals op de bestaande pagina: wie vanaf elders naar
-                   #deployment-status linkt komt hier uit. #}
-                <c-auto-grid id="deployment-status" min="260px" gap="md">
-                    {% for deployment in project.deployments | sort(attribute='name') %}
-                        <div id="deployment-status-{{ deployment.name }}"
-                             hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
-                             hx-trigger="intersect once"
-                             hx-swap="innerHTML">
-                            {% include "bg/_argocd-status-skeleton.html.j2" %}
-                        </div>
-                    {% endfor %}
-                </c-auto-grid>
+        {# ---- Deployments (in plaats van section-deployment-status.html.j2) --- #}
+        {# Hier stond "Deployment Status": een kaart per deployment, die elk hun eigen
+           ArgoCD-bevraging deden zodra je ze in beeld kreeg. Dat is een TABEL geworden,
+           met de status erin, en de kaarten zijn weg - niet ernaast, want twee weergaven
+           van dezelfde lijst lopen uiteen.
+
+           De status komt uit een gebundelde bevraging bij het opbouwen van deze pagina
+           (opi/services/argocd_overview.py), dus het lui laden per kaart is niet meer
+           nodig: het waren er N, het is er nu een.
+
+           Het id #deployment-status blijft op de wikkel staan: wie vanaf elders naar dat
+           anker linkt komt nog steeds bij het deploymentblok uit. #}
+        {% if project.deployments %}
+            {% call panel("Deployments", "arrow-up-arrow-down", info_text="Waar dit project draait, met de stand die ArgoCD meldt.") %}
+                <div id="deployment-status">
+                    {% if not argocd_available %}
+                        <c-alert type="info" heading="Deployment status niet beschikbaar">
+                            ArgoCD is niet verbonden. De statuskolom vult zich zodra ArgoCD beschikbaar is.
+                        </c-alert>
+                    {% endif %}
+
+                    {# ---- Zoeken en sorteren -------------------------------------
+                       Zelfde vorm als de projectenlijst: een <form method="get"> zodat het
+                       zonder JavaScript een gewone zoekopdracht is die de pagina herlaadt,
+                       en met htmx alleen #deployments-lijst vervangt. De sorteerkeuze reist
+                       mee in een verborgen veld, zodat zoeken de sortering niet wegvaagt.
+
+                       htmx haalt de PAGINA op en pakt daar #deployments-lijst uit
+                       (hx-select) in plaats van een apart fragmentadres: dan staat er na
+                       het zoeken /projects/details/<naam>?q=... in de adresbalk - precies
+                       wat je wilt delen - en is er geen tweede adres met dezelfde gegevens
+                       dat kan gaan afwijken. #}
+                    {% set tabblad_url = tabs['project'].url %}
+                    {% set huidige_sortering = deployment_sorteringen | selectattr('0', 'equalto', deployment_sort) | map(attribute='1') | first | default('Naam (A-Z)') %}
+                    <form method="get" action="{{ tabblad_url }}"
+                          hx-get="{{ tabblad_url }}"
+                          hx-select="#deployments-lijst"
+                          hx-target="#deployments-lijst"
+                          hx-swap="outerHTML"
+                          hx-trigger="input delay:300ms, search, submit"
+                          hx-push-url="true">
+                        <input type="hidden" name="dsort" value="{{ deployment_sort }}">
+                        {# De toolbar staat er als nldd-markup en niet als <c-toolbar>: dat
+                           component gooit ELK kind weg, ook een kind met een slot, want het
+                           heeft geen standaard-slot. Zo verdween het hele zoekveld. #}
+                        <nldd-toolbar label="Deployments" size="md">
+                            <nldd-toolbar-item slot="start" size="md">
+                                <c-search-field name="q"
+                                                value="{{ deployment_query }}"
+                                                placeholder="Zoek op naam of cluster"
+                                                accessible-label="Zoek een deployment"
+                                                show-search-button
+                                                width="26rem" />
+                            </nldd-toolbar-item>
+
+                            {# De sorteerknop en zijn menu staan als nldd-markup, en de items
+                               dragen hun bestemming twee keer (href EN hx-get): een
+                               <nldd-menu-item> navigeert niet uit zichzelf op zijn href.
+                               Allebei gemeten op de projectenlijst; zie bg/projects.html.j2. #}
+                            <nldd-toolbar-item slot="end" size="md">
+                                <nldd-button variant="secondary" expandable start-icon="sort"
+                                             text="Sorteren: {{ huidige_sortering }}" type="button"
+                                             popup-type="menu" size="md">
+                                    <nldd-menu slot="popup" placement="bottom-end">
+                                        {% for sleutel, label in deployment_sorteringen %}
+                                            {% set sorteer_url = tabblad_url ~ "?dsort=" ~ sleutel ~ ("&q=" ~ deployment_query | urlencode if deployment_query else "") %}
+                                            <nldd-menu-item type="radio" text="{{ label }}"
+                                                            href="{{ sorteer_url }}"
+                                                            hx-get="{{ sorteer_url }}"
+                                                            hx-select="#deployments-lijst"
+                                                            hx-target="#deployments-lijst"
+                                                            hx-swap="outerHTML"
+                                                            hx-push-url="true"
+                                                            {% if sleutel == deployment_sort %}selected{% endif %}></nldd-menu-item>
+                                        {% endfor %}
+                                    </nldd-menu>
+                                </nldd-button>
+                            </nldd-toolbar-item>
+
+                            {# Op een smal scherm schuift de toolbar zijn inhoud naar een
+                               overloopmenu; deze groep is wat daar van sorteren te zien is. #}
+                            <nldd-menu-group slot="overflow" text="Sorteren">
+                                {% for sleutel, label in deployment_sorteringen %}
+                                    {% set sorteer_url = tabblad_url ~ "?dsort=" ~ sleutel ~ ("&q=" ~ deployment_query | urlencode if deployment_query else "") %}
+                                    <nldd-menu-item type="radio" text="{{ label }}"
+                                                    href="{{ sorteer_url }}"
+                                                    hx-get="{{ sorteer_url }}"
+                                                    hx-select="#deployments-lijst"
+                                                    hx-target="#deployments-lijst"
+                                                    hx-swap="outerHTML"
+                                                    hx-push-url="true"
+                                                    {% if sleutel == deployment_sort %}selected{% endif %}></nldd-menu-item>
+                                {% endfor %}
+                            </nldd-menu-group>
+                        </nldd-toolbar>
+                    </form>
+
+                    <div id="deployments-lijst">
+                        {% include "bg/_deployments-lijst.html.j2" %}
+                    </div>
+                </div>
             {% endcall %}
-        {% elif project.deployments %}
-            <c-alert type="info" heading="Deployment status niet beschikbaar">
-                ArgoCD is niet verbonden. Deployment status wordt getoond wanneer ArgoCD beschikbaar is.
-            </c-alert>
         {% endif %}
 
         {# ---- Team & Toegang (section-team.html.j2) --------------------------- #}
@@ -542,19 +626,26 @@
         {% endcall %}
 
     {% elif active_tab == 'deployments' %}
-        {# DIT TABBLAD VOLGT project-details/tab-deployments.html.j2, SECTIE VOOR SECTIE.
+        {# EEN DEPLOYMENT TEGELIJK. Dit tabblad is de DETAILWEERGAVE: je kiest er een, ziet
+           zijn gegevens en kunt hem bewerken. De INGANG is de tabel op Overzicht; een rij
+           daar wijst hierheen met ?deployment=<naam>.
 
-           Dezelfde blokken in dezelfde volgorde: de deploymentkiezer, de stand die de
-           diensten melden, de acties, de ArgoCD-statuskaart, de blokken die de diensten
-           per deployment leveren (backups, metrics), de deploymentlijst zelf, en de
-           omgevingsvariabelen.
+           DE DEPLOYMENTINFORMATIE STOND HIER TWEE KEER: een statuskaart met naam, cluster,
+           de rode melding, Uitgeschakeld/Synced en de laatste sync, en daaronder
+           "Deployment: <naam>" met de acties, de componenten en de publieke links.
+           Tweemaal dezelfde deployment onder elkaar, met de kop tweemaal. Ze zijn
+           SAMENGEVOEGD, met het tweede blok als uitgangspunt - dat draagt de acties en de
+           inhoud - en de statusgegevens staan er bovenin (zie het paneel in
+           bg/_section-deployments.html.j2).
 
-           EEN DEPLOYMENT TEGELIJK, net als op de bestaande pagina. Elk blok dat bij een
-           deployment hoort draagt ``class="deployment-section"`` en zegt met een id
-           (``deployment-<naam>``, ``deployment-actions-<naam>``, ``argocd-<naam>``) of met
+           Elk blok dat bij een deployment hoort draagt ``class="deployment-section"`` en
+           zegt met een id (``deployment-<naam>``, ``deployment-actions-<naam>``) of met
            ``data-deployment`` bij welke het hoort. switchDeployment() wisselt ze; die
-           namen zijn dus geen vormgeving en staan hier letterlijk. Alles behalve de eerste
-           staat op ``is-hidden``.
+           namen zijn dus geen vormgeving en staan hier letterlijk.
+
+           WELKE OPEN STAAT bepaalt de SERVER (``deployment_open``, uit ?deployment=), niet
+           "de eerste". Anders opent een rij uit de tabel het verkeerde paneel zodra er
+           JavaScript uit staat.
 
            De omgevingsvariabelen horen NIET bij een deployment - dat blok toont ze
            allemaal - en staat daarom buiten het wisselen, precies als in het origineel. #}
@@ -570,37 +661,20 @@
 
         {% include "bg/_deployment-selector.html.j2" %}
 
+        {# #deployments-weergave draagt de keuze die de SERVER heeft gemaakt naar de
+           browser. static/js/deployment_switch.js onthoudt de laatst gekozen deployment
+           per project; zonder dit attribuut zou die opgeslagen keuze over de zojuist
+           aangeklikte rij heen gaan. Het attribuut is leeg als er niets gevraagd is - dan
+           blijft de onthouden keuze staan. #}
+        <div id="deployments-weergave" data-deployment-open="{{ deployment_gevraagd | default('') }}">
         <c-stack gap="md">
-            {% include "bg/_deployment-state.html.j2" %}
             {% include "bg/_deployment-actions.html.j2" %}
-
-            {# De ArgoCD-statuskaart per deployment, zoals
-               project-details/section-deployment-argocd.html.j2: dezelfde URL,
-               hx-trigger="intersect once" en hx-swap="innerHTML". Intersect once en niet
-               load: er kunnen tien deployments staan en elke kaart kost een
-               ArgoCD-aanroep, dus ze worden opgehaald zodra je ze in beeld krijgt.
-
-               De prefix is de KALE deploymentnaam. Die prefix maakt de id's van de
-               foutenlijst in de kaart uniek; op de bestaande pagina staan het
-               projecttabblad en het deploymenttabblad in EEN document en is daar
-               dep-<naam> voor nodig, hier is elk tabblad een eigen pagina. #}
-            {% if argocd_available | default(false) and project.deployments %}
-                {% for deployment in project.deployments | sort(attribute='name') %}
-                <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="argocd-{{ deployment.name }}">
-                    <div hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
-                         hx-trigger="intersect once"
-                         hx-swap="innerHTML">
-                        {% include "bg/_argocd-status-skeleton.html.j2" %}
-                    </div>
-                </div>
-                {% endfor %}
-            {% endif %}
 
             {# De blokken die de diensten per deployment leveren (RC-24): de backups, de
                metingen. Een dienst beslist zelf of zijn blok voor deze deployment geldt,
                dus hier staat geen dienstnaam en geen voorwaarde. #}
             {% for deployment in project.deployments | sort(attribute='name') %}
-            <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}"
+            <div class="deployment-section{% if deployment.name != deployment_open %} is-hidden{% endif %}"
                  data-deployment="{{ deployment.name }}">
                 <c-stack gap="md">
                     {% with sections = (deployment_service_sections | default({})).get(deployment.name, []) %}
@@ -610,15 +684,16 @@
             </div>
             {% endfor %}
 
-            {# De deploymentlijst zelf. Het paneel komt uit _section-deployments; de wikkel
-               eromheen is die van de bestaande pagina, want switchDeployment() zoekt op
-               id="deployment-<naam>" - ook om te bepalen of een deployment nog bestaat. #}
+            {# Het paneel per deployment - de statusgegevens EN de inhoud, in een blok. Het
+               komt uit _section-deployments; de wikkel eromheen is die van de bestaande
+               pagina, want switchDeployment() zoekt op id="deployment-<naam>" - ook om te
+               bepalen of een deployment nog bestaat. #}
             {% for deployment in project.deployments | sort(attribute='name') %}
                 {# deployment-card staat erbij omdat section-deployments.html.j2 die klasse draagt:
                    hij bakent EEN deployment af, zodat je de knop van deze te pakken krijgt
                    en niet die van de volgende. Letterlijk overgenomen, net als de id die
                    switchDeployment() gebruikt. #}
-                <div class="deployment-section deployment-card{% if not loop.first %} is-hidden{% endif %}" id="deployment-{{ deployment.name }}">
+                <div class="deployment-section deployment-card{% if deployment.name != deployment_open %} is-hidden{% endif %}" id="deployment-{{ deployment.name }}">
                     {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
                 </div>
             {% else %}
@@ -629,6 +704,7 @@
 
             {% include "bg/_env-vars.html.j2" %}
         </c-stack>
+        </div>
 
     {% elif active_tab == 'metrics' %}
         {# ---- Per deployment: CPU, geheugen, netwerk en disk over de tijd ---------
@@ -656,7 +732,7 @@
         {% if project.deployments %}
             {% include "bg/_deployment-selector.html.j2" %}
             {% for deployment in project.deployments | sort(attribute='name') %}
-                <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}"
+                <div class="deployment-section{% if deployment.name != deployment_open %} is-hidden{% endif %}"
                      data-deployment="{{ deployment.name }}">
                     {% call panel("Metingen - " ~ deployment.name, "chart-x-y-axis-line",
                                   info_text="Verbruik per component over de tijd.") %}
