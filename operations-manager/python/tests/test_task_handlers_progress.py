@@ -104,8 +104,8 @@ class TestHandleDeleteDeployment:
             result = await handle_delete_deployment(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Initializing project manager")
-        progress.add_task.assert_any_call("Deleting deployment resources")
+        progress.add_task.assert_any_call("Projectgegevens ophalen")
+        progress.add_task.assert_any_call("Deployment-resources verwijderen")
         assert progress.complete_task.call_count == 2
         assert result["deletion_results"]["namespace"]["success"] is True
 
