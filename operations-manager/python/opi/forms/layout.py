@@ -279,8 +279,7 @@ class Submit(LayoutElement):
     Attributes:
         label: Button label (i18n key)
         name: Form field name for the button
-        kind: Button style ("primary", "secondary", "danger")
-        size: Button size ("sm", "md", "lg")
+        kind: Button style -- a LOTC button variant ("primary", "secondary", ...)
         icon: Optional icon name
         icon_position: Icon position ("before", "after")
 
@@ -291,7 +290,6 @@ class Submit(LayoutElement):
     label: str = "common.submit"
     name: str = "submit"
     kind: str = "primary"
-    size: str = "md"
     icon: str | None = None
     icon_position: str = "after"
 
