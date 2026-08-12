@@ -21,8 +21,6 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE,
     DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE,
     DEPLOYMENT_COMP_IMAGE_EDITABLE,
-    DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
-    DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
     DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
     DEPLOYMENT_COMP_REFERENCE_EDITABLE,
     DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
@@ -35,6 +33,12 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENTS_SEQUENCE_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.catalog.publish_on_web.visualizers import (
+    DEPLOYMENT_COMP_PUBLISH_ATTACHMENT as PUBLISH_ON_WEB_DEPLOYMENT_COMP_ATTACHMENT,
+)
+from opi.services.catalog.publish_on_web.visualizers import (
+    DEPLOYMENT_COMP_PUBLISH_TLS as PUBLISH_ON_WEB_DEPLOYMENT_COMP_TLS,
+)
 from opi.services.registry import deployment_component_service_visualizers
 
 DEPLOYMENT_NAME = EditableVisualizer(
@@ -230,24 +234,11 @@ DEPLOYMENT_COMP_REFERENCE_READONLY = EditableVisualizer(
     readonly_on_edit=True,
 )
 
-DEPLOYMENT_COMP_PUBLISH_TLS = EditableVisualizer(
-    editable=DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="TLS-modus",
-    help_text=(
-        "Erven = gebruik de instelling van het component. Anders een override voor deze "
-        "deployment: standaard (platform), passthrough (cert op de pod), of aangeleverd "
-        "(eigen cert op de ingress)."
-    ),
-    attributes={"data-rerender": "true"},
-)
-
-DEPLOYMENT_COMP_PUBLISH_ATTACHMENT = EditableVisualizer(
-    editable=DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="Certificaat (bijlage)",
-    help_text="De PEM-bijlage (cert + key) die als certificaat op de ingress komt.",
-)
+# The per-deployment certificate override belongs to publish-on-web and is declared in its
+# package (RC-78), where the deployment form also picks it up from. Re-exported here under
+# the names the domain wizard's certificate step already used.
+DEPLOYMENT_COMP_PUBLISH_TLS = PUBLISH_ON_WEB_DEPLOYMENT_COMP_TLS
+DEPLOYMENT_COMP_PUBLISH_ATTACHMENT = PUBLISH_ON_WEB_DEPLOYMENT_COMP_ATTACHMENT
 
 DEPLOYMENT_CERT_COMPONENTS_SEQ = EditableVisualizer(
     editable=DEPLOYMENT_CERT_COMPONENTS_SEQ_EDITABLE,

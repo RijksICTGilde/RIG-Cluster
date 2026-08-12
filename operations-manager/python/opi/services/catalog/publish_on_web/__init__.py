@@ -268,6 +268,12 @@ class PublishOnWebService(Service):
             from opi.services.catalog.publish_on_web.editables import PUBLISH_ON_WEB_DEPLOYMENT_EDITABLES
 
             return list(PUBLISH_ON_WEB_DEPLOYMENT_EDITABLES)
+        if layer is ConfigLayer.DEPLOYMENT_COMPONENT:
+            from opi.services.catalog.publish_on_web.editables import (
+                PUBLISH_ON_WEB_DEPLOYMENT_COMPONENT_EDITABLES,
+            )
+
+            return list(PUBLISH_ON_WEB_DEPLOYMENT_COMPONENT_EDITABLES)
         if layer is not ConfigLayer.COMPONENT:
             return []
         from opi.services.catalog.publish_on_web.editables import (
@@ -360,6 +366,32 @@ class PublishOnWebService(Service):
         from opi.services.catalog.publish_on_web.visualizers import PUBLISH_ON_WEB_ATTACHMENT, PUBLISH_ON_WEB_TLS
 
         return [PUBLISH_ON_WEB_TLS, PUBLISH_ON_WEB_ATTACHMENT]
+
+    def config_deployment_component_visualizers(self):
+        from opi.services.catalog.publish_on_web.visualizers import (
+            DEPLOYMENT_COMP_PUBLISH_ATTACHMENT,
+            DEPLOYMENT_COMP_PUBLISH_TLS,
+        )
+
+        return [DEPLOYMENT_COMP_PUBLISH_TLS, DEPLOYMENT_COMP_PUBLISH_ATTACHMENT]
+
+    def config_deployment_component_layout(self):
+        from opi.forms.layout import Fieldset
+
+        svc = self.service_type.value
+        # The component's own services list decides whether this component publishes at
+        # all, and that list is not a field of the deployment form -- so the fieldset is
+        # unconditional here and the legend says what it overrides instead.
+        return [
+            Fieldset(
+                legend="Certificaat (alleen voor deze deployment)",
+                description=(
+                    "Standaard volgt deze deployment de instelling van het component. "
+                    "Vul dit alleen in als deze deployment een ander certificaat moet gebruiken."
+                ),
+                children=[f"services/{svc}/config/tls", f"services/{svc}/config/attachment"],
+            )
+        ]
 
     def config_approvals(self, layer: ConfigLayer):
         # A deployment's requested domain / subdomain needs platform-admin approval
