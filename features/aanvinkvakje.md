@@ -119,6 +119,48 @@ velden in een indexlijst (`deployments[0]/...`), niet voor dienstconfig. Sinds R
 `get_merged_data` haalt de gemarkeerde sleutel na het mergen weg; bij het opslaan
 verwijdert `apply_write_paths` hem uit het projectbestand.
 
+## Waar het daarna nog eens misging: de tekenkant
+
+Twee keer htmx en de server, en toch stond er in de schemastap van de wizard een vakje
+AAN ("Markeer voor verwijdering") bij een schema dat `marked-for-deletion: false` heeft.
+Deze keer zat het aan de andere kant: niet in wat er verstuurd wordt, maar in wat er
+getekend wordt.
+
+`editable_to_form_field` (`opi/forms/visualizers/bridge.py`) koos per widget tussen twee
+omzettingen van de opgeslagen waarde:
+
+| omzetting | waarvoor | wat een BooleanConverter oplevert |
+|---|---|---|
+| `read()` | select, text, textarea, radio | `"true"` / `"false"` |
+| `view()` | al het andere | `"Ja"` / `"Nee"` |
+
+Een aanvinkvakje stond in geen van beide lijstjes en viel dus in `view()`. Het sjabloon
+toetst `:checked="field.value"`, en `"Nee"` is een niet-lege tekst. Elk aanvinkvakje met
+een converter stond aan, ongeacht de waarde - ook "Versiebeheer op de bucket" bij minio.
+
+De oplossing staat op dezelfde plek: een aanvinkvakje krijgt een ECHTE boolean, uit
+dezelfde reeks waarden die `BooleanConverter.write()` gebruikt, zodat tonen en opslaan het
+over hetzelfde eens zijn.
+
+```python
+if widget == "checkbox":
+    display_value = raw_value in (True, "true", "on", "yes", "1")
+```
+
+Gemeten in de browser op de schemastap: vóór de reparatie stond het vakje van een verse
+rij aan, erna uit. De toets staat in `tests/forms/test_aanvinkvakje_stand.py`.
+
+## Twee elementen met dezelfde id
+
+Hier hoorde nog een tweede fout bij, die de toetsenbordtest hierboven al liet vallen:
+`[id='<pad>']` leverde er TWEE op. Het `id`-attribuut van `<c-checkbox-field>` landt
+namelijk op de omhulling, en de attribuutbundel (`:attrs`) op het besturingselement - en
+in beide stond het veldpad.
+
+De omhulling draagt nu `<pad>-veld`, het vakje zelf `<pad>`. De omhulling houdt een id
+omdat de component daar zijn hulptekst en foutmelding aan ophangt; die heten daarom
+`<pad>-veld-help` en `<pad>-veld-error`.
+
 ## Het vakje terugvinden
 
 `[id='<pad>']` is de enige selector die precies het vakje oplevert.
@@ -145,7 +187,7 @@ aanvinkvakjes(page, "resource_types")                                          #
 ```
 
 `aanvinkvakjes` matcht op naam EN id: een prefixselector op `<pad>-` pikt ook de hulptekst
-(`<pad>-help`) mee en telt dan een vakje te veel.
+(`<pad>-veld-help`) mee en telt dan een vakje te veel.
 
 De stand lees je van het element: `el.checked`. Niet `is_checked()`, want dat wil een
 `<input>` zien.
@@ -159,6 +201,12 @@ verzendkant zat.
 
 Alles toetste tot nu toe AANzetten. Wat er misging was UITzetten.
 
+`tests/forms/test_aanvinkvakje_stand.py` toetst de tekenkant en de opslagkant zonder
+browser: welke stand het vakje krijgt bij een opgeslagen `false`, `true` en een afwezige
+sleutel, dat er per element één id staat, en dat een schema dat gemarkeerd is dat na
+opslaan nog steeds is (en een ongemarkeerd schema het niet wordt).
+
 ```bash
 uv run pytest tests/e2e/test_aanvinkvakje.py -m "e2e and not sandbox" -q
+uv run pytest tests/forms/test_aanvinkvakje_stand.py -q
 ```
