@@ -52,7 +52,7 @@ class BootstrapManager:
         progress_manager = self.project_manager.get_progress_manager()
         bootstrap_task = None
         if progress_manager:
-            bootstrap_task = progress_manager.add_task("Executing bootstrap API actions")
+            bootstrap_task = progress_manager.add_task("Bootstrap-acties uitvoeren", subject=deployment_name)
 
         try:
             # Build context for variable substitution

@@ -48,7 +48,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     # Step 1: Validation
     # ------------------------------------------------------------------
     validate_task = progress.add_task("Project validatie")
-    progress.update_current_step("Validating project name")
+    progress.update_current_step("Projectnaam controleren")
 
     if not validate_project_name(project_name):
         error_msg = f"Invalid project name format: {project_name}"
@@ -98,7 +98,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     # Step 3: Git operations
     # ------------------------------------------------------------------
     git_task = progress.add_task("Git repository operaties")
-    progress.update_current_step("Pushing project file to Git")
+    progress.update_current_step("Projectbestand naar Git pushen")
 
     try:
         from opi.utils.yaml_util import load_yaml_from_string
@@ -213,8 +213,8 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             "processing": skipped_processing(),
         }
 
-    deploy_task = progress.add_task("Project deployment")
-    progress.update_current_step("Deploying project")
+    deploy_task = progress.add_task("Project uitrollen")
+    progress.update_current_step("Project uitrollen")
 
     # Known ArgoCD cache-invalidation bug: creating a new project invalidates
     # ArgoCD's cache, so its apps can take a few minutes to sync and the sync-wait
@@ -240,7 +240,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
         if processing_result:
             # ArgoCD monitoring
-            monitor_task = progress.add_subtask(deploy_task, "ArgoCD & deployment monitoring")
+            monitor_task = progress.add_subtask(deploy_task, "ArgoCD en de uitrol volgen")
             await _monitor_argocd_and_deployment(
                 _task_id="",  # not used by the monitor helper
                 project_name=project_name,
@@ -329,7 +329,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         # Step 1: Validation
         # ------------------------------------------------------------------
         validate_task = progress.add_task("Deployment validatie")
-        progress.update_current_step("Validating project and deployment names")
+        progress.update_current_step("Project- en deploymentnaam controleren")
 
         if not validate_project_name(project_name):
             error_msg = (
@@ -363,8 +363,8 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 2: Upsert deployment in project YAML
         # ------------------------------------------------------------------
-        upsert_task = progress.add_task("Deployment upsert")
-        progress.update_current_step(f"Upserting deployment '{deployment_name}'")
+        upsert_task = progress.add_task("Deployment aanmaken of bijwerken")
+        progress.update_current_step(f"Deployment '{deployment_name}' aanmaken of bijwerken")
 
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(
@@ -414,8 +414,8 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             succeeded = True
             processing: dict[str, Any] = skipped_processing()
         else:
-            deploy_task = progress.add_task("Deployment processing")
-            progress.update_current_step(f"Processing deployment '{deployment_name}'")
+            deploy_task = progress.add_task("Deployment verwerken")
+            progress.update_current_step(f"Deployment '{deployment_name}' verwerken")
 
             processing_result = await project_manager.process_project_from_git(
                 project_file_relative_path,

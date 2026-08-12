@@ -39,6 +39,18 @@ class Task:
     created_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     completed_at: datetime | None = None
     error: str | None = None
+    subject: str | None = None  # What the step runs for (deployment, component, service)
+
+
+def format_step_line(name: str, subject: str | None) -> str:
+    """The one-line form of a step, for the "current step" sentence.
+
+    The step list keeps name and subject apart so the page can show them apart, but
+    the running line is a single string; there the two are joined. Without this, two
+    deployments doing the same step produce the same sentence twice and the line stops
+    saying anything about where the run is.
+    """
+    return f"{name} - {subject}" if subject else name
 
 
 @dataclass
@@ -88,22 +100,27 @@ class TaskProgressManager:
         _project_managers[project_id] = self
         logger.info(f"Created TaskProgressManager for project {project_name} ({project_id})")
 
-    def add_task(self, name: str) -> str:
-        """Add a task and start it immediately. Returns task ID."""
+    def add_task(self, name: str, subject: str | None = None) -> str:
+        """Add a task and start it immediately. Returns task ID.
+
+        ``subject`` says what the step runs for -- a deployment, component or service
+        name -- for steps that run more than once per project. It is kept next to the
+        name instead of inside it, so the page can show and group them separately.
+        """
         task_id = str(uuid.uuid4())
-        task = Task(id=task_id, name=name, status=TaskStatus.RUNNING)
+        task = Task(id=task_id, name=name, status=TaskStatus.RUNNING, subject=subject)
         self.tasks[task_id] = task
         logger.info(f"Project {self.project_id}: Added task: {name} ({task_id})")
-        self.update_current_step(name)
+        self.update_current_step(format_step_line(name, subject))
         return task_id
 
-    def add_subtask(self, parent_task_id: str, name: str) -> str:
+    def add_subtask(self, parent_task_id: str, name: str, subject: str | None = None) -> str:
         """Add a subtask and start it immediately. Returns subtask ID."""
         subtask_id = str(uuid.uuid4())
-        subtask = Task(id=subtask_id, name=name, status=TaskStatus.RUNNING, parent_id=parent_task_id)
+        subtask = Task(id=subtask_id, name=name, status=TaskStatus.RUNNING, parent_id=parent_task_id, subject=subject)
         self.tasks[subtask_id] = subtask
         logger.info(f"Project {self.project_id}: Added subtask: {name} ({subtask_id}) under {parent_task_id}")
-        self.update_current_step(name)
+        self.update_current_step(format_step_line(name, subject))
         return subtask_id
 
     def update_task(self, task_id: str, message: str) -> None:

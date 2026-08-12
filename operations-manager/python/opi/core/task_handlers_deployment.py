@@ -108,7 +108,7 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     logger.info(f"Task: deleting deployment {project_name}/{deployment_name}")
 
     # Task 1: Initialize project manager
-    init_task = progress.add_task("Initializing project manager")
+    init_task = progress.add_task("Projectgegevens ophalen")
 
     from opi.manager.project_manager import create_project_manager
 
@@ -116,7 +116,7 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     progress.complete_task(init_task)
 
     # Task 2: Delete deployment resources
-    delete_task = progress.add_task("Deleting deployment resources")
+    delete_task = progress.add_task("Deployment-resources verwijderen")
     try:
         deletion_results = await project_manager.delete_deployment(project_name, deployment_name, force=True)
 
