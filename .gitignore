@@ -68,3 +68,6 @@ secrets-overview-*.yaml
 
 # Sleutelmateriaal hoort nooit in de repo.
 *agekey*.txt
+
+# De ingelogde sessie van scripts/kijk_sandbox.py: koekjes, hoort niet in git.
+operations-manager/python/scripts/.sandbox-sessie.json
