@@ -17,14 +17,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import BaseModel
-
 from opi.core.project_schema import validate_project_schema
 from opi.manager.project_manager import ProjectManager
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter, ServiceValidationError, service_entry_name
 from opi.services.services_enums import ServiceType
+from pydantic import BaseModel
 
 #: The recorded decision, per service (features/impliciete-dienstselectie.md). A service
 #: that may enrol itself is a deliberate entry in this set; everything else is the safe
