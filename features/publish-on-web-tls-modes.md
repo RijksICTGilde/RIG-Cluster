@@ -71,6 +71,20 @@ The same config can appear at, in increasing precedence:
 
 **Resolution: deployment-component > component > root > built-in `standard`.**
 
+The winning level supplies the **whole** block, mode *and* certificate, not a merge of
+the levels. Two consequences worth knowing before you set an override:
+
+- an override can switch `provided` **off**: `tls: standard` on a deployment component
+  really does put that deployment back on the platform certificate, even when the
+  component supplies its own;
+- an override to `provided` must name its **own** `attachment`; the component's is not
+  inherited along with a mode the override replaced. The model refuses `provided`
+  without one.
+
+Leaving the override empty is not "no TLS" -- it means "follow the component", and it is
+also how you remove an override: emptying the field deletes the whole `publish-on-web`
+key from the deployment component rather than storing an empty value.
+
 The per-deployment variation of the *certificate itself* (which file) is handled by
 the attachment (base + per-deployment attachment override), not by the mode.
 
@@ -89,6 +103,27 @@ passthrough.
 alongside `services.attachments.config`); at root/component it rides the generic
 service-entry and is validated in Python.
 
+## Where you set it (per deployment)
+
+Two places, one definition. The fields are declared once by the service
+(`opi/services/catalog/publish_on_web/editables.py`, layer `DEPLOYMENT_COMPONENT`) and
+every form that shows the deployment-component layer picks them up from the registry
+hook (`deployment_component_service_visualizers()`):
+
+- **Deployment bewerken** (`modal-edit-deployment-<n>`): per component, in the fieldset
+  "Certificaat (alleen voor deze deployment)", next to image and environment variables.
+- **Webadres bewerken** (`modal-edit-domain-<n>`), step 2 "Certificaten per component":
+  the same two fields on a read-only component list.
+
+The TLS select leads with an inherit option that **names the mode it would fall back
+to** ("Erven van het component: standaard certificaat ..."), so an empty field reads as
+an inheritance rather than as an absence.
+
+Adding a deployment-component field for another service needs no change to any form: the
+service declares `config_editables(ConfigLayer.DEPLOYMENT_COMPONENT)`,
+`config_deployment_component_visualizers()` and `config_deployment_component_layout()`,
+and the deployment form gathers it.
+
 ## Status
 
 - **Done**: `passthrough` at the component level + cert suppression + the inline
@@ -102,6 +137,10 @@ service-entry and is validated in Python.
   ingress uses it via `tls.secretName` with cert-manager suppressed. PEM validation
   (>=1 certificate + exactly one private key). Reuses the binary-secret template
   (`secret_k8s_type`).
+- **Done (RC-78)**: the per-deployment override is declared by the service at the
+  `DEPLOYMENT_COMPONENT` layer, so it also appears in **Deployment bewerken** and not only
+  in the domain wizard's certificate step; the inherit option names the inherited mode.
+  The forms layer no longer defines these fields itself.
 - **Next / derivable now**: the same per-component step in the Create wizard (after the
   web address step), writing the component-level definition.
 - **Deferred**: a MetalLB `type: LoadBalancer` service for FSC raw-TCP / port 8443.
