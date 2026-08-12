@@ -20,6 +20,7 @@ from opi.forms.editables.fields.components import (
     COMPONENT_IMAGE_EDITABLE,
     COMPONENT_NAME_EDITABLE,
     COMPONENT_PATH_MATCH_EDITABLE,
+    COMPONENT_PATH_REWRITE_EDITABLE,
     COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
     COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
 )
@@ -61,9 +62,18 @@ ADD_COMPONENT_VALIDATORS: dict[str, Editable] = {
     "name": COMPONENT_NAME_EDITABLE,
     "image": COMPONENT_IMAGE_EDITABLE,
     "path": _optional(COMPONENT_PATH_MATCH_EDITABLE),
+    "rewrite": COMPONENT_PATH_REWRITE_EDITABLE,
     "cpu_limit": COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
     "memory_limit": COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
     "env_vars": COMPONENT_USER_ENV_VARS_EDITABLE,
+}
+
+#: The partial update of a component. Same two editables as the add side, so a path or
+#: a rewrite is judged by one rule no matter which endpoint writes it; both are optional
+#: here because a PATCH only carries the fields it changes.
+UPDATE_COMPONENT_VALIDATORS: dict[str, Editable] = {
+    "path": _optional(COMPONENT_PATH_MATCH_EDITABLE),
+    "rewrite": COMPONENT_PATH_REWRITE_EDITABLE,
 }
 
 ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS: dict[str, Editable] = {
