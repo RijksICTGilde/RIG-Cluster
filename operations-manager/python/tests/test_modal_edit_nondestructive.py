@@ -7,19 +7,34 @@ intended field changed while everything else is preserved.
 
 This catches the class of bug where a flow does not declare its target,
 causing the save to replace the entire project.
+
+De dienstLAAG stond hier niet in, en dat is precies waarom dezelfde klasse fout daar
+opnieuw kon ontstaan: een lijst in dienstconfiguratie die het formulier niet toonde
+werd bij elke opslag leeggeschreven. ``TestDienstconfiguratieLijsten`` onderaan dekt
+die laag datagedreven over de catalogus, met per lijstveld een geval, zodat elke dienst
+die er later bij komt gratis meeloopt.
 """
 
 from __future__ import annotations
 
 import copy
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 import yaml
+from opi.forms.editables.editable import WidgetType, apply_virtualize
+from opi.forms.editables.path import resolve_path
+from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.service_path import smart_delete_value, smart_get_value, smart_set_value
+from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.flows import get_flow
+from opi.forms.visualizers.sections import FormSection
 from opi.forms.wizard.save import apply_list_item_merge as _apply_list_item_merge
 from opi.forms.wizard.state import CLEARED_FIELD
+from opi.services.catalog.base import ConfigLayer
+from opi.services.registry import SERVICES
 
 FIXTURES_DIR = Path(__file__).parent / "e2e" / "fixtures" / "projects"
 UNIT_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "projects"
@@ -366,3 +381,139 @@ class TestAgainstRealProjectFiles:
             if key == "domain-format":
                 continue
             assert result_dep[key] == orig_dep[key], f"Deployment field '{key}' was modified"
+
+
+# ---------------------------------------------------------------------------
+# De dienstlaag: elke lijst in dienstconfiguratie, datagedreven over de catalogus
+# ---------------------------------------------------------------------------
+
+#: Herkenbare inhoud die na de verwerking nog moet staan.
+_BEWAARDE_ITEMS = [{"__toets__": "eerste"}, {"__toets__": "tweede"}]
+
+
+def _dienstsectie_reeksen() -> list[tuple[str, FormSection, Any]]:
+    """Reeksen die een dienstsectie op haar EIGEN niveau verwerkt.
+
+    Een sectie van de componentlaag draagt paden met ``[*]`` erin; die wordt niet als
+    sectie gerenderd maar als kinderen van de componentenreeks, waar de index pas
+    ontstaat. Die lopen hieronder mee via ``_geneste_reeksen``.
+    """
+    gevonden = []
+    for service_type, service in SERVICES.items():
+        for layer in ConfigLayer:
+            section = service.config_form_section(layer)
+            if section is None:
+                continue
+            gevonden.extend(
+                (f"{service_type.value}-{layer.value}-{vis.editable.yaml_path}", section, vis)
+                for vis in section.editables
+                if vis.widget == WidgetType.SEQUENCE and "[*]" not in vis.editable.yaml_path
+            )
+    return gevonden
+
+
+def _geneste_reeksen() -> list[tuple[str, FormSection, Any]]:
+    """Reeksen die binnen de componentenreeks zitten.
+
+    Zonder de paden met een ``{dienst}``-filter erin. Die lijsten hangen onder de
+    dienstSELECTIE van het component, en de selectie bepaalt of de reeks getekend
+    wordt: staat de dienst aan, dan staat de lijst op het scherm. "Wel gekozen, niet
+    getekend" is geen toestand die het formulier kan maken, en een toets die hem
+    nabouwt meet de overlay van de componentenrij en niet de regel hierboven.
+    ``test_montages_overleven_een_stroom_die_ze_niet_kent`` dekt wat daar wel kan
+    misgaan.
+    """
+    sectie = FormSection(section_id="componenten-toets", title="Componenten", editables=[COMPONENTS_SEQUENCE])
+    return [
+        (vis.editable.yaml_path, sectie, vis)
+        for vis in COMPONENTS_SEQUENCE.children or []
+        if vis.widget == WidgetType.SEQUENCE and "{" not in vis.editable.yaml_path
+    ]
+
+
+def _alle_reeksen() -> list[tuple[str, FormSection, Any]]:
+    return [*_dienstsectie_reeksen(), *_geneste_reeksen()]
+
+
+def _seed(vis: Any) -> tuple[dict[str, Any], str]:
+    """Projectgegevens met deze lijst gevuld, plus het concrete pad ernaartoe.
+
+    ``[*]`` wordt op index 0 gezet, en een ``depends_on`` met ``contains`` wordt zo
+    gevuld dat de reeks daadwerkelijk zichtbaar is -- anders slaat de verwerker hem
+    over en meet de toets niets.
+    """
+    ed = vis.editable
+    pad = resolve_path(ed.yaml_path, 0)
+    data: dict[str, Any] = {}
+
+    # Maak de lijsten aan waar het pad doorheen loopt (components[0], deployments[0]).
+    segmenten = pad.split("/")
+    for i, segment in enumerate(segmenten):
+        if "[" not in segment:
+            continue
+        sleutel = segment.split("[")[0]
+        ouder = "/".join(segmenten[:i])
+        houder = smart_get_value(data, ouder) if ouder else data
+        if isinstance(houder, dict):
+            houder.setdefault(sleutel, [{}])
+
+    if ed.depends_on and isinstance(ed.show_when, dict) and "contains" in ed.show_when:
+        smart_set_value(data, resolve_path(ed.depends_on, 0), [ed.show_when["contains"]])
+
+    smart_set_value(data, pad, copy.deepcopy(_BEWAARDE_ITEMS))
+    return data, pad
+
+
+async def _verwerk(section: FormSection, data: dict[str, Any], pad: str, getekend: list[str]) -> dict[str, Any]:
+    """Verwerk een inzending die alles draagt BEHALVE de lijst onder toets.
+
+    Precies de toestand die het echte formulier oplevert: de omliggende rijen komen mee
+    (anders wordt de reeks eromheen niet eens verwerkt en meet de toets niets), en over
+    deze ene lijst staat er niets in. Wat dat betekent, zegt ``getekend``.
+    """
+    inzending = copy.deepcopy(data)
+    smart_delete_value(inzending, pad)
+    inzending[GERENDERDE_REEKSEN_VELD] = getekend
+    resultaat, _errors = await EditableFormProcessor().process_json_submission(
+        inzending,
+        section.editables,
+        data,
+        edit_mode=True,
+    )
+    return resultaat
+
+
+class TestDienstconfiguratieLijsten:
+    """Een lijst in dienstconfiguratie verdwijnt niet, en kan wel leeggemaakt worden.
+
+    Deze klasse bestaat omdat de dienstlaag hier ontbrak: dit bestand beschermde
+    deployments en componenten en kende geen enkele toets op dienstconfiguratie, en
+    daar liep een lijst leeg zonder dat iets klaagde.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("naam", "section", "vis"), _alle_reeksen(), ids=[naam for naam, _, _ in _alle_reeksen()])
+    async def test_niet_getoonde_lijst_blijft_staan(self, naam: str, section: FormSection, vis: Any) -> None:
+        """Een inzending die deze lijst niet tekende mag hem niet vervangen."""
+        data, pad = _seed(vis)
+        resultaat = await _verwerk(section, data, pad, getekend=["een/andere/reeks"])
+
+        assert smart_get_value(resultaat, pad) == _BEWAARDE_ITEMS, (
+            f"{naam} verloor {pad} terwijl het formulier de lijst niet toonde"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("naam", "section", "vis"), _alle_reeksen(), ids=[naam for naam, _, _ in _alle_reeksen()])
+    async def test_getoonde_lijst_kan_leeg(self, naam: str, section: FormSection, vis: Any) -> None:
+        """De andere kant: wie de laatste regel weghaalt houdt geen lijst over.
+
+        Zonder deze helft ruilt de vorige toets gegevensverlies in voor een lijst die
+        je niet meer leeg kunt maken.
+        """
+        data, pad = _seed(vis)
+        virt = vis.editable.virtualize
+        getekend = [pad, apply_virtualize(pad, virt)] if virt else [pad]
+        resultaat = await _verwerk(section, data, pad, getekend=getekend)
+
+        overgebleven = smart_get_value(resultaat, pad)
+        assert overgebleven in ([], None), f"{naam} hield {pad} op {overgebleven!r} terwijl de gebruiker hem leegde"

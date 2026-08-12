@@ -621,18 +621,41 @@ class EditableFormProcessor:
         # fields are pruned from the original first, so user-removed values are not
         # re-introduced; the per-child processing below sets the managed values.
         prefix = f"{ed.yaml_path}[*]/"
-        managed_rel = [
-            child.editable.yaml_path.removeprefix(prefix)
+        managed_children = [
+            child
             for child in (vis.children or [])
             if not (child.readonly or (child.readonly_on_edit and edit_mode))
             and child.editable.yaml_path.startswith(prefix)
         ]
+
+        def _managed_rel(idx: int) -> list[str]:
+            """Wat er in rij *idx* van het origineel weg mag voor de overlay.
+
+            Een genest REEKS-kind dat het formulier voor deze rij niet tekende hoort
+            daar niet bij: het snoeien zou de lijst weghalen, en het kind zelf schrijft
+            hem niet terug (het houdt zich aan dezelfde regel). Samen zou dat de lijst
+            alsnog wissen langs de andere kant.
+            """
+            rel = []
+            for child in managed_children:
+                if child.widget == WidgetType.SEQUENCE:
+                    child_real = resolve_path(child.editable.yaml_path, idx)
+                    child_virt = (
+                        apply_virtualize(child_real, child.editable.virtualize)
+                        if child.editable.virtualize
+                        else child_real
+                    )
+                    if sequence_was_not_drawn(submitted, child_real, child_virt):
+                        continue
+                rel.append(child.editable.yaml_path.removeprefix(prefix))
+            return rel
+
         merged_items: list[Any] = []
         originals = original_items if isinstance(original_items, list) else []
         for idx, item in enumerate(items):
             orig = _match_original_item(item, originals, idx)
             if isinstance(item, dict) and isinstance(orig, dict):
-                base = _prune_paths(copy.deepcopy(orig), managed_rel)
+                base = _prune_paths(copy.deepcopy(orig), _managed_rel(idx))
                 merged_items.append(deep_merge_into(base, copy.deepcopy(item)))
             else:
                 merged_items.append(copy.deepcopy(item))
