@@ -33,6 +33,10 @@ class MinioStorageService(BackupsPageMixin, Service):
     )
     config_model = MinioStorageConfig
     config_schema_version = "1.0"
+    # May enrol itself (RC-84): a bucket needs no project-level choice. enable-versioning
+    # falls back to the platform default and the rest of the model is clone state the
+    # platform writes itself.
+    allows_implicit_project_selection = True
     cleanup_manager_key = ManagerKey.MINIO
     provision_order = 20
     manifest_secret_class = MinIOSecret

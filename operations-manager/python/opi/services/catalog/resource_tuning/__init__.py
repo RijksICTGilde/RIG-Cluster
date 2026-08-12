@@ -30,6 +30,9 @@ class ResourceTuningService(Service):
         # keeps it out of the picker, so no explicit hidden is needed).
         kind=ServiceKind.SYSTEM,
     )
+    # May enrol itself (RC-84): a system service is not a user choice, so there is no
+    # project-level decision to make first.
+    allows_implicit_project_selection = True
 
     @on(ActionEvent.AFTER_SYNC)
     async def tune_after_oom(self, ctx: DeploymentObservationContext) -> list[ObservationOutcome]:
