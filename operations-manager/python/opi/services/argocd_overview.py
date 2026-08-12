@@ -22,6 +22,7 @@ ArgoCD en van kubectl, en dat hoort niet bij het opbouwen van een tabel.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -41,6 +42,14 @@ logger = logging.getLogger(__name__)
 #: wisselen en weer terug - dat zijn meerdere renders binnen een paar seconden, en die
 #: hoeven ArgoCD niet elk apart te bevragen. Alles daarbuiten haalt gewoon opnieuw op.
 CACHE_TTL_SECONDS = 15
+
+#: Hoe lang de pagina op ArgoCD wacht voor hij zonder statuskolom verder gaat.
+#:
+#: Deze bevraging staat op het renderpad: hij houdt de projectpagina op. Vijf seconden is
+#: ruim voor een enkele lijst-aanroep en kort genoeg om geen pagina op te offeren aan een
+#: ArgoCD die niet antwoordt. De connector zelf wacht tot dertig seconden, en dat is voor
+#: een pagina te lang.
+BEVRAGING_TIMEOUT_SECONDS = 5
 
 #: De opgehaalde stand per project: naam -> (tijdstip, stand per deployment).
 #:
@@ -119,7 +128,23 @@ async def get_project_argocd_statuses(project_name: str, deployment_names: list[
         logger.debug("ArgoCD niet verbonden; geen gebundelde status voor %s", project_name)
         return {}
 
-    applications = await argo.list_applications()
+    # Deze bevraging staat op het RENDERPAD van de projectpagina: hij houdt de pagina op
+    # tot hij antwoord heeft. Dat is de prijs van de status meteen in de tabel hebben, en
+    # daarom staat er een grens omheen. Een trage of hangende ArgoCD kost een halve
+    # seconde extra en levert een tabel zonder statuskolom op - hij mag de pagina niet
+    # meeslepen. De connector zelf wacht tot 30 seconden, en dat is voor een pagina te
+    # lang.
+    try:
+        async with asyncio.timeout(BEVRAGING_TIMEOUT_SECONDS):
+            applications = await argo.list_applications()
+    except TimeoutError:
+        logger.warning(
+            "ArgoCD antwoordde niet binnen %ss; de deploymenttabel van %s krijgt geen statuskolom",
+            BEVRAGING_TIMEOUT_SECONDS,
+            project_name,
+        )
+        return {}
+
     per_naam = {
         naam: application
         for application in applications
