@@ -114,3 +114,17 @@ nldd-page-footer {
     height: 100%;
 }
 
+
+/* Een formulier dat op zijn antwoord wacht, is niet aan te klikken.
+ *
+ * De klasse komt uit static/js/htmx-formgedrag.js. GEEN `disabled` op de velden: dat haalt
+ * ze uit de inzending, en bij een trage verbinding verlies je dan de helft van wat je net
+ * hebt ingevuld. Alleen de muis en het toetsenbord eruit, plus zichtbaar dat er iets loopt.
+ *
+ * De cursor staat op de wikkel zodat je ziet dat het aan het werk is en niet stuk.
+ */
+form.is-bezig {
+    pointer-events: none;
+    opacity: 0.6;
+    cursor: progress;
+}
