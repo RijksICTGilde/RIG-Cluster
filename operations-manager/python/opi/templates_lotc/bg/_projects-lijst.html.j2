@@ -44,12 +44,12 @@
 {% else %}
     <c-cluster gap="sm" align="center">
         <c-icon icon="info" size="lg" />
-        <c-paragraph>
+        <c-span>
             {%- if project_query -%}
                 Geen projecten gevonden voor "{{ project_query }}".
             {%- else -%}
                 Geen projecten gevonden waar je toegang toe hebt.
             {%- endif -%}
-        </c-paragraph>
+        </c-span>
     </c-cluster>
 {% endif %}

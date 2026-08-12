@@ -38,11 +38,11 @@
         </c-layout-flow>
     </div>
     <div class="edit-section-actions">
-        {% set lotc_onclick_1 %}closeEditModal(){% endset %}<c-button type="button" label="Annuleren"/>
+        {% set lotc_onclick_1 %}closeEditModal(){% endset %}<c-button type="secondary" label="Annuleren"/>
         {# Nothing to confirm when the action is refused up front; the dialog then only
            explains why (the server refuses it too). #}
         {% if not blocked_reason %}
-        <c-button type="button" label="{{ action.label }}" show-icon="before" icon="{{ action.icon }}" class="confirm-action-submit"/>
+        <c-button type="secondary" label="{{ action.label }}" show-icon="before" icon="{{ action.icon }}" class="confirm-action-submit"/>
         {% endif %}
     </div>
 </div>

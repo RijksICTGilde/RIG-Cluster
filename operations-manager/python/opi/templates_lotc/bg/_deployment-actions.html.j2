@@ -31,6 +31,9 @@
     {% for deployment in project.deployments | sort(attribute='name') %}
     {% set original_index = project.deployments.index(deployment) %}
     <div class="deployment-section{% if deployment.name != deployment_open %} is-hidden{% endif %}" id="deployment-actions-{{ deployment.name }}">
+        {# Twee kaarten onder elkaar in EEN deployment-section: de stack geeft ze hun
+           tussenruimte, want de c-stack van de tab omvat deze div als geheel. #}
+        <c-stack gap="md">
         <c-card outline padding="lg">
             <c-stack gap="md">
                 <c-section-head title="Acties" icon="gear" />
@@ -47,6 +50,21 @@
                     <c-button type="secondary" size="sm" show-icon="before" icon="plus"
                               label="Deployment toevoegen" :attrs="{'onclick': deployment_toevoegen}" />
 
+                    {# Deze drie stonden los in het deploymentpaneel, tussen de statusregel
+                       en de componentenlijst, en zweefden daar tussen blokken die er niets
+                       mee te maken hebben. Het zijn acties, dus ze horen bij de acties. De
+                       labels zeggen nu WAAROP ze slaan: "Bewerken" naast "Images bewerken"
+                       is een raadsel, "Deployment bewerken" niet. #}
+                    {% set deployment_bewerken = "openEditModal('modal-edit-deployment-" ~ original_index ~ "', 'Deployment bewerken - " ~ deployment.name ~ "')" %}
+                    {% set webadres = "openEditModal('modal-edit-domain-" ~ original_index ~ "', 'Webadres bewerken - " ~ deployment.name ~ "')" %}
+                    {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-deployment/confirm?target=" ~ (deployment.name | urlencode) ~ "', 'Deployment verwijderen')" %}
+                    <c-button type="secondary" size="sm" show-icon="before" icon="pencil"
+                              label="Deployment bewerken" :attrs="{'onclick': deployment_bewerken}" />
+                    <c-button type="secondary" size="sm" show-icon="before" icon="globe"
+                              label="Webadres wijzigen" :attrs="{'onclick': webadres}" />
+                    <c-button type="warning" size="sm" show-icon="before" icon="trash"
+                              label="Deployment verwijderen" :attrs="{'onclick': verwijderen}" />
+
                     {% for action in deployment_service_actions.get(deployment.name, []) if action.visible %}
                     {% set doel = action.modal_endpoint if action.modal_endpoint else "/projects/" ~ project.name ~ "/deployments/" ~ deployment.name ~ "/actions/" ~ (action | deployment_action_key) ~ "/confirm" %}
                     {% set titel = action.modal_title if action.modal_endpoint else action.label %}
@@ -57,6 +75,25 @@
                 </c-cluster>
             </c-stack>
         </c-card>
+
+        {# Publieke links stonden onderaan het deploymentpaneel, na de componenten. Dat is
+           waar je juist NAARTOE wilt: het adres waarop je deployment draait. Een eigen
+           kaart direct onder de acties, zodat het als bestemming leest en niet als bijzin. #}
+        {% if deployment.ingress_links %}
+            <c-card outline padding="lg">
+                <c-stack gap="md">
+                    <c-section-head title="Publieke links" icon="link" />
+                    <c-cluster gap="sm">
+                        {% for link in deployment.ingress_links %}
+                            {% set link_label = link.component_name ~ (' ' ~ link.path if link.path and link.path != '/' else '') %}
+                            <c-button type="secondary" size="sm" show-icon="after" icon="link"
+                                      label="{{ link_label }}" href="{{ link.url }}" target="_blank" />
+                        {% endfor %}
+                    </c-cluster>
+                </c-stack>
+            </c-card>
+        {% endif %}
+        </c-stack>
     </div>
     {% endfor %}
 {% endif %}

@@ -98,6 +98,36 @@
            image-groep zegt de image-verwijzing hetzelfde in een regel; bij de overige
            groep is de reden juist WEL het verschil per component en staat hij daarom als
            regel achter de naam. De volledige tekst blijft beschikbaar via de logs. #}
+        {# ---- Wat de DIENSTEN melden, en waarom dat HIER staat -----------------------
+
+           Dit stond in het paneel eromheen, boven deze kaart, en dat gaf twee meldingen
+           over dezelfde gebeurtenis: "Deze deployment staat uit" uit het projectbestand, en
+           daaronder "1 component is uitgeschakeld: image ontbreekt" uit de clusterstand.
+           Twee bronnen, twee momenten, en geen van beide wist van de ander.
+
+           Nu staan ze in EEN fragment, en dat is precies wat ontdubbelen mogelijk maakt:
+           deze kaart kent `disabled_components` en de dienstenberichten tegelijk. Zegt de
+           foutmelding hieronder al dat er componenten uit staan, dan hoeft het algemene
+           bericht dat niet te herhalen - de foutmelding noemt bovendien de OORZAAK, en dat
+           is het enige waar je iets aan hebt.
+
+           Alleen dat ene bericht wordt onderdrukt, niet alle. Slaapstand is ook een
+           dienstenbericht en daar weet ArgoCD niets van; die stil laten verdwijnen zou een
+           echte toestand onzichtbaar maken. #}
+        {% set facts = (deployment_states | default({})).get(deployment.name) %}
+        {% for fact in (facts.facts if facts else []) %}
+            {% set zegt_uitgeschakeld = 'uitgeschakeld' in (fact.summary | lower) or 'staat uit' in (fact.summary | lower) %}
+            {% if not (disabled_components and zegt_uitgeschakeld) %}
+                <c-cluster gap="md" align="center">
+                    <c-icon icon="info-circle" size="lg" />
+                    <c-stack gap="xs">
+                        <strong>{{ ServiceAdapter.get_service_definition(ServiceAdapter.get_service_by_value(fact.service)).name }}</strong>
+                        <c-span>{{ fact.summary }}</c-span>
+                    </c-stack>
+                </c-cluster>
+            {% endif %}
+        {% endfor %}
+
         {% if disabled_components %}
             {% set uit = namespace(image=[], overig=[]) %}
             {% for comp in disabled_components %}
@@ -182,7 +212,7 @@
             {% if status.get('last_sync') %}
                 <c-cluster gap="xs" align="center">
                     <c-icon icon="timer" size="sm" />
-                    <c-paragraph size="sm">Laatste sync: {{ status.last_sync | dutch_date }}</c-paragraph>
+                    <c-span>Laatste sync: {{ status.last_sync | dutch_date }}</c-span>
                 </c-cluster>
             {% endif %}
 
@@ -261,7 +291,7 @@
                                                 {% endif %}
                                                 <c-code>{{ error.resource }}</c-code>
                                                 {% if error.get('count') and error.count|int > 1 %}
-                                                    <c-paragraph size="sm">({{ error.count }}x)</c-paragraph>
+                                                    <c-span>({{ error.count }}x)</c-span>
                                                 {% endif %}
                                             </c-cluster>
                                             <c-paragraph size="sm">{{ error.message }}</c-paragraph>
@@ -289,7 +319,7 @@
                     <c-stack gap="xs">
                         <c-cluster gap="xs" align="center">
                             <c-icon icon="info-circle" size="sm" />
-                            <c-paragraph size="sm">{{ orphan_errors|length }} {% if orphan_errors|length == 1 %}melding{% else %}meldingen{% endif %} van verwijderde componenten - opruiming nog niet voltooid</c-paragraph>
+                            <c-span>{{ orphan_errors|length }} {% if orphan_errors|length == 1 %}melding{% else %}meldingen{% endif %} van verwijderde componenten - opruiming nog niet voltooid</c-span>
                         </c-cluster>
                         {% for error in orphan_errors %}
                             <c-paragraph size="sm">{{ error.resource }}: {{ error.message }}{% if error.get('age') %} ({{ error.age }}){% endif %}</c-paragraph>

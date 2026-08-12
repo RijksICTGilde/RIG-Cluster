@@ -273,3 +273,14 @@ encrypt/decrypt. Het logpaneel liep tegen dezelfde grens aan, om een andere rede
 
 **Voorstel.** De inhoud volgen met een `MutationObserver`, of een publieke
 `setValue()`/`value` op het component.
+
+## Een pagina met een leesbare maximumbreedte, en de benoemde `layout-container`
+
+Gemeten in ZAD op 12 augustus 2026, op `/projects/deployments/<naam>`:
+
+- `<main>` heeft `max-width: none` en groeit lineair mee met het scherm: 1008px bij een viewport van 1280, 1648px bij 1920, 2288px bij 2560. Regels van 2288 pixels zijn niet te lezen en kaarten die zo ver uitrekken verliezen hun samenhang.
+- Geen enkel element op de pagina draagt `container-name: layout-container`. NLDD heeft 28 regels van de vorm `@container layout-container (min-width: ...)` waarmee componenten zich op de beschikbare breedte afstemmen. Een containerquery zonder container matcht niet en meldt dat niet, dus die 28 regels doen in ZAD niets.
+
+Ter vergelijking een werkende NLDD-pagina elders: die zet `<nldd-page style="container: layout-container / inline-size;" background="inherit">` om de inhoud. Dat element bestaat in onze `lotc-nldd` niet als custom element; `<c-page>` rendert alleen `<html>/<head>/<body>` en zet geen container neer.
+
+**Verzoek:** laat het componentensysteem dit dragen, bijvoorbeeld op `<c-page>` of `<c-app-shell>`, in plaats van dat elke toepassing er eigen CSS voor schrijft. Wij hebben dat laatste bewust NIET gedaan: een eigen maximumbreedte is een ontwerpbeslissing die in het design system hoort, en het getal zou uit de huisstijl moeten komen en niet uit een toepassing.
