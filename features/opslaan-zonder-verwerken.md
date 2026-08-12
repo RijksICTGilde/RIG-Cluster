@@ -80,6 +80,30 @@ Daarbij hoort één aanpassing aan het opruimen van oude taken: een uitgestelde 
 nog niet is uitgerold wordt **niet** verwijderd, ongeacht leeftijd. Anders zou de
 melding na een week stil verdwijnen — precies de stille drift die dit moet voorkomen.
 
+### De grens is de START van de uitrol, niet het einde
+
+Een refresh leest het projectbestand **één keer, aan het begin van zijn eigen run**, en
+werkt de rest van de looptijd met die momentopname. Alles wat daarna wordt opgeslagen
+zit niet in die refresh, hoe lang hij daarna ook nog draait — en dat is meestal minuten,
+want de ArgoCD-wacht domineert.
+
+Daarom is de grens `started_at` van de uitrollende taak en niet `completed_at`. Met
+`completed_at` werd een uitgestelde wijziging die tijdens een lopende refresh werd
+opgeslagen weggestreept door een refresh die hem nooit gelezen had: `count` stond op 0
+terwijl de wijziging niet op het cluster stond. Een taak zonder starttijd valt terug op
+`completed_at`, zodat oudere rijen zich gedragen als voorheen. De richting is veilig:
+deze meting kan alleen méér melden dan er openstaat, nooit minder.
+
+Welke wijzigingen binnen dat venster kunnen vallen volgt uit de wachtrij. Taken zonder
+deployment in hun sleutel (`add_component`, `update_component`, `add_service`,
+`configure_service`) worden achter een projectbrede refresh geserialiseerd en landen er
+dus nooit in. Taken mét een deployment (`update_image`, `upsert_deployment`) lopen wél
+gelijktijdig, en dat waren precies de gevallen die verdwenen.
+
+Gemeten in `tests/test_refresh_merge_window.py`, dat ook vastlegt dat een tweede refresh
+tijdens een lopende dezelfde taak teruggeeft (ontdubbeling op identiek lichaam) en dat
+er in die lopende taak niets opnieuw wordt gelezen.
+
 ## Voor ontwikkelaars
 
 De vlag reist mee in de taak-payload (`payload["rollout"]`) en wordt op één plek gelezen:
