@@ -16,6 +16,7 @@ from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
 from opi.forms.editables.editable import ContextAwareEditableValidator, WidgetType, apply_virtualize
 from opi.forms.editables.merge import deep_merge_into
 from opi.forms.editables.path import get_value, resolve_path
+from opi.forms.editables.rendered_sequences import sequence_was_not_drawn
 from opi.forms.editables.service_path import (
     is_service_config_path,
     smart_delete_value,
@@ -595,6 +596,14 @@ class EditableFormProcessor:
         if not isinstance(items, list):
             items = []
 
+        # Niets ingediend EN het formulier heeft deze reeks niet getekend: dan zegt de
+        # inzending er niets over en blijft staan wat er stond. Zonder dit onderscheid
+        # is "de gebruiker haalde de laatste regel weg" niet te scheiden van "deze
+        # sectie ging er niet over", en wist elke opslag de lijst. Zie
+        # ``editables/rendered_sequences.py``.
+        if not items and sequence_was_not_drawn(submitted, read_path, ed.yaml_path):
+            return
+
         # Empty sequence + remove_when_none: don't persist an empty list (e.g. an
         # attachments coupling with no entries). For a plain path this removes the key;
         # skipping the write below avoids writing a fresh empty list.
@@ -769,6 +778,11 @@ class EditableFormProcessor:
             items = smart_get_value(submitted, real_seq_path)
         if not isinstance(items, list):
             items = []
+
+        # Zelfde regel als bij de reeks op het bovenste niveau: een geneste reeks die
+        # het formulier niet tekende, mag hij niet vervangen.
+        if not items and sequence_was_not_drawn(submitted, virtual_seq_path, real_seq_path):
+            return
 
         # Capture the pre-edit list as the field-order reference before overwriting it.
         original_nested = smart_get_value(result, real_seq_path)
