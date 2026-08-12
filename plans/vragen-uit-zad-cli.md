@@ -1,4 +1,4 @@
-# Vier open vragen uit de zad-cli-doorlopen
+# Open vragen uit de zad-cli-doorlopen
 
 Vastgelegd 12 augustus 2026 door zad-cli, na vier volledige draaiboeken tegen
 `https://zad.sandbox.rijksapp.dev/api`.
@@ -6,6 +6,10 @@ Vastgelegd 12 augustus 2026 door zad-cli, na vier volledige draaiboeken tegen
 **Aan de lezer van dit bestand:** het zijn genummerde punten met per punt de reproductie en
 wat wij al hebben uitgesloten. Antwoord er graag onder, per nummer, in het kopje "Antwoord"
 dat er al staat. Alles is met `curl` te reproduceren; onze CLI is er alleen een client op.
+
+**Stand van zaken.** Punt 1 tot en met 5 zijn beantwoord en opgelost; die staan hieronder
+met hun antwoord, en onze reactie erop staat onderaan. **Punt 6 en 7, aan het eind, zijn
+nieuw en wachten nog op een antwoord.**
 
 ```sh
 BASE=https://zad.sandbox.rijksapp.dev/api
@@ -406,3 +410,105 @@ of dat mee te controleren valt.
 | 2 | De expliciete wachtlus uit de draaiboeken, en `project create` wacht nu zelf op `poll_url` met het bearer-token |
 | 3 | Klonen staat bij ons als niet-getest; wij draaien dat draaiboek opnieuw zodra jullie PR erop staat |
 | 5 | `zad version` toont `pod` en `image`, en onze controle "draait mijn wijziging al" kijkt eerst of de podnaam over twee calls gelijk blijft |
+
+---
+
+# Twee nieuwe vragen, 12 augustus (na een volledige doorloop)
+
+Playbook 01 liep vandaag voor het eerst van begin tot eind door, tegen `edbda374`. Bevinding
+1, 5, 6 en 7 uit onze vorige ronde zijn daarmee nagemeten en weg: `/api/status` geeft 200 en
+`/status` geeft 404 op hetzelfde component, aliaswaarden zijn weer leesbaar, een alias naar
+een onbestaande variabele faalt, en `env list`/`alias list` bestaan. Dank.
+
+Er kwam ook één bug bij ons uit, voor de volledigheid: onze poll-URL verdubbelde het
+`/api`-voorvoegsel (`/api/api/tasks/<id>`), wat pas opviel toen `project create` op jullie
+`poll_url` ging wachten. Gerepareerd.
+
+Twee dingen die aan jullie kant liggen.
+
+---
+
+## 6. Waarom is een net aangemaakt project asynchroon?
+
+Dit is een ontwerpvraag, geen storing. Wij wachten nu netjes, dus er is niets kapot; de
+vraag is of dat wachten er hoort te zijn.
+
+```sh
+curl -X POST "$BASE/v2/projects" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"display_name":"Race","description":"x"}'
+# 202 {"project_name":"p1-nz2","api_key":"…","task_id":"…","poll_url":"/api/tasks/…"}
+
+curl -H "X-API-Key: <die sleutel>" "$BASE/v2/projects/p1-nz2/components"
+# 401 Invalid API key   (ongeveer 3,5 seconden lang)
+```
+
+Wat wij in jullie code lezen, en graag bevestigd of gecorrigeerd zien:
+
+- De sleutel wordt **synchroon** gemaakt: `generate_base_project_file()` geeft
+  `(project_dict, api_key)` terug vóór de taak bestaat.
+- Authenticatie kijkt naar het *record*, niet naar de sleutel:
+  `get_project_store().get(project_name)` en dan `compare_digest`. Zolang de store het
+  project niet kent is elke sleutel ongeldig, vandaar 401 en niet 403.
+- De taak die dat record aanmaakt raakt **het cluster niet**. Uit jullie eigen payload:
+  `"rollout": False`, met de opmerking *"There is nothing to roll out: the project declares
+  no deployments."*
+
+Als dat klopt, dan is die 202 een git-commit plus een store-reconcile, en niet iets traags.
+De asynchronie lijkt er dan te zijn omdat het schrijven door dezelfde taakmachinerie loopt
+als elke andere mutatie, niet omdat er iets te provisioneren valt.
+
+**Onze vraag:** kan dit ene endpoint synchroon zijn en `201` teruggeven? Dan is de sleutel
+die je krijgt meteen bruikbaar, wat is wat iedereen verwacht van een antwoord dat een
+credential bevat. Kan dat niet, dan is de andere uitweg dat de store het net gemunte project
+al kent, zodat de sleutel werkt terwijl de commit nog loopt.
+
+Wat wij hoe dan ook houden: `project create` wacht. Is het straks synchroon, dan kost dat
+wachten niets, en het blijft correct tegen oudere builds.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
+
+---
+
+## 7. Terugzetten in je eigen database vraagt om een wachtwoord dat je niet hebt
+
+Dit volgt uit punt 4, dat aan onze kant lag: wij stuurden geen verzoeklichaam. Dat is
+gerepareerd, en daarmee werd zichtbaar wat er daarna komt.
+
+`DatabaseRestoreRequest` vereist vier velden, en `BucketRestoreRequest` ook:
+
+```
+target_database_host, target_database_name, target_database_user, target_database_password
+target_minio_endpoint, target_bucket_name, target_access_key, target_secret_key
+```
+
+Voor een externe bestemming is dat precies goed. Maar de gewone handeling is terugzetten in
+de database van je eigen project, en **die credentials beheert het platform**. Ze worden in
+de container geïnjecteerd; de gebruiker ziet ze nergens. Wij hebben geen commando dat ze
+teruggeeft, en in de spec staat geen endpoint dat ze teruggeeft.
+
+Wat wij hebben nagekeken: de dienstconfiguratie van `postgresql-database` bevat ze niet,
+`project describe` evenmin, en `env list` geeft de namen van de variabelen van de gebruiker,
+niet de geïnjecteerde platformwaarden.
+
+Gevolg: `zad restore database` en `zad restore bucket` zijn wel te *bouwen* maar niet te
+*draaien* voor het gewone geval. In ons draaiboek staat de stap nu als niet-uitvoerbaar, met
+deze reden erbij.
+
+**Onze vraag:** wat is de bedoelde weg om in de eigen projectdatabase terug te zetten? Drie
+vormen die wij ons kunnen voorstellen, en wij hebben geen voorkeur zolang er één is:
+
+1. De doelvelden **optioneel** maken, en bij afwezigheid terugzetten in de database van het
+   project waar de sleutel bij hoort. Dat is ook het veiligst: geen credentials over de lijn.
+2. Een endpoint dat de verbindingsgegevens van de eigen dienst teruggeeft, zodat een client
+   ze kan doorgeven.
+3. Een aparte "restore in place" naast de bestaande, als het mengen van die twee gevallen in
+   één endpoint onwenselijk is.
+
+Ter overweging bij 2: dat maakt van een wachtwoord dat nu alleen in de pod staat iets dat
+over de API opvraagbaar is. Dat is een echte verruiming, en wij vragen er niet om als 1 kan.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
