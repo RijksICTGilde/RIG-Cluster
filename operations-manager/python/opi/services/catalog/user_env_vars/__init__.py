@@ -50,6 +50,9 @@ class UserEnvVarsService(Service):
     )
     config_model = UserEnvVarsConfig
     config_schema_version = "1.0"
+    # May enrol itself (RC-84): a system service whose values are a property of the
+    # component, so there is no project-level decision to make first.
+    allows_implicit_project_selection = True
     owned_property = "user-env-vars"
     # One AGE block for the whole set: the plaintext is the KEY=value text the form
     # posts and the deploy path parses, so it can only be encrypted as a whole.

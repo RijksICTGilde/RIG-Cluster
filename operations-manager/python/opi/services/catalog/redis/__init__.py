@@ -30,6 +30,10 @@ class RedisService(Service):
     )
     config_model = RedisConfig
     config_schema_version = "1.0"
+    # May enrol itself (RC-84): binding redis to a component decides nothing that the
+    # project layer would have decided differently -- the one project-level field
+    # (acl-key-prefix) defaults to the narrow, safe value.
+    allows_implicit_project_selection = True
     cleanup_manager_key = ManagerKey.REDIS
     provision_order = 40
     manifest_secret_class = RedisSecret
