@@ -49,6 +49,9 @@ _RUN = uuid.uuid4().hex[:8]
 _WIZARD_KEY = f"probe-invite-wizard-{_RUN}"
 _CONTACT = "invite-contact@sandbox.rijksapp.dev"
 
+#: De stand die de wizard achterliet, vastgelegd door de fixture. Zie daar waarom.
+_WIZARD_STAND: dict[str, list] = {"keys": []}
+
 
 def _select_service(page: Page, name: str) -> None:
     # Wait for the services step to render its cards (the HTMX step swap can lag on a
@@ -154,6 +157,12 @@ def invite_project(sandbox_context: BrowserContext, sandbox_url: str, forgejo: F
             page.close()
     if not name or not api_key:
         pytest.fail(f"create wizard did not complete after retries: {last_error}")
+    # De stand ZOALS DE WIZARD HEM ACHTERLIET, hier vastgelegd. De ``active``-reeks telt
+    # precies een uitnodiging (max_items=1), dus elke schrijfactie van een van de andere
+    # tests in deze module VERVANGT hem. Wie daarna nog naar de sleutel van de wizard
+    # zoekt, meet de volgorde waarin pytest de tests draait (en die is willekeurig) in
+    # plaats van de wizard. Vandaar deze momentopname.
+    _WIZARD_STAND["keys"] = _invite_keys(forgejo, name)
     try:
         yield name
     finally:
@@ -164,7 +173,10 @@ def invite_project(sandbox_context: BrowserContext, sandbox_url: str, forgejo: F
 def test_wizard_wrote_invite_active(invite_project: str, forgejo: ForgejoClient) -> None:
     # The headline capability: creating an invite through the portal persists it.
     # Before the fix this was ``active: []`` even though the row was filled at submit.
-    keys = _invite_keys(forgejo, invite_project)
+    #
+    # Op de momentopname uit de fixture en niet op het bestand van NU: zie daar.
+    del forgejo
+    keys = _WIZARD_STAND["keys"]
     assert _WIZARD_KEY in keys, f"invite key not persisted to services/invite/config/active: {keys}"
 
 
@@ -216,14 +228,22 @@ def test_configure_modal_adds_keycloak_client(
     assert client_name in names, f"keycloak additional-clients entry not persisted: {names}"
 
 
-def test_detail_block_shows_invite_link(invite_project: str, sandbox_url: str, sandbox_page: Page, capture) -> None:
+def test_detail_block_shows_invite_link(
+    invite_project: str, sandbox_url: str, sandbox_page: Page, forgejo: ForgejoClient, capture
+) -> None:
     # (D) the invite block on the detail page is shown to an admin and shows the /invite/<key>
     # link. The link is rendered as a <code class="config-code"> (a copyable string), not an
     # <a href>, so match on the text.
+    #
+    # De sleutel komt uit het projectbestand van DIT moment en is niet die van de wizard:
+    # de reeks telt er een, dus een andere test in deze module kan hem vervangen hebben.
+    # Wat hier getoetst wordt is dat het blok de HUIDIGE uitnodiging toont.
+    keys = [key for key in _invite_keys(forgejo, invite_project) if key]
+    assert keys, "er staat geen uitnodiging in het projectbestand om te tonen"
     service_config.open_detail(sandbox_page, sandbox_url, invite_project)
-    link = sandbox_page.locator("code.config-code", has_text=f"/invite/{_WIZARD_KEY}")
+    link = sandbox_page.locator("code.config-code", has_text=f"/invite/{keys[0]}")
     capture(sandbox_page, "invite-detail-block")
-    assert link.count() > 0, "invite link not shown on the detail page for an admin"
+    assert link.count() > 0, f"invite link not shown on the detail page for an admin (sleutel {keys[0]})"
 
 
 def test_configure_via_api_writes_invite(
