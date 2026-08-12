@@ -148,16 +148,25 @@ def open_deployments_tab(page: Page) -> None:
 
 def deployment_action(page: Page, label: str) -> Locator:
     """A deployment action button by its label (e.g. 'Deployment slapen', 'Applicatie wekken')."""
-    return page.locator(f"button:has-text('{label}'), a:has-text('{label}')")
+    return page.locator(f"nldd-button[text='{label}'], button:has-text('{label}'), a:has-text('{label}')")
 
 
 def click_deployment_action(page: Page, label: str) -> None:
-    """Accept the confirm dialog and press a deployment action button.
+    """Press a deployment action and confirm it in the dialog that opens.
 
-    The button POSTs to the action endpoint, which commits to git and reprocesses -- several
-    seconds -- before the page reloads. Callers should poll the source of truth (the project
-    file) for the new state rather than trusting a fixed wait here.
+    De bevestiging is een MODAL en geen ``window.confirm``. Hier stond
+    ``page.once("dialog", accept)``, en dat wachtte op een native dialoog die nooit komt:
+    de actieknop opent de gedeelde dialoog met bg/_action-confirm.html.j2, en pas de knop
+    daarin (``.confirm-action-submit``) doet de POST. Gevolg was dat de klik niets deed en
+    de test meldde dat de deployment niet ging slapen - terwijl er nooit iets verstuurd is.
+
+    De POST commit naar git en herverwerkt (enkele seconden), dus de aanroeper polt daarna
+    de bron van waarheid (het projectbestand) en niet de pagina.
     """
-    page.once("dialog", lambda dialog: dialog.accept())
     deployment_action(page, label).first.click()
+    bevestig = page.locator(f"{_MODAL} .confirm-action-submit, {_INNER} .confirm-action-submit")
+    with contextlib.suppress(PlaywrightError):
+        bevestig.first.wait_for(state="visible", timeout=10000)
+    if bevestig.count():
+        bevestig.first.click()
     page.wait_for_timeout(1000)
