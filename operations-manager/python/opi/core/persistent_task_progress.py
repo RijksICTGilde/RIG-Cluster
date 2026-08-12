@@ -45,6 +45,7 @@ class PersistentTaskProgressManager:
         self._events: list[dict[str, str]] = []
         self._web_addresses: dict[str, str] = {}
         self._namespace: str | None = None
+        self._project_failure: str | None = None
         self._dirty: bool = False
         self._background_tasks: set[asyncio.Task] = set()
         self._flush_task: asyncio.Task | None = None
@@ -311,11 +312,24 @@ class PersistentTaskProgressManager:
         except Exception:
             logger.exception("Failed to mark task %s as completed in DB", self._task_id)
 
+    @property
+    def project_failure(self) -> str | None:
+        """De reden waarom deze taak als mislukt is gemarkeerd, of ``None``.
+
+        De worker leest dit als de handler zelf iets teruggeeft dat op succes lijkt: dan
+        wint wat de handler hier meldde, en eindigt de taak op ``failed`` in plaats van op
+        ``completed`` (zie :func:`opi.core.task_worker.reported_failure`). Zonder dit
+        schreef de worker ``completed`` over de fire-and-forget schrijfactie van
+        :meth:`fail_project` heen, en dat is een wedloop met de fout als verliezer.
+        """
+        return self._project_failure
+
     def fail_project(self, error: str) -> None:
         """Mark the entire project as failed.
 
         Schedules the DB failure call as a fire-and-forget task.
         """
+        self._project_failure = error
         self.mark_legacy_failed(error)
 
         self._current_step = f"Failed: {error}"
