@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
+from opi.core.buttons import check_button_variant
 from opi.handlers.project_file_handler import (
     COMPONENT_USAGE_WEB_ADDRESS,
     component_usage_sites,
@@ -47,6 +48,12 @@ class ProjectAction:
     #: Set when the action cannot be performed at all; the dialog then explains instead
     #: of offering a button (the server still refuses it on its own).
     blocked_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        # ``kind`` wordt in het bevestigingsfragment een ``type`` op een <c-button>, en
+        # het component slaat een variant die het niet kent stil over: de knop staat er
+        # dan kaal bij. Zie opi/core/buttons.py.
+        check_button_variant(self.kind, f"ProjectAction '{self.key}'")
 
 
 def _display_name(project_name: str, project_data: dict[str, Any]) -> str:
