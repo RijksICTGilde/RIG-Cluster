@@ -109,14 +109,23 @@ def assert_progress_page_is_server_rendered(page: Page) -> None:
         return
 
     container = page.locator("#project-progress")
+    container.first.wait_for(state="attached", timeout=30000)
     assert container.count() == 1, f"No server-rendered progress fragment on {page.url}"
     poll_url = container.get_attribute("hx-get") or ""
     assert poll_url.startswith("/projects/progress/"), f"Progress fragment polls elsewhere: {poll_url!r}"
     assert poll_url.endswith("/fragment"), f"Progress fragment polls elsewhere: {poll_url!r}"
-    # The step line is part of the first paint, not something JavaScript fills in later.
-    assert (page.locator(".edit-progress-step").first.text_content() or "").strip(), (
-        "Progress page rendered without a current step"
-    )
+    # De stapregel hoort bij de eerste paint en wordt niet later door JavaScript gevuld.
+    #
+    # Op de KLASSE ".edit-progress-step" zoeken kan niet meer: die hoorde bij het oude
+    # fragment. De hertekende pagina (bg/_task-progress.html.j2) zet de stap in een
+    # <c-paragraph> en de voortgang in een <c-progress-bar>, dus deze regel wachtte 30
+    # seconden op een element dat niet meer bestaat - twintig keer in een sandboxrun, en
+    # elke keer nadat het project gewoon was aangemaakt. Wat de poort moet bewaken is
+    # ongewijzigd: er staat een voortgangsbalk mét een waarde, van de server.
+    balk = container.locator("[data-lotc-component='progress-bar'], progress, nldd-progress-bar").first
+    balk.wait_for(state="attached", timeout=30000)
+    tekst = (container.text_content() or "").strip()
+    assert tekst, "Progress page rendered without any progress text"
 
 
 # The services a user can select in the CREATE wizard (hidden types -
@@ -162,19 +171,16 @@ def _fill_service_config_step(page: Page, *, banner: str) -> None:
       leave the template at its default (sso-support).
     - authorization-wall config: set the banner text.
     """
-    restrict = page.locator("[name='services/keycloak/config/restrict-access/enabled']")
+    # Op het VAKJE en op het EINDE van het pad. Hier stond het oude, niet-virtuele pad
+    # ("services/keycloak/config/...") en dat matcht niets meer sinds de dienstconfig onder
+    # "_services-config/" wordt verstuurd, dus deze stap werd stilzwijgend overgeslagen -
+    # terwijl de auth-wall-stap juist eist dat hij aanstaat. En op het vakje, want
+    # is_checked() op het custom element is een harde fout.
+    restrict = wizard_helpers.aanvinkvakje_eindigend_op(page, "restrict-access/enabled")
     if restrict.count() > 0:
-        try:
-            if not restrict.first.is_checked():
-                # ROOS checkbox: click the card/label rather than the hidden input.
-                page.locator(
-                    "label:has([name='services/keycloak/config/restrict-access/enabled']), "
-                    "[name='services/keycloak/config/restrict-access/enabled']"
-                ).first.click()
-        except Exception:
-            restrict.first.click()
+        wizard_helpers.zet_aan(restrict.first, True)
 
-    banner_field = page.locator("[name='services/authorization-wall/config/banner']")
+    banner_field = wizard_helpers.veldbesturing_eindigend_op(page, "authorization-wall/config/banner")
     if banner_field.count() > 0:
         banner_field.first.fill(banner)
 
