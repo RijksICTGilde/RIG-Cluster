@@ -51,9 +51,18 @@ gemigreerde zou dus vrijwel het hele bestand kapotmaken, precies zoals het plan 
 
 ### 2. Project via de wizard - GESLAAGD
 
-Gedekt door de sandbox-suite (`test_sandbox_flows.py::test_create_project_via_ui` en
-`test_sandbox_all_services.py`), die het project door de wizard aanmaakt en daarna het
-projectbestand in Forgejo terugleest. Zie "De e2e-suites" hieronder.
+`test_sandbox_flows.py::test_create_project_via_ui` slaagt: het project komt uit de wizard
+en het projectbestand staat daarna in Forgejo.
+
+Belangrijker is wat de MISLUKTE opzet-fixtures uit bevinding 7 laten zien, want dat is het
+sterkste bewijs dat de wizard zelf in orde is. Die fixtures gaven het op bij het wachten na
+de verzendknop, maar het project was op dat moment gewoon aangemaakt: `waard-jgk` stond
+daarna in `zad-projects` en zijn ArgoCD-applicatie `waard-jgk-productie` meldde
+`Synced`/`Healthy`. De wizard doorloopt de keten dus tot en met een draaiende deployment; het
+is de TEST die te vroeg opgeeft, niet de wizard die blijft hangen.
+
+Een project uit de wizard en een project uit de API komen daarmee op hetzelfde uit: beide
+leveren een projectbestand dat valideert en een deployment die gezond draait.
 
 ### 3. Hetzelfde via de API, inclusief impliciete dienstselectie - GESLAAGD
 
@@ -254,6 +263,17 @@ werkelijk heeft geaccepteerd (`response.is_success`). Bij een 401/403/404 blijft
 met rust, zodat de toestand hooguit blijft staan in plaats van uiteen te vallen. De wankele
 wizard-fixture zelf is NIET aangepast: dat is een echte reparatie aan de e2e-opzet en die
 hoort een eigen taak te zijn.
+
+### 8. Klein: OPI's eigen delete laat twee objecten in `rig-system` achter
+
+Bij het opruimen van het eigen testproject na afloop: `DELETE /api/projects/rra-baj` meldt
+`completed` en haalt de applicaties, de namespace en de projectbestanden weg, maar in
+`rig-system` blijven het AppProject `rra-baj-rra-baj` en het repo-secret
+`rra-baj-main-repo` staan. ArgoCD zette `user-applications` daardoor op `OutOfSync` en
+ruimde ze in de minuut erna niet zelf op. Met de hand verwijderd; daarna weer `Synced`.
+
+Klein, maar het is wel de reden dat dit soort resten zich over runs opstapelen - en het is
+precies wat `force_cleanup_project()` uit bevinding 7 probeerde te compenseren.
 
 ## Het oordeel
 
