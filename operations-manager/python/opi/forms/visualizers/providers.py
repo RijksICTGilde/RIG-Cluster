@@ -845,10 +845,40 @@ class PublishTlsModeOptionsProvider:
 
 class PublishTlsOverrideOptionsProvider:
     """TLS mode options for a per-deployment override. The empty value means
-    'inherit' (no override): fall back to the component/root setting."""
+    'inherit' (no override): fall back to the component/root setting.
+
+    The inherit option NAMES the mode it would fall back to, resolved from the project the
+    form is editing. Without it an empty select is ambiguous in the one way that matters
+    here -- "this deployment has no TLS" reads the same as "this deployment uses whatever
+    the component uses" -- and the reader cannot tell whether they are looking at a setting
+    or at an inheritance before they change it. ``yaml_data`` and ``yaml_path`` are handed
+    to every provider that accepts them (see ``bridge._resolve_options``); without them the
+    option falls back to the plain wording rather than guessing.
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None, yaml_path: str | None = None) -> None:
+        self._yaml_data = yaml_data or {}
+        self._yaml_path = yaml_path or ""
+
+    def _inherited_label(self) -> str:
+        """What the component (or the project default) says, as an option label."""
+        from opi.forms.editables.path import get_value
+        from opi.handlers.project_file_handler import ProjectFileHandler
+
+        # ".../components[0]/services/publish-on-web/config/tls" -> the row's component.
+        row, _, _ = self._yaml_path.partition("/services/")
+        component_name = get_value(self._yaml_data, f"{row}/reference") if row else None
+        if not isinstance(component_name, str) or not component_name:
+            return "Erven (geen override)"
+
+        # Deliberately resolved WITHOUT a deployment name: the question is what this
+        # override would fall back to, which is the component level and below.
+        mode = ProjectFileHandler().extract_component_publish_on_web_tls(self._yaml_data, component_name)
+        labels = {opt["value"]: opt["label"] for opt in _PUBLISH_TLS_MODE_OPTIONS}
+        return f"Erven van het component: {labels.get(mode, mode)}"
 
     def get_options(self) -> list[dict[str, Any]]:
-        return [{"value": "", "label": "Erven (geen override)"}, *_PUBLISH_TLS_MODE_OPTIONS]
+        return [{"value": "", "label": self._inherited_label()}, *_PUBLISH_TLS_MODE_OPTIONS]
 
 
 class YesNoOptionsProvider:
