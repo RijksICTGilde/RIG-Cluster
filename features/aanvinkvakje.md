@@ -17,7 +17,7 @@ aanvinkvakje terugkwam.
                   :checked="field.value" :attrs="field_attrs(field)" />
 
 {# een groep - templates_lotc/widgets/checkbox_group.html.j2 #}
-<c-checkbox-field id="{{ pad }}" label="...">
+<c-checkbox-field id="{{ pad }}" label="..." :attrs="dict(field_attrs(field), id=field.path)">
     <c-checkbox name="{{ pad }}[]" value="pvc" label="PVC" :checked="..." />
 </c-checkbox-field>
 ```
@@ -162,6 +162,15 @@ zet het component de id zelf op het besturingselement (`<nldd-checkbox-field>`) 
 van op de omhulling, en wij geven hem alleen nog als prop mee - niet ook in `:attrs`. Het
 vakje draagt dus `<pad>` en niets anders draagt dat pad; de hulptekst en de foutmelding
 heten `<pad>-help` en `<pad>-error`, want die worden uit dezelfde prop samengesteld.
+
+**Voor een GROEP geldt het omgekeerde**, en dat is met opzet. Die 762e570 raakt alleen het
+enkele vakje; een groep rendert een andere componentvorm (`<nldd-form-field>` met de vakjes
+als kinderen) en die zet de id-prop nergens als attribuut neer. Zonder de attribuutbundel
+draagt dus GEEN enkel element het veldpad meer en is de groep niet meer met `[id='<pad>']`
+te vinden - vier tests in `tests/e2e/test_gedragsoppervlak.py` vielen daarop om. In
+`checkbox_group.html.j2` staat de id daarom wél in `:attrs`; hij landt op de omhullende div
+en er is niets dubbels, want de prop landt nergens. De vakjes zelf houden hun eigen
+`<pad>-<waarde>`.
 
 ## Het vakje terugvinden
 

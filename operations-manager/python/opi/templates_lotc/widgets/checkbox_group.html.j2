@@ -20,9 +20,13 @@
   Elk vakje krijgt zijn eigen id (<pad>-<waarde>) op het besturingselement, zodat het net
   als het enkele vakje met ``[id='...']`` precies terug te vinden is.
 
-  Het veldpad gaat ALLEEN als prop mee en niet ook in de attribuutbundel: sinds LOTC
-  762e570 zet de component hem zelf op het besturingselement, dus met beide droegen de
-  omhulling en de besturing dezelfde id. Zie widgets/checkbox.html.j2.
+  Het veldpad staat WEL in de attribuutbundel, anders dan bij het enkele vakje. LOTC
+  762e570 zet de id op het besturingselement van het ENKELE vakje; een groep rendert een
+  andere vorm (<nldd-form-field>) die de id-prop nergens als attribuut neerzet. Zonder de
+  bundel is er dus helemaal geen element meer met het veldpad als id en is de groep niet
+  meer met ``[id='<pad>']`` terug te vinden. Er is hier ook niets dubbels: de prop landt
+  nergens, dus de bundel is de enige plek waar de id vandaan komt.
+  Zie widgets/checkbox.html.j2 voor de andere kant van dit verhaal.
 #}
 {% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
 <c-checkbox-field
@@ -31,7 +35,7 @@
     :help="combined_helper(field)|trim or none"
     :required="field.required"
     :error="(field.errors[0] if field.errors else none)"
-    :attrs="field_attrs(field)">
+    :attrs="dict(field_attrs(field), id=field.path)">
     {% for option in options %}
     <c-checkbox
         name="{{ field.path|e }}[]"
