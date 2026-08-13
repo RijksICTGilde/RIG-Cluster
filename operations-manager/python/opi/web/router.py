@@ -45,6 +45,7 @@ from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.lotc_switch import (
     STANDAARD_TAB,
     TABS_MET_DEPLOYMENT,
+    TABS_MET_VOORWAARDE,
     build_deployment_status_column,
     build_lotc_dashboard,
     build_lotc_project_details,
@@ -380,56 +381,6 @@ async def delete_component_web(request: Request, project_name: str, component_na
         payload={"project_name": project_name, "component_name": component_name, "confirm_in_use": True},
         current_step=f"Component '{component_name}' verwijderen gestart...",
         success_message=f"Component '{component_name}' succesvol verwijderd",
-    )
-
-
-@web_router.get("/projects/{project_name}/keycloak/{realm_name}/otp-code", response_class=HTMLResponse)
-@requires_sso
-async def keycloak_otp_code_web(request: Request, project_name: str, realm_name: str) -> HTMLResponse:
-    """Render the realm-admin's TOTP code of this moment.
-
-    Fetched on demand so the shared seed stays on the server: the detail page
-    renders only a button, and what it swaps in expires within one period.
-    Mirrors the authorization of the detail-page section that hosts the button.
-    """
-    user = get_current_user(request)
-    user_email = user.get("email", "").lower()
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    if get_user_role_for_project(project_name, user_email) not in ("admin", "owner"):
-        raise HTTPException(status_code=403, detail="Alleen admin of owner rollen kunnen de OTP-code opvragen")
-
-    project = get_project_store().get(project_name)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project niet gevonden")
-
-    realms = Project(project.data or {}).get("services/keycloak/config/realms") or []
-    encrypted_secret = next(
-        (r.get("totp_secret") for r in realms if r.get("realm") == realm_name),
-        None,
-    )
-    if not encrypted_secret:
-        raise HTTPException(status_code=404, detail=f"Geen OTP ingesteld voor realm '{realm_name}'")
-
-    project_private_key = await decrypt_password_smart(
-        (project.data or {})["config"]["age-private-key"], get_global_private_key()
-    )
-    secret = await decrypt_password_smart(encrypted_secret, project_private_key)
-    code, _ = totp_now(secret)
-
-    logger.info(f"OTP code requested for '{project_name}' realm '{realm_name}' by {user_email}")
-
-    # Dit fragment komt terug in het Keycloak-blok op de projectdetailpagina, dus het
-    # volgt dezelfde vormgeving als die pagina. Zonder dat stond er na een klik op "Toon
-    # code" roos-HTML in een LOTC-pagina.
-    return HTMLResponse(
-        content=render_fragment(
-            request,
-            template="keycloak/otp-code.html.j2",
-            context={"code": code, "project_name": project_name, "realm": realm_name},
-        )
     )
 
 
@@ -1267,6 +1218,7 @@ async def dashboard(request: Request):
 @web_router.get("/projects/{project_name}/team", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/componenten", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/services", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/toegang", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/deployments", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/metrics", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/backups", response_class=HTMLResponse)
@@ -1304,14 +1256,20 @@ async def project_deployment_details(request: Request, project_name: str, deploy
 #: letterlijk en in dezelfde volgorde als hierboven, zodat de twee vormen naast elkaar te
 #: lezen zijn.
 #:
+#: Elk tabblad hoort hier te staan zolang zijn oude vorm hieronder als route geregistreerd
+#: is: die route zoekt zijn tabblad in deze tabel op, en een ontbrekende regel is dus geen
+#: doorverwijzing maar een 500. Zo stond ``team`` er niet in terwijl de route wel bestond
+#: (RC-101). tests/test_lotc_tabbladen_url.py loopt nu beide lijsten af.
 #: ``backups`` staat hier NIET bij, en dat is geen omissie: dat tabblad bestaat pas sinds
 #: RC-100, dus ``/projects/backups/<naam>`` heeft nooit bestaan en kan dus ook nooit
 #: gedeeld zijn. Een doorverwijzing voor een adres dat niemand kan hebben is onderhoud
 #: zonder lezer.
 OUDE_TABBLADPADEN = {
     "details": "project",
+    "team": "team",
     "componenten": "componenten",
     "services": "services",
+    "toegang": "toegang",
     "deployments": "deployments",
     "metrics": "metrics",
     "taken": "taken",
@@ -1322,6 +1280,7 @@ OUDE_TABBLADPADEN = {
 @web_router.get("/projects/team/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/componenten/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/services/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/toegang/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/deployments/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/metrics/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/taken/{project_name}", response_class=HTMLResponse)
@@ -1450,9 +1409,23 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 except Exception as e:
                     logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
                     kc_config["password"] = None
-            # The seed never reaches the page: it would grant codes forever, while the
-            # code fetched on demand expires within one period. Only the flag ships.
+            # De SEED bereikt de pagina nooit: die zou voor altijd codes opleveren. Wat er
+            # wel op komt is de CODE van dit moment, en die vergaat binnen een periode van
+            # 30 seconden.
+            #
+            # Hij wordt HIER berekend en niet meer op verzoek achter een knop (RC-101): de
+            # OTP is op het tabblad Toegang een veld zoals het wachtwoord ernaast, en een
+            # veld heeft zijn waarde bij het renderen. Dat zet de code in de HTML, net als
+            # het admin-wachtwoord dat er al stond - hetzelfde blok, dezelfde rolpoort
+            # (alleen admin/owner), en van de twee is de code de kortstlevende.
             kc_config["has_totp"] = bool(kc_config.get("totp_secret"))
+            if kc_config["has_totp"]:
+                try:
+                    seed = await decrypt_password_smart(kc_config["totp_secret"], project_private_key)
+                    kc_config["totp_code"], _ = totp_now(seed)
+                except Exception as e:
+                    logger.warning(f"Failed to derive OTP code for realm {kc_config.get('realm')}: {e}")
+                    kc_config["totp_code"] = None
             kc_config["totp_secret"] = None
 
         # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so
@@ -1804,6 +1777,18 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # credentials (e.g. keycloak realm admin details).
         service_detail_sections = collect_detail_page_sections(project_data_decrypted, role_for_services)
 
+        # Die blokken hebben sinds RC-101 een EIGEN tabblad (Toegang): het zijn de
+        # adressen, sleutels en bestanden waarmee je de diensten gebruikt, en daarvoor kom
+        # je terug. Tussen de rest van Overzicht waren ze niet te vinden.
+        #
+        # Levert geen enkele dienst iets, dan is er geen tabblad: een lege pagina achter
+        # een tab is een belofte die niet waargemaakt wordt. De tab valt uit de balk
+        # (``lege_tabs`` hieronder), en wie er via een gedeelde link toch op uitkomt gaat
+        # naar Overzicht in plaats van naar het niets.
+        lege_tabs = () if service_detail_sections else TABS_MET_VOORWAARDE
+        if tab_from_path(request.url.path) in lege_tabs:
+            return RedirectResponse(url=project_tab_url(project_name, STANDAARD_TAB), status_code=302)
+
         # Changes saved with rollout=false that nobody has rolled out yet (RC-46). Shown
         # above the tabs, because a project file that silently runs ahead of the cluster is
         # worse than a slow rollout. A task service that is not up must not take the page
@@ -1856,7 +1841,11 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 # ``config.keycloak`` and silently stopped rendering).
                 "service_detail_sections": service_detail_sections,
                 **build_lotc_project_details(
-                    request, user=user, project=project_details, deployment_open=deployment_open
+                    request,
+                    user=user,
+                    project=project_details,
+                    deployment_open=deployment_open,
+                    lege_tabs=lege_tabs,
                 ),
             },
         )
