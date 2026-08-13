@@ -156,10 +156,10 @@ ONDERDELEN: tuple[Onderdeel, ...] = (
     Onderdeel("admin-approvals", "/admin/approvals", "goedkeuringen"),
     Onderdeel("admin-usage", "/admin/usage", "verbruik over alle projecten"),
     # --- de projectpagina, per tabblad
-    Onderdeel("project-tab-project", f"/projects/details/{PROJECT}?tab=project", "projectgegevens"),
-    Onderdeel("project-tab-deployments", f"/projects/details/{PROJECT}?tab=deployments", "deployments"),
-    Onderdeel("project-tab-metrics", f"/projects/details/{PROJECT}?tab=metrics", "resourcegebruik"),
-    Onderdeel("project-tab-taken", f"/projects/details/{PROJECT}?tab=taken", "takenlijst"),
+    Onderdeel("project-tab-project", f"/projects/{PROJECT}/details?tab=project", "projectgegevens"),
+    Onderdeel("project-tab-deployments", f"/projects/{PROJECT}/details?tab=deployments", "deployments"),
+    Onderdeel("project-tab-metrics", f"/projects/{PROJECT}/details?tab=metrics", "resourcegebruik"),
+    Onderdeel("project-tab-taken", f"/projects/{PROJECT}/details?tab=taken", "takenlijst"),
     # --- de wizard
     Onderdeel("wizard-start", "/forms/wizard/start", "beginscherm van de wizard"),
 )

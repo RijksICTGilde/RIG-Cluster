@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
-NLDD_URL = f"/projects/details/{PROJECT}"
+NLDD_URL = f"/projects/{PROJECT}/details"
 
 # De aanroepen die bij een WIDGET horen en niet bij de pagina, en dus niet meetellen in
 # een vergelijking van wat de PAGINA doet. Hier stond ook het geheimveld van ROOS, dat zijn
