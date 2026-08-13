@@ -425,6 +425,7 @@ def build_deployment_status_column(
 #: links blijven werken.
 PROJECT_TABS = {
     "project": {"label": "Overzicht", "path": "details"},
+    "team": {"label": "Team", "path": "team"},
     "componenten": {"label": "Componenten", "path": "componenten"},
     "services": {"label": "Services", "path": "services"},
     "deployments": {"label": "Deployments", "path": "deployments"},
