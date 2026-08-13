@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.e2e.helpers.tekst import veld
-from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
+from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,7 +29,7 @@ def _walk_to_review(wizard: WizardHelper, project_name: str | None = None) -> st
 
     Returns the project name used.
     """
-    name = project_name or _unique_project_name()
+    name = project_name or unique_project_name()
 
     # Step 1: Identity
     wizard.fill_identity(display_name=name, description=f"Flow test {name}")
@@ -224,7 +224,7 @@ class TestWizardServiceSelection:
         wizard = WizardHelper(auth_page, app_server)
         wizard.open_create_wizard()
 
-        name = _unique_project_name()
+        name = unique_project_name()
 
         # Step 1: Identity
         wizard.fill_identity(display_name=name, description="Full flow with keycloak")
@@ -289,7 +289,7 @@ class TestWizardNavigation:
         wizard = WizardHelper(auth_page, app_server)
         wizard.open_create_wizard()
 
-        name = _unique_project_name()
+        name = unique_project_name()
         description = "Preserved description test"
 
         # Fill identity

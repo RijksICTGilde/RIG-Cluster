@@ -40,7 +40,7 @@ from tests.e2e.helpers.lifecycle import (
     CreatedProject,
     create_project_with_services,
 )
-from tests.e2e.helpers.wizard import _unique_project_name
+from tests.e2e.helpers.wizard import unique_project_name
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ def all_services_project(
     forgejo: ForgejoClient,
 ) -> Generator[CreatedProject]:
     """Create one project with every create-wizard service, shared by the tests."""
-    display_name = _unique_project_name(prefix="alls")
+    display_name = unique_project_name(prefix="alls")
     page = sandbox_context.new_page()
     created: CreatedProject | None = None
     try:
@@ -376,7 +376,7 @@ def namespace_variants_project(
     forgejo: ForgejoClient,
 ) -> Generator[CreatedProject]:
     """A minimal project with the two namespace-variant services added via the API."""
-    display_name = _unique_project_name(prefix="nsv")
+    display_name = unique_project_name(prefix="nsv")
     page = sandbox_context.new_page()
     created: CreatedProject | None = None
     try:

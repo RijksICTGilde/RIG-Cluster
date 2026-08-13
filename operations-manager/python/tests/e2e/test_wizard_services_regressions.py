@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from playwright.sync_api import expect
-from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
+from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -118,7 +118,7 @@ def test_preset_stays_applied(app_server: str, auth_page: Page, captured_yaml: l
     wizard = WizardHelper(auth_page, app_server)
     wizard.open_create_wizard()
 
-    wizard.fill_identity(display_name=_unique_project_name(), description="preset regression")
+    wizard.fill_identity(display_name=unique_project_name(), description="preset regression")
     wizard.click_next()
 
     wizard.fill_services(["keycloak"])
@@ -151,7 +151,7 @@ def test_unlocking_a_dependency_does_not_duplicate_it(
     wizard = WizardHelper(auth_page, app_server)
     wizard.open_create_wizard()
 
-    wizard.fill_identity(display_name=_unique_project_name(), description="duplication regression")
+    wizard.fill_identity(display_name=unique_project_name(), description="duplication regression")
     wizard.click_next()
 
     # authorization-wall requires keycloak, so keycloak renders locked (disabled)
@@ -181,7 +181,7 @@ def test_second_component_offers_every_project_service(app_server: str, auth_pag
     wizard = WizardHelper(auth_page, app_server)
     wizard.open_create_wizard()
 
-    wizard.fill_identity(display_name=_unique_project_name(), description="component services regression")
+    wizard.fill_identity(display_name=unique_project_name(), description="component services regression")
     wizard.click_next()
 
     # keycloak and publish-on-web carry config, redis and postgresql-database do not

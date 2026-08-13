@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers import sandbox_api, service_config
-from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, read_api_key_with_retry
+from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, project_name_from_progress, read_api_key_with_retry
 from tests.e2e.helpers.wizard import WizardHelper, aanvinkvakje_eindigend_op, veldbesturing, zet_aan
 
 if TYPE_CHECKING:
@@ -54,7 +54,6 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
     is the gap this closes, so it is checked here and not only in the modals.
     """
     wizard = WizardHelper(page, sandbox_url)
-    before = forgejo.list_project_names()
     wizard.open_create_wizard()
     wizard.fill_identity(display_name="svccfgui", description="service config UI e2e")
     wizard.click_next()
@@ -90,8 +89,11 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
     assert saw_redis_step, "the redis config step never appeared in the create wizard"
     assert saw_minio_step, "the minio-storage config step never appeared in the create wizard"
     wizard.submit_wizard()
-    name = forgejo.wait_for_new_project(before, timeout=240)
-    assert name, "no project appeared in Forgejo"
+    # De naam komt van de voortgangspagina: de taak weet hem en weet of het gelukt is.
+    # Zie project_name_from_progress - de git-listing afvissen op een klok meldde een
+    # geslaagde aanmaak als mislukking zodra de timer eerder afliep dan ArgoCD.
+    name = project_name_from_progress(page, timeout=600)
+    assert name in forgejo.list_project_names(), f"'{name}' staat niet in zad-projects"
     return name, read_api_key_with_retry(page, sandbox_url, name)
 
 

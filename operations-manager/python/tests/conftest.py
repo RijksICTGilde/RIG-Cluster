@@ -5,6 +5,7 @@ This module provides common fixtures used across unit and integration tests.
 """
 
 import os
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -271,3 +272,70 @@ async def orm_db(_orm_pg_container):
         await session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     yield
     await dispose_engine()
+
+
+# --- Live voortgang van een lange run ------------------------------------------------
+#
+# Een sandboxrun duurt bijna een uur en pytest zegt tot het EIND niets bruikbaars: met -q
+# krijg je punten, met -v een regel zonder tijd, en de samenvatting pas na afloop. Wie de
+# run niet zelf voor zich heeft (een dispatchte sessie, een collega die meekijkt) ziet dus
+# niets en kan niet beoordelen of het loopt, hoe snel, of waar het strandde. Dat kostte in
+# RC-108 meerdere keren de verkeerde conclusie: een suite die gewoon vorderde werd voor
+# vastgelopen aangezien, en een afgebroken run liet geen enkele oorzaak achter.
+#
+# Dit schrijft per afgeronde test EEN regel weg, met de gegevens die pytest zelf levert:
+# ``report.outcome``, ``report.duration`` en ``report.nodeid``. Geen tekst uit de uitvoer
+# raden - dat is precies de onbetrouwbaarheid die deze doorloop op meer plekken opleverde.
+#
+#     PYTEST_VOORTGANG=/tmp/voortgang.txt uv run pytest ...
+#     tail -f /tmp/voortgang.txt
+#
+# Zonder die variabele doet dit niets, dus een gewone run verandert er niet van.
+
+_VOORTGANG_PAD = os.environ.get("PYTEST_VOORTGANG")
+_voortgang_stand = {"klaar": 0, "totaal": 0, "rood": 0}
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items: list) -> None:
+    """Onthoud hoeveel tests er gaan draaien, zodat elke regel 'n van totaal' kan tonen.
+
+    ``trylast``, want de deselectie op markers (``-m e2e``) gebeurt ook in deze hook: tel je
+    eerder, dan staat er 9054 als totaal terwijl er 462 tests draaien.
+    """
+    _voortgang_stand["totaal"] = len(items)
+
+
+def pytest_runtest_logreport(report: Any) -> None:
+    """Schrijf een regel zodra een test klaar is.
+
+    Alleen op de call-fase, behalve als setup of teardown faalt (dan is DAT de uitkomst en
+    zou een test anders stil ontbreken in de lijst - wat bij een module-scoped fixture de
+    hele groep onzichtbaar maakt) en behalve een skip in setup, want dat is de gewone vorm
+    van overslaan.
+
+    Alleen een echte failure telt als rood: een skip en een verwachte failure zijn een
+    groene run, en een meetinstrument dat die rood meldt is precies de faalmodus die deze
+    tak opruimt.
+    """
+    if not _VOORTGANG_PAD:
+        return
+    if report.when != "call" and not (report.failed or report.skipped):
+        return
+    _voortgang_stand["klaar"] += 1
+    if report.skipped:
+        uitslag = "XFAIL" if hasattr(report, "wasxfail") else "SKIP"
+    elif report.passed:
+        uitslag = "XPASS" if hasattr(report, "wasxfail") else "PASSED"
+    else:
+        uitslag = "FAILED" if report.when == "call" else "ERROR"
+        _voortgang_stand["rood"] += 1
+    regel = (
+        f"{datetime.now(UTC).strftime('%H:%M:%S')}  "
+        f"{_voortgang_stand['klaar']:3d}/{_voortgang_stand['totaal']:<3d}  "
+        f"{report.duration:6.1f}s  "
+        f"rood={_voortgang_stand['rood']:<2d} "
+        f"{uitslag:<6} {report.nodeid}\n"
+    )
+    with open(_VOORTGANG_PAD, "a", encoding="utf-8") as bestand:
+        bestand.write(regel)
