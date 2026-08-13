@@ -185,8 +185,8 @@ def test_heeft_metingen(naam: str, metrics: dict[str, Any], pvc: dict[str, Any],
 def test_het_resourcegebruik_zegt_wat_de_balk_toont() -> None:
     """Een balk zonder schaal is geen meting: label, waarde, limiet, eenheid, percentage.
 
-    De verwachte regel is die van de kaart die op PRODUCTIE draait
-    (project-details/_resource-usage.html.j2). Hier stond na het hertekenen alleen "CPU"
+    De verwachte regel is die van de kaart die op PRODUCTIE draaide (de kaart van de
+    vervangen pagina, in RC-97 weggehaald). Hier stond na het hertekenen alleen "CPU"
     met een balk eronder; deze test legt de vorm vast die er hoorde te staan.
     """
     gebruik = {
