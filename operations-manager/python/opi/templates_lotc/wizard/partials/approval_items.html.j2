@@ -54,7 +54,7 @@
                         {% set opschrift = {'requested': 'Aangevraagd', 'approved': 'Goedgekeurd', 'denied': 'Afgewezen'}.get(entry.status, entry.status) %}
                         <c-tag type="{{ soort }}" label="{{ opschrift }}"/>
                         {% if entry.by %}<span class="rvo-text--sm rvo-text--subtle">door {{ entry.by }}</span>{% endif %}
-                        {% if entry.message %}<span class="rvo-text--sm"> — {{ entry.message }}</span>{% endif %}
+                        {% if entry.message %}<span class="rvo-text--sm">, {{ entry.message }}</span>{% endif %}
                     </div>
                     {% endfor %}
                 </div>
