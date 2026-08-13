@@ -1548,6 +1548,49 @@ def _find_deployment_for_reference(
     return None
 
 
+def _known_reference_names(project_data: dict[str, Any], service_types: list[str], default_suffix: str) -> list[str]:
+    """Every reference of this kind the project has, in the order they are accepted.
+
+    Feeds the 404: a caller who guessed wrong gets the names that do exist instead of
+    only the one that does not, which is the difference between one more request and
+    six (RC-95). Same two sources as ``_find_deployment_for_reference``.
+    """
+    project_file_handler = create_project_file_handler()
+    names: list[str] = []
+    for deployment in project_data.get("deployments") or []:
+        if not isinstance(deployment, dict) or not deployment.get("name"):
+            continue
+        deployment_name = str(deployment["name"])
+        component_refs = [
+            str(component_info["reference_name"])
+            for component_info in project_file_handler.get_components_using_service(
+                project_data, deployment_name, service_types
+            )
+            if component_info.get("reference_name")
+        ]
+        names.extend(component_refs)
+        if not component_refs:
+            names.append(f"{deployment_name}-{default_suffix}")
+
+    # Preserve order, drop duplicates (two components can share one service reference).
+    return list(dict.fromkeys(names))
+
+
+def _no_such_reference_detail(
+    project_name: str, reference_name: str, kind: str, known: list[str], target_fields: str
+) -> str:
+    """The 404 body for a reference no deployment carries."""
+    if known:
+        available = "This project has: " + ", ".join(f"'{name}'" for name in known) + "."
+    else:
+        available = f"This project has no {kind} backups registered."
+    return (
+        f"No deployment of project '{project_name}' has a {kind} backup named "
+        f"'{reference_name}'. {available} Supply the {target_fields} fields to restore "
+        "into an external destination."
+    )
+
+
 async def _resolve_own_database_target(project_name: str, namespace: str, reference_name: str) -> _DatabaseTarget:
     """Resolve the project's own database as the restore target."""
     project_data = _require_project_data(project_name)
@@ -1555,10 +1598,12 @@ async def _resolve_own_database_target(project_name: str, namespace: str, refere
     if not deployment_name:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"No deployment of project '{project_name}' has a database backup named "
-                f"'{reference_name}'. Supply the target_database_* fields to restore into an "
-                "external database."
+            detail=_no_such_reference_detail(
+                project_name,
+                reference_name,
+                "database",
+                _known_reference_names(project_data, _DATABASE_SERVICE_TYPES, "database"),
+                "target_database_*",
             ),
         )
 
@@ -1590,10 +1635,12 @@ async def _resolve_own_bucket_target(project_name: str, namespace: str, referenc
     if not deployment_name:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"No deployment of project '{project_name}' has a bucket backup named "
-                f"'{reference_name}'. Supply the target_minio_endpoint, target_bucket_name, "
-                "target_access_key and target_secret_key fields to restore into an external bucket."
+            detail=_no_such_reference_detail(
+                project_name,
+                reference_name,
+                "bucket",
+                _known_reference_names(project_data, _MINIO_SERVICE_TYPES, "minio"),
+                "target_minio_endpoint, target_bucket_name, target_access_key and target_secret_key",
             ),
         )
 
