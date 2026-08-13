@@ -1237,7 +1237,6 @@ async def dashboard(request: Request):
                 "health_counts": health_counts,
                 "health_banner": health_banner,
                 "total_cpu_usage": total_cpu_usage,
-            "total_memory_usage": total_memory_usage,
                 "total_memory_usage": total_memory_usage,
                 **build_lotc_dashboard(user=user),
             },
