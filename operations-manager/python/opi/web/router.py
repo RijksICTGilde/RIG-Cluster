@@ -57,6 +57,7 @@ from opi.web.lotc_switch import (
 )
 from opi.web.menu import get_menu_items
 from opi.web.project_actions import build_project_action
+from opi.web.stap_labels import stap_label
 from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
 
 from ..utils.age import decrypt_age_content
@@ -3328,7 +3329,7 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
 
     return {
         "progress": task.get("progress_percent", 0),
-        "current_step": task.get("current_step") or "Verwerking gestart...",
+        "current_step": stap_label(task.get("current_step")) or "Verwerking gestart...",
         "tasks": task_hierarchy,
         "status": template_status,
         "error": error,

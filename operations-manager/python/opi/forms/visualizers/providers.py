@@ -1405,8 +1405,13 @@ class KeycloakAccountLinkOptionsProvider:
 
     De waarden komen uit ``AccountLink`` in het configmodel; ``build_project_realm_context``
     geeft ze als ``account_link`` door aan de realm-template. Niets ingevuld is de
-    Keycloak-standaard, en die is hetzelfde als ``verify`` -- daarom draagt de lege keuze
-    dat ook als label, in plaats van te doen alsof er een verschil is.
+    Keycloak-standaard: de gebruiker bevestigt de koppeling via een e-mail.
+
+    Hier stond een derde keuze, ``verify``, met het label "Verificatie via e-mail" en de
+    omschrijving "Expliciet dezelfde weg als de standaard". Dat was letterlijk waar: geen
+    enkele code deed iets anders met ``verify`` dan met niets. Een keuze aanbieden die de
+    uitkomst niet verandert is geen extra vrijheid maar een leugen over de werking, dus hij
+    is weg -- uit de enum, uit het schema en hier.
     """
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -1428,11 +1433,6 @@ class KeycloakAccountLinkOptionsProvider:
                 "value": "confirm",
                 "label": "Bevestigen op het scherm",
                 "description": "De gebruiker bevestigt de koppeling in de browser, zonder e-mail.",
-            },
-            {
-                "value": "verify",
-                "label": "Verificatie via e-mail",
-                "description": "Expliciet dezelfde weg als de standaard.",
             },
         ]
 
