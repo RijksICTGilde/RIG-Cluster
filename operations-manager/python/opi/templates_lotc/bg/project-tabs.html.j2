@@ -171,6 +171,10 @@
         {% if project.deployments %}
             {% call panel("Deployments", "arrow-up-arrow-down", info_text="Waar dit project draait, met de stand die ArgoCD meldt.") %}
                 <div id="deployment-status">
+                {# Een stack eromheen: de melding, de werkbalk en de tabel stonden als
+                   kale broers in deze div, dus zoeken en sorteren plakten tegen de
+                   tabel eronder. De id blijft op de div, want er wordt naar gelinkt. #}
+                <c-stack gap="md">
                     {% if not argocd_available %}
                         <c-alert type="info" heading="Deployment status niet beschikbaar">
                             ArgoCD is niet verbonden. De statuskolom vult zich zodra ArgoCD beschikbaar is.
@@ -217,7 +221,11 @@
                                Allebei gemeten op de projectenlijst; zie bg/projects.html.j2. #}
                             <nldd-toolbar-item slot="end" size="md">
                                 <nldd-button variant="secondary" expandable start-icon="sort"
-                                             text="Sorteren: {{ huidige_sortering }}" type="button"
+                                             {# huidige_sortering hoort bij de PROJECTENlijst en wordt hier niet
+                                                meegegeven, dus de knop zei niet welke sortering aan stond terwijl
+                                                de URL en het vinkje in het menu dat wel deden. De naam komt uit
+                                                dezelfde lijst als de menu-items, dus er is geen tweede bron. #}
+                                             text="Sorteren: {{ (deployment_sorteringen | selectattr('0', 'equalto', deployment_sort) | map(attribute='1') | first) | default(deployment_sorteringen[0][1] if deployment_sorteringen else '', true) }}" type="button"
                                              popup-type="menu" size="md">
                                     <nldd-menu slot="popup" placement="bottom-end">
                                         {% for sleutel, label in deployment_sorteringen %}
@@ -256,6 +264,7 @@
                     <div id="deployments-lijst">
                         {% include "bg/_deployments-lijst.html.j2" %}
                     </div>
+                </c-stack>
                 </div>
             {% endcall %}
         {% endif %}
