@@ -15,7 +15,7 @@ from __future__ import annotations
 from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.deployment_state import collect_deployment_state
 
-TEMPLATE = "project-details/_argocd-deployment-card.html.j2"
+TEMPLATE = "bg/_argocd-deployment-card.html.j2"
 CLUSTER = "odcn-production"
 
 
