@@ -133,7 +133,18 @@ def restore_redacted_secrets(data: Any, original: Any) -> Any:
 
     A placeholder with nothing to restore from (a list item the form added) has its key
     dropped rather than written, so the placeholder can never reach the project file.
+
+    Dropping is the safe direction but it is not free: a field that is required shows up
+    as a refused save, and a field that is optional (``totp_secret`` next to the realm
+    password) simply disappears from the project file with nobody the wiser. So every drop
+    is logged with its path -- the drop that is correct (a list item the form just added)
+    and the drop that is a pairing bug read the same here, and only the log tells them
+    apart afterwards.
     """
+    return _restore(data, original, [])
+
+
+def _restore(data: Any, original: Any, path: list[str]) -> Any:
     if isinstance(data, dict):
         source = original if isinstance(original, dict) else {}
         restored: dict[Any, Any] = {}
@@ -141,13 +152,18 @@ def restore_redacted_secrets(data: Any, original: Any) -> Any:
             if item == REDACTED:
                 if source.get(key) is not None:
                     restored[key] = source[key]
+                else:
+                    logger.warning(
+                        "Redacted secret at %s has no stored counterpart; dropping the key",
+                        "/".join([*path, str(key)]),
+                    )
                 continue
-            restored[key] = restore_redacted_secrets(item, source.get(key))
+            restored[key] = _restore(item, source.get(key), [*path, str(key)])
         return restored
     if isinstance(data, list):
         source_list = original if isinstance(original, list) else []
         return [
-            restore_redacted_secrets(item, _pair_with(item, source_list, index))
+            _restore(item, _pair_with(item, source_list, index), [*path, str(index)])
             for index, item in enumerate(data)
             if item != REDACTED
         ]
