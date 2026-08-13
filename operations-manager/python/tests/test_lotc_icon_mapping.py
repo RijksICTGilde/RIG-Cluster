@@ -146,8 +146,8 @@ def _iconen_in_python() -> dict[str, set[str]]:
     De dienstDEFINITIES werden al gemeten (hierboven), en dat was maar een deel van de
     Python-kant: een deploymentactie, een formuliersectie en een preset dragen hun icoon
     net zo goed in Python. Daar zaten drie lege plekken die geen enkele poort zag -
-    ``raket`` op de wizardstap Deployments, ``uitvoering`` op "Applicatie wekken" en "Job
-    uitvoeren", en ``wolk`` op de objectopslagconfiguratie.
+    ``raket`` op de wizardstap Deployments, ``uitvoering`` op "Job uitvoeren", en ``wolk``
+    op de objectopslagconfiguratie.
     """
     gevonden: dict[str, set[str]] = {}
     for bron in OPI_DIR.rglob("*.py"):

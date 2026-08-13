@@ -76,7 +76,7 @@ ROOS_TO_NLDD_ICONS = {
     # raket; cylinder-split is het icoon dat een deployment hier overal draagt (zie
     # "server" hieronder), dus de stap krijgt hetzelfde beeld als waar hij over gaat.
     "raket": "cylinder-split",
-    # "Applicatie wekken" en "Job uitvoeren": iets in gang zetten.
+    # "Job uitvoeren" (postgres_pages.py): iets in gang zetten.
     "uitvoering": "play",
     "wolk": "cloud",
     "pijl-naar-rechts": "chevron-right",
