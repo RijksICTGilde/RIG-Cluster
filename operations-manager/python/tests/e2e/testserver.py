@@ -243,7 +243,19 @@ def create_test_app():
     @contextlib.contextmanager
     def patched_app():
         with (
-            patch("opi.core.startup.run_startup_tasks", new_callable=AsyncMock),
+            # Patch where het GEBRUIKT wordt (opi.server) en niet waar het gedefinieerd
+            # is. ``opi/server.py`` doet ``from opi.core.startup import run_startup_tasks``
+            # en roept die eigen naam aan; het definitiepad patchen raakt die binding
+            # alleen als opi.server hieronder voor het EERST geimporteerd wordt.
+            #
+            # Dat maakte de suite afhankelijk van wat er verder verzameld werd: bij
+            # ``pytest tests/e2e`` was opi.server nog niet geladen en pakte de import de
+            # mock op; bij ``pytest -m e2e`` (de hele boom) had een unittest opi.server al
+            # geimporteerd, bleef de ECHTE functie staan, en ging de app bij het opstarten
+            # een database zoeken die er niet is. De retry duurt langer dan de 10s die de
+            # ``app_server``-fixture wacht, dus faalde elke E2E-test in setup: 397 errors
+            # op een suite die per bestand groen was.
+            patch("opi.server.run_startup_tasks", new_callable=AsyncMock),
             patch("opi.core.config.settings.SECRET_KEY", SECRET_KEY),
             patch("opi.core.config.settings.ENABLE_GIT_MONITOR", False),
             patch(
