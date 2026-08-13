@@ -73,6 +73,8 @@ def test_the_notice_is_rendered_above_the_tabs() -> None:
 def test_the_page_handler_measures_the_drift() -> None:
     from opi.web import router
 
-    source = inspect.getsource(router.project_details)
+    # De projectpagina wordt door twee routes bediend (met en zonder deployment in het
+    # pad); ze delen dezelfde renderfunctie, en daar staat de meting in.
+    source = inspect.getsource(router.render_project_page)
     assert "get_deferred_rollouts" in source
     assert '"pending_rollout": pending_rollout' in source

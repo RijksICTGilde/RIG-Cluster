@@ -24,7 +24,7 @@
    style="display: none" in de markup, zodat een template geen vormgeving draagt.
 
    GEEN component. Dit is geen opmaak maar een schakelaar waar JavaScript aan hangt:
-   log_viewer.js, deployment_switch.js, metrics_charts.js en de tools-pagina zetten en
+   log_viewer.js, metrics_charts.js, edit_modal.js en de tools-pagina zetten en
    halen deze klasse. Een component eromheen zou die schakelaar juist verstoppen.
 
    Waarom !important: dit bestand staat in de <head> en de stylesheet van de pagina

@@ -10,12 +10,10 @@
   flow-id van de bewerk-dialoog, dus sorteren zonder dat zou "Images bewerken" stilletjes
   op een andere deployment richten.
 
-  De wikkel is letterlijk overgenomen: ``class="deployment-section"`` en
-  ``id="deployment-actions-<naam>"``. switchDeployment() zoekt op precies die id.
-
-  WELKE ER OPEN STAAT bepaalt de server (``deployment_open``, uit ?deployment=) en niet
-  "de eerste": een rij uit de deploymenttabel op Overzicht wijst een deployment aan, en
-  die hoort ook zonder JavaScript de zijne te zijn.
+  ER IS ER EEN, en dat is die uit het PAD (``deployment_geopend``, zie de route). Dit
+  bestand liep eerst over alle deployments en verborg alle acties behalve die van een; nu
+  rendert het de acties van de deployment die de pagina toont. De wikkel houdt zijn
+  ``id="deployment-actions-<naam>"``: die zegt bij welke deployment deze knoppen horen.
 
   De aanroep wordt met {% set %} BOVEN de tag opgebouwd: <c-button> laat geen onclick toe,
   :attrs zet het attribuut wel door, en een genest aanhalingsteken binnen :attrs leest de
@@ -27,11 +25,11 @@
   Het icoon en de soort komen ongewijzigd van de dienst.
 #}
 {% set deployment_service_actions = deployment_service_actions | default({}) %}
-{% if user_role in ["admin", "owner"] and project.deployments %}
-    {% for deployment in project.deployments | sort(attribute='name') %}
+{% if user_role in ["admin", "owner"] and deployment_geopend %}
+    {% set deployment = deployment_geopend %}
     {% set original_index = project.deployments.index(deployment) %}
-    <div class="deployment-section{% if deployment.name != deployment_open %} is-hidden{% endif %}" id="deployment-actions-{{ deployment.name }}">
-        {# Twee kaarten onder elkaar in EEN deployment-section: de stack geeft ze hun
+    <div id="deployment-actions-{{ deployment.name }}">
+        {# Twee kaarten onder elkaar in EEN wikkel: de stack geeft ze hun
            tussenruimte, want de c-stack van de tab omvat deze div als geheel. #}
         <c-stack gap="md">
         <c-card outline padding="lg">
@@ -45,8 +43,8 @@
                     <c-button type="secondary" size="sm" show-icon="before" icon="refresh"
                               label="Deployment herverwerken" :attrs="{'onclick': herverwerken}" />
                     {# Hoort bij het PROJECT en niet bij deze deployment, maar staat hier omdat
-                       dit de plek is waar je naar acties kijkt. Er is er altijd precies een
-                       zichtbaar (switchDeployment toont er een), dus hij verschijnt niet dubbel. #}
+                       dit de plek is waar je naar acties kijkt. De pagina toont er een, dus
+                       hij verschijnt niet dubbel. #}
                     <c-button type="secondary" size="sm" show-icon="before" icon="plus"
                               label="Deployment toevoegen" :attrs="{'onclick': deployment_toevoegen}" />
 
@@ -95,5 +93,4 @@
         {% endif %}
         </c-stack>
     </div>
-    {% endfor %}
 {% endif %}
