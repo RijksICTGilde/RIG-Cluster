@@ -33,11 +33,12 @@ gedaan en niet op de werkkopie.
 
 ## De tijd, eerst
 
-Totale wandkloktijd van de doorloop: **circa 55 minuten**, waarvan de beide e2e-suites
-samen het grootste deel besloegen. De vorige doorloop kostte bijna acht uur over meerdere
-sessies. Het verschil zit niet in ander werk maar in ander wachten: overal is op de
-voorwaarde gewacht (`wait_for_task()`, `kubectl rollout status`, pollen op het projectbestand)
-en nergens op de klok.
+Totale wandkloktijd van de doorloop: **1 uur 25**, waarvan de beide e2e-suites samen ruim een
+uur. Alles behalve die suites - de uitrol, het opruimen van de aangetroffen rommel, alle zes
+stappen, de nieuwe toets en de metingen - kostte samen **circa 20 minuten**. De vorige doorloop
+kostte bijna acht uur over meerdere sessies. Het verschil zit niet in ander werk maar in ander
+wachten: overal is op de voorwaarde gewacht (`wait_for_task()`, `kubectl rollout status`, pollen
+op het projectbestand) en nergens op de klok.
 
 | Stap | Duur | Waar de tijd zat |
 |---|---:|---|
@@ -59,7 +60,7 @@ en nergens op de klok.
 | Dubbele-`id`-meting in de browser | 40 s | zes pagina's laden |
 | Opruimen van beide testprojecten | 31 s + 30 s | afbraak + ArgoCD |
 | e2e lokaal (`-m "e2e and not sandbox"`) | 10 min 09 | 367 browsertests |
-| e2e sandbox (`-m "e2e and sandbox"`) | zie hieronder | echte provisioning per test |
+| e2e sandbox (`-m "e2e and sandbox"`) | 52 min 23 | echte provisioning per test |
 
 **Aanmaken plus opruimen blijft ruim binnen het half uur.** Het wizardproject kostte
 67 s aanmaken en 30 s opruimen: **1 minuut 37**. Het API-project kostte 43 s aanmaken
@@ -68,18 +69,28 @@ respectievelijk 5% en 4% van het budget.
 
 **Wat het langst duurde, en waarom.** In volgorde:
 
-1. **De e2e-suites** (samen het leeuwendeel). Dat is echt werk: de sandbox-suite provisioneert
-   per test een compleet project. Hier valt tijd te winnen door projecten tussen tests te
-   delen, niet door beter te wachten.
+1. **De sandbox-e2e-suite** (52 min, 60% van de hele doorloop). Dat is echt werk: de suite
+   provisioneert per test een compleet project, en 46 geslaagde tests betekent tientallen
+   volledige aanmaak- en opruimrondes. Hier valt tijd te winnen door projecten tussen tests te
+   delen, niet door beter te wachten. Het is ook de post die de doorloop over de lease-grens
+   duwt (bevinding 9).
 2. **Het opruimen van de aangetroffen rommel** (~7 min). Dat is *geen* eigen werk maar een
    erfenis, en het is de duurste post die volledig te vermijden is: bevinding 5 hieronder is
    de oorzaak, en die repareren haalt deze post naar nul.
 3. **De tweede deployment** (58 s) en **het aanmaken via de wizard** (67 s). Beide zijn
    provisioning met een ArgoCD-sync erachter; dat is de ondergrens van de keten zelf.
 
-**Waar verbeteren het meeste oplevert:** bevinding 5. Niet omdat hij de traagste stap raakt,
-maar omdat hij de enige is die *terugkerend* tijd kost aan iedereen die na jou de sandbox
-gebruikt, en omdat de opruiming die hij nodig maakt met de hand gebeurt.
+**Waar verbeteren het meeste oplevert:** twee dingen, in deze volgorde.
+
+1. **De sandbox-suite korter maken door projecten te delen.** Hij is 60% van de doorloop, en
+   hij is de reden dat een doorloop niet in één lease past. Elke module die nu zijn eigen
+   project aanmaakt betaalt daar ruim een minuut voor.
+2. **Bevinding 5 repareren.** Niet omdat hij de traagste stap raakt (~7 min), maar omdat hij de
+   enige is die *terugkerend* tijd kost aan iedereen die na jou de sandbox gebruikt, en omdat de
+   opruiming die hij nodig maakt met de hand gebeurt.
+
+Wat níet loont is beter wachten: de zes stappen samen kosten vier en een halve minuut, en dat is
+provisioning die echt gebeurt.
 
 ## Per stap
 
@@ -242,11 +253,18 @@ Geen stille mislukking.
 | Suite | Uitkomst |
 |---|---|
 | Lokaal (`-m "e2e and not sandbox"`) | **1 gefaald, 362 geslaagd, 1 overgeslagen, 3 xfailed** in 10m09 |
-| Sandbox (`-m "e2e and sandbox"`) | zie de aanvulling onderaan |
+| Sandbox (`-m "e2e and sandbox"`) | **3 gefaald, 46 geslaagd, 1 xfailed** in 52m23 |
 
 De lokale suite is daarmee van **7 gefaald naar 1**, en die ene is de bekende paginamarge uit
 bevinding 1. De zes andere fouten van de vorige doorloop (de dubbele `id`'s en de vier
 achterhaalde tests over het verdwenen kopieerknopje) zijn weg.
+
+De sandbox-suite is van **9 gefaald / 16 geslaagd / 25 fouten bij het opzetten** naar
+**3 gefaald / 46 geslaagd / 0 fouten bij het opzetten**. Dat de opzetfouten weg zijn is het
+belangrijkste getal van de twee: vorige keer kwamen 25 tests niet eens aan hun eigen toets toe.
+
+De drie die rood zijn staan alle drie in `test_sandbox_reallife.py`, en ze zijn **niet aan deze
+tak toe te schrijven**. Zie bevinding 9.
 
 ## Bevindingen
 
@@ -326,15 +344,25 @@ git-historie te zien dat hij netjes via OPI verwijderd is - er staat een commit 
 `enval-4mu`) staat die commit er wel. De opruiming is dus niet consequent, en elke keer dat hij
 overslaat blijft er een map staan die ArgoCD de applicatie laat herrijzen.
 
+**En het is deze doorloop opnieuw gebeurd, meetbaar.** Na afloop van de sandbox-suite stonden er
+nog twee projectbestanden (opgeruimd) en daarna **vier verweesde projectmappen** in
+`zad-argo-user-applications` - `invit-zyf`, `pgsch-gt5`, `rl155-3gf` en `sleep-ngm` - elk met een
+ArgoCD-applicatie en een AppProject die eruit herrezen, terwijl hun projectbestand netjes weg
+was. Vier projecten uit één suite-run. Dat is de aangroei van de begintoestand hierboven, van
+dichtbij gezien.
+
 Een plausibel mechanisme staat in `GitConnector.ensure_repo_cloned()`: die haalt per sessie
 **eenmalig** nieuwe commits op (`_fetched_in_session`). Een werkkopie die daarna verouderd
 raakt laat `_delete_project_argocd_folder()` de map als `not_found` zien, waarna er niets te
-committen valt en de opruiming stil overslaat. Bewijs uit de logs was er niet meer bij: de pod
-was door de uitrol van deze doorloop al herstart.
+committen valt en de opruiming stil overslaat. Dat past bij het patroon (het gaat mis bij
+projecten die kort na elkaar verwijderd worden, en goed bij losse verwijderingen), maar het is
+niet uit de logs bevestigd: de pod was al vervangen (bevinding 9).
 
 **Niet gerepareerd.** De reparatie raakt of de opruimvolgorde of het fetch-gedrag van de
-git-connector, en beide zijn een besluit. Wel opgeruimd: alle 22 mappen, applicaties,
-AppProjects en repo-secrets, plus de twee die deze doorloop zelf achterliet.
+git-connector, en beide zijn een besluit. Wel opgeruimd: alle 22 mappen die deze doorloop
+aantrof, plus alles wat de doorloop zelf achterliet. Eindstand van de sandbox: geen
+projectbestanden, geen projectmappen in de argo-repo, alleen `sandbox-infrastructure` en
+`user-applications` (beide `Synced`/`Healthy`), en alleen het AppProject `default`.
 
 ### 6. ArgoCD prunet niet als de sync *alles* zou wissen
 
@@ -373,6 +401,42 @@ Een seconde later gaf `/version` wel degelijk `52a7f330`. De controle bevraagt `
 bedienen. De waarschuwing is dus vals alarm, maar wel het soort vals alarm dat iemand een
 tweede build laat draaien.
 
+### 9. De sandbox-lease is korter dan een volledige sandbox-suite, en dat heeft deze meting geraakt
+
+De drie rode tests in de sandbox-suite zijn `test_ui_edits_while_api_task_runs_on_same_file`,
+`test_ui_env_vars_while_api_patches_same_file` en `test_final_state_of_all_projects` - de laatste
+is cumulatief en meet de nasleep van de eerste twee. Ze falen omdat vier `update_image`-taken
+(op `rl055-rvc`, `rl155-3gf`, `rl256-q2v` en `rl356-xsv`) eindigden op
+*"Failed to update image: Failed to process deployment productie"*.
+
+**Wat er onder lag is niet deze tak.** De tijden vallen samen tot op de seconde:
+
+| Tijd (UTC) | Gebeurtenis |
+|---|---|
+| 06:24:56 | mijn build (`rc-89`) uitgerold, replicaset `c8875b7fd` |
+| ~07:24 | mijn sandbox-lease van een uur verloopt (geclaimd om 06:24) |
+| **07:28:42 / 07:28:43** | **twee nieuwe replicasets: een andere PR rolt zijn build uit over het cluster** |
+| 07:28:45 - 07:28:46 | de vier `update_image`-taken worden aangemaakt |
+| 07:31:06 - 07:31:23 | die taken beginnen pas (2,5 minuut later) en falen binnen 1-2 seconden |
+| 07:36:25, 07:42:42 | nog twee uitrollen over hetzelfde cluster |
+
+De OPI waar die taken op draaiden werd dus drie seconden vóór hun aanmaak vervangen, en daarna
+nog twee keer. De logs van die pod zijn met de pod verdwenen, dus de precieze foutregel is niet
+meer te achterhalen - maar een suite die halverwege drie keer onder zich vandaan wordt uitgerold
+meet niets meer over de code die zij zou toetsen.
+
+**Niemand heeft hier iets fout gedaan**, en dat is juist de bevinding: de lease duurt een uur, en
+alleen de sandbox-suite al kost 52 minuten. Tel daar de uitrol, de zes stappen en het opruimen
+bij op, en een volledige doorloop past per definitie niet in één lease. Het slot doet dan precies
+wat het moet - de volgende PR mag erin - maar de lopende meting is stuk.
+
+**Niet opnieuw gemeten.** Het cluster is inmiddels van een andere PR (`orch sandbox status`:
+HELD by RC-91) en draait diens build. Dat mag niet weggenomen worden, dus deze drie blijven
+staan als "rood door een verstoorde meting", niet als "rood".
+
+Wat dit vraagt is een besluit, geen reparatie: of de lease meebeweegt met wat er draait, of een
+doorloop de suite in stukken draait. Dat hoort bij degene die het slot beheert.
+
 ## Het oordeel
 
 **De keten is gezond en de schil is dat nu ook.**
@@ -390,7 +454,7 @@ De drie punten die vorige keer het uitrollen tegenhielden zijn alle drie weg:
 |---|---|
 | Dubbele `id` op elk aanvinkvakje | weg, in de browser nagemeten op zes pagina's |
 | Een mislukte subtaak meldde `completed` | `status` zegt `failed`, met vangrail op de levende weg |
-| Wankele wizard-fixture sloopte de omgeving | de lokale suite staat op 1 bekende fout; de sandbox-suite is de resterende meting |
+| Wankele wizard-fixture sloopte de omgeving | 0 fouten bij het opzetten, tegen 25 vorige keer; 46 geslaagd tegen 16 |
 
 **Advies: uitrollen kan.** Geen van de bevindingen hierboven is een blokkade:
 
@@ -400,9 +464,18 @@ De drie punten die vorige keer het uitrollen tegenhielden zijn alle drie weg:
 - bevinding 5 is hygiëne in de opruiming: hij laat rommel achter, maar hij breekt geen draaiend
   project en de half kapotte toestand uit de vorige doorloop (weg uit het cluster, aanwezig in
   ZAD) treedt niet meer op;
-- bevindingen 6, 7 en 8 zijn klein.
+- bevindingen 6, 7 en 8 zijn klein;
+- bevinding 9 gaat over het meetgereedschap, niet over het product.
 
-Wat wel voorrang verdient na de uitrol is **bevinding 5**: hij kost bij elke doorloop opnieuw
+**Wat dit advies niet dekt.** De drie rode tests uit bevinding 9 zijn niet schoon nagemeten. De
+aanwijzing dat ze door een vreemde uitrol omvielen is sterk - drie seconden verschil, en daarna
+nog twee uitrollen - maar het is een aanwijzing en geen bewijs, want de logs van die pod zijn
+weg. Wie dat hard wil hebben vóór de uitrol, laat `test_sandbox_reallife.py` alleen nog een keer
+draaien op een cluster dat een uur met rust gelaten wordt; dat kost twintig minuten. Alle andere
+uitspraken in dit verslag staan op eigen metingen die wél ongestoord zijn gedaan (alle zes
+stappen en de nieuwe toets waren om 06:56 klaar, ruim binnen de lease).
+
+Wat voorrang verdient na de uitrol is **bevinding 5**: hij kost bij elke doorloop opnieuw
 handwerk, en hij is de enige bevinding die met de tijd erger wordt in plaats van gelijk blijft.
 
 ## Bijlage
