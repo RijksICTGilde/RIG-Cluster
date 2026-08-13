@@ -838,8 +838,15 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
     # heeft. Gevolg: bij twee gezonde en een leeg project stond er "Alle 2 projecten zijn
     # gezond" terwijl het er drie waren. De voorwaarde toetst nu het totaal, dus elke
     # toestand die er later bij komt valt vanzelf in de eerlijke tak.
-    if healthy == total:
-        heading = "Het project is gezond" if healthy == 1 else f"Alle {healthy} projecten zijn gezond"
+    # Een SLAPENDE deployment is gezond: hij doet precies wat er van hem gevraagd is en
+    # komt vanzelf terug op het eerste bezoek. Hij hoorde bij de niet-gezonde, en dan stond
+    # er "Geen van je 2 projecten is gezond" terwijl er niets mis was. Uitgeschakeld is wel
+    # iets anders: dat blijft uit tot iemand het aanzet, en dat is een keuze van een mens
+    # die het overzicht mag noemen. Slapend telt dus mee in de kop EN krijgt zijn eigen
+    # regel, want je wilt wel weten dat het zo is.
+    if healthy + inactive == total:
+        gezond = healthy + inactive
+        heading = "Het project is gezond" if gezond == 1 else f"Alle {gezond} projecten zijn gezond"
         return {"kind": "success", "heading": heading, "lines": []}
 
     # Elke toestand krijgt zijn eigen regel, in eigen woorden: uitgeschakeld blijft uit tot
@@ -864,14 +871,15 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
         )
     # Vier gevallen, want "0 van de 1 projecten zijn gezond" is op drie manieren fout:
     # het telwoord voor een enkelvoud, het meervoud "projecten", en het werkwoord.
+    gezond = healthy + inactive
     if total == 1:
-        heading = "Het project is gezond" if healthy else "Het project is niet gezond"
-    elif not healthy:
+        heading = "Het project is gezond" if gezond else "Het project is niet gezond"
+    elif not gezond:
         heading = f"Geen van je {total} projecten is gezond"
-    elif healthy == 1:
+    elif gezond == 1:
         heading = f"1 van de {total} projecten is gezond"
     else:
-        heading = f"{healthy} van de {total} projecten zijn gezond"
+        heading = f"{gezond} van de {total} projecten zijn gezond"
     return {
         "kind": "info",
         "heading": heading,

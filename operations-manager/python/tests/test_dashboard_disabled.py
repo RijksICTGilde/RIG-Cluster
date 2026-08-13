@@ -86,7 +86,12 @@ class TestTheBannerSentence:
     def test_switched_off_and_parked_are_named_apart(self) -> None:
         banner = _dashboard_health_banner(_counts(Healthy=1, Disabled=2, Inactive=1))
 
-        assert banner["heading"] == "1 van de 4 projecten is gezond"
+        # Slapend telt MEE als gezond: zo'n deployment doet precies wat er van hem
+        # gevraagd is en komt vanzelf terug. Hij wordt wel apart benoemd, want je wilt
+        # weten dat het zo is. Uitgeschakeld telt niet mee: dat blijft uit tot iemand het
+        # aanzet. Eerder stond hier 1 van de 4, en dan las een slapend project als een
+        # probleem.
+        assert banner["heading"] == "2 van de 4 projecten zijn gezond"
         assert banner["lines"] == [
             "2 projecten hebben een uitgeschakelde deployment",
             "1 project heeft een slapende deployment",
