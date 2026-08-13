@@ -124,6 +124,27 @@ service declares `config_editables(ConfigLayer.DEPLOYMENT_COMPONENT)`,
 `config_deployment_component_visualizers()` and `config_deployment_component_layout()`,
 and the deployment form gathers it.
 
+## Measured end to end (RC-96)
+
+The per-deployment override was walked on the sandbox on 13 August 2026 with the
+certificate established **on the connection** (`openssl s_client` with SNI), not read out
+of the project file: see `docs/doorloop-tls-override-2026-08-13.md` and the guardrail
+`tests/e2e/test_sandbox_tls_override.py`. Empty really does inherit, one deployment serves
+its own certificate while the other stays on the platform's, an override switches
+`provided` off on a running deployment, a certificate an override uses cannot be deleted
+(not even with `confirm_in_use`), and a reprocess re-emits the same certificate.
+
+Two things to know before measuring it again:
+
+- **There is no API route for this layer.** The generic config routes are generated from
+  `_CONFIG_WRITE_LAYERS` (project, component, deployment), so the override is a UI-only
+  setting today; `GET /api/v2/services/publish-on-web` states this itself with
+  `config_endpoint: null` for `deployment-component`. A CLI cannot set it.
+- **Measure on the ingress port.** On the shared dev server Caddy owns 443 and Kind
+  publishes the ingress on 8843; Caddy terminates TLS with the same wildcard, so a
+  handshake on 443 shows the platform certificate for every host, including one that
+  demonstrably serves its own.
+
 ## Status
 
 - **Done**: `passthrough` at the component level + cert suppression + the inline

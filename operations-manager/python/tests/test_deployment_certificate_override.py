@@ -244,6 +244,25 @@ def test_override_counts_as_a_use_of_the_attachment() -> None:
     assert [(s.component, s.deployment, s.kind) for s in sites] == [("web", "productie", USAGE_CERTIFICATE)]
 
 
+def test_component_and_override_pointing_at_one_certificate_are_both_reported() -> None:
+    """Two sites, one certificate: the component's own and one deployment's override (RC-96).
+
+    The plan's point 5 in its sharpest form. A guard that walked only the component list
+    would call the override's certificate unused, and a guard that walked only the
+    deployment components would say the same about the component's -- so the answer has to
+    name both places, which is what the delete refusal shows the caller.
+    """
+    project = _two_deployments()
+    project["components"][0]["services"] = [
+        {"publish-on-web": {"config": {"tls": "provided", "attachment": "prod-cert"}}}
+    ]
+    sites = attachment_usage_sites(project)["prod-cert"]
+    assert {(s.component, s.deployment) for s in sites} == {("web", None), ("web", "productie")}
+    assert all(s.kind == USAGE_CERTIFICATE for s in sites)
+    # And as the API hands it to a client: the labels distinguish the two places.
+    assert {s.label for s in sites} == {"web", "web (productie)"}
+
+
 def test_removing_a_certificate_used_by_an_override_is_refused() -> None:
     """Even with the in-use acknowledgement: moving a site off its own certificate is a
     decision, not a side effect of deleting a file."""
