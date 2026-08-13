@@ -35,7 +35,11 @@ pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
 
-NLDD_URL = f"/projects/{PROJECT}/details"
+#: De pagina waar de knop hieronder op staat. Dat was Overzicht (``/details``), maar
+#: ``a16338ee`` heeft Team een EIGEN tabblad gegeven en de knop is meeverhuisd. Deze vier
+#: tests bleven op Overzicht zoeken en vielen dus om op een verhuizing en niet op de
+#: dialoog die ze meten.
+NLDD_URL = f"/projects/{PROJECT}/team"
 
 #: De knop op het tabblad Project die de dialoog opent, en de flow die erachter zit.
 TEAM_KNOP = "Projectleden beheren"
