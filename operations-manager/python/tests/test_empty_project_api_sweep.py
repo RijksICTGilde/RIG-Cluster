@@ -83,8 +83,10 @@ def client(mock_settings: Any, store: Any) -> TestClient:
     app.state.task_service = task_service
 
     with (
-        patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
-        patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
+        # RC-104 verhuisde het opbouwen van webadressen naar de dienst zelf; de naam wordt
+        # daar geimporteerd en dus daar gepatcht.
+        patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
+        patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
         patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
         patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
         patch("opi.api.v2.router.get_decoded_project_private_key", AsyncMock(return_value="AGE-SECRET-KEY-FAKE")),
