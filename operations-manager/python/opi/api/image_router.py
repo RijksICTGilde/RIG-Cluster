@@ -44,6 +44,11 @@ async def push_image(
     The tarball should be created with `docker save`. It is streamed to disk in chunks
     to avoid holding the full image in memory, then pushed via skopeo.
 
+    The image lands on a tag that carries the project as its owner
+    (`{project_name}_{image_name}-{tag}`), so two projects pushing the same
+    `image_name` and `tag` get two different images and neither can overwrite the
+    other's. Use the returned `image` reference, not a hand-built one.
+
     Optionally, provide both `deployment` and `component` to update
     the deployment's image reference and trigger a redeployment after a successful push.
     """
@@ -58,10 +63,10 @@ async def push_image(
 
     connector = SkopeoConnector()
 
-    # Validate early before accepting the upload
+    # Validate early before accepting the upload. The project name is part of the
+    # target, so it is validated here too: the destination tag is owner-pinned.
     try:
-        connector._validate_image_name(image_name)
-        connector._validate_tag(tag)
+        connector.validate_push_target(project_name, image_name, tag)
     except SkopeoValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -92,7 +97,7 @@ async def push_image(
             f"Received image tarball for {project_name}/{image_name}:{tag} ({bytes_written / (1024 * 1024):.1f} MB)"
         )
 
-        image_ref = await connector.push_image(tarball_path, image_name, tag)
+        image_ref = await connector.push_image(tarball_path, project_name, image_name, tag)
 
         response_data: dict[str, object] = {
             "status": "success",

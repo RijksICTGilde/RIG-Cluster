@@ -2255,3 +2255,50 @@ def ensure_fqdn(hostname: str) -> str:
     cluster_conf = CLUSTER_CONFIG.get(settings.CLUSTER_MANAGER, {})
     namespace = cluster_conf.get("namespace", "rig-system")
     return f"{host}.{namespace}.svc.cluster.local{port_suffix}"
+
+
+# --- Container registry tags -------------------------------------------------
+#
+# The platform pushes every uploaded image into ONE registry repository (the robot
+# account's own repo), because Quay has no nested repositories under a single
+# robot-account scope. That makes the tag the only place where ownership can live,
+# so the tag carries the owning project.
+
+#: Separates the owning project from the rest of a registry tag.
+#:
+#: A project name matches ``^[a-z][a-z0-9-]*$`` and therefore never contains an
+#: underscore, so the part before the FIRST underscore is unambiguously the owner --
+#: also when the image name itself contains one. Two different projects can never
+#: produce the same tag.
+REGISTRY_TAG_OWNER_SEPARATOR = "_"
+
+#: The project-name shape the registry tag relies on for its unambiguous prefix.
+REGISTRY_TAG_OWNER_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
+
+def build_registry_tag(project_name: str, image_name: str, tag: str) -> str:
+    """Build the owner-pinned registry tag for an uploaded image.
+
+    Args:
+        project_name: The project the image belongs to (the API key's project).
+        image_name: Image name as supplied by the caller.
+        tag: Image tag as supplied by the caller.
+
+    Returns:
+        ``{project_name}_{image_name}-{tag}``.
+    """
+    return f"{project_name}{REGISTRY_TAG_OWNER_SEPARATOR}{image_name}-{tag}"
+
+
+def registry_tag_owner(registry_tag: str) -> str | None:
+    """The project that owns a registry tag, or None when the tag is unowned.
+
+    Tags pushed before ownership pinning have no owner prefix; they return None and
+    stay readable. A tag whose prefix is not a valid project name is not treated as
+    owned either -- ownership is only claimed by a prefix that could have been
+    produced by ``build_registry_tag``.
+    """
+    owner, separator, _rest = registry_tag.partition(REGISTRY_TAG_OWNER_SEPARATOR)
+    if not separator or not REGISTRY_TAG_OWNER_RE.match(owner):
+        return None
+    return owner

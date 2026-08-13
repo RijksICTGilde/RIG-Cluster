@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
@@ -30,7 +31,7 @@ from opi.services.services import (
     service_entry_schema_version,
 )
 from opi.services.services_enums import ServiceType
-from opi.utils.naming import generate_extra_database_schema
+from opi.utils.naming import generate_extra_database_schema, registry_tag_owner
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
 
 logger = logging.getLogger(__name__)
@@ -399,6 +400,103 @@ def validate_database_schema_names(project_data: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _platform_registry_repo() -> str | None:
+    """The one repository the platform's image-push endpoint writes into, or None.
+
+    Everything a project pushes lands in ``{REGISTRY_URL}/{REGISTRY_ORG}``; ownership
+    lives in the tag (see ``build_registry_tag``). Returns None when no registry is
+    configured, which is the case on clusters without the image-push feature.
+    """
+    if not settings.REGISTRY_URL or not settings.REGISTRY_ORG:
+        return None
+    return f"{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}"
+
+
+def _normalize_registry_repo(repo: str) -> str:
+    """The comparable form of a registry repository, so one repo has one spelling.
+
+    A hostname is case-insensitive and the https port may be written out, so
+    ``RCR.rijksapps.nl/rig`` and ``rcr.rijksapps.nl:443/rig`` are the same repository
+    as ``rcr.rijksapps.nl/rig``. The path after the host is left alone: registries
+    treat it case-sensitively.
+    """
+    host, separator, path = repo.partition("/")
+    if not separator or not ("." in host or ":" in host or host == "localhost"):
+        # No registry host in front (e.g. 'nginx' or 'library/nginx'): nothing to normalize.
+        return repo
+    host = host.lower()
+    host = host.removesuffix(":443")
+    return f"{host}/{path}"
+
+
+def _split_image_reference(image: str) -> tuple[str, str | None, bool]:
+    """Split an image reference into (repository, tag, carries-a-digest).
+
+    Handles the shapes the project schema allows: ``repo``, ``repo:tag``,
+    ``repo@sha256:...`` and ``repo:tag@sha256:...``, with an optional port in the
+    host. A colon that is followed by a ``/`` is a port, not a tag separator.
+    """
+    reference, digest_separator, _digest = image.partition("@")
+    repo, tag_separator, tag = reference.rpartition(":")
+    if not tag_separator or "/" in tag:
+        return reference, None, bool(digest_separator)
+    return repo, tag, bool(digest_separator)
+
+
+def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> list[str]:
+    """Reject deployment images that point at another project's tag in the shared registry.
+
+    Pinning the push side stops a project from writing another's image; without this
+    a project could still READ one, by naming the other's tag as its own deployment
+    image. Only references into the platform's own registry repository are judged --
+    an image from ghcr.io, Docker Hub or a project's own registry is nobody's business
+    here, and is left alone.
+
+    The reference is normalized before it is judged, because one repository has more
+    than one valid spelling (uppercase host, an explicit ``:443``). A digest reference
+    into the platform repository is refused outright: ownership lives in the tag, and
+    a digest names an image in the shared repository without naming its owner.
+
+    Tags from before ownership pinning carry no owner prefix and stay usable, so
+    deployments that already run keep running.
+    """
+    platform_repo = _platform_registry_repo()
+    if platform_repo is None:
+        return []
+    platform_repo = _normalize_registry_repo(platform_repo)
+
+    project_name = project_data.get("name", "")
+    errors: list[str] = []
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        for component in deployment.get("components", []) or []:
+            if not isinstance(component, dict):
+                continue
+            image = component.get("image")
+            if not isinstance(image, str):
+                continue
+            repo, registry_tag, has_digest = _split_image_reference(image)
+            if _normalize_registry_repo(repo) != platform_repo:
+                continue
+            where = f"deployment '{deployment.get('name')}' component '{component.get('reference')}'"
+            if has_digest:
+                errors.append(
+                    f"{where} verwijst met '{image}' naar de gedeelde platformregistry met een digest. "
+                    f"Daar staat niet in van wie de image is, dus verwijs naar je eigen tag "
+                    f"('{project_name}_...') in plaats van naar een digest"
+                )
+                continue
+            owner = registry_tag_owner(registry_tag) if registry_tag is not None else None
+            if owner is not None and owner != project_name:
+                errors.append(
+                    f"{where} verwijst met '{image}' naar een image in de gedeelde platformregistry "
+                    f"die van project '{owner}' is. "
+                    f"Je kunt daar alleen images gebruiken die je zelf gepusht hebt"
+                )
+    return errors
+
+
 async def validate_project_structure(project_data: dict[str, Any]) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
@@ -536,6 +634,12 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
     schema_errors = validate_database_schema_names(project_data)
     if schema_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(schema_errors)}")
+
+    # A deployment may not point at another project's tag in the shared platform
+    # registry. This is the read half of the ownership the push endpoint pins.
+    registry_errors = validate_platform_registry_image_ownership(project_data)
+    if registry_errors:
+        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(registry_errors)}")
 
     # Per-service typed config validation (RC-5 A). Runs last: the envelope and
     # cross-field structure are valid by here, so this only judges the config values.
