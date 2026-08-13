@@ -62,21 +62,39 @@ class ForgejoClient:
             if isinstance(entry, dict) and entry.get("name", "").endswith(".yaml")
         }
 
-    def wait_for_new_project(self, before: set[str], *, timeout: float = 180.0, interval: float = 3.0) -> str | None:
+    def wait_for_new_project(
+        self,
+        before: set[str],
+        *,
+        display_name: str | None = None,
+        timeout: float = 180.0,
+        interval: float = 3.0,
+    ) -> str | None:
         """Poll until a project name appears that was not in `before`, returning it.
 
         Project creation derives a random technical name from the display name, so
         the resulting file name cannot be predicted; we detect it by diffing the
         repo listing. Returns the new name, or None on timeout.
+
+        Met *display_name* erbij telt alleen een bestand met die weergavenaam mee. Het
+        verschil met de eerdere lijst is namelijk niet altijd waar het op lijkt: haalt de
+        listing van vóór de wizard even 404 (gemeten op de sandbox, twee seconden later
+        weer 200), dan is ``before`` leeg en adopteert de test het eerste bestand dat er
+        toch al stond - een achtergebleven project van een vorige run. De test draait dan
+        verder op de verkeerde naam en meldt iets dat niets met de wijziging te maken heeft.
         """
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            new = self.list_project_names() - before
-            if new:
-                return sorted(new)[0]
+        while True:
+            found = self._first_matching(self.list_project_names() - before, display_name)
+            if found or time.monotonic() >= deadline:
+                return found
             time.sleep(interval)
-        new = self.list_project_names() - before
-        return sorted(new)[0] if new else None
+
+    def _first_matching(self, candidates: set[str], display_name: str | None) -> str | None:
+        for name in sorted(candidates):
+            if display_name is None or (self.get_project_yaml(name) or {}).get("display-name") == display_name:
+                return name
+        return None
 
     def get_project_file(self, project_name: str) -> str | None:
         """Return the raw YAML text of the project file, or None if it does not exist."""
