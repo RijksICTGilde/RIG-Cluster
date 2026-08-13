@@ -34,7 +34,8 @@ spec:
     spec:
       # Pod-level security context (OpenShift compatible)
       securityContext:
-        # For Kind clusters, specify numeric UID since no SCC assignment.
+        # Nothing assigns a UID here, so pin one. Without fsGroup a non-root
+        # container has no group ownership on its volume and cannot write to it.
         # Per-component overrides via project YAML `components[].security.{run-as-user,run-as-group,fs-group}`;
         # each defaults to 1001 when omitted to preserve historical behaviour.
         runAsNonRoot: true

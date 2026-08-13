@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import jinja2
+from opi.core.cluster_config import assigns_uid_via_scc
 
 MANIFESTS = Path(__file__).resolve().parent.parent / "manifests"
 
@@ -19,6 +20,9 @@ def _render(attachment_secret_mounts: list[dict[str, str]]) -> str:
         namespace="rig-prd-demo",
         application_port=8080,
         attachment_secret_mounts=attachment_secret_mounts,
+        # Same helper the production render paths inject; the template needs it
+        # to pick the securityContext branch.
+        assigns_uid_via_scc=assigns_uid_via_scc,
     )
 
 

@@ -13,12 +13,12 @@ spec:
   restartPolicy: Never
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
   securityContext:
-    {% if cluster in ['local', 'sandboxed-local'] %}
+    {% if assigns_uid_via_scc(cluster) %}
+    runAsNonRoot: true
+    {% else %}
     runAsUser: 1001
     runAsGroup: 1001
     fsGroup: 1001
-    {% else %}
-    runAsNonRoot: true
     {% endif %}
   containers:
     - name: kopia

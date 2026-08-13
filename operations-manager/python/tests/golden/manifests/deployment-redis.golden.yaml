@@ -34,7 +34,7 @@ spec:
     spec:
       # Pod-level security context (OpenShift compatible)
       securityContext:
-        # For OpenShift, let SCCs assign user/group IDs automatically.
+        # Where the platform assigns IDs (OpenShift SCC), let it.
         # Per-component security overrides are intentionally ignored here:
         # SCC admission injects a UID per namespace and would conflict.
         runAsNonRoot: true

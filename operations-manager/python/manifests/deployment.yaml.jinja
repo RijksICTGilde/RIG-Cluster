@@ -54,19 +54,20 @@ spec:
       {% endif %}
       # Pod-level security context (OpenShift compatible)
       securityContext:
-        {% if cluster in ['local', 'sandboxed-local'] %}
-        # For Kind clusters, specify numeric UID since no SCC assignment.
+        {% if assigns_uid_via_scc(cluster) %}
+        # Where the platform assigns IDs (OpenShift SCC), let it.
+        # Per-component security overrides are intentionally ignored here:
+        # SCC admission injects a UID per namespace and would conflict.
+        runAsNonRoot: true
+        {% else %}
+        # Nothing assigns a UID here, so pin one. Without fsGroup a non-root
+        # container has no group ownership on its volume and cannot write to it.
         # Per-component overrides via project YAML `components[].security.{run-as-user,run-as-group,fs-group}`;
         # each defaults to 1001 when omitted to preserve historical behaviour.
         runAsNonRoot: true
         runAsUser: {{ security.runAsUser if security and security.runAsUser is not none else 1001 }}
         runAsGroup: {{ security.runAsGroup if security and security.runAsGroup is not none else 1001 }}
         fsGroup: {{ security.fsGroup if security and security.fsGroup is not none else 1001 }}  # Required for PVC write access
-        {% else %}
-        # For OpenShift, let SCCs assign user/group IDs automatically.
-        # Per-component security overrides are intentionally ignored here:
-        # SCC admission injects a UID per namespace and would conflict.
-        runAsNonRoot: true
         {% endif %}
         seccompProfile:
           type: RuntimeDefault
