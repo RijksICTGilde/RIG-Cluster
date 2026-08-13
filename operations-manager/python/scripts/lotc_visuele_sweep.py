@@ -64,8 +64,13 @@ PAGINAS: list[tuple[str, str]] = [
     ("wizard-start", "/forms/wizard/start"),
 ]
 
-#: De tabbladen van de projectpagina. Elk is een eigen URL en dus een eigen scherm.
-PROJECT_TABS = ("project", "componenten", "services", "deployments", "metrics", "taken")
+#: De tabbladen van de projectpagina, als het PAD dat elk tabblad heeft. Elk is een eigen
+#: URL en dus een eigen scherm.
+#:
+#: Hier stonden de SLEUTELS van de tabbladen, geplakt achter ``/details?tab=``. Die vorm is
+#: met RC-93 verdwenen (de projectnaam staat voorop, het tabblad is een pad), dus de sweep
+#: fotografeerde sindsdien zeven keer het tabblad Overzicht.
+PROJECT_TAB_PADEN = ("details", "team", "componenten", "services", "deployments", "metrics", "backups", "taken")
 
 #: De dialogen, als de JavaScript-aanroep die de PAGINA doet om ze te openen.
 #:
@@ -325,8 +330,8 @@ def main() -> int:
 
         if project:
             schermen.extend(
-                bezoek(page, f"project-{tab}", f"{args.base}/projects/{project}/details?tab={tab}", uit)
-                for tab in PROJECT_TABS
+                bezoek(page, f"project-{pad}", f"{args.base}/projects/{project}/{pad}", uit)
+                for pad in PROJECT_TAB_PADEN
             )
             schermen.extend(open_dialoog(page, naam, args.base, project, aanroep, uit) for naam, aanroep in DIALOGEN)
 
