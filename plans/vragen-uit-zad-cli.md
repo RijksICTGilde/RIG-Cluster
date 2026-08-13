@@ -8,8 +8,8 @@ wat wij al hebben uitgesloten. Antwoord er graag onder, per nummer, in het kopje
 dat er al staat. Alles is met `curl` te reproduceren; onze CLI is er alleen een client op.
 
 **Stand van zaken.** Punt 1 tot en met 5 zijn beantwoord en opgelost; die staan hieronder
-met hun antwoord, en onze reactie erop staat onderaan. **Punt 6 en 7, aan het eind, zijn
-nieuw en wachten nog op een antwoord.**
+met hun antwoord, en onze reactie erop staat onderaan. **Punt 6 tot en met 11, aan het eind,
+wachten nog op een antwoord.** Punt 10 en 11 zijn nagemeten op de releasebuild `5c026ecc`.
 
 ```sh
 BASE=https://zad.sandbox.rijksapp.dev/api
