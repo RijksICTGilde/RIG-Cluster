@@ -526,10 +526,23 @@
                                     </c-stack>
                                 {% endif %}
 
+                                {# De variabelen ZELF, in de kaart van het component waar ze bij
+                                   horen. Hier stond een regel die naar een aparte sectie verwees
+                                   ("zie Omgevingsvariabelen sectie"), en die sectie stond op een
+                                   ander tabblad; je moest dus wegklikken om te zien wat er stond.
+                                   De waarden zijn afgeschermd, want het zijn gebruikerswaarden en
+                                   er kan van alles in staan. #}
                                 {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars'] | length > 0 %}
-                                    <c-paragraph size="sm">
-                                        {{ component['user-env-vars'] | length }} omgevingsvariabele{{ 'n' if component['user-env-vars'] | length != 1 else '' }} (zie Omgevingsvariabelen sectie)
-                                    </c-paragraph>
+                                    <c-heading type="h5" size="6" label="Omgevingsvariabelen" />
+                                    <c-stack gap="xs">
+                                        {% for sleutel, waarde in component['user-env-vars'].items() | sort %}
+                                            <c-cluster gap="sm" align="center">
+                                                <c-icon icon="lock-closed" size="sm" />
+                                                <c-span>{{ sleutel }}</c-span>
+                                            </c-cluster>
+                                            <c-secret-field value="{{ waarde }}" show-copy />
+                                        {% endfor %}
+                                    </c-stack>
                                 {% endif %}
                             </c-stack>
                         </c-card>
@@ -612,10 +625,6 @@
             {% endcall %}
         {% endif %}
 
-        {# De variabelen die op COMPONENTniveau staan horen hier, want daar zijn ze
-           gedefinieerd. Ze stonden op het tabblad Deployments, samen met de
-           overschrijvingen, en dan lijkt een standaardwaarde iets van de deployment. #}
-        {% with env_niveau = "component" %}{% include "bg/_env-vars.html.j2" %}{% endwith %}
 
     {% elif active_tab == 'services' %}
 
