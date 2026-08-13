@@ -154,18 +154,34 @@ def test_component_aliases_save_through_the_ui(
 
     stored = _wait_for(lambda: (_component(forgejo, envali_project, "web") or {}).get("aliases"))
     assert stored, "the alias never reached the project file"
-    assert "POSTGRES_HOST" in stored, f"unexpected alias map: {stored}"
+    # Sinds RC-106 EEN AGE-blok, net als user-env-vars: de naam staat erin en niet
+    # ernaast, dus het projectbestand kan alleen bevestigen DAT er versleutelde aliassen
+    # staan. Wat erin staat leest het scherm hieronder terug.
+    assert isinstance(stored, str), f"aliases moeten een blok zijn, geen mapping: {type(stored).__name__}"
+    assert _AGE_ARMOR in stored, "de alias staat onversleuteld in het projectbestand"
 
     # En dan de weg die daarna kapot was: modal opnieuw openen, IETS ANDERS wijzigen,
-    # opslaan. Een alias wordt per waarde versleuteld onder zijn eigen naam, dus de
-    # redactie van de wizardsessie gaf de plaatshouder terug in het veld en de validator
-    # weigerde elke volgende opslag met "Alias(sen) zonder verwijzing" - de modal was
+    # opslaan. Toen een alias nog per waarde onder zijn eigen naam werd versleuteld, gaf
+    # de redactie van de wizardsessie de plaatshouder terug in het veld en weigerde de
+    # validator elke volgende opslag met "Alias(sen) zonder verwijzing" - de modal was
     # daarna niet meer op te slaan, ook niet voor een gewone gebruiker.
     again = _save_component_env_vars(sandbox_page, sandbox_url, forgejo, envali_project, "NA_ALIAS=rc88-tweede-opslag")
     capture(sandbox_page, "aliases-second-save")
     assert again, "de tweede opslag van de componenten-modal kwam nooit in het projectbestand"
-    kept = (_component(forgejo, envali_project, "web") or {}).get("aliases") or {}
-    assert "POSTGRES_HOST" in kept, f"de alias overleefde de tweede opslag niet: {kept}"
+    kept = (_component(forgejo, envali_project, "web") or {}).get("aliases")
+    assert kept, "de alias overleefde de tweede opslag niet"
+    assert _AGE_ARMOR in str(kept), f"de alias staat niet meer versleuteld opgeslagen: {kept}"
+
+    # De poort op wat er in het blok zit, en meteen op de melding die RC-106 veroorzaakte:
+    # het bewerkveld moet de eigen alias tonen en niet de plaatshouder of een AGE-blok.
+    modal = _open_components_modal(sandbox_page, sandbox_url, envali_project)
+    veld = sandbox_page.locator(".kv-editor:has(textarea[name='components[0]/aliases']) .cm-content")
+    veld.wait_for(state="visible")
+    getoond = veld.inner_text()
+    capture(sandbox_page, "aliases-teruggelezen")
+    assert "POSTGRES_HOST=$DATABASE_SERVER_HOST" in getoond, f"het aliasveld toont iets anders: {getoond!r}"
+    assert "__opi-redacted-secret__" not in getoond, "de redactieplaatshouder staat in het aliasveld"
+    assert _AGE_ARMOR not in getoond, "er staat een AGE-blok in het aliasveld"
 
 
 def test_component_env_vars_save_encrypted_through_the_ui(
