@@ -216,3 +216,10 @@
         Prometheus is niet verbonden, of er zijn geen namespaces gevonden.
     </c-alert>
 {% endif %}
+
+{# De kaart Pods staat in de PAGINA, maar het getal komt uit een van de queries hierboven.
+   De pagina rendert daarom een 0 en dit fragment schuift de kaart er via een out-of-band
+   swap overheen. #}
+<div id="kerncijfer-pods" hx-swap-oob="true">
+    <c-metric icon="cylinder-split" value="{{ pod_count }}" label="Pods" />
+</div>

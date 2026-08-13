@@ -76,7 +76,13 @@
         <c-metric icon="rectangle-stack" value="{{ active_projects }}" label="Actieve Projecten" sub="{{ total_deployments }} deployments" href="/projects" />
         <c-metric icon="arrow-up-arrow-down" value="{{ total_deployments }}" label="Deployments" />
         <c-metric icon="person-2" value="{{ total_users }}" label="Gebruikers" />
-        <c-metric icon="cylinder-split" value="{{ pod_count }}" label="Pods" />
+        {# Het aantal pods komt uit Prometheus, en die queries staan in het fragment
+           hieronder. Deze pagina kent het dus nog niet: het fragment schuift de kaart er
+           via een out-of-band swap overheen zodra het antwoord binnen is. Zonder die
+           swap stond hier altijd 0, ook met draaiende pods. #}
+        <div id="kerncijfer-pods">
+            <c-metric icon="cylinder-split" value="{{ pod_count }}" label="Pods" />
+        </div>
     </c-auto-grid>
 
     {# Het resourcegebruik wordt APART opgehaald. Zes Prometheus-queries plus een per
