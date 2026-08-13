@@ -287,6 +287,9 @@ def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:
     html = template.render(
         request=_request(),
         project={"name": PROJECT, "deployments": [{"name": DEPLOYMENT}]},
+        # De acties horen bij de deployment die de pagina toont; die komt uit het pad
+        # (RC-92) en staat als ``deployment_geopend`` in de context.
+        deployment_geopend={"name": DEPLOYMENT},
         user_role="admin",
         deployment_service_actions={DEPLOYMENT: [FAKE_ACTION]},
     )
