@@ -4,7 +4,7 @@ Waarom dit bestaat: bijna elke ronde vormgeving strandde erop dat een groene tes
 laat zien hoe iets ERUIT ziet. Dit logt in en levert een plaatje, zodat er naar het scherm
 gekeken kan worden in plaats van naar markup.
 
-    uv run python scripts/kijk_sandbox.py /projects/deployments/test-uy9
+    uv run python scripts/kijk_sandbox.py /projects/test-uy9/deployments
     uv run python scripts/kijk_sandbox.py /projects --breedte 1920 --uit /tmp/x.png
     uv run python scripts/kijk_sandbox.py /projects --deel "#deployments-lijst"
 
@@ -42,7 +42,7 @@ def _inloggen(page: Page) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("pad", help="pad op de sandbox, bijvoorbeeld /projects/details/test-uy9")
+    p.add_argument("pad", help="pad op de sandbox, bijvoorbeeld /projects/test-uy9/details")
     p.add_argument("--uit", default="/tmp/zad-sandbox.png", help="waar het plaatje heen gaat")
     p.add_argument("--breedte", type=int, default=1280)
     p.add_argument("--hoogte", type=int, default=1400)

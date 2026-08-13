@@ -44,7 +44,7 @@ class _Verzoek:
 
     def __init__(self, query: str = "") -> None:
         self.query_params = QueryParams(query)
-        self.url = _Url("/projects/details/demo", query)
+        self.url = _Url("/projects/demo/details", query)
 
 
 class _Url:
@@ -143,7 +143,7 @@ def test_elke_sortering_uit_het_menu_werkt() -> None:
 
 # ------------------------------------------------------------ welke deployment open staat
 #
-# Sinds RC-92 staat de naam in het PAD (/projects/deployments/<project>/<naam>) en niet in
+# Sinds RC-92 staat de naam in het PAD (/projects/<project>/deployments/<naam>) en niet in
 # ``?deployment=``. De keuze wordt daarom door de ROUTE gemaakt, met kies_deployment(), en
 # komt hier binnen; filter_lotc_deployments zoekt er alleen de deployment bij.
 
@@ -192,32 +192,32 @@ def test_zonder_deployments_valt_er_niets_te_openen() -> None:
 
 def test_het_adres_zet_de_naam_in_het_pad() -> None:
     verzoek = _Verzoek("")
-    verzoek.url = _Url("/projects/deployments/demo")
+    verzoek.url = _Url("/projects/demo/deployments")
 
-    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/deployments/demo/tweede"
+    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/demo/deployments/tweede"
 
 
 def test_het_adres_houdt_het_tabblad_vast() -> None:
     verzoek = _Verzoek("")
-    verzoek.url = _Url("/projects/metrics/demo")
+    verzoek.url = _Url("/projects/demo/metrics")
 
-    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/metrics/demo/tweede"
+    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/demo/metrics/tweede"
 
 
 def test_de_oude_parameter_verdwijnt_uit_het_adres() -> None:
     """``?deployment=<naam>`` was de vorige vorm. Hij mag niet naast het pad blijven
     bestaan, anders zijn er twee adressen voor dezelfde pagina."""
     verzoek = _Verzoek("deployment=tweede&q=pr")
-    verzoek.url = _Url("/projects/deployments/demo", "deployment=tweede&q=pr")
+    verzoek.url = _Url("/projects/demo/deployments", "deployment=tweede&q=pr")
 
-    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/deployments/demo/tweede?q=pr"
+    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/demo/deployments/tweede?q=pr"
 
 
 def test_een_project_zonder_deployments_krijgt_het_kale_adres() -> None:
     verzoek = _Verzoek("")
-    verzoek.url = _Url("/projects/deployments/demo/weg")
+    verzoek.url = _Url("/projects/demo/deployments/weg")
 
-    assert deployment_pagina_adres(verzoek, "demo", "") == "/projects/deployments/demo"
+    assert deployment_pagina_adres(verzoek, "demo", "") == "/projects/demo/deployments"
 
 
 # --------------------------------------------------------------------- de statuskolom
@@ -351,7 +351,7 @@ def test_de_rij_wijst_naar_het_tabblad_deployments() -> None:
     """De tabel is de ingang; het detail staat op het tabblad Deployments."""
     html = _render("", _deployments("eerste", "tweede"))
 
-    assert "/projects/deployments/demo/tweede" in html
+    assert "/projects/demo/deployments/tweede" in html
 
 
 def test_de_statuskolom_staat_in_de_rij() -> None:

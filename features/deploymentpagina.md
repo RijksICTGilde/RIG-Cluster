@@ -6,7 +6,7 @@ Metrics tonen er **een per pagina**, met zijn naam in de URL, in **een** blok.
 
 ## 1. De tabel op Overzicht
 
-`/projects/details/<project>` had een blok "Deployment Status": een kaart per deployment,
+`/projects/<project>/details` had een blok "Deployment Status": een kaart per deployment,
 die elk hun eigen ArgoCD-bevraging deden zodra je ze in beeld kreeg. Bij drie deployments
 is dat een prima beeld; bij twintig scrol je langs twintig kaarten om te zien of er een
 rood is, en kost het openen van de pagina twintig verzoeken.
@@ -16,7 +16,7 @@ twee weergaven van dezelfde lijst lopen uiteen.
 
 | Kolom | Wat er staat |
 |---|---|
-| Naam | link naar `/projects/deployments/<project>/<naam>` |
+| Naam | link naar `/projects/<project>/deployments/<naam>` |
 | Cluster | onderscheidt anders identieke namen |
 | Status | wat de diensten melden (slaapstand, uitgeschakeld) plus health en sync van ArgoCD |
 | Laatste sync | wanneer ArgoCD deze deployment voor het laatst bijwerkte |
@@ -34,7 +34,7 @@ alleen `#deployments-lijst` vervangen; zonder JavaScript herlaadt het formulier 
 | Sorteren | `?dsort=` - `naam`, `naam-af`, `cluster`, `componenten` |
 
 ```
-/projects/details/mijn-project?q=pr-&dsort=naam-af
+/projects/mijn-project/details?q=pr-&dsort=naam-af
 ```
 
 Er wordt niet op status gesorteerd: die komt van een ander systeem, en dan zou dezelfde
@@ -72,24 +72,30 @@ en heeft zijn eigen, project-brede verzoek.
 
 ## 3. Elk tabblad een eigen pad
 
-`?tab=deployments` is `/projects/deployments/<project>` geworden. Een querystring leest als
+`?tab=deployments` is `/projects/<project>/deployments` geworden. Een querystring leest als
 een filter op een pagina; een tabblad is een andere pagina over hetzelfde project.
 
 | Tabblad | Pad |
 |---|---|
-| Overzicht | `/projects/details/<project>` |
-| Componenten | `/projects/componenten/<project>` |
-| Services | `/projects/services/<project>` |
-| Deployments | `/projects/deployments/<project>/<deployment>` |
-| Metrics | `/projects/metrics/<project>/<deployment>` |
-| Taken | `/projects/taken/<project>` |
+| Overzicht | `/projects/<project>/details` |
+| Componenten | `/projects/<project>/componenten` |
+| Services | `/projects/<project>/services` |
+| Deployments | `/projects/<project>/deployments/<deployment>` |
+| Metrics | `/projects/<project>/metrics/<deployment>` |
+| Taken | `/projects/<project>/taken` |
 
-Overzicht houdt `/projects/details/<project>`: daar wijst alles al heen.
+**De projectnaam staat voorop en het tabblad erachter.** Het project is waar je bent, het
+tabblad is wat je erbinnen bekijkt. De vorige vorm had het tabblad voorop
+(`/projects/deployments/<project>`); die adressen **verwijzen door** (302) naar de nieuwe,
+inclusief de deployment en de querystring, zodat een gedeelde link niet stil een 404 wordt.
 
 De paden staan **letterlijk** geregistreerd in `opi/web/router.py` en niet als
-`/projects/{tab}/{project_name}`. Dat laatste zou ook `/projects/<naam>/tasks` opvangen, en
-dan bepaalt de volgorde van registreren welke route wint. Dat geldt ook voor de twee paden
-met een deployment erachter.
+`/projects/{project_name}/{tab}`. Dat laatste zou ook de oude vorm opvangen -
+`/projects/details/<naam>` zou een project met de naam "details" worden - en dan bepaalt de
+volgorde van registreren welke route wint. Dat geldt ook voor de twee paden met een
+deployment erachter. De nieuwe vorm staat vóór de oude geregistreerd: bij een project dat
+toevallig `details` of `deployments` heet zijn beide te lezen, en dan wint het adres van
+vandaag.
 
 **`?tab=` bestaat niet meer, ook niet als doorverwijzing.** Die vorm heeft nooit buiten
 deze applicatie geleefd - de links erheen stonden in de eigen sjablonen en tests - en een
@@ -118,16 +124,16 @@ zijn eigen lazy-laders - en de keuze ging verloren zodra je van tabblad wisselde
 De naam staat nu in het **pad**, en de server rendert die ene:
 
 ```
-/projects/deployments/mijn-project/productie
-/projects/metrics/mijn-project/productie
+/projects/mijn-project/deployments/productie
+/projects/mijn-project/metrics/productie
 ```
 
 | Wat je opvraagt | Wat er gebeurt |
 |---|---|
-| `/projects/deployments/<p>/<naam>` | die deployment; de andere staan niet in de pagina |
-| `/projects/deployments/<p>` | de server kiest de eerste op naam en **verwijst door**, zodat de URL daarna zegt welke |
-| `/projects/deployments/<p>/<weg>` | een verwijderde deployment valt terug op de eerste, ook met een doorverwijzing |
-| `/projects/deployments/<p>?deployment=<naam>` | de vorige vorm; verwijst door naar het pad, zodat een gedeelde link blijft werken |
+| `/projects/<p>/deployments/<naam>` | die deployment; de andere staan niet in de pagina |
+| `/projects/<p>/deployments` | de server kiest de eerste op naam en **verwijst door**, zodat de URL daarna zegt welke |
+| `/projects/<p>/deployments/<weg>` | een verwijderde deployment valt terug op de eerste, ook met een doorverwijzing |
+| `/projects/<p>/deployments?deployment=<naam>` | de vorige vorm; verwijst door naar het pad, zodat een gedeelde link blijft werken |
 | een project zonder deployments | het kale tabbladadres, met de melding "Nog geen deployments" |
 
 Welke deployment open staat wordt op **een** plek bepaald: `kies_deployment()` in

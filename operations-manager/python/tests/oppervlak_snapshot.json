@@ -243,9 +243,9 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
-      "/projects/details/test-project",
-      "/projects/details/test-project-detail",
-      "/projects/details/test-project-services",
+      "/projects/test-project/details",
+      "/projects/test-project-detail/details",
+      "/projects/test-project-services/details",
       "/projects?refresh=true",
       "/projects?sort=deployments",
       "/projects?sort=naam",
@@ -272,7 +272,28 @@
       "sort"
     ]
   },
-  "/projects/componenten/test-project-detail": {
+  "/projects/details/test-project-detail/backups": {
+    "bestemmingen": [],
+    "functies": [],
+    "htmx": [],
+    "ids": [
+      "backups-snapshots-default",
+      "backups-snapshots-tweede"
+    ],
+    "velden": []
+  },
+  "/projects/test-project-detail/actions/refresh-project/confirm": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/refresh"
+    ],
+    "ids": [],
+    "velden": []
+  },
+  "/projects/test-project-detail/componenten": {
     "bestemmingen": [
       "/",
       "/about",
@@ -288,16 +309,16 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
-      "/projects/componenten/test-project-detail",
-      "/projects/deployments/test-project-detail",
-      "/projects/details/test-project-detail",
-      "/projects/metrics/test-project-detail",
-      "/projects/services/test-project-detail",
-      "/projects/taken/test-project-detail",
+      "/projects/test-project-detail/componenten",
+      "/projects/test-project-detail/deployments",
+      "/projects/test-project-detail/details",
+      "/projects/test-project-detail/metrics",
+      "/projects/test-project-detail/services",
+      "/projects/test-project-detail/taken",
       "/services",
-      "/weergave?scheme=&terug=/projects/componenten/test-project-detail",
-      "/weergave?scheme=dark&terug=/projects/componenten/test-project-detail",
-      "/weergave?scheme=light&terug=/projects/componenten/test-project-detail"
+      "/weergave?scheme=&terug=/projects/test-project-detail/componenten",
+      "/weergave?scheme=dark&terug=/projects/test-project-detail/componenten",
+      "/weergave?scheme=light&terug=/projects/test-project-detail/componenten"
     ],
     "functies": [
       "clearLogs",
@@ -344,7 +365,7 @@
     ],
     "velden": []
   },
-  "/projects/deployments/test-project-detail": {
+  "/projects/test-project-detail/deployments": {
     "bestemmingen": [
       "/",
       "/about",
@@ -360,16 +381,16 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
-      "/projects/componenten/test-project-detail",
-      "/projects/deployments/test-project-detail/default",
-      "/projects/details/test-project-detail",
-      "/projects/metrics/test-project-detail/default",
-      "/projects/services/test-project-detail",
-      "/projects/taken/test-project-detail",
+      "/projects/test-project-detail/componenten",
+      "/projects/test-project-detail/deployments/default",
+      "/projects/test-project-detail/details",
+      "/projects/test-project-detail/metrics/default",
+      "/projects/test-project-detail/services",
+      "/projects/test-project-detail/taken",
       "/services",
-      "/weergave?scheme=&terug=/projects/deployments/test-project-detail/default",
-      "/weergave?scheme=dark&terug=/projects/deployments/test-project-detail/default",
-      "/weergave?scheme=light&terug=/projects/deployments/test-project-detail/default"
+      "/weergave?scheme=&terug=/projects/test-project-detail/deployments/default",
+      "/weergave?scheme=dark&terug=/projects/test-project-detail/deployments/default",
+      "/weergave?scheme=light&terug=/projects/test-project-detail/deployments/default"
     ],
     "functies": [
       "assign",
@@ -428,7 +449,7 @@
       "global-deployment-selector"
     ]
   },
-  "/projects/details/test-project-detail": {
+  "/projects/test-project-detail/details": {
     "bestemmingen": [
       "/",
       "/about",
@@ -444,22 +465,22 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
-      "/projects/componenten/test-project-detail",
-      "/projects/deployments/test-project-detail",
-      "/projects/deployments/test-project-detail/default",
-      "/projects/deployments/test-project-detail/tweede",
-      "/projects/details/test-project-detail",
-      "/projects/details/test-project-detail?dsort=cluster",
-      "/projects/details/test-project-detail?dsort=componenten",
-      "/projects/details/test-project-detail?dsort=naam",
-      "/projects/details/test-project-detail?dsort=naam-af",
-      "/projects/metrics/test-project-detail",
-      "/projects/services/test-project-detail",
-      "/projects/taken/test-project-detail",
+      "/projects/test-project-detail/componenten",
+      "/projects/test-project-detail/deployments",
+      "/projects/test-project-detail/deployments/default",
+      "/projects/test-project-detail/deployments/tweede",
+      "/projects/test-project-detail/details",
+      "/projects/test-project-detail/details?dsort=cluster",
+      "/projects/test-project-detail/details?dsort=componenten",
+      "/projects/test-project-detail/details?dsort=naam",
+      "/projects/test-project-detail/details?dsort=naam-af",
+      "/projects/test-project-detail/metrics",
+      "/projects/test-project-detail/services",
+      "/projects/test-project-detail/taken",
       "/services",
-      "/weergave?scheme=&terug=/projects/details/test-project-detail",
-      "/weergave?scheme=dark&terug=/projects/details/test-project-detail",
-      "/weergave?scheme=light&terug=/projects/details/test-project-detail"
+      "/weergave?scheme=&terug=/projects/test-project-detail/details",
+      "/weergave?scheme=dark&terug=/projects/test-project-detail/details",
+      "/weergave?scheme=light&terug=/projects/test-project-detail/details"
     ],
     "functies": [
       "clearLogs",
@@ -476,11 +497,12 @@
       "toggleWordWrap"
     ],
     "htmx": [
-      "hx-get=/projects/details/test-project-detail",
-      "hx-get=/projects/details/test-project-detail?dsort=cluster",
-      "hx-get=/projects/details/test-project-detail?dsort=componenten",
-      "hx-get=/projects/details/test-project-detail?dsort=naam",
-      "hx-get=/projects/details/test-project-detail?dsort=naam-af"
+      "hx-get=/projects/details/test-project-detail/resource-usage",
+      "hx-get=/projects/test-project-detail/details",
+      "hx-get=/projects/test-project-detail/details?dsort=cluster",
+      "hx-get=/projects/test-project-detail/details?dsort=componenten",
+      "hx-get=/projects/test-project-detail/details?dsort=naam",
+      "hx-get=/projects/test-project-detail/details?dsort=naam-af"
     ],
     "ids": [
       "deployment-status",
@@ -518,17 +540,7 @@
       "q"
     ]
   },
-  "/projects/details/test-project-detail/backups": {
-    "bestemmingen": [],
-    "functies": [],
-    "htmx": [],
-    "ids": [
-      "backups-snapshots-default",
-      "backups-snapshots-tweede"
-    ],
-    "velden": []
-  },
-  "/projects/metrics/test-project-detail": {
+  "/projects/test-project-detail/metrics": {
     "bestemmingen": [
       "/",
       "/about",
@@ -544,16 +556,16 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
-      "/projects/componenten/test-project-detail",
-      "/projects/deployments/test-project-detail/default",
-      "/projects/details/test-project-detail",
-      "/projects/metrics/test-project-detail/default",
-      "/projects/services/test-project-detail",
-      "/projects/taken/test-project-detail",
+      "/projects/test-project-detail/componenten",
+      "/projects/test-project-detail/deployments/default",
+      "/projects/test-project-detail/details",
+      "/projects/test-project-detail/metrics/default",
+      "/projects/test-project-detail/services",
+      "/projects/test-project-detail/taken",
       "/services",
-      "/weergave?scheme=&terug=/projects/metrics/test-project-detail/default",
-      "/weergave?scheme=dark&terug=/projects/metrics/test-project-detail/default",
-      "/weergave?scheme=light&terug=/projects/metrics/test-project-detail/default"
+      "/weergave?scheme=&terug=/projects/test-project-detail/metrics/default",
+      "/weergave?scheme=dark&terug=/projects/test-project-detail/metrics/default",
+      "/weergave?scheme=light&terug=/projects/test-project-detail/metrics/default"
     ],
     "functies": [
       "assign",
@@ -570,8 +582,7 @@
       "toggleWordWrap"
     ],
     "htmx": [
-      "hx-get=/projects/details/test-project-detail/metrics/default",
-      "hx-get=/projects/details/test-project-detail/resource-usage"
+      "hx-get=/projects/details/test-project-detail/metrics/default"
     ],
     "ids": [
       "edit-section-backdrop",
@@ -607,161 +618,6 @@
     "velden": [
       "global-deployment-selector"
     ]
-  },
-  "/projects/services/test-project-detail": {
-    "bestemmingen": [
-      "/",
-      "/about",
-      "/account",
-      "/actions",
-      "/admin/approvals",
-      "/admin/usage",
-      "/admin/users",
-      "/auth/logout",
-      "/cli",
-      "/dashboard",
-      "/docs",
-      "/forms/wizard/restart",
-      "/metrics-explorer",
-      "/projects",
-      "/projects/componenten/test-project-detail",
-      "/projects/deployments/test-project-detail",
-      "/projects/details/test-project-detail",
-      "/projects/metrics/test-project-detail",
-      "/projects/services/test-project-detail",
-      "/projects/taken/test-project-detail",
-      "/services",
-      "/weergave?scheme=&terug=/projects/services/test-project-detail",
-      "/weergave?scheme=dark&terug=/projects/services/test-project-detail",
-      "/weergave?scheme=light&terug=/projects/services/test-project-detail"
-    ],
-    "functies": [
-      "clearLogs",
-      "closeEditModal",
-      "closeServiceHelp",
-      "copyLogs",
-      "downloadLogs",
-      "filterLogs",
-      "handleEditBackdropClick",
-      "openEditModal",
-      "switchLogComponent",
-      "toggleLogPause",
-      "toggleWordWrap"
-    ],
-    "htmx": [],
-    "ids": [
-      "edit-section-backdrop",
-      "edit-section-content",
-      "edit-section-inner",
-      "edit-section-modal",
-      "edit-section-title",
-      "edit-section-title-text",
-      "filter-debug",
-      "filter-info",
-      "filter-warn",
-      "log-component-selector",
-      "log-empty-state",
-      "log-line-count",
-      "log-pause-btn",
-      "log-search-count",
-      "log-search-input",
-      "log-status-indicator",
-      "log-status-text",
-      "log-viewer-content",
-      "log-viewer-heading",
-      "log-viewer-panel",
-      "log-viewer-status",
-      "log-word-wrap",
-      "service-help-backdrop",
-      "service-help-content",
-      "service-help-modal",
-      "tab-services"
-    ],
-    "velden": []
-  },
-  "/projects/taken/test-project-detail": {
-    "bestemmingen": [
-      "/",
-      "/about",
-      "/account",
-      "/actions",
-      "/admin/approvals",
-      "/admin/usage",
-      "/admin/users",
-      "/auth/logout",
-      "/cli",
-      "/dashboard",
-      "/docs",
-      "/forms/wizard/restart",
-      "/metrics-explorer",
-      "/projects",
-      "/projects/componenten/test-project-detail",
-      "/projects/deployments/test-project-detail",
-      "/projects/details/test-project-detail",
-      "/projects/metrics/test-project-detail",
-      "/projects/services/test-project-detail",
-      "/projects/taken/test-project-detail",
-      "/services",
-      "/weergave?scheme=&terug=/projects/taken/test-project-detail",
-      "/weergave?scheme=dark&terug=/projects/taken/test-project-detail",
-      "/weergave?scheme=light&terug=/projects/taken/test-project-detail"
-    ],
-    "functies": [
-      "clearLogs",
-      "closeEditModal",
-      "closeServiceHelp",
-      "copyLogs",
-      "downloadLogs",
-      "filterLogs",
-      "handleEditBackdropClick",
-      "openEditModal",
-      "switchLogComponent",
-      "toggleLogPause",
-      "toggleWordWrap"
-    ],
-    "htmx": [
-      "hx-get=/projects/test-project-detail/tasks"
-    ],
-    "ids": [
-      "edit-section-backdrop",
-      "edit-section-content",
-      "edit-section-inner",
-      "edit-section-modal",
-      "edit-section-title",
-      "edit-section-title-text",
-      "filter-debug",
-      "filter-info",
-      "filter-warn",
-      "log-component-selector",
-      "log-empty-state",
-      "log-line-count",
-      "log-pause-btn",
-      "log-search-count",
-      "log-search-input",
-      "log-status-indicator",
-      "log-status-text",
-      "log-viewer-content",
-      "log-viewer-heading",
-      "log-viewer-panel",
-      "log-viewer-status",
-      "log-word-wrap",
-      "service-help-backdrop",
-      "service-help-content",
-      "service-help-modal",
-      "tab-taken"
-    ],
-    "velden": []
-  },
-  "/projects/test-project-detail/actions/refresh-project/confirm": {
-    "bestemmingen": [],
-    "functies": [
-      "closeEditModal"
-    ],
-    "htmx": [
-      "hx-post=/projects/test-project-detail/refresh"
-    ],
-    "ids": [],
-    "velden": []
   },
   "/projects/test-project-detail/modal-wizard/modal-add-deployment-1": {
     "bestemmingen": [
@@ -1380,6 +1236,150 @@
     "velden": [
       "_wizard_token"
     ]
+  },
+  "/projects/test-project-detail/services": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/projects/test-project-detail/componenten",
+      "/projects/test-project-detail/deployments",
+      "/projects/test-project-detail/details",
+      "/projects/test-project-detail/metrics",
+      "/projects/test-project-detail/services",
+      "/projects/test-project-detail/taken",
+      "/services",
+      "/weergave?scheme=&terug=/projects/test-project-detail/services",
+      "/weergave?scheme=dark&terug=/projects/test-project-detail/services",
+      "/weergave?scheme=light&terug=/projects/test-project-detail/services"
+    ],
+    "functies": [
+      "clearLogs",
+      "closeEditModal",
+      "closeServiceHelp",
+      "copyLogs",
+      "downloadLogs",
+      "filterLogs",
+      "handleEditBackdropClick",
+      "openEditModal",
+      "switchLogComponent",
+      "toggleLogPause",
+      "toggleWordWrap"
+    ],
+    "htmx": [],
+    "ids": [
+      "edit-section-backdrop",
+      "edit-section-content",
+      "edit-section-inner",
+      "edit-section-modal",
+      "edit-section-title",
+      "edit-section-title-text",
+      "filter-debug",
+      "filter-info",
+      "filter-warn",
+      "log-component-selector",
+      "log-empty-state",
+      "log-line-count",
+      "log-pause-btn",
+      "log-search-count",
+      "log-search-input",
+      "log-status-indicator",
+      "log-status-text",
+      "log-viewer-content",
+      "log-viewer-heading",
+      "log-viewer-panel",
+      "log-viewer-status",
+      "log-word-wrap",
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal",
+      "tab-services"
+    ],
+    "velden": []
+  },
+  "/projects/test-project-detail/taken": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/projects/test-project-detail/componenten",
+      "/projects/test-project-detail/deployments",
+      "/projects/test-project-detail/details",
+      "/projects/test-project-detail/metrics",
+      "/projects/test-project-detail/services",
+      "/projects/test-project-detail/taken",
+      "/services",
+      "/weergave?scheme=&terug=/projects/test-project-detail/taken",
+      "/weergave?scheme=dark&terug=/projects/test-project-detail/taken",
+      "/weergave?scheme=light&terug=/projects/test-project-detail/taken"
+    ],
+    "functies": [
+      "clearLogs",
+      "closeEditModal",
+      "closeServiceHelp",
+      "copyLogs",
+      "downloadLogs",
+      "filterLogs",
+      "handleEditBackdropClick",
+      "openEditModal",
+      "switchLogComponent",
+      "toggleLogPause",
+      "toggleWordWrap"
+    ],
+    "htmx": [
+      "hx-get=/projects/test-project-detail/tasks"
+    ],
+    "ids": [
+      "edit-section-backdrop",
+      "edit-section-content",
+      "edit-section-inner",
+      "edit-section-modal",
+      "edit-section-title",
+      "edit-section-title-text",
+      "filter-debug",
+      "filter-info",
+      "filter-warn",
+      "log-component-selector",
+      "log-empty-state",
+      "log-line-count",
+      "log-pause-btn",
+      "log-search-count",
+      "log-search-input",
+      "log-status-indicator",
+      "log-status-text",
+      "log-viewer-content",
+      "log-viewer-heading",
+      "log-viewer-panel",
+      "log-viewer-status",
+      "log-word-wrap",
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal",
+      "tab-taken"
+    ],
+    "velden": []
   },
   "/projects/test-project-detail/tasks": {
     "bestemmingen": [],
