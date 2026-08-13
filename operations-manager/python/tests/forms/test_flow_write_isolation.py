@@ -24,6 +24,7 @@ from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.wizard.resolver import resolve_active_sections
 from opi.forms.wizard.save import apply_modal_edit
+from opi.forms.wizard.secrets import REDACTED, reachable_leaf_keys, redact_unreachable_secrets
 from opi.forms.wizard.state import WizardState
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from opi.utils.yaml_util import dump_yaml_to_string
@@ -31,6 +32,9 @@ from opi.web.router_detail_edit import _fully_owned_list_keys
 from opi.web.router_wizard import _extract_section_data, _split_data_across_sections
 
 PROJECT_NAME = "netjes"
+
+REALM_PASSWORD = "-----BEGIN AGE ENCRYPTED FILE-----\nd2FjaHR3b29yZA==\n-----END AGE ENCRYPTED FILE-----\n"
+REALM_TOTP = "-----BEGIN AGE ENCRYPTED FILE-----\ndG90cA==\n-----END AGE ENCRYPTED FILE-----\n"
 
 _INDEX_RE = re.compile(r"\[\d+\]")
 
@@ -60,6 +64,19 @@ def build_project() -> dict[str, Any]:
                 "config": {
                     "template": "sso-only",
                     "additional_redirect_uris": ["http://localhost:8080/*"],
+                    # The realm admin connection OPI writes itself. Both secrets on it are
+                    # redacted out of the wizard session and have to come back from here;
+                    # ``totp_secret`` is the optional one, so losing it fails no validation
+                    # and would only surface at the next Keycloak action.
+                    "realms": [
+                        {
+                            "host": "https://keycloak.sandbox.rijksapp.dev",
+                            "realm": f"{PROJECT_NAME}-sandboxed-local",
+                            "username": f"{PROJECT_NAME}_sandboxed_local_admin",
+                            "password": REALM_PASSWORD,
+                            "totp_secret": REALM_TOTP,
+                        }
+                    ],
                 },
             },
             {
@@ -357,3 +374,56 @@ async def test_unrelated_flow_leaves_every_other_top_level_key_untouched() -> No
 
     for key in ("services", "config", "registries", "repositories", "components", "deployments", "users"):
         assert result[key] == project_data[key], f"identity edit changed {key}"
+
+
+def _redact_like_the_router(flow: Any, project_data: dict[str, Any]) -> dict[str, Any]:
+    """The session copy the modal wizard actually works from.
+
+    ``modal_wizard_init`` replaces every encrypted value the flow cannot edit with a
+    placeholder before the state is written to disk; the harness above skips that step,
+    which is why the loss below stayed invisible here for so long.
+    """
+    keep = reachable_leaf_keys([ed for section in flow.sections for ed in section.editables])
+    session_data, _ = redact_unreachable_secrets(copy.deepcopy(project_data), keep)
+    return session_data
+
+
+@pytest.mark.asyncio
+async def test_a_service_config_edit_keeps_the_secrets_opi_wrote_there() -> None:
+    """The realm admin password survives a save that spells the service entry differently.
+
+    The two structures ``restore_redacted_secrets`` walks against each other have to name
+    a service the same way. The editables write the legacy name-as-key shape
+    (``{keycloak: {config: ...}}``); the stored project carries the uniform record
+    (``{name: keycloak, config: ...}``). Paired key by key, nothing under the service
+    config lines up, so both redacted secrets on the realm were dropped instead of
+    restored -- ``password`` (which then fails validation and blocks every edit) and
+    ``totp_secret`` (which is optional and would have vanished in silence).
+    """
+    project_data = build_project()
+    flow = get_flow("modal-edit-services")
+    session_data = _redact_like_the_router(flow, project_data)
+
+    state = _seed_state(flow, "modal-edit-services", session_data)
+    active_sections = _active_sections(flow, state)
+
+    # What the editables hand back: the same content, in the name-as-key shape.
+    merged_data = state.get_merged_data(strip_cleared=False)
+    merged_data["services"] = [
+        {entry["name"]: {k: v for k, v in entry.items() if k != "name"}} if isinstance(entry, dict) else entry
+        for entry in merged_data["services"]
+    ]
+
+    result = await apply_modal_edit(
+        copy.deepcopy(project_data),
+        merged_data,
+        flow=flow,
+        active_sections=active_sections,
+        state=state,
+        project_name=PROJECT_NAME,
+    )
+
+    realm = smart_get_value(result, "services/keycloak/config/realms")[0]
+    assert realm["password"] == REALM_PASSWORD
+    assert realm["totp_secret"] == REALM_TOTP
+    assert REDACTED not in dump_yaml_to_string(result)
