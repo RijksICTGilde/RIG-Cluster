@@ -197,14 +197,181 @@ odcn-production maken we niet zelf; het blueprint legt vast hoe de ClusterRole e
 te zien, maar iemand met rechten op dat cluster moet het toepassen. Zolang dat niet gebeurd
 is, blijft de OOM-watcher daar terugvallen op alle pods.
 
-### De uitslag
+### De uitslag: 10 failures, allemaal in de testlaag
 
-<!-- INVULLEN -->
+De schone run gaf **10 failed, 45 passed** (46m19s). Geen van de tien wees op een fout in
+de applicatie; ze hadden drie oorzaken, en alle drie waren het navigaties die stilletjes
+ergens anders uitkwamen.
+
+**1. De zijbalk won van het tabblad (7 tests).** `open_services_tab` klikte op
+`a[href$='/services']` met `.first`. Dat matcht ook de Services-link in de **zijbalk**, die
+naar de platformbrede cataloguspagina wijst en eerder in de DOM staat. De controle erna,
+`wait_for_url("**/services")`, kon dat niet zien omdat beide adressen op `/services`
+eindigen. Op die catalogus staat wel een kaart per dienst - inclusief "Redis Cache" - maar
+zonder Configureer-knop, dus zeven tests liepen dood op een knop die daar per definitie
+niet staat.
+
+Dit is gevonden door naar de faalschermafdruk te kijken die Playwright zelf wegschrijft
+(`tests/e2e/artifacts/FAILED-*.png`). Daarop stond de verkeerde pagina, in één oogopslag.
+
+**2. Een tabklik op tekst die in de shadow DOM staat (1 test).**
+`open_deployments_tab` klikte op `get_by_text("Deployments", exact=True)` en wachtte
+daarna 800 ms. Het tablabel wordt door LOTC in de shadow DOM getekend, dus die tekst raakt
+de tab niet; er werd iets anders (of niets) geklikt, de pagina bleef op Overzicht, en de
+test meldde een ontbrekende knop in plaats van een mislukte navigatie.
+
+**3. Nog een verhuizing (2 tests).** `test_detail_block_shows_invite_link` zocht het
+uitnodigingsblok op Overzicht, terwijl `b134a581` de dienstblokken naar het tabblad
+Services info verplaatste. De docstring van `open_detail` beweerde nog het oude en lokte
+die fout uit.
+
+Beide tabhelpers lopen nu via één `open_project_tab`: het volledige projectpad als
+selector, en wachten op precies dat pad. Op `href*=` en niet `href$=`, want Deployments,
+Metrics en Backups dragen de deploymentnaam in hun pad (`TABS_MET_DEPLOYMENT`).
+
+### De structurele oorzaak eronder: wachten op een klok in plaats van op een toestand
+
+Tijdens het repareren bleek een tweede, bredere fout, en die is belangrijker dan de tien
+failures samen. Zeven plekken deden dit:
+
+```python
+before = forgejo.list_project_names()
+walk_create_wizard(...)                                    # wizard indienen
+name = forgejo.wait_for_new_project(before, timeout=240)    # git afvissen op een klok
+```
+
+Het aanmaken levert een **taak** op die zowel de uitkomst als de projectnaam kent. Dat
+antwoord werd weggegooid, waarna de test tot vier minuten lang de Forgejo-listing polde om
+de naam uit een verschil te **raden**. Twee keer gokken - over de tijd en over de uitkomst -
+terwijl er een bron is die het weet.
+
+Het faalt bovendien op de verkeerde manier. In deze doorloop meldde het "No new project
+file appeared in Forgejo" terwijl het project gewoon was aangemaakt; de taak deed er
+**47,14 seconden** over. Een uitgelopen klok werd zo een verzonnen mislukking - precies het
+soort rood dat "die doet het altijd al niet" wordt.
+
+De vervanging (`project_name_from_progress`) vraagt het aan de bron: de wizard komt uit op
+`/projects/progress/<task_id>`, en die pagina toont pas bij een afgeronde **of** gefaalde
+taak de knop naar `/projects/<naam>/details`. Daarop wachten is wachten op de toestand; de
+timeout is daarmee een vangnet en geen wachtmechanisme, en een mislukking komt eruit als
+een mislukking.
+
+Daarbij hoorde nog een valkuil die alleen empirisch te vinden was. Een tussenversie las de
+uitkomst uit de **paginatekst** en sloeg alarm op een geslaagde aanmaak. Oorzaak: LOTC
+rendert de melding als `<nldd-banner variant="success" text="Project succesvol
+aangemaakt...">`, dus de tekst staat in de shadow DOM en `inner_text` levert er niets van
+op. Dat is niet uit de sjablonen af te leiden - het kwam pas boven water door de echte
+`innerHTML` van een voortgangspagina op te vragen. De controle leest nu het attribuut
+`variant`.
+
+Er is geen enkele aanroep van `wait_for_new_project` meer over. Dat het bestand daadwerkelijk
+in `zad-projects` staat blijft een aparte assertie: dat is wat deze suite hoort te bewaken.
+
+### Wat dit over de doorlooptijd zegt
+
+De suite duurt ~46 minuten, en dat is inherent. Gemeten op één aanmaak:
+
+| Fase | Duur |
+|---|---|
+| Validatie, git-schrijf, namespace, database, Keycloak-realm, manifesten | **11 s** |
+| Wachten tot ArgoCD gesynchroniseerd is en de pod gereed is | **24 s** |
+
+Het aanmaken zelf is dus snel; de tijd zit in de GitOps-convergentie. Dat verklaart ook het
+verschil met de API-weg (~10 s): die maakt alleen de projectbasis **zonder** deployment en
+slaat de ArgoCD-wachttijd over. Het portaal erkent dit zelf in zijn voortgangstekst: *"door
+een bekende bug in ArgoCD kan het aanmaken van een nieuw project een paar minuten duren...
+een eventuele time-out-melding betekent niet dat het aanmaken is mislukt."* Dat is precies
+waarom een klok hier geen uitkomst mag zijn.
 
 
-## Taak 5 - De handmatige doorloop
+## Taak 5 - De handmatige doorloop, met schermafbeeldingen
 
-<!-- INVULLEN -->
+Uitgevoerd met `scripts/doorloop_rc108.py`, dat via de echte wizard een project aanmaakt
+met een component, `publish-on-web`, een database en Keycloak, wacht tot ArgoCD `Healthy`
+meldt, en daarna elk tabblad vastlegt. De plaatjes staan in `docs/doorloop-rc108/`.
+
+Voor **elke** schermmeting is opnieuw gecontroleerd of `/version` nog de commit onder test
+is; het script stopt anders. Op alle negen plaatjes staat in de voettekst
+`ZAD 3c43145d @ de-ultieme-sandboxdoorloop`, zodat achteraf te zien is wat er draaide.
+
+Twee dingen die eerst misgingen en die het opschrijven waard zijn:
+
+- De wizard kent **geen** kaart voor `namespace-postgresql-database`: die dienst is
+  `hidden=True` en gaat via de API. Voor de wizardweg is `postgresql-database` de juiste.
+- De sandbox draaide even twee pods tegelijk. `sandbox-deploy` meldde de nieuwe versie,
+  maar een `/version` direct erna gaf de oude - het verkeer werd verdeeld terwijl de oude
+  pod afsloot. Tien keer achter elkaar `/version` opvragen en de endpoints controleren
+  liet zien wanneer alleen de nieuwe pod nog antwoordde. Wie een scherm beoordeelt vlak na
+  een uitrol moet dit weten, anders meet hij de vorige build.
+
+### Wat er op de tabbladen staat
+
+| Tabblad | Bevinding |
+|---|---|
+| Overzicht | project, beschrijving, tabbalk met negen tabbladen |
+| Team | de leden met hun rol, en de knop Bewerken |
+| Componenten | Acties-kaart + componentkaart met poorten, resources, dienst-chips met hulpknop, publieke links |
+| Services | de dienstkaarten met hun Configureer-knop |
+| Services info | het Keycloak-blok: realm, admin console, gebruikersnaam, gemaskeerd wachtwoord, gedeelde OTP met vervaluitleg |
+| Deployments | Acties (8 knoppen), publieke links, en de deployment met `Healthy`/`Synced`, revisie, laatste sync en componentimage |
+| Metrics | zes grafieken (CPU, geheugen, netwerk in/uit, disk lezen/schrijven) met limietlijn en actuele waarde |
+| Backups | schema-status en per deployment een expliciete lege toestand |
+| Taken | de takenlijst van het project |
+
+**Geen kop zonder inhoud.** Waar niets is, staat dat er ook: "Geen backup schema
+ingesteld", "Geen backups gevonden voor deze deployment". Dat is precies wat deze vraag
+moest uitsluiten.
+
+Twee oneffenheden, geen van beide blokkerend:
+
+1. Bij *Disk write* (alles 0,00 KB/s) ontbreken de asaanduidingen die de vijf andere
+   grafieken wel hebben - de grafiek is een leeg kader met alleen een tijdlabel.
+2. De componentkaart toonde geen omgevingsvariabelen of aliassen, simpelweg omdat dit
+   verse project er geen heeft. **Dat punt uit het plan is via deze schermafbeelding dus
+   niet bevestigd**; het wordt wel gedekt door de sandboxtests
+   (`test_sandbox_env_vars_aliases_ui.py` en
+   `test_aliases_land_in_the_project_file_as_one_age_block`, beide groen), die de waarden
+   zetten en daarna het projectbestand controleren.
+
+### Wat er van deze taak NIET af is
+
+Eerlijk begrensd: van de acht genummerde stappen in het plan zijn er vijf gedaan
+(aanmaken, uitrollen, de URL, de tabbladen langs, en het projectbestand). Backup maken en
+terugzetten (stap 7) en het volledige verwijderpad met controle op namespace, database,
+bucket en realm (stap 8) zijn hier **niet** handmatig doorlopen. Ze zijn wel gedekt door de
+sandboxsuite en, voor het verwijderen, door taak 6 - waar na het verwijderen is
+gecontroleerd dat de namespace, het projectbestand en de ArgoCD-applicatie alle drie weg
+waren.
+
+## Bevinding buiten de taken: verwijderen laat de ArgoCD-Application in git staan
+
+Gevonden bij het opruimen tussen twee metingen door, en nagemeten.
+
+Na het verwijderen van acht testprojecten stonden hun `Application`-objecten nog in ArgoCD,
+met sync-status `Unknown`. Met `kubectl delete` weggehaald - en ze **kwamen terug**, terwijl
+`user-applications` op `OutOfSync` sprong. De reden staat in git:
+
+| Repository | Na het verwijderen |
+|---|---|
+| `zad-projects/projects/` | `enval-a6a.yaml`, `invit-knd.yaml`, ... **weg** |
+| `zad-argo-user-applications/sandboxed-local/` | `enval-a6a/`, `enval-m4k/`, `enval-xhr/`, `invit-3jf/`, `invit-au4/`, `invit-eux/`, `invit-knd/`, `pgsch-at8/` **nog aanwezig** |
+
+Het projectbestand gaat weg, de Application-definitie niet. De app-of-apps herstelt daarna
+precies wat er in git staat, dus zo'n wees is niet weg te krijgen zolang die map er is. In
+het log komt dat terug als:
+
+```
+Application 'enval-a6a-productie' terminal condition: ComparisonError: Failed to load
+target state: ... ./sandboxed-local/enval-a6a/productie: app path does not exist
+```
+
+Het cluster loopt daarmee langzaam vol met applicaties die naar een niet-bestaand pad
+wijzen, en elke reconcile houdt daar werk aan.
+
+**Niet in deze doorloop opgelost.** Dit zit in de verwijderweg (`delete_project_manager`),
+valt buiten de opdracht, en verdient een eigen taak met een eigen test. De vorm van die
+test ligt voor de hand en past bij wat de sandboxsuite goed kan: verwijder een project en
+controleer dat er in **beide** repositories niets achterblijft.
 
 ## Taak 6 - De API-weg: GROEN
 
