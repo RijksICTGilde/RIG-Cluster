@@ -26,13 +26,25 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class AccountLink(StrEnum):
+    """De standen die iets DOEN.
+
+    Hier stond ook ``VERIFY``, en die deed niets: ``keycloak_yaml_handler`` bouwt alleen
+    voor ``automatic`` en ``confirm`` een eigen first-broker-login-flow en laat de rest op
+    Keycloaks eigen flow staan - precies wat je krijgt als je niets kiest. Wie ``verify``
+    koos kreeg dus dezelfde uitkomst als wie het veld leeg liet, terwijl de keuzelijst
+    deed alsof er een verschil was.
+    """
+
     AUTOMATIC = "automatic"
     CONFIRM = "confirm"
-    VERIFY = "verify"
+
+
+#: De weggevallen stand, zoals hij in bestaande projectbestanden staat.
+LEGACY_ACCOUNT_LINK = "verify"
 
 
 class RestrictAccessConfig(BaseModel):
@@ -137,6 +149,23 @@ class KeycloakConfig(BaseModel):
         alias="account-link",
         description=(
             "How an existing account is linked when a user signs in through an identity provider: "
-            "automatic, confirm or verify."
+            "automatic or confirm. Leave it out for Keycloak's own flow (verification by email)."
         ),
     )
+
+    @field_validator("account_link", mode="before")
+    @classmethod
+    def _laat_de_oude_stand_door(cls, waarde: Any) -> Any:
+        """Een bestaand projectbestand met ``account-link: verify`` blijft verwerkbaar.
+
+        ``verify`` is uit de enum gehaald omdat hij niets deed. Hem daarna hard afkeuren
+        zou het GEVAARLIJKE deel zijn: een waarde die niet meer valideert blokkeert elke
+        volgende verwerking van dat project, en dat faalt stil - niemand kijkt naar een
+        project dat prima stond te draaien.
+
+        Hij wordt dus gelezen als "niets gekozen", en dat is geen interpretatie maar
+        precies wat hij deed: beide standen komen op de eigen flow van Keycloak uit. Het
+        projectbestand wordt hier niet herschreven; bij de eerstvolgende opslag via het
+        formulier verdwijnt de waarde vanzelf, want de keuzelijst kent hem niet meer.
+        """
+        return None if waarde == LEGACY_ACCOUNT_LINK else waarde
