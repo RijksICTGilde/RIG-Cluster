@@ -656,7 +656,7 @@ async def deployment_action_confirm(
             "key": action_key,
             # A service may leave the message out; still ask, rather than firing a
             # POST straight from the page.
-            "message": action.confirm_message or f"Weet u zeker dat u '{action.label}' wilt uitvoeren?",
+            "message": action.confirm_message or f"Weet je zeker dat je '{action.label}' wilt uitvoeren?",
         },
     )
 
@@ -1160,6 +1160,8 @@ async def dashboard(request: Request):
         pod_count = 0
 
         total_cpu_usage = sum(p.get("cpu_cores", 0) for p in user_projects)
+        # Geheugen erbij: dat is waar je op stuurt, en CPU alleen zei te weinig.
+        total_memory_usage = sum(p.get("memory_mb", 0) or 0 for p in user_projects)
 
         # --- Query ArgoCD status per project ---
         argocd_available = False
@@ -1235,6 +1237,8 @@ async def dashboard(request: Request):
                 "health_counts": health_counts,
                 "health_banner": health_banner,
                 "total_cpu_usage": total_cpu_usage,
+            "total_memory_usage": total_memory_usage,
+                "total_memory_usage": total_memory_usage,
                 **build_lotc_dashboard(user=user),
             },
         )
@@ -1993,6 +1997,8 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
 
     metrics, prometheus_available, _pods = await collect_dashboard_metrics(all_namespaces, user_projects)
     total_cpu_usage = sum(project.get("cpu_cores", 0) for project in user_projects)
+    # Geheugen erbij: dat is waar je op stuurt, en CPU alleen zei te weinig.
+    total_memory_usage = sum(project.get("memory_mb", 0) or 0 for project in user_projects)
 
     return render(
         request,

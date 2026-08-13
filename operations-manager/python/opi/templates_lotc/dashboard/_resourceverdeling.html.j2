@@ -1,4 +1,9 @@
-{# De balk die het resourcegebruik over de projecten verdeelt.
+{# De balken die het resourcegebruik over de projecten verdelen.
+
+   TWEE balken, geheugen eerst. Hier stond alleen CPU, en dat is de minst interessante van
+   de twee: op geheugen stuur je, want dat is wat een pod omvalt als het op raakt. De
+   sortering volgt daarom het geheugen, in beide balken, zodat een project op dezelfde
+   plek staat en de kleuren tussen de twee te vergelijken zijn.
 
    De kop staat IN de kaart: dit is een kop van EEN blok, en die hoort in dat blok. Hij
    stond ernaast, als losse <c-heading> boven de kaart, waardoor hij bij het wegvallen
@@ -6,34 +11,75 @@
    wat het thema daarvoor levert (c-card + c-section-head), dezelfde als op de andere
    dashboardblokken. #}
 {% from "bg/_patterns.html.j2" import panel %}
-{% if prometheus_available and total_cpu_usage is defined and total_cpu_usage > 0 %}
+
+{# Op geheugen, want dat is de balk die er het meest toe doet. Een project zonder meting
+   valt achteraan in plaats van de sortering te laten struikelen op None. #}
+{% set op_geheugen = projects | sort(attribute='memory_mb', reverse=true) %}
+
+{% if prometheus_available and ((total_memory_usage is defined and total_memory_usage > 0) or (total_cpu_usage is defined and total_cpu_usage > 0)) %}
     {% call panel("Resource Verdeling", "chart-x-y-axis-line") %}
-        <c-layout-flow gap="md">
-            <p>CPU gebruik per project</p>
-            <div class="resource-bar">
-                {% for project in projects %}
-                    {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
-                    <div class="resource-segment resource-color-{{ loop.index0 % 6 }}"
-                         data-width="{{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}"
-                         title="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores">
+        <c-layout-flow gap="lg">
+
+            {% if total_memory_usage is defined and total_memory_usage > 0 %}
+                <c-layout-flow gap="md">
+                    <c-span>Geheugen per project</c-span>
+                    <div class="resource-bar">
+                        {% for project in op_geheugen %}
+                            {% if project.memory_mb %}
+                            <div class="resource-segment resource-color-{{ loop.index0 % 6 }}"
+                                 data-width="{{ (project.memory_mb / total_memory_usage * 100) | round(1) }}"
+                                 title="{{ project.display_name }}: {{ '%.0f' | format(project.memory_mb) }} MiB">
+                            </div>
+                            {% endif %}
+                        {% endfor %}
                     </div>
-                    {% endif %}
-                {% endfor %}
-            </div>
-            {# .resource-legend was flex + wrap + gap: <c-cluster>. De items zelf blijven
-               een eigen <a> met eigen flex - een cluster rendert een <div>, en daar mag
-               geen link omheen die zelf weer een klikbaar geheel is. #}
-            <c-cluster gap="md">
-                {% for project in projects %}
-                    {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
-                    <a href="/projects/{{ project.name }}/details" class="resource-legend-item">
-                        <span class="resource-dot resource-color-{{ loop.index0 % 6 }}"></span>
-                        <span>{{ project.display_name }}</span>
-                        <span>{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</span>
-                    </a>
-                    {% endif %}
-                {% endfor %}
-            </c-cluster>
+                    {# .resource-legend was flex + wrap + gap: <c-cluster>. De items zelf blijven
+                       een eigen <a> met eigen flex - een cluster rendert een <div>, en daar mag
+                       geen link omheen die zelf weer een klikbaar geheel is. #}
+                    <c-cluster gap="md">
+                        {% for project in op_geheugen %}
+                            {% if project.memory_mb %}
+                            <a href="/projects/{{ project.name }}/details" class="resource-legend-item">
+                                <span class="resource-dot resource-color-{{ loop.index0 % 6 }}"></span>
+                                <span>{{ project.display_name }}</span>
+                                <span>{{ '%.0f' | format(project.memory_mb) }} MiB ({{ (project.memory_mb / total_memory_usage * 100) | round(1) }}%)</span>
+                            </a>
+                            {% endif %}
+                        {% endfor %}
+                    </c-cluster>
+                </c-layout-flow>
+            {% endif %}
+
+            {% if total_cpu_usage is defined and total_cpu_usage > 0 %}
+                <c-layout-flow gap="md">
+                    <c-span>CPU per project</c-span>
+                    {# DEZELFDE volgorde en dus dezelfde kleuren als hierboven: zo is te zien
+                       dat het project dat het meeste geheugen gebruikt niet per se het
+                       meeste rekenwerk doet. Sorteren per balk zou dat verband breken. #}
+                    <div class="resource-bar">
+                        {% for project in op_geheugen %}
+                            {% if project.cpu_cores %}
+                            <div class="resource-segment resource-color-{{ loop.index0 % 6 }}"
+                                 data-width="{{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}"
+                                 title="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores">
+                            </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                    <c-cluster gap="md">
+                        {% for project in op_geheugen %}
+                            {% if project.cpu_cores %}
+                            <a href="/projects/{{ project.name }}/details" class="resource-legend-item">
+                                <span class="resource-dot resource-color-{{ loop.index0 % 6 }}"></span>
+                                <span>{{ project.display_name }}</span>
+                                <span>{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</span>
+                            </a>
+                            {% endif %}
+                        {% endfor %}
+                    </c-cluster>
+                </c-layout-flow>
+            {% endif %}
+
         </c-layout-flow>
     {% endcall %}
 {% endif %}

@@ -150,6 +150,60 @@
             {% endcall %}
         {% endif %}
 
+        {# ---- Configuratie & Secrets (section-config.html.j2) ----------------- #}
+        {# Elke waarde staat in een <c-secret-field>, dat zijn eigen kopieerknop meebrengt.
+           Hier stond een losse knop met een inline copyToClipboard() erop, die vanaf de
+           knop de dichtstbijzijnde .config-item zocht en daarbinnen de .config-code;
+           daarom moesten die twee klassen letterlijk overgenomen worden. Dat is niet meer
+           nodig - de knop en de klassen zijn weg, het kopieren zit in het veld. De functie
+           zelf blijft bestaan voor de dienstblokken, in /static/js/copy_to_clipboard.js. #}
+        {% if user_role in ["admin", "owner"] %}
+            {% call panel("Configuratie & Secrets", "lock-closed", info_text="Project configuratie en gevoelige informatie") %}
+                    <c-stack gap="xs">
+                        <c-heading type="h3" size="6" label="Project Naam" />
+                        {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
+                           en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
+                           dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
+                        <c-secret-field value="{{ project.name }}" revealed show-copy />
+                    </c-stack>
+
+                {% if project.config %}
+                    {% if project.config.get('api-key') %}
+                        <c-stack gap="xs">
+                            <c-heading type="h3" size="6" label="API Key" />
+                            <c-secret-field value="{{ project.config['api-key'] }}" show-copy="true" />
+                        </c-stack>
+                    {% endif %}
+
+                    {% if project.config.get('age-public-key') %}
+                            <c-stack gap="xs">
+                                <c-heading type="h3" size="6" label="Age Public Key" />
+                                {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
+                                   en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
+                                   dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
+                                <c-secret-field value="{{ project.config['age-public-key'] }}" revealed show-copy />
+                            </c-stack>
+                    {% endif %}
+
+                    {% if project.config.get('age-private-key') %}
+                        <c-stack gap="xs">
+                            <c-heading type="h3" size="6" label="Age Private Key" />
+                            <c-secret-field value="{{ project.config['age-private-key'] }}" show-copy="true" />
+                        </c-stack>
+                    {% endif %}
+                {% else %}
+                    <c-paragraph>Geen configuratie beschikbaar</c-paragraph>
+                {% endif %}
+
+                {# Het cluster staat niet in de bestaande sectie, maar wel al op deze
+                   pagina sinds de eerste omzetting. Weghalen zou gegevens laten
+                   verdwijnen die er nu staan, dus hij blijft. #}
+                <c-detail-list>
+                    <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
+                </c-detail-list>
+            {% endcall %}
+        {% endif %}
+
         {# ---- Resourcegebruik van het HELE project ---------------------------
 
            Deze kaart stond op het tabblad Metrics, en dat klopte niet: dat tabblad is
@@ -318,60 +372,6 @@
                 {% endfor %}
             </c-table>
         {% endcall %}
-
-        {# ---- Configuratie & Secrets (section-config.html.j2) ----------------- #}
-        {# Elke waarde staat in een <c-secret-field>, dat zijn eigen kopieerknop meebrengt.
-           Hier stond een losse knop met een inline copyToClipboard() erop, die vanaf de
-           knop de dichtstbijzijnde .config-item zocht en daarbinnen de .config-code;
-           daarom moesten die twee klassen letterlijk overgenomen worden. Dat is niet meer
-           nodig - de knop en de klassen zijn weg, het kopieren zit in het veld. De functie
-           zelf blijft bestaan voor de dienstblokken, in /static/js/copy_to_clipboard.js. #}
-        {% if user_role in ["admin", "owner"] %}
-            {% call panel("Configuratie & Secrets", "lock-closed", info_text="Project configuratie en gevoelige informatie") %}
-                    <c-stack gap="xs">
-                        <c-heading type="h3" size="6" label="Project Naam" />
-                        {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
-                           en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
-                           dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
-                        <c-secret-field value="{{ project.name }}" revealed show-copy />
-                    </c-stack>
-
-                {% if project.config %}
-                    {% if project.config.get('api-key') %}
-                        <c-stack gap="xs">
-                            <c-heading type="h3" size="6" label="API Key" />
-                            <c-secret-field value="{{ project.config['api-key'] }}" show-copy="true" />
-                        </c-stack>
-                    {% endif %}
-
-                    {% if project.config.get('age-public-key') %}
-                            <c-stack gap="xs">
-                                <c-heading type="h3" size="6" label="Age Public Key" />
-                                {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
-                                   en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
-                                   dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
-                                <c-secret-field value="{{ project.config['age-public-key'] }}" revealed show-copy />
-                            </c-stack>
-                    {% endif %}
-
-                    {% if project.config.get('age-private-key') %}
-                        <c-stack gap="xs">
-                            <c-heading type="h3" size="6" label="Age Private Key" />
-                            <c-secret-field value="{{ project.config['age-private-key'] }}" show-copy="true" />
-                        </c-stack>
-                    {% endif %}
-                {% else %}
-                    <c-paragraph>Geen configuratie beschikbaar</c-paragraph>
-                {% endif %}
-
-                {# Het cluster staat niet in de bestaande sectie, maar wel al op deze
-                   pagina sinds de eerste omzetting. Weghalen zou gegevens laten
-                   verdwijnen die er nu staan, dus hij blijft. #}
-                <c-detail-list>
-                    <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
-                </c-detail-list>
-            {% endcall %}
-        {% endif %}
 
         {# ---- De secties die de DIENSTEN zelf leveren ------------------------- #}
         {# De blokken die de DIENSTEN leveren (de Keycloak-realm, de uitnodigingen, de
