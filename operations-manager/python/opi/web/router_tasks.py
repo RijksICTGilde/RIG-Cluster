@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse
 from opi.core.auth_decorators import requires_sso
 from opi.services.runs_service import get_runs_service
 from opi.web.router_detail_edit import _require_project_member_access
+from opi.web.stap_labels import stap_label
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ def _normalize_task(task: dict) -> dict:
         "deployment": task.get("deployment_name"),
         "status": _STATUS_LABELS.get(status, status),
         "active": status in _TASK_ACTIVE,
-        "step": task.get("current_step"),
+        "step": stap_label(task.get("current_step")),
         "progress": task.get("progress_percent"),
         "door": task.get("created_by"),
         "gestart": task.get("created_at"),
