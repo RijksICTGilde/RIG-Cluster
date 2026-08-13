@@ -37,6 +37,7 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import CLEARED_FIELD
+from opi.handlers.project_file_handler import merge_staged_attachments
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.help_text import is_markdown_help, render_service_help
 from opi.services.schema_migration import normalize_service_entries
@@ -2395,29 +2396,7 @@ async def _do_submit(
             # encrypts them once the AGE keypair exists).
             staged_attachments = state.staged_attachments or {}
             if staged_attachments:
-                services = final_data.setdefault("services", [])
-                data_list: list | None = None
-                for i, entry in enumerate(services):
-                    if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
-                        data_list = entry["attachments"].setdefault("data", [])
-                        break
-                    # The services picker stores an enabled service as a bare string;
-                    # upgrade "attachments" to its dict form rather than duplicating it.
-                    if entry == "attachments":
-                        upgraded: list = []
-                        services[i] = {"attachments": {"data": upgraded}}
-                        data_list = upgraded
-                        break
-                if data_list is None:
-                    data_list = []
-                    services.append({"attachments": {"data": data_list}})
-                existing_ids = {e.get("id") for e in data_list if isinstance(e, dict)}
-                for att_id, info in staged_attachments.items():
-                    if att_id in existing_ids:
-                        continue
-                    data_list.append(
-                        {"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")}
-                    )
+                merge_staged_attachments(final_data, staged_attachments)
 
             # Run generators (sets name, AGE keys, resolves staged attachments),
             # then assemble deployment (needs name for namespace).

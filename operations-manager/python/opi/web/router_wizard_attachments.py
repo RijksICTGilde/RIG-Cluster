@@ -13,6 +13,11 @@ injected into the project-level attachments catalog and encrypted:
 State resolution serves BOTH flows: the full-page wizard keeps its token in the
 Starlette session cookie; the modal wizard passes it as ``_wizard_token``.
 
+Replacing an attachment rides the same road with one difference: the staged entry is
+marked ``replace`` and lands on the catalog entry that is already there instead of next
+to it, so the id survives and every component coupled to it keeps working. Which id that
+may be is decided by the session (``REPLACE_TARGET_KEY``), not by the request.
+
 CSRF: these routes are not exempt; the upload/unstage controls live inside the
 wizard step form and inherit its ``X-CSRF-Token`` htmx header.
 """
@@ -48,6 +53,15 @@ from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
 logger = logging.getLogger(__name__)
 
 wizard_attachments_router = APIRouter(prefix="/forms/wizard", tags=["wizard-attachments"])
+
+#: Key under which the modal wizard records the attachment it was opened to replace.
+#: Lives in ``base_data`` next to ``_wizard_token``: template-only (the partial reads the
+#: merged data) and outside every editable's write set, so it never reaches the project.
+REPLACE_TARGET_KEY = "_replace_attachment"
+
+#: What the form says it is doing. Anything else is an add -- the default, and the value
+#: an unmodified add form does not send at all.
+REPLACE_MODE = "replace"
 
 
 def _resolve_state(request: Request, wizard_token: str | None) -> tuple[Any, Callable[[Any], None] | None]:
@@ -121,6 +135,38 @@ def _validate_attachment_id(attachment_id: str, existing: list[str]) -> list[str
     return validate_field(ATTACHMENT_ID_EDITABLE, attachment_id, {"existing_attachment_ids": existing})
 
 
+def _replace_target(state: Any) -> str:
+    """The attachment this session was opened to replace, or "" when it is an add.
+
+    Set once, when the modal is opened from the Vervangen button
+    (``router_detail_edit.modal_wizard_init``), and read here rather than taken from the
+    request. The form shows the id fixed, and a form that fixes a value is a convenience,
+    not a check: the id a replacement writes over has to be decided by the session that
+    was opened for it, or a hand-made POST could point the upload at somebody else's
+    certificate.
+    """
+    if state is None:
+        return ""
+    return (getattr(state, "base_data", None) or {}).get(REPLACE_TARGET_KEY) or ""
+
+
+def _check_replace(state: Any, attachment_id: str) -> str | None:
+    """Refuse a replacement that is not the one this session was opened for.
+
+    Three ways it is wrong, and all three are the same answer to the caller: this session
+    is not replacing anything, it is replacing a different attachment, or the id is not in
+    the catalog at all -- a replacement of something that is not there.
+    """
+    target = _replace_target(state)
+    if not target:
+        return "Deze bewerking is geen vervanging; open Vervangen bij de bijlage zelf."
+    if attachment_id != target:
+        return f"Bij vervangen staat de identifier vast op '{target}' en kan niet gewijzigd worden."
+    if attachment_id not in _catalog_ids(state):
+        return f"Bijlage '{attachment_id}' bestaat niet in dit project en kan dus niet vervangen worden."
+    return None
+
+
 def _session_services(state: Any) -> list:
     """The project services carried in the wizard session (includes the attachments catalog)."""
     if state is None:
@@ -157,22 +203,36 @@ async def stage_attachment(
     attachment_id: str = Form(...),
     file: UploadFile = File(...),
     wizard_token: str | None = Form(None, alias="_wizard_token"),
+    mode: str = Form(""),
 ):
-    """Stage an uploaded file and record a reference in the wizard session."""
+    """Stage an uploaded file and record a reference in the wizard session.
+
+    With ``mode=replace`` the file is new content for an attachment that is already in the
+    catalog: the id has to be the one this session was opened for, and it has to exist.
+    The staged entry carries that fact through to the save, where the catalog entry is
+    written over instead of a second one being added -- which is what keeps every
+    component that couples to that id pointing at it.
+    """
     state, save = _resolve_state(request, wizard_token)
     if state is None or save is None:
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
 
     staged = _staged(state)
-    existing = list(staged.keys()) + _catalog_ids(state)
+    replacing = mode == REPLACE_MODE
+    attachment_id = attachment_id.strip()
     # One rule per field: the shared ATTACHMENT_ID_EDITABLE is what the API upload
     # validates against too, so an id the wizard accepts is an id the API accepts.
     # Emptiness rides on the editable's ``required``; uniqueness needs the ids this
     # session already knows about, which is why the context is passed here and not there.
-    attachment_id = attachment_id.strip()
-    errors = _validate_attachment_id(attachment_id, existing)
+    # A replacement is the one case where a taken id is the point, so uniqueness is not
+    # asked -- existence is, and the session decides which id that may be.
+    errors = _validate_attachment_id(attachment_id, [] if replacing else list(staged.keys()) + _catalog_ids(state))
     if errors:
         return _attachments_list_response(request, state, wizard_token, error="; ".join(errors))
+    if replacing:
+        replace_error = _check_replace(state, attachment_id)
+        if replace_error:
+            return _attachments_list_response(request, state, wizard_token, error=replace_error)
 
     raw = await file.read()
     if len(raw) > MAX_ATTACHMENT_BYTES:
@@ -186,9 +246,18 @@ async def stage_attachment(
     except ValueError as exc:
         return _attachments_list_response(request, state, wizard_token, error=str(exc))
 
-    staged[attachment_id] = {"filename": file.filename or attachment_id, "content": f"staging:{token}"}
+    # The new file's own name is kept, also when replacing: the id is what every coupling
+    # hangs on, the filename is the label next to it, and a label that still says
+    # ``oud-cert.pem`` over new content is the more confusing of the two.
+    staged[attachment_id] = {
+        "filename": file.filename or attachment_id,
+        "content": f"staging:{token}",
+        "replace": replacing,
+    }
     save(state)
-    logger.info(f"Staged attachment '{attachment_id}' for wizard flow '{flow_id}'")
+    logger.info(
+        f"Staged attachment '{attachment_id}' ({'replacement' if replacing else 'new'}) for wizard flow '{flow_id}'"
+    )
     return _attachments_list_response(request, state, wizard_token, reset=True)
 
 
@@ -199,19 +268,27 @@ async def validate_attachment_id(
     flow_id: str,
     attachment_id: str = Form(""),
     wizard_token: str | None = Form(None, alias="_wizard_token"),
+    mode: str = Form(""),
 ):
     """Validate the identifier on change so the error surfaces before the file upload.
 
     Returns an inline HTML alert (or empty to clear it). An empty field is not an error
     (the user has not finished typing yet).
+
+    Which id is good depends on what is being done, and the two are each other's opposite:
+    adding wants an id nobody has yet, replacing wants exactly the one that is there. A
+    check that accepts both would let a typo in a new id land on an existing attachment
+    and overwrite it, which is the accident this endpoint exists to prevent.
     """
     state, _ = _resolve_state(request, wizard_token)
     staged = _staged(state) if state else {}
     error: str | None = None
     if attachment_id:
-        existing = list(staged.keys()) + _catalog_ids(state)
-        errors = _validate_attachment_id(attachment_id, existing)
+        replacing = mode == REPLACE_MODE
+        errors = _validate_attachment_id(attachment_id, [] if replacing else list(staged.keys()) + _catalog_ids(state))
         error = "; ".join(errors) if errors else None
+        if not error and replacing:
+            error = _check_replace(state, attachment_id)
     return _id_field_response(request, error, attachment_id)
 
 

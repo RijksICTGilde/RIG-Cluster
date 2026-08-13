@@ -45,9 +45,14 @@
                                 <c-paragraph size="sm">id: {{ att.id }}</c-paragraph>
                             </c-stack>
                             {% if ctx.can_edit %}
-                                {% set bijlage_verwijderen = "openServiceModal('/projects/" ~ ctx.project_name ~ "/actions/delete-attachment/confirm?target=" ~ (att.id | urlencode) ~ "', 'Bijlage verwijderen')" %}
-                                <c-button type="secondary" size="sm" label="Verwijderen"
-                                          :attrs="{'onclick': bijlage_verwijderen}" />
+                                <c-cluster gap="sm" align="center">
+                                    {% set bijlage_vervangen = "openEditModal('modal-edit-attachments', 'Bijlage vervangen', {replace: '" ~ att.id ~ "'})" %}
+                                    <c-button type="secondary" size="sm" label="Vervangen"
+                                              :attrs="{'onclick': bijlage_vervangen}" />
+                                    {% set bijlage_verwijderen = "openServiceModal('/projects/" ~ ctx.project_name ~ "/actions/delete-attachment/confirm?target=" ~ (att.id | urlencode) ~ "', 'Bijlage verwijderen')" %}
+                                    <c-button type="secondary" size="sm" label="Verwijderen"
+                                              :attrs="{'onclick': bijlage_verwijderen}" />
+                                </c-cluster>
                             {% endif %}
                         </c-cluster>
                     </c-card>

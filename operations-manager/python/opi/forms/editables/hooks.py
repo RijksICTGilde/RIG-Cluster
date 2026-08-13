@@ -118,34 +118,13 @@ class ResolveAttachmentsHook:
 
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
         from opi.forms.editables.generators import AttachmentStagingResolveGenerator
+        from opi.handlers.project_file_handler import merge_staged_attachments
 
         staged = context.get("staged_attachments") or {}
         if not staged:
             return
 
-        services = yaml_data.setdefault("services", [])
-        data_list: list | None = None
-        for i, entry in enumerate(services):
-            if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
-                data_list = entry["attachments"].setdefault("data", [])
-                break
-            # The services picker stores an enabled service as a bare string; upgrade
-            # "attachments" to its dict form in place rather than appending a duplicate.
-            if entry == "attachments":
-                upgraded: list = []
-                services[i] = {"attachments": {"data": upgraded}}
-                data_list = upgraded
-                break
-        if data_list is None:
-            data_list = []
-            services.append({"attachments": {"data": data_list}})
-
-        existing_ids = {e.get("id") for e in data_list if isinstance(e, dict)}
-        for att_id, info in staged.items():
-            if att_id in existing_ids:
-                continue
-            data_list.append({"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")})
-
+        merge_staged_attachments(yaml_data, staged)
         AttachmentStagingResolveGenerator().generate(yaml_data)
 
 
