@@ -601,7 +601,10 @@ tasks:
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
-      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
     cmds:
       - |
 
@@ -650,8 +653,11 @@ tasks:
     desc: "Apply the backup-destination MinIO (SOPS-decrypted) to the selected cluster. Managed outside ArgoCD by design (prune-safe for the backup PVC)."
     vars:
       CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn | local
-      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
     cmds:
       - |
 
@@ -839,11 +845,14 @@ tasks:
     desc: "Generate SOPS-encrypted secret from cluster-specific env file for operations-manager"
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER}}.secrets'
       OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
       NAMESPACE: '{{default .RIG_NAMESPACE .NAMESPACE}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
     cmds:
       - |
         echo "Generating SOPS-encrypted secret for cluster: {{.CLUSTER}}"
@@ -921,7 +930,10 @@ tasks:
     desc: "Build and deploy the operations-manager to the current cluster"
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
       # Zie sandbox:build-operations-manager-image: zonder dit bakt de build de
@@ -971,7 +983,10 @@ tasks:
     desc: "Deploy the operations-manager to the current cluster"
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
       - |
@@ -1442,8 +1457,11 @@ tasks:
       OUTPUT_DIR: '{{.OUTPUT_DIR}}'
       CLUSTER_TYPE: '{{.CLUSTER_TYPE}}'
       CLUSTER_FOLDER: '{{.CLUSTER_FOLDER}}'
-      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       FIXED_PASSWORD: '{{default "" .FIXED_PASSWORD}}'  # If set, use this instead of random passwords (for sandbox/dev)
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
     cmds:
       - |
         if [ ! -f ".env-taskfile-current" ]; then
