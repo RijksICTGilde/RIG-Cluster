@@ -9,7 +9,26 @@ is wat er gemeten is, inclusief wat er misging.
 
 ## Oordeel
 
-<!-- INVULLEN -->
+**Uitrollen kan.** Alle drie de geautomatiseerde suites zijn groen op de commit onder test
+(unit 8519, e2e 400, sandbox 55), de API-weg doet van aanmaken tot verwijderen wat de
+documentatie belooft, en de schermen zijn in de browser bekeken en kloppen.
+
+Met twee beperkingen die de lezer moet meewegen, want ze zijn niet aangetoond en niet
+weerlegd:
+
+1. **Dat een sandbox vanaf nul overeind komt is NIET getoetst** (taak 1). Het gereedschap
+   en de sleutels ontbraken in deze omgeving. Wat wel vaststaat is dat het draaiende
+   cluster gezond is.
+2. **Backup/restore en het volledige verwijderpad zijn niet handmatig doorlopen** (taak 5,
+   stappen 7 en 8). Ze worden wel door de suite gedekt, en het verwijderen is via de API
+   gecontroleerd op namespace, projectbestand en ArgoCD-applicatie.
+
+Geen van de vijftien gevonden problemen zat in de applicatie: veertien zaten in de
+testlaag, en het vijftiende is een RBAC-regel die nooit heeft bestaan. Dat is het
+geruststellende deel. Het verontrustende deel is dat de testlaag zo ver achterop was
+geraakt bij de opdeling in tabbladen dat tien sandboxtests en vijf e2e-tests naar plekken
+wezen waar niets meer stond - rood dat niets over de code zei, en dat bij nog een ronde
+uitstel "die doet het altijd al niet" was geworden.
 
 ## Vooraf
 
@@ -197,7 +216,22 @@ odcn-production maken we niet zelf; het blueprint legt vast hoe de ClusterRole e
 te zien, maar iemand met rechten op dat cluster moet het toepassen. Zolang dat niet gebeurd
 is, blijft de OOM-watcher daar terugvallen op alle pods.
 
-### De uitslag: 10 failures, allemaal in de testlaag
+### De uitslag na de reparaties: GROEN
+
+```
+uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife"
+55 passed, 409 deselected in 3109.38s (51m49)
+```
+
+Nul failures. Alle tien de eerder gevallen tests zijn in deze run langsgekomen en geslaagd.
+
+Dit is de derde poging; de eerste twee zijn weggegooid en waarom staat hieronder, want dat
+hoort bij een eerlijk verslag: de eerste omdat ik zelf het cluster patchte terwijl de
+meting liep, de tweede omdat ik hem startte terwijl mijn eigen opruiming van zes projecten
+nog door het cluster liep. Beide keren was de fout dezelfde: iets veranderen aan de
+omgeving die je aan het meten bent.
+
+### De uitslag van de eerste (schone) run: 10 failures, allemaal in de testlaag
 
 De schone run gaf **10 failed, 45 passed** (46m19s). Geen van de tien wees op een fout in
 de applicatie; ze hadden drie oorzaken, en alle drie waren het navigaties die stilletjes
@@ -421,3 +455,57 @@ maar de documentatie van het endpoint zegt het letterlijk: elke wijziging telt m
 the project is rolled out again with `POST /:refresh`". Nagemeten: na `POST /:refresh` gaat
 de teller naar `count: 0`. Gedrag klopt met de belofte; wel iets om te weten, want het
 uitrollen van één deployment maakt de teller niet leeg.
+
+## Aanbevelingen
+
+Drie dingen die deze doorloop opleverde en die een eigen taak verdienen. Geen ervan is
+blokkerend voor de merge.
+
+### 1. Het verwijderen laat de ArgoCD-Application in git staan
+
+Beschreven hierboven. De testlaag heeft er al een noodverband voor (`force_cleanup_project`
+in `tests/e2e/helpers/cluster.py`), met in de docstring letterlijk *"orphaning the (now
+empty) namespace and a dangling `Unknown` ArgoCD app. Left unchecked these accumulate
+across runs and starve the cluster"*. Het lek is dus bekend en wordt in de tests
+weggepoetst in plaats van in `delete_project_manager` opgelost.
+
+### 2. De sandboxsuite kan waarschijnlijk parallel
+
+De suite duurt 52 minuten, en dat is bijna volledig **idle wachten** op ArgoCD. Gemeten
+tijdens deze run:
+
+| Meting | Waarde |
+|---|---|
+| Wachttijd op de lock van de projectstore | **5,1 s** in 25 minuten, over 172 acties |
+| Langste enkele wachttijd op die lock | 1,23 s |
+| Opzet per testbestand (nieuw project) | 85-150 s |
+| De duurste enkele test (slapen + wekken) | 346 s |
+
+De serialisatie in OPI is dus verwaarloosbaar; de rem is convergentie, en parallel wachten
+kost nauwelijks extra. Isolatie is geen bezwaar: elk testbestand heeft zijn eigen project,
+namespace, Keycloak-realm, database en ArgoCD-applicatie, dus `--dist loadfile` raakt per
+worker een ander project. Wat er nog voor nodig is: `pytest-xdist` als dependency (staat er
+nu niet in), en meten hoeveel projecten dit Kind-cluster tegelijk aankan - dat is de echte
+onbekende, niet de code.
+
+### 3. `wait_for_project_apps_healthy` loopt achter op ArgoCD zelf
+
+De helper vraagt het niet aan ArgoCD maar pollt elke 5 seconden `kubectl get applications`
+en eist dat **alle** apps met dat projectlabel Healthy zijn, inclusief de aparte
+`-infrastructure`-app. Verschijnt die later, dan wacht hij door terwijl ArgoCD de eerste al
+gezond noemt. Zichtbaar als tests die langer duren dan het cluster nodig had.
+
+## Wat er structureel veranderd is
+
+Naast de losse reparaties zijn twee dingen aangepast die de volgende doorloop moeten
+behoeden voor wat deze kostte:
+
+1. **De testhelpers vragen de taak wat er gebeurd is** in plaats van de git-listing af te
+   vissen op een klok (`project_name_from_progress`). Geen enkele aanroep van
+   `wait_for_new_project` is nog over.
+2. **Een lange run is zichtbaar terwijl hij loopt.** `PYTEST_VOORTGANG=<pad>` laat pytest
+   per afgeronde test een regel wegschrijven met tijdstip, `n/totaal`, duur, het aantal
+   rode tot dan toe, de uitslag en de nodeid - uit pytest's eigen `report`-object, niet uit
+   de uitvoer gegrepen. Zie `workflow/build.md`. Dat een run op de achtergrond stond met
+   zijn uitvoer in een bestand was voor iedereen die meekeek hetzelfde als stilte, en dat
+   heeft in deze doorloop meer dan eens tot de verkeerde conclusie geleid.
