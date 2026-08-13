@@ -42,7 +42,7 @@
         {# Nothing to confirm when the action is refused up front; the dialog then only
            explains why (the server refuses it too). #}
         {% if not blocked_reason %}
-        <c-button type="secondary" label="{{ action.label }}" show-icon="before" icon="{{ action.icon }}" class="confirm-action-submit"/>
+        <c-button type="secondary" label="{{ action.label }}" show-icon="before" icon="{{ action.icon | nldd_icon }}" class="confirm-action-submit"/>
         {% endif %}
     </div>
 </div>
