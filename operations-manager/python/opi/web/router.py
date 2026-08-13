@@ -1265,6 +1265,7 @@ async def dashboard(request: Request):
 
 
 @web_router.get("/projects/{project_name}/details", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/team", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/componenten", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/services", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/deployments", response_class=HTMLResponse)
@@ -1308,6 +1309,7 @@ OUDE_TABBLADPADEN = {
 
 
 @web_router.get("/projects/details/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/team/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/componenten/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/services/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/deployments/{project_name}", response_class=HTMLResponse)
