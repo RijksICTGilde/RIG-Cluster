@@ -2007,6 +2007,9 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
             "prometheus_available": prometheus_available,
             "projects": user_projects,
             "total_cpu_usage": total_cpu_usage,
+            # Berekend en dan niet meegegeven: het sjabloon vroeg ernaar en kreeg een
+            # Undefined, en dat kostte een 500 op het hele fragment.
+            "total_memory_usage": total_memory_usage,
         },
     )
 
