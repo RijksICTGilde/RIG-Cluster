@@ -1,4 +1,4 @@
-"""De deploymentkiezer: op allebei de tabbladen waar je per deployment kijkt.
+"""De deploymentkiezer: op elk tabblad waar je per deployment kijkt.
 
 Hij stond alleen op Deployments. Op Metrics speelt hetzelfde - je kijkt daar per
 deployment - en daar stonden alle grafiekenblokken onder elkaar, dus moest je scrollen om
@@ -69,18 +69,23 @@ def test_de_kiezer_staat_maar_op_een_plek() -> None:
     assert _markup(KIEZER).count('id="global-deployment-selector"') == 1
 
 
-def test_beide_tabbladen_nemen_de_kiezer_op() -> None:
-    for naam in ("deployments", "metrics"):
+#: De tabbladen die EEN deployment tegelijk tonen en dus dezelfde kiezer voeren. Backups
+#: is er sinds RC-100 het derde.
+TABBLADEN_MET_KIEZER = ("deployments", "metrics", "backups")
+
+
+def test_elk_deploymenttabblad_neemt_de_kiezer_op() -> None:
+    for naam in TABBLADEN_MET_KIEZER:
         assert 'include "bg/_deployment-selector.html.j2"' in _tabblad(naam), f"tabblad {naam} mist de kiezer"
 
 
-def test_beide_tabbladen_renderen_er_een() -> None:
+def test_elk_deploymenttabblad_rendert_er_een() -> None:
     """De lus over alle deployments is weg: het tabblad rendert ``deployment_geopend``.
 
     Zolang die lus er staat, staat elk blok van elke deployment in de DOM - met zijn eigen
     lazy-laders - en is de winst van dit alles weg.
     """
-    for naam in ("deployments", "metrics"):
+    for naam in TABBLADEN_MET_KIEZER:
         tabblad = _tabblad(naam)
         assert "deployment_geopend" in tabblad, f"tabblad {naam} rendert niet de gekozen deployment"
         assert "for deployment in project.deployments" not in tabblad, f"tabblad {naam} loopt nog over alle deployments"

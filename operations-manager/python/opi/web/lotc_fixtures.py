@@ -132,6 +132,9 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
         "deployment_service_actions": {},
         "deployment_service_sections": {},
+        # Het backupsblok van het tabblad Backups (RC-100). Leeg, zoals bij een project dat
+        # geen dienst gebruikt die iets kan backuppen; de proefopstelling heeft geen cluster.
+        "backups_sections": [],
         # De blokken die de DIENSTEN zelf leveren, uit de echte registry en niet uit een
         # lijstje hier. Ze stonden leeg, en daardoor toonde de proefopstelling juist de
         # secties niet die het langst met roos-HTML in de LOTC-pagina stonden (RC-64) -
