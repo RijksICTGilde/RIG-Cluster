@@ -8,6 +8,7 @@ processing. These tests prove that:
 - a known-good example project from projects/ PASSES.
 """
 
+import copy
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from opi.core.project_schema import (
     validate_project_schema,
 )
 from opi.services.catalog.shared.storage import StorageEntry
+from opi.services.schema_migration import LATEST_SCHEMA_VERSION, migrate_to_latest
 from pydantic import ValidationError
 from ruamel.yaml import YAML
 
@@ -68,6 +70,37 @@ def _valid_project() -> dict:
 def test_valid_project_passes() -> None:
     """A well-formed project must pass validation without raising."""
     validate_project_schema(_valid_project())
+
+
+class TestBothAliasShapes:
+    """Aliases are ONE AGE block since RC-106, and an unencrypted mapping stays valid.
+
+    Both shapes are measured on the MIGRATED data, because that is the order production
+    uses: ``migrate_to_latest`` first, then validate. Validating the raw dict would test
+    a schema version the file no longer has by the time it is checked, and a gap between
+    the two shows up as a project that saves and then fails to reprocess.
+    """
+
+    @staticmethod
+    def _validate(aliases) -> None:
+        project = _valid_project()
+        project["schema-version"] = LATEST_SCHEMA_VERSION
+        project["components"][0]["aliases"] = aliases
+        migrated, _ = migrate_to_latest(copy.deepcopy(project))
+        validate_project_schema(migrated)
+
+    def test_one_age_block_passes(self) -> None:
+        # The stored shape a write produces: one armored block, so a plain string.
+        self._validate("-----BEGIN AGE ENCRYPTED FILE-----\nY2lwaGVydGV4dA==\n-----END AGE ENCRYPTED FILE-----")
+
+    def test_an_unencrypted_mapping_still_passes(self) -> None:
+        # Never migrated away, so a project carrying it must keep validating.
+        self._validate({"POSTGRES_HOST": "$DATABASE_SERVER_HOST"})
+
+    def test_a_shape_that_is_neither_is_refused(self) -> None:
+        # The oneOf must actually narrow: a list is not a block and not a mapping.
+        with pytest.raises(ProjectSchemaError):
+            self._validate(["POSTGRES_HOST=$DATABASE_SERVER_HOST"])
 
 
 def test_deployment_with_scheduled_backup_passes() -> None:

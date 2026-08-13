@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.services.catalog.base import ConfigLayer, Service, ValueStorage
+from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.user_env_vars.config_model import UserEnvVarsConfig
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
@@ -56,7 +56,7 @@ class UserEnvVarsService(Service):
     owned_property = "user-env-vars"
     # One AGE block for the whole set: the plaintext is the KEY=value text the form
     # posts and the deploy path parses, so it can only be encrypted as a whole.
-    owned_values_storage = ValueStorage.BLOCK
+    owned_values_map = True
     # Sits at the top of the per-component service fieldsets, where the hand-authored
     # "Variabelen" fieldset used to be, so the form order is unchanged.
     config_component_order = 6

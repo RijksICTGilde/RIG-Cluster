@@ -18,7 +18,6 @@ import subprocess
 
 import pytest
 from opi.forms.editables.converters import KeyValueConverter
-from opi.services.catalog.base import ValueStorage
 from opi.services.component_values import (
     ComponentValuesError,
     ValuesOperation,
@@ -67,43 +66,41 @@ def project(monkeypatch) -> dict:
     }
 
 
-class TestTheTwoStorageShapes:
+class TestTheOneStorageShape:
+    """One shape for both properties since RC-106: ONE AGE block of KEY=value lines."""
+
     def test_env_vars_land_as_one_age_block(self, project: dict) -> None:
-        stored = encode({"A": "1", "B": "2"}, ValueStorage.BLOCK, project)
+        stored = encode({"A": "1", "B": "2"}, project)
 
         assert isinstance(stored, str)
         assert is_age_encrypted(stored), "user-env-vars must be stored as a single AGE block"
         assert stored.count("BEGIN AGE ENCRYPTED FILE") == 1, "one block for the set, not one per entry"
-        assert decode(stored, ValueStorage.BLOCK, project) == {"A": "1", "B": "2"}
+        assert decode(stored, project) == {"A": "1", "B": "2"}
 
-    def test_aliases_land_as_a_mapping_with_readable_names(self, project: dict) -> None:
-        stored = encode({"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}, ValueStorage.PER_VALUE, project)
+    def test_aliases_land_as_one_age_block_too(self, project: dict) -> None:
+        # The change RC-106 makes: aliases used to be a mapping with each value encrypted
+        # on its own, which is what made every reader depend on a decrypt step of its own.
+        stored = encode({"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}, project)
 
-        assert isinstance(stored, dict)
-        assert list(stored) == ["POSTGRES_HOST"], "alias names stay readable in the file"
-        assert is_age_encrypted(stored["POSTGRES_HOST"])
-        assert decode(stored, ValueStorage.PER_VALUE, project) == {"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}
+        assert isinstance(stored, str), "aliases are one string, not a mapping"
+        assert not isinstance(stored, dict)
+        assert is_age_encrypted(stored)
+        assert stored.count("BEGIN AGE ENCRYPTED FILE") == 1
+        assert "POSTGRES_HOST" not in stored, "the names live inside the block, not next to it"
+        assert decode(stored, project) == {"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}
 
-    def test_two_identical_alias_values_get_different_ciphertext(self, project: dict) -> None:
-        # The proof that encryption really happens per value: AGE is not deterministic,
-        # so two separate encryptions of the same plaintext cannot come out equal. If the
-        # implementation encrypted the map as a whole and split it afterwards, or reused
-        # one ciphertext, these two would match.
-        stored = encode({"ONE": "same", "TWO": "same"}, ValueStorage.PER_VALUE, project)
+    def test_a_full_round_trip_gives_back_the_same_map(self, project: dict) -> None:
+        values = {"POSTGRES_HOST": "$DATABASE_SERVER_HOST", "POSTGRES_PORT": "$DATABASE_SERVER_PORT"}
 
-        assert stored["ONE"] != stored["TWO"]
-        assert decode(stored, ValueStorage.PER_VALUE, project) == {"ONE": "same", "TWO": "same"}
+        assert decode(encode(values, project), project) == values
 
-    def test_no_plaintext_value_survives_in_either_shape(self, project: dict) -> None:
-        block = encode({"TOKEN": "rc55-plaintext-secret"}, ValueStorage.BLOCK, project)
-        per_value = encode({"TOKEN": "rc55-plaintext-secret"}, ValueStorage.PER_VALUE, project)
+    def test_no_plaintext_value_survives(self, project: dict) -> None:
+        stored = encode({"TOKEN": "rc55-plaintext-secret"}, project)
 
-        assert "rc55-plaintext-secret" not in str(block)
-        assert "rc55-plaintext-secret" not in str(per_value)
+        assert "rc55-plaintext-secret" not in str(stored)
 
     def test_an_empty_map_means_remove_the_property(self, project: dict) -> None:
-        assert encode({}, ValueStorage.BLOCK, project) is None
-        assert encode({}, ValueStorage.PER_VALUE, project) is None
+        assert encode({}, project) is None
 
 
 class TestFailClosed:
@@ -111,9 +108,7 @@ class TestFailClosed:
         project["config"].pop("age-public-key")
 
         with pytest.raises(ComponentValuesError, match="publieke sleutel"):
-            encode({"A": "1"}, ValueStorage.BLOCK, project)
-        with pytest.raises(ComponentValuesError, match="publieke sleutel"):
-            encode({"A": "1"}, ValueStorage.PER_VALUE, project)
+            encode({"A": "1"}, project)
 
     def test_a_block_that_cannot_be_decrypted_raises_instead_of_passing_ciphertext_through(self, project: dict) -> None:
         # Encrypted for somebody else's key. The tempting failure mode is to hand the
@@ -123,50 +118,65 @@ class TestFailClosed:
         foreign = encrypt_age_content_sync("A=1", other_public)
 
         with pytest.raises(ComponentValuesError, match="ontsleutelen"):
-            decode(foreign, ValueStorage.BLOCK, project)
+            decode(foreign, project)
 
-    def test_an_alias_value_that_cannot_be_decrypted_raises(self, project: dict) -> None:
+    def test_a_per_value_mapping_that_cannot_be_decrypted_raises(self, project: dict) -> None:
+        # The shape aliases used to be written in, encrypted for somebody else's key.
         other_public, _ = _keypair()
         foreign = {"HOST": encrypt_age_content_sync("secret", other_public)}
 
         with pytest.raises(ComponentValuesError, match="ontsleutelen"):
-            decode(foreign, ValueStorage.PER_VALUE, project)
+            decode(foreign, project)
 
 
 class TestReadingWhatIsAlreadyThere:
     def test_absent_property_is_an_empty_map(self, project: dict) -> None:
-        assert decode(None, ValueStorage.BLOCK, project) == {}
-        assert decode(None, ValueStorage.PER_VALUE, project) == {}
-        assert decode("", ValueStorage.BLOCK, project) == {}
+        assert decode(None, project) == {}
+        assert decode("", project) == {}
+        assert decode({}, project) == {}
 
     def test_a_legacy_plaintext_env_var_block_is_read(self, project: dict) -> None:
         # A hand-written project file, or one from before encryption. Read, not refused;
         # the first write through the API stores it encrypted.
-        assert decode("A=1\nB=2", ValueStorage.BLOCK, project) == {"A": "1", "B": "2"}
+        assert decode("A=1\nB=2", project) == {"A": "1", "B": "2"}
 
     def test_a_legacy_mapping_env_var_value_is_read(self, project: dict) -> None:
-        assert decode({"A": "1"}, ValueStorage.BLOCK, project) == {"A": "1"}
+        assert decode({"A": "1"}, project) == {"A": "1"}
 
-    def test_a_legacy_plaintext_alias_value_is_read(self, project: dict) -> None:
-        assert decode({"HOST": "$DATABASE_SERVER_HOST"}, ValueStorage.PER_VALUE, project) == {
-            "HOST": "$DATABASE_SERVER_HOST"
-        }
+    def test_an_unencrypted_alias_mapping_is_read(self, project: dict) -> None:
+        # Still a supported shape in the project schema, so it passes through as stored.
+        assert decode({"HOST": "$DATABASE_SERVER_HOST"}, project) == {"HOST": "$DATABASE_SERVER_HOST"}
+
+    def test_a_per_value_encrypted_mapping_is_still_read(self, project: dict) -> None:
+        # The shape aliases were written in before RC-106. Read, never written again --
+        # without this such a project shows ciphertext on the component card.
+        public = project["_project_public_key"]
+        stored = {"HOST": encrypt_age_content_sync("$DATABASE_SERVER_HOST", public)}
+
+        assert decode(stored, project) == {"HOST": "$DATABASE_SERVER_HOST"}
+
+    def test_both_read_shapes_give_the_same_values(self, project: dict) -> None:
+        # The point of RC-106: the unencrypted mapping and the one AGE block are two
+        # spellings of one set, and a reader must not be able to tell them apart.
+        values = {"POSTGRES_HOST": "$DATABASE_SERVER_HOST", "OIDC": "$OIDC_URL"}
+
+        assert decode(values, project) == decode(encode(values, project), project) == values
 
 
 class TestTheUIReadsWhatTheAPIWrites:
     """The round trip that keeps the wizard and the API on one storage form."""
 
     def test_the_editor_can_read_an_api_written_env_var_block(self, project: dict) -> None:
-        stored = encode({"A": "1", "B": "2"}, ValueStorage.BLOCK, project)
+        stored = encode({"A": "1", "B": "2"}, project)
 
         shown = KeyValueConverter(fmt="env", write_as="string").read(stored, context_data=project)
 
         assert shown == "A=1\nB=2"
 
     def test_the_editor_can_read_api_written_aliases(self, project: dict) -> None:
-        stored = encode({"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}, ValueStorage.PER_VALUE, project)
+        stored = encode({"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}, project)
 
-        shown = KeyValueConverter(fmt="env", write_as="dict").read(stored, context_data=project)
+        shown = KeyValueConverter(fmt="env", write_as="string").read(stored, context_data=project)
 
         assert shown == "POSTGRES_HOST=$DATABASE_SERVER_HOST"
 
@@ -174,12 +184,12 @@ class TestTheUIReadsWhatTheAPIWrites:
         # The other direction, which is the one that breaks silently: the editor writes,
         # the API reads it back to change one entry.
         env_written = KeyValueConverter(fmt="env", write_as="string").write("A=1\nB=2", context_data=project)
-        alias_written = KeyValueConverter(fmt="env", write_as="dict").write(
+        alias_written = KeyValueConverter(fmt="env", write_as="string").write(
             "POSTGRES_HOST=$DATABASE_SERVER_HOST", context_data=project
         )
 
-        assert decode(env_written, ValueStorage.BLOCK, project) == {"A": "1", "B": "2"}
-        assert decode(alias_written, ValueStorage.PER_VALUE, project) == {"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}
+        assert decode(env_written, project) == {"A": "1", "B": "2"}
+        assert decode(alias_written, project) == {"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}
 
 
 class TestTheOperations:
@@ -252,34 +262,34 @@ class TestStorageFidelity:
     """A value must read back byte for byte, or it is refused (RC-55 review).
 
     Two normalisations sit between the write and the next read. Decryption strips the
-    plaintext, which hits BOTH shapes; and the BLOCK shape additionally reads its
-    ``KEY=value`` lines with ``validate_and_parse_env_vars``, which removes one pair of
-    surrounding quotes. A value that does not survive would come back different from what
-    was written AND would never equal what is stored, so every write of it would commit
-    again in ``zad-projects`` -- the exact churn the design forbids.
+    plaintext, and the block's ``KEY=value`` lines are read back with
+    ``validate_and_parse_env_vars``, which removes one pair of surrounding quotes. A value
+    that does not survive would come back different from what was written AND would never
+    equal what is stored, so every write of it would commit again in ``zad-projects`` --
+    the exact churn the design forbids.
+
+    Since RC-106 this holds for aliases too: they are stored the same way, so the quote
+    rule that used to apply to user-env-vars alone now applies to both.
     """
 
-    @pytest.mark.parametrize("storage", [ValueStorage.BLOCK, ValueStorage.PER_VALUE])
     @pytest.mark.parametrize("value", ["", "plain", "with inner spaces", "a=b=c", "it's"])
-    def test_a_value_that_survives_passes_on_both_shapes(self, value: str, storage: ValueStorage) -> None:
-        validate_value_for_storage("K", value, storage)
+    def test_a_value_that_survives_passes(self, value: str) -> None:
+        validate_value_for_storage("K", value)
 
-    @pytest.mark.parametrize("storage", [ValueStorage.BLOCK, ValueStorage.PER_VALUE])
     @pytest.mark.parametrize("value", [" x ", "x ", " x", "\t", " ", "x\t"])
-    def test_edge_whitespace_is_refused_on_both_shapes(self, value: str, storage: ValueStorage) -> None:
+    def test_edge_whitespace_is_refused(self, value: str) -> None:
         # age decryption strips its plaintext, so this is lost whichever way it is stored.
         with pytest.raises(ComponentValuesError):
-            validate_value_for_storage("K", value, storage)
+            validate_value_for_storage("K", value)
 
     @pytest.mark.parametrize("value", ['"q"', "'q'", '""'])
-    def test_surrounding_quotes_are_refused_on_the_block_shape_only(self, value: str) -> None:
+    def test_surrounding_quotes_are_refused(self, value: str) -> None:
         with pytest.raises(ComponentValuesError):
-            validate_value_for_storage("K", value, ValueStorage.BLOCK)
-        validate_value_for_storage("K", value, ValueStorage.PER_VALUE)
+            validate_value_for_storage("K", value)
 
     def test_the_refusal_names_the_key_and_not_the_value(self) -> None:
         with pytest.raises(ComponentValuesError) as caught:
-            validate_value_for_storage("TOKEN", " rc55-secret ", ValueStorage.BLOCK)
+            validate_value_for_storage("TOKEN", " rc55-secret ")
         assert "rc55-secret" not in str(caught.value)
         assert "TOKEN" in str(caught.value)
 
@@ -287,6 +297,6 @@ class TestStorageFidelity:
         """The guard is measured against the storage form, not against its description."""
         accepted = {"A": "plain", "B": "", "C": "a=b=c", "D": 'say "hi" now', "E": "with inner spaces"}
         for key, value in accepted.items():
-            validate_value_for_storage(key, value, ValueStorage.BLOCK)
+            validate_value_for_storage(key, value)
         block = "\n".join(f"{key}={value}" for key, value in accepted.items())
         assert validate_and_parse_env_vars(block) == accepted
