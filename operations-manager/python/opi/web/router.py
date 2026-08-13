@@ -840,6 +840,28 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
     }
 
 
+async def _sum_by_namespace(prom: Any, promql: str) -> dict[str, float]:
+    """Lees een query met ``by (namespace)`` uit als namespace -> waarde.
+
+    Zo levert EEN query de cijfers van alle projecten tegelijk, in plaats van een query per
+    project. Een mislukte query is geen fout maar een lege uitslag: het dashboard toont dan
+    nul, zoals het bij de andere Prometheus-queries in dit bestand ook doet.
+    """
+    try:
+        result = await prom.custom_query(promql)
+    except Exception as e:
+        logger.debug(f"Dashboard per-namespace query failed: {e}")
+        return {}
+
+    values: dict[str, float] = {}
+    for series in result or []:
+        namespace = series.get("metric", {}).get("namespace")
+        value = series.get("value")
+        if namespace and value:
+            values[namespace] = float(value[1])
+    return values
+
+
 async def collect_dashboard_metrics(
     all_namespaces: list[str],
     user_projects: list[dict],
@@ -851,7 +873,8 @@ async def collect_dashboard_metrics(
     Verdubbelen zou betekenen dat een verbetering aan de ene kant stilletjes niet aan de
     andere kant landt.
 
-    Zet ook ``cpu_cores`` per project in ``user_projects``, want de verdeelbalk rekent
+    Zet ook per project ``cpu_cores``, ``cpu_limit_cores``, ``memory_mb`` en
+    ``memory_limit_mb`` in ``user_projects``, want de kaart "Gebruik per project" rekent
     daarmee.
 
     Returns:
@@ -1009,24 +1032,49 @@ async def collect_dashboard_metrics(
                     "network_in_data": network_in_data,
                     "network_out_data": network_out_data,
                 }
-                # Per-project CPU usage for resource comparison bar
+                # Per project het gebruik EN de limiet, voor de kaart "Gebruik per project".
+                #
+                # Geheugen stond hier niet, en dat is waarom die kaart alleen CPU toonde: er
+                # kwam nooit een waarde binnen. Van de twee is geheugen de belangrijkste --
+                # daar valt een pod op om als het opraakt -- en op een rustig cluster is het
+                # CPU-cijfer bijna nul, waardoor de kaart in de praktijk leeg was.
+                #
+                # Gebruik is de working set en niet de limiet: dat is wat er werkelijk in
+                # gebruik is. De LIMIET komt er apart bij, want de kaart heeft de vorm van
+                # "Resourcegebruik (heel project)" op de projectpagina: gebruikt / limiet met
+                # een percentage, en dan een balk. Zonder limiet is er geen bovengrens om de
+                # balk tegen af te zetten. Dezelfde vier queries als die kaart, zodat een
+                # project op beide plekken hetzelfde cijfer laat zien.
+                #
+                # ``by (namespace)`` en niet vier queries PER project: zo kost dit vier
+                # queries ongeacht het aantal projecten, in plaats van vier keer het aantal
+                # projecten op een fragment dat al apart geladen wordt. Het was er eerst een
+                # per project, dus dit is ook voor CPU minder werk dan voorheen -- zodra er
+                # meer dan vier projecten zijn is de hele kaart netto goedkoper.
+                cpu_by_ns = await _sum_by_namespace(
+                    prom,
+                    f'sum by (namespace) (rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))',
+                )
+                cpu_limit_by_ns = await _sum_by_namespace(
+                    prom,
+                    f'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})',
+                )
+                mem_by_ns = await _sum_by_namespace(
+                    prom,
+                    f'sum by (namespace) (container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})',
+                )
+                mem_limit_by_ns = await _sum_by_namespace(
+                    prom,
+                    f'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})',
+                )
+
                 for project in user_projects:
                     proj_ns = project.get("namespaces", [])
-                    if not proj_ns:
-                        project["cpu_cores"] = 0.0
-                        continue
-                    try:
-                        proj_regex = "|".join(proj_ns)
-                        result = await prom.custom_query(
-                            f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{proj_regex}",container!=""}}[5m]))'
-                        )
-                        if result and result[0].get("value"):
-                            project["cpu_cores"] = float(result[0]["value"][1])
-                        else:
-                            project["cpu_cores"] = 0.0
-                    except Exception as e:
-                        logger.debug(f"Dashboard per-project CPU query failed for {project['name']}: {e}")
-                        project["cpu_cores"] = 0.0
+                    # Een project zonder namespaces telt op tot nul, net als voorheen.
+                    project["cpu_cores"] = sum(cpu_by_ns.get(ns, 0.0) for ns in proj_ns)
+                    project["cpu_limit_cores"] = sum(cpu_limit_by_ns.get(ns, 0.0) for ns in proj_ns)
+                    project["memory_mb"] = sum(mem_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
+                    project["memory_limit_mb"] = sum(mem_limit_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
 
         except Exception as e:
             logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")
@@ -2005,7 +2053,12 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
             "metrics": metrics,
             "prometheus_available": prometheus_available,
             "projects": user_projects,
+            # Beide totalen, net als de dashboardroute. Het fragment rekende
+            # total_memory_usage al uit maar gaf het niet mee, en de omgeving staat op
+            # StrictUndefined: een sjabloon dat ernaar vraagt levert dan een 500 op het
+            # hele fragment in plaats van een lege regel.
             "total_cpu_usage": total_cpu_usage,
+            "total_memory_usage": total_memory_usage,
         },
     )
 
