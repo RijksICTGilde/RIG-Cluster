@@ -919,7 +919,8 @@ class Service(ABC):
     #: Whether hanging this service on a component/deployment may also add it to the
     #: project's ``services`` list, without anyone selecting it there. False (the safe
     #: answer) for every service that does not say otherwise; a service that declares
-    #: approvals is never implicit, whatever it sets here.
+    #: approvals is never implicit, whatever it sets here. Only asked of a service that
+    #: HAS a project layer -- without one there is no decision to protect (RC-103).
     allows_implicit_project_selection: ClassVar[bool] = False
 
     def implicit_project_config(self) -> ServiceConfigData | None:
@@ -930,8 +931,8 @@ class Service(ABC):
         model is all defaults or that carries no project-level config at all. A service
         that needs content in the project file to be meaningful returns it here.
 
-        Only consulted when ``allows_implicit_project_selection`` is set; whatever it
-        returns must validate against the service's project-layer model, which
+        Only meaningful for a service that carries a project layer; whatever it returns
+        must validate against the service's project-layer model, which
         ``implicit_project_entry`` checks.
         """
         return None
@@ -943,8 +944,13 @@ class Service(ABC):
         first, and says so in its error. Otherwise the entry is the bare service name,
         or a ``{name, config}`` record when the service supplies a default config.
 
-        Two rules are enforced here rather than left to each service:
+        Three rules are enforced here rather than left to each service:
 
+        * a service without a project layer in ``config_layers()`` is always a bare
+          selection (RC-103). There is no project-level decision to make and no endpoint
+          to make it with, so refusing would send the caller to a layer that does not
+          exist -- a promise the API cannot keep. This outranks the two rules below,
+          which both exist to protect a project-level decision;
         * a service that declares approvals (``config_approvals``) is never implicit --
           enrolling itself would enrol the thing an administrator has to approve, so the
           approval wins over whatever the service declares;
@@ -953,27 +959,33 @@ class Service(ABC):
           error in the service and it fails loudly here instead of writing a project file
           that the save chokepoint will reject.
         """
+        config = self.implicit_project_config()
+        has_project_layer = ConfigLayer.PROJECT in self.config_layers()
+        model = self.config_model_for(ConfigLayer.PROJECT) if has_project_layer else None
+
+        if config is not None and model is None:
+            raise TypeError(
+                f"{type(self).__name__} supplies an implicit project config but carries no config at the "
+                f"project layer, so the config has nowhere to go."
+            )
+
+        if not has_project_layer:
+            # Nothing to decide at project level, and no endpoint to decide it with:
+            # refusing would name a layer the caller cannot reach.
+            return self.service_type.value
+
         if not self.allows_implicit_project_selection or self.approval_specs():
             return None
 
-        config = self.implicit_project_config()
-        model = self.config_model_for(ConfigLayer.PROJECT) if ConfigLayer.PROJECT in self.config_layers() else None
-        if model is None:
-            if config is not None:
+        if model is not None:
+            try:
+                model.model_validate({} if config is None else config)
+            except ValidationError as exc:
                 raise TypeError(
-                    f"{type(self).__name__} supplies an implicit project config but carries no config at the "
-                    f"project layer, so the config has nowhere to go."
-                )
-            return self.service_type.value
-
-        try:
-            model.model_validate({} if config is None else config)
-        except ValidationError as exc:
-            raise TypeError(
-                f"{type(self).__name__} allows implicit project selection but its default project config does "
-                f"not validate against {model.__name__}; a service can only enrol itself with a config that "
-                f"keeps the project file valid."
-            ) from exc
+                    f"{type(self).__name__} allows implicit project selection but its default project config does "
+                    f"not validate against {model.__name__}; a service can only enrol itself with a config that "
+                    f"keeps the project file valid."
+                ) from exc
 
         if config is None:
             return self.service_type.value
