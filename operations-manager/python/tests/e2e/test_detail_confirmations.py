@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
-DETAIL_URL = f"/projects/details/{PROJECT}"
+DETAIL_URL = f"/projects/{PROJECT}/details"
 
 # A stand-in for the shared task-progress fragment: the class is what makes the page
 # treat the modal as busy, so this is exactly the part that matters here.

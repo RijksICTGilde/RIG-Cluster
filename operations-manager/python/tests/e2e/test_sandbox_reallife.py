@@ -576,7 +576,7 @@ def test_ui_env_vars_while_api_patches_same_file(
         # Overzicht. En niet via text_content("body"): dat leest de lichte boom en de
         # naam staat in een <c-code> binnen een LOTC-component. De tekstselector van
         # Playwright kijkt wel door schaduwbomen heen.
-        ui_page.goto(f"{sandbox_url}/projects/deployments/{project.name}")
+        ui_page.goto(f"{sandbox_url}/projects/{project.name}/deployments")
         ui_page.wait_for_load_state("networkidle")
         key = UI_ENV_MARKER.partition("=")[0]
         assert ui_page.locator(f"text={key}").count() > 0, (

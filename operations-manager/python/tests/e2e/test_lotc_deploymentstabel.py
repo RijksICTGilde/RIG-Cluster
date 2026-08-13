@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
-OVERZICHT = f"/projects/details/{PROJECT}"
+OVERZICHT = f"/projects/{PROJECT}/details"
 SCREENSHOT_DIR = "tests/e2e/screenshots/lotc"
 
 VIEWPORT_WIDTH = 1440
@@ -191,7 +191,7 @@ def test_de_deployment_staat_op_zijn_tabblad_maar_een_keer(app_server: str, auth
     zag staan.
     """
     auth_page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
-    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}/default")
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/deployments/default")
     _wacht_op_nldd(auth_page)
 
     zichtbaar = auth_page.locator("#deployment-default")
@@ -219,10 +219,10 @@ def test_de_rij_opent_de_deployment_op_zijn_eigen_tabblad(app_server: str, auth_
     dus dit werkt ook zonder JavaScript en is deelbaar."""
     _open_overzicht(auth_page, app_server)
 
-    auth_page.locator(f'#deployments-lijst nldd-table a[href$="/deployments/{PROJECT}/tweede"]').first.click()
+    auth_page.locator(f'#deployments-lijst nldd-table a[href$="/{PROJECT}/deployments/tweede"]').first.click()
     auth_page.wait_for_load_state("networkidle")
 
-    assert auth_page.url.endswith(f"/projects/deployments/{PROJECT}/tweede")
+    assert auth_page.url.endswith(f"/projects/{PROJECT}/deployments/tweede")
     assert auth_page.locator("#deployment-tweede").count() == 1
     assert auth_page.locator("#deployment-default").count() == 0, "de andere deployment staat er ook nog"
 
@@ -230,7 +230,7 @@ def test_de_rij_opent_de_deployment_op_zijn_eigen_tabblad(app_server: str, auth_
 def test_de_kiezer_benoemt_de_deployment_die_open_staat(app_server: str, auth_page: Page) -> None:
     """De kiezer volgt het PAD.
 
-    Welke deployment de pagina toont staat in de URL (/projects/deployments/<p>/<naam>).
+    Welke deployment de pagina toont staat in de URL (/projects/<p>/deployments/<naam>).
     De kiezer bleef eerder op de eerste optie staan, en dat is twee keer fout: hij benoemt
     een andere deployment dan er open staat, en een native <select> vuurt geen change als
     je de al getoonde optie kiest - waardoor die deployment via de kiezer niet meer te
@@ -240,19 +240,19 @@ def test_de_kiezer_benoemt_de_deployment_die_open_staat(app_server: str, auth_pa
     navigeren.
     """
     auth_page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
-    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}/tweede")
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/deployments/tweede")
     _wacht_op_nldd(auth_page)
 
     kiezer = auth_page.locator("#global-deployment-selector")
     assert auth_page.locator("#deployment-tweede").count() == 1
-    assert kiezer.input_value().endswith(f"/projects/deployments/{PROJECT}/tweede"), (
+    assert kiezer.input_value().endswith(f"/projects/{PROJECT}/deployments/tweede"), (
         "de kiezer benoemt een andere deployment dan er open staat"
     )
 
     # En terug: 'default' kiezen verandert de waarde ECHT, dus de change vuurt en de
     # browser haalt die pagina op.
-    kiezer.select_option(f"/projects/deployments/{PROJECT}/default")
-    auth_page.wait_for_url(f"**/projects/deployments/{PROJECT}/default", timeout=5000)
+    kiezer.select_option(f"/projects/{PROJECT}/deployments/default")
+    auth_page.wait_for_url(f"**/projects/{PROJECT}/deployments/default", timeout=5000)
     _wacht_op_nldd(auth_page)
     assert auth_page.locator("#deployment-default").count() == 1
     assert auth_page.locator("#deployment-tweede").count() == 0
@@ -305,6 +305,6 @@ def test_elk_tabblad_heeft_zijn_eigen_adres(app_server: str, auth_page: Page) ->
     adressen = auth_page.eval_on_selector_all(
         "nldd-tab-bar a, nldd-tab-bar-item a", "els => els.map(e => new URL(e.href).pathname)"
     )
-    assert f"/projects/deployments/{PROJECT}" in adressen
-    assert f"/projects/componenten/{PROJECT}" in adressen
+    assert f"/projects/{PROJECT}/deployments" in adressen
+    assert f"/projects/{PROJECT}/componenten" in adressen
     assert not [adres for adres in adressen if "?" in adres]

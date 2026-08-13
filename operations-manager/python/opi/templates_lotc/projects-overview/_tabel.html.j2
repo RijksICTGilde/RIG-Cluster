@@ -37,7 +37,7 @@
                 <c-td>
                     <div class="project-info">
                         <div class="project-name">
-                            <a href="/projects/details/{{ project.name }}" class="project-name-link">{{ project.display_name or project.name }}</a>
+                            <a href="/projects/{{ project.name }}/details" class="project-name-link">{{ project.display_name or project.name }}</a>
                         </div>
                         <div class="project-id">{{ project.name }}</div>
                         <div class="project-description">{{ project.description or "Geen beschrijving beschikbaar" }}</div>
@@ -90,7 +90,7 @@
                 </c-td>
                 <c-td>
                     <c-cluster gap="xs">
-                        <c-link href="/projects/details/{{ project.name }}" label="Details"/>
+                        <c-link href="/projects/{{ project.name }}/details" label="Details"/>
                     </c-cluster>
                 </c-td>
             </c-table-row>

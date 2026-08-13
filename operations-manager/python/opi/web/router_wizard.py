@@ -2506,7 +2506,7 @@ async def _save_existing_project(
     # Use HX-Redirect so HTMX does a full-page navigation instead of
     # swapping the redirect target into the wizard frame.
     response = HTMLResponse(content="", status_code=200)
-    response.headers["HX-Redirect"] = f"/projects/details/{project_name}"
+    response.headers["HX-Redirect"] = f"/projects/{project_name}/details"
     return response
 
 

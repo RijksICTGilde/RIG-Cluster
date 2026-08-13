@@ -38,7 +38,7 @@
                 icon="rectangle-stack"
                 title="{{ project.display_name or project.name }}"
                 sub="{{ project.description or 'Geen beschrijving beschikbaar' }}"
-                href="/projects/details/{{ project.name }}" />
+                href="/projects/{{ project.name }}/details" />
         {% endfor %}
     </c-stack>
 {% else %}
