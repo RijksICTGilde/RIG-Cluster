@@ -345,34 +345,6 @@
             {% endcall %}
         {% endif %}
 
-        {# ---- Team & Toegang (section-team.html.j2) --------------------------- #}
-        {# De bewerkknop staat IN de kopregel van het blok en niet los in de inhoud.
-           Hij stond onder de uitleg en boven de tabel, en dat las als een knop die
-           nergens bij hoort: geen kop ernaast, geen kader eromheen, alleen een knop in
-           de leegte. panel() geeft zijn kopregel door aan <c-section-head>, en dat
-           component IS "titel links, actie rechts" - de band tussen de twee komt daar
-           dus vandaan in plaats van uit de plek waar we hem toevallig neerzetten.
-
-           Het kopicoon vervalt daarmee vanzelf (zie panel()): dat is versiering die de
-           titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
-           knop. Een van de twee moet daar weg, en het is niet de knop. #}
-        {% set team_bewerken = "openEditModal('modal-edit-team', 'Projectleden beheren')" %}
-        {% set team_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': team_bewerken}" />{% endif %}{% endset %}
-        {% call panel("Team", "person-2", aside=team_bewerken_knop, info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
-            <c-table columns="2fr 1fr">
-                <c-table-head>
-                    <c-th>E-mailadres</c-th>
-                    <c-th>Rol</c-th>
-                </c-table-head>
-                {% for member in project.users | sort(attribute='email') %}
-                    <c-table-row>
-                        <c-td>{{ member.email }}</c-td>
-                        <c-td><c-tag type="default" label="{{ member.role }}" /></c-td>
-                    </c-table-row>
-                {% endfor %}
-            </c-table>
-        {% endcall %}
-
         {# ---- De secties die de DIENSTEN zelf leveren ------------------------- #}
         {# De blokken die de DIENSTEN leveren (de Keycloak-realm, de uitnodigingen, de
            bijlagen). Ze staan bij hun dienst, in zijn eigen map.
@@ -403,6 +375,41 @@
             {% endcall %}
         {% endif %}
 
+
+    {% elif active_tab == 'team' %}
+    {# Team & Toegang was een kaart op Overzicht en is een eigen tabblad geworden:
+       wie hier komt, komt voor de rechten van mensen en niet voor de stand van het
+       project. Het staat direct na Overzicht, want het is het eerste dat je regelt. #}
+    <c-stack gap="lg">
+        {# ---- Team & Toegang (section-team.html.j2) --------------------------- #}
+        {# De bewerkknop staat IN de kopregel van het blok en niet los in de inhoud.
+           Hij stond onder de uitleg en boven de tabel, en dat las als een knop die
+           nergens bij hoort: geen kop ernaast, geen kader eromheen, alleen een knop in
+           de leegte. panel() geeft zijn kopregel door aan <c-section-head>, en dat
+           component IS "titel links, actie rechts" - de band tussen de twee komt daar
+           dus vandaan in plaats van uit de plek waar we hem toevallig neerzetten.
+
+           Het kopicoon vervalt daarmee vanzelf (zie panel()): dat is versiering die de
+           titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
+           knop. Een van de twee moet daar weg, en het is niet de knop. #}
+        {% set team_bewerken = "openEditModal('modal-edit-team', 'Projectleden beheren')" %}
+        {% set team_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': team_bewerken}" />{% endif %}{% endset %}
+        {% call panel("Team", "person-2", aside=team_bewerken_knop, info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
+            <c-table columns="2fr 1fr">
+                <c-table-head>
+                    <c-th>E-mailadres</c-th>
+                    <c-th>Rol</c-th>
+                </c-table-head>
+                {% for member in project.users | sort(attribute='email') %}
+                    <c-table-row>
+                        <c-td>{{ member.email }}</c-td>
+                        <c-td><c-tag type="default" label="{{ member.role }}" /></c-td>
+                    </c-table-row>
+                {% endfor %}
+            </c-table>
+        {% endcall %}
+
+    </c-stack>
 
     {% elif active_tab == 'componenten' %}
 
