@@ -1296,3 +1296,52 @@ Twee dingen om te weten bij het gebruik. In een lijst staat `pending_rollout` op
 Wat nu nog niet kan is per component zeggen welke URL nog wacht. `pending_rollout` telt de wachtende wijzigingen en noemt hun soort, maar niet de namen. Zeg maar of je dat nodig hebt, dan is dat een eigen stuk werk.
 
 <!-- ruimte voor RIG-Cluster -->
+
+---
+
+## 14. `:upsert-deployment` vindt af en toe zijn eigen deployment niet
+
+Intermitterend, en dat is het lastige eraan.
+
+Draaiboek 01 tegen `5c026ecc`, stap 11. Het project heeft dan drie componenten en een
+stapel niet-uitgerolde wijzigingen (`rollout=false` staat sinds stap 3 uit):
+
+```sh
+zad deployment create productie --component web --image ghcr.io/minbzk/base-images/e2e-allservices:latest
+```
+
+De taak faalt:
+
+```
+error_type: deployment_not_found
+failed:    Component aan deployment toevoegen: Deployment 'productie' not found in project 'p1-huk'
+completed: Component validatie
+```
+
+Dezelfde taak maakt de deployment aan en vindt hem in zijn volgende deelstap niet terug.
+
+**Wat wij hebben uitgesloten.** Een tweede doorloop van hetzelfde draaiboek, direct erna,
+kwam wel helemaal door: **44 van de 44 stappen**. En los na te spelen was het niet, in geen
+van de drie vormen die wij probeerden:
+
+- met uitrollen aan: lukt
+- met uitrollen uit, terwijl er al een deployment is: lukt
+- de eerste deployment van een vers project, met uitrollen uit: lukt
+
+Het lijkt dus geen verkeerd verzoek maar een volgorde binnen de taak zelf, die alleen
+misgaat als er genoeg andere wijzigingen wachten.
+
+**Waarom dit erger is dan een gewone fout.** `deployment create` is het commando waar alles
+op staat, en `zad-actions` gebruikt het in elke pijplijn. Een fout die twee van de drie keer
+uitblijft, komt in productie terecht en treft daar willekeurig iemand, die vervolgens de
+oorzaak bij zichzelf zoekt. De melding zelf is overigens goed: hij noemt welke deelstap
+faalde en welke al klaar was, en dat is precies hoe wij konden zien dat het de eigen taak is
+die zichzelf niet terugvindt.
+
+**Onze vraag:** kan de deelstap die het component toevoegt de deployment lezen die dezelfde
+taak zojuist geschreven heeft, of gaat daar iets langs een cache of een tweede lezing van
+het projectbestand?
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
