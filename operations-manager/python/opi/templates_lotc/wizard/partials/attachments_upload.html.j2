@@ -36,7 +36,10 @@
             <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('', true) }}">
             {% if vervangt %}
             <input type="hidden" id="wiz-att-mode" name="mode" value="replace">
+            {# required, hoewel je er niets in typt: zonder dat zet het veld er "Optioneel"
+               achter, en dat is precies het omgekeerde van wat een vastliggende id is. #}
             <c-text-input-field id="wiz-att-id-vast" label="Identifier" value="{{ vervangt }}" readonly="true"
+                required="true"
                 help="De identifier van een vervanging staat vast; daar hangen de koppelingen aan."/>
             <input type="hidden" id="wiz-att-id" name="attachment_id" value="{{ vervangt }}">
             {% else %}
