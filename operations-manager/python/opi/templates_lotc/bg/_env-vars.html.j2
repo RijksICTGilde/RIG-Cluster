@@ -28,11 +28,29 @@
     {% endfor %}
 {% endfor %}
 
-{% call panel("Omgevingsvariabelen", "key", info_text="Overzicht van alle gebruiker-gedefinieerde omgevingsvariabelen per scope") %}
+{# WELK NIVEAU: dit blok stond in zijn geheel op het tabblad Deployments, inclusief de
+   variabelen die op COMPONENTniveau gedefinieerd zijn. Die horen bij het component, want
+   daar staan ze; op Deployments wil je alleen zien wat daar overschreven wordt.
+
+   `env_niveau` bepaalt wat er getoond wordt: "component", "deployment", of niets voor
+   allebei (zoals het was). De kop en de uitleg volgen die keuze, want "alle variabelen per
+   scope" is niet waar als je er maar een toont. #}
+{% set env_niveau = env_niveau | default('') %}
+{% set toon_component = env_niveau in ('', 'component') %}
+{% set toon_deployment = env_niveau in ('', 'deployment') %}
+{% set env_kop = "Omgevingsvariabelen" %}
+{% set env_uitleg = "Overzicht van alle gebruiker-gedefinieerde omgevingsvariabelen per scope" %}
+{% if env_niveau == 'component' %}
+    {% set env_uitleg = "Standaardvariabelen per component; ze gelden voor alle deployments." %}
+{% elif env_niveau == 'deployment' %}
+    {% set env_kop = "Omgevingsvariabelen (overschrijvingen)" %}
+    {% set env_uitleg = "Wat deze deployments anders instellen dan het component. De standaardwaarden staan bij Componenten." %}
+{% endif %}
+{% call panel(env_kop, "key", info_text=env_uitleg) %}
     {% if ns.has_any_env_vars %}
 
         {# Componentniveau #}
-        {% if ns.has_component_env_vars %}
+        {% if ns.has_component_env_vars and toon_component %}
         <c-cluster gap="sm" align="center">
             <c-icon icon="puzzle-piece" size="lg" />
             <c-stack gap="xs">
@@ -64,7 +82,7 @@
         {% endif %}
 
         {# Deploymentniveau #}
-        {% if ns.has_deployment_env_vars %}
+        {% if ns.has_deployment_env_vars and toon_deployment %}
         <c-cluster gap="sm" align="center">
             <c-icon icon="cylinder-split" size="lg" />
             <c-stack gap="xs">
