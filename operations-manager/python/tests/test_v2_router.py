@@ -752,3 +752,78 @@ class TestV2RolloutFlag:
         assert response.status_code == 200
         assert response.json()["count"] == 0
         assert response.json()["since"] is None
+
+
+# ---------------------------------------------------------------------------
+# Een dienstconfiguratie draagt alleen wat de aanroeper stuurde (RC-99)
+# ---------------------------------------------------------------------------
+
+
+class TestServiceConfigWritesOnlyWhatWasSent:
+    """De schrijfroute mag geen modelstandaard materialiseren.
+
+    Een projectbestand kreeg ``enable-versioning: true`` te zien terwijl niemand daarom
+    vroeg. Voor de API is de poort deze: het lichaam wordt met ``exclude_unset``
+    uitgeschreven, dus een veld dat de aanroeper NIET stuurde levert geen sleutel op --
+    ook niet de standaard uit ``MinioStorageConfig`` (``None``) en al helemaal geen
+    verzonnen ``true``. Andersom: wat hij wel stuurt gaat mee, ``false`` incluis, want
+    "uit" is een keuze en geen afwezigheid.
+
+    Op de payload van de taak en niet op het projectbestand: hier wordt besloten wat er
+    geschreven wordt, en de schrijver zelf ligt vast in tests/test_service_config_api.py.
+    """
+
+    def _payload_config(self, mock_task_service: AsyncMock) -> Any:
+        return mock_task_service.create_task.call_args[1]["payload"]["config"]
+
+    def test_empty_body_writes_no_field(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/minio-storage/config/project?rollout=false",
+            headers={"X-API-Key": API_KEY},
+            json={},
+        )
+
+        assert response.status_code == 202, response.text
+        assert self._payload_config(mock_task_service) == {}
+
+    def test_explicit_false_is_kept(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        v2_client.put(
+            "/api/v2/projects/test-project/services/minio-storage/config/project?rollout=false",
+            headers={"X-API-Key": API_KEY},
+            json={"enable-versioning": False},
+        )
+
+        assert self._payload_config(mock_task_service) == {"enable-versioning": False}
+
+    def test_explicit_true_is_kept(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        v2_client.put(
+            "/api/v2/projects/test-project/services/minio-storage/config/project?rollout=false",
+            headers={"X-API-Key": API_KEY},
+            json={"enable-versioning": True},
+        )
+
+        assert self._payload_config(mock_task_service) == {"enable-versioning": True}
+
+    def test_another_field_does_not_drag_versioning_along(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """Het geval waarin een standaard normaal binnenglipt: een deelbericht.
+
+        Wie alleen de kloonstatus zet, zegt niets over versiebeheer -- dus staat die
+        sleutel er daarna ook niet.
+        """
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        v2_client.put(
+            "/api/v2/projects/test-project/services/minio-storage/config/deployment/main?rollout=false",
+            headers={"X-API-Key": API_KEY},
+            json={"generation": 2},
+        )
+
+        assert self._payload_config(mock_task_service) == {"generation": 2}
