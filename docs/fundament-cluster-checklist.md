@@ -53,6 +53,29 @@ Dat egress naar 443 openstaat is de tweede meevaller: **ghcr.io en docker.io zij
 
 ## 3. De gaten
 
+### 3.0 Opslag werkt vandaag helemaal niet (gemeten 13 augustus)
+
+Ernstiger dan 3.1 hieronder beschrijft, en pas zichtbaar bij het daadwerkelijk aanmaken van een PVC: **er kan op dit cluster geen enkele PersistentVolumeClaim gebonden worden.** De claim blijft `Pending` en de provisioner faalt met `create process timeout after 120 seconds`.
+
+De oorzaak staat in de log van de provisioner-pod:
+
+```
+create vg with command: vgcreate -v csi-lvm /dev/nvme0n1 /dev/nvme1n1 --addtag vg.metal-stack.io/csi-lvm
+Can't open /dev/nvme0n1 exclusively.  Mounted filesystem?
+```
+
+De node heeft twee NVMe-schijven van elk 3 TB. `nvme0n1` is de systeemschijf (drie partities, root op p3). `nvme1n1` is volledig vrij: geen partities, niet gemount. De controller draait met `CSI_LVM_DEVICE_PATTERN=/dev/nvme[0-1]n[0-9]`, en dat patroon pakt ze allebei. `vgcreate` probeert dus de systeemschijf op te nemen en faalt. Daarbovenop staat het type op `mirror`, wat minstens twee vrije schijven vraagt terwijl er één is.
+
+Dit is niet van ons te repareren. Zowel de StorageClass als de controller dragen `resources.gardener.cloud/managed-by: gardener` met de annotatie "DO NOT EDIT - Any modifications are discarded and the resource is returned to the original state". De configuratie komt uit de metal-stack-extensie in de seed (`extension-controlplane-storageclasses`).
+
+Dit is dus een platformvraag, en een heel concrete. Drie mogelijke antwoorden, oplopend in wat ze ons opleveren:
+
+1. Het device-patroon beperken tot de vrije schijf (`/dev/nvme1n[0-9]`) en het type op `linear`. Kleinste ingreep, geeft werkende PVC's, geen snapshots.
+2. De worker pool extra vrije schijven geven, zodat `mirror` klopt. Geeft werkende PVC's met redundantie, nog steeds geen snapshots.
+3. Een andere StorageClass met een echte CSI-driver die snapshots ondersteunt. Lost 3.1 in één keer mee op.
+
+Zonder een van deze drie is ZAD hier niet uit te rollen: PostgreSQL, MinIO en Keycloak vragen allemaal opslag.
+
 ### 3.1 Opslag en back-up: dit is het scherpste punt
 
 `csi-lvm` is de enige StorageClass en is node-lokale LVM. Gemeten eigenschappen: provisioner `metal-stack.io/csi-lvm`, `WaitForFirstConsumer`, **geen** `allowVolumeExpansion`, geen parameters. Er zijn **nul CSIDriver-objecten** en **nul VolumeSnapshotClasses**, terwijl de VolumeSnapshot-CRD's er wel staan.
@@ -75,7 +98,21 @@ Wat te doen, in volgorde van voorkeur:
 - Levert dat niets op, dan is er een terugval denkbaar die hier werkt maar elders niet: **de PVC rechtstreeks mounten**. RWO betekent toegang vanaf één node, niet vanaf één pod, en dit cluster heeft één node. Een back-uppod kan de PVC dus naast de applicatie mounten. Nadeel: geen consistent moment, de applicatie schrijft door tijdens het lezen. Voor bestandsopslag vaak acceptabel, voor iets databaseachtigs op een PVC niet. Niet bouwen voordat het platformantwoord er is.
 - Stilleggen (workload naar 0, back-up, weer omhoog) geeft wel consistentie maar kost downtime bij elke back-up. Voor een productiecluster geen serieuze optie.
 
-### 3.2 Geen ingresscontroller, geen DNS-zone, geen cert-pad
+### 3.2 Ingress: opgelost, en zelf te doen (gemeten 13 augustus)
+
+Bij het schrijven leek dit een platformvraag. Dat is het niet. Gemeten door het daadwerkelijk neer te zetten:
+
+- Een `LoadBalancer`-service krijgt **automatisch een publiek IP**. De metal-ccm in de seed verwerft er een en configureert MetalLB zelf: er verschijnt een IPAddressPool `internet-fire-ephemeral` met een `/32`, aangekondigd via BGP vanaf de metal-stack firewall, niet via L2. Bij verwijderen van de service wordt het adres netjes vrijgegeven.
+- ingress-nginx v1.15.1 (cloud-variant, niet de Kind-variant) draait en kreeg `194.135.48.69`. Van buitenaf bereikbaar op zowel 80 als 443.
+- Een testdeployment met een Ingress erachter gaf HTTP 200 over het publieke adres, en de logs van die pod tonen ons eigen publieke IP als client. De hele keten van internet tot pod werkt dus.
+- Die testpod draaide met exact de securityContext die onze gefixte template nu genereert voor een cluster zonder SCC (`runAsNonRoot` plus vastgepinde UID 1001 en fsGroup). Dat bevestigt punt 3.3 van de andere kant: het werkt hier, en zonder die fix zou het niet werken.
+- cert-manager v1.21.1 is geïnstalleerd en gezond.
+
+Wat dus overblijft van deze paragraaf is alleen nog de DNS-kant, en die is van ons: zie hieronder. Het ephemere karakter van het IP is wel een aandachtspunt. Voor een echte ingress wil je een statisch adres, anders verschuift het bij herbouw en klopt DNS niet meer. Of dat via `functl` aan te vragen is, is nog niet uitgezocht; de CLI toont geen `ip`-commando.
+
+Op het cluster staan nu ingress-nginx en cert-manager. Beide werkend, geen van beide onder GitOps.
+
+### 3.2b Wat er nog wel open is: DNS-zone en cert-pad
 
 Er is geen IngressClass en geen controller. Er zijn nul DNSEntries en er is geen zichtbare DNS-provider. Er zijn nul Gardener-certificaten.
 
