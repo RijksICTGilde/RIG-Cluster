@@ -129,24 +129,11 @@
     <c-stack id="tab-{{ active_tab }}" gap="lg">
 
     {% if active_tab == 'project' %}
-        {# DE VOLGORDE VAN DIT TABBLAD IS DIE VAN project-details/tab-project.html.j2.
-
-           Niet omdat die volgorde heilig is, maar omdat afwijken betekent dat je hem
-           opnieuw moet verdedigen, en dat is niet waar deze omzetting over gaat. Twee
-           dingen wijken WEL af, en allebei op verzoek:
-
-             - het RESOURCEGEBRUIK staat op het eigen tabblad Metrics;
-             - REPOSITORIES is eruit; die stond op de oude pagina omdat hij in het
-               projectbestand staat, niet omdat iemand hem nodig heeft.
-
-           De kerncijfers bovenaan zijn nieuw. Ze tonen niets dat er niet al staat: het
-           zijn de aantallen van de secties eronder, als ingang. #}
-        <c-auto-grid min="200px" gap="md">
-            <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" href="{{ tabs['componenten'].url }}" />
-            <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" href="{{ tabs['deployments'].url }}" />
-            <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Services" href="{{ tabs['services'].url }}" />
-            <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
-        </c-auto-grid>
+        {# HIER STOND EEN RIJ KERNCIJFERS (componenten, deployments, services,
+           teamleden). Ze toonden niets dat er niet al staat: de tabbladen dragen
+           diezelfde aantallen en zijn zelf de ingang. Een telling die alleen naar
+           een tabblad wijst dat er toch al is, kost ruimte bovenaan de pagina
+           zonder een vraag te beantwoorden. Weg op verzoek. #}
 
         {# ---- Acties (project-details/section-actions.html.j2) ---------------- #}
         {% if user_role in ["admin", "owner"] %}
