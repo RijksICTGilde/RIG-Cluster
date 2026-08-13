@@ -109,15 +109,41 @@
 
        Alleen de projecten MET een meting gaan de sortering in: sort(attribute=...) valt om
        op een project waar de sleutel ontbreekt, en dat komt in dit fragment langs. #}
-    {% set op_geheugen = projects | selectattr('memory_mb', 'defined') | rejectattr('memory_mb', 'none')
-                                  | sort(attribute='memory_mb', reverse=true) | list %}
-    {% if (total_memory_usage is defined and total_memory_usage > 0) or total_cpu_usage > 0 %}
+    {# De lijsten worden met .get opgebouwd en niet met selectattr('...', 'defined'):
+       de omgeving staat op StrictUndefined, en dan struikelt selectattr al bij het LEZEN
+       van een sleutel die een project niet heeft. Dat komt hier langs, want een project
+       zonder meting draagt de sleutel niet.
+
+       Er wordt op de REGELS geteld en niet op het totaal. Op het totaal stond de guard
+       eerder, en toen toonde de kaart zijn kop met daaronder niets: het totaal was net
+       boven nul terwijl geen enkel project door de lus kwam. Een kaart die alleen een kop
+       laat zien is erger dan een kaart die er niet staat. #}
+    {% set met_geheugen = [] %}
+    {% set alleen_cpu = [] %}
+    {% for project in projects %}
+        {% if project.get('memory_mb') %}{% set _ = met_geheugen.append(project) %}
+        {% elif project.get('cpu_cores') %}{% set _ = alleen_cpu.append(project) %}{% endif %}
+    {% endfor %}
+
+    {# GEHEUGEN EERST, en de sortering volgt het geheugen. Hier stond alleen CPU, en van
+       de twee is dat de minst interessante: op geheugen stuur je, want dat is waar een pod
+       op omvalt als het opraakt. Beide lijsten staan in DEZELFDE volgorde, zodat te zien is
+       dat het project met het meeste geheugen niet per se het meeste rekenwerk doet; per
+       lijst sorteren zou juist dat verband breken. Een project met alleen een CPU-meting
+       valt achteraan aan in plaats van uit de tweede lijst weg te vallen. #}
+    {% set op_geheugen = met_geheugen | sort(attribute='memory_mb', reverse=true) | list %}
+    {% set met_cpu = [] %}
+    {% for project in op_geheugen + alleen_cpu %}
+        {% if project.get('cpu_cores') %}{% set _ = met_cpu.append(project) %}{% endif %}
+    {% endfor %}
+
+    {% if met_geheugen or met_cpu %}
         {% call panel("Verdeling over projecten", "chart-x-y-axis-line") %}
             <c-stack gap="lg">
-                {% if total_memory_usage is defined and total_memory_usage > 0 %}
+                {% if met_geheugen %}
                     <c-stack gap="md">
                         <c-paragraph size="sm">Geheugengebruik per project, als aandeel van het totaal.</c-paragraph>
-                        {% for project in op_geheugen if project.memory_mb is defined and project.memory_mb > 0 %}
+                        {% for project in op_geheugen %}
                             <c-stack gap="xs">
                                 <c-cluster justify="between" align="center" gap="sm">
                                     <c-span>{{ project.display_name }}</c-span>
@@ -134,10 +160,10 @@
                     </c-stack>
                 {% endif %}
 
-                {% if total_cpu_usage is defined and total_cpu_usage > 0 %}
+                {% if met_cpu %}
                     <c-stack gap="md">
                         <c-paragraph size="sm">CPU-gebruik per project, als aandeel van het totaal.</c-paragraph>
-                        {% for project in op_geheugen if project.cpu_cores is defined and project.cpu_cores > 0 %}
+                        {% for project in met_cpu %}
                             <c-stack gap="xs">
                                 <c-cluster justify="between" align="center" gap="sm">
                                     <c-span>{{ project.display_name }}</c-span>
