@@ -45,16 +45,17 @@ def test_the_section_fires_exactly_one_lazy_request() -> None:
     namespace, so 18 per-deployment blocks opened 18 parallel Kopia connects to the
     same repository. This is the regression guard for that.
 
-    'intersect once', not 'load': the section lives in the (hidden) Deployments tab,
-    so it should not fetch until that tab is opened.
+    'intersect once', not 'load': the section has its own tab since RC-100, so the reason
+    to HIDE it is gone but the reason to load it lazily is not -- opening a Kopia
+    repository over S3 costs 2.5s, and the page should be there before that.
     """
     section = (_TEMPLATES / "section-backups.html.j2").read_text()
 
     assert section.count("hx-trigger=") == 1, "exactly one loader for the whole backups section"
     assert 'hx-trigger="intersect once"' in section
     assert 'hx-get="/projects/details/{{ ctx.project_name }}/backups"' in section
-    # Only the first deployment's block carries the loader (RC-24: the block is now
-    # rendered once per deployment by the backupable services).
+    # The loader sits behind a flag rather than being unconditional: the block that
+    # carries it is decided in Python (one per PAGE since RC-100), not by the template.
     assert "{% if ctx.loads_snapshots %}" in section
     # Not the per-deployment URL that caused the swarm.
     assert "/backups/{{ ctx.deployment_name }}" not in section
