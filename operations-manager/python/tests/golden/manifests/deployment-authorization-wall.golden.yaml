@@ -89,7 +89,7 @@ spec:
             tcpSocket:
               port: 8080
             initialDelaySeconds: 0
-            periodSeconds: 5
+            periodSeconds: 2
             failureThreshold: 3
         - name: authorization-wall
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
@@ -147,7 +147,7 @@ spec:
               path: /ping
               port: 4180
             initialDelaySeconds: 3
-            periodSeconds: 5
+            periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /ping

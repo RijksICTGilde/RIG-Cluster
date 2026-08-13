@@ -69,7 +69,9 @@
               path: /ping
               port: 4180
             initialDelaySeconds: 3
-            periodSeconds: 5
+            {# 2s: de sidecar moet ook Ready zijn voordat de pod meetelt; zelfde afweging
+               als de readinessProbe in deployment.yaml.jinja. #}
+            periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /ping
