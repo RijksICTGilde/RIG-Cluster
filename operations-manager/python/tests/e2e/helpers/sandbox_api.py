@@ -264,7 +264,8 @@ def delete_project_via_api(
                     logger.warning("Delete task %s for '%s' did not succeed: %s", task_id, project_name, fout)
         elif not accepted:
             logger.warning(
-                "Delete of '%s' was refused with HTTP %d; the project stays behind on the sandbox",
+                "Delete of '%s' was refused with HTTP %d; als het project nog bestaat blijft het "
+                "op de sandbox staan (401 betekent meestal dat de test het zelf al opruimde)",
                 project_name,
                 response.status_code,
             )
