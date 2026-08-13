@@ -29,7 +29,18 @@ config:
   api-key: test-api-key-services-67890
 
 services:
-  - keycloak
+  # MET realms, en dat is de reden dat ze hier staan: het Keycloak-blok op het tabblad
+  # Toegang rendert alleen als de dienst realms heeft (RC-101). Zonder deze gegevens heeft
+  # geen enkele fixture zo'n blok, en dan is er niets te meten aan het tabblad dat ze
+  # draagt - het andere testproject (test-project-detail) heeft ze met opzet NIET, zodat
+  # daar het lege geval gemeten wordt.
+  - keycloak:
+      config:
+        realms:
+          - realm: test-project-services-local
+            host: https://keycloak.voorbeeld.nl
+            username: test_project_services_admin
+            password: VOORBEELDWAARDE-geen-echt-geheim
   # postgresql-database en niet postgresql: dat laatste is geen ServiceType, en de
   # detailpagina viel er met een 500 op om (ValueError uit de enum).
   - postgresql-database
