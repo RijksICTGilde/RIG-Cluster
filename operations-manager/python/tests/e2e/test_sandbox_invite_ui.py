@@ -240,7 +240,9 @@ def test_detail_block_shows_invite_link(
     # Wat hier getoetst wordt is dat het blok de HUIDIGE uitnodiging toont.
     keys = [key for key in _invite_keys(forgejo, invite_project) if key]
     assert keys, "er staat geen uitnodiging in het projectbestand om te tonen"
-    service_config.open_detail(sandbox_page, sandbox_url, invite_project)
+    # Op Services info en niet op Overzicht: b134a581 heeft de blokken die de diensten zelf
+    # leveren naar een eigen tabblad verplaatst. Deze test keek nog op de landingspagina.
+    service_config.open_services_info_tab(sandbox_page, sandbox_url, invite_project)
     link = sandbox_page.locator("code.config-code", has_text=f"/invite/{keys[0]}")
     capture(sandbox_page, "invite-detail-block")
     assert link.count() > 0, f"invite link not shown on the detail page for an admin (sleutel {keys[0]})"
