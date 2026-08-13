@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.services.catalog.base import ConfigLayer, ValueStorage
+from opi.services.catalog.base import ConfigLayer
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_values
 from opi.services.project_env_vars import read_user_env_vars
@@ -254,27 +254,21 @@ def _component_aliases(
 ) -> dict[str, str]:
     """A component's aliases, with values that are not a reference replaced by ``***``.
 
-    The stored values are decrypted first: an alias is written AGE-encrypted per value,
-    so without decrypting there is nothing to judge and nothing to show. Values that
-    cannot be decrypted keep their names and lose their values -- "unreadable" is not
-    the same as "not there".
+    The stored value is decrypted first: aliases are written as ONE AGE block whose
+    plaintext is ``KEY=value`` lines (RC-106), so without decrypting there is nothing to
+    judge and nothing to show. Through the shared decoder, so this reads exactly what a
+    write wrote. A set that cannot be read at all is dropped rather than half-shown --
+    with one block there is no per-entry failure left to report.
     """
-    aliases = component.get("aliases")
-    if not isinstance(aliases, dict):
+    raw = component.get("aliases")
+    if not raw:
         return {}
-    shown: dict[str, str] = {}
-    for key, raw in aliases.items():
-        name = str(key)
-        try:
-            # Per entry, so one unreadable value costs its own value and not the whole
-            # map. Through the shared decoder, so this reads exactly what a write wrote.
-            value = decode_values({name: raw}, ValueStorage.PER_VALUE, project_data, project_private_key)[name]
-        except (ComponentValuesError, ValueError) as error:
-            logger.warning(f"Alias '{name}' of component '{component.get('name', '')}' could not be read: {error}")
-            shown[name] = REDACTED
-            continue
-        shown[name] = value if _shows_value(value) else REDACTED
-    return shown
+    try:
+        values = decode_values(raw, project_data, project_private_key)
+    except (ComponentValuesError, ValueError) as error:
+        logger.warning(f"Aliases of component '{component.get('name', '')}' could not be read: {error}")
+        return {}
+    return {name: (value if _shows_value(value) else REDACTED) for name, value in values.items()}
 
 
 async def build_component_details(

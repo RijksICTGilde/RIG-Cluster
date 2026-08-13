@@ -18,6 +18,10 @@ from opi.connectors.subdomain import (
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_issuer
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.component_values import ComponentValuesError
+from opi.services.component_values import decode as decode_component_values
+from opi.services.component_values import encode as encode_component_values
+from opi.utils.age import is_age_encrypted
 
 logger = logging.getLogger(__name__)
 
@@ -233,21 +237,19 @@ class UserEnvVarsEncryptGenerator:
 
 
 class ComponentAliasesEncryptGenerator:
-    """Encrypt each component alias value with the project's AGE public key.
+    """Encrypt a component's aliases with the project's AGE public key.
 
-    Aliases are stored as a ``name -> value`` map; values may hold secrets
-    (e.g. a password), so each value is encrypted independently while the
-    alias names stay readable. Skips values that are already AGE-encrypted.
+    Since RC-106 aliases are stored exactly like ``user-env-vars``: ONE AGE block whose
+    plaintext is ``KEY=value`` lines. A mapping still found here is the unencrypted
+    shape (a hand-written file, or an older per-value one) and is joined into that block
+    first; a value that is already an AGE block is decrypted first, because a block
+    inside a block is not readable by anything downstream.
 
     Must run after ``AGEKeyPairGenerator`` so the project public key exists.
     Uses a ``_generated`` path - the return value is discarded during cleanup.
     """
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from ruamel.yaml.scalarstring import LiteralScalarString
-
-        from opi.utils.age import encrypt_age_content_sync
-
         public_key = yaml_data.get("config", {}).get("age-public-key")
         if not public_key:
             logger.debug("No project public key available, skipping aliases encryption")
@@ -257,16 +259,22 @@ class ComponentAliasesEncryptGenerator:
             if not isinstance(component, dict):
                 continue
             aliases = component.get("aliases")
-            if not isinstance(aliases, dict):
+            if not aliases or (isinstance(aliases, str) and is_age_encrypted(aliases)):
                 continue
-            for alias_name, alias_value in aliases.items():
-                if not isinstance(alias_value, str) or "BEGIN AGE ENCRYPTED FILE" in alias_value:
-                    continue
-                aliases[alias_name] = LiteralScalarString(encrypt_age_content_sync(alias_value, public_key))
-                logger.debug(
-                    "Encrypted alias '%s' for component %s",
-                    alias_name,
+            try:
+                values = decode_component_values(aliases, yaml_data)
+            except (ComponentValuesError, ValueError) as error:
+                logger.warning(
+                    "Could not read aliases of component %s, leaving them as stored: %s",
                     component.get("name", "unknown"),
+                    error,
                 )
+                continue
+            encoded = encode_component_values(values, yaml_data)
+            if encoded is None:
+                component.pop("aliases", None)
+            else:
+                component["aliases"] = encoded
+            logger.debug("Encrypted aliases for component %s", component.get("name", "unknown"))
 
         return True
