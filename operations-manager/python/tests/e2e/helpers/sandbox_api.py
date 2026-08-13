@@ -11,6 +11,7 @@ we scrape it from there, then use it for the async API call.
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 import time
 from typing import TYPE_CHECKING
@@ -20,6 +21,9 @@ from tests.e2e.helpers import cluster
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
+
+
+logger = logging.getLogger(__name__)
 
 
 #: Hoe een projectsleutel eruitziet: 32 tekens uit het tokenalfabet.
@@ -232,6 +236,11 @@ def delete_project_via_api(
 
     Best-effort: swallows connection errors so it never breaks fixture teardown.
     Waits for the async delete task to finish when a task id is returned.
+
+    Wat het NIET meer doet is zwijgen: een opruiming die niet lukte wordt gelogd.
+    Na een groene run bleef er een testproject op de sandbox staan zonder dat
+    ergens te zien was dat de teardown was mislukt, en zulke projecten stapelen
+    zich over runs op.
     """
     base = base_url.rstrip("/")
     headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
@@ -249,8 +258,16 @@ def delete_project_via_api(
             location = response.headers.get("Location")
             task_id = location.rsplit("/", 1)[-1] if location else None
             if task_id:
-                with contextlib.suppress(AssertionError):
+                try:
                     _wait_for_task(client, base, task_id, headers, timeout=timeout)
+                except AssertionError as fout:
+                    logger.warning("Delete task %s for '%s' did not succeed: %s", task_id, project_name, fout)
+        elif not accepted:
+            logger.warning(
+                "Delete of '%s' was refused with HTTP %d; the project stays behind on the sandbox",
+                project_name,
+                response.status_code,
+            )
 
     # Belt-and-suspenders: the project delete only drops the namespace once the
     # ArgoCD app deletion is confirmed, which frequently times out on a busy
