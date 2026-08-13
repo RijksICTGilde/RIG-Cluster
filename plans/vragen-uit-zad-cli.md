@@ -1380,6 +1380,18 @@ ertegen — een keycloak-realm is niet iets om ongevraagd aan te maken, en `temp
 keuze — maar dan is de vervolgvraag waarom `postgresql-database` dat wel mag, want een
 database aanmaken is niet minder ingrijpend.
 
+**En misschien lost dit het hele bezwaar op.** Een dienstconfiguratie is nooit definitief:
+je kunt hem daarna gewoon wijzigen. Het bezwaar tegen ongevraagd aanzetten is dus niet dat
+er iets onomkeerbaars gebeurt, maar dat je niet weet dát het gebeurd is en waarmee. Dat is
+op te lossen in het antwoord in plaats van in een weigering:
+
+> `keycloak` is aan dit project toegevoegd met `template: sso-only`.
+> Wijzig het met `zad service config set keycloak --set template=...`.
+
+Dan weet de aanroeper wat er staat, kan hij ernaar handelen als het niet klopt, en hoeft
+niemand een volgorde te kennen die nergens staat. Voor een agent is dat het verschil tussen
+doorlopen en vastlopen; voor een mens tussen lezen en uitzoeken.
+
 **Wat in elk geval helpt, ongeacht het antwoord:** laat de foutmelding het commando noemen
 dat het oplost. Nu zegt hij *dát* er projectconfiguratie nodig is, niet welke. Beide agents
 hebben daarna zelf moeten uitzoeken dat het
