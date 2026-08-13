@@ -8,8 +8,8 @@ wat wij al hebben uitgesloten. Antwoord er graag onder, per nummer, in het kopje
 dat er al staat. Alles is met `curl` te reproduceren; onze CLI is er alleen een client op.
 
 **Stand van zaken.** Punt 1 tot en met 5 zijn beantwoord en opgelost; die staan hieronder
-met hun antwoord, en onze reactie erop staat onderaan. **Punt 6 tot en met 11, aan het eind,
-wachten nog op een antwoord.** Punt 10 en 11 zijn nagemeten op de releasebuild `5c026ecc`.
+met hun antwoord, en onze reactie erop staat onderaan. **Punt 6 tot en met 12, aan het eind,
+wachten nog op een antwoord; 12 is blokkerend en een regressie op `5c026ecc`.** Punt 10 en 11 zijn nagemeten op de releasebuild `5c026ecc`.
 
 ```sh
 BASE=https://zad.sandbox.rijksapp.dev/api
@@ -949,3 +949,58 @@ aantoonbaar bij jouw bestemming", en dat is méér dan alleen platformpech: het 
 een aanroep die de bestemmingspoort nooit haalde, zoals hierboven. Jullie nieuwe
 behandeling ("niet toe te wijzen", exit 3, en de logs lezen) past daar beter bij dan
 "probeer opnieuw". Wij zouden hem zo laten.
+
+---
+
+## 12. `publish-on-web` is op `5c026ecc` niet meer aan te zetten (blokkerend, regressie)
+
+Vanmiddag liep ons draaiboek 01 hier nog helemaal door op `edbda374`, inclusief
+`publish-on-web` op twee componenten. Op de releasebuild `5c026ecc` lukt het via geen enkele
+weg meer, ook niet op een vers project.
+
+```sh
+curl -X PUT -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{"tls":"standard"}' \
+  "$BASE/v2/projects/$P/services/publish-on-web/config/component/frontend?rollout=false"
+# 202, en de taak faalt:
+# "Services that must be enabled at project level first: ['publish-on-web']. They need
+#  project-level configuration that cannot be assumed, so they are not added automatically."
+```
+
+Hetzelfde via `PATCH .../components/frontend {"services":["publish-on-web"]}`, en hetzelfde
+bij `POST .../components` met de dienst er meteen bij. Drie routes, één fout.
+
+**En die projectlaag bestaat niet.** Niet in de catalogus:
+
+```sh
+curl -s "$BASE/v2/services/publish-on-web" | jq -c '[.layers[].target]'
+# ["component","deployment","deployment-component"]
+```
+
+En niet als endpoint:
+
+```sh
+curl -X PUT -H "X-API-Key: $KEY" -d '{}' "$BASE/v2/projects/$P/services/publish-on-web/config/project"
+# 404 {"detail":"Not Found"}
+```
+
+De validator eist dus iets wat de catalogus niet kent en waar geen endpoint voor is. Gevolg:
+`publish-on-web` is niet aan te zetten, en `keycloak` daarmee ook niet, want die vereist hem.
+Een component zonder publish-on-web draait wel maar is van buiten onbereikbaar, dus dit
+blokkeert elke doorloop die iets aantoonbaar werkends wil opleveren.
+
+**Onze vraag:** is deze controle nieuw in `5c026ecc`? Zo ja, wat is de bedoelde weg om aan
+die eis te voldoen? Drie vormen die wij ons kunnen voorstellen:
+
+1. De controle laten vervallen voor diensten die geen projectlaag hebben. Dat lijkt ons het
+   meest waarschijnlijk het gewenste gedrag: hij vraagt om iets wat niet uit te drukken is.
+2. `publish-on-web` een projectlaag geven, waarbij lege config "aan" betekent.
+3. De component- of deploymentconfiguratie het enablement zelf laten aanmaken, zoals bij
+   `postgresql-database`, `redis` en `minio-storage` blijkbaar wel gebeurt.
+
+**Waar wij dit vandaan hebben:** een agent die alleen de CLI mocht raadplegen liep hierop
+vast en heeft het uitgebreid vastgelegd. Dat is precies het scenario waar deze CLI voor
+bedoeld is, dus wij hechten er waarde aan dat het van buitenaf op te lossen valt.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
