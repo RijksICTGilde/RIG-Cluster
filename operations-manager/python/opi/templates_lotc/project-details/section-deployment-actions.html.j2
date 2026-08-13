@@ -23,9 +23,9 @@
                    reads the tag before Jinja does and the page 500s. #}
                 {% for action in deployment_service_actions.get(deployment.name, []) if action.visible %}
                 {% if action.modal_endpoint %}
-                {% set lotc_onclick_3 %}openServiceModal('{{ action.modal_endpoint }}', '{{ action.modal_title }}'){% endset %}<c-button label="{{ action.label }}" size="sm" show-icon="before" icon="{{ action.icon }}"/>
+                {% set lotc_onclick_3 %}openServiceModal('{{ action.modal_endpoint }}', '{{ action.modal_title }}'){% endset %}<c-button label="{{ action.label }}" size="sm" show-icon="before" icon="{{ action.icon | nldd_icon }}"/>
                 {% else %}
-                {% set lotc_onclick_4 %}openServiceModal('/projects/{{ project.name }}/deployments/{{ deployment.name }}/actions/{{ action|deployment_action_key }}/confirm', '{{ action.label }}'){% endset %}<c-button label="{{ action.label }}" size="sm" show-icon="before" icon="{{ action.icon }}"/>
+                {% set lotc_onclick_4 %}openServiceModal('/projects/{{ project.name }}/deployments/{{ deployment.name }}/actions/{{ action|deployment_action_key }}/confirm', '{{ action.label }}'){% endset %}<c-button label="{{ action.label }}" size="sm" show-icon="before" icon="{{ action.icon | nldd_icon }}"/>
                 {% endif %}
                 {% endfor %}
             </c-cluster>

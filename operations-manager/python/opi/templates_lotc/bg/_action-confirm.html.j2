@@ -68,7 +68,7 @@
                     type="{{ knoptype }}"
                     label="{{ action.label }}"
                     show-icon="before"
-                    icon="{{ action.icon | default('', true) }}"
+                    icon="{{ action.icon | default('', true) | nldd_icon }}"
                     class="confirm-action-submit"
                     hx-post="{{ action.endpoint }}"
                     hx-disabled-elt="this" />

@@ -36,7 +36,7 @@
         />
         <div class="service-card__content">
             <div class="service-card__header">
-                <c-icon icon="{{ preset.icon|e }}" color="{{ preset.color|e }}" size="lg" />
+                <c-icon icon="{{ preset.icon|nldd_icon|e }}" color="{{ preset.color|e }}" size="lg" />
                 <span class="service-card__title">{{ preset.label|e }}</span>
             </div>
             <p class="service-card__description">{{ preset.description|e }}</p>
