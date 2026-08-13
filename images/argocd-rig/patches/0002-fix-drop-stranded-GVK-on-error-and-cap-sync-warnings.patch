@@ -1,7 +1,7 @@
-From 618331da7fa62fcd2da1be952859c32407ee83f8 Mon Sep 17 00:00:00 2001
+From 376adb8d9703758e9f5cbc28e6513ea62cd900c2 Mon Sep 17 00:00:00 2001
 From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
 Date: Thu, 23 Jul 2026 18:14:49 +0200
-Subject: [PATCH 2/2] fix: drop stranded GVK on error and cap sync warnings
+Subject: [PATCH 2/4] fix: drop stranded GVK on error and cap sync warnings
 
 ---
  gitops-engine/pkg/cache/cluster.go            | 26 +++++-
@@ -10,7 +10,7 @@ Subject: [PATCH 2/2] fix: drop stranded GVK on error and cap sync warnings
  create mode 100644 gitops-engine/pkg/cache/rig_regression_test.go
 
 diff --git a/gitops-engine/pkg/cache/cluster.go b/gitops-engine/pkg/cache/cluster.go
-index fa329b00a..31495875f 100644
+index a6f8c7599..ec67f91b5 100644
 --- a/gitops-engine/pkg/cache/cluster.go
 +++ b/gitops-engine/pkg/cache/cluster.go
 @@ -298,8 +298,10 @@ type clusterCache struct {
@@ -26,7 +26,7 @@ index fa329b00a..31495875f 100644
  }
  
  type clusterCacheSync struct {
-@@ -718,6 +720,12 @@ func (c *clusterCache) startMissingWatches() error {
+@@ -717,6 +719,12 @@ func (c *clusterCache) startMissingWatches() error {
  				return nil
  			})
  			if err != nil {
@@ -39,7 +39,7 @@ index fa329b00a..31495875f 100644
  				return err
  			}
  		}
-@@ -1039,9 +1047,19 @@ func (c *clusterCache) checkNamespacePermission(ctx context.Context, reviewInter
+@@ -1124,9 +1132,19 @@ func (c *clusterCache) checkNamespacePermission(ctx context.Context, reviewInter
  	return resp != nil && resp.Status.Allowed, nil
  }
  
@@ -59,7 +59,7 @@ index fa329b00a..31495875f 100644
  	c.syncWarnings = append(c.syncWarnings, msg)
  }
  
-@@ -1108,6 +1126,7 @@ func (c *clusterCache) sync() error {
+@@ -1194,6 +1212,7 @@ func (c *clusterCache) sync() error {
  	c.parentUIDToChildren = make(map[types.UID]map[kube.ResourceKey]struct{})
  	c.syncWarningsLock.Lock()
  	c.syncWarnings = nil
@@ -67,7 +67,7 @@ index fa329b00a..31495875f 100644
  	c.syncWarningsLock.Unlock()
  	config := c.config
  	version, err := c.kubectl.GetServerVersion(config)
-@@ -1759,6 +1778,9 @@ func (c *clusterCache) GetClusterInfo() ClusterInfo {
+@@ -1840,6 +1859,9 @@ func (c *clusterCache) GetClusterInfo() ClusterInfo {
  
  	c.syncWarningsLock.Lock()
  	warnings := append([]string(nil), c.syncWarnings...)

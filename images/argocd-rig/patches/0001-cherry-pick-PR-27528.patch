@@ -1,7 +1,7 @@
-From d6ca68673d4a6e9a7b6349461d6267275f874a2d Mon Sep 17 00:00:00 2001
+From f90886a7ac9401b5365dcadd2a7d0ecd90b88397 Mon Sep 17 00:00:00 2001
 From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
 Date: Thu, 23 Jul 2026 18:09:17 +0200
-Subject: [PATCH 1/2] cherry-pick PR 27528
+Subject: [PATCH 1/4] cherry-pick PR 27528
 
 ---
  controller/clusterinfoupdater.go          |   4 +
@@ -13,7 +13,7 @@ Subject: [PATCH 1/2] cherry-pick PR 27528
  6 files changed, 739 insertions(+), 22 deletions(-)
 
 diff --git a/controller/clusterinfoupdater.go b/controller/clusterinfoupdater.go
-index c1e070608..c055b1a45 100644
+index e92f1a03b..d5f4fcec1 100644
 --- a/controller/clusterinfoupdater.go
 +++ b/controller/clusterinfoupdater.go
 @@ -3,6 +3,7 @@ package controller
@@ -35,7 +35,7 @@ index c1e070608..c055b1a45 100644
  			clusterInfo.ConnectionState.Status = appv1.ConnectionStatusFailed
  			clusterInfo.ConnectionState.Message = info.SyncError.Error()
 diff --git a/controller/clusterinfoupdater_test.go b/controller/clusterinfoupdater_test.go
-index 6fd144911..fee9d6436 100644
+index 56e91dee8..9e0e280a5 100644
 --- a/controller/clusterinfoupdater_test.go
 +++ b/controller/clusterinfoupdater_test.go
 @@ -216,6 +216,42 @@ func TestGetUpdatedClusterInfo_AmbiguousName(t *testing.T) {
@@ -82,10 +82,10 @@ index 6fd144911..fee9d6436 100644
  	shouldNotBeInvoked := func(_ context.Context, _ *v1alpha1.Cluster) (*v1alpha1.Cluster, error) {
  		shouldNotHappen := errors.New("if an error happens here, something's wrong")
 diff --git a/docs/operator-manual/declarative-setup.md b/docs/operator-manual/declarative-setup.md
-index be43668fe..723fb9e4f 100644
+index d3247bd87..df985c046 100644
 --- a/docs/operator-manual/declarative-setup.md
 +++ b/docs/operator-manual/declarative-setup.md
-@@ -569,6 +569,13 @@ disableCompression: boolean
+@@ -602,6 +602,13 @@ disableCompression: boolean
  > To resolve this issue, you can increase the `ARGOCD_K8S_CLIENT_MAX_IDLE_CONNECTIONS` environment variable in the
  > Application controller.
  
@@ -100,7 +100,7 @@ index be43668fe..723fb9e4f 100644
  > Note that if you specify a command to run under `execProviderConfig`, that command must be available in the Argo CD image. See [BYOI (Build Your Own Image)](custom_tools.md#byoi-build-your-own-image).
  
 diff --git a/gitops-engine/pkg/cache/cluster.go b/gitops-engine/pkg/cache/cluster.go
-index 231b93ef2..fa329b00a 100644
+index 9ddfce2fb..a6f8c7599 100644
 --- a/gitops-engine/pkg/cache/cluster.go
 +++ b/gitops-engine/pkg/cache/cluster.go
 @@ -26,6 +26,7 @@ package cache
@@ -110,7 +110,7 @@ index 231b93ef2..fa329b00a 100644
 +	"errors"
  	"fmt"
  	"runtime/debug"
- 	"strings"
+ 	"slices"
 @@ -92,6 +93,11 @@ const (
  	RespectRbacStrict
  )
@@ -159,7 +159,7 @@ index 231b93ef2..fa329b00a 100644
  }
  
  type clusterCacheSync struct {
-@@ -664,9 +679,9 @@ func (c *clusterCache) startMissingWatches() error {
+@@ -663,9 +678,9 @@ func (c *clusterCache) startMissingWatches() error {
  	if err != nil {
  		return fmt.Errorf("failed to create client: %w", err)
  	}
@@ -171,7 +171,7 @@ index 231b93ef2..fa329b00a 100644
  	}
  	namespacedResources := make(map[schema.GroupKind]bool)
  	for i := range apis {
-@@ -678,20 +693,25 @@ func (c *clusterCache) startMissingWatches() error {
+@@ -677,20 +692,25 @@ func (c *clusterCache) startMissingWatches() error {
  
  			err := c.processApi(client, api, func(resClient dynamic.ResourceInterface, ns string) error {
  				resourceVersion, err := c.loadInitialState(ctx, api, resClient, ns, false) // don't lock here, we are already in a lock before startMissingWatches is called inside watchEvents
@@ -210,7 +210,7 @@ index 231b93ef2..fa329b00a 100644
  					}
  				}
  				go c.watchEvents(ctx, api, resClient, ns, resourceVersion)
-@@ -926,6 +946,7 @@ func (c *clusterCache) watchEvents(ctx context.Context, api kube.APIResourceInfo
+@@ -1012,6 +1032,7 @@ func isAPIServiceAvailable(obj *unstructured.Unstructured) bool {
  // processApi processes all the resources for a given API. First we construct an API client for the given API. Then we
  // call the callback. If we're managing the whole cluster, we call the callback with the client and an empty namespace.
  // If we're managing specific namespaces, we call the callback for each namespace.
@@ -218,7 +218,7 @@ index 231b93ef2..fa329b00a 100644
  func (c *clusterCache) processApi(client dynamic.Interface, api kube.APIResourceInfo, callback func(resClient dynamic.ResourceInterface, ns string) error) error {
  	resClient := client.Resource(api.GroupVersionResource)
  	switch {
-@@ -936,6 +957,9 @@ func (c *clusterCache) processApi(client dynamic.Interface, api kube.APIResource
+@@ -1022,6 +1043,9 @@ func (c *clusterCache) processApi(client dynamic.Interface, api kube.APIResource
  	case len(c.namespaces) != 0 && api.Meta.Namespaced:
  		for _, ns := range c.namespaces {
  			err := callback(resClient.Namespace(ns), ns)
@@ -228,7 +228,7 @@ index 231b93ef2..fa329b00a 100644
  			if err != nil {
  				return err
  			}
-@@ -995,6 +1019,66 @@ func (c *clusterCache) checkPermission(ctx context.Context, reviewInterface auth
+@@ -1080,6 +1104,66 @@ func (c *clusterCache) checkPermission(ctx context.Context, reviewInterface auth
  	return true, nil
  }
  
@@ -295,8 +295,8 @@ index 231b93ef2..fa329b00a 100644
  // sync retrieves the current state of the cluster and stores relevant information in the clusterCache fields.
  //
  // First we get some metadata from the cluster, like the server version, OpenAPI document, and the list of all API
-@@ -1022,6 +1106,9 @@ func (c *clusterCache) sync() error {
- 	c.resources = make(map[kube.ResourceKey]*Resource)
+@@ -1108,6 +1192,9 @@ func (c *clusterCache) sync() error {
+ 	c.nsIndex = make(map[string]map[kube.ResourceKey]*Resource)
  	c.namespacedResources = make(map[schema.GroupKind]bool)
  	c.parentUIDToChildren = make(map[types.UID]map[kube.ResourceKey]struct{})
 +	c.syncWarningsLock.Lock()
@@ -305,7 +305,7 @@ index 231b93ef2..fa329b00a 100644
  	config := c.config
  	version, err := c.kubectl.GetServerVersion(config)
  	if err != nil {
-@@ -1053,9 +1140,9 @@ func (c *clusterCache) sync() error {
+@@ -1139,9 +1226,9 @@ func (c *clusterCache) sync() error {
  	if err != nil {
  		return fmt.Errorf("failed to create client: %w", err)
  	}
@@ -317,7 +317,7 @@ index 231b93ef2..fa329b00a 100644
  	}
  
  	if c.batchEventsProcessing {
-@@ -1089,6 +1176,9 @@ func (c *clusterCache) sync() error {
+@@ -1175,6 +1262,9 @@ func (c *clusterCache) sync() error {
  				})
  			})
  			if err != nil {
@@ -327,7 +327,7 @@ index 231b93ef2..fa329b00a 100644
  				if c.isRestrictedResource(err) {
  					keep := false
  					if c.respectRBAC == RespectRbacStrict {
-@@ -1115,6 +1205,7 @@ func (c *clusterCache) sync() error {
+@@ -1201,6 +1291,7 @@ func (c *clusterCache) sync() error {
  			return nil
  		})
  	})
@@ -335,7 +335,7 @@ index 231b93ef2..fa329b00a 100644
  	if err != nil {
  		c.log.Error(err, "Failed to sync cluster")
  		return fmt.Errorf("failed to sync cluster %s: %w", c.config.Host, err)
-@@ -1665,9 +1756,13 @@ var ignoredRefreshResources = map[string]bool{
+@@ -1746,9 +1837,13 @@ var ignoredRefreshResources = map[string]bool{
  func (c *clusterCache) GetClusterInfo() ClusterInfo {
  	c.lock.RLock()
  	defer c.lock.RUnlock()
@@ -350,7 +350,7 @@ index 231b93ef2..fa329b00a 100644
  	return ClusterInfo{
  		APIsCount:         len(c.apisMeta),
  		K8SVersion:        c.serverVersion,
-@@ -1676,6 +1771,7 @@ func (c *clusterCache) GetClusterInfo() ClusterInfo {
+@@ -1757,6 +1852,7 @@ func (c *clusterCache) GetClusterInfo() ClusterInfo {
  		LastCacheSyncTime: c.syncStatus.syncTime,
  		SyncError:         c.syncStatus.syncError,
  		APIResources:      c.apiResources,
@@ -359,10 +359,10 @@ index 231b93ef2..fa329b00a 100644
  }
  
 diff --git a/gitops-engine/pkg/cache/cluster_test.go b/gitops-engine/pkg/cache/cluster_test.go
-index 7e09138dc..9af105141 100644
+index 63660c91b..f7a995a77 100644
 --- a/gitops-engine/pkg/cache/cluster_test.go
 +++ b/gitops-engine/pkg/cache/cluster_test.go
-@@ -17,9 +17,11 @@ import (
+@@ -16,9 +16,11 @@ import (
  	"github.com/stretchr/testify/assert"
  	"github.com/stretchr/testify/require"
  	appsv1 "k8s.io/api/apps/v1"
@@ -373,10 +373,10 @@ index 7e09138dc..9af105141 100644
 +	apierrors "k8s.io/apimachinery/pkg/api/errors"
  	"k8s.io/apimachinery/pkg/api/meta"
  	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
- 	"k8s.io/apimachinery/pkg/types"
-@@ -27,7 +29,9 @@ import (
- 	"k8s.io/apimachinery/pkg/runtime"
+ 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+@@ -26,7 +28,9 @@ import (
  	"k8s.io/apimachinery/pkg/runtime/schema"
+ 	"k8s.io/apimachinery/pkg/types"
  	"k8s.io/apimachinery/pkg/watch"
 +	"k8s.io/client-go/dynamic"
  	"k8s.io/client-go/dynamic/fake"
@@ -384,7 +384,7 @@ index 7e09138dc..9af105141 100644
  	"k8s.io/client-go/kubernetes/scheme"
  	"k8s.io/client-go/rest"
  	testcore "k8s.io/client-go/testing"
-@@ -87,7 +91,7 @@ func newCluster(tb testing.TB, objs ...runtime.Object) *clusterCache {
+@@ -93,7 +97,7 @@ func newCluster(tb testing.TB, objs ...runtime.Object) *clusterCache {
  	return cache
  }
  
@@ -393,7 +393,7 @@ index 7e09138dc..9af105141 100644
  	client := fake.NewSimpleDynamicClient(scheme.Scheme, objs...)
  	reactor := client.ReactionChain[0]
  	client.PrependReactor("list", "*", func(action testcore.Action) (handled bool, ret runtime.Object, err error) {
-@@ -130,6 +134,7 @@ func newClusterWithOptions(_ testing.TB, opts []UpdateSettingsFunc, objs ...runt
+@@ -136,6 +140,7 @@ func newClusterWithOptions(_ testing.TB, opts []UpdateSettingsFunc, objs ...runt
  		&rest.Config{Host: "https://test"},
  		opts...,
  	)
@@ -401,7 +401,7 @@ index 7e09138dc..9af105141 100644
  	return cache
  }
  
-@@ -2643,3 +2648,564 @@ func BenchmarkIncrementalIndexBuild(b *testing.B) {
+@@ -2782,3 +2787,564 @@ func BenchmarkIncrementalIndexBuild(b *testing.B) {
  		})
  	}
  }
@@ -967,7 +967,7 @@ index 7e09138dc..9af105141 100644
 +	}
 +}
 diff --git a/gitops-engine/pkg/cache/settings.go b/gitops-engine/pkg/cache/settings.go
-index 692ac2674..8c07570f6 100644
+index 9af582318..d7b30d752 100644
 --- a/gitops-engine/pkg/cache/settings.go
 +++ b/gitops-engine/pkg/cache/settings.go
 @@ -5,6 +5,7 @@ import (
@@ -977,7 +977,7 @@ index 692ac2674..8c07570f6 100644
 +	"k8s.io/client-go/kubernetes"
  	"k8s.io/client-go/rest"
  
- 	"github.com/argoproj/gitops-engine/pkg/health"
+ 	"github.com/argoproj/argo-cd/gitops-engine/pkg/health"
 @@ -183,3 +184,10 @@ func SetEventProcessingInterval(interval time.Duration) UpdateSettingsFunc {
  		cache.eventProcessingInterval = interval
  	}
