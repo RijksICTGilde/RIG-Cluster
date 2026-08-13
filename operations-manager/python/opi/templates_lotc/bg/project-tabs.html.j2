@@ -156,6 +156,34 @@
             {% endcall %}
         {% endif %}
 
+        {# ---- Resourcegebruik van het HELE project ---------------------------
+
+           Deze kaart stond op het tabblad Metrics, en dat klopte niet: dat tabblad is
+           PER DEPLOYMENT (een kiezer, een blok per keer), terwijl dit over het hele
+           project gaat - alle deployments delen een namespace, dus de blokken daar
+           tellen nooit op tot deze cijfers. Hier hoort hij, tussen Acties en
+           Deployments, en op Metrics blijft alleen wat werkelijk per deployment is.
+
+           Verplaatst en niet gekopieerd: twee weergaven van dezelfde cijfers lopen uit
+           de pas zodra er aan een van beide iets verandert.
+
+           Apart laden, zodat een trage of afwezige Prometheus deze pagina niet ophoudt.
+           Is het gebruik al meegegeven (de proefopstelling doet dat), dan komt HETZELFDE
+           fragment er rechtstreeks in - niet een tweede uitvoering van dezelfde kaart. #}
+        {% if project.name is defined and usage is not defined %}
+            {% call panel("Resourcegebruik (heel project)", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
+                <div hx-get="/projects/details/{{ project.name }}/resource-usage"
+                     hx-trigger="load"
+                     hx-swap="innerHTML">
+                    <c-paragraph>Metingen worden opgehaald...</c-paragraph>
+                </div>
+            {% endcall %}
+        {% else %}
+            {% call panel("Resourcegebruik (heel project)", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
+                {% include "bg/_resource-usage.html.j2" %}
+            {% endcall %}
+        {% endif %}
+
         {# ---- Deployments (in plaats van section-deployment-status.html.j2) --- #}
         {# Hier stond "Deployment Status": een kaart per deployment, die elk hun eigen
            ArgoCD-bevraging deden zodra je ze in beeld kreeg. Dat is een TABEL geworden,
@@ -787,27 +815,6 @@
             </script>
         {% endif %}
 
-        {% if project.name is defined and usage is not defined %}
-            {# Zelfde aanpak als de bestaande pagina: apart laden, zodat een trage of
-               afwezige Prometheus deze pagina niet ophoudt. Het fragment volgt dezelfde
-               keuze als de pagina, dus er hoeft niets meegegeven te worden. #}
-            {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
-                <div hx-get="/projects/details/{{ project.name }}/resource-usage"
-                     hx-trigger="load"
-                     hx-swap="innerHTML">
-                    <c-paragraph>Metingen worden opgehaald...</c-paragraph>
-                </div>
-            {% endcall %}
-        {% else %}
-            {# Is het gebruik al meegegeven (de proefopstelling geeft het mee), dan komt
-               het van HETZELFDE fragment als hierboven via htmx binnenkomt. Hier stond
-               een tweede uitvoering van dezelfde kaart - eigen balken, eigen teksten -
-               en die liep meteen uit de pas zodra er aan een van de twee iets veranderde:
-               de eenheden en de cijfers onder de balk stonden alleen in de andere. #}
-            {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
-                {% include "bg/_resource-usage.html.j2" %}
-            {% endcall %}
-        {% endif %}
 
     {% elif active_tab == 'taken' %}
         {# Zelfde aanpak als de bestaande pagina: het fragment haalt zichzelf op en ververst
