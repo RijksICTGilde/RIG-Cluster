@@ -6,14 +6,14 @@ metadata:
   annotations:
     policies.kyverno.io/exclude: "disallow-capabilities-strict,disallow-privilege-escalation,restrict-seccomp-strict"
 spec:
-  # RIG-eigen image: upstream v3.3.12 + de namespace-sync fixes uit images/argocd-rig.
+  # RIG-eigen image: upstream v3.5.1 + de namespace-sync en health-fixes uit images/argocd-rig.
   # Alle componenten volgen dit, behalve repo-server (zie spec.repo hieronder) — zo is de
   # sandbox dezelfde vorm als odcn-production, waar repo-server op de Red Hat build blijft.
   # Uit de publieke registry, zodat de sandbox hem via GitOps binnenhaalt in plaats van
   # via `task load-kind`; die taak blijft bestaan om een lokale build te testen voor je
   # publiceert (bouw dan met IMAGE_TAG=<iets anders> en pin die tag hier tijdelijk).
   image: ghcr.io/minbzk/base-images/argocd-rig
-  version: v3.3.12-rig1
+  version: v3.5.1-rig1
   extraConfig:
     resource.customizations.health.cert-manager.io_Issuer: |
       hs = {}

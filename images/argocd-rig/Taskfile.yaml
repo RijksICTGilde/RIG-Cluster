@@ -1,7 +1,7 @@
 version: '3'
 
-# Eigen Argo CD image voor RIG: upstream v3.3.12 + namespace-sync fixes.
-# Zie README.md voor de inhoud van de patches.
+# Eigen Argo CD image voor RIG: upstream v3.5.1 + namespace-sync fixes + snellere
+# health-updates in de Application CR. Zie README.md voor de inhoud van de patches.
 #
 # Standaard flow (lokaal testen):
 #   task src:prepare        # argo-cd worktree met de patches klaarzetten
@@ -21,11 +21,11 @@ vars:
   # patches), ARGOCD_REPO is de gewone argo-cd checkout waar die worktree uit komt.
   ARGOCD_REPO: '{{default (printf "%s/../../../argo-cd" .ROOT_DIR) .ARGOCD_REPO}}'
   ARGOCD_SRC: '{{default (printf "%s/../../../argo-cd-rig" .ROOT_DIR) .ARGOCD_SRC}}'
-  BRANCH: '{{default "rig/ns-sync" .BRANCH}}'
-  BASE_TAG: '{{default "v3.3.12" .BASE_TAG}}'
+  BRANCH: '{{default "rig/ns-sync-3.5" .BRANCH}}'
+  BASE_TAG: '{{default "v3.5.1" .BASE_TAG}}'
 
   IMAGE_NAME: '{{default "argocd-rig" .IMAGE_NAME}}'
-  IMAGE_TAG: '{{default "v3.3.12-rig1" .IMAGE_TAG}}'
+  IMAGE_TAG: '{{default "v3.5.1-rig1" .IMAGE_TAG}}'
   REGISTRY_IMAGE: '{{default "ghcr.io/minbzk/base-images/argocd-rig" .REGISTRY_IMAGE}}'
 
   # Lokaal bouwen we voor de host-arch (kind draait op dezelfde arch als de Mac),

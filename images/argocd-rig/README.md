@@ -1,21 +1,26 @@
-# argocd-rig — eigen Argo CD image met namespace-sync fixes
+# argocd-rig — eigen Argo CD image met namespace-sync en health-fixes
 
-Upstream Argo CD **v3.3.12** plus twee patches die voorkomen dat de cluster-cache stukloopt
-(en namespaces uit de cache verdwijnen) als één namespace weggaat of RBAC-restricted is.
+Upstream Argo CD **v3.5.1** plus patches: twee die voorkomen dat de cluster-cache stukloopt
+(en namespaces uit de cache verdwijnen) als één namespace weggaat of RBAC-restricted is, en
+één die `status.health` in de Application CR direct bijwerkt bij cluster-events, zodat de
+API dezelfde (verse) gezondheid rapporteert als de UI-tree.
 
-Productie draait nu de Red Hat build van v3.3.12
-(`registry.redhat.io/openshift-gitops-1/argocd-rhel9@sha256:5058a825...`). Die is gewoon
-upstream v3.3.12 zonder downstream patches, dus deze patches landen exact op de draaiende code.
+De vorige iteratie van deze image (`v3.3.12-rig1`, branch `rig/ns-sync`) was gebaseerd op
+v3.3.12, gelijk aan de Red Hat build die productie draait
+(`registry.redhat.io/openshift-gitops-1/argocd-rhel9@sha256:5058a825...`). De v3.5-basis
+loopt dus vóór op de vendor-build in productie; eerst in `sandboxed-local` draaien.
 
 Relevant omdat `argocd-default-cluster-config` 47 namespaces in het `namespaces`-veld heeft:
-we draaien in **namespace-mode**, precies het pad dat de bug raakt.
+we draaien in **namespace-mode**, precies het pad dat de cache-bug raakt.
 
 ## Inhoud van de patches
 
 | Patch | Herkomst |
 |---|---|
-| `0001-cherry-pick-PR-27528.patch` | Upstream PR [argoproj/argo-cd#27528](https://github.com/argoproj/argo-cd/pull/27528) — cluster sync blijft leven als een namespace verdwijnt of RBAC-restricted is. Eén triviaal conflict opgelost bij de cherry-pick (de syncLock-refactor is master-only). |
+| `0001-cherry-pick-PR-27528.patch` | Upstream PR [argoproj/argo-cd#27528](https://github.com/argoproj/argo-cd/pull/27528) — cluster sync blijft leven als een namespace verdwijnt of RBAC-restricted is. Nog steeds niet gemerged upstream (ook niet in release-3.5); paste schoon toe op v3.5.1. |
 | `0002-fix-drop-stranded-GVK-on-error-and-cap-sync-warnings.patch` | Twee fixes uit onze review op die PR, met regressietests (groen onder `-race`): (1) GVK wordt uit `apisMeta` verwijderd bij een error in `startMissingWatches`, anders blijft die tot de volgende full resync ongewatcht; (2) cap op sync-warnings (max 50 + "... and N more"), anders groeit `ConnectionState.Message` bij 47 namespaces naar honderden KB's. |
+| `0003-fix-refresh-app-health-from-cluster-cache-on-tree-on.patch` | Eigen fix: het tree-only refreshpad van de application-controller (cluster-events op child-resources, zoals pods die Ready worden) herberekent nu ook `status.health`, via dezelfde `setApplicationHealth` als het volledige vergelijkingspad. Daarvoor bleef de health in de CR — wat de API serveert — achterlopen op de resource tree die de UI toont, tot de volgende volledige comparison. Met regressietest (`TestTreeOnlyRefreshUpdatesHealth`). Kandidaat om te upstreamen (issue nodig). |
+| `0004-test-adapt-carried-cache-tests-to-release-3.5-base.patch` | Aanpassing van de meegenomen tests aan de v3.5-basis (kubetest-importpad, `strings`-import in `cluster_test.go`). |
 
 Niet meegenomen: PR [#25229](https://github.com/argoproj/argo-cd/pull/25229) (incremental namespace
 sync, achter feature flag `ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC`). Die botst qua ontwerp met
@@ -28,8 +33,8 @@ De patches zijn de bron van waarheid: `task src:verify` bewijst dat de build-wor
 ## Gebruik
 
 De image wordt gebouwd uit een **git worktree** van de argo-cd checkout, standaard
-`../../../argo-cd-rig` naast deze repo, op branch `rig/ns-sync`. Bestaat die branch niet
-(bijv. op een andere machine), dan bouwt `task src:prepare` hem op uit tag `v3.3.12` + `patches/`.
+`../../../argo-cd-rig` naast deze repo, op branch `rig/ns-sync-3.5`. Bestaat die branch niet
+(bijv. op een andere machine), dan bouwt `task src:prepare` hem op uit tag `v3.5.1` + `patches/`.
 
 ```bash
 cd images/argocd-rig
