@@ -31,7 +31,7 @@ from tests.e2e.helpers.lifecycle import (
     create_project_via_wizard,
 )
 from tests.e2e.helpers.project_actions import delete_project_via_ui
-from tests.e2e.helpers.wizard import _unique_project_name
+from tests.e2e.helpers.wizard import unique_project_name
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def lifecycle_project(
     Yields the project name, its API key, and its first deployment name. Tears
     down with a best-effort API delete in case the UI-delete test did not run.
     """
-    display_name = _unique_project_name()
+    display_name = unique_project_name()
     page = sandbox_context.new_page()
     created: CreatedProject | None = None
     try:
@@ -119,7 +119,7 @@ def disposable_project(
             page,
             sandbox_url,
             forgejo,
-            _unique_project_name(),
+            unique_project_name(),
             user_email=SANDBOX_TEST_USER["email"],
         )
         yield created

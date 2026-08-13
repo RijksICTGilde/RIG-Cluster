@@ -31,7 +31,7 @@ from opi.services.catalog.base import DeploymentManifestContext
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from tests.e2e.helpers.tekst import veld
-from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
+from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -154,7 +154,7 @@ def _project_from_wizard(app_server: str, page: Page, captured: list[str], rule_
     """Run the create wizard with one cross-domain rule and return the project it produced."""
     wizard = WizardHelper(page, app_server)
     wizard.open_create_wizard()
-    wizard.fill_identity(display_name=_unique_project_name("cda"), description="cross-domain chain")
+    wizard.fill_identity(display_name=unique_project_name("cda"), description="cross-domain chain")
     wizard.click_next()
     wizard.fill_services([SERVICE])
     _walk(wizard, page, until=STEP)

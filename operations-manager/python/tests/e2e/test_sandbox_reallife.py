@@ -48,7 +48,7 @@ from tests.e2e.helpers.lifecycle import (
     CreatedProject,
     create_project_via_wizard,
 )
-from tests.e2e.helpers.wizard import _unique_project_name, veldbesturing
+from tests.e2e.helpers.wizard import unique_project_name, veldbesturing
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ def reallife_projects(
     projects: list[CreatedProject] = []
     try:
         for i in range(PROJECT_COUNT):
-            display_name = _unique_project_name(prefix=f"rl{i}")
+            display_name = unique_project_name(prefix=f"rl{i}")
             project = create_project_via_wizard(
                 page,
                 sandbox_url,
