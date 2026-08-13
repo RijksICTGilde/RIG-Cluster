@@ -45,7 +45,7 @@
         {# 1 + 2 + 3: kop, omschrijving, API-naam - samen een blok, net als in het origineel #}
         <c-stack gap="xs">
             <c-cluster gap="sm" align="center">
-                <c-icon icon="{{ service.icon }}" color="{{ service.color }}" size="lg" />
+                <c-icon icon="{{ service.icon | nldd_icon }}" color="{{ service.color }}" size="lg" />
                 <c-heading type="h3" size="5" label="{{ service.label }}" />
                 {% if service.help_template %}
                     {% set help_js = "event.stopPropagation(); openServiceHelp('" ~ service.help_template ~ "')" %}

@@ -15,7 +15,9 @@
     type="{{ submit.kind|e }}"
     label="{{ submit.label|e }}"
     :show-icon="(submit.icon_position if submit.icon else none)"
-    :icon="submit.icon or none"
+    {# Door nldd_icon: een verzendknop kan een ROOS-naam dragen (SubmitButton.icon is
+       vrije tekst uit de formulierdefinitie) en die rendert onvertaald als een lege plek. #}
+    :icon="(submit.icon | nldd_icon) or none"
     :class="submit.css_class or none"
     :attrs="submit.attributes or {}"
 />
