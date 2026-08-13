@@ -29,9 +29,13 @@ rules:
   # Prometheus/kubelet scrape endpoints onder dezelfde SA.
   - nonResourceURLs: [/metrics, /metrics/cadvisor]
     verbs: [get]
-  # Deploy-status + OOM watcher leest deployments.
+  # Deploy-status + OOM watcher leest deployments. De watcher leest ook replicasets:
+  # daarmee bepaalt hij de pod-template-hash van de HUIDIGE ReplicaSet, zodat een pod
+  # van een vervangen ReplicaSet niet meetelt. Zonder dat recht faalt die lookup met
+  # Forbidden en valt hij terug op "alle pods", wat een oude OOM-kill kan doorgeven
+  # aan het auto-tunen.
   - apiGroups: [apps]
-    resources: [deployments]
+    resources: [deployments, replicasets]
     verbs: [get, list]
   # Events voor deploy-progress en diagnostics.
   - apiGroups: [""]
