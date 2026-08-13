@@ -423,11 +423,26 @@ def build_deployment_status_column(
 #: Het project is waar je bent, het tabblad is wat je erbinnen bekijkt, en zo leest het
 #: pad ook. De oude vorm (``/projects/deployments/<naam>``) verwijst door, zodat gedeelde
 #: links blijven werken.
+#:
+#: SERVICES EN TOEGANG ZIJN TWEE DINGEN (RC-101). Services gaat over BEHEER: welke
+#: diensten staan aan, wat doen ze, hoe zijn ze gebonden, en waar zet je ze aan of uit.
+#: Toegang gaat over GEBRUIK: de adressen, sleutels en bestanden die de diensten je
+#: aanreiken - het Keycloak-realm met zijn console, gebruikersnaam, wachtwoord en OTP, de
+#: uitnodigingslinks waarmee je iemand anders binnenlaat, en de geuploade bestanden
+#: (certificaten) die een component meekrijgt. Ze stonden tussen de rest van Overzicht,
+#: terwijl je er juist naartoe gaat als je iets nodig hebt.
+#:
+#: "Toegang" en niet "Services gebruik": gebruik leest als verbruik of kosten. Overwogen
+#: en afgevallen: "Servicegegevens" (klopt, maar staat naast "Services" in dezelfde balk
+#: en die twee zijn dan niet uit elkaar te houden) en "Aansluiten" (een werkwoord tussen
+#: zelfstandige naamwoorden, en bijlagen sluit je nergens op aan). Zie
+#: features/toegang-tabblad.md voor de afweging.
 PROJECT_TABS = {
     "project": {"label": "Overzicht", "path": "details"},
     "team": {"label": "Team", "path": "team"},
     "componenten": {"label": "Componenten", "path": "componenten"},
     "services": {"label": "Services", "path": "services"},
+    "toegang": {"label": "Toegang", "path": "toegang"},
     "deployments": {"label": "Deployments", "path": "deployments"},
     "metrics": {"label": "Metrics", "path": "metrics"},
     "backups": {"label": "Backups", "path": "backups"},
@@ -436,6 +451,17 @@ PROJECT_TABS = {
 
 #: Het tabblad waar een onbekend (of ontbrekend) tabblad op uitkomt.
 STANDAARD_TAB = next(iter(PROJECT_TABS))
+
+#: De tabbladen die er alleen zijn als ze iets te tonen hebben (RC-101).
+#:
+#: Toegang draagt de blokken die de DIENSTEN zelf leveren, en een project dat geen dienst
+#: met zo'n blok gebruikt heeft er dus niets staan. Een tabblad dat een lege pagina opent
+#: is een belofte die niet waargemaakt wordt; dan hoort hij niet in de balk.
+#:
+#: Welke tabbladen dat zijn staat hier en niet in het sjabloon, zodat de tabbalk en de
+#: route (die op zo'n leeg tabblad doorverwijst naar Overzicht) het over dezelfde regel
+#: hebben.
+TABS_MET_VOORWAARDE = ("toegang",)
 
 #: De tabbladen die EEN deployment tegelijk tonen, en die hem daarom in hun PAD dragen:
 #: ``/projects/<project>/deployments/<deployment>``.
@@ -513,6 +539,7 @@ def build_lotc_project_details(
     user: dict[str, Any] | None,
     project: dict[str, Any],
     deployment_open: str = "",
+    lege_tabs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """De ECHTE projectgegevens, in de vorm die de pagina met tabs leest.
 
@@ -528,6 +555,10 @@ def build_lotc_project_details(
     Het resourcegebruik zit hier NIET in. De bestaande pagina laadt dat apart met htmx,
     zodat een trage Prometheus de pagina niet ophoudt, en dat blijft zo - het fragment
     kent zijn eigen LOTC-weergave.
+
+    ``lege_tabs`` zijn de voorwaardelijke tabbladen (:data:`TABS_MET_VOORWAARDE`) die voor
+    DIT project niets te tonen hebben; ze blijven uit de balk. De route bepaalt dat, want
+    daar is bekend wat de diensten leveren.
     """
     from opi.web.navigation_lotc import get_navigation
 
@@ -540,6 +571,7 @@ def build_lotc_project_details(
         "tabs": {
             tab: {**gegevens, "url": project_tab_url(project["name"], tab, deployment=deployment_open)}
             for tab, gegevens in PROJECT_TABS.items()
+            if tab not in lege_tabs
         },
         "active_tab": active_tab,
         "project": project,

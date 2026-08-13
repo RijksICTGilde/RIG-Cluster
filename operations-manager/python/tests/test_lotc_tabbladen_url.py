@@ -159,6 +159,8 @@ def test_het_pad_met_een_deployment_wijst_nog_steeds_zijn_tabblad_aan() -> None:
 #: in de sandbox in gebruik geweest en kunnen gedeeld zijn.
 OUDE_ADRESSEN = {
     "/projects/details/demo": "/projects/demo/details",
+    "/projects/team/demo": "/projects/demo/team",
+    "/projects/toegang/demo": "/projects/demo/toegang",
     "/projects/componenten/demo": "/projects/demo/componenten",
     "/projects/services/demo": "/projects/demo/services",
     "/projects/deployments/demo": "/projects/demo/deployments",
@@ -188,6 +190,29 @@ def test_het_oude_adres_verwijst_door_naar_het_nieuwe(client: TestClient, oud: s
 
     assert antwoord.status_code == 302, f"{oud} verwijst niet door"
     assert antwoord.headers["location"] == nieuw
+
+
+def test_elke_geregistreerde_oude_vorm_verwijst_ook_echt_door(client: TestClient) -> None:
+    """De routes en de vertaaltabel worden met de HAND naast elkaar gehouden, en dat liep
+    uit de pas: ``/projects/team/<naam>`` stond wel als route geregistreerd maar niet in
+    OUDE_TABBLADPADEN, dus die zoekopdracht wierp een KeyError en het adres gaf een 500 in
+    plaats van een doorverwijzing (gevonden en gerepareerd in RC-101).
+
+    Daarom worden de routes hier ZELF afgelopen: elke oude vorm die geregistreerd staat
+    moet ook doorverwijzen, hoe de tabel er ook uitziet.
+    """
+    oude_vormen = sorted(
+        route.path
+        for route in web_router.routes
+        if getattr(route, "endpoint", None) is not None
+        and route.endpoint.__name__ == "project_tab_oude_vorm"
+        and "{deployment_name}" not in route.path
+    )
+
+    assert oude_vormen, "geen enkele oude vorm gevonden; deze meting kijkt naar de verkeerde routes"
+    for pad in oude_vormen:
+        antwoord = client.get(pad.replace("{project_name}", "demo"), follow_redirects=False)
+        assert antwoord.status_code == 302, f"{pad} verwijst niet door (status {antwoord.status_code})"
 
 
 def test_de_zoekopdracht_reist_mee_in_de_doorverwijzing(client: TestClient) -> None:
