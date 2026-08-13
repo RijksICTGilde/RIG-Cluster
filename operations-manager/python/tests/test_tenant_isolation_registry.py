@@ -186,6 +186,33 @@ class TestReadOwnership:
         data = self._project_with_image(f"{PLATFORM_REPO}:backend-latest")
         assert validate_platform_registry_image_ownership(data) == []
 
+    def test_an_uppercase_host_is_still_the_platform_registry(self):
+        """A hostname is case-insensitive, so shouting it must not dodge the check."""
+        image = f"{REGISTRY_URL.upper()}/{REGISTRY_ORG}:{PROJECT_B}_backend-latest"
+        errors = validate_platform_registry_image_ownership(self._project_with_image(image))
+        assert len(errors) == 1
+        assert PROJECT_B in errors[0]
+
+    def test_an_explicit_https_port_is_still_the_platform_registry(self):
+        """':443' is the port the reference already implies, not another registry."""
+        image = f"{REGISTRY_URL}:443/{REGISTRY_ORG}:{PROJECT_B}_backend-latest"
+        errors = validate_platform_registry_image_ownership(self._project_with_image(image))
+        assert len(errors) == 1
+        assert PROJECT_B in errors[0]
+
+    def test_a_digest_reference_into_the_platform_registry_is_refused(self):
+        """A digest names an image in the shared repo without naming its owner."""
+        digest = "sha256:" + "ab" * 32
+        for image in (f"{PLATFORM_REPO}@{digest}", f"{PLATFORM_REPO}:{PROJECT_A}_backend-latest@{digest}"):
+            errors = validate_platform_registry_image_ownership(self._project_with_image(image))
+            assert len(errors) == 1, image
+            assert "digest" in errors[0]
+
+    def test_a_digest_outside_the_platform_registry_stays_free(self):
+        digest = "sha256:" + "ab" * 32
+        image = f"ghcr.io/rijksictgilde/algoritmeregister/backend@{digest}"
+        assert validate_platform_registry_image_ownership(self._project_with_image(image)) == []
+
     def test_images_outside_the_platform_registry_are_not_judged(self):
         for image in (
             "ghcr.io/rijksictgilde/algoritmeregister/backend:project-b_thing-v1",
