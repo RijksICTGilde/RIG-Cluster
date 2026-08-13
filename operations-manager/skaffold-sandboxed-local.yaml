@@ -37,6 +37,13 @@ build:
         strip: 'operations-manager/python/static/'
 
 deploy:
+  # VASTGEPIND op het kind-cluster, en niet alleen op de commandoregel van de taak.
+  # Zonder dit volgt skaffold de ACTIEVE kubectl-context, en die staat hier geregeld op
+  # productie; dan gaan de sync en de deploy daarheen terwijl je naar de sandbox zit te
+  # kijken en je wijzigingen nergens aankomen. De taak geeft --kube-context al mee, maar
+  # dat helpt niet als dit bestand vanuit de IDE of met een kale `skaffold dev -f` wordt
+  # gestart. Hier hoort het, want het is een eigenschap van deze configuratie.
+  kubeContext: kind-rig-sandbox
   statusCheckDeadlineSeconds: 0
   kustomize:
     flags:
