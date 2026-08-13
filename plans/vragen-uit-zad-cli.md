@@ -1184,3 +1184,97 @@ deployment-endpoint ook geeft, en het is de vorm waarop jullie afgaan.
 Vastgelegd in `tests/test_refresh_verzint_geen_webadres.py`: `p1-wan` met een `worker` zonder
 publish-on-web levert een lege map op, de refresh-kant en het deployment-endpoint geven per
 constructie hetzelfde, en de oude afleiding uit de naamgeving laat die eerste toets vallen.
+
+---
+
+# Hertest op de sandbox, 13 augustus, eind van de middag
+
+Er draait nieuwe code: hetzelfde commit `5c026ecc`, maar `dirty: true` en een ander image
+(`b90dd304…` tegen `f7d955e1…` vanmiddag). Dat de hash gelijk bleef terwijl het gedrag
+veranderde is precies waarvoor jullie `image` hebben toegevoegd; zonder dat veld hadden wij
+geconcludeerd dat er niets nieuws stond.
+
+**Wat wij nagemeten hebben en werkt:**
+
+| Punt | Stand |
+|---|---|
+| 7 + 10 restore zonder doel | **opgelost.** `success: true`, teruggezet in `v1_kew_productie`. De 404 bij een verkeerde naam noemt nu ook wat er wél is |
+| 9 + 11 fouttoekenning bij een onbereikbaar doel | **opgelost.** HTTP 400 in plaats van 500, en `error_category: InvalidTarget`. Onze kant maakt daar exit 1 van, "jouw invoer" |
+| 12 publish-on-web | **opgelost.** Gaat er gewoon op |
+| 13 refresh noemde een URL die 404 gaf | **opgelost.** Alleen componenten met een ingress krijgen er een |
+| 6 een nieuw project | onveranderd: 202, en de sleutel geeft nog ~2 seconden 401. Blokkeert niets meer, want wij wachten |
+
+Twee dingen die de hertest opleverde.
+
+## 10b. `backup list` en de foutmelding noemen verschillende namen
+
+De 404 zegt nu netjes wat er wél is, en dat is een grote vooruitgang. Alleen komt die naam
+niet overeen met die van `backup list`:
+
+```sh
+zad backup list productie -o json | jq -c '[.runs[].items[].reference_name] | unique'
+# ["productie-postgresql"]     <- deze werkt
+
+curl -X POST -H "X-API-Key: $KEY" -d '{}' "$BASE/v1/restore/database/$CLUSTER/$NS/backup?project_name=$P"
+# 404 "... This project has: 'productie-database'. ..."   <- deze bestaat niet als referentie
+```
+
+`productie-postgresql` doet het, `productie-database` niet. De suggestie wijst dus naar een
+naam die je vervolgens niet kunt gebruiken, wat een gebruiker een ronde extra kost precies
+op het moment dat hij al iets fout deed.
+
+**Onze vraag:** kan de suggestie dezelfde namen noemen als `backup list` teruggeeft?
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
+
+---
+
+## 8b. Het venster uit vraag 8 bestaat, en `describe` dekt het toe
+
+Vraag 8 vroeg of een wijziging die tijdens een lopende refresh wordt opgeslagen erin
+meegaat. Vanmiddag wel; nu niet, en dat is nuttiger dan een ja.
+
+```sh
+TA=$(zad --no-wait project refresh -o json | jq -r .task_id)
+zad component assign laatkomer productie --image $IMG --no-rollout   # tijdens TA
+TB=$(zad --no-wait project refresh -o json | jq -r .task_id)
+test "$TA" = "$TB"          # klopt: samengevoegd, geen tweede taak
+# ... TA loopt af als 'completed' ...
+```
+
+Daarna:
+
+```sh
+zad project pending -o json
+# {"count":1,"task_types":["add_component_to_deployment"]}     <- goed: hij weet het
+
+curl -o /dev/null -w '%{http_code}\n' https://laatkomer-productie-v1-kew.sandbox.rijksapp.dev/status
+# 404                                                          <- klopt, nog niet uitgerold
+
+zad deployment describe productie -o json | jq -c .urls
+# {"frontend":"https://…","laatkomer":"https://laatkomer-productie-v1-kew…"}   <- en dit niet
+```
+
+Een tweede `project refresh` zet `pending` op 0 en het adres op 200.
+
+**Twee dingen, en het eerste is goed nieuws.** `pending` klopt: de samengevoegde taak neemt
+een wijziging van ná zijn start niet mee, en dat is eerlijk zichtbaar. Wij hadden gevreesd
+dat `pending` op 0 zou springen, en dat doet hij niet.
+
+**Wat wel misleidt is `deployment describe`**: die noemt een URL voor een component dat nog
+niet is uitgerold. Dat is dezelfde vorm als punt 13, maar dan andersom — daar verzon
+`:refresh` een adres voor iets zonder ingress, hier noemt `describe` er een voor iets dat er
+nog niet is. Iemand die na een refresh de adressen naloopt krijgt er een die 404 geeft, en
+gaat dat in zijn eigen stappen zoeken.
+
+**Onze vraag:** hoort `urls` in `describe` de gewenste of de werkelijke toestand te
+beschrijven? Als het de gewenste is, dan is dat verdedigbaar, maar dan willen wij het
+kunnen zien — bijvoorbeeld doordat het veld leeg blijft tot de ingress bestaat, of doordat
+er iets naast staat dat zegt dat er nog werk wacht. Wij tonen dit veld ongewijzigd en gaan
+niet raden.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
