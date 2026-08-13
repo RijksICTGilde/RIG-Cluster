@@ -1,0 +1,19 @@
+{#
+  De schrijfwijze van CPU en geheugen, op EEN plek.
+
+  Twee kaarten tonen dezelfde soort getallen: "Resourcegebruik (heel project)" op de
+  projectpagina (bg/_resource-usage.html.j2) en "Gebruik per project" op het dashboard
+  (bg/_dashboard-usage.html.j2). Ze horen 512 MiB ook allebei als "512 MiB" te schrijven.
+
+  Daarom staan de macro's hier en niet in een van beide kaarten. Een kopie in de tweede
+  kaart zou het vandaag goed doen en morgen uit de pas lopen; en importeren UIT de
+  projectkaart zou de ene kaart aan de andere hangen, terwijl geen van tweeen de eigenaar
+  van deze schrijfwijze is. Een eigen bestand heeft geen van beide problemen.
+
+  cores(v): onder een core in millicores (30m), daarboven in cores met een decimaal (22.5).
+  gib(v):   v is in BYTES. Onder 0,1 GiB in MiB, daarboven in GiB met een decimaal.
+
+  Zonder deze twee staat er op elke regel een rij nullen (0.0300000001 cores).
+#}
+{% macro cores(v) %}{% if v < 1 %}{{ (v * 1000) | round | int }}m{% else %}{{ '%.1f' | format(v) }}{% endif %}{% endmacro %}
+{% macro gib(v) %}{% if (v / 1073741824) < 0.1 %}{{ (v / 1048576) | round | int }} MiB{% else %}{{ '%.1f' | format(v / 1073741824) }} GiB{% endif %}{% endmacro %}

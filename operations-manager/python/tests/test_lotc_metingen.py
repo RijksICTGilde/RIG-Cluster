@@ -350,10 +350,28 @@ def _dashboard(**extra: Any) -> str:
         "metrics": metrics,
         "prometheus_available": True,
         "projects": [
-            {"name": "a", "display_name": "Project A", "cpu_cores": 0.03},
-            {"name": "b", "display_name": "Project B", "cpu_cores": 0.01},
+            {
+                "name": "a",
+                "display_name": "Project A",
+                "cpu_cores": 0.03,
+                "cpu_limit_cores": 1.0,
+                "memory_mb": 64.0,
+                "memory_limit_mb": 512.0,
+            },
+            {
+                "name": "b",
+                "display_name": "Project B",
+                "cpu_cores": 0.01,
+                "cpu_limit_cores": 2.0,
+                "memory_mb": 2048.0,
+                "memory_limit_mb": 4096.0,
+            },
+            # Een project waar Prometheus nog niets over zei. Het draagt de sleutels dus
+            # NIET, en dat is precies het geval waarop dit sjabloon eerder omviel.
+            {"name": "c", "display_name": "Project C"},
         ],
         "total_cpu_usage": 0.04,
+        "total_memory_usage": 2112.0,
     }
     context.update(extra)
     return _render(DASHBOARD_TEMPLATE, context)
@@ -372,12 +390,125 @@ def test_netwerkverkeer_met_meetpunten_tekent_wel() -> None:
     assert "geen netwerkverkeer gemeten" not in _tekst(html)
 
 
-def test_de_verdeling_over_projecten_heeft_een_legenda() -> None:
-    """Een balk met alleen een projectnaam zegt niet hoeveel het is en waarvan het het
-    aandeel is. De bestaande kaart zet er ``0.030 cores (12.3%)`` bij; die schrijfwijze."""
+# --- Gebruik per project (de kaart onder Resourcegebruik) ------------------------------
+#
+# Op deze kaart stond geen enkele test, en dat is waarom hij drie keer mis kon gaan zonder
+# dat er iets rood werd: een kop zonder inhoud, een kaart die zonder uitleg verdween, en
+# een sjabloon dat omviel op een project zonder meting.
+
+
+def test_per_project_staan_geheugen_en_cpu_in_de_vorm_van_de_projectkaart() -> None:
+    """Gebruikt / limiet met een percentage, precies zoals op de projectpagina.
+
+    De balk is het gebruik ten opzichte van de LIMIET van dat project, niet het aandeel
+    van het clustertotaal: een project op 95% van zijn geheugen is een probleem, ook als
+    het maar 3% van het cluster gebruikt.
+    """
     tekst = _tekst(_dashboard())
-    assert "Project A 0.030 cores (75.0%)" in tekst, tekst
-    assert "Project B 0.010 cores (25.0%)" in tekst, tekst
+
+    assert "Geheugen (in gebruik) 2.0 GiB / 4.0 GiB (50%)" in tekst, tekst
+    assert "CPU 10m / 2.0 cores (0%)" in tekst, tekst
+    # 512 MiB is boven 0,1 GiB en wordt dus als GiB geschreven - dezelfde grens als op de
+    # projectkaart, want het is dezelfde macro.
+    assert "Geheugen (in gebruik) 64 MiB / 0.5 GiB (12%)" in tekst, tekst
+    assert "CPU 30m / 1.0 cores (3%)" in tekst, tekst
+
+
+def test_de_volgorde_is_aflopend_op_geheugen() -> None:
+    """Geheugen is waar een pod op omvalt; wat daar het meeste van gebruikt staat boven.
+
+    Project B gebruikt MINDER CPU dan A en meer geheugen, dus de sortering is alleen aan
+    de volgorde te zien en niet aan toeval.
+    """
+    tekst = _tekst(_dashboard())
+
+    assert tekst.index("Project B") < tekst.index("Project A"), tekst
+
+
+def test_een_project_zonder_meting_laat_de_kaart_niet_omvallen() -> None:
+    """De omgeving staat op StrictUndefined: een sleutel die ontbreekt is geen lege waarde.
+
+    ``selectattr('memory_mb', 'defined')`` en ``sort(attribute='memory_mb')`` vallen daar
+    al op om bij het LEZEN. Project C draagt geen enkele meetsleutel en hoort simpelweg
+    niet in de lijst te staan.
+    """
+    tekst = _tekst(_dashboard())
+
+    assert "Project A" in tekst
+    assert "Project C" not in tekst, tekst
+
+
+def test_zonder_metingen_staat_de_kaart_er_met_een_melding() -> None:
+    """Niet een kop zonder inhoud, en niet een kaart die verdwijnt.
+
+    De guard telt de REGELS en niet het totaal: op het totaal stond hij eerder, en toen
+    toonde de kaart zijn kop met daaronder niets omdat het totaal net boven nul stond
+    terwijl geen enkel project door de lus kwam. Een kaart die zonder uitleg weg is leest
+    als kapot.
+    """
+    tekst = _tekst(_dashboard(projects=[{"name": "c", "display_name": "Project C"}], total_cpu_usage=0.0))
+
+    assert "Gebruik per project" in tekst, tekst
+    assert "Nog geen metingen per project" in tekst, tekst
+    assert "Project C" not in tekst, tekst
+
+
+def test_zonder_limiet_geen_percentage_en_geen_balk_per_project() -> None:
+    """Dezelfde regel als op de projectkaart: een balk zonder schaal is geen meting."""
+    html = _dashboard(
+        projects=[{"name": "a", "display_name": "Project A", "cpu_cores": 0.03, "memory_mb": 64.0}],
+        total_cpu_usage=0.03,
+    )
+    tekst = _tekst(html)
+
+    assert "Geheugen (in gebruik) 64 MiB" in tekst, tekst
+    assert "CPU 30m cores" in tekst, tekst
+    assert "%)" not in tekst.split("Gebruik per project", 1)[1], tekst
+    assert "progress-bar" not in html.split("Gebruik per project", 1)[1]
+
+
+def test_beide_kaarten_schrijven_dezelfde_getallen_hetzelfde() -> None:
+    """De schrijfwijze komt uit EEN bestand, anders lopen twee kaarten uit de pas.
+
+    64 MiB is op beide plekken "64 MiB", 2 GiB is "2.0 GiB" en 0,03 core is "30m".
+    """
+    projectkaart = _tekst(
+        _render(
+            GEBRUIK_TEMPLATE,
+            {
+                "usage": {
+                    "deployments": 1,
+                    "pods": 1,
+                    "cpu_used": 0.03,
+                    "cpu_limit": 1.0,
+                    "cpu_pct": 3,
+                    "mem_used": 64 * 1048576,
+                    "mem_limit": 2 * 1073741824,
+                    "mem_pct": 3,
+                },
+                "usage_error": None,
+            },
+        )
+    )
+    dashboard = _tekst(
+        _dashboard(
+            projects=[
+                {
+                    "name": "a",
+                    "display_name": "Project A",
+                    "cpu_cores": 0.03,
+                    "cpu_limit_cores": 1.0,
+                    "memory_mb": 64.0,
+                    "memory_limit_mb": 2048.0,
+                }
+            ],
+            total_cpu_usage=0.03,
+        )
+    )
+
+    for regel in ("64 MiB", "2.0 GiB", "30m", "1.0 cores"):
+        assert regel in projectkaart, regel
+        assert regel in dashboard, regel
 
 
 def test_het_percentage_staat_er_maar_een_keer() -> None:
