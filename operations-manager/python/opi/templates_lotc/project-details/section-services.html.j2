@@ -17,7 +17,7 @@
                     <c-cluster justify="between" align="center" class="service-header">
                         {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
                         <div>
-                            <c-heading type="h3"><c-icon icon="{{ service_def.icon }}" size="xl" color="{{ service_def.color }}"/>{{ service_def.name }}</c-heading>
+                            <c-heading type="h3"><c-icon icon="{{ service_def.icon | nldd_icon }}" size="xl" color="{{ service_def.color }}"/>{{ service_def.name }}</c-heading>
                             <div class="service-scope">{{ service_binding_label(service.enum) }}</div>
                         </div>
                     </c-cluster>

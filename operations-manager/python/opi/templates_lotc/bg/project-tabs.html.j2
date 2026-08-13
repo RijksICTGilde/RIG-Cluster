@@ -540,7 +540,10 @@
 
         {# ---- Helm Charts (section-helm-charts.html.j2) ----------------------- #}
         {% if project.helm_charts %}
-            {% call panel("Helm Charts", "folder-stack", info_text="Helm chart definities op project niveau") %}
+            {# folder, niet folder-stack: die tweede naam bestaat in de NLDD-bundel maar
+               LOTC herschrijft hem in icons.json naar folder-on-folder, en DIE bestaat
+               niet. Het kopje rendeerde daardoor zonder icoon. #}
+            {% call panel("Helm Charts", "folder", info_text="Helm chart definities op project niveau") %}
                 <c-stack gap="md">
                     {% for helm_chart in project.helm_charts %}
                         <c-card outline padding="md">
