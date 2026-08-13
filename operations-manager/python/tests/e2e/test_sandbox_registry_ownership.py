@@ -27,7 +27,7 @@ import pytest
 from tests.e2e.conftest import FORGEJO_VERIFY_SSL, SANDBOX_TEST_USER
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.lifecycle import CreatedProject, create_project_via_wizard
-from tests.e2e.helpers.wizard import _unique_project_name
+from tests.e2e.helpers.wizard import unique_project_name
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def _create(sandbox_context: BrowserContext, sandbox_url: str, forgejo: ForgejoC
             page,
             sandbox_url,
             forgejo,
-            _unique_project_name(),
+            unique_project_name(),
             user_email=SANDBOX_TEST_USER["email"],
         )
         yield created

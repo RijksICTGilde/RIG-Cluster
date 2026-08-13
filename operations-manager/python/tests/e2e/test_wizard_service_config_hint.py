@@ -20,7 +20,7 @@ import pytest
 from opi.services.config_location import project_step_config_hint
 from opi.services.services_enums import ServiceType
 from playwright.sync_api import expect
-from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
+from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -61,7 +61,7 @@ def _tick(page: Page, service: ServiceType, *, expect_selected: bool) -> None:
 def _open_services_step(page: Page, app_server: str) -> WizardHelper:
     wizard = WizardHelper(page, app_server)
     wizard.open_create_wizard()
-    wizard.fill_identity(display_name=_unique_project_name(), description="config hint")
+    wizard.fill_identity(display_name=unique_project_name(), description="config hint")
     wizard.click_next()
     page.wait_for_load_state("networkidle")
     return wizard

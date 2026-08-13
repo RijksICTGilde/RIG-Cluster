@@ -28,7 +28,7 @@ from tests.e2e.helpers.lifecycle import (
     project_name_from_progress,
     walk_create_wizard_with_services,
 )
-from tests.e2e.helpers.wizard import _unique_project_name
+from tests.e2e.helpers.wizard import unique_project_name
 
 BASIS = os.environ.get("ZAD_SANDBOX_URL", "https://zad.sandbox.rijksapp.dev")
 GEBRUIKER = os.environ.get("ZAD_SANDBOX_USER", "admin")
@@ -115,7 +115,7 @@ def main() -> int:
             naam = a.project
             print(f"[doorloop] bestaand project: {naam}")
         else:
-            weergavenaam = _unique_project_name()
+            weergavenaam = unique_project_name()
             print(f"[doorloop] wizard: {weergavenaam}")
             walk_create_wizard_with_services(
                 page,
