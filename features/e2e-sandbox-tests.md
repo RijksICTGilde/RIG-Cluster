@@ -117,6 +117,18 @@ The rule of thumb: assert against Forgejo for *what was stored*, against the tas
 *how it ended*, and against the cluster for *what it rendered*. Reaching for a `sleep` in place
 of any of the three is what makes a test green through a broken run.
 
+### When only an outside caller can see the fault
+
+`tests/e2e/test_sandbox_restore_van_buiten.py` walks the whole restore road the way the
+zad-cli walks it: create a project with a database and a bucket, back it up, take the
+reference name **out of the read endpoint**, and restore with it. Two rounds of fixes
+(RC-81, RC-82) were unit-tested green while the road stayed impassable, because the
+read side and the write side were each tested against their own idea of the name and
+never against each other. The suite asserts the handover: the name a caller can read is
+a name the restore route accepts, for both kinds, plus the failure classification
+(`InvalidTarget`) that only appears once the restore gets far enough to reach the
+destination gate.
+
 ## How to run
 
 ```bash

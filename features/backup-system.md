@@ -558,7 +558,26 @@ deployments:
 | `/var/lib/mysql` | `varlibmysql` |
 | `/app/uploads` | `appuploads` |
 
-**Database/Bucket reference_name**: Use the service reference name from your deployment configuration (e.g., `minio-storage`, `database`).
+**Database/Bucket reference_name**: the service reference the backup was registered
+under — a component service reference (`{deployment}-postgresql`, `{deployment}-minio`)
+or the deployment-wide fallback (`{deployment}-database`, `{deployment}-minio`).
+
+You do not have to derive it: both read endpoints publish exactly the name the restore
+endpoints accept.
+
+| Read endpoint | Field |
+|---|---|
+| `GET /api/v1/backup/runs/{project}/{deployment}` | `reference_name` |
+| `GET /api/v1/restore/snapshots/{cluster}/{namespace}` | `pvc_name` (carries every kind, PVC/database/bucket) |
+
+A database or bucket snapshot carries no `pvc` tag, so this listing used to fall back to
+the last segment of the snapshot's source path — `backup` for a database dump and
+`bucket-backup` for a mirrored bucket. Both endpoints published that directory name while
+the restore route wanted the reference, so no readable name was accepted (RC-95). The
+listing now reads the `database`/`bucket` tag for those kinds; a PVC keeps its `pvc` tag,
+which is what the PVC restore route takes.
+
+A reference no deployment carries answers 404, naming the references that do exist.
 
 ## Trigger metadata and retention isolation
 

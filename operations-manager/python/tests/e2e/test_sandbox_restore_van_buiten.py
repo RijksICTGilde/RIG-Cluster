@@ -145,6 +145,44 @@ def test_restore_van_buiten(restore_project: CreatedProject, sandbox_url: str) -
     )
     logger.info("RESTORE DOEL.INVALID %s %s", extern.status_code, extern.text[:2000])
 
+    bucketnamen = sorted(
+        {
+            item["reference_name"]
+            for run in runs.json().get("runs", [])
+            for item in run.get("items", [])
+            if item.get("resource_type") == "bucket"
+        }
+    )
+    logger.info("BUCKETNAMEN UIT BACKUP LIST: %s", bucketnamen)
+    assert bucketnamen, "backup list noemt geen enkele bucketbackup"
+
+    bucket = _api(
+        sandbox_url,
+        "POST",
+        f"/api/v1/restore/bucket/{_CLUSTER}/{namespace}/{bucketnamen[0]}?project_name={project}",
+        key,
+        json={},
+    )
+    logger.info("RESTORE EIGEN BUCKET %s %s", bucket.status_code, bucket.text[:2000])
+
+    # De oude, gepubliceerde mapnaam bestaat niet meer als referentie; de 404 daarop
+    # hoort te zeggen welke naam er dan wel is, zodat je niet hoeft te raden.
+    onbekend = _api(
+        sandbox_url,
+        "POST",
+        f"/api/v1/restore/database/{_CLUSTER}/{namespace}/backup?project_name={project}",
+        key,
+        json={},
+    )
+    logger.info("RESTORE ONBEKENDE NAAM %s %s", onbekend.status_code, onbekend.text[:1000])
+
+    # De snapshotlijst en de backuplijst noemen dezelfde naam, en dat is er een die werkt.
+    assert sorted(s["pvc_name"] for s in snaps.json()["snapshots"]) == sorted(names + bucketnamen)
     assert eigen.status_code == 200, f"restore zonder doelvelden faalde: {eigen.status_code} {eigen.text[:500]}"
+    assert bucket.status_code == 200, (
+        f"bucketrestore zonder doelvelden faalde: {bucket.status_code} {bucket.text[:500]}"
+    )
     assert extern.status_code == 400, f"doel.invalid gaf {extern.status_code}: {extern.text[:500]}"
     assert extern.json().get("error_category") == "InvalidTarget"
+    assert onbekend.status_code == 404
+    assert names[0] in onbekend.json()["detail"], onbekend.text
