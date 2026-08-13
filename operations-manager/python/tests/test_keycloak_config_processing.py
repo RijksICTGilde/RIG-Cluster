@@ -81,16 +81,16 @@ class TestKeycloakConfigExtraction:
         assert config["variables"] == {}
 
     def test_account_link_defaults_to_none_when_omitted(self):
-        """account-link omitted -> None (treated as stock 'verify' flow, opt-in)."""
+        """account-link omitted -> None (Keycloak's own flow; opt-in)."""
         project_data = {"name": "test-project", "services": [{"keycloak": {"config": {"template": "sso-only"}}}]}
 
         config = self.keycloak_manager._get_keycloak_service_config(project_data)
 
         assert config["account_link"] is None
 
-    @pytest.mark.parametrize("mode", ["automatic", "confirm", "verify"])
+    @pytest.mark.parametrize("mode", ["automatic", "confirm"])
     def test_account_link_accepts_valid_modes(self, mode):
-        """account-link accepts the three valid modes."""
+        """account-link accepts the two modes that do something."""
         project_data = {
             "name": "test-project",
             "services": [{"keycloak": {"config": {"template": "sso-only", "account-link": mode}}}],
@@ -109,6 +109,24 @@ class TestKeycloakConfigExtraction:
 
         with pytest.raises(ValueError, match="account-link must be"):
             self.keycloak_manager._get_keycloak_service_config(project_data)
+
+    def test_account_link_verify_blijft_verwerkbaar(self):
+        """Een bestaand projectbestand met de weggevallen stand blijft gewoon draaien.
+
+        ``verify`` deed niets - geen enkele tak in ``keycloak_yaml_handler`` keek ernaar -
+        en is daarom uit de enum, het schema en de keuzelijst gehaald. Hem daarna hard
+        afkeuren is het gevaarlijke deel: een waarde die niet meer valideert blokkeert elke
+        volgende verwerking van dat project, en dat gebeurt stil. Hij wordt dus gelezen als
+        "niets gekozen", en dat is precies wat hij al betekende.
+        """
+        project_data = {
+            "name": "test-project",
+            "services": [{"keycloak": {"config": {"template": "sso-only", "account-link": "verify"}}}],
+        }
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["account_link"] is None
 
 
 class TestKeycloakConfigValidation:
