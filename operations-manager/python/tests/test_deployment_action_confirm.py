@@ -207,9 +207,9 @@ async def test_the_route_takes_no_endpoint_from_the_request(service_with_an_acti
 
 
 def _fragment(action: DeploymentAction) -> str:
-    # bg/_action-confirm.html.j2 en niet project-details/action-confirm.html.j2: het
-    # eerste is wat de route rendert (zie deployment_action_confirm), het tweede is de
-    # eerste automatische omzetting van het oude sjabloon, die aan geen enkele route hangt.
+    # bg/_action-confirm.html.j2 is wat de route rendert (zie deployment_action_confirm).
+    # Ernaast stond project-details/action-confirm.html.j2, de eerste automatische omzetting
+    # van het oude sjabloon; die hing aan geen enkele route en is in RC-97 weggehaald.
     template = templates.env.get_template("bg/_action-confirm.html.j2")
     return template.render(request=_request(), action=action, key="fake-key", message=action.confirm_message)
 

@@ -85,8 +85,8 @@ def _swap(page: Page, target: str, swap: str) -> None:
 def _start_task(page: Page) -> None:
     """Put the running fragment in the dialog the way a confirmed action does.
 
-    ``innerHTML`` into the wrapper is what project-details/action-confirm.html.j2 uses
-    for the POST that starts the task.
+    ``innerHTML`` into the wrapper is what the confirm fragment uses for the POST that
+    starts the task.
     """
     _swap(page, "#edit-section-inner", "innerHTML")
 
