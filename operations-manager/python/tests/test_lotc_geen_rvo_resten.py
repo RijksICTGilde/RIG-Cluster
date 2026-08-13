@@ -72,8 +72,6 @@ NOG_MET_KLASSEN = {
     "project-creation-partial.html.j2": 4,
     "project-creation-result.html.j2": 3,
     "project-creation-success.html.j2": 5,
-    "project-details/_argocd-deployment-card.html.j2": 27,
-    "project-details/_resource-usage.html.j2": 12,
     "wizard/modal_wizard_review.html.j2": 1,
     "wizard/partials/approval_items.html.j2": 13,
     "wizard/partials/attachments_list.html.j2": 7,
