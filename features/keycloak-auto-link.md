@@ -44,18 +44,25 @@ services:
     config:
       restrict-access:
         realm-role: allowed-user
-      account-link: automatic   # automatic | confirm | verify
+      account-link: automatic   # automatic | confirm (weglaten = Keycloaks eigen flow)
 ```
 
-`account-link` accepts three modes:
+`account-link` accepts two modes:
 
 | Value | Behaviour |
 |---|---|
 | `automatic` | Link a brokered SSO identity to a pre-existing account silently (no page). |
 | `confirm` | Same, after one "confirm link" screen. UX clarity, **not** a security control (the user can just click "yes"). |
-| `verify` | Keycloak's stock flow: the user proves ownership of the existing account by email link or re-authentication. This is also what you get when `account-link` is **omitted**. |
 
-Omitting `account-link` is identical to `account-link: verify`.
+**Omit `account-link`** for Keycloak's stock flow: the user proves ownership of the existing
+account by email link or re-authentication.
+
+There used to be a third value, `verify`, that named that stock flow explicitly. It did
+nothing an omitted key did not already do -- no code branched on it -- so it offered a
+choice without an effect, and it is gone from the enum, the schema fragment and the picker.
+A project file written before that still validates: `verify` is read as "not set", which is
+what it already meant. Rejecting it instead would block every further processing of that
+project, silently.
 
 ### Switching modes on an existing project
 
@@ -65,7 +72,7 @@ You can change `account-link` at any time. On the next reconcile the change take
   adds the confirmation screen; `confirm` -> `automatic` removes it) by
   `ensure_auto_link_first_broker_login_flow`, which is idempotent.
 - The IdP's `firstBrokerLoginFlowAlias` is re-pointed by the connector's 409-diff-update:
-  `verify` -> `automatic`/`confirm` points it at the custom flow; the reverse points it back at
+  the stock flow -> `automatic`/`confirm` points it at the custom flow; the reverse points it back at
   the stock `"first broker login"` flow (the custom flow is left in place, unreferenced).
 
 The setting is configured via the project YAML (like `template`, `variables`, and

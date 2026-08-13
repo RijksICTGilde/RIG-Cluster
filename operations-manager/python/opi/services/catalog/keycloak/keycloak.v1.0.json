@@ -1,10 +1,10 @@
 {
   "$defs": {
     "AccountLink": {
+      "description": "De standen die iets DOEN.\n\nHier stond ook ``VERIFY``, en die deed niets: ``keycloak_yaml_handler`` bouwt alleen\nvoor ``automatic`` en ``confirm`` een eigen first-broker-login-flow en laat de rest op\nKeycloaks eigen flow staan - precies wat je krijgt als je niets kiest. Wie ``verify``\nkoos kreeg dus dezelfde uitkomst als wie het veld leeg liet, terwijl de keuzelijst\ndeed alsof er een verschil was.",
       "enum": [
         "automatic",
-        "confirm",
-        "verify"
+        "confirm"
       ],
       "title": "AccountLink",
       "type": "string"
@@ -147,7 +147,7 @@
         }
       ],
       "default": null,
-      "description": "How an existing account is linked when a user signs in through an identity provider: automatic, confirm or verify."
+      "description": "How an existing account is linked when a user signs in through an identity provider: automatic or confirm. Leave it out for Keycloak's own flow (verification by email)."
     },
     "additional-clients": {
       "description": "Extra Keycloak clients to create in the realm.",

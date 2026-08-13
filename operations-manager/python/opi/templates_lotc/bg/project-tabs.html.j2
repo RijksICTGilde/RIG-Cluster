@@ -636,7 +636,16 @@
                         {% set config_hint = service_config_hint(service.enum) if service_config_hint is callable else '' %}
                         <c-card outline padding="md">
                             <c-stack gap="sm">
-                                <c-heading type="h3" size="5" label="{{ service_def.name }}" />
+                                {# Het icoon van de dienst hoorde hier te staan en stond er niet:
+                                   elke dienst declareert er een (service_def.icon), maar deze kaart
+                                   toonde alleen de naam. Zelfde vorm als de kaart op /services (zie
+                                   bg/_service-card.html.j2): icoon en naam naast elkaar, met het
+                                   nldd_icon-filter ertussen omdat de definities Nederlandse namen
+                                   dragen en NLDD een eigen woordenschat heeft. #}
+                                <c-cluster gap="sm" align="center">
+                                    <c-icon icon="{{ service_def.icon | nldd_icon }}" color="{{ service_def.color }}" size="lg" />
+                                    <c-heading type="h3" size="5" label="{{ service_def.name }}" />
+                                </c-cluster>
                                 {% if binding_label %}
                                     <c-chip>{{ binding_label }}</c-chip>
                                 {% endif %}
