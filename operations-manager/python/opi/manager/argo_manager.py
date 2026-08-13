@@ -62,6 +62,7 @@ def terminal_condition_message(status_data: dict[str, Any]) -> str | None:
 #: ververst zelf ook niet sneller, en het kost ArgoCD wel verzoeken.
 POLL_INTERVAL_SECONDEN = 2
 
+
 class ArgoManager:
     """Manager for ArgoCD-related operations and resources."""
 

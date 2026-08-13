@@ -1918,7 +1918,7 @@ def _annotate_argocd_error_ages(errors: list[dict[str, Any]]) -> None:
                 error["age"] = f"{diff_min} min geleden"
             else:
                 error["age"] = f"{diff_min // 60} uur geleden"
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
 
 
@@ -2040,7 +2040,7 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
             }
         )
 
-    metrics, prometheus_available, _pods = await collect_dashboard_metrics(all_namespaces, user_projects)
+    metrics, prometheus_available, pod_count = await collect_dashboard_metrics(all_namespaces, user_projects)
     total_cpu_usage = sum(project.get("cpu_cores", 0) for project in user_projects)
     # Geheugen erbij: dat is waar je op stuurt, en CPU alleen zei te weinig.
     total_memory_usage = sum(project.get("memory_mb", 0) or 0 for project in user_projects)
@@ -2059,6 +2059,9 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
             # hele fragment in plaats van een lege regel.
             "total_cpu_usage": total_cpu_usage,
             "total_memory_usage": total_memory_usage,
+            # De kaart Pods staat in de pagina maar het getal komt uit deze queries; het
+            # fragment schuift hem er out-of-band overheen.
+            "pod_count": pod_count,
         },
     )
 
