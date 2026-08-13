@@ -50,9 +50,14 @@ def test_detail_page_shows_components(app_server: str, auth_page: Page) -> None:
 
 
 def test_detail_page_shows_team(app_server: str, auth_page: Page) -> None:
-    """Verify team section lists users and roles."""
+    """Verify team section lists users and roles.
+
+    Het team heeft een eigen tabblad, net als de diensten; op het overzicht staat het
+    niet meer. Deze test las nog het overzicht en viel daarop om.
+    """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
+    open_tab(auth_page, "team")
 
     toon_tekst(auth_page, "test@example.com")
     toon_tekst(auth_page, "developer@example.com")
