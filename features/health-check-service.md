@@ -156,6 +156,11 @@ This service replaces the earlier component-level `probe:` block (never used by 
 project). See `features/futures/configurable-health-probes.md` for the original
 design and `instructions/services.md` for the service system.
 
+A probe pointed at a port the component does not serve does not fail loudly: the
+kubelet restarts the container, which reaches `CrashLoopBackOff` just like a real
+crash. What the portal reports in that case -- and how it tells the two apart -- is
+in `features/probe-kill-is-geen-crash.md`.
+
 ## Dependencies
 
 None. Behaviour-only; no external system, no secret, no other service required.

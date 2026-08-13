@@ -37,6 +37,11 @@ class InterpretedEvent:
 
 # --- Translation table for K8s event reasons ---
 
+# De melding voor een container die uit zichzelf stopt en opnieuw wordt gestart. Een
+# constante, omdat de probe-oorzaak hieronder hem gericht moet kunnen vervangen: de
+# kubelet meldt namelijk hetzelfde als hij een container kilt op een falende probe.
+_CRASH_TITLE = "Applicatie crasht herhaaldelijk"
+
 _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
     # (title, suggestion, severity)
     #
@@ -49,12 +54,12 @@ _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
     ),
     # Crash / restart
     "BackOff": (
-        "Applicatie crasht herhaaldelijk",
+        _CRASH_TITLE,
         "De container start steeds opnieuw op en crasht. Bekijk de logs voor de oorzaak.",
         EventSeverity.ACTIONABLE,
     ),
     "CrashLoopBackOff": (
-        "Applicatie crasht herhaaldelijk",
+        _CRASH_TITLE,
         "De container start steeds opnieuw op en crasht. Bekijk de logs voor de oorzaak.",
         EventSeverity.ACTIONABLE,
     ),
@@ -86,7 +91,9 @@ _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
         "Controleer of de storage-configuratie correct is.",
         EventSeverity.ACTIONABLE,
     ),
-    # Health probes
+    # Health probes. Alleen de READINESS-probe komt hier terecht: een falende liveness-
+    # of startup-probe is een eigen oorzaak en wordt eerder afgevangen (zie
+    # _LIVENESS_PROBE_RE en _probe_kill_translation).
     "Unhealthy": (
         "Health-check gefaald",
         "De applicatie reageert niet op health-checks. Controleer of de applicatie correct opstart en luistert op de juiste poort.",
@@ -171,7 +178,7 @@ _MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
     ),
     (
         re.compile(r"back-off.*restarting failed container", re.IGNORECASE),
-        "Applicatie crasht herhaaldelijk",
+        _CRASH_TITLE,
         "De container start steeds opnieuw op en crasht. Bekijk de logs voor de oorzaak.",
         EventSeverity.ACTIONABLE,
     ),
@@ -229,6 +236,62 @@ def _image_pull_suggestion(message: str) -> str:
     )
 
 
+# --- Een container die de kubelet kilt omdat de probe faalt -------------------------
+#
+# Dit is GEEN crash, en het onderscheid is voor de gebruiker het hele verschil: bij
+# "crasht" ga je je applicatie debuggen, bij "de probe komt er niet doorheen" pas je je
+# health-instelling aan.
+#
+# Gemeten op de sandbox met twee pods naast elkaar - een die draait maar een liveness-
+# probe op een dichte poort heeft, en een die echt met exit 1 stopt:
+#
+#   probefail   Running, ready=true   lastState.terminated: reason=Error exitCode=137
+#               events: [Unhealthy] Liveness probe failed: dial tcp 10.244.0.85:9999: ...
+#                       [Killing]   Container app failed liveness probe, will be restarted
+#   echtcrash   CrashLoopBackOff      lastState.terminated: reason=Error exitCode=1
+#               events: [BackOff]    Back-off restarting failed container app in pod ...
+#
+# lastState.terminated.reason is dus in BEIDE gevallen "Error" en draagt het onderscheid
+# niet. Blijft de probe lang genoeg falen, dan gaat de kubelet ook op de probe-kill
+# backoffen en meldt hij daar hetzelfde "Back-off restarting failed container" - en dat
+# is precies de tekst die hieronder als "Applicatie crasht herhaaldelijk" vertaald wordt.
+# Vandaar de verkeerde melding.
+#
+# Wat het onderscheid WEL draagt is het Unhealthy-event: de kubelet schrijft "Liveness
+# probe failed" alleen als hij een DRAAIENDE container aan het killen is. Een container
+# die uit zichzelf stopt haalt dat event niet.
+_LIVENESS_PROBE_RE = re.compile(r"\b(liveness|startup) probe failed", re.IGNORECASE)
+_PROBE_KILL_TITLE = "Health-check faalt, de container wordt herstart"
+
+# De poort uit de probe-foutmelding, zodat de melding zegt WAAR het misgaat. Twee vormen,
+# beide gemeten: een tcp-probe meldt "dial tcp <ip>:<poort>", een http(s)-probe meldt
+# 'Get "http://<ip>:<poort>/<pad>"'.
+_PROBE_TCP_PORT_RE = re.compile(r"dial tcp \S*?:(\d{1,5})\b")
+_PROBE_HTTP_PORT_RE = re.compile(r"https?://[^/\s\"]*:(\d{1,5})")
+
+
+def _probe_port(message: str) -> str | None:
+    """De poort waarop de probe strandde, of ``None`` als de melding hem niet noemt."""
+    for pattern in (_PROBE_TCP_PORT_RE, _PROBE_HTTP_PORT_RE):
+        match = pattern.search(message)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _probe_kill_translation(message: str) -> tuple[str, str, EventSeverity]:
+    """Vertaling voor een container die op een falende liveness-/startup-probe wordt gekild."""
+    port = _probe_port(message)
+    waar = f"De health-check op poort {port} krijgt geen antwoord" if port else "De health-check krijgt geen antwoord"
+    return (
+        _PROBE_KILL_TITLE,
+        f"{waar}, daarom herstart Kubernetes de container. De applicatie zelf draait wel. "
+        "Controleer of de health-check op de poort en het pad staat waar je component echt "
+        "luistert - niet of je applicatie crasht.",
+        EventSeverity.ACTIONABLE,
+    )
+
+
 def condense_render_error(message: str) -> str:
     """Reduce a verbose ArgoCD generation-error message to its meaningful tail.
 
@@ -274,6 +337,14 @@ def _interpret_by_reason(reason: str, message: str) -> tuple[str, str, EventSeve
     if reason in _IMAGE_PULL_REASONS or _IMAGE_PULL_RE.search(message):
         return "Container image kan niet worden opgehaald", _image_pull_suggestion(message), EventSeverity.ACTIONABLE
 
+    # Voor de reason-tabel: het Unhealthy-event zou anders als het algemene
+    # "Health-check gefaald" landen, en dat is een SYMPTOOM dat verderop wordt
+    # weggefilterd zodra er een crashmelding naast staat - precies de melding die deze
+    # oorzaak moet vervangen. Alleen liveness en startup: die killen de container, een
+    # falende readiness-probe doet dat niet en blijft dus wel een symptoom.
+    if _LIVENESS_PROBE_RE.search(message):
+        return _probe_kill_translation(message)
+
     # Checked before the reason table: a FailedScheduling on an unbound PVC would
     # otherwise be mistranslated as a cluster resource shortage.
     if _UNBOUND_PVC_RE.search(message):
@@ -307,7 +378,8 @@ _SYMPTOM_TITLES: set[str] = {
 
 # Titles considered root causes that suppress symptoms.
 _ROOT_CAUSE_TITLES: set[str] = {
-    "Applicatie crasht herhaaldelijk",
+    _CRASH_TITLE,
+    _PROBE_KILL_TITLE,
     "Container image kan niet worden opgehaald",
     "Ongeldige image-naam",
     "Applicatie gestopt wegens geheugengebrek",
@@ -326,12 +398,22 @@ def _resource_base_name(resource: str) -> str:
 
 
 def _suppress_symptoms(errors: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Remove symptom errors when a root cause exists for the same component."""
+    """Remove symptom errors when a root cause exists for the same component.
+
+    Bovenop de symptoomregel geldt er een tussen twee OORZAKEN: staat er voor hetzelfde
+    component een probe-kill, dan is de crashmelding onwaar en verdwijnt hij. Beide
+    komen namelijk van dezelfde kubelet-backoff, maar alleen de probe-kill weet WAAROM
+    de container omging. Andersom - een component dat echt crasht - is er geen
+    probe-kill, en dan blijft de crashmelding gewoon staan.
+    """
     root_cause_components: set[str] = set()
+    probe_kill_components: set[str] = set()
     for error in errors:
         title = error.get("message", "")
         if title in _ROOT_CAUSE_TITLES:
             root_cause_components.add(_resource_base_name(error.get("resource", "")))
+        if title == _PROBE_KILL_TITLE:
+            probe_kill_components.add(_resource_base_name(error.get("resource", "")))
 
     if not root_cause_components:
         return errors
@@ -339,7 +421,10 @@ def _suppress_symptoms(errors: list[dict[str, str]]) -> list[dict[str, str]]:
     result: list[dict[str, str]] = []
     for error in errors:
         title = error.get("message", "")
-        if title in _SYMPTOM_TITLES and _resource_base_name(error.get("resource", "")) in root_cause_components:
+        component = _resource_base_name(error.get("resource", ""))
+        if title in _SYMPTOM_TITLES and component in root_cause_components:
+            continue
+        if title == _CRASH_TITLE and component in probe_kill_components:
             continue
         result.append(error)
     return result

@@ -533,3 +533,110 @@ class TestOrphanedComponentFlagging:
         errors = [{"resource": "Pod/productie-magazijna-5c75cf5664-wkrkf", "message": self._CRASH}]
         result = interpret_argocd_errors(errors, deployment_name="productie", component_names=[])
         assert "orphaned" not in result[0]
+
+
+class TestProbeKillVersusCrash:
+    """Een container die op een falende probe wordt gekild is geen crash (RC-105).
+
+    Alle berichten hieronder zijn LETTERLIJK overgenomen van twee pods die naast elkaar
+    op de sandbox hebben gedraaid: ``probefail`` (draait prima, liveness-probe op een
+    dichte poort) en ``echtcrash`` (stopt met exit 1). Ze zijn niet verzonnen, want de
+    hele bevinding hangt aan het feit dat de twee gevallen elkaars berichten delen:
+
+      probefail  Running, ready=true, restartCount 4 -> uiteindelijk CrashLoopBackOff
+                 [Unhealthy] Liveness probe failed: dial tcp 10.244.0.89:9999: connect: connection refused
+                 [Killing]   Container app failed liveness probe, will be restarted
+                 [BackOff]   Back-off restarting failed container app in pod probefail-...
+      echtcrash  CrashLoopBackOff, restartCount 3
+                 [BackOff]   Back-off restarting failed container app in pod echtcrash-...
+
+    Het BackOff-bericht is dus IDENTIEK; lastState.terminated.reason is voor allebei
+    "Error". Alleen het Unhealthy-event scheidt de twee.
+    """
+
+    _BACKOFF = "Back-off restarting failed container app in pod {pod}_rig-ma-axk(d2d52071)"
+    _LIVENESS = "Liveness probe failed: dial tcp 10.244.0.89:9999: connect: connection refused"
+
+    def _event(self, reason: str, message: str, pod: str) -> dict[str, str]:
+        return {"reason": reason, "message": message, "object": pod, "time": ""}
+
+    def test_liveness_probe_failure_is_not_reported_as_a_crash(self):
+        result = interpret_events([self._event("Unhealthy", self._LIVENESS, "webapp-54887cbf98-m65r2")])
+        assert len(result) == 1
+        assert "crasht" not in result[0].title.lower()
+        assert "health-check" in result[0].title.lower()
+
+    def test_message_names_the_probe_port(self):
+        result = interpret_events([self._event("Unhealthy", self._LIVENESS, "webapp-54887cbf98-m65r2")])
+        assert "9999" in result[0].suggestion
+
+    def test_message_names_the_probe_port_for_an_http_probe(self):
+        message = 'Liveness probe failed: Get "http://10.244.0.89:8081/healthz": context deadline exceeded'
+        result = interpret_events([self._event("Unhealthy", message, "webapp-54887cbf98-m65r2")])
+        assert "8081" in result[0].suggestion
+
+    def test_probe_failure_without_a_port_still_reports_the_probe(self):
+        message = "Liveness probe failed: command timed out"
+        result = interpret_events([self._event("Unhealthy", message, "webapp-54887cbf98-m65r2")])
+        assert len(result) == 1
+        assert "crasht" not in result[0].title.lower()
+
+    def test_probe_kill_replaces_the_crash_message_for_the_same_pod(self):
+        # De gemeten situatie: de kubelet meldt BackOff EN de probe-fout op dezelfde pod.
+        pod = "webapp-54887cbf98-m65r2"
+        errors = [
+            {"resource": f"Event/{pod}", "message": f"[BackOff] {self._BACKOFF.format(pod=pod)}"},
+            {"resource": f"Event/{pod}", "message": f"[Unhealthy] {self._LIVENESS}"},
+        ]
+        result = interpret_argocd_errors(errors)
+        assert len(result) == 1
+        assert "crasht" not in result[0]["message"].lower()
+        assert "9999" in result[0]["suggestion"]
+
+    def test_probe_kill_replaces_the_argocd_tree_crash_message(self):
+        # De crashmelding komt ook uit de ArgoCD-resourceboom, niet alleen uit de events.
+        pod = "webapp-54887cbf98-m65r2"
+        errors = [
+            {"resource": f"Pod/{pod}", "message": self._BACKOFF.format(pod=pod)},
+            {"resource": f"Event/{pod}", "message": f"[Unhealthy] {self._LIVENESS}"},
+        ]
+        result = interpret_argocd_errors(errors)
+        assert len(result) == 1
+        assert "crasht" not in result[0]["message"].lower()
+
+    def test_a_real_crash_is_still_reported_as_a_crash(self):
+        # Het onderscheid moet beide kanten op werken: echtcrash heeft geen probe-event.
+        pod = "echtcrash-559b765bc5-wc7xr"
+        errors = [{"resource": f"Event/{pod}", "message": f"[BackOff] {self._BACKOFF.format(pod=pod)}"}]
+        result = interpret_argocd_errors(errors)
+        assert len(result) == 1
+        assert "crasht" in result[0]["message"].lower()
+
+    def test_a_failing_readiness_probe_does_not_excuse_a_crash(self):
+        # Een readiness-probe kilt de container niet: bij een crashende app is hij het
+        # GEVOLG, en dan blijft de crashmelding staan (en verdwijnt het symptoom).
+        pod = "echtcrash-559b765bc5-wc7xr"
+        errors = [
+            {"resource": f"Event/{pod}", "message": f"[BackOff] {self._BACKOFF.format(pod=pod)}"},
+            {
+                "resource": f"Event/{pod}",
+                "message": "[Unhealthy] Readiness probe failed: dial tcp 10.244.0.90:8080: connect: connection refused",
+            },
+        ]
+        result = interpret_argocd_errors(errors)
+        assert len(result) == 1
+        assert "crasht" in result[0]["message"].lower()
+
+    def test_probe_kill_on_one_component_leaves_another_components_crash_alone(self):
+        errors = [
+            {"resource": "Event/webapp-54887cbf98-m65r2", "message": f"[Unhealthy] {self._LIVENESS}"},
+            {
+                "resource": "Event/worker-6d9f7b4c88-2xqzt",
+                "message": f"[BackOff] {self._BACKOFF.format(pod='worker-6d9f7b4c88-2xqzt')}",
+            },
+        ]
+        result = interpret_argocd_errors(errors, deployment_name="productie", component_names=["webapp", "worker"])
+        assert len(result) == 2
+        crash = [e for e in result if "crasht" in e["message"].lower()]
+        assert len(crash) == 1
+        assert crash[0]["resource"] == "worker"
