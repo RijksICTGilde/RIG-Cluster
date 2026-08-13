@@ -313,7 +313,7 @@ def test_het_verversen_zwijgt_op_een_achtergrondtabblad() -> None:
     metrics = _metrics_tabblad()
     assert "every 60s" not in metrics
     assert "document.hidden" in metrics
-    assert '.deployment-section:not(.is-hidden)' not in metrics
+    assert ".deployment-section:not(.is-hidden)" not in metrics
     assert '[id^="metrics-content-"]' in metrics
 
 
