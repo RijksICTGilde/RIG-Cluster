@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from playwright.sync_api import Error as PlaywrightError
 
@@ -33,27 +34,73 @@ _INNER = "#edit-section-inner"
 def open_detail(page: Page, base_url: str, project_name: str) -> None:
     """Open de landingspagina van het project (het tabblad Overzicht).
 
-    Daar staan de blokken die de DIENSTEN zelf leveren (de Keycloak-realm, de
-    uitnodigingen). De configuratiekaarten staan op het tabblad Services; de helpers
-    hieronder gaan daar zelf naartoe, zodat een test die alleen het overzicht nodig heeft
-    niet ergens anders uitkomt.
+    LET OP: hier stond dat op deze pagina de blokken staan die de DIENSTEN zelf leveren (de
+    Keycloak-realm, de uitnodigingen). Dat klopt sinds ``b134a581`` niet meer - die blokken
+    zijn ``detail_page_sections`` en renderen op het tabblad Services info. Wie ze zoekt
+    gebruikt :func:`open_services_info_tab`; deze functie opent alleen Overzicht.
+    De configuratiekaarten met hun Configureer-knop staan weer ergens anders, op het
+    tabblad Services (:func:`open_services_tab`).
     """
     page.goto(f"{base_url}/projects/{project_name}/details", wait_until="networkidle", timeout=30000)
     page.wait_for_load_state("networkidle")
 
 
-def open_services_tab(page: Page) -> None:
-    """Ga naar het tabblad Services, waar de dienstkaarten staan.
+def open_services_info_tab(page: Page, base_url: str, project_name: str) -> None:
+    """Open het tabblad Services info, waar de blokken van de diensten zelf staan.
 
-    Die kaarten stonden op de landingspagina en hebben sinds de opdeling een eigen
-    tabblad. De tabbladen zijn gewone links (``<c-tab href=...>`` rendert een ``<a>``),
-    dus dit is dezelfde navigatie als een gebruiker doet.
+    Dat zijn de ``detail_page_sections``: de Keycloak-realm met zijn wachtwoord, de
+    uitnodigingslink, en wat een dienst verder over zichzelf te tonen heeft. Ze stonden op
+    Overzicht en hebben sinds ``b134a581`` een eigen tabblad.
     """
-    if page.url.split("?")[0].endswith("/services"):
-        return
-    page.locator("a[href$='/services']").first.click()
-    page.wait_for_url("**/services", timeout=15000)
+    page.goto(f"{base_url}/projects/{project_name}/services-info", wait_until="networkidle", timeout=30000)
     page.wait_for_load_state("networkidle")
+
+
+def open_project_tab(page: Page, tab: str) -> None:
+    """Ga naar een tabblad van het project waar de pagina nu op staat.
+
+    De tabbladen zijn gewone links (``<c-tab href=...>`` rendert een ``<a>``), dus dit is
+    dezelfde navigatie als een gebruiker doet.
+
+    HET PAD MOET VOLLEDIG ZIJN, en de navigatie moet GECONTROLEERD worden. Beide helpers
+    hieronder deden dat niet, elk op hun eigen manier, en beide keren kwam de test ergens
+    anders uit zonder dat iets dat merkte:
+
+    * Services klikte op ``a[href$='/services']`` met ``.first``. Dat matcht ook de
+      Services-link in de ZIJBALK, die naar de platformbrede cataloguspagina wijst en
+      eerder in de DOM staat. ``wait_for_url("**/services")`` zag dat niet, want beide
+      adressen eindigen op ``/services``. Op die catalogus staat wel een kaart per dienst -
+      inclusief "Redis Cache" - maar zonder Configureer-knop, dus zes tests liepen dood op
+      een knop die daar per definitie niet staat.
+    * Deployments klikte op ``get_by_text("Deployments", exact=True)`` en wachtte daarna
+      800 ms. Het tablabel staat in de SHADOW DOM van het tabcomponent, dus die tekst
+      matcht de tab niet; er werd iets anders (of niets) geraakt, de pagina bleef op
+      Overzicht staan, en de test meldde dat een knop ontbrak in plaats van dat hij nooit
+      op het goede tabblad was.
+
+    Vandaar: het volledige projectpad als selector, en wachten op precies dat pad.
+
+    Op ``href*=`` en niet op ``href$=``: Deployments, Metrics en Backups tonen EEN
+    deployment tegelijk en dragen die naam in hun pad
+    (``/projects/<naam>/deployments/<deployment>``, zie ``TABS_MET_DEPLOYMENT`` in
+    opi/web/lotc_switch.py). Een selector die op het tabblad moet EINDIGEN vindt die drie
+    dus niet. Het projectpad ervoor houdt hem alsnog eenduidig.
+    """
+    stukken = urlparse(page.url)
+    segmenten = stukken.path.strip("/").split("/")
+    if len(segmenten) < 2 or segmenten[0] != "projects":
+        raise AssertionError(f"open_project_tab({tab!r}) verwacht een projectpagina, maar staat op {page.url!r}")
+    doel = f"/projects/{segmenten[1]}/{tab}"
+    if stukken.path == doel or stukken.path.startswith(f"{doel}/"):
+        return
+    page.locator(f"a[href*='{doel}']").first.click()
+    page.wait_for_url(f"**{doel}**", timeout=15000)
+    page.wait_for_load_state("networkidle")
+
+
+def open_services_tab(page: Page) -> None:
+    """Ga naar het tabblad Services, waar de dienstkaarten met hun Configureer-knop staan."""
+    open_project_tab(page, "services")
 
 
 def service_card(page: Page, service_display_name: str) -> Locator:
@@ -158,9 +205,8 @@ def modal_submit(page: Page, label: str = "Opslaan") -> None:
 
 
 def open_deployments_tab(page: Page) -> None:
-    """Click the 'Deployments' tab, where the per-deployment action buttons live."""
-    page.get_by_text("Deployments", exact=True).first.click()
-    page.wait_for_timeout(800)
+    """Ga naar het tabblad Deployments, waar de acties per deployment staan."""
+    open_project_tab(page, "deployments")
 
 
 def deployment_action(page: Page, label: str) -> Locator:
