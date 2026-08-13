@@ -33,6 +33,30 @@ Wil je in één deployment, bijvoorbeeld een preview-omgeving, een andere koppel
 
 Lever je zelf een certificaat aan om op je webadres te serveren? Upload het als bijlage (een PEM met het certificaat en de sleutel), kies bij **Webadres** de modus **eigen certificaat** en selecteer die bijlage.
 
+## Een bijlage vervangen
+
+Een certificaat verloopt en je hebt een nieuw bestand. Gebruik dan **Vervangen**, niet verwijderen-en-opnieuw-uploaden: bij vervangen blijft de identifier staan, **en dus blijven alle koppelingen staan**. Elk component dat de bijlage gebruikt, blijft eraan gekoppeld. Verwijderen en opnieuw uploaden verbreekt die koppelingen; je zou ze daarna per component opnieuw moeten leggen.
+
+1. Ga naar de sectie **Bijlagen** en klik bij de bijlage op **Vervangen**.
+2. Kies het nieuwe bestand. De identifier ligt vast en is niet te wijzigen.
+3. Klik op **Vervangen** en daarna op **Opslaan**.
+
+De naam van het nieuwe bestand wordt overgenomen, zodat wat er in de lijst staat klopt met wat erin zit. De vorige inhoud is daarna weg: er is geen versiehistorie.
+
+Wil je een bijlage onder een *andere* identifier? Dat is geen vervanging maar een nieuwe bijlage; je moet dan ook elke koppeling omzetten.
+
+### Via de API
+
+Vervangen is `PUT` op de bijlage zelf. De id staat in het pad, het nieuwe bestand gaat als multipart mee:
+
+```bash
+curl -X PUT -H "X-API-Key: <key>" \
+  -F file=@nieuw-certificaat.pem \
+  https://<host>/api/v2/projects/<project>/services/attachments/attachment/server-cert
+```
+
+`PUT` eist dat de bijlage bestaat en weigert een id die er niet is (404) -- een vervanging van iets wat er niet is, is een vergissing en geen aanmaak. Wil je "aanmaken of overschrijven, wat er ook staat", gebruik dan `?upsert=true`.
+
 ## Een bijlage verwijderen
 
 Klik in de sectie **Bijlagen** op **Verwijderen**. Wordt de bijlage nog gebruikt door een component of als webcertificaat, dan kan dat niet en zie je waar 'ie in gebruik is. Verwijder eerst die koppeling(en).
