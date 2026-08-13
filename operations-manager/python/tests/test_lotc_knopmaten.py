@@ -63,9 +63,6 @@ TYPE_UIT_CODE = {
 KALE_BUTTON_TOEGESTAAN = {
     "components/_forms.j2": "het kopieerknopje IN het kopieerveld (lotc-copyfield, forms.css)",
     "widgets/key_value_editor.html.j2": "de ENV/YAML-schakelaar van het veld (kv-toggle, wizard.css)",
-    "project-details/_argocd-deployment-card.html.j2": (
-        "dood sjabloon; de levende versie (bg/_argocd-deployment-card.html.j2) heeft een <c-button>"
-    ),
 }
 
 

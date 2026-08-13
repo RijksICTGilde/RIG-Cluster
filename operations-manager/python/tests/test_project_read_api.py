@@ -533,7 +533,7 @@ class TestDetailPageIsUnaffected:
             "components": [{"name": "frontend", "user-env-vars": stored}],
             "deployments": [{"name": "production", "cluster": "local", "components": []}],
         }
-        return templates.get_template("project-details/section-env-vars.html.j2").render(project=project)
+        return templates.get_template("bg/_env-vars.html.j2").render(project=project)
 
     def test_empty_mapping_renders_exactly_like_unknown(self) -> None:
         assert self._render({}) == self._render(None)

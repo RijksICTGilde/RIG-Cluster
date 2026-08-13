@@ -49,7 +49,6 @@ def _help_file(help_template: str) -> pathlib.Path | None:
 _SERVICE_BLOCK_USERS = (
     "widgets/service_cards.html.j2",
     "services-overview/_diensten.html.j2",
-    "project-details/section-components.html.j2",
 )
 
 

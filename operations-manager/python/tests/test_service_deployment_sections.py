@@ -173,15 +173,18 @@ def test_service_owned_routes_are_mounted_exactly_once() -> None:
 #: service, so the exemption is a named list rather than a blanket rule: a NEW occurrence
 #: fails, and this list shrinks to nothing when step 3 of
 #: plans/env-vars-en-aliassen-als-systeemdienst.md lands.
+#: RC-97: de map project-details/ is weg (de pagina die hem rendeerde bestond niet meer).
+#: Deze poort meet nu op bg/, waar dezelfde markup staat; de schuld verhuisde mee en werd
+#: niet ingelost, dus de regels blijven staan onder hun nieuwe bestandsnaam.
 _SYSTEM_SERVICE_DEBT = {
-    ("section-components.html.j2", "user-env-vars"),
-    ("section-env-vars.html.j2", "user-env-vars"),
-    ("section-deployments.html.j2", "user-env-vars"),
+    ("project-tabs.html.j2", "user-env-vars"),
+    ("_env-vars.html.j2", "user-env-vars"),
+    ("_section-deployments.html.j2", "user-env-vars"),
 }
 
 
 def test_the_general_templates_name_no_service() -> None:
-    """The point of the move: a service name in the general project-details layer is
+    """The point of the move: a service name in the general project-page layer is
     knowledge that belongs to the service, and it goes stale silently when the service
     changes. Comments are allowed to explain who owns what; code is not.
 
@@ -200,7 +203,7 @@ def test_the_general_templates_name_no_service() -> None:
 
     service_names = [service_type.value for service_type in ServiceType]
     offenders: list[str] = []
-    for path in (Path(opi.__file__).parent / "templates_lotc" / "project-details").glob("*.j2"):
+    for path in (Path(opi.__file__).parent / "templates_lotc" / "bg").glob("*.j2"):
         source = re.sub(r"\{#.*?#\}", "", path.read_text(), flags=re.DOTALL)
         for name in service_names:
             if f"'{name}'" not in source and f'"{name}"' not in source:
@@ -220,7 +223,7 @@ def test_the_debt_list_has_no_stale_entries() -> None:
 
     stale = []
     for template_name, service_name in _SYSTEM_SERVICE_DEBT:
-        path = Path(opi.__file__).parent / "templates_lotc" / "project-details" / template_name
+        path = Path(opi.__file__).parent / "templates_lotc" / "bg" / template_name
         source = re.sub(r"\{#.*?#\}", "", path.read_text(), flags=re.DOTALL) if path.exists() else ""
         if f"'{service_name}'" not in source and f'"{service_name}"' not in source:
             stale.append(f"{template_name}: {service_name}")
