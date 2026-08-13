@@ -95,6 +95,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     get_domain_setting,
     set_domain_setting,
 )
+from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
 from opi.services.deployment_order import order_deployments_by_clone_dependency
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.postgres_scope import project_uses_dedicated_postgres, schema_is_marked
@@ -707,6 +708,19 @@ class ProjectManager:
                 return {deployment_name: self._deployment_results[deployment_name]}
             return {}
         return self._deployment_results
+
+    def _track_public_urls(self, project_data: dict[str, Any], deployment: dict[str, Any], project_name: str) -> None:
+        """Record the public addresses this deployment offers on its result.
+
+        The addresses come from publish-on-web, the service that decides whether a component
+        gets an ingress, so they are the same ones the deployment endpoint returns and the
+        detail page links. Deriving them here from the naming alone is what made a refresh
+        promise an address that nothing serves (RC-104, vraag 13): a component without an
+        ingress has a name, not an address.
+        """
+        self._deployment_results[deployment["name"]].urls.update(
+            public_url_map_for_deployment(project_data, deployment, project_name, self._project_file_handler)
+        )
 
     def get_processing_error(self) -> str | None:
         """
@@ -5122,6 +5136,8 @@ class ProjectManager:
                 namespace=namespace,
             )
 
+        self._track_public_urls(project_data, deployment, project_name)
+
         logger.info(f"Processing deployment: {deployment_name} in prefixed namespace: {namespace}")
 
         # Check if deployment has components
@@ -5551,15 +5567,12 @@ class ProjectManager:
             logger.info(f"Generated ingress_map for {component_name}: {ingress_map}")
             logger.info(f"Primary hostname for {component_name}: {hostname}")
 
-            # Track component URL in deployment results
-            if hostname:
-                web_address = generate_public_url(hostname, use_https)
-                self._deployment_results[deployment_name].urls[component_name] = web_address
-                logger.debug(f"Tracked component {component_name} URL: {web_address}")
-
-                # Also update progress manager if available (for background task UI)
-                if progress_manager:
-                    progress_manager.update_component_web_address(component_name, web_address)
+            # Show the component's public address in the background-task UI, but only the one
+            # that publish-on-web recorded for this deployment: a component without an ingress
+            # has no address to show, and the hostname above is only what it would be called.
+            web_address = self._deployment_results[deployment_name].urls.get(component_name)
+            if web_address and progress_manager:
+                progress_manager.update_component_web_address(component_name, web_address)
 
             # Generate environment variables using service-based registration pattern
             env_vars = {}
