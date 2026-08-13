@@ -201,7 +201,10 @@ spec:
               port: {{ probe_port | default(application_port, true) | tojson }}
             {% endif %}
             initialDelaySeconds: 0
-            periodSeconds: 5
+            {# 2s: de kubelet-sampling bepaalt hoe snel een verse pod als Ready telt, en
+               daarmee hoe snel ArgoCD de app Healthy meldt. Op 5s kostte alleen dit rooster
+               al gemiddeld 2,5s extra Progressing na een feitelijk geslaagde start. #}
+            periodSeconds: 2
             failureThreshold: {{ probe_readiness_failure_threshold | default(3) }}
           {% endif %}
 {% if sidecars is defined and sidecars %}

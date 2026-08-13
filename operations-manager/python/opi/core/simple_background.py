@@ -52,14 +52,16 @@ async def _monitor_argocd_and_deployment(
 
         argo_connector = create_argo_connector()
 
-        # Give ArgoCD time to pick up the git changes and create the project apps
-        await asyncio.sleep(5)
-
         argo_subtask = task_progress_manager.add_subtask(monitor_task, "Wachten op ArgoCD sync voltooiing")
 
-        # Allow the triggered syncs to propagate
-        await asyncio.sleep(8)
-
+        # Direct beginnen met kijken, zonder voorslaap. De vaste sleep(5)+sleep(8) die hier
+        # stonden ("give ArgoCD time to pick up" / "allow syncs to propagate") stammen uit de
+        # tijd dat de status in de Application CR seconden-tot-minuten achterliep op de
+        # werkelijkheid; sinds argocd-rig v3.5.1-rig1 werkt de controller status.health bij op
+        # elk cluster-event, en process_project_from_git heeft hiervoor al per app een refresh
+        # gedaan en op Synced+Healthy gewacht. Bij een al-groene stand kost deze controle nu
+        # een enkele lijst-aanroep in plaats van dertien seconden; is er nog niets te zien,
+        # dan vangt de retry-lus hieronder dat op.
         wanted_apps = {f"{project_name}-{name}" for name in deployment_names} if deployment_names else None
         max_retries = 15  # Wait up to ~30 seconds for project apps
         argo_synced = False
