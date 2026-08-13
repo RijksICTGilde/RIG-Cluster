@@ -73,6 +73,7 @@ from opi.handlers.project_file_handler import (
     extract_component_attachment_uses,
     extract_service_names_from_component,
     find_attachment_data_list,
+    is_transient_registry_error,
     remove_attachment_references,
     remove_component_references,
 )
@@ -2998,6 +2999,10 @@ class ProjectManager:
             # as warnings and do NOT fail the task, so a persistently-crashing app doesn't
             # flood ERRORs (and pages) on every reprocess of the project.
             health_warnings: list[str] = []
+            # Set when a warning came from the registry failing to serve an image. The
+            # closing sentence of the user-facing notice blames the tenant's own app,
+            # which is wrong for a platform-side registry outage.
+            registry_outage_seen = False
 
             if deployments and project_name:
                 from opi.services.catalog.base import ComponentHealth
@@ -3281,8 +3286,22 @@ class ProjectManager:
 
                     # Categorize failures by type
                     oom_failures = [f for f in e.failures if f.failure_type == "oom"]
-                    image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
                     crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
+
+                    # Split the image-pull failures on what the registry actually told
+                    # us. A 5xx or a rate limit means the registry could not answer, so
+                    # whether the image exists is unknown -- those must never disable the
+                    # component: disabling scales it to 0, which removes the very pod
+                    # that would have retried, so a registry hiccup becomes a permanent
+                    # outage that no refresh undoes. Kubelet retries the pull with its
+                    # own backoff and recovers by itself once the registry does.
+                    all_image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
+                    registry_down_failures = [
+                        f for f in all_image_pull_failures if is_transient_registry_error(f.message)
+                    ]
+                    image_pull_failures = [
+                        f for f in all_image_pull_failures if not is_transient_registry_error(f.message)
+                    ]
 
                     task_service = (
                         progress_manager._task_service
@@ -3370,6 +3389,19 @@ class ProjectManager:
                             else:
                                 health_warnings.append(msg)
 
+                    # Registry outage: nothing to remediate and nothing the tenant did
+                    # wrong, so only report it -- named as a registry problem, so the
+                    # user does not go looking for a broken image that is fine.
+                    for f in registry_down_failures:
+                        registry_outage_seen = True
+                        image = f" [image {f.image}]" if f.image else ""
+                        reason = " ".join(f.message.split()) if f.message else ""
+                        health_warnings.append(
+                            f"{app_name}: de registry kon het image voor component "
+                            f"'{f.component_name}'{image} niet leveren: {reason}. "
+                            "Het component blijft aan staan en probeert het opnieuw."
+                        )
+
                     # CrashLoopBackOff is the user's app crashing at runtime, not a
                     # deploy/sync failure - report it as a warning, don't fail the task.
                     if crash_loop_failures:
@@ -3402,11 +3434,17 @@ class ProjectManager:
                 logger.info("ArgoCD applications synced (%d runtime health warning(s) above)", len(health_warnings))
                 if progress_manager and argo_task:
                     progress_manager.complete_task(argo_task)
+                    cause = (
+                        "Een deel daarvan ligt aan het platform: de registry kon een image niet leveren. "
+                        "Daar hoef je zelf niets voor te doen, het ophalen wordt vanzelf opnieuw geprobeerd."
+                        if registry_outage_seen
+                        else "Dat ligt aan de applicatie zelf (bijvoorbeeld een crashende pod of een image dat "
+                        "nog niet gebouwd is), niet aan het uitrollen."
+                    )
                     notice = progress_manager.add_subtask(
                         argo_task,
                         f"Let op: de deployment is uitgerold, maar de applicatie draait niet gezond: {summary}. "
-                        "Dat ligt aan de applicatie zelf (bijvoorbeeld een crashende pod of een image dat nog "
-                        "niet gebouwd is), niet aan het uitrollen.",
+                        f"{cause}",
                     )
                     progress_manager.complete_task(notice)
                 return True
