@@ -191,7 +191,7 @@ def test_de_meters_worden_getekend_zoals_op_de_bestaande_pagina(app_server: str,
     tekst = auth_page.locator(".metrics-grid").inner_text()
     assert "42%" in tekst
     assert "0.42 / 1.00 cores" in tekst
-    assert "Inbound/Outbound (KB/s, laatste 30 min)" in tekst
+    assert "Inkomend en uitgaand (KB/s, laatste 30 min)" in tekst
 
 
 def test_de_netwerkgrafiek_wordt_door_chart_js_getekend(app_server: str, auth_page: Page) -> None:

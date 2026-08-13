@@ -21,7 +21,6 @@ from datetime import UTC
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
-from opi.services.catalog.base import ValueStorage
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
@@ -1452,21 +1451,21 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                     where=f"component '{component_name}'",
                 )
             # Aliassen ook, en om dezelfde reden: de kaart toont ze en zonder dit staat er
-            # een AGE-blok op het scherm. Ze worden PER WAARDE versleuteld opgeslagen
-            # (ValueStorage.PER_VALUE), dus dit is niet hetzelfde pad als hierboven; het is
-            # wel dezelfde decoder als de leesendpoints gebruiken, zodat de pagina en de API
-            # niet uiteen kunnen lopen over wat er staat. Wat er daarna nog afgeschermd
-            # wordt bepaalt de dienst, in het sjabloon via het filter is_verwijzing.
+            # een AGE-blok op het scherm. Sinds RC-106 is dat hetzelfde blok als hierboven,
+            # en het is dezelfde decoder als de leesendpoints gebruiken, zodat de pagina en
+            # de API niet uiteen kunnen lopen over wat er staat. Wat er daarna nog
+            # afgeschermd wordt bepaalt de dienst, in het sjabloon via het filter
+            # is_verwijzing.
             if component.get("aliases"):
                 try:
                     component["aliases"] = decode_component_values(
-                        component["aliases"], ValueStorage.PER_VALUE, project_data_decrypted, project_private_key
+                        component["aliases"], project_data_decrypted, project_private_key
                     )
                 except (ComponentValuesError, ValueError) as error:
-                    # Namen behouden, waarden niet: "onleesbaar" is iets anders dan "niet
-                    # aanwezig", en een kaart die de alias weglaat liegt over het component.
+                    # Een onleesbaar blok levert geen namen op om te tonen; laat het weg in
+                    # plaats van er een AGE-blok van te maken op het scherm.
                     logger.warning(f"Aliases of component '{component_name}' could not be read: {error}")
-                    component["aliases"] = dict.fromkeys(component["aliases"], "")
+                    component["aliases"] = {}
 
         # Decrypt helm-charts base helm-values
         for helm_chart in project_data_decrypted.get("helm-charts", []):

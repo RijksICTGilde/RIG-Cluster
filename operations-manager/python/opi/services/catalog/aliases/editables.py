@@ -39,18 +39,22 @@ class AliasMapValidator:
     the value on screen.
 
     A value the author does NOT have on screen cannot be judged, and there are two of
-    those. An AGE block is one. The other is the ``REDACTED`` placeholder: alias values
-    are encrypted per value under their own (dynamic) name, so the wizard session
-    redaction replaces them one by one and the form shows the placeholder back. Judging
-    it as a reference-free constant made every following save of the components modal
-    fail with "Alias(sen) zonder verwijzing" -- for any component that had ever stored
-    an alias, and for a plain user editing something else entirely. The placeholder is
-    put back from the stored project at save (``restore_redacted_secrets``), so what is
-    written is the original value, which was validated when it was entered.
+    those. An AGE block is one -- and since RC-106 that is the whole set at once, so the
+    guard on the text as a whole below is the one that fires. The other is the
+    ``REDACTED`` placeholder, kept because the wizard session redaction may still hand it
+    back: judging it as a reference-free constant made every following save of the
+    components modal fail with "Alias(sen) zonder verwijzing" -- for any component that
+    had ever stored an alias, and for a plain user editing something else entirely. The
+    placeholder is put back from the stored project at save
+    (``restore_redacted_secrets``), so what is written is the original value, which was
+    validated when it was entered.
     """
 
     def validate(self, value: Any) -> list[str]:
         if not isinstance(value, str) or not value.strip() or is_age_encrypted(value):
+            return []
+        if value.strip() == REDACTED:
+            # The whole set, redacted as one block: nothing on screen to judge.
             return []
         try:
             aliases = validate_and_parse_env_vars(value)
@@ -73,7 +77,7 @@ class AliasMapValidator:
 
 COMPONENT_ALIASES_EDITABLE = Editable(
     yaml_path="components[*]/aliases",
-    converter=KeyValueConverter(fmt="env"),
+    converter=KeyValueConverter(fmt="env", write_as="string"),
     validator=AliasMapValidator(),
     remove_when_none=True,
 )

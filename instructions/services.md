@@ -295,6 +295,15 @@ for that endpoint to address). Everything else -- config model, schema fragment,
 form sections -- is identical to any other service. See
 `features/system-services-with-a-ui.md`.
 
+When that property is a key/value map the API should manage entry by entry, add
+`owned_values_map = True`. That generates the `/values/...` routes, for the layers the
+service already declares and no others. There is exactly one storage shape for such a map:
+ONE AGE block whose plaintext is `KEY=value` lines, implemented once in
+`opi/services/component_values.py`. `aliases` was stored per value until RC-106, which is
+why this used to name a shape (`owned_values_storage = ValueStorage.PER_VALUE`); that enum
+is gone, because a second shape only meant every reader needed a decrypt step of its own to
+forget. See `features/component-values-api.md`.
+
 ### Project-level config: what "declarative" does and does not cover
 
 The service builds the whole `FormSection` itself (auth-wall is the smallest complete
