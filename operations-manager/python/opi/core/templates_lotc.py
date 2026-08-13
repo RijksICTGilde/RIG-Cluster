@@ -29,6 +29,7 @@ from opi.core.template_helpers import (
 )
 from opi.core.version import get_version_info
 from opi.forms.lotc_attrs import attr_escape, bedraad_foutmelding, field_attrs
+from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
 from opi.services.registry import deployment_action_key
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,7 @@ templates_lotc.env.globals["field_attrs"] = field_attrs
 # De widgettemplates delen macro's die een attribuutwaarde escapen (optional_attr,
 # bool_attr). De adapter rendert die macro's in DEZE omgeving, dus hier hoort het filter te
 # staan. Zonder valt de formulierlaag om op elk veld dat de macro's gebruikt.
+
 templates_lotc.env.filters["attr_escape"] = attr_escape
 
 # De foutmelding bij een formulierveld zichtbaar maken. Onze kopie van
@@ -124,6 +126,12 @@ templates_lotc.env.filters["foutbedrading"] = bedraad_foutmelding
 templates_lotc.env.filters["nldd_icon"] = _to_nldd_icon
 templates_lotc.env.filters["service_name"] = get_service_name
 templates_lotc.env.filters["service_definition"] = get_service_definition_for_entry
+# Een aliaswaarde die naar platformvariabelen VERWIJST is geen geheim: hij noemt waar de
+# waarde vandaan komt, en dat is juist wat je wilt zien. Een letterlijke waarde kan er
+# wel een zijn. Dat oordeel staat bij de dienst zelf (AliasesService.owned_value_is_secret)
+# en wordt hier als filter beschikbaar gemaakt, zodat het sjabloon niet zijn eigen regel
+# verzint over wat een verwijzing is.
+templates_lotc.env.filters["is_verwijzing"] = _alias_is_reference
 templates_lotc.env.filters["dutch_date"] = format_dutch_date
 templates_lotc.env.filters["rrule_schedule"] = format_rrule_schedule
 templates_lotc.env.filters["deployment_action_key"] = deployment_action_key
