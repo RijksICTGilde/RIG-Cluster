@@ -117,6 +117,21 @@ The rule of thumb: assert against Forgejo for *what was stored*, against the tas
 *how it ended*, and against the cluster for *what it rendered*. Reaching for a `sleep` in place
 of any of the three is what makes a test green through a broken run.
 
+### When the cluster object is still not the answer
+
+`tests/e2e/test_sandbox_tls_override.py` (RC-96) goes one step further than the ingress
+annotation above: for a *certificate*, neither the project file nor the ingress is the
+proof -- the proof is the certificate a client is handed on the connection. It walks the
+whole chain per deployment (file -> ingress -> `kubernetes.io/tls` secret -> a real TLS
+handshake with SNI via `openssl s_client`) and compares a self-signed certificate against
+the platform's Let's Encrypt wildcard.
+
+The trap it encodes: **pick the port the ingress listens on**. On the dev server Caddy owns
+443 and Kind publishes the ingress on 8843, and Caddy terminates TLS with that same
+wildcard -- so a handshake on 443 reports the platform certificate for every host, and the
+first run of that suite failed on a deployment whose file, ingress and secret were all
+correct. The module probes the Kind ports first (`E2E_TLS_ENDPOINT` overrides).
+
 ### When only an outside caller can see the fault
 
 `tests/e2e/test_sandbox_restore_van_buiten.py` walks the whole restore road the way the
