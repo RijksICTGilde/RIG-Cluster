@@ -20,6 +20,7 @@ from opi.core.config import settings
 from opi.core.startup import keycloak_operation_with_retry
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.keycloak.config_model import LEGACY_ACCOUNT_LINK, AccountLink
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
@@ -80,7 +81,7 @@ def build_project_realm_context(
         # Operations manager domain and client ID for invite flow
         "operations_manager_domain": operations_manager_domain,
         "invite_client_id": settings.INVITE_CLIENT_ID,
-        # Per-realm SSO account-linking mode (automatic | confirm | verify; None/verify -> stock)
+        # Per-realm SSO account-linking mode (automatic | confirm; None -> Keycloak's stock flow)
         "account_link": account_link,
     }
 
@@ -622,12 +623,20 @@ class KeycloakManager:
         # Extract and validate account-link (per-realm SSO account-linking mode):
         #   automatic -> link a brokered SSO identity to a pre-existing account silently
         #   confirm   -> same, after one confirmation screen
-        #   verify    -> Keycloak's stock flow (prove ownership by email/password); the default
-        #                when account-link is omitted
+        #   omitted   -> Keycloak's stock flow (prove ownership by email/password)
+        #
+        # 'verify' was a third choice that did nothing: it fell through to the stock flow,
+        # exactly like omitting the key. It is gone from the enum, the schema and the
+        # picker, but a project file written before that still carries it -- and rejecting
+        # it here would block every further processing of that project, silently. So it is
+        # read as "not chosen", which is what it already meant.
         if "account-link" in user_config:
             account_link = user_config["account-link"]
-            if account_link not in ("automatic", "confirm", "verify"):
-                raise ValueError(f"account-link must be 'automatic', 'confirm' or 'verify', got {account_link!r}")
+            if account_link == LEGACY_ACCOUNT_LINK:
+                logger.info("Account-link '%s' is a no-op and was dropped; using Keycloak's stock flow", account_link)
+                account_link = None
+            elif account_link not in (AccountLink.AUTOMATIC, AccountLink.CONFIRM):
+                raise ValueError(f"account-link must be 'automatic' or 'confirm', got {account_link!r}")
             merged_config["account_link"] = account_link
             logger.info(f"Account-link mode configured: {account_link}")
 
