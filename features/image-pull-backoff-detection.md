@@ -11,7 +11,7 @@ This extends the existing sanitize endpoint (which already handles OOM kills and
 ```
 Deployment running
        |
-  Image pull fails (wrong tag, registry down, auth error)
+  Image pull fails (wrong tag, deleted image, auth error)
        |
   Pod enters ImagePullBackOff
        |
@@ -37,6 +37,26 @@ Kubernetes retries image pulls with exponential backoff (up to 5 minutes between
 - Wasted node resources on scheduling attempts
 
 Disabling the component (replicas: 0) stops the retry loop entirely until the user takes action.
+
+### Why a broken registry is the exception
+
+Disabling is only correct when the registry *answered* and the image is not there. A `500`,
+`502`, `503`, `504` or a `429` rate limit says nothing about whether the tag exists, so
+disabling on one is a guess -- and an expensive guess: `replicas: 0` removes the very pod
+that would have retried, so the component can never recover on its own, not even once the
+registry is healthy again. That turns a hiccup of a few seconds into an outage that lasts
+until someone pushes a new tag.
+
+So a pull error whose message names a registry-side failure leaves the component **enabled**
+and is only reported. Kubelet keeps retrying the pull with its own backoff and the component
+comes back by itself. `is_transient_registry_error()` in `opi/handlers/project_file_handler.py`
+draws the line; it matches literal phrases (`internal server error`, `http status: 503`, ...)
+and never a bare number, so an image tag like `pr-500-abc1234` is not read as a status code.
+
+This came out of the incident of 2026-08-12, where the ODCN pull-through mirror
+`rcr.rijksapps.nl/ghcr-rig` returned 500 on manifests that ghcr served fine. Two components
+sharing one image tag would pull at the same moment, one would catch the 500, and that half
+of the pair was disabled permanently while its twin ran happily on the identical tag.
 
 ## Detection
 
@@ -77,6 +97,9 @@ No additional configuration needed. The detection uses the existing sanitize inf
 | File | Purpose |
 |------|---------|
 | `opi/api/resource_router.py` | Sanitize endpoint with ImagePullBackOff event check |
+| `opi/handlers/project_file_handler.py` | `is_transient_registry_error()`: registry failure vs missing image |
+| `opi/manager/project_manager.py` | Inline deploy path: splits the two and only disables the missing-image half |
+| `opi/services/oom_watcher.py` | Delayed watcher: same split before `disable_components_for_image_pull()` |
 | `opi/services/redeploy.py` | The rollout scan that lets the services clear their state |
 | `opi/services/catalog/deployment_health/` | Clears the disable on a rollout |
 | `opi/connectors/kubectl.py` | `get_namespace_events()` for event retrieval |

@@ -54,37 +54,37 @@ def _tabbalk(pad: str, lege_tabs: tuple[str, ...] = ()) -> dict[str, Any]:
     return gegevens["tabs"]
 
 
-def test_toegang_is_een_eigen_tabblad_met_een_eigen_pad() -> None:
-    assert PROJECT_TABS["toegang"]["label"] == "Toegang"
-    assert project_tab_url("demo", "toegang") == "/projects/demo/toegang"
-    assert tab_from_path("/projects/demo/toegang") == "toegang"
+def test_services_info_is_een_eigen_tabblad_met_een_eigen_pad() -> None:
+    assert PROJECT_TABS["services-info"]["label"] == "Services info"
+    assert project_tab_url("demo", "services-info") == "/projects/demo/services-info"
+    assert tab_from_path("/projects/demo/services-info") == "services-info"
 
 
-def test_toegang_staat_naast_services_en_niet_erin() -> None:
-    """Services gaat over beheer (wat staat er aan), Toegang over gebruik (hoe kom je
+def test_services_info_staat_naast_services_en_niet_erin() -> None:
+    """Services gaat over beheer (wat staat er aan), Services info over wat een dienst zelf meldt (hoe kom je
     erbij). Twee tabbladen, dus ook twee adressen."""
-    assert project_tab_url("demo", "toegang") != project_tab_url("demo", "services")
+    assert project_tab_url("demo", "services-info") != project_tab_url("demo", "services")
 
 
 def test_het_lege_tabblad_valt_uit_de_tabbalk() -> None:
     """Een tab die een lege pagina opent is een belofte die niet waargemaakt wordt."""
-    balk = _tabbalk("/projects/demo/details", lege_tabs=("toegang",))
+    balk = _tabbalk("/projects/demo/details", lege_tabs=("services-info",))
 
-    assert "toegang" not in balk
+    assert "services-info" not in balk
     assert "services" in balk, "alleen het lege tabblad hoort weg te vallen"
 
 
 def test_zonder_lege_tabbladen_staat_toegang_er_gewoon() -> None:
     balk = _tabbalk("/projects/demo/details")
 
-    assert "toegang" in balk
-    assert balk["toegang"]["url"] == "/projects/demo/toegang"
+    assert "services-info" in balk
+    assert balk["services-info"]["url"] == "/projects/demo/services-info"
 
 
 def test_alleen_toegang_kan_wegvallen() -> None:
     """De voorwaardelijke tabbladen staan op EEN plek, zodat de route en de tabbalk het
     over dezelfde regel hebben."""
-    assert TABS_MET_VOORWAARDE == ("toegang",)
+    assert TABS_MET_VOORWAARDE == ("services-info",)
     assert all(tab in PROJECT_TABS for tab in TABS_MET_VOORWAARDE)
     assert STANDAARD_TAB not in TABS_MET_VOORWAARDE, "het terugvaltabblad mag nooit wegvallen"
 
@@ -98,7 +98,7 @@ def client() -> TestClient:
 
 def test_de_oude_vorm_van_het_adres_verwijst_door(client: TestClient) -> None:
     """Beide vormen staan geregistreerd, net als bij de andere tabbladen."""
-    antwoord = client.get("/projects/toegang/demo", follow_redirects=False)
+    antwoord = client.get("/projects/services-info/demo", follow_redirects=False)
 
     assert antwoord.status_code == 302
-    assert antwoord.headers["location"] == "/projects/demo/toegang"
+    assert antwoord.headers["location"] == "/projects/demo/services-info"

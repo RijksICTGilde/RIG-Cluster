@@ -1218,7 +1218,7 @@ async def dashboard(request: Request):
 @web_router.get("/projects/{project_name}/team", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/componenten", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/services", response_class=HTMLResponse)
-@web_router.get("/projects/{project_name}/toegang", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/services-info", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/deployments", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/metrics", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/backups", response_class=HTMLResponse)
@@ -1269,7 +1269,7 @@ OUDE_TABBLADPADEN = {
     "team": "team",
     "componenten": "componenten",
     "services": "services",
-    "toegang": "toegang",
+    "services-info": "services-info",
     "deployments": "deployments",
     "metrics": "metrics",
     "taken": "taken",
@@ -1280,7 +1280,7 @@ OUDE_TABBLADPADEN = {
 @web_router.get("/projects/team/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/componenten/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/services/{project_name}", response_class=HTMLResponse)
-@web_router.get("/projects/toegang/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/services-info/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/deployments/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/metrics/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/taken/{project_name}", response_class=HTMLResponse)
