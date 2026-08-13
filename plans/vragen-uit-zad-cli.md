@@ -773,3 +773,94 @@ als test vast.
 Vastgelegd in `tests/test_restore_target_fault.py`: de exitcode uit beide
 pod-sjablonen, dat alleen díe exitcode telt, dat een aanroeper zonder doelvelden de
 categorie nooit krijgt, en dat het meegestuurde wachtwoord niet terugkomt.
+
+---
+
+# Nagemeten op de releasebuild, 13 augustus
+
+Tegen `5c026ecc`, podnaam stabiel over drie peilingen. Wij hebben de live spec veld voor veld
+tegen onze gevendorde gelegd: **geen paden erbij of eraf, geen schema's erbij of eraf**, en
+zeven gewijzigde schema's. Die zeven zijn jullie antwoorden op vraag 7 en 9, en die zijn bij
+ons doorgevoerd:
+
+- De vier doelvelden van `DatabaseRestoreRequest` en `BucketRestoreRequest` zijn optioneel,
+  met "omit to restore into the project's own database" erbij. Onze `--target-*`-opties zijn
+  dat nu ook. Wij weigeren wel een *half* doel (twee van de vier): dat zou bij jullie als
+  "geen doel" binnenkomen en in de eigen database schrijven terwijl de gebruiker dacht ergens
+  anders te schrijven.
+- `ErrorCategory.InvalidTarget` en `error_category` op beide restore-antwoorden. Toegevoegd
+  aan onze enum en aan beide kaarten; `InvalidTarget` levert exit code 1 in plaats van 2.
+- `SubtaskStatus.subject` gebruiken wij nu in de foutregels: twee keer "Diensten bijwerken"
+  is niet uit elkaar te houden, met het subject zijn het twee componenten bij naam.
+- `AccountLink` verloor de waarde `verify`. Wij verwijzen daar nergens naar (diensten komen
+  uit de registry), maar een project dat `verify` had staan wordt hiermee ongeldig.
+
+Twee dingen werken nog niet, en allebei zitten ze in wat er net bij kwam.
+
+## 10. Zonder doel is de restore niet te bereiken: geen enkele naam wordt geaccepteerd
+
+De omgekeerde kant van vraag 7. `restore database` zonder `--target-*` hoort in de eigen
+database terug te zetten, maar wij krijgen de referentienaam niet geraden — ook niet de naam
+die jullie eigen antwoorden publiceren.
+
+```sh
+zad backup create productie
+zad backup list productie -o json | jq -c '[.runs[].items[] | {resource_type, reference_name}]'
+# [{"resource_type":"database","reference_name":"backup"}, {"resource_type":"bucket","reference_name":"bucket-backup"}]
+
+zad restore list sandboxed-local rig-$P -o json | jq -c '[.[].pvc_name]'
+# ["bucket-backup","backup"]
+```
+
+Dus beide lijstendpoints zeggen `backup`. Maar:
+
+```sh
+curl -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{}' \
+  "$BASE/v1/restore/database/sandboxed-local/rig-$P/backup?project_name=$P"
+# 404 "No deployment of project '<p>' has a database backup named 'backup'.
+#      Supply the target_database_* fields to restore into an external database."
+```
+
+Wat wij nog meer geprobeerd hebben, alle vijf 404 met dezelfde melding: de componentnaam
+(`web`), de deploymentnaam (`productie`), de projectnaam, `database`, en de dienstnaam
+(`postgresql-database`).
+
+**Onze vraag:** welke naam hoort daar? Als het een naam is die alleen in het projectbestand
+staat, dan is de nieuwe weg van buitenaf niet te vinden, want geen enkel leesendpoint noemt
+hem. De melding wijst bovendien naar de externe weg, terwijl de gebruiker juist de eigen
+database bedoelde.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
+
+---
+
+## 11. `error_category` komt mee, maar zegt `Unknown` bij precies het geval waarvoor hij bedoeld is
+
+De doorgifte werkt: het veld staat in het antwoord. De classificatie niet.
+
+```sh
+curl -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"target_database_host":"doel.invalid","target_database_name":"d",
+       "target_database_user":"u","target_database_password":"g"}' \
+  "$BASE/v1/restore/database/sandboxed-local/rig-$P/backup?project_name=$P"
+# HTTP 500
+# {"status":"failed","error_category":"Unknown",
+#  "message":"... psql: error: could not translate host name \"doel.invalid\" to address ..."}
+```
+
+`doel.invalid` is een gereserveerd domein dat per definitie niet resolvet, dus dit is het
+schoolvoorbeeld van `InvalidTarget`. De waarde bestaat in de enum en wordt hier niet gezet.
+
+**Onze vraag:** wordt `InvalidTarget` ergens wél geproduceerd, of is de bedrading nog niet
+aangesloten? Zolang dit `Unknown` is, blijft dit een 500 waar CI niets mee kan.
+
+Wat wij intussen aan onze kant doen: een expliciete `"Unknown"` in dat veld behandelen wij
+niet meer als "platform, probeer opnieuw" (exit 2) maar als "niet toe te wijzen" (exit 3).
+Jullie hadden een plek om het toe te wijzen en hebben daar "ik weet het niet" ingevuld; dan
+is opnieuw proberen niet de conclusie, en de logs lezen wel.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
