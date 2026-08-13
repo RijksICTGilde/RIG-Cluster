@@ -7,6 +7,22 @@
   - Use the waits that already exist rather than building your own: `kubectl wait --for=condition=Ready pod/... --timeout=120s`, `kubectl rollout status deployment/... --timeout=120s`, `wait_for_task()` in the test helpers. They return on success instead of on the clock.
   - **A timeout is a safety net, not a waiting mechanism.** `--timeout=600` means "something is wrong if it takes this long", never "come back in ten minutes". If your wait only ever ends at the timeout, you are not waiting, you are guessing.
   - Waiting on something that reports progress? Read the progress, do not re-check on a timer. A rollout, a task and a pod all say when they are done.
+- **Do not poll a log file for a command you are waiting on anyway.** This is the pattern that cost hours:
+
+  ```
+  # WRONG: a test run in the background, then grepping its own output for the summary line
+  for i in $(seq 1 19); do
+    grep -qE "= .*(passed|failed).* in .*=" e2e.log && break
+    sleep 30
+  done          # timeout 10m
+  ```
+
+  Three things go wrong at once. There is no parallelism, because you block on it regardless. The poll interval is added latency on top of the real runtime. And worst: if the command dies *without* writing that line (a crash, an OOM, a killed worker), the loop never matches, runs every iteration, and ends on the timeout — so a failure that took ten seconds presents itself as ten minutes of waiting.
+
+  - Waiting for it anyway? **Run it in the foreground** with a sane timeout. You get the output and the exit code the moment it ends, and a crash is immediately a crash.
+  - Genuinely doing something else meanwhile? Background it and wait on the **process**, not on its output — the exit code tells you what happened, an absent log line does not.
+  - A log file is for reading afterwards, or for following a long-running service. It is not a completion signal.
+
 - **Ask the thing that knows, not the clock.** Sleeping until something is "probably done" is guessing twice: about the time, and about the outcome. Every state you might sleep on has an owner that will tell you:
   - a task → the task endpoint (`wait_for_task()` in the test helpers wraps it, and returns the *outcome*, not just "finished");
   - a deployment's health and sync → ArgoCD, via `opi/services/argocd_overview.py` for a whole project in one query;
