@@ -1003,7 +1003,52 @@ bedoeld is, dus wij hechten er waarde aan dat het van buitenaf op te lossen valt
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+**Jullie hebben gelijk, het was een regressie van ons, en jullie eerste vorm was de
+juiste.** De controle is nieuw sinds RC-84 en hij weigerde `publish-on-web` met een eis
+waaraan niet te voldoen was. Hij is nu weg voor elke dienst die geen projectlaag heeft.
+
+**Wat er misging.** Sinds RC-84 mag een dienst zichzelf op projectniveau aanmelden als de
+dienst zelf zegt dat dat mag. Diensten die op projectniveau een besluit vragen - keycloak
+(welke realm), attachments (welke catalogus) - zeggen nee, en dan hoort de aanroeper dat
+besluit eerst te nemen. `publish-on-web` stond bij de neezeggers omdat wij dachten dat het
+project vastlegt op welke domeinen gepubliceerd mag worden. Dat klopt niet: die keuze en de
+bijbehorende goedkeuringen (`domain`, `subdomain`) zitten op de **deployment**, niet op het
+project. De dienst draagt helemaal geen projectlaag - precies wat jullie in de catalogus
+zagen - en dus verwees de weigering naar een laag die niet bestaat, met geen enkele manier
+om eraan te voldoen. Drie routes, één muur, en van buitenaf niet op te lossen.
+
+**De regel is nu systematisch, niet per dienst.** Weigeren mag alleen als de aanroeper de
+laag kán bereiken waar hij naartoe gestuurd wordt. Heeft een dienst geen projectlaag, dan
+is de kale selectie (de naam in de projectlijst, geen configblok) het juiste gedrag,
+ongeacht wat de dienst verder over impliciete selectie verklaart en ongeacht goedkeuringen
+- die beschermen een projectbesluit, en dat is er dan niet. Dit dekt ook de volgende dienst
+met dezelfde vorm; een test bewaakt dat elke overgebleven weigeraar een projectlaag heeft
+die `GET /v2/services/{naam}` ook meldt.
+
+**De andere kant op gemeten**, zoals jullie impliciet vroegen: `publish-on-web` was de enige
+dienst in de catalogus met deze vorm. De zes diensten die nog weigeren (`keycloak`,
+`attachments`, `authorization-wall`, `cross-domain-access`, `sleep-mode`, `invite`) hebben
+allemaal een projectlaag die de catalogus meldt en die te zetten is: vijf met
+`PUT /v2/projects/{p}/services/{svc}/config/project`, en `attachments` met zijn eigen
+projecthandeling (`POST /v2/projects/{p}/services/attachments/attachment`, de catalogus die
+een component daarna aanhaalt). Daar klopt de melding dus wel.
+
+**Wat er niet verandert.** De goedkeuring per deployment blijft staan: een domein of
+subdomein aanvragen vraagt nog steeds om een platformbeheerder, en tot die er is publiceert
+de deployment op de terugvalnaam. Aanzetten is geen goedkeuring.
+
+**Gemeten op de sandbox** (build `b9bfb9b5`), drie verse projecten, één per route, met de
+projectlijst uit het Forgejo-projectbestand als toets:
+
+```sh
+PUT   /v2/projects/$P/services/publish-on-web/config/component/web?rollout=false  {"tls":"standard"}
+PATCH /v2/projects/$P/components/web?rollout=false                                {"services":["publish-on-web"]}
+POST  /v2/projects/$P/components   {"name":"web2","image":...,"services":["publish-on-web"]}
+# alle drie: 202, taak completed, en 'publish-on-web' staat daarna op de projectlijst
+```
+
+Dat staat als vangrail in `tests/e2e/test_sandbox_publish_on_web.py` (4 tests, groen),
+naast de beslissing zelf in `tests/test_implicit_project_selection.py`.
 
 ---
 
