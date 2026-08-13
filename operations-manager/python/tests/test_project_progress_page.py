@@ -131,7 +131,7 @@ class TestProgressFragmentRoute:
         assert "Project succesvol aangemaakt" in response.text
         assert 'hx-trigger="every 2s"' not in response.text
         assert "Naar projectdetails" in response.text
-        assert f"/projects/details/{SAMPLE_PROJECT}" in response.text
+        assert f"/projects/{SAMPLE_PROJECT}/details" in response.text
 
     def test_failed_result_shows_the_error_and_the_way_out(
         self, client: TestClient, mock_task_service: AsyncMock

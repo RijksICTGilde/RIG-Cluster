@@ -5,7 +5,7 @@ deployment - en daar stonden alle grafiekenblokken onder elkaar, dus moest je sc
 er een te vinden en kon je niet wisselen.
 
 Sinds RC-92 rendert de server er EEN, en staat de naam in het PAD
-(``/projects/deployments/<project>/<naam>``). Daarmee is de kiezer een rij ADRESSEN
+(``/projects/<project>/deployments/<naam>``). Daarmee is de kiezer een rij ADRESSEN
 geworden: kiezen is navigeren, de URL zegt wat je ziet, en de keuze blijft staan bij het
 wisselen van tabblad omdat de tabbalk hem meeneemt. De JavaScript die blokken toonde en
 verborg (switchDeployment) is daarmee vervallen, en het bestand waarin hij stond is weg.
@@ -92,15 +92,15 @@ def test_de_optie_is_het_adres_van_die_deployment() -> None:
     meer - er is geen JavaScript meer die er blokken bij zoekt."""
     html = _kiezer_html()
 
-    assert '<option value="/projects/deployments/demo/default"' in html
-    assert '<option value="/projects/deployments/demo/tweede"' in html
+    assert '<option value="/projects/demo/deployments/default"' in html
+    assert '<option value="/projects/demo/deployments/tweede"' in html
 
 
 def test_de_optie_blijft_op_het_tabblad_waar_je_bent() -> None:
     """Op Metingen wijst de kiezer naar Metingen; anders wisselt kiezen ook van tabblad."""
     html = _kiezer_html(tabblad="metrics")
 
-    assert '<option value="/projects/metrics/demo/default"' in html
+    assert '<option value="/projects/demo/metrics/default"' in html
 
 
 def test_de_kiezer_navigeert_en_toont_of_verbergt_niets() -> None:
@@ -132,5 +132,5 @@ def test_de_kiezer_wijst_de_deployment_aan_die_de_pagina_toont() -> None:
     via de kiezer onbereikbaar wordt."""
     html = _kiezer_html(deployment_open="tweede")
 
-    assert '<option value="/projects/deployments/demo/tweede" selected>' in html
+    assert '<option value="/projects/demo/deployments/tweede" selected>' in html
     assert html.count("selected") == 1, "er staat meer dan een optie voorgeselecteerd"

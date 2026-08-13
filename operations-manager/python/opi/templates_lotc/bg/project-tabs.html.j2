@@ -18,7 +18,7 @@
 
   WAT ER ANDERS IS DAN DE OUDE PAGINA
 
-  De tabs zijn ECHTE LINKS met een eigen PAD (/projects/deployments/<naam>), waar de oude
+  De tabs zijn ECHTE LINKS met een eigen PAD (/projects/<naam>/deployments), waar de oude
   versie ze in de browser wisselt met switchTab(). Daardoor is een tab deelbaar, werkt de
   terugknop, en doet de pagina het zonder JavaScript.
 
@@ -672,7 +672,7 @@
         {# EEN DEPLOYMENT PER PAGINA. Dit tabblad is de DETAILWEERGAVE: je kiest er een,
            ziet zijn gegevens en kunt hem bewerken. De INGANG is de tabel op Overzicht; een
            rij daar wijst hierheen met de naam in het PAD
-           (/projects/deployments/<project>/<naam>).
+           (/projects/<project>/deployments/<naam>).
 
            Hier stonden ALLE deployments, waarvan er alles behalve een met CSS verborgen
            werd. Dat is werk voor blokken die niemand ziet - elk verborgen blok draagt zijn
@@ -756,7 +756,7 @@
 
            EEN DEPLOYMENT PER PAGINA, net als op het tabblad Deployments, en om dezelfde
            reden: je kijkt hier per deployment. De naam staat in het PAD
-           (/projects/metrics/<project>/<naam>) en de server rendert dat ene blok; ze
+           (/projects/<project>/metrics/<naam>) en de server rendert dat ene blok; ze
            stonden hier alle onder elkaar, waarvan er alles behalve een verborgen werd.
            Dezelfde kiezer als op Deployments (bg/_deployment-selector.html.j2), en de
            keuze blijft staan bij het wisselen van tabblad omdat de tabbalk hem meeneemt. #}
