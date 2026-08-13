@@ -51,6 +51,37 @@ def is_image_pull_disable_reason(reason: str) -> bool:
     return any(reason.startswith(r) for r in IMAGE_PULL_REASONS)
 
 
+# Phrases in a pull error that mean "the registry could not answer", as opposed to
+# "the registry answered, and the image is not there". A 5xx or a rate limit says
+# nothing about whether the tag exists, so the component must NOT be auto-disabled
+# for one: disabling scales it to 0, which removes the pod that would have retried,
+# turning a registry hiccup into a permanent outage. Kubelet retries the pull with
+# backoff on its own and recovers once the registry does.
+#
+# Matched as literal phrases, never as a bare number: an image tag like
+# ``pr-500-abc1234`` is part of the same message and must not read as a 500.
+_REGISTRY_UNAVAILABLE_MARKERS = (
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "too many requests",
+    "http status: 500",
+    "http status: 502",
+    "http status: 503",
+    "http status: 504",
+    "http status: 429",
+)
+
+
+def is_transient_registry_error(message: str | None) -> bool:
+    """True when a pull error means the registry failed, not that the image is missing."""
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(marker in lowered for marker in _REGISTRY_UNAVAILABLE_MARKERS)
+
+
 # Default resource values for deployment containers
 DEFAULT_RESOURCES: dict[str, str] = {
     "requests_memory": "128Mi",

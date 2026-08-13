@@ -1,20 +1,24 @@
-{% extends "base_lotc.html.j2" %}
+{# Dezelfde hulptekst als in de modal, maar dan als op zichzelf staande pagina.
 
-{# Dezelfde hulptekst als in de modal, maar dan als hele pagina.
+   GEEN base_lotc: die brengt de hele applicatieschil mee (kopbalk, hoofdmenu, zijkolom,
+   voettekst) en dat is te veel voor een hulptekst. Hier stond hij wel, en toen kreeg een
+   uitleg over een dienst ineens een menu waar je nergens heen wilt.
 
-   Waarom dit bestaat: /forms/wizard/help/<...> gaf altijd een FRAGMENT terug, want het
-   wordt met htmx in een dialoog geladen en die levert de marges. Wie de URL rechtstreeks
-   opende - en dat gebeurt, hij staat in de wizard en is deelbaar - kreeg datzelfde
-   fragment zonder <head>: geen stylesheets, geen paginakader, en dus alles tegen de
-   linkerrand. Dat was niet met CSS te repareren, want er zat geen pagina omheen.
+   Waarom er toch een pagina omheen zit: /forms/wizard/help/<...> gaf altijd een FRAGMENT
+   terug, want het wordt met htmx in een dialoog geladen en die levert de marges. Wie de URL
+   rechtstreeks opende - en dat gebeurt, hij staat in de wizard en is deelbaar - kreeg datzelfde
+   fragment zonder <head>: geen stylesheets, geen marges, alles tegen de linkerrand.
 
-   De route kiest nu op HX-Request: htmx krijgt het fragment dat het verwacht, een browser
-   krijgt deze pagina. Eén bron voor de inhoud, twee omhulsels. #}
-
-{% block page_title %}{{ page_title_value | default("Uitleg") }} - ZAD{% endblock %}
-
-{% block content %}
-<c-layout-flow gap="lg">
-    {{ help_markup | safe }}
-</c-layout-flow>
-{% endblock %}
+   Dit is het minimum dat dat oplost: de stylesheets van het thema, en een leesbare kolom. De
+   route kiest op HX-Request; htmx krijgt nog steeds het kale fragment. #}
+{# <c-page> laadt de CSS/JS van de actieve designsystemen zelf; hier komt alleen onze
+   eigen stylesheet bij. base_lotc bouwt een uitgebreidere head (htmx, de
+   aanvinkvakjesbrug, de licht/donker-stand) en die heeft een hulptekst niet nodig. #}
+{% set help_head %}<link rel="stylesheet" href="{{ static_url('css/lotc-app.css') }}">{% endset %}
+<c-page title="{{ page_title_value | default('Uitleg') }} - ZAD" lang="nl" head="{{ help_head }}">
+    <c-container padding="24">
+        <c-layout-flow gap="lg">
+            {{ help_markup | safe }}
+        </c-layout-flow>
+    </c-container>
+</c-page>
