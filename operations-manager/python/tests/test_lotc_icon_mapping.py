@@ -7,7 +7,12 @@ waarna NLDD ze niet herkent en er niets verschijnt. Dat faalt niet - het is stil
 dat is precies waarom het een test verdient: een leeg icoon ziet niemand in een
 foutmelding, alleen op een screenshot.
 
-De test toetst drie dingen:
+Elke toets meet de naam die er NA het renderen uitkomt (het ``name=`` op ``<nldd-icon>``)
+en niet de naam die wij meegeven: LOTC heeft een eigen aliaslaag in ``icons.json`` die er
+nog tussen zit, en daar verdween het icoon van de bijlagendienst in (``folder-stack``
+bestaat, wordt herschreven naar ``folder-on-folder``, en die bestaat niet).
+
+De test toetst vier dingen:
 
 1. Elke afbeelding in ROOS_TO_NLDD_ICONS wijst naar een naam die NLDD echt kent.
    Een gok naar een niet-bestaande naam levert hetzelfde lege icoon op als geen
@@ -19,6 +24,9 @@ De test toetst drie dingen:
    die set is er niet meer, en de vraag is nu welke naam NLDD kent. Het menu apart, want
    het is de enige plek waar de iconnamen uit Python komen en pas na een rollencontrole
    compleet zijn - "Domeinen" droeg lange tijd een naam die niet bestond.
+4. Elke letterlijke iconnaam in de Python-bron levert een icoon op. De dienstDEFINITIES
+   waren daarvan maar een deel: een deploymentactie, een formuliersectie en een preset
+   dragen hun icoon net zo goed in Python, en daar stonden drie lege plekken.
 """
 
 import logging
@@ -27,6 +35,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from opi.core.templates_lotc import templates_lotc
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import ROOS_TO_NLDD_ICONS, to_nldd_icon
 from opi.web.nldd_iconen import nldd_icon_names
@@ -47,6 +56,25 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 # deployment en score-meter voor de hulppagina over resources. Ze staan nu in
 # ROOS_TO_NLDD_ICONS.
 KNOWN_GAPS: set[str] = set()
+
+
+def _gerenderde_naam(icon: str) -> str:
+    """De naam die er na LOTC's eigen aliaslaag uitkomt: het ``name=`` op ``<nldd-icon>``.
+
+    DIT IS DE NAAM DIE DE BROWSER OPZOEKT, en hij is niet altijd de naam die wij
+    meegeven. ``icons.json`` van lord_of_the_components draagt een tabel met aliassen die
+    tijdens het renderen wordt toegepast: ``folder-stack`` -> ``folder-on-folder``,
+    ``database`` -> ``cylinder-split``.
+
+    Op die eerste ging het mis. ``folder-stack`` staat WEL in de geleverde bundel, dus
+    elke poort hier was groen; ``folder-on-folder`` staat er NIET in, en dat is de naam
+    waarmee het icoon van de bijlagendienst werd opgezocht. Het rendeerde leeg. Een poort
+    die de naam meet die wij meegeven in plaats van de naam die eruit komt, meet dus de
+    verkeerde kant van de aliaslaag.
+    """
+    html = templates_lotc.env.from_string(f'<c-icon icon="{icon}"/>').render()
+    treffer = re.search(r'name="([^"]*)"', html)
+    return treffer.group(1) if treffer else icon
 
 
 def _nldd_vocabulary() -> set[str]:
@@ -108,10 +136,56 @@ def _all_icons_in_use() -> set[str]:
     return _icons_used_in_templates() | _icons_used_by_services()
 
 
+#: De Python-kant van de applicatie, waar iconnamen ook letterlijk in de code staan.
+OPI_DIR = Path(__file__).parent.parent / "opi"
+
+
+def _iconen_in_python() -> dict[str, set[str]]:
+    """Elke letterlijke ``icon="..."`` in de Python-bron, met de bestanden erbij.
+
+    De dienstDEFINITIES werden al gemeten (hierboven), en dat was maar een deel van de
+    Python-kant: een deploymentactie, een formuliersectie en een preset dragen hun icoon
+    net zo goed in Python. Daar zaten drie lege plekken die geen enkele poort zag -
+    ``raket`` op de wizardstap Deployments, ``uitvoering`` op "Applicatie wekken" en "Job
+    uitvoeren", en ``wolk`` op de objectopslagconfiguratie.
+    """
+    gevonden: dict[str, set[str]] = {}
+    for bron in OPI_DIR.rglob("*.py"):
+        for naam in re.findall(r'(?<![-\w])icon="([a-z0-9-]+)"', bron.read_text()):
+            gevonden.setdefault(naam, set()).add(bron.name)
+    return gevonden
+
+
+def test_de_python_kant_draagt_iconnamen() -> None:
+    """Bewaak de bewaker: een lege vangst maakt de test hieronder gratis groen."""
+    assert len(_iconen_in_python()) > 10
+
+
+def test_elke_iconnaam_in_python_levert_een_icoon_op() -> None:
+    """Elke letterlijke iconnaam in de code komt na vertaling op een echt icoon uit.
+
+    Deze kant gaat WEL door ROOS_TO_NLDD_ICONS: wat in Python staat komt via het
+    ``nldd_icon``-filter of via ``to_nldd_icon()`` de sjabloon in.
+    """
+    vocabulaire = _nldd_vocabulary()
+    leeg = {
+        f"{naam} -> {to_nldd_icon(naam)}": sorted(bestanden)
+        for naam, bestanden in _iconen_in_python().items()
+        if _gerenderde_naam(to_nldd_icon(naam)) not in vocabulaire
+    }
+    assert not leeg, "iconnamen in Python die als een lege plek renderen:\n" + "\n".join(
+        f"  {naam}: {', '.join(bestanden)}" for naam, bestanden in sorted(leeg.items())
+    )
+
+
 def test_every_mapping_points_at_a_real_nldd_icon() -> None:
     """Geen enkele afbeelding wijst naar een naam die NLDD niet kent."""
     vocabulary = _nldd_vocabulary()
-    invalid = {ours: theirs for ours, theirs in ROOS_TO_NLDD_ICONS.items() if theirs not in vocabulary}
+    invalid = {
+        ours: f"{theirs} -> {_gerenderde_naam(theirs)}"
+        for ours, theirs in ROOS_TO_NLDD_ICONS.items()
+        if _gerenderde_naam(theirs) not in vocabulary
+    }
     assert not invalid, f"afbeelding naar onbekende NLDD-iconen: {invalid}"
 
 
@@ -124,7 +198,11 @@ def test_elk_dienstpictogram_levert_een_icoon_op() -> None:
     waar 37 lege plekken vandaan kwamen.
     """
     vocabulary = _nldd_vocabulary()
-    leeg = {icon: to_nldd_icon(icon) for icon in _icons_used_by_services() if to_nldd_icon(icon) not in vocabulary}
+    leeg = {
+        icon: to_nldd_icon(icon)
+        for icon in _icons_used_by_services()
+        if _gerenderde_naam(to_nldd_icon(icon)) not in vocabulary
+    }
     assert not leeg, (
         "dienstpictogrammen die als een lege plek renderen (naam -> na vertaling): "
         f"{leeg}. Kies een naam die NLDD levert of leg de afbeelding in ROOS_TO_NLDD_ICONS."
@@ -157,7 +235,7 @@ def test_the_menu_actually_has_icons() -> None:
 @pytest.mark.parametrize("icon", sorted(_menu_icons()))
 def test_every_menu_icon_lands_in_the_nldd_vocabulary(icon: str) -> None:
     vertaald = to_nldd_icon(icon)
-    assert vertaald in _nldd_vocabulary(), (
+    assert _gerenderde_naam(vertaald) in _nldd_vocabulary(), (
         f"menu-icoon {icon!r} wordt {vertaald!r} en dat kent NLDD niet; "
         f"het rendert leeg zonder enige foutmelding. Kies een bestaande naam of leg de "
         f"afbeelding in ROOS_TO_NLDD_ICONS."
@@ -246,7 +324,7 @@ def test_elke_iconnaam_in_een_lotc_sjabloon_bestaat_in_nldd() -> None:
     onbekend = {
         naam: sorted(bestanden)
         for naam, bestanden in _iconen_in_lotc_templates().items()
-        if naam not in vocabulaire and naam not in KNOWN_GAPS
+        if _gerenderde_naam(naam) not in vocabulaire and naam not in KNOWN_GAPS
     }
     assert not onbekend, "iconnamen die NLDD niet kent (ze renderen leeg, zonder foutmelding):\n" + "\n".join(
         f"  {naam}: {', '.join(bestanden)}" for naam, bestanden in sorted(onbekend.items())
