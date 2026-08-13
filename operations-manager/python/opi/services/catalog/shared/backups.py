@@ -6,11 +6,26 @@ services, minio-storage). So the block is owned jointly -- every such service mi
 ``BackupsPageMixin`` -- and the collector renders the section once and mounts the router
 once, because all owners hand back the same template and the same router object.
 
-The block covers ONE deployment (its schedule, its actions, its snapshot table), but the
-snapshots are fetched for the WHOLE project in a single request: listing them opens a
+The block covers ONE deployment (its schedule, its actions, its snapshot table), and since
+RC-100 it is a TAB of its own (``/projects/<project>/backups/<deployment>``) instead of a
+block on the Deployments tab. It is therefore no longer offered on
+``UIEvent.DEPLOYMENT_SECTIONS`` -- which is the generic "every service delivers its blocks
+per deployment" hook -- but collected by name through :func:`collect_backups_sections`.
+
+That is a deliberate exception to the generic mechanism, and the alternative was
+considered: let a service DECLARE that its block deserves a tab, and derive the tab bar
+partly from the registry. Measured first, as the plan asked: exactly two services deliver
+a deployment section, and the other one (metrics-scraper) shows the same graphs the
+Metrics tab already shows for every project. With one candidate, a hook for "which
+services want a tab" is machinery for a case that does not exist (YAGNI), so Backups is
+named -- once here, once in the tab list, once in the tab template -- exactly as Metrics
+is. The day a second block wants a tab, that is the moment to generalise.
+
+The snapshots are fetched for the WHOLE project in a single request: listing them opens a
 Kopia repository over S3, and one request per deployment once OOM-killed the pod (see
-``backups_fragment``). Only the first deployment's block therefore carries the loader;
-it fans its results out to every block via ``hx-swap-oob``.
+``backups_fragment``). The page now carries one deployment's block, so that block carries
+the loader; it fans its results out via ``hx-swap-oob``, and the placeholders of the
+deployments that are not on this page simply are not there.
 
 The route lives here because a service that owns a block owns the endpoint that fills it
 -- otherwise half the block stays behind in the general router. Everything heavy
@@ -28,8 +43,6 @@ from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import requires_sso
 from opi.services.catalog.base import DeploymentPageContext, DetailPageSection
-from opi.services.catalog.events import on
-from opi.services.services_enums import UIEvent
 
 logger = logging.getLogger(__name__)
 
@@ -40,33 +53,16 @@ SECTION_TEMPLATE = "shared/section-backups.html.j2"
 backups_router = APIRouter()
 
 
-def _deployments_on_cluster(ctx: DeploymentPageContext) -> list[str]:
-    """Names of the project's deployments on the managed cluster, sorted as displayed."""
-    return sorted(
-        deployment["name"]
-        for deployment in ctx.project_data.get("deployments", []) or []
-        if deployment.get("name") and deployment.get("cluster") == ctx.current_cluster
-    )
-
-
 def backup_deployment_sections(ctx: DeploymentPageContext) -> list[DetailPageSection]:
     """The backups block for ``ctx.deployment``, or nothing when it does not apply.
 
-    Only deployments on the managed cluster have backups. When the backup service is
-    unreachable the notice is shown once for the project, not once per deployment.
+    Only deployments on the managed cluster have backups.
     """
     deployment_name = ctx.deployment.get("name")
     if not deployment_name or ctx.deployment.get("cluster") != ctx.current_cluster:
         return []
 
-    on_cluster = _deployments_on_cluster(ctx)
-    # The first block (in display order) carries the project's single snapshot loader
-    # and any project-wide notice.
-    is_first = bool(on_cluster) and on_cluster[0] == deployment_name
-
     if not ctx.backend_available.get("backups", False):
-        if not is_first:
-            return []
         return [DetailPageSection(template=SECTION_TEMPLATE, context={"available": False})]
 
     deployments = ctx.project_data.get("deployments", []) or []
@@ -84,32 +80,49 @@ def backup_deployment_sections(ctx: DeploymentPageContext) -> list[DetailPageSec
                 # project's own list (modal-edit-backup-schedule-<i>), not by name.
                 "deployment_index": deployments.index(ctx.deployment) if ctx.deployment in deployments else 0,
                 "schedule": (backup_config or {}).get("schedule", "") if isinstance(backup_config, dict) else "",
-                "loads_snapshots": is_first,
+                # The page carries ONE deployment (RC-100), so this block carries the
+                # loader. It used to be "only the first deployment of the project", when
+                # every deployment had a block on the same page and eighteen loaders were
+                # eighteen Kopia connects; on a page with one block that rule meant the
+                # second deployment's page never loaded a thing.
+                "loads_snapshots": True,
             },
         )
     ]
 
 
 class BackupsPageMixin:
-    """Mixed into every service with a ``backup_label``: it brings the backups block.
+    """Mixed into every service with a ``backup_label``: it brings the backups tab.
 
-    Each owner returns the same section and the same router, and the registry renders
-    and mounts each of them once -- so the block appears for a project that can back
-    something up, and exactly once.
+    Carrying this mixin is what makes a service backupable in the UI: the tab shows its
+    block for a project that uses at least one such service (see
+    :func:`collect_backups_sections`), and every owner hands back the same router object
+    so the fragment route is mounted once instead of once per owner.
 
-    No cooperative ``super()`` needed since RC-39: a service can carry more than one page
-    mixin -- the PostgreSQL services are backupable AND bring the console/job modals --
-    and the event dispatch concatenates what every handler of the event returns, so
-    neither mixin has to know the other exists. Before, a mixin that forgot to chain
-    through ``super()`` silently swallowed the other's block.
+    The block hung on ``UIEvent.DEPLOYMENT_SECTIONS`` until RC-100, and that is why the
+    mixin no longer declares a handler: the block has a tab of its own now and is asked
+    for by name. What it still does is say WHO owns backups, in one place.
     """
-
-    @on(UIEvent.DEPLOYMENT_SECTIONS)
-    def backups_block(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
-        return backup_deployment_sections(ctx)
 
     def web_routers(self) -> list[Any]:
         return [*super().web_routers(), backups_router]  # type: ignore[misc]
+
+
+def collect_backups_sections(ctx: DeploymentPageContext) -> list[DetailPageSection]:
+    """The backups blocks for the Backups tab, or nothing for a project without backups.
+
+    Same selection rule as the registry's own collectors -- the services the project
+    actually uses -- but asked by name instead of through an event, because the block
+    landed on a tab of its own (see the module docstring for the trade-off). A project
+    that uses no backupable service gets no block, which is the failure this guards: a
+    tab that shows "geen backups" for a project that cannot back anything up at all reads
+    as "the backups are gone".
+    """
+    from opi.services.registry import selected_services
+
+    if not any(isinstance(service, BackupsPageMixin) for service in selected_services(ctx.project_data)):
+        return []
+    return backup_deployment_sections(ctx)
 
 
 def _snapshot_to_dict(snapshot: Any) -> dict[str, Any]:

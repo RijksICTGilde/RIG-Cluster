@@ -22,7 +22,9 @@
     ],
     "functies": [],
     "htmx": [],
-    "ids": [],
+    "ids": [
+      "hoofdinhoud"
+    ],
     "velden": []
   },
   "/admin/approvals": {
@@ -56,7 +58,8 @@
       "approval-modal",
       "approval-title",
       "approval-title-text",
-      "edit-section-inner"
+      "edit-section-inner",
+      "hoofdinhoud"
     ],
     "velden": []
   },
@@ -84,6 +87,7 @@
     "functies": [],
     "htmx": [],
     "ids": [
+      "hoofdinhoud",
       "namespace",
       "price",
       "year"
@@ -122,7 +126,9 @@
       "confirm"
     ],
     "htmx": [],
-    "ids": [],
+    "ids": [
+      "hoofdinhoud"
+    ],
     "velden": [
       "csrf_token"
     ]
@@ -152,7 +158,9 @@
     "htmx": [
       "hx-get=/dashboard/resource-usage"
     ],
-    "ids": [],
+    "ids": [
+      "hoofdinhoud"
+    ],
     "velden": []
   },
   "/forms/wizard/start": {
@@ -179,7 +187,9 @@
     ],
     "functies": [],
     "htmx": [],
-    "ids": [],
+    "ids": [
+      "hoofdinhoud"
+    ],
     "velden": []
   },
   "/metrics-explorer": {
@@ -243,9 +253,9 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
-      "/projects/test-project/details",
       "/projects/test-project-detail/details",
       "/projects/test-project-services/details",
+      "/projects/test-project/details",
       "/projects?refresh=true",
       "/projects?sort=deployments",
       "/projects?sort=naam",
@@ -265,6 +275,7 @@
       "hx-get=/projects?sort=teamleden"
     ],
     "ids": [
+      "hoofdinhoud",
       "projects-lijst"
     ],
     "velden": [
@@ -293,6 +304,88 @@
     "ids": [],
     "velden": []
   },
+  "/projects/test-project-detail/backups": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/projects/test-project-detail/backups/default",
+      "/projects/test-project-detail/componenten",
+      "/projects/test-project-detail/deployments/default",
+      "/projects/test-project-detail/details",
+      "/projects/test-project-detail/metrics/default",
+      "/projects/test-project-detail/services",
+      "/projects/test-project-detail/taken",
+      "/projects/test-project-detail/team",
+      "/services",
+      "/weergave?scheme=&terug=/projects/test-project-detail/backups/default",
+      "/weergave?scheme=dark&terug=/projects/test-project-detail/backups/default",
+      "/weergave?scheme=light&terug=/projects/test-project-detail/backups/default"
+    ],
+    "functies": [
+      "assign",
+      "clearLogs",
+      "closeEditModal",
+      "closeServiceHelp",
+      "copyLogs",
+      "downloadLogs",
+      "filterLogs",
+      "handleEditBackdropClick",
+      "openEditModal",
+      "switchLogComponent",
+      "toggleLogPause",
+      "toggleWordWrap"
+    ],
+    "htmx": [
+      "hx-get=/projects/details/test-project-detail/backups"
+    ],
+    "ids": [
+      "backups-snapshots-default",
+      "edit-section-backdrop",
+      "edit-section-content",
+      "edit-section-inner",
+      "edit-section-modal",
+      "edit-section-title",
+      "edit-section-title-text",
+      "filter-debug",
+      "filter-info",
+      "filter-warn",
+      "global-deployment-selector",
+      "hoofdinhoud",
+      "log-component-selector",
+      "log-empty-state",
+      "log-line-count",
+      "log-pause-btn",
+      "log-search-count",
+      "log-search-input",
+      "log-status-indicator",
+      "log-status-text",
+      "log-viewer-content",
+      "log-viewer-heading",
+      "log-viewer-panel",
+      "log-viewer-status",
+      "log-word-wrap",
+      "restore-btn-default",
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal",
+      "tab-backups"
+    ],
+    "velden": [
+      "global-deployment-selector"
+    ]
+  },
   "/projects/test-project-detail/componenten": {
     "bestemmingen": [
       "/",
@@ -309,12 +402,14 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
+      "/projects/test-project-detail/backups",
       "/projects/test-project-detail/componenten",
       "/projects/test-project-detail/deployments",
       "/projects/test-project-detail/details",
       "/projects/test-project-detail/metrics",
       "/projects/test-project-detail/services",
       "/projects/test-project-detail/taken",
+      "/projects/test-project-detail/team",
       "/services",
       "/weergave?scheme=&terug=/projects/test-project-detail/componenten",
       "/weergave?scheme=dark&terug=/projects/test-project-detail/componenten",
@@ -345,6 +440,7 @@
       "filter-debug",
       "filter-info",
       "filter-warn",
+      "hoofdinhoud",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -381,12 +477,14 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
+      "/projects/test-project-detail/backups/default",
       "/projects/test-project-detail/componenten",
       "/projects/test-project-detail/deployments/default",
       "/projects/test-project-detail/details",
       "/projects/test-project-detail/metrics/default",
       "/projects/test-project-detail/services",
       "/projects/test-project-detail/taken",
+      "/projects/test-project-detail/team",
       "/services",
       "/weergave?scheme=&terug=/projects/test-project-detail/deployments/default",
       "/weergave?scheme=dark&terug=/projects/test-project-detail/deployments/default",
@@ -408,11 +506,8 @@
       "toggleLogPause",
       "toggleWordWrap"
     ],
-    "htmx": [
-      "hx-get=/projects/details/test-project-detail/backups"
-    ],
+    "htmx": [],
     "ids": [
-      "backups-snapshots-default",
       "deployment-actions-default",
       "deployment-default",
       "edit-section-backdrop",
@@ -439,7 +534,6 @@
       "log-viewer-panel",
       "log-viewer-status",
       "log-word-wrap",
-      "restore-btn-default",
       "service-help-backdrop",
       "service-help-content",
       "service-help-modal",
@@ -465,6 +559,7 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
+      "/projects/test-project-detail/backups",
       "/projects/test-project-detail/componenten",
       "/projects/test-project-detail/deployments",
       "/projects/test-project-detail/deployments/default",
@@ -477,6 +572,7 @@
       "/projects/test-project-detail/metrics",
       "/projects/test-project-detail/services",
       "/projects/test-project-detail/taken",
+      "/projects/test-project-detail/team",
       "/services",
       "/weergave?scheme=&terug=/projects/test-project-detail/details",
       "/weergave?scheme=dark&terug=/projects/test-project-detail/details",
@@ -556,12 +652,14 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
+      "/projects/test-project-detail/backups/default",
       "/projects/test-project-detail/componenten",
       "/projects/test-project-detail/deployments/default",
       "/projects/test-project-detail/details",
       "/projects/test-project-detail/metrics/default",
       "/projects/test-project-detail/services",
       "/projects/test-project-detail/taken",
+      "/projects/test-project-detail/team",
       "/services",
       "/weergave?scheme=&terug=/projects/test-project-detail/metrics/default",
       "/weergave?scheme=dark&terug=/projects/test-project-detail/metrics/default",
@@ -785,6 +883,7 @@
       "modal-wizard-step-inner"
     ],
     "velden": [
+      "_gerenderde-reeksen[]",
       "_wizard_token",
       "components[0]/aliases",
       "components[0]/command",
@@ -837,6 +936,7 @@
       "modal-wizard-step-inner"
     ],
     "velden": [
+      "_gerenderde-reeksen[]",
       "_wizard_token",
       "components[1]/aliases",
       "components[1]/command",
@@ -887,11 +987,13 @@
       "deployments[0]/components[0]/reference",
       "deployments[0]/components[0]/services/attachments/config-container",
       "deployments[0]/components[0]/services/attachments/config-items",
+      "deployments[0]/components[0]/services/publish-on-web/config/tls",
       "deployments[0]/components[0]/user-env-vars",
       "deployments[0]/components[1]/image",
       "deployments[0]/components[1]/reference",
       "deployments[0]/components[1]/services/attachments/config-container",
       "deployments[0]/components[1]/services/attachments/config-items",
+      "deployments[0]/components[1]/services/publish-on-web/config/tls",
       "deployments[0]/components[1]/user-env-vars",
       "edit-section-actions",
       "edit-section-content",
@@ -901,12 +1003,15 @@
       "modal-wizard-step-inner"
     ],
     "velden": [
+      "_gerenderde-reeksen[]",
       "_wizard_token",
       "deployments[0]/components[0]/image",
       "deployments[0]/components[0]/reference",
+      "deployments[0]/components[0]/services/publish-on-web/config/tls",
       "deployments[0]/components[0]/user-env-vars",
       "deployments[0]/components[1]/image",
       "deployments[0]/components[1]/reference",
+      "deployments[0]/components[1]/services/publish-on-web/config/tls",
       "deployments[0]/components[1]/user-env-vars"
     ]
   },
@@ -987,6 +1092,7 @@
       "modal-wizard-step-inner"
     ],
     "velden": [
+      "_gerenderde-reeksen[]",
       "_services-config/invite/config/active[0]/application-url",
       "_services-config/invite/config/active[0]/contact-email",
       "_services-config/invite/config/active[0]/key",
@@ -1012,8 +1118,11 @@
       "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-keycloak-config/step/keycloak-config?_wizard_token=<wisselend>"
     ],
     "ids": [
+      "_services-config/keycloak/config/account-link",
       "_services-config/keycloak/config/additional-clients-container",
       "_services-config/keycloak/config/additional-clients-items",
+      "_services-config/keycloak/config/additional_redirect_uris-container",
+      "_services-config/keycloak/config/additional_redirect_uris-items",
       "_services-config/keycloak/config/restrict-access/enabled",
       "_services-config/keycloak/config/template",
       "edit-section-actions",
@@ -1022,6 +1131,8 @@
       "modal-wizard-step-inner"
     ],
     "velden": [
+      "_gerenderde-reeksen[]",
+      "_services-config/keycloak/config/account-link",
       "_services-config/keycloak/config/restrict-access/enabled",
       "_services-config/keycloak/config/template",
       "_wizard_token"
@@ -1090,6 +1201,7 @@
       "modal-wizard-step-inner"
     ],
     "velden": [
+      "_gerenderde-reeksen[]",
       "_wizard_token"
     ]
   },
@@ -1211,6 +1323,7 @@
       "users[1]/role"
     ],
     "velden": [
+      "_gerenderde-reeksen[]",
       "_wizard_token",
       "users[0]/email",
       "users[0]/role",
@@ -1253,12 +1366,14 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
+      "/projects/test-project-detail/backups",
       "/projects/test-project-detail/componenten",
       "/projects/test-project-detail/deployments",
       "/projects/test-project-detail/details",
       "/projects/test-project-detail/metrics",
       "/projects/test-project-detail/services",
       "/projects/test-project-detail/taken",
+      "/projects/test-project-detail/team",
       "/services",
       "/weergave?scheme=&terug=/projects/test-project-detail/services",
       "/weergave?scheme=dark&terug=/projects/test-project-detail/services",
@@ -1288,6 +1403,7 @@
       "filter-debug",
       "filter-info",
       "filter-warn",
+      "hoofdinhoud",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -1324,12 +1440,14 @@
       "/forms/wizard/restart",
       "/metrics-explorer",
       "/projects",
+      "/projects/test-project-detail/backups",
       "/projects/test-project-detail/componenten",
       "/projects/test-project-detail/deployments",
       "/projects/test-project-detail/details",
       "/projects/test-project-detail/metrics",
       "/projects/test-project-detail/services",
       "/projects/test-project-detail/taken",
+      "/projects/test-project-detail/team",
       "/services",
       "/weergave?scheme=&terug=/projects/test-project-detail/taken",
       "/weergave?scheme=dark&terug=/projects/test-project-detail/taken",
@@ -1361,6 +1479,7 @@
       "filter-debug",
       "filter-info",
       "filter-warn",
+      "hoofdinhoud",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -1418,6 +1537,7 @@
     ],
     "htmx": [],
     "ids": [
+      "hoofdinhoud",
       "service-help-backdrop",
       "service-help-content",
       "service-help-modal"

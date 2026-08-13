@@ -718,8 +718,13 @@
                 {% include "bg/_deployment-actions.html.j2" %}
 
                 {# De blokken die de diensten voor DEZE deployment leveren (RC-24): de
-                   backups, de metingen. Een dienst beslist zelf of zijn blok voor deze
-                   deployment geldt, dus hier staat geen dienstnaam en geen voorwaarde. #}
+                   metingen van de metrics-scraper. Een dienst beslist zelf of zijn blok
+                   voor deze deployment geldt, dus hier staat geen dienstnaam en geen
+                   voorwaarde.
+
+                   De backups stonden hier ook en staan sinds RC-100 op hun eigen tabblad.
+                   Ze zijn niet gekopieerd: twee weergaven van dezelfde gegevens lopen uit
+                   de pas. #}
                 <div data-deployment="{{ deployment_geopend.name }}">
                     <c-stack gap="md">
                         {% with sections = (deployment_service_sections | default({})).get(deployment_geopend.name, []) %}
@@ -811,6 +816,58 @@
             </script>
         {% endif %}
 
+
+    {% elif active_tab == 'backups' %}
+        {# ---- De backups van EEN deployment ------------------------------------------
+
+           Dit blok stond op het tabblad Deployments, als een van de blokken die de
+           diensten per deployment leveren. Het is groot genoeg voor een eigen aanzicht -
+           een schema, twee knoppen en de hele snapshotlijst - en het is waar je heen gaat
+           als je iets komt terugzetten, niet iets dat je en passant onder een deployment
+           tegenkomt.
+
+           BACKUPS STAAT HIER MET NAAM, net als Metrics. Dat is een uitzondering op het
+           mechanisme dat juist bedoeld is om geen dienstnaam in dit sjabloon te hoeven
+           zetten, en dus een keuze: van de twee diensten die een deploymentblok leveren is
+           dit de enige kandidaat voor een eigen tabblad (de andere, de metrics-scraper,
+           toont dezelfde grafieken die het tabblad Metrics al voor elk project toont). De
+           afweging staat voluit in opi/services/catalog/shared/backups.py.
+
+           EEN DEPLOYMENT PER PAGINA, zoals op Deployments en Metrics: de naam staat in het
+           PAD (/projects/<project>/backups/<naam>), de server rendert dat ene blok,
+           dezelfde kiezer wisselt van deployment, en de keuze blijft staan bij het
+           wisselen van tabblad omdat de tabbalk hem meeneemt.
+
+           Het blok laadt zijn snapshots nog steeds LUI (hx-trigger="intersect once" in
+           shared/section-backups.html.j2). De reden om het te verbergen is met een
+           deployment per pagina vervallen, de reden om het lui te laden niet: een
+           snapshotlijst opent een Kopia-repository over S3, en dat kostte gemeten 2,5
+           seconde die anders elke bezoeker van deze pagina betaalt. #}
+        {% include "bg/_deployment-selector.html.j2" %}
+
+        <c-stack gap="md">
+            {% if not project.deployments %}
+                <c-alert type="info" heading="Nog geen deployments">
+                    Backups horen bij een deployment. Maak er eerst een op het tabblad Deployments.
+                </c-alert>
+            {% elif backups_sections %}
+                <div data-deployment="{{ deployment_geopend.name }}">
+                    <c-stack gap="md">
+                        {% with sections = backups_sections %}
+                            {% include "bg/_deployment-service-sections.html.j2" %}
+                        {% endwith %}
+                    </c-stack>
+                </div>
+            {% else %}
+                {# Geen enkele dienst van dit project kan iets backuppen, of deze deployment
+                   draait op een ander cluster dan deze instantie beheert. Zwijgen zou hier
+                   lezen als "de backups zijn weg". #}
+                <c-alert type="info" heading="Geen backups voor deze deployment">
+                    Backups horen bij een dienst die iets bewaart - opslag, een database of MinIO -
+                    en bij een deployment op het cluster dat dit portaal beheert.
+                </c-alert>
+            {% endif %}
+        </c-stack>
 
     {% elif active_tab == 'taken' %}
         {# Zelfde aanpak als de bestaande pagina: het fragment haalt zichzelf op en ververst

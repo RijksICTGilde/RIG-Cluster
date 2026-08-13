@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DeploymentPageContext
+from opi.services.catalog.shared.backups import collect_backups_sections
 from opi.services.registry import collect_deployment_page_sections
 from opi.services.services_enums import ServiceType
 
@@ -89,31 +90,54 @@ BACKUPS_TEMPLATE = "shared/section-backups.html.j2"
 
 class TestBackups:
     """Backups are not a service of their own: the block belongs to every service with a
-    ``backup_label``. It used to render for any project with a deployment."""
+    ``backup_label``. It used to render for any project with a deployment.
+
+    Since RC-100 the block has a TAB of its own, so it is collected by name
+    (``collect_backups_sections``) instead of on the generic per-deployment hook. Same
+    ownership rule, same two guards: it appears for a project that uses a backupable
+    service and stays away from one that does not.
+    """
+
+    def test_the_block_is_no_longer_a_deployment_page_section(self) -> None:
+        """It moved to its own tab; leaving it on the hook too would put the same block on
+        two pages, and two views of the same data drift apart."""
+        assert BACKUPS_TEMPLATE not in _templates(_ctx(["postgresql-database"]))
 
     def test_section_for_a_project_that_can_back_something_up(self) -> None:
-        section = collect_deployment_page_sections(_ctx(["postgresql-database"]))[0]
+        section = collect_backups_sections(_ctx(["postgresql-database"]))[0]
         assert section.template == BACKUPS_TEMPLATE
         assert section.context["available"] is True
         assert section.context["deployment_name"] == "dep-1"
 
     def test_no_section_for_a_project_with_nothing_to_back_up(self) -> None:
-        assert _templates(_ctx(["publish-on-web", "redis"])) == []
+        assert collect_backups_sections(_ctx(["publish-on-web", "redis"])) == []
 
     def test_every_backupable_service_is_an_owner(self) -> None:
         for service_name in ("persistent-storage", "postgresql-database", "minio-storage"):
-            assert BACKUPS_TEMPLATE in _templates(_ctx([service_name])), service_name
+            sections = collect_backups_sections(_ctx([service_name]))
+            assert [s.template for s in sections] == [BACKUPS_TEMPLATE], service_name
 
     def test_several_owners_still_render_one_block(self) -> None:
-        seen = _templates(_ctx(["persistent-storage", "postgresql-database", "minio-storage"]))
-        assert seen.count(BACKUPS_TEMPLATE) == 1
+        sections = collect_backups_sections(_ctx(["persistent-storage", "postgresql-database", "minio-storage"]))
+        assert [s.template for s in sections] == [BACKUPS_TEMPLATE]
+
+    def test_a_service_referenced_by_a_component_counts_too(self) -> None:
+        """The tab reads the project's services the same way every other collector does,
+        so a service picked at component level must not go missing."""
+        ctx = _ctx([], components=[{"name": "c1", "services": [{"reference": "persistent-storage"}]}])
+        assert [s.template for s in collect_backups_sections(ctx)] == [BACKUPS_TEMPLATE]
 
     def test_no_section_for_a_deployment_on_another_cluster(self) -> None:
-        assert _templates(_ctx(["postgresql-database"], cluster="other-cluster")) == []
+        assert collect_backups_sections(_ctx(["postgresql-database"], cluster="other-cluster")) == []
 
-    def test_only_the_first_deployment_carries_the_single_loader(self) -> None:
-        """One request for the whole project: per-deployment loaders each open a Kopia
-        repository, which OOM-killed the pod once."""
+    def test_the_block_on_the_page_carries_the_single_loader(self) -> None:
+        """One request per PAGE, and the page carries one deployment (RC-100).
+
+        The rule used to be "only the first deployment of the project", because every
+        deployment had a block on the same page and eighteen loaders opened eighteen Kopia
+        connects, which OOM-killed the pod. On a page with one block that rule would mean
+        the second deployment's page loads nothing at all.
+        """
         ctx = _ctx(["postgresql-database"])
         ctx.project_data["deployments"] = [
             {"name": "b-dep", "cluster": "test-cluster", "namespace": "proj"},
@@ -122,25 +146,25 @@ class TestBackups:
         loaders = {}
         for deployment in ctx.project_data["deployments"]:
             ctx.deployment = deployment
-            loaders[deployment["name"]] = collect_deployment_page_sections(ctx)[0].context["loads_snapshots"]
-        assert loaders == {"a-dep": True, "b-dep": False}
+            loaders[deployment["name"]] = collect_backups_sections(ctx)[0].context["loads_snapshots"]
+        assert loaders == {"a-dep": True, "b-dep": True}
 
-    def test_unavailable_backend_gives_one_notice_not_one_per_deployment(self) -> None:
+    def test_an_unavailable_backend_gives_a_notice_on_every_deployments_page(self) -> None:
+        """Each deployment has its own page now, so each must say why it shows nothing."""
         ctx = _ctx(["postgresql-database"])
         ctx.backend_available["backups"] = False
         ctx.project_data["deployments"] = [
             {"name": "a-dep", "cluster": "test-cluster", "namespace": "proj"},
             {"name": "b-dep", "cluster": "test-cluster", "namespace": "proj"},
         ]
-        ctx.deployment = ctx.project_data["deployments"][0]
-        assert [s.context["available"] for s in collect_deployment_page_sections(ctx)] == [False]
-        ctx.deployment = ctx.project_data["deployments"][1]
-        assert collect_deployment_page_sections(ctx) == []
+        for deployment in ctx.project_data["deployments"]:
+            ctx.deployment = deployment
+            assert [s.context["available"] for s in collect_backups_sections(ctx)] == [False], deployment["name"]
 
     def test_template_renders_through_the_app_env(self) -> None:
         ctx = _ctx(["postgresql-database"])
         ctx.deployment["backup"] = {"schedule": "FREQ=DAILY"}
-        section = collect_deployment_page_sections(ctx)[0]
+        section = collect_backups_sections(ctx)[0]
         html = templates.env.get_template(section.template).render(section=section)
         assert "/projects/details/proj/backups" in html
         assert "backups-snapshots-dep-1" in html

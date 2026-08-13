@@ -430,6 +430,7 @@ PROJECT_TABS = {
     "services": {"label": "Services", "path": "services"},
     "deployments": {"label": "Deployments", "path": "deployments"},
     "metrics": {"label": "Metrics", "path": "metrics"},
+    "backups": {"label": "Backups", "path": "backups"},
     "taken": {"label": "Taken", "path": "taken"},
 }
 
@@ -444,7 +445,7 @@ STANDAARD_TAB = next(iter(PROJECT_TABS))
 #: je van tabblad wisselde. Nu rendert de server er een, en zegt de URL welke: dat is
 #: deelbaar, de terugknop werkt, en de keuze reist mee naar het andere tabblad omdat de
 #: tabbalk hem in zijn adressen meeneemt.
-TABS_MET_DEPLOYMENT = ("deployments", "metrics")
+TABS_MET_DEPLOYMENT = ("deployments", "metrics", "backups")
 
 
 def project_tab_url(project_name: str, tab: str, query: str = "", deployment: str = "") -> str:
