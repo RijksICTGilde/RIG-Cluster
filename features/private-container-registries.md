@@ -212,7 +212,10 @@ curl -X POST "https://<ops-manager-url>/api/v1/projects/<project-name>/images/pu
   -F "file=@/tmp/my-app.tar"
 ```
 
-The image lands at `{REGISTRY_URL}/{REGISTRY_ORG}/{project-name}/{image-name}:{tag}`.
+The image lands at `{REGISTRY_URL}/{REGISTRY_ORG}:{project-name}_{image-name}-{tag}` — one
+repository with the owning project in the tag, because Quay has no nested repos under a
+single robot-account scope. Use the reference the response returns under `image` rather
+than building one yourself. See `features/registry-image-ownership.md`.
 
 ### Important
 
