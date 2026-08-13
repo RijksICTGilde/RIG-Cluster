@@ -15,11 +15,24 @@
        @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
        stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
 {% set hulp_js = "openServiceHelp('" ~ field.help_template ~ "')" %}
-<c-icon icon="question-mark-circle" size="xl"
-        class="field-help-btn"
-        :attrs="{'onclick': hulp_js}" />
-{% endif %}
+{# HET ICOON STOND LOS BOVEN ZIJN TEKST EN WAS TWEE KEER TE GROOT. De oorzaak zat hier en
+   niet in het icoon: dit was een kale <div> met een inline c-icon van xl (32px) gevolgd
+   door de omschrijving, dus de twee stonden op dezelfde regel maar op de BASISLIJN
+   uitgelijnd, met een vraagteken dat anderhalve regel hoog was. Een cluster met
+   align="center" zet ze naast elkaar op hun midden; md is de maat van de tekst ernaast.
+
+   Dit is NIET het patroon van <c-paragraph> (nldd-rich-text) die in een cluster de volle
+   breedte opeist - gemeten, want dat was de verwachting. De omschrijving gaat daarom als
+   <c-span> mee: inline, en hij wikkelt netjes als hij niet past. #}
+<c-cluster gap="sm" align="center">
+    <c-icon icon="question-mark-circle" size="md"
+            class="field-help-btn"
+            :attrs="{'onclick': hulp_js}" />
+    {% if field.description %}<c-span>{{ field.description }}</c-span>{% endif %}
+</c-cluster>
+{% else %}
 {{ description_text(field) }}
+{% endif %}
 <c-text-input-field
     id="{{ field.path|e }}"
     name="{{ field.path|e }}"
