@@ -467,7 +467,10 @@ class BackupConfig:
     s3_access_key: str
     s3_secret_key: str
     s3_use_tls: bool = False
-    snapshot_class: str = "ocs-storagecluster-rbdplugin-snapclass"
+    # None when the cluster has no VolumeSnapshotClass. Only PVC backups need one;
+    # database and bucket backups go straight to S3. See PVCBackupManager._backup_pvc,
+    # which refuses to start rather than emit an empty volumeSnapshotClassName.
+    snapshot_class: str | None = None
     timeout_seconds: int = 3600
     retention_keep_latest: int = 30
     retention_keep_daily: int = 30
@@ -489,8 +492,11 @@ class BackupConfig:
     @classmethod
     def from_settings(cls) -> BackupConfig:
         """Create BackupConfig from application settings."""
-        # Get snapshot class from cluster config, fall back to settings if not configured
-        snapshot_class = get_volume_snapshot_class(settings.CLUSTER_MANAGER) or settings.BACKUP_SNAPSHOT_CLASS
+        # Single source: the cluster's storage config. There is deliberately no fallback
+        # value here, because the only sensible one would be another cluster's snapshot
+        # class, and a cluster that simply has none would then fail on a name that does
+        # not exist instead of saying so.
+        snapshot_class = get_volume_snapshot_class(settings.CLUSTER_MANAGER)
         return cls(
             s3_endpoint=settings.BACKUP_S3_ENDPOINT,
             s3_bucket=settings.BACKUP_S3_BUCKET,  # Default bucket

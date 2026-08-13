@@ -89,6 +89,23 @@ class PVCBackupManager(BaseBackupManager):
 
         logger.info(f"Starting backup of {namespace}/{pvc_name}")
 
+        # A PVC backup runs through a VolumeSnapshot, so without a snapshot class there
+        # is nothing to do. Say so here: rendering an empty volumeSnapshotClassName
+        # produces a snapshot that never becomes ready, and the run would spend the full
+        # _wait_for_snapshot timeout before failing with nothing to point at.
+        if not self.config.snapshot_class:
+            return BackupResult(
+                namespace=namespace,
+                pvc_name=pvc_name,
+                success=False,
+                error=(
+                    f"No VolumeSnapshotClass configured for cluster '{backup_cluster}'. "
+                    "PVC backups need one; set storage.volume_snapshot_class in cluster_config. "
+                    "Database and bucket backups are unaffected."
+                ),
+                duration_seconds=(utc_now() - start_time).total_seconds(),
+            )
+
         try:
             # 1. Get PVC details (size, storage class)
             pvc_info = await self._get_pvc_info(namespace, pvc_name)
