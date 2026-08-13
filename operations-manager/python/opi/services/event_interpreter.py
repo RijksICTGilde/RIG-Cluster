@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from opi.handlers.project_file_handler import is_transient_registry_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -220,11 +222,22 @@ def _source_image(rewritten: str) -> str:
 def _image_pull_suggestion(message: str) -> str:
     """Short suggestion for an image-pull failure, naming the source-registry image.
 
-    No per-HTTP-status wording: the status is unreliable (a 500 from the proxy can
-    really be an auth problem), so a single check covers the common causes, plus an
-    anonymous ``docker pull`` the user can run to test public access.
+    Only two outcomes are distinguished, and only on wording the registry is explicit
+    about (see ``is_transient_registry_error``): a 5xx or a rate limit means the
+    registry could not answer, anything else is treated as a problem with the image
+    reference. Deliberately no finer than that -- the exact status is unreliable, an
+    auth problem can surface as more than one code -- so the second branch stays one
+    check of the common causes plus an anonymous ``docker pull`` to test public access.
     """
     match = _IMAGE_IN_MSG_RE.search(message)
+    if is_transient_registry_error(message):
+        subject = f"De image {_source_image(match.group(1))}" if match else "De image"
+        return (
+            f"{subject} kon niet worden opgehaald omdat de registry zelf geen antwoord gaf. Dat zegt niets "
+            "over de image: die kan prima bestaan. Hier is niets voor je te doen, het ophalen wordt vanzelf "
+            "opnieuw geprobeerd en herstelt zodra de registry weer werkt. Houdt het uren aan, meld het dan "
+            "bij het platformteam."
+        )
     if not match:
         return "Controleer of de image publiek toegankelijk is en of de naam en tag kloppen."
     image = _source_image(match.group(1))
@@ -234,6 +247,22 @@ def _image_pull_suggestion(message: str) -> str:
         "* DOCKER_CONFIG=$(mktemp -d) haalt de image op zonder je config (dus publiek/anoniem) en wijzigt "
         "niets aan je eigen Docker-configuratie."
     )
+
+
+def _image_pull_translation(message: str) -> tuple[str, str, EventSeverity]:
+    """Title, suggestion and severity for an image-pull failure.
+
+    A registry that could not answer is INFORMATIONAL: the user cannot fix it and the
+    pull retries by itself, so presenting it as something to act on sends them looking
+    for a broken image that is fine. A missing or unreachable image stays ACTIONABLE.
+    """
+    if is_transient_registry_error(message):
+        return (
+            "Registry kon de container image niet leveren",
+            _image_pull_suggestion(message),
+            EventSeverity.INFORMATIONAL,
+        )
+    return "Container image kan niet worden opgehaald", _image_pull_suggestion(message), EventSeverity.ACTIONABLE
 
 
 # --- Een container die de kubelet kilt omdat de probe faalt -------------------------
@@ -335,7 +364,7 @@ def _interpret_by_reason(reason: str, message: str) -> tuple[str, str, EventSeve
 
     # Image-pull failures get a dynamic, solution-oriented suggestion.
     if reason in _IMAGE_PULL_REASONS or _IMAGE_PULL_RE.search(message):
-        return "Container image kan niet worden opgehaald", _image_pull_suggestion(message), EventSeverity.ACTIONABLE
+        return _image_pull_translation(message)
 
     # Voor de reason-tabel: het Unhealthy-event zou anders als het algemene
     # "Health-check gefaald" landen, en dat is een SYMPTOOM dat verderop wordt
@@ -638,10 +667,11 @@ def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
         enriched["severity"] = EventSeverity.ACTIONABLE.value
         return enriched
     if _IMAGE_PULL_RE.search(message):
+        title, suggestion, severity = _image_pull_translation(message)
         enriched = dict(error)
-        enriched["message"] = "Container image kan niet worden opgehaald"
-        enriched["suggestion"] = _image_pull_suggestion(message)
-        enriched["severity"] = EventSeverity.ACTIONABLE.value
+        enriched["message"] = title
+        enriched["suggestion"] = suggestion
+        enriched["severity"] = severity.value
         enriched["original_message"] = message
         return enriched
     for pattern, title, suggestion, severity in _MESSAGE_PATTERNS:

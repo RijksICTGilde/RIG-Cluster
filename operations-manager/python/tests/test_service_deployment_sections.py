@@ -200,8 +200,13 @@ def test_service_owned_routes_are_mounted_exactly_once() -> None:
 #: RC-97: de map project-details/ is weg (de pagina die hem rendeerde bestond niet meer).
 #: Deze poort meet nu op bg/, waar dezelfde markup staat; de schuld verhuisde mee en werd
 #: niet ingelost, dus de regels blijven staan onder hun nieuwe bestandsnaam.
+#: RC-106: de componentkaart toont sinds 1ba48f18 ook de aliassen, naast de
+#: omgevingsvariabelen die er al stonden. Diezelfde schuld, dezelfde reden dat het er een
+#: is, en hij is met dat blok meegekomen zonder hier te worden opgeschreven -- waardoor
+#: deze poort rood stond. Hij hoort in dezelfde beweging weg als de regels hierboven.
 _SYSTEM_SERVICE_DEBT = {
     ("project-tabs.html.j2", "user-env-vars"),
+    ("project-tabs.html.j2", "aliases"),
     ("_env-vars.html.j2", "user-env-vars"),
     ("_section-deployments.html.j2", "user-env-vars"),
 }

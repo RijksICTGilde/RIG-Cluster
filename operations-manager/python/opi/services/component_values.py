@@ -2,15 +2,17 @@
 
 Two system services own a plain property on a component instead of a config block in a
 ``services:`` list: ``user-env-vars`` and ``aliases`` (see their packages under
-``opi/services/catalog/``). Both are a map of environment-variable name -> value, and
-both hold secrets, but they are **not stored the same way**:
+``opi/services/catalog/``). Both are a map of environment-variable name -> value, both
+may hold secrets, and since RC-106 both are stored the same way: the whole set is ONE
+AGE-encrypted block whose plaintext is ``KEY=value`` lines.
 
-* ``ValueStorage.BLOCK`` (``user-env-vars``) -- the whole set is one AGE-encrypted block
-  whose plaintext is ``KEY=value`` lines. One ciphertext for the set.
-* ``ValueStorage.PER_VALUE`` (``aliases``) -- a mapping whose keys stay readable and
-  whose values are each AGE-encrypted on their own. One ciphertext per value.
+``aliases`` used to be stored per value -- a mapping with readable names and each value
+encrypted on its own. That difference was never a decision about aliases; it only made
+every reader depend on a decrypt step it could forget, which is exactly what happened
+(an AGE block on the component card, the redaction placeholder in the edit field). One
+shape removes the class of bug.
 
-Changing either is always decrypt -> mutate -> re-encrypt; there is no way to edit one
+Changing the set is always decrypt -> mutate -> re-encrypt; there is no way to edit one
 entry of a block in place. This module is that round trip, and it is deliberately
 **fail-closed**: without a public key ``encode`` raises instead of writing plaintext,
 and a value that announces itself as AGE-encrypted but will not decrypt raises instead
@@ -23,9 +25,10 @@ again, that is defensible. For an API write path it would put a secret in git, s
 module does not reuse it. The converter is left alone: it is the wizard's read/write
 path and changing its failure mode is a separate change with its own blast radius.
 
-Legacy shapes are read, never written: a ``user-env-vars`` that is still a plain
-``KEY=value`` block or a legacy mapping is parsed, and a plaintext alias value is taken
-as-is. The first write through here stores the encrypted shape.
+Legacy shapes are read, never written: a plain ``KEY=value`` block is parsed, and so is
+a mapping -- both the unencrypted one (which stays a supported shape in the project
+schema) and the per-value-encrypted one aliases used to be written in. The first write
+through here stores the single encrypted block.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from typing import Any
 
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-from opi.services.catalog.base import ConfigLayer, ValueStorage
+from opi.services.catalog.base import ConfigLayer
 from opi.utils.age import (
     decrypt_age_content_sync,
     encrypt_age_content_sync,
@@ -107,19 +110,18 @@ def _block_roundtrip(value: str) -> str | None:
         return None
 
 
-def validate_value_for_storage(key: str, value: str, storage: ValueStorage) -> None:
-    """Raise unless *value* comes back out of *storage* exactly as it went in.
+def validate_value_for_storage(key: str, value: str) -> None:
+    """Raise unless *value* comes back out of storage exactly as it went in.
 
     Two normalisations sit between a write and the next read, and neither is this
     module's to change:
 
     * ``decrypt_age_content_sync`` strips the plaintext it gets back from ``age`` (it has
-      to: the armored form ends in a newline). That hits **both** storage shapes, so a
-      value with leading or trailing whitespace never returns as written, aliases
-      included.
-    * ``ValueStorage.BLOCK`` additionally reads its plaintext with
-      :func:`validate_and_parse_env_vars`, which reads ``KEY=value`` the way a shell
-      would and removes one layer of surrounding quotes -- so ``'"q"'`` returns as ``q``.
+      to: the armored form ends in a newline), so a value with leading or trailing
+      whitespace never returns as written.
+    * the block's plaintext is read back with :func:`validate_and_parse_env_vars`, which
+      reads ``KEY=value`` the way a shell would and removes one layer of surrounding
+      quotes -- so ``'"q"'`` returns as ``q``.
 
     Storing such a value anyway would break two promises at once. The API would hand back
     something other than what was written, and -- worse -- the stored set would never
@@ -135,7 +137,7 @@ def validate_value_for_storage(key: str, value: str, storage: ValueStorage) -> N
             "versleutelde opslag niet. Lever de waarde aan zonder die spaties, tabs of "
             "regeleindes aan de randen."
         )
-    if storage is ValueStorage.BLOCK and _block_roundtrip(value) != value:
+    if _block_roundtrip(value) != value:
         raise ComponentValuesError(
             f"De waarde van '{key}' overleeft de opslagvorm niet. Deze waarden worden als "
             "KEY=value-regels bewaard, en daarbij vervalt een paar omringende aanhalingstekens. "
@@ -179,15 +181,13 @@ def locate(
     )
 
 
-def decode(
-    raw: Any, storage: ValueStorage, project_data: dict[str, Any], private_key: str | None = None
-) -> dict[str, str]:
+def decode(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:
     """The plaintext values currently stored under a component's owned property.
 
     *raw* is whatever the project file holds there: absent, an AGE block, a plain
-    ``KEY=value`` block, or a mapping (encrypted per value or legacy plaintext). An
-    empty/absent property is an empty map, not an error -- "nothing set yet" is the
-    normal starting point for an add.
+    ``KEY=value`` block, or a mapping (unencrypted, or encrypted per value by the shape
+    aliases used to be written in). An empty/absent property is an empty map, not an
+    error -- "nothing set yet" is the normal starting point for an add.
 
     *private_key* is the project's decoded AGE private key when the caller already holds
     it. Without it the key is decoded from *project_data*, which needs the system key --
@@ -196,15 +196,24 @@ def decode(
     """
     if raw is None or raw == "" or raw == {}:
         return {}
-    if storage is ValueStorage.BLOCK:
-        return _decode_block(raw, project_data, private_key)
-    return _decode_per_value(raw, project_data, private_key)
+    return _decode_block(raw, project_data, private_key)
 
 
 def _decode_block(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:
     if isinstance(raw, dict):
-        # Legacy mapping shape, from before the value became a single string.
-        return {str(key): str(value) for key, value in raw.items()}
+        # Legacy mapping shape, from before the value became a single string. Read only:
+        # a write always stores one block. A plaintext mapping is the supported
+        # unencrypted shape and passes through; a value that is an AGE block comes from
+        # the per-value shape aliases used to be written in (RC-106) and is decrypted
+        # here so such a project stays readable without being touched.
+        return {
+            str(key): (
+                _decrypt(str(value), project_data, str(key), private_key)
+                if is_age_encrypted(str(value))
+                else str(value)
+            )
+            for key, value in raw.items()
+        }
     text = str(raw)
     if is_age_encrypted(text):
         text = _decrypt(text, project_data, "user-env-vars", private_key)
@@ -212,16 +221,6 @@ def _decode_block(raw: Any, project_data: dict[str, Any], private_key: str | Non
         return validate_and_parse_env_vars(text)
     except ValueError as error:
         raise ComponentValuesError(f"De opgeslagen omgevingsvariabelen zijn niet te lezen: {error}") from error
-
-
-def _decode_per_value(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:
-    if not isinstance(raw, dict):
-        raise ComponentValuesError("De opgeslagen waarden hebben niet de verwachte vorm van een mapping.")
-    values: dict[str, str] = {}
-    for key, value in raw.items():
-        text = str(value)
-        values[str(key)] = _decrypt(text, project_data, str(key), private_key) if is_age_encrypted(text) else text
-    return values
 
 
 def _decrypt(ciphertext: str, project_data: dict[str, Any], label: str, private_key: str | None = None) -> str:
@@ -238,7 +237,7 @@ def _decrypt(ciphertext: str, project_data: dict[str, Any], label: str, private_
     return plaintext
 
 
-def encode(values: dict[str, str], storage: ValueStorage, project_data: dict[str, Any]) -> Any:
+def encode(values: dict[str, str], project_data: dict[str, Any]) -> Any:
     """The stored shape for *values*, encrypted with the project's public key.
 
     Returns ``None`` for an empty map, which is the caller's signal to remove the
@@ -253,10 +252,8 @@ def encode(values: dict[str, str], storage: ValueStorage, project_data: dict[str
         raise ComponentValuesError(
             "Het project heeft geen AGE-publieke sleutel; waarden worden niet onversleuteld opgeslagen."
         )
-    if storage is ValueStorage.BLOCK:
-        text = "\n".join(f"{key}={value}" for key, value in values.items())
-        return LiteralScalarString(encrypt_age_content_sync(text, public_key))
-    return {key: LiteralScalarString(encrypt_age_content_sync(value, public_key)) for key, value in values.items()}
+    text = "\n".join(f"{key}={value}" for key, value in values.items())
+    return LiteralScalarString(encrypt_age_content_sync(text, public_key))
 
 
 def apply_operation(

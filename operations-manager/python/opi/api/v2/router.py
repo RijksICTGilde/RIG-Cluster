@@ -92,7 +92,7 @@ from opi.services.catalog.actions import (
     ServiceAction,
     UploadedFile,
 )
-from opi.services.catalog.base import ConfigLayer, ConfigRole, ValueStorage, config_path
+from opi.services.catalog.base import ConfigLayer, ConfigRole, config_path
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.postgresql_database.config_model import schema_description_field, schema_postfix_field
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
@@ -1709,7 +1709,7 @@ def _values_targets(service) -> list[ConfigLayer]:
     The single derivation both the catalog and the route generator use, so what a client
     is told exists and what actually exists cannot come apart.
     """
-    if service.owned_values_storage is None or service.owned_property is None:
+    if not service.owned_values_map or service.owned_property is None:
         return []
     return [layer for layer in service.config_layers() if layer in VALUES_LAYERS]
 
@@ -3247,7 +3247,6 @@ async def _enqueue_values_write(
 def _make_values_endpoint(
     service_name: str,
     service,
-    storage: ValueStorage,
     layer: ConfigLayer,
     operation: ValuesOperation,
     *,
@@ -3264,7 +3263,7 @@ def _make_values_endpoint(
             # would make every write of such a value a fresh commit.
             try:
                 for key, value in body.values.items():
-                    validate_values_value_for_storage(key, value, storage)
+                    validate_values_value_for_storage(key, value)
                     # And the service's own rule: an alias has to point at a platform
                     # variable that exists, where an own env-var may hold anything.
                     service.validate_owned_value(key, value)
@@ -3328,7 +3327,7 @@ class ServiceValuesRead(BaseModel):
     )
 
 
-def _make_values_read_endpoint(service_name: str, service, storage: ValueStorage, layer: ConfigLayer):
+def _make_values_read_endpoint(service_name: str, service, layer: ConfigLayer):
     """Build the GET that reads back what the writes on this path put there (RC-66).
 
     Synchronous: it reads the project file, so there is nothing to enqueue. Which values
@@ -3351,7 +3350,7 @@ def _make_values_read_endpoint(service_name: str, service, storage: ValueStorage
             where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
             raise HTTPException(status_code=404, detail=f"No {where} in project '{project_name}'")
         try:
-            stored = decode_values(node.get(service.owned_property), storage, project.data)
+            stored = decode_values(node.get(service.owned_property), project.data)
         except ComponentValuesError as error:
             # Stored values that will not decrypt or parse. Not "none set": saying so is
             # the difference between an empty map and one nobody can read.
@@ -3374,15 +3373,13 @@ def _make_values_read_endpoint(service_name: str, service, storage: ValueStorage
     return endpoint
 
 
-def _values_read_description(service_name: str, storage: ValueStorage, layer: ConfigLayer) -> str:
+def _values_read_description(service_name: str, layer: ConfigLayer) -> str:
     """What a values read gives back, and what it deliberately does not."""
     secrets = (
-        "Every value here is a secret (the whole set is stored as one AGE-encrypted block), "
-        "so every value comes back as `***` and the names are the readable part."
-        if storage is ValueStorage.BLOCK
-        else "A value that is a reference to a platform variable comes back as stored -- that "
-        "reference IS the coupling and is what makes this readable at all. A value stored as "
-        "something else is treated as a secret and comes back as `***`."
+        "The names are always readable. Whether a value comes back is the owning service's "
+        "call, asked per value: a value it treats as a secret comes back as `***`, and a value "
+        "that is a reference to a platform variable comes back as stored -- that reference IS "
+        "the coupling and masking it would hide exactly what was asked about."
     )
     return "\n".join(
         [
@@ -3416,24 +3413,14 @@ _VALUES_RULE = {
 }
 
 
-def _values_description(
-    service_name: str, storage: ValueStorage, layer: ConfigLayer, operation: ValuesOperation
-) -> str:
+def _values_description(service_name: str, layer: ConfigLayer, operation: ValuesOperation) -> str:
     """What a values write does, beyond what its summary already says."""
-    stored = (
-        "The whole set is stored as ONE AGE-encrypted block of `KEY=value` lines"
-        if storage is ValueStorage.BLOCK
-        else "The names stay readable and EVERY value is AGE-encrypted on its own"
-    )
+    stored = "The whole set is stored as ONE AGE-encrypted block of `KEY=value` lines"
     fidelity = [
         "A value that would not read back byte for byte is refused with a 422 rather than "
-        "stored: decryption strips leading and trailing whitespace"
-        + (
-            ", and reading the `KEY=value` line back also removes a single pair of surrounding quotes"
-            if storage is ValueStorage.BLOCK
-            else ""
-        )
-        + ". Send the value as the workload should receive it, without those edge characters.",
+        "stored: decryption strips leading and trailing whitespace, and reading the `KEY=value` "
+        "line back also removes a single pair of surrounding quotes. Send the value as the "
+        "workload should receive it, without those edge characters.",
         "",
     ]
     return "\n".join(
@@ -3466,15 +3453,14 @@ _VALUES_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 
 def _register_service_values_routes(router: APIRouter) -> None:
-    """Generate the owned key/value routes for every service that declares a storage shape.
+    """Generate the owned key/value routes for every service that owns a values map.
 
     Registry-driven like the config routes: a service that starts owning a values map
-    gets its endpoints by declaring ``owned_values_storage``, and only for the layers it
+    gets its endpoints by declaring ``owned_values_map``, and only for the layers it
     already declares -- so a layer the project schema has no place for cannot get a route.
     """
     for service_type, service in SERVICES.items():
-        storage = service.owned_values_storage
-        if storage is None or service.owned_property is None:
+        if not service.owned_values_map or service.owned_property is None:
             continue
         service_name = service_type.value
         for layer in _values_targets(service):
@@ -3502,14 +3488,12 @@ def _register_service_values_routes(router: APIRouter) -> None:
             for route_path, method, operation, keyed, summary in routes:
                 router.add_api_route(
                     route_path,
-                    validate_api_token(
-                        _make_values_endpoint(service_name, service, storage, layer, operation, keyed=keyed)
-                    ),
+                    validate_api_token(_make_values_endpoint(service_name, service, layer, operation, keyed=keyed)),
                     methods=[method],
                     tags=[service_name],
                     responses=_VALUES_RESPONSES,
                     summary=summary,
-                    description=_values_description(service_name, storage, layer, operation),
+                    description=_values_description(service_name, layer, operation),
                 )
 
             # The read side of the same path (RC-66, bevinding 3). Without it the values
@@ -3518,12 +3502,12 @@ def _register_service_values_routes(router: APIRouter) -> None:
             # could see THAT a component had variables and never which.
             router.add_api_route(
                 path,
-                validate_api_token(_make_values_read_endpoint(service_name, service, storage, layer)),
+                validate_api_token(_make_values_read_endpoint(service_name, service, layer)),
                 methods=["GET"],
                 tags=[service_name],
                 response_model=ServiceValuesRead,
                 summary=f"Read {service_name} values ({layer.value})",
-                description=_values_read_description(service_name, storage, layer),
+                description=_values_read_description(service_name, layer),
             )
 
 

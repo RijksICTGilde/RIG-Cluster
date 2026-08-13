@@ -96,6 +96,8 @@ from opi.services.catalog.publish_on_web.domain_config import (
     set_domain_setting,
 )
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
+from opi.services.component_values import ComponentValuesError
+from opi.services.component_values import decode as decode_component_values
 from opi.services.deployment_order import order_deployments_by_clone_dependency
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.postgres_scope import project_uses_dedicated_postgres, schema_is_marked
@@ -111,7 +113,6 @@ from opi.utils.age import (
     encrypt_file_to_age_block_sync,
     get_decoded_project_private_key,
     get_project_public_key,
-    is_age_encrypted,
 )
 from opi.utils.env_vars import (
     detect_circular_references,
@@ -1159,11 +1160,6 @@ class ProjectManager:
             "secret": {},
         }
 
-        # Alias values may hold secrets (e.g. a password) and are stored AGE-encrypted
-        # like user-env-vars. Decrypt lazily below, only when a value is encrypted, so
-        # projects without an AGE key and existing plaintext aliases keep working.
-        project_private_key: str | None = None
-
         # Scan all components
         components = deployment.get("components", [])
         for component in components:
@@ -1172,7 +1168,18 @@ class ProjectManager:
             if not component_definition:
                 logger.warning("Component '%s' referenced in deployment but not found in project", component_name)
                 continue
-            component_aliases = component_definition.get("aliases", {})
+            # Aliases are stored as ONE AGE block whose plaintext is KEY=value lines
+            # (RC-106), so reading them is a decrypt-and-parse and never a walk over the
+            # stored value. Through the shared decoder, which also still reads the
+            # unencrypted mapping and the per-value shape aliases used to be written in
+            # -- this is the deploy path, and an alias that fell away silently here is a
+            # running pod with a missing variable.
+            try:
+                component_aliases = decode_component_values(component_definition.get("aliases"), project_data)
+            except ComponentValuesError as e:
+                raise ValueError(
+                    f"Aliases of component '{component_name}' in deployment '{deployment_name}' could not be read: {e}"
+                ) from e
 
             if not component_aliases:
                 continue
@@ -1181,19 +1188,6 @@ class ProjectManager:
 
             # Categorize each alias
             for alias_name, alias_template in component_aliases.items():
-                if not isinstance(alias_template, str):
-                    logger.warning(
-                        f"Alias '{alias_name}' in component '{component_name}' has non-string value, skipping"
-                    )
-                    continue
-
-                # Decrypt AGE-encrypted alias values before categorization/substitution.
-                # Plaintext values pass through unchanged (backward compatible).
-                if is_age_encrypted(alias_template):
-                    if project_private_key is None:
-                        project_private_key = await get_decoded_project_private_key(project_data)
-                    alias_template = await decrypt_age_content(alias_template, project_private_key)
-
                 try:
                     # Determine which service and source type this alias belongs to
                     service_category, source_type = self._categorize_alias(alias_name, alias_template)
@@ -1267,14 +1261,19 @@ class ProjectManager:
             The same structure, containing only aliases this component declares.
             Empty service categories are dropped.
         """
-        own_aliases = next(
+        raw_aliases = next(
             (
-                component.get("aliases", {})
+                component.get("aliases")
                 for component in project_data.get("components", [])
                 if component.get("name") == component_name
             ),
-            {},
+            None,
         )
+        # Decoded rather than read as a mapping: the stored shape is one AGE block, so
+        # membership has to be tested on the decrypted names (RC-106). Without this the
+        # test below is a substring/character test on a ciphertext and every direct
+        # alias silently drops out.
+        own_aliases = decode_component_values(raw_aliases, project_data)
         if not own_aliases:
             return {}
 
@@ -8111,10 +8110,8 @@ class ProjectManager:
         """
         from opi.services.catalog.base import ConfigLayer
         from opi.services.component_values import (
-            ComponentValuesError,
             ValuesOperation,
             apply_operation,
-            decode,
             encode,
             locate,
             validate_value_for_storage,
@@ -8123,9 +8120,8 @@ class ProjectManager:
         from opi.services.services_enums import ServiceType
 
         service = get_service(ServiceType(service_name))
-        storage = service.owned_values_storage
         owned_property = service.owned_property
-        if storage is None or owned_property is None:  # pragma: no cover - guarded by the API
+        if not service.owned_values_map or owned_property is None:  # pragma: no cover - guarded by the API
             return {
                 "success": False,
                 "error": f"Service '{service_name}' owns no values",
@@ -8138,7 +8134,7 @@ class ProjectManager:
                 # The API refuses these too, with a 422. Repeated here because this is the
                 # write path: a value the storage form normalises would differ from what is
                 # stored on every read, so the no-op check below could never be true again.
-                validate_value_for_storage(key, value, storage)
+                validate_value_for_storage(key, value)
                 # And the service's own rule on its values: an alias must point at a
                 # platform variable that exists (RC-66, bevinding 5).
                 service.validate_owned_value(key, value)
@@ -8153,11 +8149,11 @@ class ProjectManager:
                     + (f" in deployment '{deployment_name}'" if deployment_name else "")
                     + "."
                 )
-            current = decode(node.get(owned_property), storage, project_data)
+            current = decode_component_values(node.get(owned_property), project_data)
             updated = apply_operation(current, values_operation, values=values, keys=keys)
             if updated == current:
                 return None
-            encoded = encode(updated, storage, project_data)
+            encoded = encode(updated, project_data)
             if encoded is None:
                 node.pop(owned_property, None)
             else:

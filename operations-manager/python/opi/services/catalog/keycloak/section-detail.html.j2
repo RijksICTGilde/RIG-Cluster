@@ -76,7 +76,7 @@
 
                 {% if kc_config.has_totp %}
                     <c-stack gap="xs">
-                        <c-heading type="h4" size="6" label="OTP" />
+                        <c-heading type="h4" size="6" label="Gedeelde OTP" />
                         <c-secret-field value="{{ kc_config.totp_code }}" show-copy="true" />
                         <c-paragraph size="sm">Dit is de code van het moment dat je deze pagina laadde, en die verloopt binnen 30 seconden. Laad de pagina opnieuw voor een verse code.</c-paragraph>
                     </c-stack>

@@ -72,6 +72,43 @@ class TestInterpretEvents:
         assert result[0].severity == EventSeverity.ACTIONABLE
         assert result[0].suggestion != ""
 
+    def test_registry_outage_is_not_presented_as_a_broken_image(self):
+        # A mirror 5xx says nothing about the image, so telling the user to check the
+        # name and tag sends them hunting for a problem that is not theirs. It is
+        # informational: the pull retries by itself and there is nothing to fix.
+        events = [
+            {
+                "reason": "ErrImagePull",
+                "message": (
+                    'Failed to pull image "rcr.rijksapps.nl/ghcr-rig/minbzk/app:pr-186-5d4e19a": reading manifest '
+                    "pr-186-5d4e19a in rcr.rijksapps.nl/ghcr-rig/minbzk/app: "
+                    "received unexpected HTTP status: 500 Internal Server Error"
+                ),
+                "object": "pr-186-magazijna-abc123-xyz",
+                "time": "",
+            }
+        ]
+        result = interpret_events(events)
+        assert len(result) == 1
+        assert result[0].title == "Registry kon de container image niet leveren"
+        assert result[0].severity == EventSeverity.INFORMATIONAL
+        assert "registry zelf geen antwoord gaf" in result[0].suggestion
+        assert "naam en tag kloppen" not in result[0].suggestion
+
+    def test_missing_image_keeps_the_actionable_suggestion(self):
+        events = [
+            {
+                "reason": "ErrImagePull",
+                "message": 'Failed to pull image "ghcr.io/minbzk/app:pr-9": manifest unknown',
+                "object": "pr-9-app-abc123-xyz",
+                "time": "",
+            }
+        ]
+        result = interpret_events(events)
+        assert result[0].title == "Container image kan niet worden opgehaald"
+        assert result[0].severity == EventSeverity.ACTIONABLE
+        assert "naam en tag kloppen" in result[0].suggestion
+
     def test_translates_crash_loop_backoff(self):
         events = [
             {"reason": "BackOff", "message": "back-off 5m0s restarting failed container", "object": "pod-1", "time": ""}

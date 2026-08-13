@@ -30,7 +30,7 @@
 {# De kop IN de kaart, zoals overal: de kop van EEN blok hoort in dat blok. De vier
    metingen blijven hun eigen kaart houden binnen deze; dat leest als een groep. #}
 {% if prometheus_available and metrics %}
-    {% call panel("Resource Usage", "chart-x-y-axis-line") %}
+    {% call panel("Resourcegebruik", "chart-x-y-axis-line") %}
     {# .metrics-grid uit dashboard.css was repeat(auto-fit, minmax(280px, 1fr)):
        <c-auto-grid min="280px">. Let op: dezelfde KLASSENAAM staat ook in
        metrics-charts.css, waar hij een flexkolom is. Door dit raster een component te
@@ -41,7 +41,7 @@
 
        De kaart eromheen komt van de basis (RC-70): de kop van EEN kaart hoort erin. #}
     <c-auto-grid min="280px" gap="lg" class="metrics-grid">
-        {% call panel("CPU Usage", "chart-x-y-axis-line") %}
+        {% call panel("CPU", "chart-x-y-axis-line") %}
             <div class="gauge-container">
                 <canvas id="cpu-gauge" class="gauge"></canvas>
                 <div class="gauge-value">
@@ -51,7 +51,7 @@
             </div>
         {% endcall %}
 
-        {% call panel("Memory Usage", "chart-x-y-axis-line") %}
+        {% call panel("Geheugen", "chart-x-y-axis-line") %}
             <div class="gauge-container">
                 <canvas id="memory-gauge" class="gauge"></canvas>
                 <div class="gauge-value">
@@ -61,7 +61,7 @@
             </div>
         {% endcall %}
 
-        {% call panel("Storage Usage", "chart-x-y-axis-line") %}
+        {% call panel("Opslag", "chart-x-y-axis-line") %}
             <div class="gauge-container">
                 <canvas id="storage-gauge" class="gauge"></canvas>
                 <div class="gauge-value">
@@ -75,12 +75,12 @@
            nullen: een leeg vlak, niet te onderscheiden van een grafiek die niet wil.
            Dan liever zeggen wat er aan de hand is - dezelfde keuze als bij de metingen
            per deployment. #}
-        {% call panel("Network Traffic", "chart-x-y-axis-line") %}
+        {% call panel("Netwerkverkeer", "chart-x-y-axis-line") %}
             {% if metrics.network_in_data or metrics.network_out_data %}
                 <div class="chart-container">
                     <canvas id="network-chart" class="chart"></canvas>
                 </div>
-                <c-paragraph size="sm">Inbound/Outbound (KB/s, laatste 30 min)</c-paragraph>
+                <c-paragraph size="sm">Inkomend en uitgaand (KB/s, laatste 30 min)</c-paragraph>
             {% else %}
                 <c-alert type="info" heading="Nog geen metingen">
                     Prometheus heeft over de laatste 30 minuten geen netwerkverkeer gemeten.
