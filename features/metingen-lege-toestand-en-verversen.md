@@ -6,7 +6,7 @@ zich een keer op en daarna nooit meer.
 
 ## Geen metingen is een toestand, geen leegte
 
-Het blok `Metingen - <deployment>` (`/projects/metrics/<naam>`) toonde zes lege grafieken
+Het blok `Metingen - <deployment>` (`/projects/<naam>/metrics`) toonde zes lege grafieken
 als er niets te meten was. Dat is niet te onderscheiden van iets dat stuk is, terwijl het
 vlak na een start het normale geval is.
 
@@ -62,7 +62,7 @@ Dezelfde legenda ontbrak op `Verdeling over projecten` (dashboard) en staat er w
 
 Deze kaart gaat over het HELE project - alle deployments delen een namespace, dus de
 blokken op het tabblad Metrics tellen nooit op tot deze cijfers. Hij staat daarom op
-`/projects/details/<naam>`, tussen `Acties` en `Deployments`, en niet op het tabblad
+`/projects/<naam>/details`, tussen `Acties` en `Deployments`, en niet op het tabblad
 Metrics (dat per deployment is). Verplaatst, niet gekopieerd.
 
 ## Het blok ververst zichzelf elke minuut

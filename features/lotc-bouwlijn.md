@@ -12,7 +12,7 @@ naast elkaar stonden): `docs/lotc-samenleven-met-jinja-roos.md`.
 ## Wat het is
 
 - **Elke route** rendert zijn pagina door LOTC: `/services`,
-  `/dashboard`, `/projects` en `/projects/details/<naam>` (met het resourcegebruik-
+  `/dashboard`, `/projects` en `/projects/<naam>/details` (met het resourcegebruik-
   fragment dat htmx apart inlaadt), plus de beheerpagina's `/admin/users` (inclusief het
   formulier op `/admin/users/create` en `/admin/users/<id>/edit`), `/admin/approvals` en
   `/admin/usage`, en **de wizard** (`/forms/wizard/start`, `/forms/wizard/<flow>`,

@@ -29,7 +29,7 @@ pytestmark = pytest.mark.e2e
 BREDE_PAGINAS = [
     "/dashboard",
     "/projects/",
-    "/projects/details/test-project-detail",
+    "/projects/test-project-detail/details",
     "/forms/wizard/create-project",
     "/services",
 ]

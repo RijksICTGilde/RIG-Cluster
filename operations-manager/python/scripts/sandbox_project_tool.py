@@ -73,7 +73,7 @@ def get_api_key(project: str) -> str:
     of bullets, so the plaintext has to come from the `data-value` attribute; the AGE key
     on the same page is longer, so a strict 32-char match picks the API key unambiguously.
     """
-    status, html = _request(f"/projects/details/{project}")
+    status, html = _request(f"/projects/{project}/details")
     if status != 200:
         raise SystemExit(f"details page for '{project}' returned {status}")
     for value in (v.strip() for v in re.findall(r'lotc-secret__value[^>]*?data-value="([^"]*)"', html)):

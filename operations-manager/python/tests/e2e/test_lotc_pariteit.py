@@ -415,7 +415,7 @@ def test_de_snapshotlijst_komt_in_de_nieuwe_vormgeving_binnen(app_server: str, a
     """Het blok wordt buiten de band gevuld, en wat er komt draagt geen rvo-markup meer."""
     _serveer(auth_page, "**/backups", _backups_fragment("default"))
 
-    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}")
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/deployments")
     auth_page.wait_for_load_state("networkidle")
     scroll_backupblok_in_beeld(auth_page)
 
@@ -435,7 +435,7 @@ def test_de_herstelknop_opent_de_gedeelde_dialoog(app_server: str, auth_page: Pa
     """
     _serveer(auth_page, "**/backups", _backups_fragment("default"))
 
-    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}")
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/deployments")
     auth_page.wait_for_load_state("networkidle")
     scroll_backupblok_in_beeld(auth_page)
 
@@ -458,7 +458,7 @@ def test_de_projectkop_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth
     naam en titel moeten die van project-details/section-header.html.j2 zijn. Toetsen dat
     er "een knop Bewerken" staat zou niets bewijzen: op deze pagina staan er vijf.
     """
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}")
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/details")
     auth_page.wait_for_load_state("networkidle")
 
     kop = auth_page.locator("nldd-title:has-text('Detail Test Project')").first
@@ -484,7 +484,7 @@ def test_de_projectpagina_laat_geen_sluitknop_zweven(app_server: str, auth_page:
     los kruisje onderaan de pagina - zichtbaar op een screenshot, onzichtbaar voor elke
     markupcontrole, want de HTML klopte.
     """
-    auth_page.goto(f"{app_server}/projects/details/{PROJECT}")
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/details")
     auth_page.wait_for_load_state("networkidle")
 
     dialoog = auth_page.locator("#service-help-modal")

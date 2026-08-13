@@ -173,7 +173,7 @@ def test_a_wrapper_that_stays_is_released_by_its_finish_buttons(app_server: str,
 
 def test_the_blockade_is_not_a_page_local_listener(app_server: str, auth_page: Page) -> None:
     """The hook lives in the shared module: no page template defines its helper any more."""
-    auth_page.goto(f"{app_server}/projects/details/test-project-detail")
+    auth_page.goto(f"{app_server}/projects/test-project-detail/details")
     auth_page.wait_for_load_state("networkidle")
 
     assert auth_page.evaluate("typeof containsClass") == "undefined"

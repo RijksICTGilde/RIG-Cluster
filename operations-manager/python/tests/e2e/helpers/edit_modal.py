@@ -36,7 +36,7 @@ class EditModalHelper:
 
     @property
     def detail_url(self) -> str:
-        return f"{self.base_url}/projects/details/{self.project_name}"
+        return f"{self.base_url}/projects/{self.project_name}/details"
 
     def open_detail_page(self) -> None:
         """Navigate to the project detail page."""

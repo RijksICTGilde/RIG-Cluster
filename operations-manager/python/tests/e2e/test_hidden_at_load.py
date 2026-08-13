@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.e2e
 
-DETAIL_URL = "/projects/details/test-project-detail"
+DETAIL_URL = "/projects/test-project-detail/details"
 
 
 def _display(page: Page, selector: str) -> str:
