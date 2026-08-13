@@ -41,6 +41,11 @@ services:
             host: https://keycloak.voorbeeld.nl
             username: test_project_services_admin
             password: VOORBEELDWAARDE-geen-echt-geheim
+            # De seed met het voorvoegsel ``plain:``, zodat hij zonder AGE-sleutel te
+            # lezen is. Hij staat er om te kunnen METEN dat de pagina de CODE rendert en
+            # de SEED niet: de test rekent met dezelfde seed de code van dit moment uit en
+            # zoekt allebei terug in de HTML. Dit is de RFC 6238-voorbeeldseed.
+            totp_secret: plain:12345678901234567890
   # postgresql-database en niet postgresql: dat laatste is geen ServiceType, en de
   # detailpagina viel er met een 500 op om (ValueError uit de enum).
   - postgresql-database

@@ -75,6 +75,7 @@ BLOKKEN: dict[str, dict[str, Any]] = {
                         "username": "voorbeeld_admin",
                         "password": "VOORBEELDWAARDE-geen-echt-geheim",
                         "has_totp": True,
+                        "totp_code": "123456",
                     }
                 ]
             }
@@ -87,15 +88,13 @@ BLOKKEN: dict[str, dict[str, Any]] = {
 #: dat in de hx-headers van elke muterende knop terechtkomt.
 _VERZOEK = SimpleNamespace(state=SimpleNamespace(csrf_token="VOORBEELD-CSRF-TOKEN"))
 
-#: Fragmenten die geen ``section`` krijgen maar wel in een LOTC-pagina terechtkomen. De
-#: OTP-code wordt met htmx in het Keycloak-blok gezet, dus hij hoort bij dezelfde poort.
+#: Fragmenten die geen ``section`` krijgen maar wel in een LOTC-pagina terechtkomen.
 #:
-#: De twee dialogen staan hier per TOESTAND. Ze renderen een andere tak per toestand, en
-#: alleen de takken die je rendert worden vergeleken: met enkel de standaardtoestand blijft
-#: de knop "Nu stoppen" - de enige die iets afbreekt - ongemeten.
-FRAGMENTEN: dict[str, dict[str, Any]] = {
-    "keycloak/otp-code.html.j2": {"code": "123456", "project_name": "voorbeeld", "realm": "voorbeeld-realm"},
-}
+#: Leeg sinds RC-101: hier stond ``keycloak/otp-code.html.j2``, het fragment dat de knop
+#: "Toon code" met htmx in het Keycloak-blok zette. De OTP is daar een gewoon veld
+#: geworden, met de code in de paginarender, dus het fragment en zijn endpoint zijn weg.
+#: De lijst blijft staan omdat het volgende fragment hem weer nodig heeft.
+FRAGMENTEN: dict[str, dict[str, Any]] = {}
 
 #: De dialogen, per toestand. Aparte lijst omdat een naam hier meer dan een keer voorkomt
 #: en een dict dat niet kan; de sjabloonnaam blijft de sleutel voor de tegenhanger.
