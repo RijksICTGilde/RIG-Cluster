@@ -1,0 +1,231 @@
+From 4cdfa28ed7ed9e28c8bfb32327545a5c54b07fe8 Mon Sep 17 00:00:00 2001
+From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
+Date: Thu, 13 Aug 2026 23:27:10 +0200
+Subject: [PATCH 3/4] fix: refresh app health from cluster cache on tree-only
+ refresh
+
+The ComparisonWithNothing refresh path, taken for cluster events on child
+resources, rebuilds the resource tree (which the UI renders) but left
+status.health untouched until the next full comparison. The persisted
+health could therefore trail the tree by however long that comparison
+took to be scheduled and run, making API consumers see a stale health
+status while the UI already showed everything healthy.
+
+Recompute the aggregated health in that path from the same live state:
+fresh live objects from the cluster cache paired with the target
+manifests persisted by the last comparison, run through the existing
+setApplicationHealth so both paths share one set of semantics (hooks,
+ignore annotations, Lua overrides, self-referencing apps).
+---
+ controller/appcontroller.go      |  8 +++
+ controller/appcontroller_test.go | 84 ++++++++++++++++++++++++++++++++
+ controller/health.go             | 62 +++++++++++++++++++++++
+ 3 files changed, 154 insertions(+)
+
+diff --git a/controller/appcontroller.go b/controller/appcontroller.go
+index ed0348ccd..41641a4f5 100644
+--- a/controller/appcontroller.go
++++ b/controller/appcontroller.go
+@@ -144,6 +144,7 @@ type ApplicationController struct {
+ 	projByNameCache               sync.Map
+ 	applicationNamespaces         []string
+ 	ignoreNormalizerOpts          normalizers.IgnoreNormalizerOpts
++	persistResourceHealth         bool
+ 
+ 	// dynamicClusterDistributionEnabled if disabled deploymentInformer is never initialized
+ 	dynamicClusterDistributionEnabled bool
+@@ -219,6 +220,7 @@ func NewApplicationController(
+ 		applicationNamespaces:             applicationNamespaces,
+ 		dynamicClusterDistributionEnabled: dynamicClusterDistributionEnabled,
+ 		ignoreNormalizerOpts:              ignoreNormalizerOpts,
++		persistResourceHealth:             persistResourceHealth,
+ 		metricsClusterLabels:              metricsClusterLabels,
+ 	}
+ 	if hydratorEnabled {
+@@ -1853,6 +1855,12 @@ func (ctrl *ApplicationController) processAppRefreshQueueItem() (processNext boo
+ 						logCtx.WithError(err).Error("Failed to cache resources tree")
+ 						return processNext
+ 					}
++					// The tree just rebuilt reflects the cluster event that triggered this
++					// refresh; recompute status.health from the same live state so the
++					// persisted health does not trail the tree until the next full comparison.
++					if err := ctrl.setAppHealthFromClusterCache(app, destCluster, managedResources); err != nil {
++						logCtx.WithError(err).Warn("Failed to refresh app health from cluster cache; keeping last health status")
++					}
+ 				}
+ 
+ 				patchDuration = ctrl.persistReconciliationStatus(origApp, &app.Status)
+diff --git a/controller/appcontroller_test.go b/controller/appcontroller_test.go
+index d93179219..54657f660 100644
+--- a/controller/appcontroller_test.go
++++ b/controller/appcontroller_test.go
+@@ -1784,6 +1784,90 @@ func TestNormalizeApplication(t *testing.T) {
+ 	}
+ }
+ 
++// TestTreeOnlyRefreshUpdatesHealth verifies that the tree-only (ComparisonWithNothing)
++// refresh path recomputes status.health from the current cluster cache instead of leaving
++// the persisted health to trail the resource tree until the next full comparison.
++func TestTreeOnlyRefreshUpdatesHealth(t *testing.T) {
++	app := newFakeApp()
++	now := metav1.Now()
++	app.Status.ReconciledAt = &now
++	app.Status.Health = v1alpha1.AppHealthStatus{Status: health.HealthStatusProgressing}
++	app.Status.Sync = v1alpha1.SyncStatus{
++		Status:     v1alpha1.SyncStatusCodeSynced,
++		ComparedTo: v1alpha1.ComparedTo{Source: app.Spec.GetSource(), Destination: app.Spec.Destination},
++	}
++	app.Status.Resources = []v1alpha1.ResourceStatus{{
++		Group:     "apps",
++		Version:   "v1",
++		Kind:      "Deployment",
++		Namespace: test.FakeDestNamespace,
++		Name:      "my-deploy",
++		Status:    v1alpha1.SyncStatusCodeSynced,
++	}}
++
++	// A deployment that is fully rolled out, as the cluster cache now sees it.
++	liveDeploy := &unstructured.Unstructured{Object: map[string]any{
++		"apiVersion": "apps/v1",
++		"kind":       "Deployment",
++		"metadata": map[string]any{
++			"name":       "my-deploy",
++			"namespace":  test.FakeDestNamespace,
++			"generation": int64(1),
++		},
++		"spec": map[string]any{"replicas": int64(1)},
++		"status": map[string]any{
++			"observedGeneration": int64(1),
++			"replicas":           int64(1),
++			"updatedReplicas":    int64(1),
++			"readyReplicas":      int64(1),
++			"availableReplicas":  int64(1),
++		},
++	}}
++
++	ctrl := newFakeController(t.Context(), &fakeData{
++		apps: []runtime.Object{app, defaultProj.DeepCopy()},
++		managedLiveObjs: map[kube.ResourceKey]*unstructured.Unstructured{
++			kube.NewResourceKey("apps", "Deployment", test.FakeDestNamespace, "my-deploy"): liveDeploy,
++		},
++	}, nil)
++
++	// The cached comparison still holds the pre-rollout live state; only the cluster
++	// cache (mocked managedLiveObjs above) knows the deployment is ready.
++	staleDeploy := liveDeploy.DeepCopy()
++	require.NoError(t, unstructured.SetNestedField(staleDeploy.Object, int64(0), "status", "readyReplicas"))
++	staleJSON, err := json.Marshal(staleDeploy.Object)
++	require.NoError(t, err)
++	require.NoError(t, ctrl.cache.SetAppManagedResources(app.InstanceName(ctrl.namespace), []*v1alpha1.ResourceDiff{{
++		Group:       "apps",
++		Kind:        "Deployment",
++		Namespace:   test.FakeDestNamespace,
++		Name:        "my-deploy",
++		TargetState: string(staleJSON),
++		LiveState:   string(staleJSON),
++	}}))
++
++	ctrl.requestAppRefresh(app.QualifiedName(), ComparisonWithNothing.Pointer(), nil)
++
++	var patched map[string]any
++	fakeAppCs := ctrl.applicationClientset.(*appclientset.Clientset)
++	fakeAppCs.ReactionChain = nil
++	fakeAppCs.AddReactor("patch", "*", func(action kubetesting.Action) (bool, runtime.Object, error) {
++		if patchAction, ok := action.(kubetesting.PatchAction); ok {
++			require.NoError(t, json.Unmarshal(patchAction.GetPatch(), &patched))
++		}
++		return true, &v1alpha1.Application{}, nil
++	})
++
++	ctrl.processAppRefreshQueueItem()
++
++	require.NotNil(t, patched, "expected the tree-only refresh to persist a status patch")
++	statusPatch, ok := patched["status"].(map[string]any)
++	require.True(t, ok, "expected patch to contain a status section, got: %v", patched)
++	healthPatch, ok := statusPatch["health"].(map[string]any)
++	require.True(t, ok, "expected patch to contain status.health, got: %v", statusPatch)
++	assert.Equal(t, string(health.HealthStatusHealthy), healthPatch["status"])
++}
++
+ func TestHandleAppUpdated(t *testing.T) {
+ 	app := newFakeApp()
+ 	app.Spec.Destination.Namespace = test.FakeArgoCDNamespace
+diff --git a/controller/health.go b/controller/health.go
+index 4b4ea2b26..d2385898c 100644
+--- a/controller/health.go
++++ b/controller/health.go
+@@ -1,8 +1,11 @@
+ package controller
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++
+ 	"github.com/argoproj/argo-cd/gitops-engine/pkg/health"
+ 	hookutil "github.com/argoproj/argo-cd/gitops-engine/pkg/sync/hook"
+ 	"github.com/argoproj/argo-cd/gitops-engine/pkg/sync/ignore"
+@@ -102,3 +105,62 @@ func setApplicationHealth(resources []managedResource, statuses []appv1.Resource
+ 	}
+ 	return appHealthStatus, savedErr
+ }
++
++// setAppHealthFromClusterCache recomputes the application's aggregated health against the
++// current cluster cache, reusing the target manifests persisted by the last full comparison.
++// The tree-only (ComparisonWithNothing) refresh path rebuilds the resource tree on every
++// cluster event, but left status.health untouched until the next full comparison, so the
++// persisted health could trail the (UI-visible) tree by however long that comparison took to
++// be scheduled and run. Aggregation goes through the same setApplicationHealth as the full
++// comparison so the two paths cannot disagree on semantics (hooks, ignore annotations, Lua
++// overrides, self-referencing apps).
++func (ctrl *ApplicationController) setAppHealthFromClusterCache(app *appv1.Application, destCluster *appv1.Cluster, cachedDiffs []*appv1.ResourceDiff) error {
++	resourceOverrides, err := ctrl.settingsMgr.GetResourceOverrides()
++	if err != nil {
++		return fmt.Errorf("error getting resource overrides: %w", err)
++	}
++
++	targetByKey := make(map[kubeutil.ResourceKey]*unstructured.Unstructured, len(cachedDiffs))
++	targets := make([]*unstructured.Unstructured, 0, len(cachedDiffs))
++	for _, cachedDiff := range cachedDiffs {
++		if cachedDiff.TargetState == "" || cachedDiff.TargetState == "null" {
++			continue
++		}
++		target := &unstructured.Unstructured{}
++		if err := json.Unmarshal([]byte(cachedDiff.TargetState), target); err != nil {
++			return fmt.Errorf("error unmarshaling cached target state of %s/%s %s/%s: %w", cachedDiff.Group, cachedDiff.Kind, cachedDiff.Namespace, cachedDiff.Name, err)
++		}
++		targetByKey[kubeutil.NewResourceKey(cachedDiff.Group, cachedDiff.Kind, cachedDiff.Namespace, cachedDiff.Name)] = target
++		targets = append(targets, target)
++	}
++
++	liveObjByKey, err := ctrl.stateCache.GetManagedLiveObjs(destCluster, app, targets)
++	if err != nil {
++		return fmt.Errorf("error getting managed live objects: %w", err)
++	}
++
++	resources := make([]managedResource, len(app.Status.Resources))
++	for i, res := range app.Status.Resources {
++		key := kubeutil.NewResourceKey(res.Group, res.Kind, res.Namespace, res.Name)
++		live := liveObjByKey[key]
++		if live == nil && res.Namespace == "" && app.Spec.Destination.Namespace != "" {
++			// Namespaced resources without an explicit namespace in the manifest live in the
++			// application's destination namespace.
++			live = liveObjByKey[kubeutil.NewResourceKey(res.Group, res.Kind, app.Spec.Destination.Namespace, res.Name)]
++		}
++		resources[i] = managedResource{
++			Group:     res.Group,
++			Version:   res.Version,
++			Kind:      res.Kind,
++			Namespace: res.Namespace,
++			Name:      res.Name,
++			Hook:      res.Hook,
++			Target:    targetByKey[key],
++			Live:      live,
++		}
++	}
++
++	healthStatus, err := setApplicationHealth(resources, app.Status.Resources, resourceOverrides, app, ctrl.persistResourceHealth)
++	app.Status.Health.Status = healthStatus
++	return err
++}
