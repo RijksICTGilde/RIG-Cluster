@@ -1,17 +1,19 @@
 {# Shared pod-level securityContext body for run pods (console, job). Included
    under a `securityContext:` key (2-space indent), so this body is 4-space
-   indented. On Kind clusters we pin a numeric UID (no SCC); on OpenShift we let
-   the SCC assign one. Keeps the security "special" in one place.
+   indented. Where the platform assigns a UID itself (OpenShift SCC) we only set
+   runAsNonRoot; everywhere else we pin a numeric UID, because runAsNonRoot
+   without one fails any image that does not declare a non-root USER. Keeps the
+   security "special" in one place.
    The trailing blank line is intentional: Jinja strips one trailing newline and
    trim_blocks eats the newline after the {% include %}, so without it the next
    line (containers:) would collide with the last line here. #}
-{% if cluster in ['local', 'sandboxed-local'] %}
+{% if assigns_uid_via_scc(cluster) %}
+    runAsNonRoot: true
+{% else %}
     runAsNonRoot: true
     runAsUser: 1001
     runAsGroup: 1001
     fsGroup: 1001
-{% else %}
-    runAsNonRoot: true
 {% endif %}
     seccompProfile:
       type: RuntimeDefault

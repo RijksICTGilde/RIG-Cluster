@@ -62,6 +62,7 @@ CLUSTER_CONFIG = {
         # (cluster_issuer kind-ca-issuer) en of die ook een eigen domein tekent is niet
         # nagemeten. Afwezig betekent zwijgen, en dat is het eerlijke antwoord bij een
         # cluster waarvan we het niet weten.
+        "assigns_uid_via_scc": False,
         "ca_certificate": {
             "enabled": True,
             "node_path": "/etc/ssl/certs/kind-local-ca.crt",
@@ -141,6 +142,7 @@ CLUSTER_CONFIG = {
             "namespace": "vlam-wt8",
             "port": 8081,
         },
+        "assigns_uid_via_scc": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
@@ -219,6 +221,7 @@ CLUSTER_CONFIG = {
             "namespace": "vlam-wt8",
             "port": 8081,
         },
+        "assigns_uid_via_scc": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
@@ -955,6 +958,34 @@ def supports_custom_domain_certificates(cluster_name: str) -> bool:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("supports_custom_domain_certificates", True)
+def assigns_uid_via_scc(cluster_name: str) -> bool:
+    """
+    Check if the platform assigns a UID to pods itself (OpenShift SCC).
+
+    When True, manifests only set runAsNonRoot and let admission inject the UID;
+    setting one ourselves would conflict with the namespace's assigned range.
+    When False, manifests must pin a numeric UID and fsGroup, because nothing
+    else will: a plain Kubernetes cluster leaves runAsNonRoot without a UID,
+    which fails any image that does not declare a non-root USER, and leaves the
+    pod without group ownership on its volumes.
+
+    Unknown clusters get False rather than an error. This is called from the
+    manifest templates, which cannot catch anything, and False is the safe
+    answer: pinning a UID works on a plain cluster, while relying on an SCC that
+    is not there does not. Same graceful fallback as
+    ManifestGenerator._determine_namespace_with_prefix.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        True if the platform assigns the UID, False if we must set it ourselves
+    """
+    try:
+        cluster_config = get_cluster_config(cluster_name)
+    except ValueError:
+        return False
+    return cluster_config.get("assigns_uid_via_scc", False)
 
 
 def get_min_cpu_m(cluster_name: str) -> int:

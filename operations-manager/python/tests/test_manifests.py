@@ -108,7 +108,7 @@ class TestRenderRealTemplates:
         pod_sec = doc["spec"]["template"]["spec"]["securityContext"]
         assert pod_sec["runAsUser"] == 1001
 
-    def test_deployment_template_non_local_cluster(self):
+    def _render_deployment_for_cluster(self, cluster: str):
         result = render_template(
             "deployment.yaml.jinja",
             {
@@ -120,15 +120,36 @@ class TestRenderRealTemplates:
                 "application_port": 3000,
                 "imageURL": "registry.example.com/app:latest",
                 "imagePullPolicy": "IfNotPresent",
-                "cluster": "production",
+                "cluster": cluster,
             },
         )
         yaml = YAML()
-        doc = yaml.load(result)
-        pod_sec = doc["spec"]["template"]["spec"]["securityContext"]
-        # Non-local cluster should NOT have explicit runAsUser (OpenShift SCCs assign it)
+        return yaml.load(result)["spec"]["template"]["spec"]["securityContext"]
+
+    def test_deployment_template_scc_cluster_omits_uid(self):
+        """A cluster whose platform assigns the UID (OpenShift SCC) gets none from us."""
+        pod_sec = self._render_deployment_for_cluster("odcn-production")
         assert "runAsUser" not in pod_sec
         assert pod_sec["runAsNonRoot"] is True
+
+    def test_deployment_template_plain_cluster_pins_uid_and_fsgroup(self):
+        """Without an SCC nothing assigns a UID, so the manifest must.
+
+        runAsNonRoot without a UID fails any image lacking a non-root USER, and
+        without fsGroup the container has no group ownership on its volume.
+        The choice follows the cluster's assigns_uid_via_scc, not its name.
+        """
+        pod_sec = self._render_deployment_for_cluster("sandboxed-local")
+        assert pod_sec["runAsUser"] == 1001
+        assert pod_sec["runAsGroup"] == 1001
+        assert pod_sec["fsGroup"] == 1001
+        assert pod_sec["runAsNonRoot"] is True
+
+    def test_deployment_template_unknown_cluster_pins_uid(self):
+        """An unknown cluster falls back to pinning, the portable side of the choice."""
+        pod_sec = self._render_deployment_for_cluster("not-a-configured-cluster")
+        assert pod_sec["runAsUser"] == 1001
+        assert pod_sec["fsGroup"] == 1001
 
     def test_deployment_template_probe_none_omits_all_probes(self):
         """scheme=none renders no startup/liveness/readiness probes at all."""

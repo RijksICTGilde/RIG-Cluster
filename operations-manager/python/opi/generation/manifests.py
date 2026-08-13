@@ -17,7 +17,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 from ruamel.yaml import YAML
 
-from opi.core.cluster_config import get_namespace_prefix
+from opi.core.cluster_config import assigns_uid_via_scc, get_namespace_prefix
 from opi.core.config import settings
 
 #: Label the platform puts on a Secret or ConfigMap that must stay OUT of the config-hash
@@ -135,7 +135,7 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
     template = env.from_string(template_content)
 
     # Render the template with variables
-    result = template.render(**variables)
+    result = template.render(assigns_uid_via_scc=assigns_uid_via_scc, **variables)
 
     logger.debug(f"Successfully rendered template: {template_name}")
     return result
@@ -183,7 +183,7 @@ class ManifestGenerator:
             template = env.from_string(manifest_content)
 
             # Render the template with variables
-            result = template.render(**variables)
+            result = template.render(assigns_uid_via_scc=assigns_uid_via_scc, **variables)
 
             logger.debug("Successfully templated manifest with Jinja2")
             return result
