@@ -51,6 +51,17 @@ def terminal_condition_message(status_data: dict[str, Any]) -> str | None:
     return None
 
 
+#: Hoe vaak de wachtlussen ArgoCD bevragen. Stond op 5 (en op 10 bij de infrastructuur)
+#: uit de tijd dat een nieuw project door een ArgoCD-bug minuten kon duren; dan valt een
+#: interval van 5 seconden weg in het geheel. Gemeten op 14 augustus 2026 duurt het
+#: aanmaken van een heel project 42,9 seconden, waarvan 6 seconden wachten tot de
+#: applicatie bestaat -- en dan is tot 5 seconden niets doen bijna de helft van die fase.
+#:
+#: Twee seconden, want dit gaat over hoe snel de gebruiker het ZIET: de stap is al klaar,
+#: alleen wij weten het nog niet. Lager heeft geen zin, want de voortgang in de browser
+#: ververst zelf ook niet sneller, en het kost ArgoCD wel verzoeken.
+POLL_INTERVAL_SECONDEN = 2
+
 class ArgoManager:
     """Manager for ArgoCD-related operations and resources."""
 
@@ -783,7 +794,9 @@ class ArgoManager:
             logger.exception(f"Error creating infrastructure ArgoCD application: {e}")
             return False
 
-    async def wait_for_application_created(self, app_name: str, timeout: int = 120, poll_interval: int = 5) -> bool:
+    async def wait_for_application_created(
+        self, app_name: str, timeout: int = 120, poll_interval: int = POLL_INTERVAL_SECONDEN
+    ) -> bool:
         """
         Wait for an ArgoCD application to be created and appear in the API.
 
@@ -793,7 +806,7 @@ class ArgoManager:
         Args:
             app_name: Name of the application to wait for
             timeout: Maximum time to wait in seconds (default: 120 = 2 minutes)
-            poll_interval: Seconds between checks (default: 5)
+            poll_interval: Seconds between checks (default: POLL_INTERVAL_SECONDEN)
 
         Returns:
             True if application was created, False otherwise
@@ -856,7 +869,7 @@ class ArgoManager:
         project_name: str,
         cluster_name: str,
         timeout: int = 300,
-        poll_interval: int = 10,
+        poll_interval: int = POLL_INTERVAL_SECONDEN,
         refreshed_after: str | None = None,
     ) -> bool:
         """
@@ -869,7 +882,7 @@ class ArgoManager:
             project_name: Name of the project
             cluster_name: Target cluster name
             timeout: Maximum time to wait in seconds (default: 300 = 5 minutes)
-            poll_interval: Seconds between status checks (default: 10)
+            poll_interval: Seconds between status checks (default: POLL_INTERVAL_SECONDEN)
             refreshed_after: ISO-8601 ``reconciledAt`` timestamp returned by
                 ``refresh_application``.  When set, terminal states are ignored
                 until ``reconciledAt`` moves past this value.
@@ -1027,7 +1040,7 @@ class ArgoManager:
         self,
         app_name: str,
         timeout: int = 300,
-        poll_interval: int = 5,
+        poll_interval: int = POLL_INTERVAL_SECONDEN,
         refreshed_after: str | None = None,
         on_progressing: Callable[[int], Awaitable[None]] | None = None,
     ) -> bool:

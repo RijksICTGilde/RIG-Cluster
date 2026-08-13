@@ -216,16 +216,23 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     deploy_task = progress.add_task("Project uitrollen")
     progress.update_current_step("Project uitrollen")
 
-    # Known ArgoCD cache-invalidation bug: creating a new project invalidates
-    # ArgoCD's cache, so its apps can take a few minutes to sync and the sync-wait
-    # may run into its timeout. Warn the user up front that a timeout here does NOT
-    # mean creation failed.
+    # Hier stond dat het aanmaken "door een bekende bug in ArgoCD een paar minuten kan
+    # duren, excuus daarvoor". Die zin zette de verwachting meteen op minuten, en dat is
+    # op de sandbox niet meer waar: op 14 augustus 2026 duurde het aanmaken van een heel
+    # project 42,9 seconden, waarvan 6 seconden wachten tot ArgoCD de applicatie had
+    # aangemaakt.
+    #
+    # Wat er WEL blijft staan is de enige zin die er echt toe deed: een time-out betekent
+    # niet dat het is mislukt. Dat is nog steeds waar, en het is uitgerekend het bericht
+    # dat je nodig hebt als het lang duurt. De meting hierboven komt van de SANDBOX; op
+    # productie is niet nagemeten of de Argo-fix hetzelfde oplevert, en daarom verdwijnt
+    # de geruststelling niet mee met het excuus.
     if payload.get("is_new_project", False):
         notice = progress.add_subtask(
             deploy_task,
-            "Let op: door een bekende bug in ArgoCD kan het aanmaken van een nieuw project een paar minuten duren, "
-            "excuus daarvoor. Een eventuele time-out-melding betekent niet dat het aanmaken is mislukt, alleen dat de "
-            "wachttijd is verstreken; het project wordt vrijwel zeker gewoon aangemaakt.",
+            "Duurt het wachten op ArgoCD lang, dan betekent een time-out-melding niet dat het "
+            "aanmaken is mislukt: alleen dat de wachttijd is verstreken. Het project wordt dan "
+            "vrijwel zeker gewoon aangemaakt.",
         )
         progress.complete_task(notice)
 
