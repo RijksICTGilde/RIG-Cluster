@@ -349,3 +349,21 @@ async def test_de_idcontrole_kent_het_verschil() -> None:
 
     assert "vast op &#39;server-cert&#39;" in vervangen.body.decode()
     assert "bestaat al" in toevoegen.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_de_samenvatting_toont_het_vervangende_bestand() -> None:
+    """De laatste stap voor het opslaan mag niet het bestand tonen dat verdwijnt.
+
+    De samenvatting leest de catalogus, en die draagt bij een vervanging nog de OUDE naam
+    -- de nieuwe zit in de sessie. Zonder deze paring bevestigt de gebruiker "oud.pem"
+    terwijl hij op het punt staat dat bestand te overschrijven.
+    """
+    from opi.web.router_detail_edit import _attachment_review_items
+
+    state = WizardState(flow_id=FLOW_ID, current_step="attachments", project_name=PROJECT_NAME)
+    state.staged_attachments = {"server-cert": {"filename": "nieuw.pem", "content": "staging:abc", "replace": True}}
+
+    items = _attachment_review_items(_catalog({"id": "server-cert", "filename": "oud.pem"}), state)
+
+    assert items == ["nieuw.pem (server-cert, vervangen)"]
