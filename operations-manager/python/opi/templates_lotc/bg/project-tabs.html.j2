@@ -718,6 +718,25 @@
            intersect once, net als bij de dienst: elk blok is een reeks queries, en die
            doe je pas als iemand kijkt.
 
+           EN DAARNA ELKE MINUUT OPNIEUW - MAAR ALLEEN HET ZICHTBARE BLOK
+
+           Met alleen "intersect once" haalde het blok zichzelf een keer op en daarna
+           nooit meer, terwijl dit grafieken over de TIJD zijn: wie keek of het aantrok,
+           moest F5 gebruiken.
+
+           Dat is geen "every 60s" erbij geworden, want de lus hieronder rendert ALLE
+           deployments en verbergt er alle op een na met is-hidden (gemeten: de blokken
+           staan wel degelijk in de DOM, want switchDeployment() wisselt ertussen zonder
+           de pagina te herladen). Een tijdklok van htmx peilt ook wat verborgen is, dus
+           een project met vier deployments zou elke minuut vier keer Prometheus
+           bevragen om drie antwoorden weg te gooien.
+
+           Daarom een eigen gebeurtenis (zad-metingen-ververs) die het script onderaan
+           alleen naar het ZICHTBARE blok stuurt. Dat is meteen de reden dat het geen
+           htmx-triggerfilter is ("every 60s [conditie]"): htmx bouwt zo'n filter met de
+           Function-constructor, en de Content-Security-Policy van deze applicatie staat
+           geen unsafe-eval toe - de conditie zou stil nooit waar worden.
+
            EEN DEPLOYMENT TEGELIJK, net als op het tabblad Deployments. Hier stonden ze
            alle onder elkaar, terwijl je ook hier per deployment kijkt: bij vier
            deployments scrolde je langs vier grafiekenblokken om er een te vinden.
@@ -734,13 +753,38 @@
                                   info_text="Verbruik per component over de tijd.") %}
                         <div id="metrics-content-{{ deployment.name }}"
                              hx-get="/projects/details/{{ project.name }}/metrics/{{ deployment.name }}"
-                             hx-trigger="intersect once"
+                             hx-trigger="intersect once, zad-metingen-ververs"
                              hx-swap="innerHTML">
                             <c-paragraph>Metingen worden opgehaald...</c-paragraph>
                         </div>
                     {% endcall %}
                 </div>
             {% endfor %}
+
+            {# De minuutklok. Hij stuurt de gebeurtenis alleen naar de blokken die NIET
+               verborgen zijn, zodat er nooit meer bevragingen lopen dan er blokken in
+               beeld staan - er staat er altijd precies een open.
+
+               Staat het browsertabblad op de achtergrond, dan gebeurt er niets: dan
+               kijkt er niemand, en een pagina die je een uur laat openstaan hoort geen
+               zestig rondes Prometheus te kosten. Bij terugkomen wordt er meteen een
+               ronde gedaan, want dan is wat er staat oud. #}
+            <script>
+            (function () {
+                var TUSSENPOOS = 60000;
+
+                function ververs() {
+                    if (document.hidden || typeof htmx === 'undefined') return;
+                    document.querySelectorAll('.deployment-section:not(.is-hidden) [id^="metrics-content-"]')
+                        .forEach(function (blok) { htmx.trigger(blok, 'zad-metingen-ververs'); });
+                }
+
+                setInterval(ververs, TUSSENPOOS);
+                document.addEventListener('visibilitychange', function () {
+                    if (!document.hidden) ververs();
+                });
+            })();
+            </script>
         {% endif %}
 
         {% if project.name is defined and usage is not defined %}
@@ -754,32 +798,15 @@
                     <c-paragraph>Metingen worden opgehaald...</c-paragraph>
                 </div>
             {% endcall %}
-        {% elif usage_error %}
-            <c-alert type="info" heading="Resourcegebruik niet beschikbaar">{{ usage_error }}</c-alert>
-        {% elif usage %}
-            {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
-                <c-paragraph size="sm">
-                    {{ usage.deployments }} deployment(s), {{ usage.pods }} pod(s) op dit cluster.
-                </c-paragraph>
-                <c-progress-bar
-                    text="CPU"
-                    :value="usage.cpu_pct"
-                    max="100"
-                    value-display="true"
-                    color="info"
-                    accessible-label="CPU-gebruik ten opzichte van de limiet" />
-                <c-progress-bar
-                    text="Geheugen"
-                    :value="usage.mem_pct"
-                    max="100"
-                    value-display="true"
-                    color="success"
-                    accessible-label="Geheugengebruik ten opzichte van de limiet" />
-            {% endcall %}
         {% else %}
-            <c-alert type="info" heading="Nog geen meetgegevens">
-                Er zijn nog geen metingen voor dit project.
-            </c-alert>
+            {# Is het gebruik al meegegeven (de proefopstelling geeft het mee), dan komt
+               het van HETZELFDE fragment als hierboven via htmx binnenkomt. Hier stond
+               een tweede uitvoering van dezelfde kaart - eigen balken, eigen teksten -
+               en die liep meteen uit de pas zodra er aan een van de twee iets veranderde:
+               de eenheden en de cijfers onder de balk stonden alleen in de andere. #}
+            {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
+                {% include "bg/_resource-usage.html.j2" %}
+            {% endcall %}
         {% endif %}
 
     {% elif active_tab == 'taken' %}
