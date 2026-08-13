@@ -852,8 +852,8 @@ async def collect_dashboard_metrics(
     Verdubbelen zou betekenen dat een verbetering aan de ene kant stilletjes niet aan de
     andere kant landt.
 
-    Zet ook ``cpu_cores`` per project in ``user_projects``, want de verdeelbalk rekent
-    daarmee.
+    Zet ook ``cpu_cores`` en ``memory_mb`` per project in ``user_projects``, want de
+    verdeelkaart rekent daarmee.
 
     Returns:
         De metrics, of Prometheus bereikbaar was, en het aantal pods.
@@ -1010,14 +1010,26 @@ async def collect_dashboard_metrics(
                     "network_in_data": network_in_data,
                     "network_out_data": network_out_data,
                 }
-                # Per-project CPU usage for resource comparison bar
+                # Per project het CPU- EN het geheugengebruik, voor de verdeelkaart.
+                #
+                # Geheugen stond hier niet, en dat is de reden dat de verdeling alleen CPU
+                # toonde: het sjabloon kon het wel tekenen, maar er kwam nooit een waarde
+                # binnen. Van de twee is geheugen bovendien de belangrijkste, want daar valt
+                # een pod op om als het opraakt -- en op een rustig cluster is het CPU-cijfer
+                # bijna nul, waardoor de kaart in de praktijk leeg bleef.
+                #
+                # Working set en niet de limiet: dat is wat er werkelijk in gebruik is, en
+                # dat is de vraag die "hoeveel gebruikt dit project" stelt. Dezelfde meting
+                # als de geheugenmeter bovenaan dezelfde kaart, zodat de delen bij het
+                # totaal horen dat ernaast staat.
                 for project in user_projects:
                     proj_ns = project.get("namespaces", [])
                     if not proj_ns:
                         project["cpu_cores"] = 0.0
+                        project["memory_mb"] = 0.0
                         continue
+                    proj_regex = "|".join(proj_ns)
                     try:
-                        proj_regex = "|".join(proj_ns)
                         result = await prom.custom_query(
                             f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{proj_regex}",container!=""}}[5m]))'
                         )
@@ -1028,6 +1040,17 @@ async def collect_dashboard_metrics(
                     except Exception as e:
                         logger.debug(f"Dashboard per-project CPU query failed for {project['name']}: {e}")
                         project["cpu_cores"] = 0.0
+                    try:
+                        result = await prom.custom_query(
+                            f'sum(container_memory_working_set_bytes{{namespace=~"{proj_regex}",container!=""}})'
+                        )
+                        if result and result[0].get("value"):
+                            project["memory_mb"] = float(result[0]["value"][1]) / (1024 * 1024)
+                        else:
+                            project["memory_mb"] = 0.0
+                    except Exception as e:
+                        logger.debug(f"Dashboard per-project memory query failed for {project['name']}: {e}")
+                        project["memory_mb"] = 0.0
 
         except Exception as e:
             logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")
