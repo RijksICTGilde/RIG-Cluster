@@ -44,10 +44,13 @@ from opi.utils.totp import totp_now
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.lotc_switch import (
     STANDAARD_TAB,
+    TABS_MET_DEPLOYMENT,
     build_deployment_status_column,
     build_lotc_dashboard,
     build_lotc_project_details,
     build_lotc_projects,
+    deployment_pagina_adres,
+    kies_deployment,
     render,
     render_fragment,
     tab_from_path,
@@ -1255,6 +1258,29 @@ async def dashboard(request: Request):
 @web_router.get("/projects/taken/{project_name}", response_class=HTMLResponse)
 @requires_sso
 async def project_details(request: Request, project_name: str):
+    """De projectpagina zonder deployment in het pad; zie :func:`render_project_page`."""
+    return await render_project_page(request, project_name, "")
+
+
+@web_router.get("/projects/deployments/{project_name}/{deployment_name}", response_class=HTMLResponse)
+@web_router.get("/projects/metrics/{project_name}/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def project_deployment_details(request: Request, project_name: str, deployment_name: str):
+    """EEN deployment op de tabbladen Deployments en Metrics.
+
+    Die twee toonden alle deployments en verborgen er alles behalve een met CSS. Nu staat
+    de naam in het PAD en rendert de server er een: dat scheelt het werk voor blokken die
+    niemand ziet, de pagina is deelbaar, de terugknop werkt, en de keuze blijft staan bij
+    het wisselen van tabblad omdat de tabbalk hem in zijn adressen meeneemt.
+
+    De paden staan hier letterlijk en niet als ``/projects/{tab}/{project}/{deployment}``,
+    om dezelfde reden als bij de tabbladen zelf: dat laatste vangt ook paden op die een
+    andere route toekomen.
+    """
+    return await render_project_page(request, project_name, deployment_name)
+
+
+async def render_project_page(request: Request, project_name: str, deployment_name: str):
     """
     Serve the project details page showing comprehensive project information.
     Shows detailed project data including services, components, deployments, and configuration.
@@ -1308,6 +1334,28 @@ async def project_details(request: Request, project_name: str):
 
         # Use project data from memory if available
         project_data = project.data or {}
+
+        # WELKE deployment staat open, en staat die naam al in de URL? Deze twee
+        # tabbladen tonen er een, dus het adres hoort te zeggen welke: zonder naam in het
+        # pad (of met een naam die niet meer bestaat) kiest de server er een en verwijst
+        # hij daarheen, zodat de URL daarna klopt en deelbaar is. ``?deployment=<naam>``
+        # was de oude vorm en verwijst hier ook naartoe, zodat een gedeelde link uit die
+        # tijd blijft werken.
+        #
+        # Hier, direct na het laden van het project: alles hieronder is ontsleutelwerk dat
+        # voor een doorverwijzing niet gedaan hoeft te worden.
+        deployment_open = ""
+        if tab_from_path(request.url.path) in TABS_MET_DEPLOYMENT:
+            deployment_open = kies_deployment(
+                [deployment["name"] for deployment in project_data.get("deployments") or []],
+                deployment_name,
+                request.query_params.get("deployment") or "",
+            )
+            hoort_op = deployment_pagina_adres(request, project_name, deployment_open)
+            huidig = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+            if hoort_op != huidig:
+                return RedirectResponse(url=hoort_op, status_code=302)
+
         settings_private_key = get_global_private_key()
 
         project_data_decrypted = copy.deepcopy(project_data)
@@ -1710,7 +1758,9 @@ async def project_details(request: Request, project_name: str):
                 # after RC-5's config move kept reading the old project-level
                 # ``config.keycloak`` and silently stopped rendering).
                 "service_detail_sections": service_detail_sections,
-                **build_lotc_project_details(request, user=user, project=project_details),
+                **build_lotc_project_details(
+                    request, user=user, project=project_details, deployment_open=deployment_open
+                ),
             },
         )
 
