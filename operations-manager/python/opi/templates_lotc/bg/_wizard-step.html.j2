@@ -78,6 +78,10 @@
                  het verzoek gewoon klikbaar. #}
               hx-disabled-elt="#wizard-step-form [type='submit']">
 
+            {# De inhoud en de knoppenbalk in een stack: zonder stond <c-action-group>
+               direct achter de stapinhoud en plakten Vorige/Volgende tegen de kaart
+               erboven. Dat gold in elke wizardstap, want ze delen dit sjabloon. #}
+            <c-stack gap="lg">
             {{ step_html | safe }}
 
             <c-action-group align="between">
@@ -132,6 +136,7 @@
                     {% endif %}
                 </c-cluster>
             </c-action-group>
+            </c-stack>
         </form>
     </c-stack>
 </div>
