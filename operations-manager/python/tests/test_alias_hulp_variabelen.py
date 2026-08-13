@@ -13,6 +13,8 @@ de functie die het formulier gebruikt om te oordelen.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from opi.core.templates_lotc import templates_lotc
 from opi.services.catalog.aliases.overzicht import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference
@@ -72,11 +74,11 @@ def test_het_veld_krijgt_een_hulpknop() -> None:
         help_template = HULP
         help_text = None
         description = None
-        errors: list[str] = []
+        errors: ClassVar[list[str]] = []
         value = ""
         readonly = False
-        examples: list[str] = []
-        attributes = {"kv_format": "env"}
+        examples: ClassVar[list[str]] = []
+        attributes: ClassVar[dict[str, str]] = {"kv_format": "env"}
 
     html = templates_lotc.env.get_template("widgets/key_value_editor.html.j2").render(field=_Veld())
 
