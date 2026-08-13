@@ -52,6 +52,7 @@ from opi.api.v2.models import (
     DeploymentDetail,
     DeploymentListResponse,
     DeploymentStatus,
+    PendingRolloutResponse,
     ProjectListItem,
     ProjectListResponse,
     StatusError,
@@ -469,6 +470,7 @@ async def list_deployments_v2(
         content=DeploymentListResponse(
             project=project_name,
             cluster=current_cluster,
+            pending_rollout=await _pending_rollout_or_none(request, project_name),
             deployments=details,
         ).model_dump(),
     )
@@ -516,6 +518,12 @@ async def get_deployment_v2(
 
     live = await _fetch_one_live_status_strict(project_name, project_data, deployment)
     detail = _build_deployment_detail(deployment, project_name, project_data, live)
+    # Gemeld door de zad-cli (punt 8b): dit antwoord noemde een URL voor een component dat
+    # nog niet was uitgerold, en er stond niets bij waaraan je dat kon zien. Het is het
+    # enige leesantwoord dat gewenste en werkelijke toestand MENGT -- urls uit het
+    # projectbestand, status uit de cluster -- en juist dat antwoord droeg de twee velden
+    # niet die de andere leesendpoints wel dragen.
+    detail.pending_rollout = await _pending_rollout_or_none(request, project_name)
     return JSONResponse(content=detail.model_dump())
 
 
@@ -552,24 +560,6 @@ NoDeferQuery = Annotated[
 ]
 
 
-class PendingRolloutResponse(BaseModel):
-    """Changes that were saved but deliberately not rolled out."""
-
-    project: str = Field(..., description="Technical name of the project.")
-    count: int = Field(..., description="Number of saved changes that have not been rolled out yet. 0 means in sync.")
-    since: str | None = Field(
-        default=None,
-        description=(
-            "ISO timestamp of the OLDEST change still waiting, so a caller can tell a change "
-            "made minutes ago from one that has been waiting a week. Null when count is 0."
-        ),
-    )
-    task_types: list[str] = Field(
-        default_factory=list,
-        description="Which kinds of change are waiting (e.g. 'configure_service'), deduplicated and sorted.",
-    )
-
-
 async def _pending_rollout(request: Request, project_name: str) -> PendingRolloutResponse:
     """How far the project file runs ahead of the cluster.
 
@@ -582,6 +572,20 @@ async def _pending_rollout(request: Request, project_name: str) -> PendingRollou
         raise HTTPException(status_code=503, detail="Task service not available")
     pending = await task_service.get_deferred_rollouts(project_name)
     return PendingRolloutResponse(project=project_name, **pending)
+
+
+async def _pending_rollout_or_none(request: Request, project_name: str) -> PendingRolloutResponse | None:
+    """Hetzelfde, maar het mag ontbreken.
+
+    Op de deploymentantwoorden is dit een ETIKET bij een beschrijving die er ook zonder
+    staat. Zou een ontbrekende takenservice hier een 503 opleveren, dan werkt "deployment
+    describe" niet meer op het moment dat die service het niet doet -- terwijl alles wat
+    het commando beschrijft uit het projectbestand en de cluster komt en gewoon te geven
+    is. Op /pending-rollout zelf blijft de 503 staan: daar IS het het antwoord.
+    """
+    if getattr(request.app.state, "task_service", None) is None:
+        return None
+    return await _pending_rollout(request, project_name)
 
 
 @v2_router.get(

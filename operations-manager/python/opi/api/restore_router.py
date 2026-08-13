@@ -1542,10 +1542,34 @@ def _find_deployment_for_reference(
                 return deployment_name
 
     for deployment_name in deployment_names:
-        if reference_name == f"{deployment_name}-{default_suffix}":
+        if reference_name in _fallback_reference_names(deployment_name, service_types, default_suffix):
             return deployment_name
 
     return None
+
+
+def _fallback_reference_names(deployment_name: str, service_types: list[str], default_suffix: str) -> list[str]:
+    """De namen die een backup KAN dragen als geen component de dienst voert.
+
+    Gemeld door de zad-cli (punt 10b): ``backup list`` gaf ``productie-postgresql``, maar
+    de 404 suggereerde ``productie-database`` -- en die naam draagt geen enkele snapshot,
+    dus de suggestie stuurde precies de verkeerde kant op. Erger nog: hij werd hier ook
+    geaccepteerd, waardoor de restore startte en pas daarna strandde op een snapshot die
+    niet bestaat.
+
+    De oorzaak was een tweede naamconventie. De schrijver leidt de naam af als
+    ``{deployment}-{dienstnaam tot het eerste streepje}`` (zie
+    ``ProjectFileHandler.get_components_using_service``), dus ``postgresql-database`` wordt
+    ``productie-postgresql``. Hier stond ``{deployment}-database``. Bij buckets viel dat
+    toevallig samen, want ``minio-storage`` begint ook met ``minio``; bij databases niet.
+
+    Deze functie volgt de regel van de SCHRIJVER, voor elke dienst die hier in aanmerking
+    komt. Het oude achtervoegsel blijft erbij staan: een backup die onder de oude naam is
+    weggeschreven moet terug te zetten blijven.
+    """
+    namen = [f"{deployment_name}-{service_type.split('-')[0]}" for service_type in service_types]
+    namen.append(f"{deployment_name}-{default_suffix}")
+    return list(dict.fromkeys(namen))
 
 
 def _known_reference_names(project_data: dict[str, Any], service_types: list[str], default_suffix: str) -> list[str]:
@@ -1570,7 +1594,9 @@ def _known_reference_names(project_data: dict[str, Any], service_types: list[str
         ]
         names.extend(component_refs)
         if not component_refs:
-            names.append(f"{deployment_name}-{default_suffix}")
+            # Dezelfde namen als hierboven geaccepteerd worden. Ze liepen uiteen, en dan
+            # noemt de 404 een naam die de restore vervolgens weigert of, erger, aanneemt.
+            names.extend(_fallback_reference_names(deployment_name, service_types, default_suffix))
 
     # Preserve order, drop duplicates (two components can share one service reference).
     return list(dict.fromkeys(names))
