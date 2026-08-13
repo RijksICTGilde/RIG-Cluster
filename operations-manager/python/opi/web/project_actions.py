@@ -86,7 +86,7 @@ def build_project_action(
             key=action_key,
             endpoint=f"/projects/{project_path}/refresh",
             message=(
-                f'Weet u zeker dat u het project "{display}" wilt herverwerken? '
+                f'Weet je zeker dat je het project "{display}" wilt herverwerken? '
                 "Het projectbestand wordt opnieuw uit Git ingelezen, waarna alle "
                 "deployments daarmee worden gesynchroniseerd. Verwijderde deployments "
                 "worden opgeruimd."
@@ -101,7 +101,7 @@ def build_project_action(
             key=action_key,
             endpoint=f"/projects/delete/{project_path}",
             message=(
-                f'Weet u zeker dat u het volledige project "{display}" wilt verwijderen? '
+                f'Weet je zeker dat je het volledige project "{display}" wilt verwijderen? '
                 "Dit verwijdert ALLE deployments, services en configuratie."
             ),
             **_DELETE_BUTTON,
@@ -116,7 +116,7 @@ def build_project_action(
                 key=action_key,
                 endpoint=f"/projects/{project_path}/refresh/{deployment_path}",
                 message=(
-                    f'Weet u zeker dat u deployment "{target}" wilt herverwerken? '
+                    f'Weet je zeker dat je deployment "{target}" wilt herverwerken? '
                     "Dit synchroniseert alle onderdelen van deze deployment."
                 ),
                 **_REFRESH_BUTTON,
@@ -125,7 +125,7 @@ def build_project_action(
             key=action_key,
             endpoint=f"/projects/{project_path}/delete-deployment/{deployment_path}",
             message=(
-                f'Weet u zeker dat u deployment "{target}" wilt verwijderen? '
+                f'Weet je zeker dat je deployment "{target}" wilt verwijderen? '
                 "Dit verwijdert alle bijbehorende Kubernetes resources en ArgoCD configuratie."
             ),
             **_DELETE_BUTTON,
@@ -146,7 +146,7 @@ def build_project_action(
             if web_addresses
             else None
         )
-        message = f'Weet u zeker dat u component "{target}" wilt verwijderen?'
+        message = f'Weet je zeker dat je component "{target}" wilt verwijderen?'
         if sites and not web_addresses:
             message += (
                 f" Het wordt gebruikt door: {', '.join(site.label for site in sites)};"
@@ -178,7 +178,7 @@ def build_project_action(
         return ProjectAction(
             key=action_key,
             endpoint=f"/projects/{project_path}/attachments/{quote(target, safe='')}/delete",
-            message=f'Weet u zeker dat u bijlage "{filename}" wilt verwijderen?',
+            message=f'Weet je zeker dat je bijlage "{filename}" wilt verwijderen?',
             blocked_reason=blocked,
             **_DELETE_BUTTON,
         )
