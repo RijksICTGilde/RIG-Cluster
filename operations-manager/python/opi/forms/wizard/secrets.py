@@ -104,16 +104,18 @@ def _redact(value: Any, path: list[str], keep: set[str], removed: list[str]) -> 
                 # BEREIKBAAR, en dan de hele inhoud. Er werd hier afgedaald en binnenin
                 # opnieuw geoordeeld, op de naam van het onderliggende veld -- en die naam
                 # kent geen editable, dus alles eronder werd weggestreept. Zichtbaar bij de
-                # aliassen: die zijn PER WAARDE versleuteld, dus onder de bereikbare sleutel
-                # "aliases" staan sleutels als POSTGRES_HOST, en de gebruiker kreeg in het
-                # bewerkveld de tekst __opi-redacted-secret__ te zien in plaats van zijn
-                # eigen alias. user-env-vars ontsprong de dans alleen omdat dat EEN
-                # versleuteld blok is en dus nooit een afdaling werd.
+                # aliassen toen die nog PER WAARDE versleuteld werden: onder de bereikbare
+                # sleutel "aliases" stonden sleutels als POSTGRES_HOST, en de gebruiker
+                # kreeg in het bewerkveld de tekst __opi-redacted-secret__ te zien in plaats
+                # van zijn eigen alias. user-env-vars ontsprong de dans omdat dat EEN
+                # versleuteld blok is en dus nooit een afdaling werd; sinds RC-106 geldt dat
+                # voor aliassen ook.
                 #
-                # Dit is ook wat de module bedoelt: bereikbaarheid gaat erover of het
-                # formulier de waarde kan terugzetten, en de editable van een map bezit die
-                # map in zijn geheel. Grof in de richting van bewaren, zoals
-                # reachable_leaf_keys al opschrijft.
+                # Deze regel blijft staan, en niet alleen omdat aliassen nu een blok zijn:
+                # dit is wat de module bedoelt. Bereikbaarheid gaat erover of het formulier
+                # de waarde kan terugzetten, en de editable van een map bezit die map in
+                # zijn geheel. Grof in de richting van bewaren, zoals reachable_leaf_keys
+                # al opschrijft.
                 continue
             if carries_encrypted_value(item):
                 removed.append("/".join([*path, str(key)]))

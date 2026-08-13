@@ -26,7 +26,6 @@ from typing import Any
 
 import pytest
 from opi.manager.project_manager import ProjectManager
-from opi.services.catalog.base import ValueStorage
 from opi.services.component_values import decode
 from opi.utils.age import encrypt_age_content_sync
 
@@ -144,7 +143,7 @@ class TestWritingOnTheComponent:
         assert result["changed"]
         stored = _component(commit.data)["user-env-vars"]
         assert "rc55-secret" not in str(stored), "the plaintext value is in the project file"
-        assert decode(stored, ValueStorage.BLOCK, commit.data) == {"TOKEN": "rc55-secret"}
+        assert decode(stored, commit.data) == {"TOKEN": "rc55-secret"}
 
     @pytest.mark.asyncio
     async def test_add_then_patch_then_delete(self, manager) -> None:
@@ -159,7 +158,7 @@ class TestWritingOnTheComponent:
             "user-env-vars", "component", "delete", component_name="backend", keys=["B"]
         )
 
-        assert decode(_component(commit.data)["user-env-vars"], ValueStorage.BLOCK, commit.data) == {"A": "9"}
+        assert decode(_component(commit.data)["user-env-vars"], commit.data) == {"A": "9"}
         assert len(commit.commits) == 3
 
     @pytest.mark.asyncio
@@ -174,20 +173,19 @@ class TestWritingOnTheComponent:
         assert "user-env-vars" not in _component(commit.data)
 
     @pytest.mark.asyncio
-    async def test_aliases_land_per_value_with_readable_names(self, manager) -> None:
+    async def test_aliases_land_as_one_block_and_read_back_the_same(self, manager) -> None:
+        # RC-106: one block, exactly like user-env-vars. The names used to be readable
+        # keys next to their own ciphertext, and every reader had to decrypt per value.
         instance, commit = manager
+        values = {"POSTGRES_HOST": "$DATABASE_SERVER_HOST", "POSTGRES_PORT": "$DATABASE_SERVER_PORT"}
 
-        await instance.set_component_values(
-            "aliases",
-            "component",
-            "add",
-            component_name="backend",
-            values={"POSTGRES_HOST": "$DATABASE_SERVER_HOST", "POSTGRES_PORT": "$DATABASE_SERVER_PORT"},
-        )
+        await instance.set_component_values("aliases", "component", "add", component_name="backend", values=values)
 
         stored = _component(commit.data)["aliases"]
-        assert sorted(stored) == ["POSTGRES_HOST", "POSTGRES_PORT"]
-        assert all("BEGIN AGE ENCRYPTED FILE" in value for value in stored.values())
+        assert isinstance(stored, str), "one block, not a mapping"
+        assert stored.count("BEGIN AGE ENCRYPTED FILE") == 1, "one ciphertext for the set"
+        assert "POSTGRES_HOST" not in stored, "the names live inside the block now"
+        assert decode(stored, commit.data) == values
 
     @pytest.mark.asyncio
     async def test_a_component_that_is_not_there_fails_without_committing(self, manager) -> None:
@@ -225,8 +223,8 @@ class TestTheTwoLayersStaySeparate:
         deployment_level = _deployment_component(commit.data).get("user-env-vars")
         assert component_level, "writing the deployment override wiped the component-level value"
         assert deployment_level, "the deployment override never landed"
-        assert decode(component_level, ValueStorage.BLOCK, commit.data) == {"SHARED": "component-value"}
-        assert decode(deployment_level, ValueStorage.BLOCK, commit.data) == {"SHARED": "deployment-value"}
+        assert decode(component_level, commit.data) == {"SHARED": "component-value"}
+        assert decode(deployment_level, commit.data) == {"SHARED": "deployment-value"}
 
     @pytest.mark.asyncio
     async def test_clearing_one_layer_leaves_the_other(self, manager) -> None:
@@ -252,7 +250,7 @@ class TestTheTwoLayersStaySeparate:
         )
 
         assert "user-env-vars" not in _deployment_component(commit.data)
-        assert decode(_component(commit.data)["user-env-vars"], ValueStorage.BLOCK, commit.data) == {"A": "1"}
+        assert decode(_component(commit.data)["user-env-vars"], commit.data) == {"A": "1"}
 
     @pytest.mark.asyncio
     async def test_a_component_missing_from_the_deployment_fails(self, manager) -> None:
@@ -323,7 +321,7 @@ class TestNoChurn:
 
     @pytest.mark.asyncio
     async def test_edge_whitespace_is_refused_for_aliases_too(self, manager) -> None:
-        # age decryption strips its plaintext, so PER_VALUE loses this as well.
+        # age decryption strips its plaintext, whichever property it is stored under.
         instance, commit = manager
 
         result = await instance.set_component_values(
@@ -335,25 +333,19 @@ class TestNoChurn:
         assert commit.commits == []
 
     @pytest.mark.asyncio
-    async def test_surrounding_quotes_are_refused_for_env_vars_but_kept_for_aliases(self, manager) -> None:
+    async def test_surrounding_quotes_are_refused_for_both_properties(self, manager) -> None:
+        # Aliases used to keep them, because the per-value shape never read a KEY=value
+        # line back. Since RC-106 they are stored as that line, so the same rule holds
+        # and the value is refused rather than silently returned without its quotes.
         instance, commit = manager
 
-        refused = await instance.set_component_values(
-            "user-env-vars", "component", "add", component_name="backend", values={"A": '"q"'}
-        )
-        assert not refused["success"]
-
-        stored = await instance.set_component_values(
-            "aliases", "component", "add", component_name="backend", values={"A": '"$DATABASE_SERVER_HOST"'}
-        )
-        assert stored["success"]
-        assert stored["changed"]
-
-        again = await instance.set_component_values(
-            "aliases", "component", "patch", component_name="backend", values={"A": '"$DATABASE_SERVER_HOST"'}
-        )
-        assert again["changed"] is False, "PER_VALUE keeps the quotes, so re-writing it is a no-op"
-        assert len(commit.commits) == 1
+        for service_name in ("user-env-vars", "aliases"):
+            refused = await instance.set_component_values(
+                service_name, "component", "add", component_name="backend", values={"A": '"$DATABASE_SERVER_HOST"'}
+            )
+            assert not refused["success"], service_name
+            assert refused["error_type"] == "invalid_values"
+        assert commit.commits == []
 
     @pytest.mark.asyncio
     async def test_clearing_what_is_already_empty_commits_nothing(self, manager) -> None:

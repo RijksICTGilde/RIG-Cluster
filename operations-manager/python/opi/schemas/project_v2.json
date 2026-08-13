@@ -283,8 +283,11 @@
           "maxItems": 10
         },
         "aliases": {
-          "type": "object",
-          "additionalProperties": { "type": "string" }
+          "description": "Aliassen van dit component: de naam die de applicatie verwacht, gekoppeld aan een platform-variabele (POSTGRES_HOST: $DATABASE_SERVER_HOST). Opgeslagen als EEN AGE-blok waarvan de platte tekst KEY=value-regels zijn, net als user-env-vars; een onversleutelde mapping blijft geldig.",
+          "oneOf": [
+            { "type": "object", "additionalProperties": { "type": "string" } },
+            { "type": "string" }
+          ]
         }
       }
     },

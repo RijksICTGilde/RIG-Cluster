@@ -95,22 +95,47 @@ service:
 {"name": "user-env-vars",  "value_targets": ["component", "deployment-component"]}
 ```
 
-## De opslagvormen
+## De opslagvorm
 
 Dit is het lastigste deel, en waar een naïeve implementatie een geheim in plaintext in git
-zet. De twee velden worden **verschillend** opgeslagen:
+zet. Beide velden worden **hetzelfde** opgeslagen: **één** AGE-blok voor de hele set, met
+`KEY=value`-regels erbinnen.
 
-| veld | opslag |
-|---|---|
-| `user-env-vars` | **één** AGE-blok voor de hele set, met `KEY=value`-regels erbinnen |
-| `aliases` | een mapping met leesbare namen, en **elke waarde apart** AGE-versleuteld |
+Wijzigen is dus altijd **ontsleutelen -> muteren -> opnieuw versleutelen**; een blok kun je
+niet per regel bewerken. `opi/services/component_values.py` is de enige implementatie
+daarvan, en een dienst verklaart alleen nog *dat* hij zo'n waardenmap bezit
+(`owned_values_map`, `opi/services/catalog/base.py`).
 
-Wijzigen is in beide gevallen **ontsleutelen -> muteren -> opnieuw versleutelen**. Een blok
-kun je niet per regel bewerken, en een aliaswaarde niet zonder de andere te laten staan.
+### Aliassen waren een uitzondering (RC-106)
 
-De service declareert zelf welke van de twee vormen hij gebruikt
-(`owned_values_storage`, `opi/services/catalog/base.py`), en
-`opi/services/component_values.py` is de enige implementatie van beide vormen.
+Tot RC-106 werden aliassen **per sleutel** bewaard: een mapping met leesbare namen en elke
+waarde apart versleuteld, gedeclareerd met `ValueStorage.PER_VALUE`. Dat onderscheid was
+nooit een keuze over aliassen zelf, en het lekte overal doorheen -- elke lezer moest een
+eigen ontsleutelstap doen en kon die vergeten. Dat gebeurde ook: er stond een AGE-blok als
+waarde op de componentkaart, en in het bewerkveld stond `__opi-redacted-secret__` omdat de
+sessieredactie afdaalde in de mapping en per aliasnaam oordeelde. `user-env-vars` ontsprong
+die dans alleen omdat dat één blok is en dus nooit een afdaling werd.
+
+De dienst zegt bovendien zelf dat een alias die naar platformvariabelen verwijst géén geheim
+is (`AliasesService.owned_value_is_secret`), en de validator weigert een alias zonder
+verwijzing -- dus de versleuteling per waarde beschermde iets wat per definitie geen geheim
+was.
+
+**Lezen** kent daarom drie vormen, **schrijven** nog maar één:
+
+| vorm | gelezen | geschreven |
+|---|---|---|
+| één AGE-blok | ja | ja |
+| onversleutelde mapping | ja (blijft geldig in het projectschema) | nee |
+| mapping met een AGE-blok per waarde | ja (de vorm van voor RC-106) | nee |
+
+Er is geen migratie: een project met de vorm per sleutel blijft leesbaar en wordt bij de
+eerste bewerking als blok weggeschreven.
+
+Eén gevolg is zichtbaar op de API. Een waarde die niet heelhuids door een `KEY=value`-regel
+komt -- omringende aanhalingstekens -- is nu ook voor aliassen een 422. Dat was hij voor
+`user-env-vars` al; aliassen ontsnapten eraan omdat hun waarde nooit als zo'n regel werd
+teruggelezen.
 
 ## Fail-closed
 
@@ -289,7 +314,7 @@ curl -X POST "https://.../api/v2/projects/mijnproject/:refresh" -H "X-API-Key: $
 | onderdeel | bestand |
 |---|---|
 | opslagvormen, versleutelen/ontsleutelen, operaties | `opi/services/component_values.py` |
-| declaratie van de opslagvorm per service | `opi/services/catalog/base.py` (`ValueStorage`, `owned_values_storage`) |
+| declaratie dat een service een waardenmap bezit | `opi/services/catalog/base.py` (`owned_values_map`) |
 | de routes (registry-gedreven) | `opi/api/v2/router.py` (`_register_service_values_routes`) |
 | de schrijfactie | `ProjectManager.set_component_values` |
 | de taak | `opi/core/task_handlers_components.py` (`handle_configure_service_values`) |
@@ -298,7 +323,7 @@ curl -X POST "https://.../api/v2/projects/mijnproject/:refresh" -H "X-API-Key: $
 | toetsen | `tests/test_component_values.py`, `tests/test_component_values_api.py`, `tests/test_component_values_manager.py`, `tests/test_component_values_read_api.py`, `tests/test_alias_reference_validation.py` |
 
 Een service die in de toekomst ook een sleutel/waarde-property bezit, krijgt zijn endpoints
-door `owned_values_storage` te declareren - er staat nergens een servicenaam in de router.
+door `owned_values_map` te declareren - er staat nergens een servicenaam in de router.
 
 ## Afhankelijkheden
 
