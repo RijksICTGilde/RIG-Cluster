@@ -157,6 +157,34 @@
             {% endcall %}
         {% endif %}
 
+        {# ---- Resourcegebruik van het HELE project ---------------------------
+
+           Deze kaart stond op het tabblad Metrics, en dat klopte niet: dat tabblad is
+           PER DEPLOYMENT (een kiezer, een blok per keer), terwijl dit over het hele
+           project gaat - alle deployments delen een namespace, dus de blokken daar
+           tellen nooit op tot deze cijfers. Hier hoort hij, tussen Acties en
+           Deployments, en op Metrics blijft alleen wat werkelijk per deployment is.
+
+           Verplaatst en niet gekopieerd: twee weergaven van dezelfde cijfers lopen uit
+           de pas zodra er aan een van beide iets verandert.
+
+           Apart laden, zodat een trage of afwezige Prometheus deze pagina niet ophoudt.
+           Is het gebruik al meegegeven (de proefopstelling doet dat), dan komt HETZELFDE
+           fragment er rechtstreeks in - niet een tweede uitvoering van dezelfde kaart. #}
+        {% if project.name is defined and usage is not defined %}
+            {% call panel("Resourcegebruik (heel project)", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
+                <div hx-get="/projects/details/{{ project.name }}/resource-usage"
+                     hx-trigger="load"
+                     hx-swap="innerHTML">
+                    <c-paragraph>Metingen worden opgehaald...</c-paragraph>
+                </div>
+            {% endcall %}
+        {% else %}
+            {% call panel("Resourcegebruik (heel project)", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
+                {% include "bg/_resource-usage.html.j2" %}
+            {% endcall %}
+        {% endif %}
+
         {# ---- Deployments (in plaats van section-deployment-status.html.j2) --- #}
         {# Hier stond "Deployment Status": een kaart per deployment, die elk hun eigen
            ArgoCD-bevraging deden zodra je ze in beeld kreeg. Dat is een TABEL geworden,
@@ -730,52 +758,45 @@
                               info_text="Verbruik per component over de tijd.") %}
                     <div id="metrics-content-{{ deployment_geopend.name }}"
                          hx-get="/projects/details/{{ project.name }}/metrics/{{ deployment_geopend.name }}"
-                         hx-trigger="intersect once"
+                         {# EN DAARNA ELKE MINUUT, via een eigen gebeurtenis en niet via een
+                            kale "every 60s". De pagina draagt sinds RC-92 nog maar EEN blok, dus
+                            het argument "peil niet wat verborgen is" is vervallen - maar het
+                            script hieronder doet meer dan dat: het luistert op visibilitychange
+                            en zwijgt zodra het TABBLAD naar de achtergrond gaat. Een tijdklok van
+                            htmx blijft daar gewoon doorpeilen, dus een tabblad dat een dag
+                            openstaat zou Prometheus een dag lang elke minuut bevragen.
+
+                            Geen htmx-triggerfilter ("every 60s [conditie]") dus, en dat kan ook
+                            niet: htmx bouwt zo'n filter met de Function-constructor, en de
+                            Content-Security-Policy van deze applicatie staat geen unsafe-eval
+                            toe - die conditie zou stil nooit waar worden. Gemeten door RC-91. #}
+                         hx-trigger="intersect once, zad-metingen-ververs"
                          hx-swap="innerHTML">
                         <c-paragraph>Metingen worden opgehaald...</c-paragraph>
                     </div>
                 {% endcall %}
             </div>
+            <script>
+            (function () {
+                var TUSSENPOOS = 60000;
+
+                function ververs() {
+                    if (document.hidden || typeof htmx === 'undefined') return;
+                    // De pagina draagt er sinds RC-92 nog maar EEN. Hier stond een selector
+                    // die op de zichtbare deployment-sectie filterde; die hoorde bij de lus
+                    // die er niet meer is en zou nu niets vinden.
+                    document.querySelectorAll('[id^="metrics-content-"]')
+                        .forEach(function (blok) { htmx.trigger(blok, 'zad-metingen-ververs'); });
+                }
+
+                setInterval(ververs, TUSSENPOOS);
+                document.addEventListener('visibilitychange', function () {
+                    if (!document.hidden) ververs();
+                });
+            })();
+            </script>
         {% endif %}
 
-        {% if project.name is defined and usage is not defined %}
-            {# Zelfde aanpak als de bestaande pagina: apart laden, zodat een trage of
-               afwezige Prometheus deze pagina niet ophoudt. Het fragment volgt dezelfde
-               keuze als de pagina, dus er hoeft niets meegegeven te worden. #}
-            {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
-                <div hx-get="/projects/details/{{ project.name }}/resource-usage"
-                     hx-trigger="load"
-                     hx-swap="innerHTML">
-                    <c-paragraph>Metingen worden opgehaald...</c-paragraph>
-                </div>
-            {% endcall %}
-        {% elif usage_error %}
-            <c-alert type="info" heading="Resourcegebruik niet beschikbaar">{{ usage_error }}</c-alert>
-        {% elif usage %}
-            {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
-                <c-paragraph size="sm">
-                    {{ usage.deployments }} deployment(s), {{ usage.pods }} pod(s) op dit cluster.
-                </c-paragraph>
-                <c-progress-bar
-                    text="CPU"
-                    :value="usage.cpu_pct"
-                    max="100"
-                    value-display="true"
-                    color="info"
-                    accessible-label="CPU-gebruik ten opzichte van de limiet" />
-                <c-progress-bar
-                    text="Geheugen"
-                    :value="usage.mem_pct"
-                    max="100"
-                    value-display="true"
-                    color="success"
-                    accessible-label="Geheugengebruik ten opzichte van de limiet" />
-            {% endcall %}
-        {% else %}
-            <c-alert type="info" heading="Nog geen meetgegevens">
-                Er zijn nog geen metingen voor dit project.
-            </c-alert>
-        {% endif %}
 
     {% elif active_tab == 'taken' %}
         {# Zelfde aanpak als de bestaande pagina: het fragment haalt zichzelf op en ververst

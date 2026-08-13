@@ -1,51 +1,88 @@
 {#
   Het resourcegebruik van een project, als los fragment.
 
-  De projectpagina laadt dit apart met htmx (hx-trigger="intersect once"), zodat een trage
-  of afwezige Prometheus de pagina niet ophoudt. Dat blijft zo; alleen de weergave is
-  omgezet.
+  De projectpagina laadt dit apart met htmx, zodat een trage of afwezige Prometheus de
+  pagina niet ophoudt.
 
-  De balken waren eigen div's met een breedte in een style-attribuut. Nu c-progress-bar:
-  hetzelfde beeld, met de rol en de aria-waarden die het thema meelevert, en het volgt een
-  themawissel.
+  DE VORM IS DIE VAN DE BESTAANDE KAART, NIET EEN NIEUWE
+
+  Bij het hertekenen bleven van deze kaart alleen twee balkjes over: het woord "CPU" en
+  een balk, zonder eenheid, zonder waarde en zonder waar de balk zich toe verhoudt. Dat is
+  niet af te lezen - "ongeveer een derde" waarvan, en van hoeveel?
+
+  De goede vorm bestond al en draait op productie
+  (project-details/_resource-usage.html.j2, de kaart van de oude pagina). Die is hier
+  overgenomen in plaats van er een tweede ontwerp naast te zetten: per regel een label met
+  icoon, rechts de gebruikte waarde tegen de limiet MET eenheid en het percentage, en dan
+  pas de balk.
+
+  Ook de SCHRIJFWIJZE is die van het origineel, inclusief de twee macro's: onder een core
+  in millicores (30m), daarboven in cores met een decimaal (22.5); geheugen onder 0,1 GiB
+  in MiB en daarboven in GiB. Dat scheelt op elke kaart een rij nullen.
+
+  Wat wel anders is dan het origineel: de balk is <c-progress-bar> van het thema in plaats
+  van een eigen div met een breedte in een style-attribuut. Die omzetting stond er al en
+  blijft; het is de REGEL erboven die ontbrak.
+
+  ``value-display="tooltip"`` op die balk: het thema zet het percentage standaard NAAST de
+  balk, en dan staat het er twee keer - een keer in de regel hierboven en een keer bij de
+  balk. Met "tooltip" verhuist het naar de muisaanwijzer; gemeten in de browser, want
+  "none" is geen waarde die dit component kent (dan valt hij terug op inline).
 #}
+{% macro cores(v) %}{% if v < 1 %}{{ (v * 1000) | round | int }}m{% else %}{{ '%.1f' | format(v) }}{% endif %}{% endmacro %}
+{% macro gib(v) %}{% if (v / 1073741824) < 0.1 %}{{ (v / 1048576) | round | int }} MiB{% else %}{{ '%.1f' | format(v / 1073741824) }} GiB{% endif %}{% endmacro %}
+
 {% if usage_error %}
-    <c-alert type="info" heading="Resourcegebruik niet beschikbaar">{{ usage_error }}</c-alert>
+    {# Een storing van de METING, niet van het project: Prometheus antwoordt niet. Dat is
+       iets anders dan de melding onderaan (Prometheus antwoordt wel, maar met niets). #}
+    <c-alert type="warning" heading="Resourcegebruik is niet op te halen">
+        {{ usage_error }}
+    </c-alert>
 {% elif usage %}
     <c-stack gap="md">
         <c-paragraph size="sm">
-            {{ usage.deployments }} deployment(s), {{ usage.pods }} pod(s) op dit cluster.
+            {{ usage.deployments }} deployment(s), {{ usage.pods }} pod(s) op dit cluster
         </c-paragraph>
-        {# Zonder limiet zegt een percentage niets: dan is er geen bovengrens om tegen af
-           te zetten. In dat geval alleen het getal. #}
-        {% if usage.cpu_limit > 0 %}
-            <c-progress-bar
-                text="CPU"
-                :value="usage.cpu_pct"
-                max="100"
-                value-display="true"
-                color="info"
-                accessible-label="CPU-gebruik ten opzichte van de limiet" />
-        {% else %}
-            <c-detail-list>
-                <c-detail-item label="CPU" value="{{ usage.cpu_used | round(2) }} cores" />
-            </c-detail-list>
-        {% endif %}
 
-        {% if usage.mem_limit > 0 %}
-            <c-progress-bar
-                text="Geheugen (in gebruik)"
-                :value="usage.mem_pct"
-                max="100"
-                value-display="true"
-                color="success"
-                accessible-label="Geheugengebruik ten opzichte van de limiet" />
-        {% else %}
-            <c-detail-list>
-                <c-detail-item label="Geheugen (in gebruik)" value="{{ (usage.mem_used / 1048576) | round | int }} MiB" />
-            </c-detail-list>
-        {% endif %}
+        {# CPU. Zonder limiet geen percentage en geen balk: dan is er geen bovengrens om
+           tegen af te zetten, en een balk zonder schaal is geen meting. #}
+        <c-stack gap="xs">
+            <c-cluster justify="between" align="center" gap="sm">
+                <c-span><c-icon icon="cylinder-split" size="sm" color="donkerblauw" /> CPU</c-span>
+                <c-span><strong>{{ cores(usage.cpu_used) }}</strong>{% if usage.cpu_limit > 0 %} / {{ cores(usage.cpu_limit) }} cores ({{ usage.cpu_pct }}%){% else %} cores{% endif %}</c-span>
+            </c-cluster>
+            {% if usage.cpu_limit > 0 %}
+                <c-progress-bar
+                    :value="usage.cpu_pct"
+                    max="100"
+                    value-display="tooltip"
+                    color="info"
+                    accessible-label="CPU-gebruik ten opzichte van de limiet" />
+            {% endif %}
+        </c-stack>
+
+        {# Geheugen: de working set, dus wat er werkelijk in gebruik is. #}
+        <c-stack gap="xs">
+            <c-cluster justify="between" align="center" gap="sm">
+                <c-span><c-icon icon="database" size="sm" color="groen" /> Geheugen (in gebruik)</c-span>
+                <c-span><strong>{{ gib(usage.mem_used) }}</strong>{% if usage.mem_limit > 0 %} / {{ gib(usage.mem_limit) }} ({{ usage.mem_pct }}%){% endif %}</c-span>
+            </c-cluster>
+            {% if usage.mem_limit > 0 %}
+                <c-progress-bar
+                    :value="usage.mem_pct"
+                    max="100"
+                    value-display="tooltip"
+                    color="success"
+                    accessible-label="Geheugengebruik ten opzichte van de limiet" />
+            {% endif %}
+        </c-stack>
     </c-stack>
 {% else %}
-    <c-paragraph>Er zijn nog geen metingen voor dit project.</c-paragraph>
+    {# Geen leegte maar een toestand: er is niets te meten omdat er op dit cluster geen
+       deployment van dit project draait. Zonder deze tekst stond hier een lege kaart, en
+       dat leest als "er is iets stuk". #}
+    <c-alert type="info" heading="Nog geen metingen">
+        Er zijn nog geen metingen voor dit project. Dat hoort zo vlak na het aanmaken - de
+        eerste waarden verschijnen zodra er iets draait op dit cluster.
+    </c-alert>
 {% endif %}
