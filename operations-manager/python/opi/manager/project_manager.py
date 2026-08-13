@@ -2579,6 +2579,7 @@ class ProjectManager:
             await self._argo_manager.wait_for_application_created(
                 app_name=infra_app_name,
                 timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
+                poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
             )
 
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
@@ -2899,7 +2900,7 @@ class ProjectManager:
 
                 get_database_pool("main")  # guard: raises if the DB is unavailable -> immediate delete
                 marked_service = MarkedForDeletionService()
-            except KeyError, ValueError:
+            except (KeyError, ValueError):
                 logger.warning("Database pool not available - persistent resources will be deleted immediately")
 
             project_name = current_yaml.get("name", "unknown")
@@ -3074,7 +3075,7 @@ class ProjectManager:
                     async def _wait_created(app_name: str) -> str | None:
                         try:
                             await self._argo_manager.wait_for_application_created(
-                                app_name=app_name, timeout=360, poll_interval=5
+                                app_name=app_name, timeout=360, poll_interval=1
                             )
                             return None
                         except TimeoutError:
@@ -3141,9 +3142,14 @@ class ProjectManager:
 
                     # Track the last reported line per deployment to detect stalls.
                     stall: dict[str, Any] = {"line": None, "since": 0}
+                    # De statuspoll draait elke 2s; de kubectl-inspectie hieronder houdt zijn
+                    # eigen 5s-ritme zodat de snellere poll het cluster niet zwaarder belast.
+                    # (De OOM-callback verderop throttlet zichzelf al, via last_check_at.)
+                    describe_next: dict[str, int] = {"at": 0}
 
                     async def _on_progressing(elapsed: int) -> None:
-                        if app_subtask and namespace and component_names:
+                        if app_subtask and namespace and component_names and elapsed >= describe_next["at"]:
+                            describe_next["at"] = elapsed + 5
                             try:
                                 statuses = await describe_components_waiting(
                                     namespace, component_names, component_refs, deployment_state
@@ -3202,7 +3208,11 @@ class ProjectManager:
                         await self._argo_manager.wait_for_application_synced(
                             app_name=app_name,
                             timeout=300,
-                            poll_interval=5,
+                            # 2s: de status-GET is een goedkope live read; het oude 5s-rooster
+                            # betekende gemiddeld 2,5s extra wachten nadat de app al groen was.
+                            # De zwaardere componenten-inspectie in on_progressing zit op zijn
+                            # eigen 5s-throttle en versnelt hierdoor niet mee.
+                            poll_interval=2,
                             refreshed_after=reconciled_at,
                             on_progressing=on_progressing,
                         )
@@ -7193,7 +7203,7 @@ class ProjectManager:
                     result_create["warnings"] = normalized_warnings_create
                 return result_create
 
-        except ConflictError, ConcurrencyError:
+        except (ConflictError, ConcurrencyError):
             # Retried by upsert_deployment on a fresh read. Must propagate, not become a
             # generic error dict, or the retry never sees it.
             raise

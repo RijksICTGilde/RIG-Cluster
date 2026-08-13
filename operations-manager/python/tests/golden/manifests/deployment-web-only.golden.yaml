@@ -87,5 +87,5 @@ spec:
             tcpSocket:
               port: 8080
             initialDelaySeconds: 0
-            periodSeconds: 5
+            periodSeconds: 2
             failureThreshold: 3

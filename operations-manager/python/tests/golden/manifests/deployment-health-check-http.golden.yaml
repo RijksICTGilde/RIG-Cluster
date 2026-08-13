@@ -93,5 +93,5 @@ spec:
               path: "/health/ready"
               scheme: HTTP
             initialDelaySeconds: 0
-            periodSeconds: 5
+            periodSeconds: 2
             failureThreshold: 3

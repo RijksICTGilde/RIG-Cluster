@@ -1918,7 +1918,7 @@ def _annotate_argocd_error_ages(errors: list[dict[str, Any]]) -> None:
                 error["age"] = f"{diff_min} min geleden"
             else:
                 error["age"] = f"{diff_min // 60} uur geleden"
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             pass
 
 
