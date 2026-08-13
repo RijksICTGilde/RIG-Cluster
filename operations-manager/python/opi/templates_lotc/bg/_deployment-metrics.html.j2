@@ -57,6 +57,16 @@
 </div>
 {% endmacro %}
 
+{#
+  DE RUIMTE TUSSEN DE KNOPPENBALK EN DE KAART
+
+  De tijdvakknoppen stonden tegen de kaart eronder aan: twee blokken achter elkaar zonder
+  iets dat er ruimte tussen zet. Dezelfde geur als de knoppenbalk van de wizard, en
+  dezelfde oplossing: EEN stack om alles wat dit fragment neerzet, zodat de afstand van
+  het thema komt en niet van een marge die iemand hier bij moet houden.
+#}
+<c-stack gap="md">
+
 {# .metrics-toolbar was flex met een klein gat: <c-cluster gap="xs">. #}
 <c-cluster gap="xs">
     {% for value, label in durations %}
@@ -72,6 +82,35 @@
               hx-swap="innerHTML" />
     {% endfor %}
 </c-cluster>
+
+{#
+  NIETS GEMETEN IS EEN TOESTAND, GEEN LEEGTE
+
+  Stond er niets, dan stond er niets: zes lege grafieken met "No data available" eronder,
+  en dat is niet te onderscheiden van iets dat stuk is. Vlak na een start is het juist het
+  normale geval.
+
+  De twee gevallen krijgen NIET dezelfde tekst, want het zijn niet dezelfde gevallen:
+  Prometheus die niet antwoordt is een storing van de meting (over de deployment zelf zegt
+  het niets), Prometheus die antwoordt met niets is een deployment waar nog niets van te
+  meten valt. De route zegt welk van de twee het is; zonder die vlaggen (een ander
+  fragment dat dit sjabloon opneemt) blijft het bij de grafieken zoals ze waren.
+
+  De grafieken blijven staan. Ze horen bij het tijdvak dat je kiest, en dit gaat over de
+  MELDING erboven, niet over de grafieken zelf.
+#}
+{% if prometheus_bereikbaar is defined and not prometheus_bereikbaar %}
+    <c-alert type="warning" heading="Metingen zijn niet op te halen">
+        Prometheus antwoordt niet, dus er zijn op dit moment geen metingen op te vragen.
+        Dat zegt niets over deze deployment: die kan gewoon draaien.
+    </c-alert>
+{% elif metingen_leeg | default(false) %}
+    <c-alert type="info" heading="Nog geen metingen">
+        Prometheus is bereikbaar en heeft nog geen waarden voor deze deployment. Vlak na een
+        start hoort dat zo - de eerste punten verschijnen na een paar minuten - en het kan
+        ook betekenen dat er niets draait om te meten.
+    </c-alert>
+{% endif %}
 
 {% if deployment.components %}
 {# .metrics-grid uit metrics-charts.css was een flexkolom met een gat: <c-stack>. #}
@@ -250,6 +289,8 @@
     </c-stack>
 </div>
 {% endif %}
+
+</c-stack>
 
 {# Wat de bestaande pagina in haar <head> laadt, haalt dit fragment zelf op: de maten van
    de grafieken, Chart.js met zijn annotatie-plugin, en de tekencode. Een keer per
