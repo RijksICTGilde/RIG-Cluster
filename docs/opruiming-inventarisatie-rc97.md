@@ -50,9 +50,9 @@ tabbladen, en 26 deeltemplates eronder.
 `/lotc/pagina/project-details` geeft nu een 404 in plaats van een 422. Verder niets: er
 is geen weg waarlangs deze sjablonen HTML naar een gebruiker konden sturen.
 
-**Wat er meeverhuisde.** Negen testbestanden rendeerden een van deze sjablonen en maten
-dus niets over de pagina die de gebruiker ziet. Ze wijzen nu naar het `bg/`-sjabloon dat
-de route wel rendert. Twee uitspraken konden niet mee - zie bak 3.
+**Wat er meeverhuisde.** Tien testbestanden rendeerden of lazen een van deze sjablonen en
+maten dus niets over de pagina die de gebruiker ziet. Ze wijzen nu naar het `bg/`-sjabloon
+dat de route wel rendert. Drie uitspraken konden niet mee - zie bak 3.
 
 ### 1.2 De contextsleutel `deployment_state_facts`
 
@@ -148,7 +148,25 @@ zijn er allebei nog. Het staat hier zodat de keuze zichtbaar is: **wil de projec
 omschrijving van een dienst tonen, dan is dat werk aan het herontwerp**, niet het
 terugzetten van een sjabloon.
 
-### 3.3 De herkomstregels in de `bg/`-sjablonen
+### 3.3 Team & Toegang staat niet meer op het tabblad Project
+
+`tests/test_project_resource_usage.py` deed over de plaatsing van het resourceblok een
+uitspraak in twee helften: **onder de acties, boven het team**. De eerste helft is op
+`bg/project-tabs.html.j2` nog gewoon af te lezen (het paneel Acties staat voor het paneel
+Resourcegebruik, en dat voor Deployments - precies wat de toelichting in dat sjabloon zelf
+zegt: "tussen Acties en Deployments").
+
+De tweede helft is er niet meer af te lezen, en niet omdat de volgorde veranderd is: **Team
+& Toegang is een eigen tabblad geworden** en staat helemaal niet meer op dit tabblad. Er is
+dus niets meer om "boven" te staan. Die halve uitspraak is daarom vervallen in plaats van
+naar een ander anker omgebogen - een test die je zo groen buigt dat hij een andere vraag
+gaat stellen, meet vanaf dan niets.
+
+**Wat de keuze is.** Wil je bewaken dat het resourceblok hoog op de pagina blijft ten
+opzichte van wat er nu wel onder staat, dan is dat een nieuwe uitspraak over het
+herontwerp, niet het herstel van een oude.
+
+### 3.4 De herkomstregels in de `bg/`-sjablonen
 
 Dertien `bg/`-sjablonen verwijzen in hun toelichting naar `project-details/...`. Die bestanden
 bestaan sinds 1.1 niet meer. De regels blijven staan: ze vertellen waar de markup vandaan
