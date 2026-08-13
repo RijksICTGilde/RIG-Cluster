@@ -88,10 +88,23 @@ c-fieldset c-fieldset {
 
 /* Key-value editor */
 .kv-editor__label {
-    display: block;
+    /* flex en niet block: er staat sinds de hulpknop iets NAAST het label, en met block
+       zakt dat naar de volgende regel. */
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     font-size: 1.125rem;
     font-weight: 700;
     margin-bottom: 0.25rem;
+}
+.kv-editor__help-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--nldd-color-hemelblauw, #007bc7);
+    cursor: pointer;
 }
 .kv-toggle {
     display: inline-flex;

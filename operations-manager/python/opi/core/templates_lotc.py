@@ -29,6 +29,7 @@ from opi.core.template_helpers import (
 )
 from opi.core.version import get_version_info
 from opi.forms.lotc_attrs import attr_escape, bedraad_foutmelding, field_attrs
+from opi.services.catalog.aliases.overzicht import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
 from opi.services.registry import deployment_action_key
 
@@ -135,6 +136,12 @@ templates_lotc.env.filters["is_verwijzing"] = _alias_is_reference
 templates_lotc.env.filters["dutch_date"] = format_dutch_date
 templates_lotc.env.filters["rrule_schedule"] = format_rrule_schedule
 templates_lotc.env.filters["deployment_action_key"] = deployment_action_key
+
+# Als GLOBAL en niet als context: de hulproute rendert een .html.j2 met alleen het verzoek
+# erin (router_wizard.service_help), dus een hulptekst die gegevens nodig heeft kan er
+# anders niet bij. Een uitzondering voor dit ene sjabloon in die route zou de volgende
+# hulptekst met gegevens weer een uitzondering kosten.
+templates_lotc.env.globals["alias_variabelen"] = alias_variabelen
 
 templates_lotc.env.add_extension("jinja2.ext.i18n")
 
