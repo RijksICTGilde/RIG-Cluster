@@ -26,7 +26,7 @@
             <c-cluster gap="md">
                 {% for project in projects %}
                     {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
-                    <a href="/projects/details/{{ project.name }}" class="resource-legend-item">
+                    <a href="/projects/{{ project.name }}/details" class="resource-legend-item">
                         <span class="resource-dot resource-color-{{ loop.index0 % 6 }}"></span>
                         <span>{{ project.display_name }}</span>
                         <span>{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</span>

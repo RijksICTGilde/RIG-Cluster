@@ -276,7 +276,7 @@ def filter_lotc_deployments(
     wel gewoon ``q`` - die twee lijsten staan nooit op dezelfde pagina.
 
     WELKE deployment open staat wordt hier NIET meer bepaald. Dat doet de route, uit het
-    PAD (``/projects/deployments/<project>/<naam>``), met :func:`kies_deployment`; het
+    PAD (``/projects/<project>/deployments/<naam>``), met :func:`kies_deployment`; het
     komt hier binnen als ``deployment_open``. De tabel op Overzicht heeft die keuze zelf
     niet nodig - daar is elke rij een link naar het tabblad Deployments - maar de kiezer
     en het paneel lezen hem uit dezelfde context, dus hij gaat mee de pagina in.
@@ -419,9 +419,10 @@ def build_deployment_status_column(
 #: ``path`` staat naast het label omdat het adres NIET af te leiden is uit de sleutel:
 #: Overzicht heet ``project`` en woont op ``details``.
 #:
-#: Overzicht houdt ``/projects/details/<naam>``. Dat is het adres waar de projectpagina al
-#: jaren staat en waar alles heen wijst - de projectenlijst, het dashboard, de e-mails van
-#: de uitnodigingsdienst. Dat adres verhuizen zou van alles breken en niets opleveren.
+#: De PROJECTNAAM staat voorop en het tabblad erachter: ``/projects/<naam>/deployments``.
+#: Het project is waar je bent, het tabblad is wat je erbinnen bekijkt, en zo leest het
+#: pad ook. De oude vorm (``/projects/deployments/<naam>``) verwijst door, zodat gedeelde
+#: links blijven werken.
 PROJECT_TABS = {
     "project": {"label": "Overzicht", "path": "details"},
     "componenten": {"label": "Componenten", "path": "componenten"},
@@ -435,7 +436,7 @@ PROJECT_TABS = {
 STANDAARD_TAB = next(iter(PROJECT_TABS))
 
 #: De tabbladen die EEN deployment tegelijk tonen, en die hem daarom in hun PAD dragen:
-#: ``/projects/deployments/<project>/<deployment>``.
+#: ``/projects/<project>/deployments/<deployment>``.
 #:
 #: Ze stonden er allebei alle deployments te renderen en verborgen er alles behalve een
 #: met CSS. Dat kost werk voor blokken die niemand ziet, en de keuze ging verloren zodra
@@ -457,7 +458,7 @@ def project_tab_url(project_name: str, tab: str, query: str = "", deployment: st
     hebben, en dan zou de tabbalk naar een 404 wijzen zodra er een deployment gekozen is.
     """
     pad = PROJECT_TABS.get(tab, PROJECT_TABS[STANDAARD_TAB])["path"]
-    adres = f"/projects/{pad}/{project_name}"
+    adres = f"/projects/{project_name}/{pad}"
     if deployment and tab in TABS_MET_DEPLOYMENT:
         adres += f"/{quote(deployment, safe='')}"
     return adres + (f"?{query}" if query else "")
@@ -493,13 +494,14 @@ def deployment_pagina_adres(request: Request, project_name: str, deployment_open
 
 
 def tab_from_path(path: str) -> str:
-    """Welk tabblad hoort bij dit pad? ``/projects/deployments/<naam>`` -> ``deployments``.
+    """Welk tabblad hoort bij dit pad? ``/projects/<naam>/deployments`` -> ``deployments``.
 
-    Leest het tweede segment en niet de naam van de route, zodat een pad dat er niet bij
-    hoort op Overzicht uitkomt in plaats van een fout te geven.
+    Leest het DERDE segment (het tabblad staat achter de projectnaam) en niet de naam van
+    de route, zodat een pad dat er niet bij hoort op Overzicht uitkomt in plaats van een
+    fout te geven.
     """
     delen = path.strip("/").split("/")
-    segment = delen[1] if len(delen) > 1 else ""
+    segment = delen[2] if len(delen) > 2 else ""
     return next((tab for tab, gegevens in PROJECT_TABS.items() if gegevens["path"] == segment), STANDAARD_TAB)
 
 
@@ -516,7 +518,7 @@ def build_lotc_project_details(
     sjabloon leest precies die sleutels. Wat hier gebeurt is de navigatie en het actieve
     tabblad bepalen.
 
-    Het actieve tabblad komt uit het PAD (``/projects/deployments/<naam>``) en niet meer
+    Het actieve tabblad komt uit het PAD (``/projects/<naam>/deployments``) en niet meer
     uit ``?tab=``. Die oude vorm is weg, ook als doorverwijzing: hij heeft nooit buiten
     deze applicatie geleefd, en een tweede adres dat niemand gebruikt is onderhoud zonder
     lezer. Een achtergebleven ``?tab=`` wordt genegeerd.
