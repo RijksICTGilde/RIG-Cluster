@@ -9,6 +9,7 @@ the logic lives here instead of in one test module.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -292,7 +293,6 @@ def create_project_with_services(
     create_timeout: float = 240.0,
 ) -> CreatedProject:
     """Create a project through the wizard with `services` selected; resolve its identity."""
-    before = forgejo.list_project_names()
     walk_create_wizard_with_services(
         page,
         base_url,
@@ -302,8 +302,12 @@ def create_project_with_services(
         component_name=component_name,
         image=image,
     )
-    name = forgejo.wait_for_new_project(before, display_name=display_name, timeout=create_timeout)
-    assert name, f"No new project file appeared in Forgejo for display-name '{display_name}'"
+    # De naam komt van de voortgangspagina en niet uit een diff van de git-listing: de taak
+    # weet hem, en weet ook of het gelukt is. Zie project_name_from_progress.
+    name = project_name_from_progress(page, timeout=create_timeout)
+    # Het BESTAND blijft een aparte controle: dat de wizard iets aanmaakte zegt nog niet dat
+    # het in zad-projects staat, en dat is wat deze suite bewaakt.
+    assert name in forgejo.list_project_names(), f"'{name}' staat niet in zad-projects"
     deployment_name = forgejo.get_first_deployment_name(name)
     api_key = read_api_key_with_retry(page, base_url, name)
     # The project file appears early in the create_project task, but the task then
@@ -313,6 +317,49 @@ def create_project_with_services(
     # leaving create_project hung on a now-missing app and jamming the worker.
     cluster.wait_for_project_apps_healthy(name, timeout=create_timeout)
     return CreatedProject(name=name, display_name=display_name, api_key=api_key, deployment_name=deployment_name)
+
+
+def project_name_from_progress(page: Page, *, timeout: float = 600.0) -> str:
+    """Wacht tot de aanmaaktaak KLAAR is en lees de projectnaam waar de app hem zet.
+
+    DIT VERVANGT HET AFVISSEN VAN DE GIT-LISTING. De wizard leverde een taak op die zowel
+    de UITKOMST als de NAAM kent, en dat antwoord werd weggegooid; daarna polde
+    ``wait_for_new_project`` tot 240 seconden lang de Forgejo-listing tot er een bestand
+    opdook dat er eerst niet was, om de naam daaruit te RADEN. Dat is twee keer gokken -
+    over de tijd en over de uitkomst - en het faalt op de verkeerde manier: bij RC-108
+    meldde het "No new project file appeared" terwijl het project gewoon was aangemaakt,
+    in 47 seconden. Een time-out werd zo een verzonnen mislukking.
+
+    De wizard komt uit op ``/projects/progress/<task_id>``. Die pagina toont pas bij een
+    afgeronde OF gefaalde taak de knop naar ``/projects/<naam>/details``
+    (``_task-progress.html.j2``: ``status in ("completed", "failed")``). Daarop wachten is
+    wachten op de TOESTAND: hij verschijnt precies wanneer de taak klaar is en draagt de
+    naam. De ``timeout`` hier is dus een vangnet ("er is iets mis als het zo lang duurt")
+    en geen wachtmechanisme.
+
+    Faalt de taak, dan zegt deze functie DAT, in plaats van het als een uitgelopen klok te
+    presenteren.
+    """
+    knop = page.locator("a[href*='/details'], [onclick*='/details']").first
+    knop.wait_for(state="attached", timeout=timeout * 1000)
+    doel = knop.get_attribute("href") or knop.get_attribute("onclick") or ""
+    treffer = re.search(r"/projects/([^/'\"]+)/details", doel)
+    assert treffer, f"de voortgangspagina wijst niet naar een project: {doel!r}"
+    naam = treffer.group(1)
+    # De uitkomst staat in een ATTRIBUUT en niet in de tekst van de pagina. Het sjabloon zet
+    # bij status "completed" een success-alert en bij "failed" een error-alert, maar LOTC
+    # rendert dat als <nldd-banner variant="..." text="...">: de melding staat in de
+    # shadow DOM, dus ``inner_text`` levert er niets van op. Een eerste versie toetste op de
+    # woorden "mislukt"/"succesvol" in de paginatekst en sloeg daardoor alarm op een
+    # geslaagde aanmaak - gemeten: OPI meldde "completed successfully (50.50s)" terwijl de
+    # test zei dat het faalde. Vandaar het attribuut, en dat is meteen de nauwkeurige bron:
+    # een mislukking komt eruit als een MISLUKKING met zijn eigen melding, niet als een
+    # uitgelopen wachttijd.
+    alert = page.locator("#project-progress [data-lotc-component='alert']").first
+    variant = (alert.get_attribute("variant") or "") if alert.count() else ""
+    melding = (alert.get_attribute("text") or "") if alert.count() else ""
+    assert variant == "success", f"het aanmaken van '{naam}' is niet geslaagd (variant={variant!r}): {melding}"
+    return naam
 
 
 def read_api_key_with_retry(page: Page, base_url: str, project_name: str, *, attempts: int = 20) -> str:
@@ -344,11 +391,12 @@ def create_project_via_wizard(
     Forgejo repo listing before/after. Returns the project with its API key and
     first deployment name.
     """
-    before = forgejo.list_project_names()
     walk_create_wizard(page, base_url, display_name, user_email=user_email, component_name=component_name, image=image)
 
-    name = forgejo.wait_for_new_project(before, display_name=display_name, timeout=create_timeout)
-    assert name, f"No new project file appeared in Forgejo for display-name '{display_name}'"
+    # Zie project_name_from_progress: de taak weet de naam en de uitkomst, dus die vragen we
+    # in plaats van de git-listing af te vissen op een klok.
+    name = project_name_from_progress(page, timeout=create_timeout)
+    assert name in forgejo.list_project_names(), f"'{name}' staat niet in zad-projects"
 
     deployment_name = forgejo.get_first_deployment_name(name)
     api_key = read_api_key_with_retry(page, base_url, name)
