@@ -2054,6 +2054,23 @@ async def argocd_status_fragment(
     )
 
 
+#: De reeksen die het metingenfragment tekent. Een meting kan ook alleen limieten
+#: bevatten (cpu_limit, memory_limit): die komen uit de deploymentdefinitie en niet uit
+#: een meting, dus ze tellen niet mee voor "is er iets gemeten".
+METINGREEKSEN = ("cpu", "memory", "network_in", "network_out", "disk_read", "disk_write")
+
+
+def _heeft_metingen(metrics: dict[str, dict[str, Any]], pvc_storage: dict[str, dict[str, Any]]) -> bool:
+    """Heeft Prometheus ergens een waarde teruggegeven?
+
+    Zo niet, dan is dat een TOESTAND ("nog niets gemeten") en geen leegte, en zegt het
+    fragment dat met een melding in plaats van met zes lege grafieken.
+    """
+    if any(pvc.get("values") for pvc in pvc_storage.values()):
+        return True
+    return any(meting.get(reeks) for meting in metrics.values() for reeks in METINGREEKSEN)
+
+
 @web_router.get("/projects/details/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
 async def deployment_metrics_fragment(
@@ -2106,6 +2123,10 @@ async def deployment_metrics_fragment(
     metrics: dict[str, dict[str, Any]] = {}
     discovered_workloads: list[dict[str, Any]] = []
     pvc_storage: dict[str, dict[str, Any]] = {}
+    # Prometheus die niet antwoordt is iets anders dan Prometheus die antwoordt met niets,
+    # en het fragment hoort die twee niet dezelfde melding te geven. Zonder deze vlag zag
+    # de lezer in beide gevallen zes lege grafieken.
+    prometheus_bereikbaar = True
 
     if base_namespace and cluster:
         try:
@@ -2113,6 +2134,7 @@ async def deployment_metrics_fragment(
             from opi.core.cluster_config import get_prefixed_namespace
 
             prom = await get_metrics_connector()
+            prometheus_bereikbaar = prom.is_connected
             if prom.is_connected:
                 k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
 
@@ -2153,6 +2175,9 @@ async def deployment_metrics_fragment(
                         f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}"
                     )
         except Exception as metrics_error:
+            # Een bevraging die stukloopt is geen "nog geen metingen": er is niets
+            # opgehaald omdat de meting zelf faalde.
+            prometheus_bereikbaar = False
             logging.getLogger(__name__).warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
 
     # Build a deployment-like object for the template (needs .name and .components attributes)
@@ -2174,6 +2199,8 @@ async def deployment_metrics_fragment(
             "discovered_workloads": discovered_workloads,
             "pvc_storage": pvc_storage,
             "duration": duration,
+            "prometheus_bereikbaar": prometheus_bereikbaar,
+            "metingen_leeg": not _heeft_metingen(metrics, pvc_storage),
         },
     )
 
