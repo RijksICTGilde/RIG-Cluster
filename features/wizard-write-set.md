@@ -66,6 +66,31 @@ flow die geen `services` meebrengt mag de services van het project niet laten
 vallen), en een service-pad zonder subpad (dat zou de hele dienst deselecteren, een
 andere beslissing dan het legen van één configveld).
 
+### Geheimen die de sessie niet mag dragen (`opi/forms/wizard/secrets.py`)
+
+De wizardsessie staat als JSON op schijf. Elke versleutelde waarde die geen editable
+van de flow kan bereiken wordt daarom bij het openen vervangen door een plaatshouder
+(`redact_unreachable_secrets`) en bij het opslaan teruggezet uit het projectbestand
+zoals dat net uit git is gelezen (`restore_redacted_secrets`). Een plaatshouder komt
+zo nooit in het projectbestand, en een geheim dat niemand bewerkt gaat er ongewijzigd
+weer in - byte voor byte hetzelfde AGE-blok.
+
+Twee regels horen daarbij:
+
+- **Beide kanten moeten een dienst hetzelfde spellen.** Het herstellen loopt de twee
+  structuren sleutel voor sleutel langs. De editables schrijven de oude vorm met de
+  naam als sleutel (`{keycloak: {config: ...}}`), het opgeslagen bestand draagt het
+  uniforme record (`{name: keycloak, config: ...}`). Tegen elkaar gelegd sluit onder
+  een serviceconfig niets meer aan en valt elk geredigeerd geheim daar weg in plaats
+  van terug te komen - zo verdween het realm-wachtwoord van Keycloak, en het
+  optionele `totp_secret` ernaast in stilte. `apply_modal_edit` normaliseert de
+  ingestuurde data daarom vóór het herstellen, met dezelfde idempotente
+  `normalize_service_entries` die aan het eind toch al draait.
+- **Een plaatshouder zonder bron laat zijn sleutel vallen**, en dat wordt gelogd. Bij
+  een lijstitem dat het formulier zelf toevoegde is dat juist; bij een paringsfout is
+  het gegevensverlies, en hier zien die twee er hetzelfde uit. Het waarschuwingsregel
+  met het pad is achteraf het enige verschil.
+
 ### Het doelwit van een flow (`opi/forms/visualizers/flows.py`)
 
 ```python
@@ -109,6 +134,13 @@ realistisch projectbestand:
 
 `tests/test_modal_edit_nondestructive.py` draait daarnaast een
 backup-schema- en domeinbewerking over alle echte projectbestanden in de repo.
+
+Voor de geheimen die de sessie niet draagt zijn er twee poorten. In de harnas
+hierboven zat de redactiestap niet, en daardoor bleef het verlies daar onzichtbaar:
+`test_a_service_config_edit_keeps_the_secrets_opi_wrote_there` voegt hem toe.
+`tests/e2e/test_realm_secrets_survive_edit.py` meet hetzelfde van buitenaf, door de
+echte modal, omdat de vorm die het misging pas ontstaat in wat de editables
+teruggeven.
 
 ## Belangrijke bestanden
 
