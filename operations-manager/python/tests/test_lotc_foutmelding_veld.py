@@ -112,10 +112,13 @@ def test_bedrading_op_lege_invoer() -> None:
 #: Onze kopie van de gedeelde macro's van lotc-forms.
 ONZE_KOPIE = Path(__file__).resolve().parent.parent / "opi" / "templates_lotc" / "components" / "_forms.j2"
 
-#: De drie regels in ``nldd_field`` zoals lotc-forms ze heeft, en zoals wij ze maken.
+#: De regels in ``nldd_field`` zoals lotc-forms ze heeft, en zoals wij ze maken. Ze worden
+#: op volgorde toegepast, dus 3 werkt op wat 2 heeft opgeleverd.
 #: 1. de besturing wordt EEN keer gerenderd, zodat de frame hem kan lezen;
 #: 2. de openingstag laat "Optioneel" weg als het veld daarom vraagt;
-#: 3. de besturing krijgt de foutbedrading.
+#: 3. een keuzelijst krijgt nooit "Optioneel" - daar staat altijd al iets geselecteerd, en
+#:    het merk uit 2 landt bij een select op de OMHULLING en niet op de besturing;
+#: 4. de besturing krijgt de foutbedrading.
 VERVANGINGEN = [
     (
         "(id, label, help, error, required, kind) -%}\n",
@@ -125,6 +128,10 @@ VERVANGINGEN = [
         '<nldd-form-field label="{{ label }}"{% if not required %} optional{% endif %}',
         '<nldd-form-field label="{{ label }}"'
         "{% if not required and 'data-no-optional-badge' not in besturing %} optional{% endif %}",
+    ),
+    (
+        "{% if not required and 'data-no-optional-badge' not in besturing %}",
+        "{% if not required and kind != 'select-field' and 'data-no-optional-badge' not in besturing %}",
     ),
     (
         "  {{ caller() }}",
