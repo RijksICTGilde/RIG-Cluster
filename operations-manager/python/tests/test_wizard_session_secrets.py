@@ -9,6 +9,7 @@ file -- which is how a realm password lost its literal-block formatting.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from typing import TYPE_CHECKING
@@ -157,6 +158,20 @@ class TestRestore:
         restored = restore_redacted_secrets(redacted, _project())
         assert restored["services"][1]["config"]["banner"] == "Nieuwe tekst"
         assert restored["services"][0]["config"]["realms"][0]["password"] == AGE_BLOCK
+
+    def test_a_dropped_placeholder_names_itself_in_the_log(self, caplog):
+        """Dropping is the safe direction, not a free one.
+
+        The drop that is correct (a list item the form just added) and the drop that is a
+        pairing bug are indistinguishable here. A required field turns the bug into a
+        refused save, but an optional one -- ``totp_secret`` beside the realm password --
+        would simply be gone from the project file. The log is the only place that
+        difference can still be seen afterwards, so the path has to be in it.
+        """
+        added = {"realms": [{"realm": "new", "password": REDACTED}]}
+        with caplog.at_level(logging.WARNING, logger="opi.forms.wizard.secrets"):
+            restore_redacted_secrets(added, {"realms": []})
+        assert "realms/0/password" in caplog.text
 
     def test_placeholder_never_reaches_the_output(self):
         redacted, _ = redact_unreachable_secrets(_project(), set())
