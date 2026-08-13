@@ -131,6 +131,27 @@ class TestTheCatalogAnswer:
         allowed = {st for st, service in SERVICES.items() if service.implicit_project_entry() is not None}
         assert allowed == IMPLICIT_SERVICES
 
+    def test_every_implicit_entry_is_a_bare_name(self) -> None:
+        """RC-99: enrolling itself selects the service and settles nothing else.
+
+        Every service in the catalogue leaves ``implicit_project_config`` at None, so the
+        entry is the name and nothing more. A config block here would be a setting the
+        project carries without anyone choosing it -- for minio that was
+        ``enable-versioning``, which costs storage on every overwrite -- and it would be
+        indistinguishable in the file from a value a user did choose.
+
+        This is the whole catalogue and not only minio: the hook is shared, so a default
+        that slips in anywhere lands in project files the same way.
+        """
+        entries = {
+            service_type: service.implicit_project_entry()
+            for service_type, service in SERVICES.items()
+            if service.implicit_project_entry() is not None
+        }
+
+        assert entries, "no service enrols itself, so this test measures nothing"
+        assert entries == {service_type: service_type.value for service_type in IMPLICIT_SERVICES}
+
     def test_publish_on_web_is_not_implicit(self) -> None:
         """The example from the plan: the project decides which domains it may publish
         on, and that is not a default anyone can invent."""

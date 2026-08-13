@@ -100,6 +100,30 @@ def test_hetzelfde_geldt_voor_het_versiebeheervakje_van_minio() -> None:
     assert aan.value is True
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "minio-storage",
+        {"name": "minio-storage"},
+        {"name": "minio-storage", "config": {}},
+    ],
+    ids=["kale-naam", "record-zonder-config", "leeg-configblok"],
+)
+def test_versiebeheer_staat_uit_zolang_niemand_iets_koos(entry: Any) -> None:
+    """RC-99: geen sleutel is UIT, en niet "aan tot het tegendeel blijkt".
+
+    Dit is de stand waarin een project binnenkomt dat minio gewoon aanzette: de dienst
+    staat in de lijst en over versiebeheer is niets gezegd. Stond het vakje dan aan, dan
+    schreef de eerstvolgende opslag ``enable-versioning: true`` weg - een instelling die
+    de gebruiker niet koos, en die bij elke overschrijving opslag kost. Precies dat is er
+    gebeurd voordat het vakje de opgeslagen waarde ging volgen.
+    """
+    veld = editable_to_form_field(MINIO_ENABLE_VERSIONING, {"services": [entry]})
+
+    assert veld.value is False
+    assert " checked" not in _vakje_html(veld)
+
+
 # --- wat een inzending achterlaat --------------------------------------------------
 
 
