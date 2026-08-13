@@ -323,8 +323,8 @@ def project_name_from_progress(page: Page, *, timeout: float = 600.0) -> str:
     """Wacht tot de aanmaaktaak KLAAR is en lees de projectnaam waar de app hem zet.
 
     DIT VERVANGT HET AFVISSEN VAN DE GIT-LISTING. De wizard leverde een taak op die zowel
-    de UITKOMST als de NAAM kent, en dat antwoord werd weggegooid; daarna polde
-    ``wait_for_new_project`` tot 240 seconden lang de Forgejo-listing tot er een bestand
+    de UITKOMST als de NAAM kent, en dat antwoord werd weggegooid; daarna polde de oude
+    helper ``ForgejoClient.wait_for_new_project`` tot 240 seconden lang de listing tot er een bestand
     opdook dat er eerst niet was, om de naam daaruit te RADEN. Dat is twee keer gokken -
     over de tijd en over de uitkomst - en het faalt op de verkeerde manier: bij RC-108
     meldde het "No new project file appeared" terwijl het project gewoon was aangemaakt,
