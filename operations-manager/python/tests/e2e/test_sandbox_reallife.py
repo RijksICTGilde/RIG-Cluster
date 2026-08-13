@@ -24,7 +24,11 @@ sandbox with YOUR build deployed (sandbox-deploy). Run with:
     task test-e2e-sandbox-reallife
 
 Tests in this module are ordered and share module state: they must run as a
-whole file, not via -k selections of individual tests.
+whole file, not via -k selections of individual tests. That order dependency is
+the subject here and not an oversight - the final sweep can only see a lost
+update from an earlier round if that round really ran before it - so the module
+carries `pytest.mark.serial` and the hook in `tests/e2e/conftest.py` puts it back
+in file order after pytest-randomly has shuffled.
 """
 
 from __future__ import annotations
@@ -42,7 +46,7 @@ from tests.e2e.helpers.lifecycle import (
     CreatedProject,
     create_project_via_wizard,
 )
-from tests.e2e.helpers.wizard import _unique_project_name
+from tests.e2e.helpers.wizard import _unique_project_name, veldbesturing
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +56,7 @@ if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Page
     from tests.e2e.helpers.forgejo import ForgejoClient
 
-pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.reallife]
+pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.reallife, pytest.mark.serial]
 
 _VERIFY_SSL = FORGEJO_VERIFY_SSL
 
@@ -266,11 +270,14 @@ def _add_team_member_via_ui(page: Page, base_url: str, project_name: str, email:
 
 def _component_index_in_modal(page: Page, component_name: str) -> int:
     """Return the sequence index of the named component in the open components modal."""
+    # Via veldbesturing() en niet via [name='...']: onder NLDD wijst een naam-selector
+    # het custom element aan (<nldd-text-field>) en is input_value() daarop een harde
+    # fout ("Node is not an <input>"), geen leeg veld. Zie helpers/wizard.py.
     for i in range(12):
-        name_input = page.locator(f"[name='components[{i}]/name']")
-        if name_input.count() == 0:
+        name_field = veldbesturing(page, f"components[{i}]/name")
+        if name_field.count() == 0:
             break
-        if name_input.first.input_value() == component_name:
+        if (name_field.first.input_value() or "") == component_name:
             return i
     raise AssertionError(f"Component '{component_name}' not found in the components modal")
 

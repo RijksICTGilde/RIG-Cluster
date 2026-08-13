@@ -221,6 +221,33 @@ def artifact_dir() -> Path:
     return path
 
 
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items: list) -> None:
+    """Geef modules met de marker ``serial`` hun bestandsvolgorde terug.
+
+    pytest-randomly schudt de tests binnen een module, en dat is precies de bedoeling:
+    een test die van zijn buurman afhangt hoort om te vallen. Voor een enkele suite is
+    die afhankelijkheid het onderwerp zelf: ``test_sandbox_reallife`` bouwt vijf
+    projectbestanden in ronden op en de slotronde meet wat alle voorgaande ronden samen
+    hebben achtergelaten. Elke ronde zijn eigen uitgangspunt laten maken zou de meting
+    kapotmaken (dan is er geen geschiedenis meer om in te verliezen) en kost per ronde
+    minuten aan echte provisioning.
+
+    Zo'n module zegt dat expliciet met ``pytest.mark.serial``, en hier zetten we hem
+    terug op zijn bestandsvolgorde. ``trylast`` omdat pytest-randomly in dezelfde hook
+    schudt: wij moeten daarna.
+    """
+    serial_positions: dict[str, list[int]] = {}
+    for position, item in enumerate(items):
+        if item.get_closest_marker("serial") is not None:
+            serial_positions.setdefault(item.module.__name__, []).append(position)
+
+    for positions in serial_positions.values():
+        in_file_order = sorted((items[p] for p in positions), key=lambda i: i.reportinfo()[1] or 0)
+        for position, item in zip(sorted(positions), in_file_order, strict=True):
+            items[position] = item
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """Expose each phase's result on the item so fixtures can react to failures."""
