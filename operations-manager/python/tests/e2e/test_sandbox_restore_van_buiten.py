@@ -30,7 +30,7 @@ import pytest
 from tests.e2e.conftest import FORGEJO_VERIFY_SSL, SANDBOX_TEST_USER
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.lifecycle import CreatedProject, create_project_with_services
-from tests.e2e.helpers.wizard import _unique_project_name
+from tests.e2e.helpers.wizard import unique_project_name
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def restore_project(
     forgejo: ForgejoClient,
 ) -> Generator[CreatedProject]:
     """Een project met een database en een bucket, plus een backup."""
-    display_name = _unique_project_name(prefix="rest")
+    display_name = unique_project_name(prefix="rest")
     page = sandbox_context.new_page()
     created: CreatedProject | None = None
     try:
