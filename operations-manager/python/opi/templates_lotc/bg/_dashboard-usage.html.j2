@@ -96,92 +96,66 @@
         initializeCharts({{ metrics.network_in_data | tojson }}, {{ metrics.network_out_data | tojson }});
     </script>
 
-    {# De LEGENDA hoort erbij, en die was bij het hertekenen weggevallen: er stonden
-       balkjes met alleen een projectnaam, dus zonder te zien hoeveel dat is en waarvan
-       het het aandeel is. De bestaande kaart (dashboard/_resourceverdeling.html.j2) zet
-       naast elk segment ``0.030 cores (12.3%)``, en dat is precies wat hier nu ook naast
-       de balk staat - dezelfde schrijfwijze, geen tweede vorm ernaast. #}
-    {# GEHEUGEN EERST, en de sortering volgt het geheugen. Hier stond alleen CPU, en van
-       de twee is dat de minst interessante: op geheugen stuur je, want dat is waar een pod
-       op omvalt als het opraakt. Beide lijsten staan in DEZELFDE volgorde, zodat te zien is
-       dat het project dat het meeste geheugen gebruikt niet per se het meeste rekenwerk
-       doet; per lijst sorteren zou juist dat verband breken.
+    {# Per project wat het gebruikt: geheugen en CPU, allebei als aandeel van het totaal.
+       Geheugen staat voorop omdat daarop gestuurd wordt, en beide lijsten staan in dezelfde
+       volgorde zodat je ze naast elkaar kunt lezen.
 
-       Alleen de projecten MET een meting gaan de sortering in: sort(attribute=...) valt om
-       op een project waar de sleutel ontbreekt, en dat komt in dit fragment langs. #}
-    {# De lijsten worden met .get opgebouwd en niet met selectattr('...', 'defined'):
-       de omgeving staat op StrictUndefined, en dan struikelt selectattr al bij het LEZEN
-       van een sleutel die een project niet heeft. Dat komt hier langs, want een project
-       zonder meting draagt de sleutel niet.
-
-       Er wordt op de REGELS geteld en niet op het totaal. Op het totaal stond de guard
-       eerder, en toen toonde de kaart zijn kop met daaronder niets: het totaal was net
-       boven nul terwijl geen enkel project door de lus kwam. Een kaart die alleen een kop
-       laat zien is erger dan een kaart die er niet staat. #}
-    {% set met_geheugen = [] %}
-    {% set alleen_cpu = [] %}
+       De lijsten worden met .get opgebouwd: de omgeving staat op StrictUndefined, dus
+       selectattr valt al om bij het lezen van een sleutel die een project zonder meting
+       niet draagt. #}
+    {% set gemeten = [] %}
     {% for project in projects %}
-        {% if project.get('memory_mb') %}{% set _ = met_geheugen.append(project) %}
-        {% elif project.get('cpu_cores') %}{% set _ = alleen_cpu.append(project) %}{% endif %}
+        {% if project.get('memory_mb') or project.get('cpu_cores') %}{% set _ = gemeten.append(project) %}{% endif %}
     {% endfor %}
+    {% set op_geheugen = gemeten | sort(attribute='memory_mb', reverse=true) | list %}
 
-    {# GEHEUGEN EERST, en de sortering volgt het geheugen. Hier stond alleen CPU, en van
-       de twee is dat de minst interessante: op geheugen stuur je, want dat is waar een pod
-       op omvalt als het opraakt. Beide lijsten staan in DEZELFDE volgorde, zodat te zien is
-       dat het project met het meeste geheugen niet per se het meeste rekenwerk doet; per
-       lijst sorteren zou juist dat verband breken. Een project met alleen een CPU-meting
-       valt achteraan aan in plaats van uit de tweede lijst weg te vallen. #}
-    {% set op_geheugen = met_geheugen | sort(attribute='memory_mb', reverse=true) | list %}
-    {% set met_cpu = [] %}
-    {% for project in op_geheugen + alleen_cpu %}
-        {% if project.get('cpu_cores') %}{% set _ = met_cpu.append(project) %}{% endif %}
-    {% endfor %}
+    {% call panel("Verdeling over projecten", "chart-x-y-axis-line") %}
+        <c-stack gap="lg">
+            {% if op_geheugen %}
+                <c-stack gap="md">
+                    <c-paragraph size="sm">Geheugengebruik per project, als aandeel van het totaal.</c-paragraph>
+                    {% for project in op_geheugen %}
+                        <c-stack gap="xs">
+                            <c-cluster justify="between" align="center" gap="sm">
+                                <c-span>{{ project.display_name }}</c-span>
+                                <c-span>{{ '%.0f' | format(project.get('memory_mb', 0)) }} MiB{% if total_memory_usage %} ({{ (project.get('memory_mb', 0) / total_memory_usage * 100) | round(1) }}%){% endif %}</c-span>
+                            </c-cluster>
+                            <c-progress-bar
+                                :value="(project.get('memory_mb', 0) / total_memory_usage * 100) | round(1) if total_memory_usage else 0"
+                                max="100"
+                                value-display="tooltip"
+                                color="info"
+                                accessible-label="{{ project.display_name }}: {{ '%.0f' | format(project.get('memory_mb', 0)) }} MiB" />
+                        </c-stack>
+                    {% endfor %}
+                </c-stack>
 
-    {% if met_geheugen or met_cpu %}
-        {% call panel("Verdeling over projecten", "chart-x-y-axis-line") %}
-            <c-stack gap="lg">
-                {% if met_geheugen %}
-                    <c-stack gap="md">
-                        <c-paragraph size="sm">Geheugengebruik per project, als aandeel van het totaal.</c-paragraph>
-                        {% for project in op_geheugen %}
-                            <c-stack gap="xs">
-                                <c-cluster justify="between" align="center" gap="sm">
-                                    <c-span>{{ project.display_name }}</c-span>
-                                    <c-span>{{ '%.0f' | format(project.memory_mb) }} MiB ({{ (project.memory_mb / total_memory_usage * 100) | round(1) }}%)</c-span>
-                                </c-cluster>
-                                <c-progress-bar
-                                    :value="(project.memory_mb / total_memory_usage * 100) | round(1)"
-                                    max="100"
-                                    value-display="tooltip"
-                                    color="info"
-                                    accessible-label="{{ project.display_name }}: {{ '%.0f' | format(project.memory_mb) }} MiB" />
-                            </c-stack>
-                        {% endfor %}
-                    </c-stack>
-                {% endif %}
-
-                {% if met_cpu %}
-                    <c-stack gap="md">
-                        <c-paragraph size="sm">CPU-gebruik per project, als aandeel van het totaal.</c-paragraph>
-                        {% for project in met_cpu %}
-                            <c-stack gap="xs">
-                                <c-cluster justify="between" align="center" gap="sm">
-                                    <c-span>{{ project.display_name }}</c-span>
-                                    <c-span>{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</c-span>
-                                </c-cluster>
-                                <c-progress-bar
-                                    :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
-                                    max="100"
-                                    value-display="tooltip"
-                                    color="info"
-                                    accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
-                            </c-stack>
-                        {% endfor %}
-                    </c-stack>
-                {% endif %}
-            </c-stack>
-        {% endcall %}
-    {% endif %}
+                <c-stack gap="md">
+                    <c-paragraph size="sm">CPU-gebruik per project, als aandeel van het totaal.</c-paragraph>
+                    {% for project in op_geheugen %}
+                        <c-stack gap="xs">
+                            <c-cluster justify="between" align="center" gap="sm">
+                                <c-span>{{ project.display_name }}</c-span>
+                                <c-span>{{ '%.3f' | format(project.get('cpu_cores', 0)) }} cores{% if total_cpu_usage %} ({{ (project.get('cpu_cores', 0) / total_cpu_usage * 100) | round(1) }}%){% endif %}</c-span>
+                            </c-cluster>
+                            <c-progress-bar
+                                :value="(project.get('cpu_cores', 0) / total_cpu_usage * 100) | round(1) if total_cpu_usage else 0"
+                                max="100"
+                                value-display="tooltip"
+                                color="info"
+                                accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.get('cpu_cores', 0)) }} cores" />
+                        </c-stack>
+                    {% endfor %}
+                </c-stack>
+            {% else %}
+                {# Zeggen dat er niets gemeten is, in plaats van een kop zonder inhoud of
+                   een kaart die zonder uitleg verdwijnt. #}
+                <c-alert type="info" heading="Nog geen metingen per project">
+                    Prometheus heeft voor deze projecten nog geen gebruik gemeten.
+                </c-alert>
+            {% endif %}
+        </c-stack>
+    {% endcall %}
 {% else %}
     <c-alert type="info" heading="Resourcegebruik niet beschikbaar">
         Prometheus is niet verbonden, of er zijn geen namespaces gevonden.
