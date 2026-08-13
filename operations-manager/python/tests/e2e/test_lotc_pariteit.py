@@ -455,7 +455,7 @@ def test_de_projectkop_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth
     de dialoog bestaat nog in de HTML, alleen roept niemand hem meer aan.
 
     Daarom wordt hier geklikt en wordt AFGELEZEN waarmee openEditModal() geroepen wordt -
-    naam en titel moeten die van project-details/section-header.html.j2 zijn. Toetsen dat
+    naam en titel moeten die van de kopregel van de projectpagina zijn. Toetsen dat
     er "een knop Bewerken" staat zou niets bewijzen: op deze pagina staan er vijf.
     """
     auth_page.goto(f"{app_server}/projects/{PROJECT}/details")
