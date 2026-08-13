@@ -31,10 +31,15 @@ def modal(app_server: str, auth_page: Page) -> EditModalHelper:
     return helper
 
 
-def _switch_to_deployments_tab(page: Page) -> None:
-    """Switch to the Deployments tab on the detail page."""
-    open_tab(page, "deployments")
-    page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
+def _switch_to_backups_tab(page: Page) -> None:
+    """Switch to the Backups tab on the detail page.
+
+    Backups stond op het tabblad Deployments en heeft sinds ``36209fad`` een EIGEN
+    tabblad. Deze tests keken nog op Deployments en vielen daardoor om op een
+    verhuizing en niet op een storing; het blok zelf is ongewijzigd.
+    """
+    open_tab(page, "backups")
+    page.locator("#tab-backups").wait_for(state="visible", timeout=5000)
 
 
 def _wait_for_schedule_text(page: Page, expected: str, timeout: int = 10000) -> None:
@@ -47,7 +52,7 @@ def _wait_for_schedule_text(page: Page, expected: str, timeout: int = 10000) -> 
     beide in de DOM zet; de eerste ('default') is de zichtbare en is degene waar deze
     tests het schema van zetten.
     """
-    page.locator(f"#tab-deployments :text('{expected}')").first.wait_for(state="visible", timeout=timeout)
+    page.locator(f"#tab-backups :text('{expected}')").first.wait_for(state="visible", timeout=timeout)
 
 
 def _set_schedule(modal: EditModalHelper, frequency: str, time: str = "02:00") -> None:
@@ -76,9 +81,9 @@ class TestBackupSection:
     """Verify the backup section renders on the detail page."""
 
     def test_backup_section_visible(self, modal: EditModalHelper) -> None:
-        """The backup section should be visible on the Deployments tab."""
-        _switch_to_deployments_tab(modal.page)
-        heading = kop(modal.page.locator("#tab-deployments"), "Backups")
+        """The backup section should be visible on the Backups tab."""
+        _switch_to_backups_tab(modal.page)
+        heading = kop(modal.page.locator("#tab-backups"), "Backups")
         heading.first.wait_for(state="visible", timeout=5000)
         assert heading.first.is_visible()
 
@@ -88,8 +93,8 @@ class TestBackupSection:
         The schedule button label varies: "Schema instellen" when the deployment
         has no schedule yet, "Schema wijzigen" when it does.
         """
-        _switch_to_deployments_tab(modal.page)
-        tab = modal.page.locator("#tab-deployments")
+        _switch_to_backups_tab(modal.page)
+        tab = modal.page.locator("#tab-backups")
         assert tab.locator("text=Backup aanmaken").first.is_visible()
         schedule_button = tab.locator("text=/Schema (instellen|wijzigen)/").first
         assert schedule_button.is_visible()
@@ -98,16 +103,16 @@ class TestBackupSection:
         """The RRULE schedule should render as 'Dagelijks rond 02:00' via the rrule_schedule filter."""
         _set_schedule(modal, "DAILY", "02:00")
         modal.open_detail_page()
-        _switch_to_deployments_tab(modal.page)
-        tab = modal.page.locator("#tab-deployments")
+        _switch_to_backups_tab(modal.page)
+        tab = modal.page.locator("#tab-backups")
         # Via locators en niet via text_content(): onder het nieuwe thema staat deze
         # tekst in de schaduwboom van een component, en dan geeft text_content() leegte.
         toon_tekst(tab, "Backups ingeschakeld")
         toon_tekst(tab, "Dagelijks rond 02:00")
 
     def test_screenshot_backup_section(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
-        """Screenshot the backup section on the Deployments tab."""
-        _switch_to_deployments_tab(modal.page)
+        """Screenshot the backup section on the Backups tab."""
+        _switch_to_backups_tab(modal.page)
         path = modal.screenshot("backup-section", screenshot_dir)
         assert path.exists()
 
@@ -242,7 +247,7 @@ class TestBackupScheduleRoundTrip:
         # Set up: ensure schedule is DAILY 02:00
         _set_schedule(modal, "DAILY", "02:00")
         modal.open_detail_page()
-        _switch_to_deployments_tab(modal.page)
+        _switch_to_backups_tab(modal.page)
         _wait_for_schedule_text(modal.page, "Dagelijks rond 02:00")
         modal.screenshot("roundtrip-01-initial-display", screenshot_dir)
 
@@ -270,7 +275,7 @@ class TestBackupScheduleRoundTrip:
         # Reload and verify display shows new time
         modal.close_modal()
         modal.open_detail_page()
-        _switch_to_deployments_tab(modal.page)
+        _switch_to_backups_tab(modal.page)
         _wait_for_schedule_text(modal.page, "Dagelijks rond 14:30")
         modal.screenshot("roundtrip-05-display-updated", screenshot_dir)
 
@@ -279,7 +284,7 @@ class TestBackupScheduleRoundTrip:
         # Set up: ensure schedule is DAILY first
         _set_schedule(modal, "DAILY", "02:00")
         modal.open_detail_page()
-        _switch_to_deployments_tab(modal.page)
+        _switch_to_backups_tab(modal.page)
 
         # Open schedule modal and change to WEEKLY
         modal.open_edit_modal("modal-edit-backup-schedule-0", "Backup schema instellen")
@@ -297,7 +302,7 @@ class TestBackupScheduleRoundTrip:
         # Reload and verify display shows "Wekelijks"
         modal.close_modal()
         modal.open_detail_page()
-        _switch_to_deployments_tab(modal.page)
+        _switch_to_backups_tab(modal.page)
         _wait_for_schedule_text(modal.page, "Wekelijks")
         modal.screenshot("roundtrip-weekly-02-display-updated", screenshot_dir)
 
@@ -306,7 +311,7 @@ class TestBackupScheduleRoundTrip:
         # Set up: ensure schedule is DAILY first
         _set_schedule(modal, "DAILY", "02:00")
         modal.open_detail_page()
-        _switch_to_deployments_tab(modal.page)
+        _switch_to_backups_tab(modal.page)
 
         # Open schedule modal and set to empty (Geen)
         modal.open_edit_modal("modal-edit-backup-schedule-0", "Backup schema instellen")
@@ -322,7 +327,7 @@ class TestBackupScheduleRoundTrip:
         # Reload and verify schedule status changed
         modal.close_modal()
         modal.open_detail_page()
-        _switch_to_deployments_tab(modal.page)
+        _switch_to_backups_tab(modal.page)
         _wait_for_schedule_text(modal.page, "Geen backup schema ingesteld")
         modal.screenshot("roundtrip-none-02-display-disabled", screenshot_dir)
 
@@ -331,7 +336,7 @@ class TestBackupScheduleRoundTrip:
         # Set up: disable schedule first
         _set_schedule(modal, "")
         modal.open_detail_page()
-        _switch_to_deployments_tab(modal.page)
+        _switch_to_backups_tab(modal.page)
 
         # Open schedule modal and set to MONTHLY
         modal.open_edit_modal("modal-edit-backup-schedule-0", "Backup schema instellen")
@@ -347,7 +352,7 @@ class TestBackupScheduleRoundTrip:
         # Reload and verify
         modal.close_modal()
         modal.open_detail_page()
-        _switch_to_deployments_tab(modal.page)
+        _switch_to_backups_tab(modal.page)
         _wait_for_schedule_text(modal.page, "Maandelijks")
         modal.screenshot("roundtrip-monthly-02-display-updated", screenshot_dir)
 
@@ -361,8 +366,8 @@ class TestRestoreModal:
     """
 
     def test_restore_button_visible_when_no_backups(self, modal: EditModalHelper) -> None:
-        """The Herstellen button is visible on the Deployments tab."""
-        _switch_to_deployments_tab(modal.page)
+        """The Herstellen button is visible on the Backups tab."""
+        _switch_to_backups_tab(modal.page)
         restore_btn = modal.page.locator("c-button[label='Herstellen']")
         # Button only shows when ns.has_backups is true in the template;
         # if not visible, the button is hidden because no backups exist - that's expected
