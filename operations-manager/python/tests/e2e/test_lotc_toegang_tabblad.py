@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.utils.totp import totp_now
 from opi.web.lotc_switch import project_tab_url
 
 if TYPE_CHECKING:
@@ -29,6 +30,10 @@ ZONDER_BLOKKEN = "test-project-detail"
 
 #: Uit de realm van de fixture; dit staat alleen in het Keycloak-blok.
 REALM = "test-project-services-local"
+
+#: Dezelfde seed als in de fixture (``plain:``), zodat de test de code van dit moment zelf
+#: kan uitrekenen en beide - code en seed - in de HTML kan terugzoeken.
+SEED = "12345678901234567890"
 
 
 def _open(page: Page, app_server: str, project: str, tab: str) -> None:
@@ -49,6 +54,22 @@ def test_het_dienstblok_staat_op_toegang(auth_page: Page, app_server: str) -> No
     _open(auth_page, app_server, MET_BLOKKEN, "toegang")
 
     assert REALM in auth_page.content(), "het Keycloak-blok staat niet op het tabblad Toegang"
+
+
+def test_de_otp_staat_er_als_code_en_niet_als_seed(auth_page: Page, app_server: str) -> None:
+    """De OTP is een veld met de code van dit moment (RC-101, na terugkoppeling).
+
+    Twee dingen tegelijk: de code komt uit de PAGINARENDER (geen knop die hem ophaalt),
+    en de seed blijft op de server - die zou voor altijd codes geven, deze code vergaat
+    binnen een periode.
+    """
+    _open(auth_page, app_server, MET_BLOKKEN, "toegang")
+    html = auth_page.content()
+
+    code, _ = totp_now(SEED)
+    assert code in html, "de OTP-code van dit moment staat niet op de pagina"
+    assert SEED not in html, "de seed hoort de pagina nooit te bereiken"
+    assert "Toon code" not in html, "de knop is een veld geworden"
 
 
 def test_het_dienstblok_staat_niet_meer_op_overzicht(auth_page: Page, app_server: str) -> None:
