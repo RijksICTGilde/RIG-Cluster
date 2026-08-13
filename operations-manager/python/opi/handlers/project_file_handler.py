@@ -3372,6 +3372,42 @@ def ensure_attachment_data_list(services: list[Any]) -> list[Any]:
     return created
 
 
+def merge_staged_attachments(yaml_data: dict[str, Any], staged: dict[str, Any]) -> None:
+    """Write the attachments staged in a wizard session into the project's catalog.
+
+    One place for both flows (create: ``opi/web/router_wizard.py``; edit:
+    ``ResolveAttachmentsHook``), which each carried their own copy of this loop -- and a
+    replacement that lands in one copy and not in the other is exactly the silent half of
+    the feature this exists to prevent.
+
+    An id that is already in the catalog is only overwritten when the staged entry says
+    it is a replacement (``replace: True``, set by the wizard's replace flow, which checks
+    against the session that the id is the one the user opened). The catalog *entry* stays
+    where it is: only ``filename`` and ``content`` are written over it, so every component
+    that couples to that id keeps pointing at it. Without that flag the entry is left
+    alone and the staged file is dropped with a warning -- silently replacing content the
+    user did not ask to replace is the one outcome worse than not writing it.
+    """
+    data_list = ensure_attachment_data_list(yaml_data.setdefault("services", []))
+    by_id = {entry["id"]: entry for entry in data_list if isinstance(entry, dict) and entry.get("id")}
+    for attachment_id, info in staged.items():
+        existing = by_id.get(attachment_id)
+        if existing is not None:
+            if not info.get("replace"):
+                logger.warning(
+                    "Staged attachment '%s' collides with an existing catalog entry and is not a "
+                    "replacement; leaving the stored content in place",
+                    attachment_id,
+                )
+                continue
+            existing["filename"] = info.get("filename", attachment_id)
+            existing["content"] = info.get("content")
+            continue
+        data_list.append(
+            {"id": attachment_id, "filename": info.get("filename", attachment_id), "content": info.get("content")}
+        )
+
+
 def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract a component's attachment ``config`` coupling entries from its services list.
 
