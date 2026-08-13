@@ -473,8 +473,8 @@ class KeycloakYamlHandler:
         # Per-realm account-link mode (project realms only; the platform realm never sets it):
         #   automatic -> silently link a brokered SSO identity to a pre-existing account
         #   confirm   -> same, after one confirmation screen
-        #   verify (default / unset) -> Keycloak's stock flow: the user proves ownership of the
-        #                               existing account by email link or re-authentication
+        #   unset (the default) -> Keycloak's stock flow: the user proves ownership of the
+        #                          existing account by email link or re-authentication
         # For automatic/confirm, ensure the custom first-broker-login flow exists (the IdPs below
         # reference it by alias) and point the IdPs at it; otherwise keep the stock flow. Switching
         # modes on an existing realm is picked up on reconcile: the flow is reconciled in place and

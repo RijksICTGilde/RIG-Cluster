@@ -78,14 +78,38 @@ def test_elk_veld_heeft_zijn_eigen_bundel() -> None:
     assert KEYCLOAK_REDIRECT_URI_ITEM.attributes is not KEYCLOAK_CLIENT_REDIRECT_URI.attributes
 
 
+def _render_select(extra: str = "") -> str:
+    bron = f'<c-select-field id="v" name="v" label="Deployment"{extra}><c-option value="a" label="A"/></c-select-field>'
+    return templates_lotc.env.from_string(bron).render()
+
+
+def test_een_keuzelijst_draagt_nooit_optioneel() -> None:
+    """In een keuzelijst staat altijd al iets geselecteerd; "Optioneel" belooft niets.
+
+    Dit gaat buiten het merk om: bij een ``c-select-field`` landt
+    ``data-no-optional-badge`` op de OMHULLING en niet op de besturing, dus de toets in
+    ``nldd_field`` zag hem daar nooit. De voorwaarde staat daarom op ``kind``.
+    """
+    assert " optional" not in _render_select()
+
+
+def test_een_keuzelijst_wordt_daarmee_niet_verplicht() -> None:
+    """De badge weghalen mag de HTML niets anders laten beweren."""
+    assert " required" not in _render_select()
+
+
+def test_een_tekstveld_houdt_optioneel() -> None:
+    """Bewaak de bewaker: de conventie geldt nog steeds waar hij iets betekent."""
+    assert " optional " in _render("")
+
+
 def test_de_deploymentkiezer_gebruikt_het_merk_en_geen_required() -> None:
     """Het merk, niet de omweg: required zou tegen een schermlezer liegen.
 
-    Gemeten dat het merk nog NIET werkt op een c-select-field: het landt op de omhullende
-    nldd-form-field, terwijl nldd_field het in de BESTURING zoekt. Het label "Optioneel"
-    staat dus nog op de kiezer. Dat is opgeschreven in request_for_components.md; de
-    omweg (required="true") is bewust niet teruggezet, want die zegt dat er iets ingevuld
-    MOET worden en dat is onwaar.
+    De kiezer is een keuzelijst en krijgt de badge inmiddels sowieso niet meer (zie
+    hierboven). Het merk blijft erop staan omdat het zegt wat de bedoeling is; de omweg
+    (required="true") is bewust nooit teruggezet, want die zegt dat er iets ingevuld MOET
+    worden en dat is onwaar.
     """
     bron = (WORTEL / "opi" / "templates_lotc" / "bg" / "_deployment-selector.html.j2").read_text()
     kiezer = bron.partition("global-deployment-selector")[2].partition("</c-select-field>")[0]
