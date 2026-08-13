@@ -33,6 +33,7 @@ Slaat over zonder E2E_BASE_URL. Draaien:
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import os
@@ -63,7 +64,15 @@ _USER_EMAIL = os.environ.get("E2E_SANDBOX_USER", "admin@sandbox.rijksapp.dev")
 
 #: Waar de TLS-handshake naartoe gaat. Het hele wildcard wijst naar 127.0.0.1 (de sandbox
 #: is een lokaal Kind-cluster), dus de hostnaam gaat als SNI mee en niet als adres.
-_TLS_ENDPOINT = os.environ.get("E2E_TLS_ENDPOINT", "127.0.0.1:443")
+#:
+#: De POORT is hier geen detail. Op de gedeelde dev-server staat Caddy op 443 en Kind op
+#: 8843; Caddy termineert TLS zelf met hetzelfde wildcard-certificaat, dus een meting op
+#: 443 levert voor ELKE hostnaam het platformcertificaat op -- ook voor een deployment die
+#: zijn eigen certificaat aanbiedt. Dat is precies de meting die 'de bedoeling' voor 'de
+#: uitkomst' aanziet. Daarom worden de Kind-poorten eerst geprobeerd, en pas daarna 443
+#: (een lokale sandbox zonder Caddy staat daar wel zelf op). Met E2E_TLS_ENDPOINT te
+#: overrulen.
+_TLS_KANDIDATEN = ["127.0.0.1:8843", "127.0.0.1:8443", "127.0.0.1:443"]
 
 #: De tweede deployment. Twee zijn er nodig: een override die op beide zou landen is met
 #: een is niet van een projectbrede instelling te onderscheiden.
@@ -114,14 +123,65 @@ def _ingress_tls_secret(project_name: str, naam: str) -> str:
     return (tls[0] or {}).get("secretName", "") if tls else ""
 
 
-def _certificaat_op_de_verbinding(hostnaam: str) -> dict[str, str]:
-    """Het certificaat dat een client voor deze hostnaam werkelijk aangeboden krijgt.
+def _secret_certificaat(project_name: str, naam: str) -> dict[str, str]:
+    """Het certificaat zoals het als kubernetes.io/tls-secret in de namespace staat, of {}.
 
-    Een echte TLS-handshake met SNI, en daarna ``openssl x509`` over wat er terugkwam.
-    Dit is het bewijs; het projectbestand is de bedoeling. Geeft {} als er geen
-    certificaat uit de handshake komt (host onbekend, ingress nog niet uitgerold).
+    De schakel tussen 'het ingress wijst ernaar' en 'de verbinding levert het': een ingress
+    dat naar een secret wijst dat er niet is, valt stil terug op het standaardcertificaat
+    van de ingress-controller -- en dat ziet er van buiten uit als 'de override deed niets'.
     """
-    host, _, poort = _TLS_ENDPOINT.partition(":")
+    obj = _kubectl_json("get", "secret", naam, "-n", f"rig-{project_name}")
+    ruwe_crt = (obj.get("data") or {}).get("tls.crt")
+    if not ruwe_crt:
+        return {}
+    try:
+        ontleed = subprocess.run(
+            ["openssl", "x509", "-noout", "-subject", "-issuer"],
+            input=base64.b64decode(ruwe_crt).decode("utf-8"),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except OSError, subprocess.SubprocessError:
+        return {}
+    if ontleed.returncode != 0:
+        return {}
+    velden: dict[str, str] = {}
+    for regel in ontleed.stdout.splitlines():
+        sleutel, _, waarde = regel.partition("=")
+        velden[sleutel.strip()] = waarde.strip()
+    return velden
+
+
+def _tls_endpoint() -> str:
+    """Het adres waarop de ingress-controller zelf de handshake doet.
+
+    Zie ``_TLS_KANDIDATEN``: de eerste kandidaat die een certificaat teruggeeft wint, en
+    de Kind-poorten staan vooraan omdat een proxy ervoor het antwoord zou vervangen.
+    """
+    gekozen = os.environ.get("E2E_TLS_ENDPOINT")
+    if gekozen:
+        return gekozen
+    for kandidaat in _TLS_KANDIDATEN:
+        if _certificaat_van(kandidaat, "zad.sandbox.rijksapp.dev"):
+            return kandidaat
+    return _TLS_KANDIDATEN[-1]
+
+
+def _certificaat_op_de_verbinding(hostnaam: str) -> dict[str, str]:
+    """Het certificaat dat een client voor deze hostnaam werkelijk aangeboden krijgt."""
+    return _certificaat_van(_tls_endpoint(), hostnaam)
+
+
+def _certificaat_van(endpoint: str, hostnaam: str) -> dict[str, str]:
+    """Een echte TLS-handshake met SNI, en daarna ``openssl x509`` over wat er terugkwam.
+
+    Dit is het bewijs; het projectbestand is de bedoeling. Geeft {} als er geen
+    certificaat uit de handshake komt (host onbekend, ingress nog niet uitgerold,
+    niets dat op die poort luistert).
+    """
+    host, _, poort = endpoint.partition(":")
     try:
         handshake = subprocess.run(
             [
@@ -345,6 +405,7 @@ def test_provided_zonder_certificaat_wordt_geweigerd_met_de_reden(
             json={"tls": "provided"},
         )
 
+    print(f"[punt 4] {antwoord.status_code}: {antwoord.text}")
     assert antwoord.status_code == 422, f"verwachtte een weigering, kreeg {antwoord.status_code}: {antwoord.text}"
     tekst = antwoord.text.lower()
     assert "attachment" in tekst or "certificaat" in tekst, (
@@ -384,7 +445,10 @@ def _zet_override_via_de_modal(
             f"na de keuze 'provided' verschijnt er geen certificaatveld ({bijlageveld}); zonder dat veld kan "
             f"een gebruiker de override niet afmaken en weigert het model hem"
         )
-        modal.select_with_rerender(bijlage, attachment)
+        # Gewoon kiezen en niet via select_with_rerender: het certificaatveld is het EINDE
+        # van de keten (er hangt geen veld van af), dus het zet geen her-render in gang en
+        # wachten op een /step/-antwoord loopt hier in een timeout.
+        bijlage.select_option(attachment)
 
     modal.submit_step_expect_progress()
     modal.wait_for_progress_complete(timeout=600000)
@@ -421,6 +485,8 @@ def test_doorloop_van_de_tls_override(
     )
     voor_productie = _wacht_op(lambda: _certificaat_op_de_verbinding(host_productie) or None)
     voor_staging = _wacht_op(lambda: _certificaat_op_de_verbinding(host_staging) or None)
+    print(f"[punt 1] {_tls_endpoint()} | {host_productie}: {voor_productie}")
+    print(f"[punt 1] {_tls_endpoint()} | {host_staging}: {voor_staging}")
     assert _is_platformcertificaat(voor_productie or {}), (
         f"zonder override hoort {host_productie} het platformcertificaat te krijgen: {voor_productie}"
     )
@@ -439,8 +505,14 @@ def test_doorloop_van_de_tls_override(
     assert opties, f"de TLS-keuze van de deployment-component-laag staat niet op de modal ({veld})"
     assert opties[0]["value"] == "", f"de eerste keuze is niet de erf-optie: {opties}"
     assert "rven" in opties[0]["label"], f"de lege keuze zegt niet dat hij erft: {opties[0]}"
-    assert "standard" in opties[0]["label"].lower(), (
-        f"de erf-optie noemt niet WAT er geerfd wordt; dan is 'leeg' niet van 'geen TLS' te onderscheiden: {opties[0]}"
+    # De geerfde modus staat er in de bewoording van de keuzelijst zelf ("Standaard
+    # certificaat (platform regelt het)"), niet als de ruwe waarde 'standard': het label
+    # is voor een lezer en niet voor een yaml-sleutel. Waar het om gaat is dat er IETS
+    # genoemd wordt, anders is 'leeg' niet van 'geen TLS' te onderscheiden.
+    geerfd = opties[0]["label"].split(":", 1)[-1].strip().lower()
+    andere_labels = {optie["label"].strip().lower() for optie in opties[1:]}
+    assert geerfd in andere_labels, (
+        f"de erf-optie noemt niet WAT er geerfd wordt (of noemt iets dat geen keuze is): {opties}"
     )
     sandbox_page.keyboard.press("Escape")
 
@@ -472,6 +544,16 @@ def test_doorloop_van_de_tls_override(
         f"(gevonden: {_ingress_tls_secret(project_name, f'{STAGING}-{COMPONENT}')!r}, verwacht {secret!r})"
     )
 
+    # De schakel ertussen: het secret waar dat ingress naar wijst bestaat en draagt ONS
+    # certificaat. Zonder deze stap zou een mislukte meting op de verbinding niet zeggen of
+    # het certificaat nooit is aangekomen of onderweg is overschreven.
+    uit_secret = _wacht_op(lambda: _secret_certificaat(project_name, secret) or None, timeout_s=300) or {}
+    assert _is_eigen_certificaat(uit_secret), (
+        f"het secret '{secret}' draagt niet het aangeleverde certificaat: {uit_secret or 'het staat er niet'}. "
+        f"Een ingress dat naar een ontbrekend secret wijst valt stil terug op het standaardcertificaat van de "
+        f"ingress-controller, en dat is van buiten niet van 'de override deed niets' te onderscheiden"
+    )
+
     # DE meting: wat een client op de verbinding aangeboden krijgt, per deployment.
     def _eigen_op_staging() -> dict[str, str] | None:
         cert = _certificaat_op_de_verbinding(host_staging)
@@ -483,6 +565,8 @@ def test_doorloop_van_de_tls_override(
         f"het projectbestand en het ingress zeggen 'provided', dus dit is het verschil tussen bedoeling en uitkomst"
     )
     ander = _certificaat_op_de_verbinding(host_productie)
+    print(f"[punt 2] {host_staging} (override provided): {eigen}")
+    print(f"[punt 2] {host_productie} (geen override): {ander}")
     assert _is_platformcertificaat(ander), (
         f"{host_productie} kreeg het eigen certificaat er ook bij ({ander}); de override geldt voor een deployment"
     )
@@ -502,6 +586,8 @@ def test_doorloop_van_de_tls_override(
             f"/api/v2/projects/{project_name}/services/attachments/attachment/{BIJLAGE_ID}",
             params={"confirm_in_use": "true"},
         )
+        print(f"[punt 5] delete: {weigering.status_code} {weigering.text}")
+        print(f"[punt 5] delete met confirm_in_use: {alsnog.status_code} {alsnog.text}")
         assert alsnog.status_code == 409, (
             f"met de bevestiging verdwijnt het certificaat alsnog ({alsnog.status_code}: {alsnog.text}); een site "
             f"van zijn certificaat halen is een besluit, geen bijwerking van een verwijdering"
@@ -567,6 +653,8 @@ def test_doorloop_van_de_tls_override(
     # En de kant die de override juist UITzet: die mag na het herverwerken niet alsnog
     # terugvallen op het component, want dat component staat op 'provided'.
     na_staging = _certificaat_op_de_verbinding(host_staging)
+    print(f"[punt 7] na herverwerken | {host_productie}: {na_productie}")
+    print(f"[punt 7] na herverwerken | {host_staging}: {na_staging}")
     assert _is_platformcertificaat(na_staging), (
         f"na het herverwerken volgt {host_staging} weer het component in plaats van zijn eigen override: {na_staging}"
     )
