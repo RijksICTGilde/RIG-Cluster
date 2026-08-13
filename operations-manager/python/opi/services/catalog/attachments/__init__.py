@@ -39,7 +39,7 @@ class AttachmentsService(Service):
         name="Bijlagen",
         description="Geuploade bestanden (bijv. certificaten) gekoppeld als bestand of env-var aan een component",
         help_template="attachments/help.md",
-        icon="map",
+        icon="paperclip",
         color="grijs-600",
         binding=ServiceBinding.COMPONENT,
         variables=[],
@@ -147,7 +147,7 @@ class AttachmentsService(Service):
             cached = FormSection(
                 section_id="attachments",
                 title="Bijlagen",
-                icon="map",
+                icon="paperclip",
                 description="Upload bestanden (bijv. certificaten) om per component als bestand of env-var te koppelen",
                 visible=self._config_selected,
                 editables=[services_carrier],
