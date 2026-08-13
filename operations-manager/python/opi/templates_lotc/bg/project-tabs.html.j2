@@ -541,6 +541,48 @@
                                         {% endfor %}
                                     </c-stack>
                                 {% endif %}
+
+                                {# De ALIASSEN, naast de omgevingsvariabelen en in dezelfde
+                                   kaart. Ze zijn hier nooit eerder getoond: je kon ze wel
+                                   invullen (via Bewerken op deze kaart, het aliassenveld) maar
+                                   nergens teruglezen, dus niemand wist wat er stond.
+
+                                   Aliassen leven ALLEEN op componentniveau; er is geen
+                                   deployment-variant om hier ook te tonen. Zie
+                                   opi/services/catalog/aliases/editables.py
+                                   (yaml_path "components[*]/aliases").
+
+                                   Afschermen doet de DIENST, niet dit sjabloon: een alias die
+                                   naar platformvariabelen verwijst noemt alleen waar de waarde
+                                   vandaan komt en is dus juist wat je wilt zien; alles wat geen
+                                   verwijzing is kan een geheim zijn. Dat oordeel staat in
+                                   AliasesService.owned_value_is_secret en komt hier binnen als
+                                   het filter is_verwijzing, zodat er niet twee regels ontstaan. #}
+                                {% if component.get('aliases') and component['aliases'] is mapping and component['aliases'] | length > 0 %}
+                                    <c-heading type="h5" size="6" label="Aliassen" />
+                                    <c-stack gap="xs">
+                                        {% for sleutel, waarde in component['aliases'].items() | sort %}
+                                            {# Naam en waarde op EEN regel: een alias is het verband
+                                               tussen die twee ("deze naam komt daarvandaan") en dat
+                                               verband gaat verloren zodra ze onder elkaar staan. Bij
+                                               de omgevingsvariabelen hierboven kan dat niet, want
+                                               daar is de waarde een veld over de volle breedte. #}
+                                            {% if waarde | string | is_verwijzing %}
+                                                <c-cluster gap="sm" align="center">
+                                                    <c-icon icon="link" size="sm" />
+                                                    <c-span>{{ sleutel }}</c-span>
+                                                    <c-code>{{ waarde }}</c-code>
+                                                </c-cluster>
+                                            {% else %}
+                                                <c-cluster gap="sm" align="center">
+                                                    <c-icon icon="lock-closed" size="sm" />
+                                                    <c-span>{{ sleutel }}</c-span>
+                                                </c-cluster>
+                                                <c-secret-field value="{{ waarde }}" show-copy />
+                                            {% endif %}
+                                        {% endfor %}
+                                    </c-stack>
+                                {% endif %}
                             </c-stack>
                         </c-card>
                     {% endfor %}
@@ -685,17 +727,19 @@
             {% endif %}
         {% endcall %}
 
-    {% elif active_tab == 'toegang' %}
-        {# HET TABBLAD TOEGANG: de blokken die de DIENSTEN zelf leveren (de Keycloak-realm
+    {% elif active_tab == 'services-info' %}
+        {# HET TABBLAD SERVICES INFO: de blokken die de DIENSTEN zelf leveren via de haak
+           detail_page_sections (de Keycloak-realm
            met zijn console, gebruikersnaam, wachtwoord en OTP, de uitnodigingslinks, de
            geuploade bestanden). Ze staan bij hun dienst, in zijn eigen map.
 
-           Ze stonden onderaan Overzicht, tussen de rest van de detailpagina, terwijl je er
-           juist naartoe gaat als je iets NODIG hebt: een adres om naartoe te gaan, een
-           wachtwoord om mee in te loggen, een code om in te vullen. Services ernaast gaat
-           over BEHEER (welke dienst staat aan, hoe is hij gebonden, waar zet je hem uit);
-           dit gaat over GEBRUIK. Zie opi/web/lotc_switch.py (PROJECT_TABS) voor de naam en
-           features/toegang-tabblad.md voor de afweging.
+           Het heette "Toegang", en dat beschreef wat de eerste drie diensten TOEVALLIG
+           tonen (een adres, een wachtwoord, een code) in plaats van wat het tabblad is:
+           zodra een dienst hier iets anders neerzet, klopt die naam niet meer. De HAAK is
+           wat het tabblad draagt, dus de naam noemt de diensten. Services ernaast gaat over
+           BEHEER (welke dienst staat aan, hoe is hij gebonden, waar zet je hem uit); dit
+           toont wat een dienst OVER ZICHZELF te melden heeft. Zie opi/web/lotc_switch.py
+           (PROJECT_TABS) voor de naam en features/services-info-tabblad.md.
 
            De lus noemt GEEN dienst met naam: elke dienst levert zijn blok via
            UIEvent.PROJECT_SECTIONS en komt hier vanzelf terecht. Zo hoeft de vierde dienst

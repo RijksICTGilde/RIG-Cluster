@@ -160,7 +160,7 @@ def test_het_pad_met_een_deployment_wijst_nog_steeds_zijn_tabblad_aan() -> None:
 OUDE_ADRESSEN = {
     "/projects/details/demo": "/projects/demo/details",
     "/projects/team/demo": "/projects/demo/team",
-    "/projects/toegang/demo": "/projects/demo/toegang",
+    "/projects/services-info/demo": "/projects/demo/services-info",
     "/projects/componenten/demo": "/projects/demo/componenten",
     "/projects/services/demo": "/projects/demo/services",
     "/projects/deployments/demo": "/projects/demo/deployments",
