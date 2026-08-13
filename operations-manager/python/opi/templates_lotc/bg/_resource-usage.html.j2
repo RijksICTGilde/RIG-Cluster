@@ -4,24 +4,29 @@
   De projectpagina laadt dit apart met htmx, zodat een trage of afwezige Prometheus de
   pagina niet ophoudt.
 
-  De balken waren eigen div's met een breedte in een style-attribuut. Nu c-progress-bar:
-  hetzelfde beeld, met de rol en de aria-waarden die het thema meelevert, en het volgt een
-  themawissel.
+  DE VORM IS DIE VAN DE BESTAANDE KAART, NIET EEN NIEUWE
 
-  EEN BALK ZONDER SCHAAL IS GEEN METING
+  Bij het hertekenen bleven van deze kaart alleen twee balkjes over: het woord "CPU" en
+  een balk, zonder eenheid, zonder waarde en zonder waar de balk zich toe verhoudt. Dat is
+  niet af te lezen - "ongeveer een derde" waarvan, en van hoeveel?
 
-  Hier stonden twee balkjes met alleen het woord "CPU" en "Geheugen" ernaast. Daaraan is
-  niet te zien WAT je ziet: is dat een percentage of een absolute waarde, waarvan is het
-  de verhouding, en hoeveel is het. Een balk is af te lezen als "ongeveer een derde", en
-  daar is niets mee te doen.
+  De goede vorm bestond al en draait op productie
+  (project-details/_resource-usage.html.j2, de kaart van de oude pagina). Die is hier
+  overgenomen in plaats van er een tweede ontwerp naast te zetten: per regel een label met
+  icoon, rechts de gebruikte waarde tegen de limiet MET eenheid en het percentage, en dan
+  pas de balk.
 
-  Onder elke balk staat daarom de waarde in CIJFERS, met de EENHEID en met waar de balk
-  zich toe verhoudt: gebruikt van de limiet. De schrijfwijze (``gebruikt / limiet
-  (percentage)``) is die van de grafieken in bg/_deployment-metrics.html.j2, zodat
-  dezelfde pagina niet twee manieren hanteert om hetzelfde te zeggen.
+  Ook de SCHRIJFWIJZE is die van het origineel, inclusief de twee macro's: onder een core
+  in millicores (30m), daarboven in cores met een decimaal (22.5); geheugen onder 0,1 GiB
+  in MiB en daarboven in GiB. Dat scheelt op elke kaart een rij nullen.
 
-  De balk zelf is niet verbouwd; er staat alleen bij wat hij toont.
+  Wat wel anders is dan het origineel: de balk is <c-progress-bar> van het thema in plaats
+  van een eigen div met een breedte in een style-attribuut. Die omzetting stond er al en
+  blijft; het is de REGEL erboven die ontbrak.
 #}
+{% macro cores(v) %}{% if v < 1 %}{{ (v * 1000) | round | int }}m{% else %}{{ '%.1f' | format(v) }}{% endif %}{% endmacro %}
+{% macro gib(v) %}{% if (v / 1073741824) < 0.1 %}{{ (v / 1048576) | round | int }} MiB{% else %}{{ '%.1f' | format(v / 1073741824) }} GiB{% endif %}{% endmacro %}
+
 {% if usage_error %}
     {# Een storing van de METING, niet van het project: Prometheus antwoordt niet. Dat is
        iets anders dan de melding onderaan (Prometheus antwoordt wel, maar met niets). #}
@@ -31,50 +36,39 @@
 {% elif usage %}
     <c-stack gap="md">
         <c-paragraph size="sm">
-            {{ usage.deployments }} deployment(s), {{ usage.pods }} pod(s) op dit cluster.
+            {{ usage.deployments }} deployment(s), {{ usage.pods }} pod(s) op dit cluster
         </c-paragraph>
 
-        {# Zonder limiet zegt een percentage niets: dan is er geen bovengrens om tegen af
-           te zetten. In dat geval alleen het getal, met zijn eenheid. #}
-        {% if usage.cpu_limit > 0 %}
-            <c-stack gap="xs">
+        {# CPU. Zonder limiet geen percentage en geen balk: dan is er geen bovengrens om
+           tegen af te zetten, en een balk zonder schaal is geen meting. #}
+        <c-stack gap="xs">
+            <c-cluster justify="between" align="center" gap="sm">
+                <c-paragraph size="sm"><c-icon icon="cylinder-split" size="sm" color="donkerblauw" /> CPU</c-paragraph>
+                <c-paragraph size="sm"><strong>{{ cores(usage.cpu_used) }}</strong>{% if usage.cpu_limit > 0 %} / {{ cores(usage.cpu_limit) }} cores ({{ usage.cpu_pct }}%){% else %} cores{% endif %}</c-paragraph>
+            </c-cluster>
+            {% if usage.cpu_limit > 0 %}
                 <c-progress-bar
-                    text="CPU"
                     :value="usage.cpu_pct"
                     max="100"
-                    value-display="true"
                     color="info"
                     accessible-label="CPU-gebruik ten opzichte van de limiet" />
-                <c-paragraph size="sm">
-                    {{ '%g' | format(usage.cpu_used | round(2)) }} van {{ '%g' | format(usage.cpu_limit | round(2)) }} core in gebruik
-                    ({{ usage.cpu_pct }}% van de limiet)
-                </c-paragraph>
-            </c-stack>
-        {% else %}
-            <c-detail-list>
-                <c-detail-item label="CPU in gebruik" value="{{ '%g' | format(usage.cpu_used | round(2)) }} core (geen limiet ingesteld)" />
-            </c-detail-list>
-        {% endif %}
+            {% endif %}
+        </c-stack>
 
-        {% if usage.mem_limit > 0 %}
-            <c-stack gap="xs">
+        {# Geheugen: de working set, dus wat er werkelijk in gebruik is. #}
+        <c-stack gap="xs">
+            <c-cluster justify="between" align="center" gap="sm">
+                <c-paragraph size="sm"><c-icon icon="database" size="sm" color="groen" /> Geheugen (in gebruik)</c-paragraph>
+                <c-paragraph size="sm"><strong>{{ gib(usage.mem_used) }}</strong>{% if usage.mem_limit > 0 %} / {{ gib(usage.mem_limit) }} ({{ usage.mem_pct }}%){% endif %}</c-paragraph>
+            </c-cluster>
+            {% if usage.mem_limit > 0 %}
                 <c-progress-bar
-                    text="Geheugen"
                     :value="usage.mem_pct"
                     max="100"
-                    value-display="true"
                     color="success"
                     accessible-label="Geheugengebruik ten opzichte van de limiet" />
-                <c-paragraph size="sm">
-                    {{ (usage.mem_used / 1048576) | round | int }} MiB van {{ (usage.mem_limit / 1048576) | round | int }} MiB in gebruik
-                    ({{ usage.mem_pct }}% van de limiet)
-                </c-paragraph>
-            </c-stack>
-        {% else %}
-            <c-detail-list>
-                <c-detail-item label="Geheugen in gebruik" value="{{ (usage.mem_used / 1048576) | round | int }} MiB (geen limiet ingesteld)" />
-            </c-detail-list>
-        {% endif %}
+            {% endif %}
+        </c-stack>
     </c-stack>
 {% else %}
     {# Geen leegte maar een toestand: er is niets te meten omdat er op dit cluster geen

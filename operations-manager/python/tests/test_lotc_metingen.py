@@ -32,6 +32,7 @@ TABS = WORTEL / "opi" / "templates_lotc" / "bg" / "project-tabs.html.j2"
 
 METINGEN_TEMPLATE = "bg/_deployment-metrics.html.j2"
 GEBRUIK_TEMPLATE = "bg/_resource-usage.html.j2"
+DASHBOARD_TEMPLATE = "bg/_dashboard-usage.html.j2"
 
 
 class _Deployment:
@@ -82,8 +83,17 @@ def _metrics_tabblad() -> str:
     juist NIET staat ("every 60s") - dus een test die op de ruwe bron kijkt meet het
     commentaar mee.
     """
+    return _tabblad("{% elif active_tab == 'metrics' %}")
+
+
+def _project_tabblad() -> str:
+    """Het stuk sjabloon van het tabblad Overzicht, zonder zijn toelichting."""
+    return _tabblad("{% if active_tab == 'project' %}")
+
+
+def _tabblad(opening: str) -> str:
     bron = TABS.read_text()
-    start = bron.index("{% elif active_tab == 'metrics' %}")
+    start = bron.index(opening)
     volgende = bron.find("{% elif active_tab ==", start + 10)
     deel = bron[start : volgende if volgende != -1 else len(bron)]
     return re.sub(r"\{#.*?#\}", "", deel, flags=re.DOTALL)
@@ -173,27 +183,34 @@ def test_heeft_metingen(naam: str, metrics: dict[str, Any], pvc: dict[str, Any],
 
 
 def test_het_resourcegebruik_zegt_wat_de_balk_toont() -> None:
-    """Een balk zonder schaal is geen meting: eenheid, waarde en waartoe hij zich verhoudt."""
+    """Een balk zonder schaal is geen meting: label, waarde, limiet, eenheid, percentage.
+
+    De verwachte regel is die van de kaart die op PRODUCTIE draait
+    (project-details/_resource-usage.html.j2). Hier stond na het hertekenen alleen "CPU"
+    met een balk eronder; deze test legt de vorm vast die er hoorde te staan.
+    """
     gebruik = {
-        "deployments": 1,
-        "pods": 2,
-        "cpu_used": 0.123,
-        "cpu_limit": 1.0,
-        "cpu_pct": 12,
-        "mem_used": 180 * 1048576,
-        "mem_limit": 512 * 1048576,
-        "mem_pct": 35,
+        "deployments": 20,
+        "pods": 44,
+        "cpu_used": 0.030,
+        "cpu_limit": 22.5,
+        "cpu_pct": 0,
+        "mem_used": int(3.7 * 1073741824),
+        "mem_limit": int(9.6 * 1073741824),
+        "mem_pct": 39,
     }
     tekst = _tekst(_render(GEBRUIK_TEMPLATE, {"usage": gebruik, "usage_error": None}))
 
-    assert "0.12 van 1 core in gebruik" in tekst, tekst
-    assert "180 MiB van 512 MiB in gebruik" in tekst, tekst
-    assert "12% van de limiet" in tekst
-    assert "35% van de limiet" in tekst
+    assert "20 deployment(s), 44 pod(s) op dit cluster" in tekst, tekst
+    assert "CPU 30m / 22.5 cores (0%)" in tekst, tekst
+    assert "Geheugen (in gebruik) 3.7 GiB / 9.6 GiB (39%)" in tekst, tekst
 
 
 def test_zonder_limiet_geen_percentage_maar_wel_de_eenheid() -> None:
-    """Zonder bovengrens zegt een percentage niets; het getal met zijn eenheid wel."""
+    """Zonder bovengrens zegt een percentage niets; het getal met zijn eenheid wel.
+
+    En dan ook geen balk: die zou een vulling tonen zonder dat er een schaal onder ligt.
+    """
     gebruik = {
         "deployments": 1,
         "pods": 1,
@@ -204,11 +221,13 @@ def test_zonder_limiet_geen_percentage_maar_wel_de_eenheid() -> None:
         "mem_limit": 0.0,
         "mem_pct": 0,
     }
-    tekst = _tekst(_render(GEBRUIK_TEMPLATE, {"usage": gebruik, "usage_error": None}))
+    html = _render(GEBRUIK_TEMPLATE, {"usage": gebruik, "usage_error": None})
+    tekst = _tekst(html)
 
-    assert "0.5 core" in tekst
-    assert "64 MiB" in tekst
-    assert "van de limiet" not in tekst
+    assert "CPU 500m cores" in tekst, tekst
+    assert "Geheugen (in gebruik) 64 MiB" in tekst, tekst
+    assert "%)" not in tekst
+    assert "progress-bar" not in html
 
 
 def test_geen_gebruik_en_een_storing_zijn_twee_meldingen() -> None:
@@ -221,14 +240,35 @@ def test_geen_gebruik_en_een_storing_zijn_twee_meldingen() -> None:
     assert leeg != stuk
 
 
-def test_de_kaart_resourcegebruik_staat_maar_in_een_sjabloon() -> None:
+def test_de_kaart_staat_op_overzicht_en_niet_op_metrics() -> None:
+    """Deze kaart gaat over het HELE project; Metrics gaat per deployment.
+
+    Alle deployments van een project delen een namespace, dus de blokken op Metrics
+    tellen nooit op tot deze cijfers - en een kaart met een projecttotaal onder een
+    deploymentkiezer leest als het totaal van die ene deployment.
+    """
+    assert "Resourcegebruik" not in _metrics_tabblad(), "de projectkaart staat nog op Metrics"
+    assert "Resourcegebruik (heel project)" in _project_tabblad()
+
+
+def test_de_kaart_staat_tussen_acties_en_deployments() -> None:
+    """De gevraagde volgorde: tussen Acties en Deployments, niet eronder."""
+    overzicht = _project_tabblad()
+    acties = overzicht.index('panel("Acties"')
+    gebruik = overzicht.index('panel("Resourcegebruik (heel project)"')
+    deployments = overzicht.index('panel("Deployments"')
+
+    assert acties < gebruik < deployments
+
+
+def test_de_kaart_staat_maar_in_een_sjabloon() -> None:
     """Twee uitvoeringen van dezelfde kaart lopen uit de pas; deze deed dat ook.
 
-    De eenheden en de cijfers onder de balk zaten in het fragment, de tweede kopie in het
-    tabblad toonde nog kale balken.
+    Het tabblad had een eigen kopie met kale balken naast het fragment met de regel
+    erboven, en die kopie kreeg elke verbetering aan het fragment niet mee.
     """
-    assert "c-progress-bar" not in _metrics_tabblad(), "het tabblad tekent de balken zelf"
-    assert 'include "bg/_resource-usage.html.j2"' in _metrics_tabblad()
+    assert "c-progress-bar" not in _project_tabblad(), "het tabblad tekent de balken zelf"
+    assert 'include "bg/_resource-usage.html.j2"' in _project_tabblad()
 
 
 # --- 3. Het blok ververst zichzelf, maar alleen als het zichtbaar is --------------------
@@ -268,3 +308,59 @@ def test_een_achtergrondtabblad_bevraagt_niets() -> None:
     metrics = _metrics_tabblad()
     assert "document.hidden" in metrics
     assert "visibilitychange" in metrics
+
+
+# --- Dezelfde vraag op het dashboard ---------------------------------------------------
+#
+# Het dashboard toont dezelfde soort kaarten, en daar viel hetzelfde weg: een grafiek
+# zonder meetpunten die als een leeg vlak op het scherm staat, en balken zonder de
+# legenda die erbij hoort.
+
+
+def _dashboard(**extra: Any) -> str:
+    metrics: dict[str, Any] = {
+        "cpu_percentage": 10,
+        "cpu_usage_display": "1.0",
+        "cpu_limit_display": "10",
+        "memory_percentage": 20,
+        "memory_usage_display": "1 GiB",
+        "memory_limit_display": "5 GiB",
+        "storage_percentage": 5,
+        "storage_usage_display": "1G",
+        "storage_capacity_display": "20G",
+        "network_in_data": [],
+        "network_out_data": [],
+    }
+    metrics.update(extra.pop("metrics", {}))
+    context: dict[str, Any] = {
+        "metrics": metrics,
+        "prometheus_available": True,
+        "projects": [
+            {"name": "a", "display_name": "Project A", "cpu_cores": 0.03},
+            {"name": "b", "display_name": "Project B", "cpu_cores": 0.01},
+        ],
+        "total_cpu_usage": 0.04,
+    }
+    context.update(extra)
+    return _render(DASHBOARD_TEMPLATE, context)
+
+
+def test_netwerkverkeer_zonder_meetpunten_zegt_dat() -> None:
+    """De grafiek tekende dan een streepje op de as en twee nullen: een leeg vlak."""
+    html = _dashboard()
+    assert 'id="network-chart"' not in html, "er staat een leeg canvas"
+    assert "Nog geen metingen" in _tekst(html)
+
+
+def test_netwerkverkeer_met_meetpunten_tekent_wel() -> None:
+    html = _dashboard(metrics={"network_in_data": [{"t": "12:00", "v": 1.0}]})
+    assert 'id="network-chart"' in html
+    assert "geen netwerkverkeer gemeten" not in _tekst(html)
+
+
+def test_de_verdeling_over_projecten_heeft_een_legenda() -> None:
+    """Een balk met alleen een projectnaam zegt niet hoeveel het is en waarvan het het
+    aandeel is. De bestaande kaart zet er ``0.030 cores (12.3%)`` bij; die schrijfwijze."""
+    tekst = _tekst(_dashboard())
+    assert "Project A 0.030 cores (75.0%)" in tekst, tekst
+    assert "Project B 0.010 cores (25.0%)" in tekst, tekst
