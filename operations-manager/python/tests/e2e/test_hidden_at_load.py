@@ -52,30 +52,25 @@ def test_metrics_explorer_starts_with_its_blocks_hidden(app_server: str, auth_pa
     )
 
 
-def test_only_the_first_deployment_is_visible(app_server: str, auth_page: Page) -> None:
-    """Het tabblad Deployments toont een deployment tegelijk, de eerste bij het laden.
+def test_the_deployments_tab_renders_one_deployment(app_server: str, auth_page: Page) -> None:
+    """Het tabblad Deployments toont EEN deployment, en verbergt de rest niet - die staat
+    er niet.
 
-    De fixture heeft er twee ('default' en 'tweede'); zonder een tweede deployment wordt
-    ``{% if not loop.first %}`` nooit waar en bewijst dit niets.
+    Hier stond de tegenovergestelde toets: alles behalve de eerste hoorde ``.is-hidden`` te
+    zijn. Sinds RC-92 staat de naam in het pad en rendert de server er een, dus wat toen
+    verborgen moest zijn, hoort er nu helemaal niet te staan. De fixture heeft er twee
+    ('default' en 'tweede'); met een enkele bewijst dit niets.
     """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
     open_tab(auth_page, "deployments")
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
 
-    visible = auth_page.evaluate(
-        "() => [...document.querySelectorAll('#tab-deployments .deployment-section')]"
-        ".filter(e => getComputedStyle(e).display !== 'none')"
-        ".map(e => e.id || e.dataset.deployment || '?')"
+    aanwezig = auth_page.evaluate(
+        '() => [...document.querySelectorAll(\'#tab-deployments [id^="deployment-"], '
+        "#tab-deployments [data-deployment]')].map(e => e.id || e.dataset.deployment)"
     )
-    hidden = auth_page.evaluate(
-        "() => [...document.querySelectorAll('#tab-deployments .deployment-section')]"
-        ".filter(e => getComputedStyle(e).display === 'none')"
-        ".map(e => e.id || e.dataset.deployment || '?')"
+    assert aanwezig, "er staat geen enkel deploymentblok op het tabblad"
+    assert not [naam for naam in aanwezig if "tweede" in naam], (
+        f"de andere deployment staat er nog steeds bij: {aanwezig}"
     )
-
-    assert hidden, "Geen enkele sectie is verborgen -- verbergt .is-hidden nog wel?"
-    assert not [name for name in visible if "tweede" in name], (
-        f"De tweede deployment staat er meteen bij: zichtbaar={visible}"
-    )
-    assert [name for name in hidden if "tweede" in name], f"Niets van 'tweede' is verborgen: verborgen={hidden}"
