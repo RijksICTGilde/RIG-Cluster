@@ -1,8 +1,8 @@
 # De deploymentpagina
 
 De projectpagina toont zijn deployments als **tabel op het tabblad Overzicht**, met de
-ArgoCD-status erin. Elk tabblad heeft een **eigen pad**. De tabbladen Deployments en
-Metrics tonen er **een per pagina**, met zijn naam in de URL, in **een** blok.
+ArgoCD-status erin. Elk tabblad heeft een **eigen pad**. De tabbladen Deployments, Metrics
+en Backups tonen er **een per pagina**, met zijn naam in de URL, in **een** blok.
 
 ## 1. De tabel op Overzicht
 
@@ -68,7 +68,8 @@ blijft waar hij stond: in het deploymentpaneel, dat zichzelf laadt. Die vraagt m
 ArgoCD en van kubectl, en er staat er precies een op de pagina.
 
 Het **backupblok** staat hier helemaal los van: dat laadt lui vanwege de Kopia-verbindingen
-en heeft zijn eigen, project-brede verzoek.
+en heeft zijn eigen verzoek. Het staat sinds RC-100 niet meer op dit tabblad maar op een
+eigen tabblad Backups; zie `features/backups-tabblad.md`.
 
 ## 3. Elk tabblad een eigen pad
 
@@ -82,12 +83,15 @@ een filter op een pagina; een tabblad is een andere pagina over hetzelfde projec
 | Services | `/projects/<project>/services` |
 | Deployments | `/projects/<project>/deployments/<deployment>` |
 | Metrics | `/projects/<project>/metrics/<deployment>` |
+| Backups | `/projects/<project>/backups/<deployment>` |
 | Taken | `/projects/<project>/taken` |
 
 **De projectnaam staat voorop en het tabblad erachter.** Het project is waar je bent, het
 tabblad is wat je erbinnen bekijkt. De vorige vorm had het tabblad voorop
 (`/projects/deployments/<project>`); die adressen **verwijzen door** (302) naar de nieuwe,
 inclusief de deployment en de querystring, zodat een gedeelde link niet stil een 404 wordt.
+Backups staat daar niet bij: dat tabblad bestaat pas sinds RC-100 en heeft nooit onder die
+vorm geleefd.
 
 De paden staan **letterlijk** geregistreerd in `opi/web/router.py` en niet als
 `/projects/{project_name}/{tab}`. Dat laatste zou ook de oude vorm opvangen -
@@ -118,7 +122,7 @@ ArgoCD-statuskaart die zichzelf laadt.
 ## 5. Een deployment per pagina
 
 De tabbladen Deployments en Metrics renderden **alle** deployments en verborgen er alles
-behalve een met CSS. Dat is werk voor blokken die niemand ziet - elk verborgen blok draagt
+behalve een met CSS. (Backups is er sinds RC-100 het derde, met dezelfde afspraken.) Dat is werk voor blokken die niemand ziet - elk verborgen blok draagt
 zijn eigen lazy-laders - en de keuze ging verloren zodra je van tabblad wisselde.
 
 De naam staat nu in het **pad**, en de server rendert die ene:
@@ -126,6 +130,7 @@ De naam staat nu in het **pad**, en de server rendert die ene:
 ```
 /projects/mijn-project/deployments/productie
 /projects/mijn-project/metrics/productie
+/projects/mijn-project/backups/productie
 ```
 
 | Wat je opvraagt | Wat er gebeurt |
@@ -166,11 +171,12 @@ bestaat niet meer.
 | Bestand | Wat het bewaakt |
 |---|---|
 | `tests/test_lotc_deploymentstabel.py` | zoeken, sorteren, de statusregel (RC-31/RC-35), en dat de tabel `columns` draagt |
-| `tests/test_lotc_deploymentkiezer.py` | de kiezer staat op een plek, wijst met ADRESSEN naar de deployments, en beide tabbladen renderen er een |
+| `tests/test_lotc_deploymentkiezer.py` | de kiezer staat op een plek, wijst met ADRESSEN naar de deployments, en elk deploymenttabblad rendert er een |
 | `tests/test_argocd_overview.py` | twintig rijen = een bevraging; de cache vervalt echt |
 | `tests/test_lotc_tabbladen_url.py` | elk tabblad heeft een pad dat bij de projectpagina uitkomt, en de deployment reist mee in de adressen |
 | `tests/e2e/test_lotc_deployments_tab.py` | de pagina toont er een, de doorverwijzingen kloppen, en de keuze blijft staan bij het wisselen van tabblad |
 | `tests/e2e/test_lotc_deploymentstabel.py` | GEOMETRIE in de browser, plus screenshots |
+| `tests/test_lotc_backups_tabblad.py` | het backupblok staat op zijn eigen tabblad en niet meer op dit |
 
 Die laatste bestaat om een fout die groen was. NLDD maakt van een tabel een CSS-grid;
 zonder het attribuut `columns` wordt `grid-template-columns: none` en valt elke cel op een
