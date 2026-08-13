@@ -179,11 +179,19 @@ def click_deployment_action(page: Page, label: str) -> None:
 
     De POST commit naar git en herverwerkt (enkele seconden), dus de aanroeper polt daarna
     de bron van waarheid (het projectbestand) en niet de pagina.
+
+    Blijft de modal weg, dan faalt dit hard. Eerder werd dat weggeslikt en ging de test
+    stil verder; de poll op het projectbestand ving het uiteindelijk wel, maar meldde dan
+    een minuut later dat de deployment niet ging slapen in plaats van dat er nooit iets
+    verstuurd is.
     """
     deployment_action(page, label).first.click()
     bevestig = page.locator(f"{_MODAL} .confirm-action-submit, {_INNER} .confirm-action-submit")
-    with contextlib.suppress(PlaywrightError):
+    try:
         bevestig.first.wait_for(state="visible", timeout=10000)
-    if bevestig.count():
-        bevestig.first.click()
+    except PlaywrightError as fout:
+        raise AssertionError(
+            f"De bevestigingsmodal van '{label}' kwam niet op; de actie is dus nooit verstuurd."
+        ) from fout
+    bevestig.first.click()
     page.wait_for_timeout(1000)
