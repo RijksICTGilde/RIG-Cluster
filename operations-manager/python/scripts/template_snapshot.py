@@ -42,7 +42,7 @@ PAGES: list[tuple[str, str]] = [
     ("home", "/"),
     ("dashboard", "/dashboard"),
     ("projects-overview", "/projects"),
-    ("project-details", "/projects/details/test-project-detail"),
+    ("project-details", "/projects/test-project-detail/details"),
     ("services-overview", "/services"),
     ("architecture", "/architecture"),
     ("about", "/about"),

@@ -128,7 +128,7 @@ def paneel(auth_page: Page, app_server: str) -> Page:
     """Een projectpagina met het logpaneel open en een nagebootste stroom eraan."""
     auth_page.add_init_script(FAKE_WEBSOCKET)
     auth_page.set_viewport_size({"width": 1440, "height": 900})
-    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}")
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/deployments")
     _wait_for_nldd(auth_page)
     _open_paneel(auth_page)
     return auth_page

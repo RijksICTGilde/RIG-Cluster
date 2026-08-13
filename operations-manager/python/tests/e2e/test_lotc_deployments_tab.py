@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
-LOTC_URL = f"/projects/deployments/{PROJECT}"
+LOTC_URL = f"/projects/{PROJECT}/deployments"
 
 #: De twee deployments van de fixture, elk op zijn eigen adres. Sinds RC-92 toont het
 #: tabblad er EEN per pagina, dus het gedragsoppervlak van dit tabblad is de som van de
@@ -180,14 +180,14 @@ def test_de_keuze_blijft_staan_bij_het_wisselen_van_tabblad(app_server: str, aut
     auth_page.wait_for_load_state("networkidle")
 
     auth_page.locator(
-        'nldd-tab-bar a[href$="/metrics/' + PROJECT + '/tweede"], a[href$="/metrics/' + PROJECT + '/tweede"]'
+        f'nldd-tab-bar a[href$="/{PROJECT}/metrics/tweede"], a[href$="/{PROJECT}/metrics/tweede"]'
     ).first.click()
     auth_page.wait_for_load_state("networkidle")
-    assert auth_page.url.endswith(f"/projects/metrics/{PROJECT}/tweede")
+    assert auth_page.url.endswith(f"/projects/{PROJECT}/metrics/tweede")
     assert auth_page.locator("#metrics-content-tweede").count() == 1
     assert auth_page.locator("#metrics-content-default").count() == 0
 
-    auth_page.locator('a[href$="/deployments/' + PROJECT + '/tweede"]').first.click()
+    auth_page.locator(f'a[href$="/{PROJECT}/deployments/tweede"]').first.click()
     auth_page.wait_for_load_state("networkidle")
     assert auth_page.url.endswith(f"{LOTC_URL}/tweede")
 

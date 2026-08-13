@@ -38,7 +38,7 @@ def delete_project_via_ui(
     can take minutes, hence the generous finish_timeout.
     """
     base = base_url.rstrip("/")
-    page.goto(f"{base}/projects/details/{project_name}")
+    page.goto(f"{base}/projects/{project_name}/details")
     page.wait_for_load_state("networkidle")
 
     # Open the confirmation in the shared modal.

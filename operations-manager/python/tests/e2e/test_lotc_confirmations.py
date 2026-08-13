@@ -30,7 +30,7 @@ pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
 #  wint van de cookie, dus deze test staat los van wat de browser onthoudt.
-DETAIL_URL = f"/projects/details/{PROJECT}"
+DETAIL_URL = f"/projects/{PROJECT}/details"
 
 
 def _intercept_posts(page: Page, recorded: list[tuple[str, str]]) -> None:

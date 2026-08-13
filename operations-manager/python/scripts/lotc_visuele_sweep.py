@@ -229,7 +229,7 @@ def open_dialoog(page: Page, naam: str, basis: str, project: str, aanroep: str, 
     de knop hangt. Alleen zo staan de stijlbladen en de web-componenten er, en zegt een
     berekende ``gap`` of een lege icoonbreedte iets.
     """
-    scherm = Scherm(naam=naam, url=f"{basis}/projects/details/{project} -> {aanroep}")
+    scherm = Scherm(naam=naam, url=f"{basis}/projects/{project}/details -> {aanroep}")
     console: list[str] = []
     mislukt: list[str] = []
 
@@ -242,7 +242,7 @@ def open_dialoog(page: Page, naam: str, basis: str, project: str, aanroep: str, 
             mislukt.append(f"{verzoek.url} ({verzoek.failure})")
 
     try:
-        page.goto(f"{basis}/projects/details/{project}", wait_until="networkidle", timeout=45000)
+        page.goto(f"{basis}/projects/{project}/details", wait_until="networkidle", timeout=45000)
         page.on("console", op_console)
         page.on("requestfailed", op_mislukt)
 
@@ -325,7 +325,7 @@ def main() -> int:
 
         if project:
             schermen.extend(
-                bezoek(page, f"project-{tab}", f"{args.base}/projects/details/{project}?tab={tab}", uit)
+                bezoek(page, f"project-{tab}", f"{args.base}/projects/{project}/details?tab={tab}", uit)
                 for tab in PROJECT_TABS
             )
             schermen.extend(open_dialoog(page, naam, args.base, project, aanroep, uit) for naam, aanroep in DIALOGEN)
