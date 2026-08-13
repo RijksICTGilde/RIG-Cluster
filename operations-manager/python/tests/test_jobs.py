@@ -31,7 +31,7 @@ def test_generate_job_name():
 
 def _render_tasks(items) -> str:
     req = SimpleNamespace(scope={"type": "http"}, headers={}, state=SimpleNamespace())
-    tmpl = templates_lotc.get_template("project-details/section-tasks.html.j2")
+    tmpl = templates_lotc.get_template("bg/_tasks.html.j2")
     return tmpl.render(request=req, project_name="proj", items=items)
 
 

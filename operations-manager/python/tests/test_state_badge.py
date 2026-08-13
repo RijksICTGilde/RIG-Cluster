@@ -13,12 +13,15 @@ takes the place of the green Healthy or stands next to it.
 
 from __future__ import annotations
 
+import re
+
 from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DeploymentStateFact
 from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING, SleepState, write
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
+from opi.services.services import ServiceAdapter
 
-TEMPLATE = "project-details/_argocd-deployment-card.html.j2"
+TEMPLATE = "bg/_argocd-deployment-card.html.j2"
 CLUSTER = "odcn-production"
 
 
@@ -53,6 +56,9 @@ def _render(project_data: dict, *, health: str = "Healthy", state: DeploymentSta
         argocd_status={deployment["name"]: {"health": health, "sync": "Synced", "errors": []}},
         current_cluster=CLUSTER,
         deployment_states={deployment["name"]: state},
+        # De kaart noemt de dienst achter een feit bij naam in de melding eronder. De
+        # route geeft ServiceAdapter mee (opi/web/router.py); zonder valt de render om.
+        ServiceAdapter=ServiceAdapter,
     )
 
 
@@ -145,8 +151,13 @@ class TestTheCardDerivesItsBadgeFromTheFacts:
 
     def test_the_card_names_no_service(self) -> None:
         """The point of routing the badge through the facts: the next service that parks a
-        deployment needs no second condition in this template."""
-        source = templates.env.loader.get_source(templates.env, TEMPLATE)[0]
+        deployment needs no second condition in this template.
+
+        Het Jinja-COMMENTAAR gaat er eerst uit: de kop van het sjabloon legt uit welke
+        gevallen de generieke voorwaarde dekt, en daar hoort een dienstnaam in. Wat hier
+        getoetst wordt is de MARKUP.
+        """
+        source = re.sub(r"\{#.*?#\}", "", templates.env.loader.get_source(templates.env, TEMPLATE)[0], flags=re.DOTALL)
 
         # "uitgeschakeld" itself still appears: the alert for a component the watcher
         # switched off after an ImagePullBackOff is about one component, not about the

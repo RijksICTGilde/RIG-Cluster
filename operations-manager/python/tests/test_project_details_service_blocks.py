@@ -7,13 +7,25 @@ Authentication") nor the name in the project file ("publish-on-web") -- so the s
 thing was called three things in three places.
 
 What is pinned here is what the raw line could not do: the definition behind the name
-is looked up (icon, description, help template), whatever shape the entry has in the
-project file, and an entry nobody recognises still shows up instead of vanishing.
+is looked up (naam, hulptekst), whatever shape the entry has in the project file, and an
+entry nobody recognises still shows up instead of vanishing.
+
+WAAR DIT MEET, EN WAAROM DAT VERANDERD IS (RC-97). Deze test rendeerde
+``project-details/section-components.html.j2``, een sjabloon van de vervangen pagina. Het
+tabblad Componenten dat de route WEL rendert is ``bg/project-tabs.html.j2``; daar gaat de
+lijst nu doorheen, met de voorbeeldgegevens van de proefopstelling en een eigen
+componentenlijst erin.
+
+Wat het herontwerp anders doet: een dienst is daar een ``<c-chip>`` met een vraagteken
+ernaast, geen kaart met icoon en omschrijving. De naam en de hulptekst zijn dus nog te
+meten, het icoon en de omschrijving niet - die claim hoorde bij de oude vormgeving en
+staat als keuze genoteerd in ``docs/opruiming-inventarisatie-rc97.md``.
 """
 
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -21,20 +33,43 @@ from opi.core.template_helpers import get_service_definition_for_entry
 from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
-from opi.web.navigation_lotc import to_nldd_icon
+from opi.web.lotc_fixtures import page_data
 
 
 def _render(services: list[Any]) -> str:
-    template = templates.env.get_template("project-details/section-components.html.j2")
-    return template.render(
-        request=None,
-        project={"name": "demo", "components": [{"name": "app", "type": "single", "services": services}]},
-        user_role="viewer",
+    """Het tabblad Componenten zoals de route het rendert, met een eigen componentenlijst.
+
+    De rest van de context komt uit de proefopstelling, want deze pagina heeft er veel
+    van nodig en die zijn hier niet het onderwerp.
+    """
+    request = SimpleNamespace(
+        scope={"type": "http"},
+        headers={},
+        cookies={},
+        state=SimpleNamespace(),
+        url=SimpleNamespace(path="/"),
+        session={},
+        query_params={},
     )
+    data = page_data("project-tabs")
+    data["project"] = {**data["project"], "components": [{"name": "app", "type": "single", "services": services}]}
+    data["active_tab"] = "componenten"
+    data["tabs"] = {sleutel: {**tab, "url": "#"} for sleutel, tab in data["tabs"].items()}
+    return templates.env.get_template("bg/project-tabs.html.j2").render(request=request, navigation=[], **data)
 
 
-def _titles(html: str) -> list[str]:
-    return re.findall(r'service-card__title">([^<]*)</span>', html)
+def _chips(html: str) -> list[str]:
+    """De dienstnamen van het component, zoals ze op het tabblad staan.
+
+    Vanaf "<b>Services:</b>", want dat is de enige plek op dit tabblad waar chips staan.
+    ``<c-chip>`` levert een ``<span class="lotc-layer-chip">`` op; er wordt op het
+    ANTWOORD gemeten en niet op de tag, anders zou de meting stil meeveranderen met wat
+    het thema ervan maakt.
+    """
+    start = html.find("<b>Services:</b>")
+    if start == -1:
+        return []
+    return [naam.strip() for naam in re.findall(r'class="lotc-layer-chip"[^>]*>([^<]*)</span>', html[start:])]
 
 
 # ---------------------------------------------------------------------------
@@ -69,20 +104,18 @@ def test_an_unknown_name_has_no_definition() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_service_shows_its_icon_description_and_explanation() -> None:
+def test_a_service_shows_its_name_and_its_explanation() -> None:
     definition = ServiceAdapter.get_service_definition(ServiceType.KEYCLOAK)
     html = _render([{"reference": "keycloak"}])
 
-    assert definition.name in html
-    assert definition.description in html
-    assert f'name="{to_nldd_icon(definition.icon)}"' in html
+    assert _chips(html) == [definition.name]
     assert f"openServiceHelp('{definition.help_template}')" in html
 
 
-def test_every_service_of_a_component_gets_its_own_block() -> None:
+def test_every_service_of_a_component_gets_its_own_chip() -> None:
     html = _render(["keycloak", "publish-on-web", {"postgresql-database": {"config": {}}}])
 
-    assert _titles(html) == [
+    assert _chips(html) == [
         ServiceAdapter.get_service_definition(ServiceType.KEYCLOAK).name,
         ServiceAdapter.get_service_definition(ServiceType.PUBLISH_ON_WEB).name,
         ServiceAdapter.get_service_definition(ServiceType.POSTGRESQL_DATABASE).name,
@@ -94,8 +127,9 @@ def test_an_unknown_service_is_still_shown() -> None:
     """It is in the project file, so hiding it would hide the problem."""
     html = _render(["iets-wat-niet-bestaat"])
 
-    assert "iets-wat-niet-bestaat" in html
-    assert _titles(html) == []
+    assert _chips(html) == ["iets-wat-niet-bestaat"]
+    # Geen definitie, dus ook geen vraagteken: er valt niets uit te leggen.
+    assert "openServiceHelp(" not in html
 
 
 def test_the_service_names_are_no_longer_a_title_cased_line() -> None:
