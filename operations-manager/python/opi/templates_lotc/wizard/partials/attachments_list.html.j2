@@ -34,7 +34,10 @@
     {% for att in staged | default([]) %}
     <c-card padding="sm" background-color="grijs-050" outline="true">
         <div class="attachment-row">
-            <div><strong>{{ att.filename }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }}, nog niet opgeslagen)</span></div>
+            {# Een vervanging staat naast de regel die hij overschrijft, en dan zegt "nog
+               niet opgeslagen" alleen de helft: het lijkt een tweede bijlage met dezelfde
+               id. Bij een bestaande id staat er dus wat er bij het opslaan gebeurt. #}
+            <div><strong>{{ att.filename }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }}, {% if att.id in ns.items | map(attribute='id') | list %}vervangt de opgeslagen inhoud bij opslaan{% else %}nog niet opgeslagen{% endif %})</span></div>
             {% set unstage_attrs = {
                 'hx-post': '/forms/wizard/create-project/attachments/unstage/' ~ att.id,
                 'hx-ext': 'ignore:json-enc',

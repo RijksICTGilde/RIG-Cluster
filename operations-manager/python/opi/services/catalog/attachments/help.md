@@ -14,3 +14,9 @@ Met bijlagen koppel je een bestand aan een component, bijvoorbeeld een certifica
 Je geeft elke bijlage een identifier en kiest per component hoe hij wordt aangeleverd: als **bestand** op een pad in de pod, of als **omgevingsvariabele** met de inhoud als waarde (alleen voor tekstbestanden). Een bijlage kan aan meerdere componenten gekoppeld worden, en je kunt per deployment afwijken.
 
 Een bestand is maximaal 256 KB. De inhoud wordt versleuteld opgeslagen; er is geen database of aparte opslag voor nodig.
+
+## Een bijlage vervangen
+
+Loopt een certificaat af, gebruik dan **Vervangen** bij de bijlage en niet verwijderen-en-opnieuw-uploaden. Bij vervangen blijft de identifier staan, en daarmee blijven alle koppelingen staan: elk component dat de bijlage gebruikt, blijft eraan gekoppeld. Verwijderen verbreekt die koppelingen.
+
+De identifier ligt bij een vervanging vast; alleen de inhoud gaat eroverheen. De naam van het nieuwe bestand wordt overgenomen. De vorige inhoud is daarna weg -- er is geen versiehistorie. Via de API is dit `PUT` op de bijlage zelf, die een id die niet bestaat weigert.
