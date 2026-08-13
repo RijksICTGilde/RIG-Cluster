@@ -364,3 +364,26 @@ def test_de_verdeling_over_projecten_heeft_een_legenda() -> None:
     tekst = _tekst(_dashboard())
     assert "Project A 0.030 cores (75.0%)" in tekst, tekst
     assert "Project B 0.010 cores (25.0%)" in tekst, tekst
+
+
+def test_het_percentage_staat_er_maar_een_keer() -> None:
+    """Het thema zet het percentage standaard NAAST de balk, en dan staat het dubbel.
+
+    De regel erboven noemt het al, in de schrijfwijze van de bestaande kaart. "tooltip"
+    is de waarde die het percentage naar de muisaanwijzer verplaatst; een onbekende
+    waarde valt terug op inline en dan staat het er alsnog twee keer.
+    """
+    gebruik = {
+        "deployments": 1,
+        "pods": 1,
+        "cpu_used": 0.5,
+        "cpu_limit": 2.0,
+        "cpu_pct": 25,
+        "mem_used": 64 * 1048576,
+        "mem_limit": 512 * 1048576,
+        "mem_pct": 12,
+    }
+    html = _render(GEBRUIK_TEMPLATE, {"usage": gebruik, "usage_error": None})
+
+    assert html.count('value-display="tooltip"') == 2, html
+    assert 'value-display="inline"' not in html

@@ -114,6 +114,7 @@
                         <c-progress-bar
                             :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
                             max="100"
+                            value-display="tooltip"
                             color="info"
                             accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
                     </c-stack>
