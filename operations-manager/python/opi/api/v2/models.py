@@ -223,6 +223,24 @@ class StatusError(BaseModel):
     timestamp: str | None = Field(default=None, description="ISO timestamp if known")
 
 
+class PendingRolloutResponse(BaseModel):
+    """Changes that were saved but deliberately not rolled out."""
+
+    project: str = Field(..., description="Technical name of the project.")
+    count: int = Field(..., description="Number of saved changes that have not been rolled out yet. 0 means in sync.")
+    since: str | None = Field(
+        default=None,
+        description=(
+            "ISO timestamp of the OLDEST change still waiting, so a caller can tell a change "
+            "made minutes ago from one that has been waiting a week. Null when count is 0."
+        ),
+    )
+    task_types: list[str] = Field(
+        default_factory=list,
+        description="Which kinds of change are waiting (e.g. 'configure_service'), deduplicated and sorted.",
+    )
+
+
 class DeploymentDetail(BaseModel):
     """Full deployment state as returned by the GET endpoints."""
 
@@ -260,6 +278,29 @@ class DeploymentDetail(BaseModel):
             "(Degraded, OutOfSync, Suspended, Missing). Empty otherwise."
         ),
     )
+    source: str = Field(
+        default="project-file",
+        description=(
+            "Where the DESCRIPTION comes from: always 'project-file'. Dit antwoord mengt "
+            "twee bronnen, en dat is de reden dat dit veld hier staat. 'components', "
+            "'urls' en 'subdomain' komen uit het projectbestand en zijn dus de GEWENSTE "
+            "toestand; 'status', 'sync_revision', 'last_synced_at' en 'errors' komen uit "
+            "de cluster. Een component dat met rollout=false is opgeslagen heeft daarom "
+            "meteen een URL, terwijl er nog niets draait dat hem bedient. Kijk naar "
+            "'pending_rollout' om te zien of de twee uit elkaar lopen."
+        ),
+    )
+    pending_rollout: PendingRolloutResponse | None = Field(
+        default=None,
+        description=(
+            "Saved changes that are not on the cluster yet. Gevuld op GET "
+            "/projects/{project}/deployments/{deployment}; null in een lijst, waar het "
+            "omhullende antwoord het draagt. Het is een eigenschap van het PROJECT, dus "
+            "hem per deployment herhalen zou hetzelfde getal zo vaak neerzetten als er "
+            "deployments zijn. Ook null als de takenservice niet bereikbaar is: het etiket "
+            "ontbreekt dan, de beschrijving niet."
+        ),
+    )
 
 
 class DeploymentListResponse(BaseModel):
@@ -267,4 +308,12 @@ class DeploymentListResponse(BaseModel):
 
     project: str
     cluster: str
+    source: str = Field(
+        default="project-file",
+        description="Zie DeploymentDetail.source: de beschrijving komt uit het projectbestand.",
+    )
+    pending_rollout: PendingRolloutResponse | None = Field(
+        default=None,
+        description="Saved changes that are not on the cluster yet, voor het hele project.",
+    )
     deployments: list[DeploymentDetail] = Field(default_factory=list)

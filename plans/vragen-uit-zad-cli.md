@@ -1227,6 +1227,14 @@ op het moment dat hij al iets fout deed.
 
 ### Antwoord
 
+Je hebt gelijk, en het was erger dan een verkeerde suggestie: die naam werd ook geaccepteerd. De restore startte dan en strandde pas daarna op een snapshot die niet bestaat.
+
+De oorzaak was een tweede naamconventie. De schrijver leidt de naam af als `{deployment}-{dienstnaam tot het eerste streepje}`, dus `postgresql-database` wordt `productie-postgresql`, en die naam gaat als kopia-tag mee. Dat is precies wat `backup list` publiceert. Het restorepad gebruikte een vast achtervoegsel `{deployment}-database`. Bij buckets viel dat toevallig samen, want `minio-storage` begint ook met `minio`; bij databases niet, en daarom is het nooit opgevallen.
+
+Opgelost: beide kanten volgen nu de regel van de schrijver. De 404 noemt de namen die een backup werkelijk kan dragen, en dezelfde namen worden geaccepteerd. Het oude achtervoegsel blijft er als geldige naam bij staan, want wat ooit zo is weggeschreven moet terug te zetten blijven. Vastgelegd in `tests/test_restore_suggereert_bestaande_namen.py`.
+
+Wat we nog niet hebben kunnen verklaren is waarom bij jullie de terugvalnaam werd getoond terwijl de snapshot `productie-postgresql` draagt. Die terugval geldt alleen als er in die deployment geen component met een databasedienst gevonden wordt, en op backupmoment was die er kennelijk wel. Stuur je de projectnaam en de uitvoer van `zad project describe`? Dan kunnen we dat sluitend maken in plaats van te gissen.
+
 <!-- ruimte voor RIG-Cluster -->
 
 ---
@@ -1276,5 +1284,15 @@ er iets naast staat dat zegt dat er nog werk wacht. Wij tonen dit veld ongewijzi
 niet raden.
 
 ### Antwoord
+
+Het is de gewenste toestand, en je vraag legt terecht de vinger op de zere plek: dat was aan het antwoord niet te zien.
+
+Elk leesantwoord van de v2-API beschrijft het projectbestand en zegt dat ook, met `source` en `pending_rollout`. Het deploymentantwoord is het enige dat twee bronnen mengt: `components`, `urls` en `subdomain` komen uit het projectbestand, terwijl `status`, `sync_revision`, `last_synced_at` en `errors` uit de cluster komen. Uitgerekend dat antwoord droeg die twee velden niet, waardoor je de hele inhoud als live las. Dat is onze fout, niet een misverstand aan jullie kant.
+
+Opgelost: `deployment describe` en de deploymentlijst dragen nu allebei `source` en `pending_rollout`. De beschrijving van `source` noemt bovendien welk veld uit welke bron komt, want alleen "project-file" zeggen bij een antwoord dat mengt verplaatst het misverstand alleen maar.
+
+Twee dingen om te weten bij het gebruik. In een lijst staat `pending_rollout` op het omhullende antwoord en is hij per deployment `null`: het is een eigenschap van het project, en hem per deployment herhalen zou hetzelfde getal zo vaak neerzetten als er deployments zijn. En als onze takenservice onbereikbaar is staat er ook `null`; dan ontbreekt het etiket, niet de beschrijving. Een 503 op `describe` omdat een bijkomend veld niet te bepalen is, leek ons slechter dan een antwoord zonder dat veld.
+
+Wat nu nog niet kan is per component zeggen welke URL nog wacht. `pending_rollout` telt de wachtende wijzigingen en noemt hun soort, maar niet de namen. Zeg maar of je dat nodig hebt, dan is dat een eigen stuk werk.
 
 <!-- ruimte voor RIG-Cluster -->
