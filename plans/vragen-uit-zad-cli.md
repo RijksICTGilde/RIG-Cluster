@@ -8,7 +8,7 @@ wat wij al hebben uitgesloten. Antwoord er graag onder, per nummer, in het kopje
 dat er al staat. Alles is met `curl` te reproduceren; onze CLI is er alleen een client op.
 
 **Stand van zaken.** Punt 1 tot en met 5 zijn beantwoord en opgelost; die staan hieronder
-met hun antwoord, en onze reactie erop staat onderaan. **Punt 6 tot en met 12, aan het eind,
+met hun antwoord, en onze reactie erop staat onderaan. **Punt 6 tot en met 13, aan het eind,
 wachten nog op een antwoord; 12 is blokkerend en een regressie op `5c026ecc`.** Punt 10 en 11 zijn nagemeten op de releasebuild `5c026ecc`.
 
 ```sh
@@ -1000,6 +1000,51 @@ die eis te voldoen? Drie vormen die wij ons kunnen voorstellen:
 **Waar wij dit vandaan hebben:** een agent die alleen de CLI mocht raadplegen liep hierop
 vast en heeft het uitgebreid vastgelegd. Dat is precies het scenario waar deze CLI voor
 bedoeld is, dus wij hechten er waarde aan dat het van buitenaf op te lossen valt.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
+
+---
+
+## 13. `:refresh` belooft een webadres dat niet bestaat, `describe` zegt eerlijk van niet
+
+Dezelfde deployment, hetzelfde moment, twee endpoints die elkaar tegenspreken.
+
+Project `p1-wan`, één component `worker`: geen poort, geen `publish-on-web`, dus geen
+ingress. Wat de refresh teruggeeft:
+
+```sh
+curl -X POST -H "X-API-Key: $KEY" "$BASE/v2/projects/$P/:refresh"
+# result.urls.productie.urls = {"worker": "https://worker-productie-p1-wan.sandbox.rijksapp.dev"}
+```
+
+Wat het deployment-endpoint op datzelfde moment zegt:
+
+```sh
+curl -H "X-API-Key: $KEY" "$BASE/v2/projects/$P/deployments/productie" | jq -c '{status, urls}'
+# {"status":"Healthy","urls":{}}
+```
+
+En wie er gelijk heeft:
+
+```sh
+curl -o /dev/null -w '%{http_code}\n' https://worker-productie-p1-wan.sandbox.rijksapp.dev
+# 404
+```
+
+`describe` heeft dus gelijk en `:refresh` verzint een adres. Het lijkt de naam te vormen uit
+`{component}-{deployment}-{project}` zonder te kijken of er een ingress voor bestaat.
+
+**Waarom dit meer is dan cosmetisch.** De refresh-uitvoer is precies wat iemand leest na
+"zet mijn project neer": het is het laatste wat over het scherm gaat en het enige dat
+adressen noemt. Een agent die daarop afgaat rapporteert een draaiende applicatie op een URL
+die 404 geeft, en zoekt de fout vervolgens in zijn eigen stappen. Wij zijn het zo
+tegengekomen: een agent meldde het als vreemd, wij konden het reproduceren.
+
+**Onze vraag:** kan `:refresh` dezelfde bron gebruiken als `describe`, of alleen adressen
+noemen van componenten die daadwerkelijk een ingress hebben gekregen? Wij tonen dit veld
+ongewijzigd, dus filteren aan onze kant zou betekenen dat wij gaan raden wat de API bedoelt.
 
 ### Antwoord
 
