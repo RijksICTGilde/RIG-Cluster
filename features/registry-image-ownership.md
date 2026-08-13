@@ -85,6 +85,23 @@ De controle is bewust smal:
 - ze weigert alleen een tag met een eigenaar-prefix die van een **ander** project is;
 - een tag **zonder** eigenaar-prefix (alles van vóór deze wijziging) blijft toegestaan.
 
+### Eén repository, meerdere schrijfwijzen
+
+Het `image`-veld is vrije tekst van de tenant, en dezelfde registry-repository is op meer
+dan één manier op te schrijven. De referentie wordt daarom eerst genormaliseerd en pas
+daarna vergeleken (`_normalize_registry_repo` / `_split_image_reference`), aan beide
+kanten van de vergelijking:
+
+| Schrijfwijze | Wat ermee gebeurt |
+|---|---|
+| `RCR.rijksapps.nl/rig:ander_backend-latest` | de hostnaam is hoofdletterongevoelig, dus lowercase vóór de vergelijking — geweigerd |
+| `rcr.rijksapps.nl:443/rig:ander_backend-latest` | `:443` is de poort die de referentie toch al impliceert, dus eraf — geweigerd |
+| `rcr.rijksapps.nl/rig@sha256:<64 hex>` | een digest naar de gedeelde repository noemt geen eigenaar, dus **altijd** geweigerd, ook mét tag ernaast (`repo:tag@sha256:...`, waar de digest wint bij het pullen) |
+
+Een digest naar een **andere** registry (ghcr.io en zo) blijft vrij, net als elke andere
+referentie daarheen. Alleen in de gedeelde platformregistry is een digest niet bruikbaar,
+want daar is de tag de enige plek waar het eigendom staat.
+
 ## Migratie: wat gebeurt er met bestaande tags
 
 Niets. Bestaande tags worden niet hernoemd en niet verwijderd. Een draaiende deployment
@@ -113,6 +130,17 @@ samenvalt met de projectnaam van de ander, is niet door de aanvaller te sturen (
 projectnaam wordt gegenereerd), en de verzameling oude tags groeit niet meer. Het is
 bewust niet dichtgezet met een registry-lookup per push: dat zou een netwerkafhankelijkheid
 in het pushpad zetten voor een geval dat alleen kleiner wordt.
+
+Aan de leeskant wordt het **pad** achter de hostnaam niet genormaliseerd: alleen de host
+gaat naar lowercase en verliest een expliciete `:443`. Registries behandelen het pad
+hoofdlettergevoelig en staan er sowieso geen hoofdletters in toe, dus een verwijzing als
+`rcr.rijksapps.nl/RIG:ander_backend-latest` valt buiten de controle én is niet te pullen.
+Verandert de registry ooit van scheme of standaardpoort, dan hoort die vorm hier ook bij.
+
+En de leescontrole blijft diepteverdediging, geen slot: om een image uit de gedeelde
+registry ook echt te pullen heeft de namespace pull-credentials nodig, en die krijgt een
+project alleen uit zijn eigen `registries`-blok. De kritieke helft van bevinding A is de
+schrijfkant, en die is gepind.
 
 ## Waar het staat
 

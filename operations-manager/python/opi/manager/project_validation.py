@@ -412,6 +412,37 @@ def _platform_registry_repo() -> str | None:
     return f"{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}"
 
 
+def _normalize_registry_repo(repo: str) -> str:
+    """The comparable form of a registry repository, so one repo has one spelling.
+
+    A hostname is case-insensitive and the https port may be written out, so
+    ``RCR.rijksapps.nl/rig`` and ``rcr.rijksapps.nl:443/rig`` are the same repository
+    as ``rcr.rijksapps.nl/rig``. The path after the host is left alone: registries
+    treat it case-sensitively.
+    """
+    host, separator, path = repo.partition("/")
+    if not separator or not ("." in host or ":" in host or host == "localhost"):
+        # No registry host in front (e.g. 'nginx' or 'library/nginx'): nothing to normalize.
+        return repo
+    host = host.lower()
+    host = host.removesuffix(":443")
+    return f"{host}/{path}"
+
+
+def _split_image_reference(image: str) -> tuple[str, str | None, bool]:
+    """Split an image reference into (repository, tag, carries-a-digest).
+
+    Handles the shapes the project schema allows: ``repo``, ``repo:tag``,
+    ``repo@sha256:...`` and ``repo:tag@sha256:...``, with an optional port in the
+    host. A colon that is followed by a ``/`` is a port, not a tag separator.
+    """
+    reference, digest_separator, _digest = image.partition("@")
+    repo, tag_separator, tag = reference.rpartition(":")
+    if not tag_separator or "/" in tag:
+        return reference, None, bool(digest_separator)
+    return repo, tag, bool(digest_separator)
+
+
 def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> list[str]:
     """Reject deployment images that point at another project's tag in the shared registry.
 
@@ -421,12 +452,18 @@ def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> 
     an image from ghcr.io, Docker Hub or a project's own registry is nobody's business
     here, and is left alone.
 
+    The reference is normalized before it is judged, because one repository has more
+    than one valid spelling (uppercase host, an explicit ``:443``). A digest reference
+    into the platform repository is refused outright: ownership lives in the tag, and
+    a digest names an image in the shared repository without naming its owner.
+
     Tags from before ownership pinning carry no owner prefix and stay usable, so
     deployments that already run keep running.
     """
     platform_repo = _platform_registry_repo()
     if platform_repo is None:
         return []
+    platform_repo = _normalize_registry_repo(platform_repo)
 
     project_name = project_data.get("name", "")
     errors: list[str] = []
@@ -439,14 +476,22 @@ def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> 
             image = component.get("image")
             if not isinstance(image, str):
                 continue
-            repo, separator, registry_tag = image.rpartition(":")
-            if not separator or repo != platform_repo:
+            repo, registry_tag, has_digest = _split_image_reference(image)
+            if _normalize_registry_repo(repo) != platform_repo:
                 continue
-            owner = registry_tag_owner(registry_tag)
+            where = f"deployment '{deployment.get('name')}' component '{component.get('reference')}'"
+            if has_digest:
+                errors.append(
+                    f"{where} verwijst met '{image}' naar de gedeelde platformregistry met een digest. "
+                    f"Daar staat niet in van wie de image is, dus verwijs naar je eigen tag "
+                    f"('{project_name}_...') in plaats van naar een digest"
+                )
+                continue
+            owner = registry_tag_owner(registry_tag) if registry_tag is not None else None
             if owner is not None and owner != project_name:
                 errors.append(
-                    f"deployment '{deployment.get('name')}' component '{component.get('reference')}' verwijst met "
-                    f"'{image}' naar een image in de gedeelde platformregistry die van project '{owner}' is. "
+                    f"{where} verwijst met '{image}' naar een image in de gedeelde platformregistry "
+                    f"die van project '{owner}' is. "
                     f"Je kunt daar alleen images gebruiken die je zelf gepusht hebt"
                 )
     return errors
