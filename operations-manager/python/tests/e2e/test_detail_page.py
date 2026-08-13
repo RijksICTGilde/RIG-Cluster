@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.e2e
 
-DETAIL_URL = "/projects/details/test-project-detail"
+DETAIL_URL = "/projects/test-project-detail/details"
 
 
 def test_detail_page_renders(app_server: str, auth_page: Page) -> None:
@@ -28,7 +28,7 @@ def test_detail_page_renders(app_server: str, auth_page: Page) -> None:
     assert response.ok, f"Detail page returned {response.status}"
 
     # Should not redirect
-    assert "details/test-project-detail" in auth_page.url
+    assert "test-project-detail/details" in auth_page.url
 
     # Check project name/description appear
     toon_tekst(auth_page, "Detail Test Project")

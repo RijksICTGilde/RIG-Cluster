@@ -36,7 +36,7 @@ def client(app_server: str) -> Iterator[httpx.Client]:
 def _projectnamen(html: str) -> list[str]:
     """De projecten in de volgorde waarin ze op de pagina staan, zonder dubbelen."""
     volgorde: list[str] = []
-    for naam in re.findall(r"/projects/details/([a-z0-9-]+)", html):
+    for naam in re.findall(r"/projects/([a-z0-9-]+)/details", html):
         if naam not in volgorde:
             volgorde.append(naam)
     return volgorde

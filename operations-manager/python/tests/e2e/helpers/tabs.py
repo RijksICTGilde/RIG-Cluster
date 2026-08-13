@@ -5,7 +5,7 @@ weinige echte gedragsverschillen van de omzetting:
 
 - De bestaande pagina zet ALLE tabbladen in een document en wisselt ze in de browser met
   ``switchTab('deployments')``.
-- De nieuwe pagina geeft elk tabblad een eigen PAD (``/projects/deployments/<naam>``).
+- De nieuwe pagina geeft elk tabblad een eigen PAD (``/projects/<naam>/deployments``).
   Daardoor is een tab deelbaar, werkt de terugknop, en doet de pagina het zonder
   JavaScript. Sinds RC-76 is dat een pad en geen ``?tab=``-parameter, en er is bewust geen
   doorverwijzing van de oude vorm: die heeft nooit buiten deze applicatie geleefd.
@@ -32,10 +32,10 @@ def open_tab(page: Page, tab: str) -> None:
     Gebruikt ``switchTab()`` als die er is, en navigeert anders naar het PAD van dat
     tabblad. Zo hoeft een test niet te weten welke weergave hij meet.
 
-    De projectnaam komt uit het pad van de huidige pagina: dat is het DERDE segment
-    (``/projects/<tabblad>/<naam>``). Niet het laatste - sinds RC-92 kan er een deployment
-    achter staan (``/projects/deployments/<naam>/<deployment>``), en dan zou het laatste
-    segment de deployment zijn.
+    De projectnaam komt uit het pad van de huidige pagina: dat is het TWEEDE segment
+    (``/projects/<naam>/<tabblad>``, sinds RC-93 staat de naam voorop). Niet het laatste -
+    er kan een deployment achter staan (``/projects/<naam>/deployments/<deployment>``), en
+    dan zou het laatste segment de deployment zijn.
     """
     heeft_switch = page.evaluate("() => typeof window.switchTab === 'function'")
     if heeft_switch:
@@ -44,6 +44,6 @@ def open_tab(page: Page, tab: str) -> None:
 
     stukken = urlparse(page.url)
     segmenten = stukken.path.strip("/").split("/")
-    projectnaam = segmenten[2] if len(segmenten) > 2 else ""
+    projectnaam = segmenten[1] if len(segmenten) > 1 else ""
     page.goto(f"{stukken.scheme}://{stukken.netloc}{project_tab_url(projectnaam, tab)}")
     page.wait_for_load_state("networkidle")

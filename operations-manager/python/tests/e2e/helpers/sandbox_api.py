@@ -47,7 +47,7 @@ def read_api_key(page: Page, base_url: str, project_name: str) -> str:
     op de vorm eronder: een verkeerde waarde hoort hier hard te falen en niet stil door
     te gaan.
     """
-    page.goto(f"{base_url.rstrip('/')}/projects/details/{project_name}")
+    page.goto(f"{base_url.rstrip('/')}/projects/{project_name}/details")
     page.wait_for_load_state("networkidle")
     stack = (
         "xpath=(//h3[normalize-space(text())='API Key']"

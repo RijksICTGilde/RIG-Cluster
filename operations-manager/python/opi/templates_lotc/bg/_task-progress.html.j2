@@ -76,7 +76,7 @@
                 <c-button
                     type="primary"
                     label="{{ on_complete_label | default('Ok' if status == 'completed' else 'Sluiten') }}"
-                    href="/projects/details/{{ project_name }}" />
+                    href="/projects/{{ project_name }}/details" />
             </c-action-group>
         {% endif %}
     </c-stack>

@@ -38,7 +38,7 @@ def open_detail(page: Page, base_url: str, project_name: str) -> None:
     hieronder gaan daar zelf naartoe, zodat een test die alleen het overzicht nodig heeft
     niet ergens anders uitkomt.
     """
-    page.goto(f"{base_url}/projects/details/{project_name}", wait_until="networkidle", timeout=30000)
+    page.goto(f"{base_url}/projects/{project_name}/details", wait_until="networkidle", timeout=30000)
     page.wait_for_load_state("networkidle")
 
 
@@ -49,10 +49,10 @@ def open_services_tab(page: Page) -> None:
     tabblad. De tabbladen zijn gewone links (``<c-tab href=...>`` rendert een ``<a>``),
     dus dit is dezelfde navigatie als een gebruiker doet.
     """
-    if "/projects/services/" in page.url:
+    if page.url.split("?")[0].endswith("/services"):
         return
-    page.locator("a[href*='/projects/services/']").first.click()
-    page.wait_for_url("**/projects/services/**", timeout=15000)
+    page.locator("a[href$='/services']").first.click()
+    page.wait_for_url("**/services", timeout=15000)
     page.wait_for_load_state("networkidle")
 
 
