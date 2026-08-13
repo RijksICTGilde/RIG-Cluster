@@ -43,8 +43,8 @@
            tegen af te zetten, en een balk zonder schaal is geen meting. #}
         <c-stack gap="xs">
             <c-cluster justify="between" align="center" gap="sm">
-                <c-paragraph size="sm"><c-icon icon="cylinder-split" size="sm" color="donkerblauw" /> CPU</c-paragraph>
-                <c-paragraph size="sm"><strong>{{ cores(usage.cpu_used) }}</strong>{% if usage.cpu_limit > 0 %} / {{ cores(usage.cpu_limit) }} cores ({{ usage.cpu_pct }}%){% else %} cores{% endif %}</c-paragraph>
+                <c-span><c-icon icon="cylinder-split" size="sm" color="donkerblauw" /> CPU</c-span>
+                <c-span><strong>{{ cores(usage.cpu_used) }}</strong>{% if usage.cpu_limit > 0 %} / {{ cores(usage.cpu_limit) }} cores ({{ usage.cpu_pct }}%){% else %} cores{% endif %}</c-span>
             </c-cluster>
             {% if usage.cpu_limit > 0 %}
                 <c-progress-bar
@@ -58,8 +58,8 @@
         {# Geheugen: de working set, dus wat er werkelijk in gebruik is. #}
         <c-stack gap="xs">
             <c-cluster justify="between" align="center" gap="sm">
-                <c-paragraph size="sm"><c-icon icon="database" size="sm" color="groen" /> Geheugen (in gebruik)</c-paragraph>
-                <c-paragraph size="sm"><strong>{{ gib(usage.mem_used) }}</strong>{% if usage.mem_limit > 0 %} / {{ gib(usage.mem_limit) }} ({{ usage.mem_pct }}%){% endif %}</c-paragraph>
+                <c-span><c-icon icon="database" size="sm" color="groen" /> Geheugen (in gebruik)</c-span>
+                <c-span><strong>{{ gib(usage.mem_used) }}</strong>{% if usage.mem_limit > 0 %} / {{ gib(usage.mem_limit) }} ({{ usage.mem_pct }}%){% endif %}</c-span>
             </c-cluster>
             {% if usage.mem_limit > 0 %}
                 <c-progress-bar
