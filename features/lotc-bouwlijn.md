@@ -285,6 +285,31 @@ langs. In een sjabloon schrijf je dus een NLDD-naam; de tabel is voor namen die 
 Python komen (het menu, de dienstdefinities). Zie
 `features/eigen-vormgeving-vervangen-door-componenten.md`.
 
+### En het derde gat: de naam die uit GEGEVENS komt
+
+Beide regels hierboven gaan over een naam die je kunt LEZEN. De helft van de iconen op
+een pagina staat er niet: `icon="{{ service.icon }}"` haalt zijn naam uit de gegevens, en
+die dragen ROOS-namen. Twaalf van die plekken misten het filter. De poort was groen -
+hij mat `to_nldd_icon(naam)`, dus een vertaling die het sjabloon vervolgens niet
+uitvoerde - en de gebruiker zag lege plekken.
+
+Twee regels, allebei bewaakt:
+
+- **Komt een iconnaam uit gegevens, dan gaat hij door `| nldd_icon`.** Ook als de
+  gegevens al een NLDD-naam dragen: `to_nldd_icon` laat een onbekende naam door, dus het
+  filter kan er nooit kwaad. `test_elke_gegevensgestuurde_iconnaam_gaat_door_het_filter`
+  faalt op elke plek zonder.
+- **Een iconnaam kan ook ergens anders staan dan in een `icon=`-attribuut.** Bijvoorbeeld
+  als macro-argument (`{% call panel("Helm Charts", "folder-stack") %}`), in een
+  woordenboek in Python (`"icon": "..."`) of in een gegevensbestand (de presets in
+  `opi/configs/presets/*.yaml`). Daar stonden ook lege plekken; alle drie worden nu
+  gescand.
+
+Onder die statische poorten ligt `tests/e2e/test_lotc_iconen_tekenen.py`: die vraagt het
+aan de BROWSER in plaats van aan een lijst - een echte `<nldd-icon>` per naam en de vraag
+of er iets in het SVG staat, plus de draaiende pagina's op lege plekken. Een lijst is een
+aanname over de browser, en die aanname is hier al twee keer misgegaan.
+
 ## Stand en wat er open staat
 
 Alle templates compileren, en de omzetting is af: er is geen tweede vormgeving meer om op
