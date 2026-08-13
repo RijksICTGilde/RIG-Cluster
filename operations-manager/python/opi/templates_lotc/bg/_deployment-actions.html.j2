@@ -67,7 +67,7 @@
                     {% set doel = action.modal_endpoint if action.modal_endpoint else "/projects/" ~ project.name ~ "/deployments/" ~ deployment.name ~ "/actions/" ~ (action | deployment_action_key) ~ "/confirm" %}
                     {% set titel = action.modal_title if action.modal_endpoint else action.label %}
                     {% set dienstactie = "openServiceModal('" ~ doel ~ "', '" ~ titel ~ "')" %}
-                    <c-button type="{{ action.kind }}" size="sm" show-icon="before" icon="{{ action.icon }}"
+                    <c-button type="{{ action.kind }}" size="sm" show-icon="before" icon="{{ action.icon | nldd_icon }}"
                               label="{{ action.label }}" :attrs="{'onclick': dienstactie}" />
                     {% endfor %}
                 </c-cluster>

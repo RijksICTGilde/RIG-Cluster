@@ -29,7 +29,7 @@
             <div class="wizard-review__section">
                 <div class="wizard-review__section-header">
                     <c-heading type="h3">
-                        {% if section.icon %}<c-icon icon="{{ section.icon }}" size="lg"/>{% endif %}
+                        {% if section.icon %}<c-icon icon="{{ section.icon | nldd_icon }}" size="lg"/>{% endif %}
                         {{ section.title }}
                     </c-heading>
                     <c-button size="sm" label="Bewerken" show-icon="before" icon="pencil-on-square"/>
