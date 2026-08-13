@@ -13,6 +13,7 @@ de hertekende pagina leest - plus de weergavekeuze licht/donker onderaan.
 """
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, urlencode
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -261,7 +262,9 @@ DEPLOYMENT_SORTERINGEN: list[tuple[str, str, Any]] = [
 ]
 
 
-def filter_lotc_deployments(request: Request, deployments: list[dict[str, Any]]) -> dict[str, Any]:
+def filter_lotc_deployments(
+    request: Request, deployments: list[dict[str, Any]], deployment_open: str = ""
+) -> dict[str, Any]:
     """Pas ``?q=`` en ``?dsort=`` toe op de deployments van een project.
 
     Zelfde opzet als :func:`filter_lotc_projects`, en om dezelfde reden SERVER-SIDE: dan
@@ -272,11 +275,11 @@ def filter_lotc_deployments(request: Request, deployments: list[dict[str, Any]])
     kunnen in een en dezelfde URL staan zodra iemand een link deelt. Het ZOEKveld heet
     wel gewoon ``q`` - die twee lijsten staan nooit op dezelfde pagina.
 
-    ``?deployment=`` hoort bij het TABBLAD DEPLOYMENTS en niet bij de tabel: daar wordt er
-    een getoond, en de rij in de tabel is de link die hem aanwijst. Hij wordt hier bepaald
-    omdat hier bekend is welke deployments er zijn; een naam die niets oplevert (een
-    verwijderde deployment in een oude link) valt terug op de eerste, net als
-    switchDeployment() in de browser doet.
+    WELKE deployment open staat wordt hier NIET meer bepaald. Dat doet de route, uit het
+    PAD (``/projects/deployments/<project>/<naam>``), met :func:`kies_deployment`; het
+    komt hier binnen als ``deployment_open``. De tabel op Overzicht heeft die keuze zelf
+    niet nodig - daar is elke rij een link naar het tabblad Deployments - maar de kiezer
+    en het paneel lezen hem uit dezelfde context, dus hij gaat mee de pagina in.
     """
     zoekterm = (request.query_params.get("q") or "").strip()
     if zoekterm:
@@ -301,12 +304,7 @@ def filter_lotc_deployments(request: Request, deployments: list[dict[str, Any]])
     if gekozen == "naam-af":
         gevonden.reverse()
 
-    gevraagd = request.query_params.get("deployment") or ""
-    # Alfabetisch, want zo staan de panelen op het tabblad Deployments onder elkaar: de
-    # terugval hoort de deployment te zijn die je daar als eerste ziet.
-    alle_namen = sorted(deployment["name"] for deployment in deployments)
-    expliciet = gevraagd if gevraagd in alle_namen else ""
-    open_deployment = expliciet or (alle_namen[0] if alle_namen else "")
+    geopend = next((deployment for deployment in deployments if deployment["name"] == deployment_open), None)
 
     return {
         "deployments_zichtbaar": gevonden,
@@ -316,12 +314,11 @@ def filter_lotc_deployments(request: Request, deployments: list[dict[str, Any]])
         "deployment_query": zoekterm,
         "deployment_sort": gekozen,
         "deployment_sorteringen": [(sleutel, label) for sleutel, label, _ in DEPLOYMENT_SORTERINGEN],
-        "deployment_open": open_deployment,
-        # Of die keuze GEVRAAGD is (?deployment=<naam>) of alleen de terugval. Het
-        # verschil telt in de browser: een gevraagde keuze overrulet wat er van het vorige
-        # tabblad onthouden is, de terugval niet - anders zou elke paginaverversing de
-        # onthouden keuze terugzetten naar de eerste deployment.
-        "deployment_gevraagd": expliciet,
+        "deployment_open": deployment_open,
+        # De deployment zelf, want de tabbladen renderen er nog maar EEN en hoeven er dus
+        # niet meer met een lus doorheen om hem te vinden. Leeg als het project er geen
+        # heeft; dan toont het tabblad de melding "Nog geen deployments".
+        "deployment_geopend": geopend,
     }
 
 
@@ -437,16 +434,62 @@ PROJECT_TABS = {
 #: Het tabblad waar een onbekend (of ontbrekend) tabblad op uitkomt.
 STANDAARD_TAB = next(iter(PROJECT_TABS))
 
+#: De tabbladen die EEN deployment tegelijk tonen, en die hem daarom in hun PAD dragen:
+#: ``/projects/deployments/<project>/<deployment>``.
+#:
+#: Ze stonden er allebei alle deployments te renderen en verborgen er alles behalve een
+#: met CSS. Dat kost werk voor blokken die niemand ziet, en de keuze ging verloren zodra
+#: je van tabblad wisselde. Nu rendert de server er een, en zegt de URL welke: dat is
+#: deelbaar, de terugknop werkt, en de keuze reist mee naar het andere tabblad omdat de
+#: tabbalk hem in zijn adressen meeneemt.
+TABS_MET_DEPLOYMENT = ("deployments", "metrics")
 
-def project_tab_url(project_name: str, tab: str, query: str = "") -> str:
+
+def project_tab_url(project_name: str, tab: str, query: str = "", deployment: str = "") -> str:
     """Het adres van een tabblad van een project.
 
     Op een plek berekend, zodat de tabbalk, de kruimels, de kerncijfers en de router het
     over hetzelfde adres hebben. Een onbekend tabblad valt terug op Overzicht in plaats
     van een pad te verzinnen dat geen route heeft.
+
+    ``deployment`` komt er als extra segment achter, maar alleen op de tabbladen die er
+    een tegelijk tonen (:data:`TABS_MET_DEPLOYMENT`). Op Overzicht zou dat pad geen route
+    hebben, en dan zou de tabbalk naar een 404 wijzen zodra er een deployment gekozen is.
     """
     pad = PROJECT_TABS.get(tab, PROJECT_TABS[STANDAARD_TAB])["path"]
-    return f"/projects/{pad}/{project_name}" + (f"?{query}" if query else "")
+    adres = f"/projects/{pad}/{project_name}"
+    if deployment and tab in TABS_MET_DEPLOYMENT:
+        adres += f"/{quote(deployment, safe='')}"
+    return adres + (f"?{query}" if query else "")
+
+
+def kies_deployment(namen: list[str], *voorkeuren: str) -> str:
+    """Welke deployment staat er open: de eerste voorkeur die ECHT bestaat.
+
+    Een naam die niets oplevert - een verwijderde deployment in een gedeelde link - valt
+    terug op de eerste op naam, want zo staan ze in de kiezer. Een project zonder
+    deployments levert een lege naam op; daar valt niets te openen.
+
+    Dit is de ENE regel voor "welke staat open". Hij stond eerder half in de server
+    (``?deployment=``) en half in de browser (een onthouden keuze in sessionStorage), en
+    die twee konden elkaar overschrijven.
+    """
+    for voorkeur in voorkeuren:
+        if voorkeur and voorkeur in namen:
+            return voorkeur
+    return sorted(namen)[0] if namen else ""
+
+
+def deployment_pagina_adres(request: Request, project_name: str, deployment_open: str) -> str:
+    """Het adres waar DEZE pagina hoort te staan, met de deployment in het pad.
+
+    De querystring gaat mee behalve ``deployment=``: die oude vorm (een gedeelde link uit
+    de tijd dat de keuze een parameter was) wordt hiermee een doorverwijzing naar het pad,
+    zodat er een adres per deployment is en niet twee.
+    """
+    tab = tab_from_path(request.url.path)
+    resterend = [(sleutel, waarde) for sleutel, waarde in request.query_params.multi_items() if sleutel != "deployment"]
+    return project_tab_url(project_name, tab, urlencode(resterend), deployment=deployment_open)
 
 
 def tab_from_path(path: str) -> str:
@@ -465,6 +508,7 @@ def build_lotc_project_details(
     *,
     user: dict[str, Any] | None,
     project: dict[str, Any],
+    deployment_open: str = "",
 ) -> dict[str, Any]:
     """De ECHTE projectgegevens, in de vorm die de pagina met tabs leest.
 
@@ -486,12 +530,16 @@ def build_lotc_project_details(
     active_tab = tab_from_path(request.url.path)
     return {
         "navigation": get_navigation(user, current_path="/projects"),
+        # De gekozen deployment gaat MEE in de tabbladadressen. Zo blijft hij staan als je
+        # van Deployments naar Metingen wisselt: dat is een gewone link naar een adres dat
+        # de naam al draagt, en niet iets dat de browser moet onthouden.
         "tabs": {
-            tab: {**gegevens, "url": project_tab_url(project["name"], tab)} for tab, gegevens in PROJECT_TABS.items()
+            tab: {**gegevens, "url": project_tab_url(project["name"], tab, deployment=deployment_open)}
+            for tab, gegevens in PROJECT_TABS.items()
         },
         "active_tab": active_tab,
         "project": project,
-        **filter_lotc_deployments(request, project.get("deployments") or []),
+        **filter_lotc_deployments(request, project.get("deployments") or [], deployment_open),
     }
 
 

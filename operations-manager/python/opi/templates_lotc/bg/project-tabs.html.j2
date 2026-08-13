@@ -50,16 +50,17 @@
        pagina - een zwevend kruisje boven de voettekst. Precies het soort fout waar geen
        enkele markupcontrole op aanslaat: de HTML klopte, alleen de opmaak ontbrak. #}
     <link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
-    {# base.css om EEN klasse: .is-hidden (display:none !important). Het tabblad
-       Deployments toont een deployment tegelijk en switchDeployment() wisselt dat met
-       precies die klasse; zonder deze stylesheet staat alles tegelijk in beeld. De rest
-       van base.css hangt aan rvo-klassen die op deze pagina niet voorkomen. #}
+    {# base.css om EEN klasse: .is-hidden (display:none !important). De gedeelde dialoog
+       verbergt er zijn foutregel mee en de logweergave zijn gefilterde regels; zonder
+       deze stylesheet staan die meteen in beeld. De rest van base.css hangt aan
+       rvo-klassen die op deze pagina niet voorkomen.
+
+       Het tabblad Deployments gebruikte hem ook, om alle deployments behalve een te
+       verbergen. Dat is weg: de server rendert er nog maar EEN (die uit het pad), dus er
+       valt niets meer te verbergen. #}
     <link rel="stylesheet" href="{{ static_url('css/base.css') }}">
     <script src="{{ static_url('js/json-enc.js') }}"></script>
     <script src="{{ static_url('js/edit_modal.js') }}"></script>
-    {# switchDeployment(): dezelfde functie als op de bestaande pagina, sinds deze
-       omzetting in een eigen bestand omdat beide pagina's hem nodig hebben. #}
-    <script src="{{ static_url('js/deployment_switch.js') }}"></script>
     {# copyToClipboard(): de kopieerknoppen van de DIENSTBLOKKEN (keycloak, invite, de
        OTP-code). Onder "Configuratie & Secrets" hangt hij niet meer: die waarden staan in
        een <c-secret-field>, dat zijn eigen kopieerknop meebrengt. Stond inline op de
@@ -631,9 +632,17 @@
         {% endcall %}
 
     {% elif active_tab == 'deployments' %}
-        {# EEN DEPLOYMENT TEGELIJK. Dit tabblad is de DETAILWEERGAVE: je kiest er een, ziet
-           zijn gegevens en kunt hem bewerken. De INGANG is de tabel op Overzicht; een rij
-           daar wijst hierheen met ?deployment=<naam>.
+        {# EEN DEPLOYMENT PER PAGINA. Dit tabblad is de DETAILWEERGAVE: je kiest er een,
+           ziet zijn gegevens en kunt hem bewerken. De INGANG is de tabel op Overzicht; een
+           rij daar wijst hierheen met de naam in het PAD
+           (/projects/deployments/<project>/<naam>).
+
+           Hier stonden ALLE deployments, waarvan er alles behalve een met CSS verborgen
+           werd. Dat is werk voor blokken die niemand ziet - elk verborgen blok draagt zijn
+           eigen lazy-laders - en de keuze ging verloren zodra je van tabblad wisselde. De
+           server rendert er nu EEN: die uit het pad (``deployment_geopend``, gekozen door
+           de route). De keuze reist mee naar Metingen omdat de tabbalk hem in zijn
+           adressen meeneemt, en niet omdat de browser hem onthoudt.
 
            DE DEPLOYMENTINFORMATIE STOND HIER TWEE KEER: een statuskaart met naam, cluster,
            de rode melding, Uitgeschakeld/Synced en de laatste sync, en daaronder
@@ -643,17 +652,13 @@
            inhoud - en de statusgegevens staan er bovenin (zie het paneel in
            bg/_section-deployments.html.j2).
 
-           Elk blok dat bij een deployment hoort draagt ``class="deployment-section"`` en
-           zegt met een id (``deployment-<naam>``, ``deployment-actions-<naam>``) of met
-           ``data-deployment`` bij welke het hoort. switchDeployment() wisselt ze; die
-           namen zijn dus geen vormgeving en staan hier letterlijk.
-
-           WELKE OPEN STAAT bepaalt de SERVER (``deployment_open``, uit ?deployment=), niet
-           "de eerste". Anders opent een rij uit de tabel het verkeerde paneel zodra er
-           JavaScript uit staat.
+           Elk blok dat bij de deployment hoort zegt met een id (``deployment-<naam>``,
+           ``deployment-actions-<naam>``) of met ``data-deployment`` om welke het gaat. Er
+           valt niets meer te wisselen, dus ``deployment-section`` en ``is-hidden`` zijn
+           weg; de namen zelf blijven, want ze benoemen waar een blok over gaat.
 
            De omgevingsvariabelen horen NIET bij een deployment - dat blok toont ze
-           allemaal - en staat daarom buiten het wisselen, precies als in het origineel. #}
+           allemaal - en staan daarom buiten dit alles, precies als in het origineel. #}
 
         {# Alleen zonder deployments. Zodra er een is staat deze knop in de Acties-kaart,
            naast "Images bewerken"; die kaart rendert niet op een leeg project, en dan zou
@@ -666,50 +671,35 @@
 
         {% include "bg/_deployment-selector.html.j2" %}
 
-        {# #deployments-weergave draagt de keuze die de SERVER heeft gemaakt naar de
-           browser. static/js/deployment_switch.js onthoudt de laatst gekozen deployment
-           per project; zonder dit attribuut zou die opgeslagen keuze over de zojuist
-           aangeklikte rij heen gaan. Het attribuut is leeg als er niets gevraagd is - dan
-           blijft de onthouden keuze staan. #}
-        <div id="deployments-weergave" data-deployment-open="{{ deployment_gevraagd | default('') }}">
         <c-stack gap="md">
-            {% include "bg/_deployment-actions.html.j2" %}
+            {% if deployment_geopend %}
+                {% include "bg/_deployment-actions.html.j2" %}
 
-            {# De blokken die de diensten per deployment leveren (RC-24): de backups, de
-               metingen. Een dienst beslist zelf of zijn blok voor deze deployment geldt,
-               dus hier staat geen dienstnaam en geen voorwaarde. #}
-            {% for deployment in project.deployments | sort(attribute='name') %}
-            <div class="deployment-section{% if deployment.name != deployment_open %} is-hidden{% endif %}"
-                 data-deployment="{{ deployment.name }}">
-                <c-stack gap="md">
-                    {% with sections = (deployment_service_sections | default({})).get(deployment.name, []) %}
-                        {% include "bg/_deployment-service-sections.html.j2" %}
-                    {% endwith %}
-                </c-stack>
-            </div>
-            {% endfor %}
+                {# De blokken die de diensten voor DEZE deployment leveren (RC-24): de
+                   backups, de metingen. Een dienst beslist zelf of zijn blok voor deze
+                   deployment geldt, dus hier staat geen dienstnaam en geen voorwaarde. #}
+                <div data-deployment="{{ deployment_geopend.name }}">
+                    <c-stack gap="md">
+                        {% with sections = (deployment_service_sections | default({})).get(deployment_geopend.name, []) %}
+                            {% include "bg/_deployment-service-sections.html.j2" %}
+                        {% endwith %}
+                    </c-stack>
+                </div>
 
-            {# Het paneel per deployment - de statusgegevens EN de inhoud, in een blok. Het
-               komt uit _section-deployments; de wikkel eromheen is die van de bestaande
-               pagina, want switchDeployment() zoekt op id="deployment-<naam>" - ook om te
-               bepalen of een deployment nog bestaat. #}
-            {% for deployment in project.deployments | sort(attribute='name') %}
-                {# deployment-card staat erbij omdat section-deployments.html.j2 die klasse draagt:
-                   hij bakent EEN deployment af, zodat je de knop van deze te pakken krijgt
-                   en niet die van de volgende. Letterlijk overgenomen, net als de id die
-                   switchDeployment() gebruikt. #}
-                <div class="deployment-section deployment-card{% if deployment.name != deployment_open %} is-hidden{% endif %}" id="deployment-{{ deployment.name }}">
-                    {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
+                {# Het paneel van de deployment - de statusgegevens EN de inhoud, in een
+                   blok. Het komt uit _section-deployments; deployment-card is de klasse
+                   die het paneel afbakent (zie static/css/project-details.css). #}
+                <div class="deployment-card" id="deployment-{{ deployment_geopend.name }}">
+                    {{ deployment_panel(deployment_geopend, project, approval_notices | default({}), user_role | default('')) }}
                 </div>
             {% else %}
                 <c-alert type="info" heading="Nog geen deployments">
                     Een deployment bepaalt waar je componenten draaien en op welk adres. Maak er een met de knop bovenaan.
                 </c-alert>
-            {% endfor %}
+            {% endif %}
 
             {% include "bg/_env-vars.html.j2" %}
         </c-stack>
-        </div>
 
     {% elif active_tab == 'metrics' %}
         {# ---- Per deployment: CPU, geheugen, netwerk en disk over de tijd ---------
@@ -727,29 +717,25 @@
            intersect once, net als bij de dienst: elk blok is een reeks queries, en die
            doe je pas als iemand kijkt.
 
-           EEN DEPLOYMENT TEGELIJK, net als op het tabblad Deployments. Hier stonden ze
-           alle onder elkaar, terwijl je ook hier per deployment kijkt: bij vier
-           deployments scrolde je langs vier grafiekenblokken om er een te vinden.
-           Dezelfde kiezer (bg/_deployment-selector.html.j2) en dezelfde markup waar
-           switchDeployment() aan hangt: ``class="deployment-section"`` met
-           ``data-deployment``. De keuze loopt mee met het andere tabblad; dat onthoudt
-           het script per project. #}
-        {% if project.deployments %}
+           EEN DEPLOYMENT PER PAGINA, net als op het tabblad Deployments, en om dezelfde
+           reden: je kijkt hier per deployment. De naam staat in het PAD
+           (/projects/metrics/<project>/<naam>) en de server rendert dat ene blok; ze
+           stonden hier alle onder elkaar, waarvan er alles behalve een verborgen werd.
+           Dezelfde kiezer als op Deployments (bg/_deployment-selector.html.j2), en de
+           keuze blijft staan bij het wisselen van tabblad omdat de tabbalk hem meeneemt. #}
+        {% if deployment_geopend %}
             {% include "bg/_deployment-selector.html.j2" %}
-            {% for deployment in project.deployments | sort(attribute='name') %}
-                <div class="deployment-section{% if deployment.name != deployment_open %} is-hidden{% endif %}"
-                     data-deployment="{{ deployment.name }}">
-                    {% call panel("Metingen - " ~ deployment.name, "chart-x-y-axis-line",
-                                  info_text="Verbruik per component over de tijd.") %}
-                        <div id="metrics-content-{{ deployment.name }}"
-                             hx-get="/projects/details/{{ project.name }}/metrics/{{ deployment.name }}"
-                             hx-trigger="intersect once"
-                             hx-swap="innerHTML">
-                            <c-paragraph>Metingen worden opgehaald...</c-paragraph>
-                        </div>
-                    {% endcall %}
-                </div>
-            {% endfor %}
+            <div data-deployment="{{ deployment_geopend.name }}">
+                {% call panel("Metingen - " ~ deployment_geopend.name, "chart-x-y-axis-line",
+                              info_text="Verbruik per component over de tijd.") %}
+                    <div id="metrics-content-{{ deployment_geopend.name }}"
+                         hx-get="/projects/details/{{ project.name }}/metrics/{{ deployment_geopend.name }}"
+                         hx-trigger="intersect once"
+                         hx-swap="innerHTML">
+                        <c-paragraph>Metingen worden opgehaald...</c-paragraph>
+                    </div>
+                {% endcall %}
+            </div>
         {% endif %}
 
         {% if project.name is defined and usage is not defined %}
