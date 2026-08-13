@@ -32,8 +32,10 @@ def open_tab(page: Page, tab: str) -> None:
     Gebruikt ``switchTab()`` als die er is, en navigeert anders naar het PAD van dat
     tabblad. Zo hoeft een test niet te weten welke weergave hij meet.
 
-    De projectnaam komt uit het pad van de huidige pagina: elk tabbladadres eindigt erop
-    (``/projects/<tabblad>/<naam>``), dus dat is het laatste segment.
+    De projectnaam komt uit het pad van de huidige pagina: dat is het DERDE segment
+    (``/projects/<tabblad>/<naam>``). Niet het laatste - sinds RC-92 kan er een deployment
+    achter staan (``/projects/deployments/<naam>/<deployment>``), en dan zou het laatste
+    segment de deployment zijn.
     """
     heeft_switch = page.evaluate("() => typeof window.switchTab === 'function'")
     if heeft_switch:
@@ -41,6 +43,7 @@ def open_tab(page: Page, tab: str) -> None:
         return
 
     stukken = urlparse(page.url)
-    projectnaam = stukken.path.rstrip("/").rsplit("/", 1)[-1]
+    segmenten = stukken.path.strip("/").split("/")
+    projectnaam = segmenten[2] if len(segmenten) > 2 else ""
     page.goto(f"{stukken.scheme}://{stukken.netloc}{project_tab_url(projectnaam, tab)}")
     page.wait_for_load_state("networkidle")

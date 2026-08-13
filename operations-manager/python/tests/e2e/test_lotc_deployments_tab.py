@@ -37,6 +37,11 @@ pytestmark = pytest.mark.e2e
 PROJECT = "test-project-detail"
 LOTC_URL = f"/projects/deployments/{PROJECT}"
 
+#: De twee deployments van de fixture, elk op zijn eigen adres. Sinds RC-92 toont het
+#: tabblad er EEN per pagina, dus het gedragsoppervlak van dit tabblad is de som van de
+#: twee pagina's - en dat het er per pagina EEN is, is zelf de winst die getoetst wordt.
+DEPLOYMENTS = ("default", "tweede")
+
 # Op de bestaande pagina staan alle drie de tabbladen in EEN document; alleen wat binnen
 # #tab-deployments staat hoort bij dit tabblad. De hertekende pagina heeft een eigen URL
 # per tabblad, maar draagt dezelfde id om de twee vergelijkbaar te houden.
@@ -99,47 +104,123 @@ INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD = {"/projects/details/test-project-detail/b
 
 
 def test_geen_enkele_bestemming_van_het_deploymenttabblad_is_verdwenen(app_server: str, auth_page: Page) -> None:
-    """Elke dialoog en elk endpoint uit de lijst hierboven staat op het tabblad."""
-    nieuw = _surface(auth_page, app_server, LOTC_URL, LOTC_SCOPE)
+    """Elke dialoog en elk endpoint uit de lijst hierboven staat op het tabblad.
 
-    weg = AANROEPEN_VAN_HET_DEPLOYMENTTABBLAD - set(nieuw["calls"])
+    Over de twee deploymentpagina's samen: er staat er een per pagina, dus wie ze op EEN
+    pagina zoekt vindt de helft.
+    """
+    gevonden: set[str] = set()
+    ingeladen: set[str] = set()
+    for naam in DEPLOYMENTS:
+        oppervlak = _surface(auth_page, app_server, f"{LOTC_URL}/{naam}", LOTC_SCOPE)
+        gevonden |= set(oppervlak["calls"])
+        ingeladen |= set(oppervlak["hx"])
+
+    weg = AANROEPEN_VAN_HET_DEPLOYMENTTABBLAD - gevonden
     assert not weg, "verdwenen van het tabblad Deployments:\n  " + "\n  ".join(sorted(weg))
 
-    assert set(nieuw["hx"]) >= INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD, (
-        f"het tabblad laadt niet meer in: {sorted(INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD - set(nieuw['hx']))}"
+    assert ingeladen >= INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD, (
+        f"het tabblad laadt niet meer in: {sorted(INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD - ingeladen)}"
     )
 
 
-def test_de_kiezer_toont_een_andere_deployment(app_server: str, auth_page: Page) -> None:
-    """De keuzelijst wisselt ALLE blokken van een deployment, niet alleen het paneel.
+def test_de_pagina_toont_alleen_de_deployment_uit_het_pad(app_server: str, auth_page: Page) -> None:
+    """De andere deployment staat er niet - ook niet verborgen.
 
-    Er hangen er drie soorten aan: het paneel (id deployment-<naam>), de acties
-    (deployment-actions-<naam>) en de blokken van de diensten (data-deployment). Die
-    laatste zijn de reden dat switchDeployment() niet alleen op id's zoekt.
+    Dat is de hele opbrengst: geen blokken renderen die niemand ziet, en geen lazy-laders
+    die daaraan hangen. Verborgen zou hier net zo goed "onzichtbaar" meten, dus dit kijkt
+    of het element BESTAAT.
     """
+    auth_page.goto(f"{app_server}{LOTC_URL}/default")
+    auth_page.wait_for_load_state("networkidle")
+
+    assert auth_page.locator("#deployment-default").count() == 1
+    assert auth_page.locator("#deployment-actions-default").count() == 1
+    assert auth_page.locator('[data-deployment="default"]').count() == 1
+    assert auth_page.locator("#deployment-tweede").count() == 0
+    assert auth_page.locator("#deployment-actions-tweede").count() == 0
+    assert auth_page.locator('[data-deployment="tweede"]').count() == 0
+
+
+def test_zonder_deployment_in_het_pad_opent_er_een_en_zegt_de_url_welke(app_server: str, auth_page: Page) -> None:
+    """Een adres zonder naam is geen fout: de server kiest de eerste op naam en verwijst
+    door, zodat de URL daarna zegt wat je ziet en de link deelbaar is."""
     auth_page.goto(f"{app_server}{LOTC_URL}")
     auth_page.wait_for_load_state("networkidle")
 
-    assert auth_page.locator("#deployment-default").is_visible()
-    assert auth_page.locator("#deployment-actions-default").is_visible()
-    assert auth_page.locator('.deployment-section[data-deployment="default"]').is_visible()
-    assert not auth_page.locator("#deployment-tweede").is_visible()
-    assert not auth_page.locator("#deployment-actions-tweede").is_visible()
-    assert not auth_page.locator('.deployment-section[data-deployment="tweede"]').is_visible()
+    assert auth_page.url.endswith(f"{LOTC_URL}/default")
+    assert auth_page.locator("#deployment-default").count() == 1
 
-    auth_page.select_option("#global-deployment-selector", "tweede")
 
-    auth_page.locator("#deployment-tweede").wait_for(state="visible", timeout=5000)
-    assert auth_page.locator("#deployment-actions-tweede").is_visible()
-    assert auth_page.locator('.deployment-section[data-deployment="tweede"]').is_visible()
-    assert not auth_page.locator("#deployment-default").is_visible()
-    assert not auth_page.locator("#deployment-actions-default").is_visible()
-    assert not auth_page.locator('.deployment-section[data-deployment="default"]').is_visible()
+def test_een_verdwenen_deployment_in_de_url_komt_bij_een_bestaande_uit(app_server: str, auth_page: Page) -> None:
+    """Een gedeelde link kan een deployment noemen die verwijderd is."""
+    auth_page.goto(f"{app_server}{LOTC_URL}/bestaat-niet")
+    auth_page.wait_for_load_state("networkidle")
+
+    assert auth_page.url.endswith(f"{LOTC_URL}/default")
+
+
+def test_de_oude_vorm_met_een_parameter_verwijst_door(app_server: str, auth_page: Page) -> None:
+    """``?deployment=<naam>`` was het adres voor RC-92; een gedeelde link hoort niet dood
+    te gaan, en er hoort maar EEN adres per deployment te zijn."""
+    auth_page.goto(f"{app_server}{LOTC_URL}?deployment=tweede")
+    auth_page.wait_for_load_state("networkidle")
+
+    assert auth_page.url.endswith(f"{LOTC_URL}/tweede")
+    assert auth_page.locator("#deployment-tweede").count() == 1
+
+
+def test_de_keuze_blijft_staan_bij_het_wisselen_van_tabblad(app_server: str, auth_page: Page) -> None:
+    """Van Deployments naar Metingen en terug: dezelfde deployment.
+
+    De tabbalk draagt de naam mee, dus dit is een gewone link en geen keuze die de browser
+    onthoudt.
+    """
+    auth_page.goto(f"{app_server}{LOTC_URL}/tweede")
+    auth_page.wait_for_load_state("networkidle")
+
+    auth_page.locator(
+        'nldd-tab-bar a[href$="/metrics/' + PROJECT + '/tweede"], a[href$="/metrics/' + PROJECT + '/tweede"]'
+    ).first.click()
+    auth_page.wait_for_load_state("networkidle")
+    assert auth_page.url.endswith(f"/projects/metrics/{PROJECT}/tweede")
+    assert auth_page.locator("#metrics-content-tweede").count() == 1
+    assert auth_page.locator("#metrics-content-default").count() == 0
+
+    auth_page.locator('a[href$="/deployments/' + PROJECT + '/tweede"]').first.click()
+    auth_page.wait_for_load_state("networkidle")
+    assert auth_page.url.endswith(f"{LOTC_URL}/tweede")
+
+
+def test_de_kiezer_navigeert_naar_de_andere_deployment(app_server: str, auth_page: Page) -> None:
+    """Kiezen is navigeren: de URL verandert mee, en dus werkt de terugknop.
+
+    Er hangen drie soorten blokken aan een deployment - het paneel (deployment-<naam>), de
+    acties (deployment-actions-<naam>) en de blokken van de diensten (data-deployment) -
+    en na het wisselen horen ze alle drie bij de ANDERE deployment te horen.
+    """
+    auth_page.goto(f"{app_server}{LOTC_URL}/default")
+    auth_page.wait_for_load_state("networkidle")
+
+    auth_page.select_option("#global-deployment-selector", f"{LOTC_URL}/tweede")
+    auth_page.wait_for_url(f"**{LOTC_URL}/tweede", timeout=5000)
+    auth_page.wait_for_load_state("networkidle")
+
+    assert auth_page.locator("#deployment-tweede").count() == 1
+    assert auth_page.locator("#deployment-actions-tweede").count() == 1
+    assert auth_page.locator('[data-deployment="tweede"]').count() == 1
+    assert auth_page.locator("#deployment-default").count() == 0
+
+    # En terug met de terugknop: dat is wat een adres per deployment oplevert.
+    auth_page.go_back()
+    auth_page.wait_for_load_state("networkidle")
+    assert auth_page.url.endswith(f"{LOTC_URL}/default")
+    assert auth_page.locator("#deployment-default").count() == 1
 
 
 def test_de_kiezer_staat_er_alleen_bij_meer_dan_een_deployment(app_server: str, auth_page: Page) -> None:
     """Dezelfde voorwaarde als op de bestaande pagina; de fixture heeft er twee."""
-    auth_page.goto(f"{app_server}{LOTC_URL}")
+    auth_page.goto(f"{app_server}{LOTC_URL}/default")
     auth_page.wait_for_load_state("networkidle")
 
     opties = auth_page.locator("#global-deployment-selector option").all_text_contents()

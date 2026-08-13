@@ -52,10 +52,11 @@
    tweede kopie loopt uit de pas, dus hij staat nu in static/js/, net als de
    modal-openers. #}
 <script src="{{ static_url('js/copy_to_clipboard.js') }}"></script>
-{# switchDeployment() en het herstellen van de keuze uit de URL-hash stonden hieronder
-   inline. De hertekende Deployments-tab heeft ze ook nodig, en twee kopieen lopen uit de
-   pas, dus ze staan nu in static/js/ - net als de modal-openers. #}
-<script src="{{ static_url('js/deployment_switch.js') }}"></script>
+{# switchDeployment() is weg (RC-92). De gerenderde Deployments-tab toont EEN deployment
+   per pagina, met de naam in het pad, dus er valt niets meer te tonen en te verbergen; het
+   script static/js/deployment_switch.js is daarmee vervallen. Deze pagina wordt door geen
+   enkele route meer gerenderd - de projectpagina is bg/project-tabs.html.j2 - en is hier
+   niet verder aangeraakt. #}
 <script>
     /**
      * Switch between tabs (Project / Deployments)
@@ -112,10 +113,8 @@
         }
     }
 
-    /* switchDeployment() staat sinds de omzetting in static/js/deployment_switch.js,
-       samen met het herstellen van de keuze uit de URL-hash: de hertekende pagina
-       (templates_lotc/bg/project-tabs.html.j2) heeft hem ook nodig en er hoort er maar
-       een te zijn. Het script staat hierboven bij de andere. */
+    /* switchDeployment() bestaat niet meer (RC-92): een deployment per pagina, met de
+       naam in het pad. Zie de toelichting bovenaan dit blok. */
 
     /**
      * Toggle ArgoCD error details visibility
@@ -157,9 +156,8 @@
        Hij is niet van deze pagina: de dienstblokken en de nieuwe vormgeving roepen hem
        net zo goed aan. */
 
-    /* Het herstellen van tab en deployment uit de URL-hash is meeverhuisd naar
-       static/js/deployment_switch.js; daar wacht het op DOMContentLoaded en roept het
-       switchTab() alleen aan als die bestaat (op deze pagina dus wel). */
+    /* Het herstellen van de deployment uit de URL-hash is vervallen met
+       switchDeployment(): de deployment staat in het pad. */
 </script>
 {% endblock %}
 

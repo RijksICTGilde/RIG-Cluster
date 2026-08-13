@@ -191,7 +191,7 @@ def test_de_deployment_staat_op_zijn_tabblad_maar_een_keer(app_server: str, auth
     zag staan.
     """
     auth_page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
-    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}?deployment=default")
+    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}/default")
     _wacht_op_nldd(auth_page)
 
     zichtbaar = auth_page.locator("#deployment-default")
@@ -219,39 +219,43 @@ def test_de_rij_opent_de_deployment_op_zijn_eigen_tabblad(app_server: str, auth_
     dus dit werkt ook zonder JavaScript en is deelbaar."""
     _open_overzicht(auth_page, app_server)
 
-    auth_page.locator('#deployments-lijst nldd-table a[href*="deployment=tweede"]').first.click()
+    auth_page.locator(f'#deployments-lijst nldd-table a[href$="/deployments/{PROJECT}/tweede"]').first.click()
     auth_page.wait_for_load_state("networkidle")
 
-    assert auth_page.url.endswith(f"/projects/deployments/{PROJECT}?deployment=tweede")
-    assert auth_page.locator("#deployment-tweede").is_visible()
-    assert not auth_page.locator("#deployment-default").is_visible()
+    assert auth_page.url.endswith(f"/projects/deployments/{PROJECT}/tweede")
+    assert auth_page.locator("#deployment-tweede").count() == 1
+    assert auth_page.locator("#deployment-default").count() == 0, "de andere deployment staat er ook nog"
 
 
 def test_de_kiezer_benoemt_de_deployment_die_open_staat(app_server: str, auth_page: Page) -> None:
-    """De kiezer volgt de SERVER.
+    """De kiezer volgt het PAD.
 
-    De server bepaalt welk paneel open staat (?deployment=<naam>, sinds een rij uit de
-    tabel de ingang is). De kiezer bleef op de eerste optie staan, en dat is twee keer
-    fout: hij benoemt een andere deployment dan er open staat, en een native <select>
-    vuurt geen change als je de al getoonde optie kiest - waardoor 'default' bij twee
-    deployments via de kiezer niet meer te bereiken was.
+    Welke deployment de pagina toont staat in de URL (/projects/deployments/<p>/<naam>).
+    De kiezer bleef eerder op de eerste optie staan, en dat is twee keer fout: hij benoemt
+    een andere deployment dan er open staat, en een native <select> vuurt geen change als
+    je de al getoonde optie kiest - waardoor die deployment via de kiezer niet meer te
+    bereiken was.
 
-    Daarom legt deze toets de kiezerwaarde naast het ZICHTBARE paneel, en loopt daarna de
-    weg terug.
+    De WAARDE van een optie is sinds RC-92 het adres van die deployment: kiezen is
+    navigeren.
     """
     auth_page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
-    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}?deployment=tweede")
+    auth_page.goto(f"{app_server}/projects/deployments/{PROJECT}/tweede")
     _wacht_op_nldd(auth_page)
 
     kiezer = auth_page.locator("#global-deployment-selector")
-    assert auth_page.locator("#deployment-tweede").is_visible()
-    assert kiezer.input_value() == "tweede", "de kiezer benoemt een andere deployment dan er open staat"
+    assert auth_page.locator("#deployment-tweede").count() == 1
+    assert kiezer.input_value().endswith(f"/projects/deployments/{PROJECT}/tweede"), (
+        "de kiezer benoemt een andere deployment dan er open staat"
+    )
 
-    # En terug: 'default' kiezen verandert de waarde ECHT, dus de change vuurt en het
-    # andere paneel komt tevoorschijn.
-    kiezer.select_option("default")
-    assert auth_page.locator("#deployment-default").is_visible()
-    assert not auth_page.locator("#deployment-tweede").is_visible()
+    # En terug: 'default' kiezen verandert de waarde ECHT, dus de change vuurt en de
+    # browser haalt die pagina op.
+    kiezer.select_option(f"/projects/deployments/{PROJECT}/default")
+    auth_page.wait_for_url(f"**/projects/deployments/{PROJECT}/default", timeout=5000)
+    _wacht_op_nldd(auth_page)
+    assert auth_page.locator("#deployment-default").count() == 1
+    assert auth_page.locator("#deployment-tweede").count() == 0
 
 
 def test_zoeken_werkt_via_de_url(app_server: str, auth_page: Page) -> None:
