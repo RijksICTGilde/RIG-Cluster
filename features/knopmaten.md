@@ -70,8 +70,28 @@ klasse terugvindt.
 
 - een `size` die niet in de regel staat, of die uit een variabele komt (dan is hij niet
   te lezen, en kan hij stilletjes buiten de regel vallen);
+- een `size` op een knop die NIET in een dichte context staat (zie hieronder);
 - een `type` dat geen bestaande variant is;
 - een kale `<button>` buiten de twee uitzonderingen.
+
+### De omgekeerde toets
+
+"Bestaat deze maat" is niet genoeg gebleken. `sm` bestaat, dus de hoofdacties van het
+dashboard konden maandenlang kleiner zijn dan dezelfde knop op elke andere pagina met
+alle toetsen groen; het is drie keer door een gebruiker gemeld en nooit door een test.
+
+Wat wél machinaal te zien is: een knop op een **paginasjabloon** (een die een layout
+uitbreidt -- dat is het hele scherm, en daar staan de hoofdacties) die **niet in een
+`{% for %}`** staat, is geen rij in een tabel en geen kaart in een raster. Zo'n knop
+is verdacht en moet zijn reden opschrijven in `SM_OP_EEN_PAGINA` in de bewaker, met
+`(sjabloon, label)` als sleutel -- een regelnummer verschuift bij de eerste bewerking.
+
+De fragmenten (partials, modals, kaarten) blijven buiten deze toets: die zijn de dichte
+context zelf, want ze worden per item of binnen een dialoog gerenderd.
+
+De lijst telt nu zes regels, allemaal een knop in de kopregel van een paneel of in een
+kaart. Wordt hij lang, dan is dat het signaal dat de regel zelf niet meer klopt -- niet
+dat er een regel bij moet.
 
 Waar de variant uit Python komt in plaats van uit het sjabloon -- `DeploymentAction.kind`
 en `ProjectAction.kind`, die rechtstreeks het `type`-attribuut worden -- struikelt de

@@ -42,6 +42,10 @@ KNOP = re.compile(r"<c-button\b[^>]*?>", re.DOTALL)
 #: ``type=`` en ``size=``, maar niet ``html-type=`` of ``:size=``.
 TYPE_ATTRIBUUT = re.compile(r'(?<![-\w:])type="([^"]*)"')
 SIZE_ATTRIBUUT = re.compile(r'(?<![-\w:])size="([^"]*)"')
+LABEL_ATTRIBUUT = re.compile(r'(?<![-\w:])label="([^"]*)"')
+EXTENDS = re.compile(r"\{%-?\s*extends\s")
+FOR = re.compile(r"\{%-?\s*for\s")
+ENDFOR = re.compile(r"\{%-?\s*endfor\s*-?%\}")
 
 #: Een ``type`` die uit Python of uit een Jinja-variabele komt, met de plek waar die
 #: waarde WEL gecontroleerd wordt. Een nieuwe dynamische variant hoort hier pas thuis
@@ -62,6 +66,26 @@ KALE_BUTTON_TOEGESTAAN = {
     "project-details/_argocd-deployment-card.html.j2": (
         "dood sjabloon; de levende versie (bg/_argocd-deployment-card.html.j2) heeft een <c-button>"
     ),
+}
+
+
+#: Knoppen op een PAGINA die ``sm`` dragen terwijl ze niet in een lus staan, en waarom
+#: dat daar tóch klopt. De sleutel is (sjabloon, label): een regelnummer verschuift bij
+#: de eerste de beste bewerking en dan bewaakt deze lijst iets anders dan wat er staat.
+#:
+#: Elke regel hier is een belofte dat de knop in een KOPREGEL of een KAART staat en niet
+#: paginabreed is. Wordt deze lijst lang, dan is dat het signaal dat de regel zelf niet
+#: meer klopt - niet dat er een regel bij moet.
+SM_OP_EEN_PAGINA = {
+    ("bg/project-tabs.html.j2", "Bewerken"): "in de kopregel van een paneel, naast de titel (panel(aside=...))",
+    ("bg/project-tabs.html.j2", "Toevoegen"): "in de kaart Componenten, bij de lijst eronder",
+    (
+        "bg/project-tabs.html.j2",
+        "Deployment toevoegen",
+    ): "in de kaart Acties, naast de andere acties van diezelfde kaart",
+    ("bg/admin-users.html.j2", "Gebruiker toevoegen"): "in de kopregel van het paneel, bij de tabel eronder",
+    ("bg/admin-approvals.html.j2", "Sluiten"): "de sluitknop in de kopregel van de dialoog",
+    ("test-template-variables.html.j2", "Verwijderen"): "ontwikkelpagina die een tabelrijknop naspeelt",
 }
 
 
@@ -98,6 +122,38 @@ def _knoppen() -> list[tuple[str, int, str]]:
     return gevonden
 
 
+def _korte_naam(pad: pathlib.Path) -> str:
+    """Het sjabloonpad zoals een include het schrijft: relatief aan zijn eigen map."""
+    for map_ in (TEMPLATES_DIR, CATALOG_DIR):
+        try:
+            return str(pad.relative_to(map_))
+        except ValueError:
+            continue
+    return str(pad)
+
+
+def _paginaknoppen_met_een_maat() -> list[tuple[str, int, str, bool]]:
+    """Elke ``<c-button>`` MET een maat op een paginasjabloon, en of hij in een lus staat.
+
+    Een paginasjabloon is er een die een layout uitbreidt: dat is het hele scherm, en
+    daar staan de hoofdacties. De fragmenten (partials, modals, kaarten) zijn de dichte
+    context zelf - die worden per item of binnen een dialoog gerenderd - dus daar zegt
+    "staat hij in een lus" niets.
+    """
+    gevonden: list[tuple[str, int, str, bool]] = []
+    for pad in _templatebestanden():
+        tekst = _zonder_commentaar(pad.read_text())
+        if not EXTENDS.search(tekst):
+            continue
+        for treffer in KNOP.finditer(tekst):
+            if not SIZE_ATTRIBUUT.search(treffer.group(0)):
+                continue
+            voor = tekst[: treffer.start()]
+            in_lus = len(FOR.findall(voor)) > len(ENDFOR.findall(voor))
+            gevonden.append((_korte_naam(pad), voor.count("\n") + 1, treffer.group(0), in_lus))
+    return gevonden
+
+
 def test_er_zijn_knoppen_om_te_bewaken() -> None:
     """Zonder deze regel is een test die niets vindt niet van een groene te onderscheiden."""
     assert len(_knoppen()) > 100
@@ -115,6 +171,68 @@ def test_elke_knopmaat_staat_in_de_regel() -> None:
         f"{sorted(BUTTON_SIZES)} voor een knop in een dichte, herhaalde context; alles "
         "daarbuiten laat size weg en krijgt de standaardmaat. Zie features/knopmaten.md:\n  " + "\n  ".join(buiten)
     )
+
+
+def test_er_zijn_paginaknoppen_met_een_maat_om_te_bewaken() -> None:
+    """Vindt de lezer hierboven niets, dan is de test hieronder gratis groen."""
+    assert len(_paginaknoppen_met_een_maat()) > 10
+
+
+def test_geen_maat_op_een_knop_die_niet_in_een_dichte_context_staat() -> None:
+    """De omgekeerde toets: niet "bestaat deze maat", maar "hoort hij hier".
+
+    Waarom deze kant nodig was. De bewaker hierboven leest of een maat in de regel
+    STAAT, en ``sm`` staat erin - dus 'Nieuw Project' en 'Alle projecten' konden op het
+    dashboard maandenlang kleiner zijn dan dezelfde knop op elke andere pagina, met alle
+    toetsen groen. De gebruiker heeft dat drie keer gemeld.
+
+    Wat wel machinaal te zien is: een knop op een PAGINASJABLOON (een die een layout
+    uitbreidt) die NIET in een ``{% for %}`` staat, is geen rij in een tabel en geen
+    kaart in een raster. Zo'n knop is verdacht en moet zijn reden opschrijven in
+    ``SM_OP_EEN_PAGINA``. Wat een dichte context is weet alleen de plek zelf; deze test
+    dwingt af dat die plek het zegt.
+    """
+    verdacht = []
+    for pad, regel, tag, in_lus in _paginaknoppen_met_een_maat():
+        if in_lus:
+            continue
+        label = LABEL_ATTRIBUUT.search(tag)
+        naam = label.group(1) if label else ""
+        if (pad, naam) in SM_OP_EEN_PAGINA:
+            continue
+        verdacht.append(f"{pad}:{regel} label={naam!r}")
+    assert verdacht == [], (
+        "Deze knoppen dragen een maat op een paginasjabloon terwijl ze niet in een lus "
+        "staan, en dat is geen dichte, herhaalde context. Haal de size weg (md is de "
+        "standaard en die schrijf je niet op), of zet de knop in SM_OP_EEN_PAGINA met de "
+        "reden waarom hij daar wel in een kopregel of kaart hoort:\n  " + "\n  ".join(verdacht)
+    )
+
+
+def test_de_omgekeerde_toets_ziet_een_paginabrede_knop_met_een_maat() -> None:
+    """Bewaak de bewaker: een knop die niet in de lijst staat MOET rood worden.
+
+    Zonder deze helft is niet te zien of de lezer hierboven echt iets meet. Dit is
+    precies de vorm die op het dashboard stond.
+    """
+    verdacht = []
+    for pad, _regel, tag, in_lus in [*_paginaknoppen_met_een_maat(), _DASHBOARDKNOP]:
+        if in_lus:
+            continue
+        label = LABEL_ATTRIBUUT.search(tag)
+        naam = label.group(1) if label else ""
+        if (pad, naam) not in SM_OP_EEN_PAGINA:
+            verdacht.append(naam)
+    assert verdacht == ["Nieuw Project"]
+
+
+#: De knop zoals hij op het dashboard stond, als voer voor de test hierboven.
+_DASHBOARDKNOP = (
+    "bg/dashboard.html.j2",
+    92,
+    '<c-button type="primary" size="sm" label="Nieuw Project" icon="plus" href="/forms/wizard/restart" />',
+    False,
+)
 
 
 def test_geen_knopmaat_die_van_buiten_komt() -> None:
