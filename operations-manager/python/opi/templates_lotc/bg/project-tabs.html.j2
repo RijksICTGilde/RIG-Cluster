@@ -345,18 +345,8 @@
             {% endcall %}
         {% endif %}
 
-        {# ---- De secties die de DIENSTEN zelf leveren ------------------------- #}
-        {# De blokken die de DIENSTEN leveren (de Keycloak-realm, de uitnodigingen, de
-           bijlagen). Ze staan bij hun dienst, in zijn eigen map.
-
-           Hier stond eerst render_roos() als terugval voor een dienst zonder eigen
-           sjabloon, en daarna lotc_counterpart(), dat een blok OVERSLOEG als er geen
-           ``-lotc``-versie naast lag. Allebei waren ze er zolang er twee bouwlijnen
-           waren; nu heeft elke dienst nog EEN sjabloon en wordt dat gewoon gerenderd.
-           Dat het er ook echt is, toetst tests/test_lotc_dienstblokken.py. #}
-        {% for section in service_detail_sections | default([]) %}
-            {% include section.template %}
-        {% endfor %}
+        {# DE BLOKKEN DIE DE DIENSTEN LEVEREN STAAN HIER NIET MEER. Ze hebben een eigen
+           tabblad gekregen (Toegang, hieronder): zie de toelichting daar. #}
 
         {# ---- Danger zone (section-danger-zone.html.j2) ----------------------- #}
         {% if user_role in ["admin", "owner"] %}
@@ -694,6 +684,33 @@
                 <c-alert type="info" heading="Geen services geconfigureerd" />
             {% endif %}
         {% endcall %}
+
+    {% elif active_tab == 'toegang' %}
+        {# HET TABBLAD TOEGANG: de blokken die de DIENSTEN zelf leveren (de Keycloak-realm
+           met zijn console, gebruikersnaam, wachtwoord en OTP, de uitnodigingslinks, de
+           geuploade bestanden). Ze staan bij hun dienst, in zijn eigen map.
+
+           Ze stonden onderaan Overzicht, tussen de rest van de detailpagina, terwijl je er
+           juist naartoe gaat als je iets NODIG hebt: een adres om naartoe te gaan, een
+           wachtwoord om mee in te loggen, een code om in te vullen. Services ernaast gaat
+           over BEHEER (welke dienst staat aan, hoe is hij gebonden, waar zet je hem uit);
+           dit gaat over GEBRUIK. Zie opi/web/lotc_switch.py (PROJECT_TABS) voor de naam en
+           features/toegang-tabblad.md voor de afweging.
+
+           De lus noemt GEEN dienst met naam: elke dienst levert zijn blok via
+           UIEvent.PROJECT_SECTIONS en komt hier vanzelf terecht. Zo hoeft de vierde dienst
+           die iets te tonen heeft dit sjabloon niet aan te raken. Drie diensten zijn er
+           genoeg om het zo te willen; een tabblad per dienst (de afweging uit RC-100) is
+           pas nodig als een dienst een eigen INDELING wil in plaats van een blok. Dat elk
+           blok ook echt bestaat toetst
+           tests/test_lotc_dienstblokken.py.
+
+           Er staat hier geen lege toestand: heeft geen enkele dienst iets, dan is er geen
+           tabblad. De route verwijst dat adres door naar Overzicht en de tabbalk laat hem
+           weg (TABS_MET_VOORWAARDE). #}
+        {% for section in service_detail_sections | default([]) %}
+            {% include section.template %}
+        {% endfor %}
 
     {% elif active_tab == 'deployments' %}
         {# EEN DEPLOYMENT PER PAGINA. Dit tabblad is de DETAILWEERGAVE: je kiest er een,

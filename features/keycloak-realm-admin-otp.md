@@ -43,10 +43,14 @@ after it the shared `admin` account is no longer a daily workhorse.
 
 ## How to use it
 
-1. Open a project's detail page in the portal (admin/owner role). Under the
-   **Keycloak** section, each realm with OTP shows a **Toon code** button. It
-   fetches the code of that moment plus how long it stays valid, and a **Nieuwe
-   code** button refetches once it runs out.
+1. Open a project's **Toegang** tab in the portal (admin/owner role). Under the
+   **Keycloak** section, each realm with OTP shows a **Gedeelde OTP** field: the
+   code of the moment the page was rendered, masked like the admin password, with
+   a reveal eye and a copy button. It does not tick down and does not refresh
+   itself - reload the page for a fresh code, which the help text under the field
+   says. (Until RC-101 this was a **Toon code** button that fetched the code from
+   `/projects/<p>/keycloak/<realm>/otp-code`; that endpoint and its fragment are
+   gone with the button.)
 2. Log in at `{keycloak}/admin/` with the admin username + password; Keycloak
    prompts for the OTP code.
 
@@ -144,9 +148,10 @@ above for why that is acceptable here and where the person-bound factor lives.
   OTP credential alongside the password.
 - `opi/manager/keycloak_manager.py` - `_setup_project_keycloak_realm` (new realm)
   and `_ensure_admin_otp` (retrofit).
-- `opi/web/router.py` (`keycloak_otp_code_web`) +
-  `opi/services/catalog/keycloak/section-detail.html.j2` + `otp-code.html.j2` -
-  the on-demand code endpoint and the button/fragment that show it.
+- `opi/web/router.py` (`render_project_page`) - derives the code of this moment
+  from the seed while decrypting the realm data, and nulls the seed before the
+  page context is built.
+- `opi/services/catalog/keycloak/section-detail.html.j2` - the field that shows it.
 - `opi/services/catalog/keycloak/config_model.py` + `keycloak.v1.0.json` -
   `totp_secret` field on the `KeycloakRealm` model + regenerated schema fragment.
 
