@@ -607,6 +607,11 @@
                             </c-stack>
                         </c-card>
                     {% endfor %}
+
+        {# De variabelen die op COMPONENTniveau staan horen hier, want daar zijn ze
+           gedefinieerd. Ze stonden op het tabblad Deployments, samen met de
+           overschrijvingen, en dan lijkt een standaardwaarde iets van de deployment. #}
+        {% with env_niveau = "component" %}{% include "bg/_env-vars.html.j2" %}{% endwith %}
                 </c-stack>
             {% endcall %}
         {% endif %}
@@ -740,7 +745,7 @@
                 </c-alert>
             {% endif %}
 
-            {% include "bg/_env-vars.html.j2" %}
+            {% with env_niveau = "deployment" %}{% include "bg/_env-vars.html.j2" %}{% endwith %}
         </c-stack>
 
     {% elif active_tab == 'metrics' %}
