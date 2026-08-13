@@ -11,7 +11,9 @@ Daarom meet dit bestand het GEDRAGSOPPERVLAK en niet het beeld:
    pagina, uit de ECHTE DOM van beide pagina's naast elkaar gelegd;
 2. de kiezer wisselt echt van deployment - alle blokken van de een verdwijnen en die van
    de ander komen in beeld;
-3. het backupblok vuurt zijn ene project-brede verzoek af.
+3. wat naar een ander tabblad is VERHUISD staat hier niet meer. Het backupblok stond hier
+   en heeft sinds RC-100 een eigen tabblad (tests/e2e/test_lotc_backups_tab.py); een kopie
+   die blijft staan is precies zo stil als een blok dat verdwijnt.
 
 Er wordt echt geklikt. Of een attribuut in de uitvoer landt is in deze omzetting al
 meermaals stil misgegaan: onder ROOS schrijft @click de aanroep, onder LOTC gaat hij via
@@ -23,14 +25,12 @@ verschijnt de kiezer niet en wordt geen enkel blok verborgen, en bewijst dit nie
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 import pytest
-from tests.e2e.helpers.htmx import scroll_backupblok_in_beeld
 
 if TYPE_CHECKING:
-    from playwright.sync_api import Page, Request, Route
+    from playwright.sync_api import Page
 
 pytestmark = pytest.mark.e2e
 
@@ -83,8 +83,6 @@ AANROEPEN_VAN_HET_DEPLOYMENTTABBLAD = {
         aanroep.format(index=index, naam=naam)
         for index, naam in enumerate(("default", "tweede"))
         for aanroep in (
-            "openEditModal('modal-backup', 'Backup aanmaken', {{deployment: '{naam}'}})",
-            "openEditModal('modal-edit-backup-schedule-{index}', 'Backup schema instellen')",
             "openEditModal('modal-edit-deployment-{index}', 'Deployment bewerken - {naam}')",
             "openEditModal('modal-edit-deployment-{index}', 'Images bewerken - {naam}')",
             "openEditModal('modal-edit-domain-{index}', 'Webadres bewerken - {naam}')",
@@ -98,9 +96,15 @@ AANROEPEN_VAN_HET_DEPLOYMENTTABBLAD = {
     ],
 }
 
-#: Het blok dat dit tabblad zelf inlaadt. Verdwijnt dit adres, dan blijft de skeletweergave
-#: van de snapshotlijst staan zonder dat er iets misgaat.
-INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD = {"/projects/details/test-project-detail/backups"}
+#: Wat hier NIET meer hoort te staan: het backupblok heeft sinds RC-100 een eigen tabblad
+#: (tests/e2e/test_lotc_backups_tab.py). Het is verhuisd en niet gekopieerd - twee
+#: weergaven van dezelfde gegevens lopen uit de pas - dus zowel de dialogen als de lui
+#: ladende snapshotlijst horen van dit tabblad verdwenen te zijn.
+NIET_MEER_OP_HET_DEPLOYMENTTABBLAD = {
+    "openEditModal('modal-backup', 'Backup aanmaken', {deployment: 'default'})",
+    "openEditModal('modal-edit-backup-schedule-0', 'Backup schema instellen')",
+}
+NIET_MEER_INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD = {"/projects/details/test-project-detail/backups"}
 
 
 def test_geen_enkele_bestemming_van_het_deploymenttabblad_is_verdwenen(app_server: str, auth_page: Page) -> None:
@@ -119,8 +123,12 @@ def test_geen_enkele_bestemming_van_het_deploymenttabblad_is_verdwenen(app_serve
     weg = AANROEPEN_VAN_HET_DEPLOYMENTTABBLAD - gevonden
     assert not weg, "verdwenen van het tabblad Deployments:\n  " + "\n  ".join(sorted(weg))
 
-    assert ingeladen >= INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD, (
-        f"het tabblad laadt niet meer in: {sorted(INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD - ingeladen)}"
+    achtergebleven = NIET_MEER_OP_HET_DEPLOYMENTTABBLAD & gevonden
+    assert not achtergebleven, "het backupblok is verhuisd maar staat hier nog:\n  " + "\n  ".join(
+        sorted(achtergebleven)
+    )
+    assert not (NIET_MEER_INGELADEN_DOOR_HET_DEPLOYMENTTABBLAD & ingeladen), (
+        "dit tabblad haalt de snapshotlijst nog op; die hoort bij het tabblad Backups"
     )
 
 
@@ -225,31 +233,3 @@ def test_de_kiezer_staat_er_alleen_bij_meer_dan_een_deployment(app_server: str, 
 
     opties = auth_page.locator("#global-deployment-selector option").all_text_contents()
     assert opties == ["default (local)", "tweede (local)"]
-
-
-def test_het_backupblok_vuurt_zijn_verzoek_af(app_server: str, auth_page: Page) -> None:
-    """Een lui verzoek voor het HELE project, en niet een per deployment.
-
-    Dat aantal is geen detail: per deployment een verzoek opende evenzoveel
-    Kopia-verbindingen en sloopte de pod. Het verzoek wordt onderschept en bereikt de
-    server niet; wat getoetst wordt is dat het wordt afgevuurd, en hoe vaak.
-    """
-    verzoeken: list[str] = []
-
-    def handler(route: Route, request: Request) -> None:
-        verzoeken.append(request.url)
-        route.abort()
-
-    auth_page.route("**/backups", handler)
-
-    auth_page.goto(f"{app_server}{LOTC_URL}")
-    auth_page.wait_for_load_state("networkidle")
-    scroll_backupblok_in_beeld(auth_page)
-
-    deadline = time.time() + 10
-    while time.time() < deadline and not verzoeken:
-        time.sleep(0.1)
-
-    assert verzoeken == [f"{app_server}/projects/details/{PROJECT}/backups"], (
-        f"het backupblok haalde niet precies een keer de snapshots op: {verzoeken}"
-    )

@@ -1269,6 +1269,7 @@ async def dashboard(request: Request):
 @web_router.get("/projects/{project_name}/services", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/deployments", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/metrics", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/backups", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/taken", response_class=HTMLResponse)
 @requires_sso
 async def project_details(request: Request, project_name: str):
@@ -1278,14 +1279,19 @@ async def project_details(request: Request, project_name: str):
 
 @web_router.get("/projects/{project_name}/deployments/{deployment_name}", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/backups/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
 async def project_deployment_details(request: Request, project_name: str, deployment_name: str):
-    """EEN deployment op de tabbladen Deployments en Metrics.
+    """EEN deployment op de tabbladen Deployments, Metrics en Backups.
 
-    Die twee toonden alle deployments en verborgen er alles behalve een met CSS. Nu staat
-    de naam in het PAD en rendert de server er een: dat scheelt het werk voor blokken die
-    niemand ziet, de pagina is deelbaar, de terugknop werkt, en de keuze blijft staan bij
-    het wisselen van tabblad omdat de tabbalk hem in zijn adressen meeneemt.
+    Deployments en Metrics toonden alle deployments en verborgen er alles behalve een met
+    CSS. Nu staat de naam in het PAD en rendert de server er een: dat scheelt het werk voor
+    blokken die niemand ziet, de pagina is deelbaar, de terugknop werkt, en de keuze blijft
+    staan bij het wisselen van tabblad omdat de tabbalk hem in zijn adressen meeneemt.
+
+    Backups is er sinds RC-100 het derde: het backupsblok stond als dienstblok op
+    Deployments en heeft nu een eigen tabblad, met dezelfde vorm - een deployment per
+    pagina, zijn naam in het pad, dezelfde kiezer.
 
     De paden staan hier letterlijk en niet als ``/projects/{project}/{tab}/{deployment}``,
     om dezelfde reden als bij de tabbladen zelf: dat laatste vangt ook paden op die een
@@ -1297,6 +1303,11 @@ async def project_deployment_details(request: Request, project_name: str, deploy
 #: De tabbladpaden van voor RC-93, met het tabblad VOOR de projectnaam. Ze staan hier
 #: letterlijk en in dezelfde volgorde als hierboven, zodat de twee vormen naast elkaar te
 #: lezen zijn.
+#:
+#: ``backups`` staat hier NIET bij, en dat is geen omissie: dat tabblad bestaat pas sinds
+#: RC-100, dus ``/projects/backups/<naam>`` heeft nooit bestaan en kan dus ook nooit
+#: gedeeld zijn. Een doorverwijzing voor een adres dat niemand kan hebben is onderhoud
+#: zonder lezer.
 OUDE_TABBLADPADEN = {
     "details": "project",
     "componenten": "componenten",
@@ -1702,6 +1713,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # (e.g. sleep-mode "wake"), keyed by deployment name. Built from the decrypted
         # project data so it can read the OPI-managed sleep state.
         from opi.services.catalog.base import DeploymentPageContext
+        from opi.services.catalog.shared.backups import collect_backups_sections
         from opi.services.registry import (
             collect_deployment_actions,
             collect_deployment_page_sections,
@@ -1745,22 +1757,47 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # services gate on the role string, and an empty one matches no gate.
         role_for_services = user_role or ""
 
-        # Per-deployment read-only blocks the services deliver (RC-24): metrics and
-        # backups describe one deployment, so they are asked per deployment instead of
-        # being hardcoded in the Deployments tab. The availability of the optional
-        # back-ends is probed here (a service never calls a connector) and passed in.
-        deployment_service_sections = {
-            dep.get("name"): collect_deployment_page_sections(
-                DeploymentPageContext(
-                    project_data=project_data_decrypted,
-                    deployment=dep,
-                    user_role=role_for_services,
-                    current_cluster=current_cluster,
-                    backend_available={"prometheus": prometheus_available, "backups": backups_available},
-                )
+        def deployment_page_context(dep: dict[str, Any]) -> DeploymentPageContext:
+            """Wat een dienst nodig heeft om zijn blok voor DEZE deployment te maken.
+
+            De beschikbaarheid van de optionele achterkanten is hier al gemeten (een
+            dienst belt zelf nooit een connector) en gaat mee naar binnen.
+            """
+            return DeploymentPageContext(
+                project_data=project_data_decrypted,
+                deployment=dep,
+                user_role=role_for_services,
+                current_cluster=current_cluster,
+                backend_available={"prometheus": prometheus_available, "backups": backups_available},
             )
+
+        # Per-deployment read-only blocks the services deliver (RC-24): a block that
+        # describes one deployment is asked per deployment instead of being hardcoded in
+        # the Deployments tab.
+        deployment_service_sections = {
+            dep.get("name"): collect_deployment_page_sections(deployment_page_context(dep))
             for dep in project_data_decrypted.get("deployments", [])
         }
+
+        # Het backupsblok, voor de deployment die op het tabblad Backups openstaat (RC-100).
+        #
+        # Bij NAAM gevraagd en niet via het algemene dienstenmechanisme hierboven, want het
+        # heeft een eigen tabblad gekregen en dat mechanisme levert alles op EEN tabblad af.
+        # De afweging staat in opi/services/catalog/shared/backups.py; kort: van de twee
+        # diensten die een deploymentblok leveren is dit de enige kandidaat voor een eigen
+        # tabblad, dus is een haak voor "welke dienst wil een tabblad" machinerie voor een
+        # geval dat niet bestaat.
+        #
+        # Alleen voor de OPEN deployment: de pagina toont er een, en voor de rest zou dit
+        # werk zijn voor blokken die niemand ziet.
+        backups_sections: list[Any] = []
+        if tab_from_path(request.url.path) == "backups":
+            open_deployment = next(
+                (dep for dep in project_data_decrypted.get("deployments", []) if dep.get("name") == deployment_open),
+                None,
+            )
+            if open_deployment is not None:
+                backups_sections = collect_backups_sections(deployment_page_context(open_deployment))
 
         # Read-only detail-page sections the project's services deliver (WP2): each
         # service owns its own block instead of the general template hardcoding an
@@ -1812,6 +1849,9 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "deployment_argocd": argocd_statuses,
                 # Per-deployment service-owned blocks (RC-24), keyed by deployment name.
                 "deployment_service_sections": deployment_service_sections,
+                # Het backupsblok van de open deployment, voor het tabblad Backups (RC-100).
+                # Leeg op elk ander tabblad, en leeg voor een project dat niets kan backuppen.
+                "backups_sections": backups_sections,
                 # Detail-page sections the project's services own (WP2). Replaces the
                 # hardcoded per-service includes (e.g. the Keycloak realm block, which
                 # after RC-5's config move kept reading the old project-level

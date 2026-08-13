@@ -415,7 +415,11 @@ def test_de_snapshotlijst_komt_in_de_nieuwe_vormgeving_binnen(app_server: str, a
     """Het blok wordt buiten de band gevuld, en wat er komt draagt geen rvo-markup meer."""
     _serveer(auth_page, "**/backups", _backups_fragment("default"))
 
-    auth_page.goto(f"{app_server}/projects/{PROJECT}/deployments")
+    # Het backupblok staat sinds RC-100 op zijn eigen tabblad, niet meer op Deployments.
+    # MET de deployment in het pad: het adres zonder naam verwijst door naar dat mét, en
+    # het zou bovendien zelf op "**/backups" matchen - dan serveert de onderschepping
+    # hierboven het snapshotfragment als de PAGINA.
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/backups/default")
     auth_page.wait_for_load_state("networkidle")
     scroll_backupblok_in_beeld(auth_page)
 
@@ -435,7 +439,11 @@ def test_de_herstelknop_opent_de_gedeelde_dialoog(app_server: str, auth_page: Pa
     """
     _serveer(auth_page, "**/backups", _backups_fragment("default"))
 
-    auth_page.goto(f"{app_server}/projects/{PROJECT}/deployments")
+    # Het backupblok staat sinds RC-100 op zijn eigen tabblad, niet meer op Deployments.
+    # MET de deployment in het pad: het adres zonder naam verwijst door naar dat mét, en
+    # het zou bovendien zelf op "**/backups" matchen - dan serveert de onderschepping
+    # hierboven het snapshotfragment als de PAGINA.
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/backups/default")
     auth_page.wait_for_load_state("networkidle")
     scroll_backupblok_in_beeld(auth_page)
 

@@ -77,7 +77,7 @@ def test_een_lotc_pagina_bevat_geen_roos_html(slug: str, client: TestClient) -> 
     )
 
 
-@pytest.mark.parametrize("tab", ["project", "deployments", "metrics", "taken"])
+@pytest.mark.parametrize("tab", ["project", "deployments", "metrics", "backups", "taken"])
 def test_elk_tabblad_van_de_projectpagina_blijft_schoon(tab: str, client: TestClient) -> None:
     """De tabbladen zijn echte links met een eigen URL, dus ook eigen antwoorden."""
     antwoord = client.get(f"/lotc/bg/project-tabs?tab={tab}")
