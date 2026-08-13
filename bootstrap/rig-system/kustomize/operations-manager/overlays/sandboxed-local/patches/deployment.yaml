@@ -15,7 +15,19 @@ spec:
       containers:
       - name: operations-manager
         image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest
-        imagePullPolicy: Always
+        # IfNotPresent en niet Always. Dit is een kind-cluster: de image komt er met
+        # `kind load` in, hij staat niet in een registry. Met Always haalt kubelet de
+        # REMOTE :latest uit ghcr op en overschrijft daarmee precies de build die je net
+        # lokaal hebt gemaakt. Op 14 augustus 2026 kostte dat een crashloop: die remote
+        # image was ouder dan de branch en kende SLEEP_MODE_SCHEDULER_ENABLED,
+        # SLEEP_MODE_SWEEP_MINUTES, SLEEP_MODE_WAKER_IMAGE en KEYCLOAK_ENFORCE_ADMIN_OTP
+        # niet, terwijl de configmap ze wel meegeeft; pydantic weigert ze als onbekend en
+        # de migratie viel om. De pod die het nog deed draaide een vastgepinde digest.
+        #
+        # De -dev-overlay (die skaffold gebruikt) zet hem op Never en had dit probleem
+        # daarom niet. Deze overlay wordt door de deploytaken gebruikt, en die laadt de
+        # image net zo goed lokaal in.
+        imagePullPolicy: IfNotPresent
         env:
         - name: TMPDIR
           value: "/tmp"
