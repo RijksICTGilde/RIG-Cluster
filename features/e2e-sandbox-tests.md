@@ -97,6 +97,26 @@ fails halfway.
 `tests/e2e/test_sandbox_flows.py` is the canonical lifecycle: create via UI -> add component via
 API -> delete via UI, each verified against Forgejo, plus `test_version_endpoint`. Copy its shape.
 
+### When the project file is not the whole answer
+
+`tests/e2e/test_sandbox_repetitie.py` covers the two things the second dress rehearsal
+(`docs/generale-repetitie-2026-08-13.md`) had to prove, and both need an assertion that Forgejo
+cannot give:
+
+- **A refused action must report itself in the task's own `status`.** The refusal happens in the
+  work, not in the HTTP response (that is a plain `202`), so the outcome is only readable from
+  `GET /api/tasks/{id}`. Polling the *file* would show nothing changed and call that success -
+  which is exactly how the fault this guards against stayed invisible.
+- **A setting that only exists once it is rendered.** The TLS override per deployment-component
+  is stored on the deployment-component layer *and* has to come out as an annotation on one
+  deployment's ingress and not the other's. The file proves where it is stored; only
+  `kubectl get ingress` proves what it produced. The helper there degrades to a `skip` when
+  kubectl is absent, so the file-level assertions still run.
+
+The rule of thumb: assert against Forgejo for *what was stored*, against the task endpoint for
+*how it ended*, and against the cluster for *what it rendered*. Reaching for a `sleep` in place
+of any of the three is what makes a test green through a broken run.
+
 ## How to run
 
 ```bash
