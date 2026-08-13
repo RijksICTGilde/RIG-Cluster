@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import pytest
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.lifecycle import create_project_via_wizard
-from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
+from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -35,7 +35,7 @@ def test_wizard_create_verified_in_forgejo(
     generated (a random slug, not the display name), so it is resolved by diffing the
     repo listing before/after (create_project_via_wizard). Cleaned up via the API.
     """
-    display = _unique_project_name()
+    display = unique_project_name()
     project = create_project_via_wizard(
         sandbox_page,
         sandbox_url,
@@ -90,7 +90,7 @@ def test_wizard_minimal_project(
     conditional database-schemas step), so a hard-coded click sequence submits from
     the wrong step and silently creates nothing. Cleaned up via the API.
     """
-    display = _unique_project_name()
+    display = unique_project_name()
     project = create_project_via_wizard(
         sandbox_page,
         sandbox_url,
@@ -113,7 +113,7 @@ def test_wizard_project_appears_in_list(
     forgejo: ForgejoClient,
 ) -> None:
     """After creating a project via the wizard, it appears in the projects list."""
-    display = _unique_project_name()
+    display = unique_project_name()
     project = create_project_via_wizard(
         sandbox_page,
         sandbox_url,
