@@ -28,17 +28,26 @@ class MijnService(Service):
 
 | Situatie | Antwoord |
 |---|---|
-| De basisklasse (de dienst zegt niets) | `None` - eerst op projectniveau aanzetten |
+| De dienst draagt **geen projectlaag** (`config_layers()`) | `"mijn-dienst"` (kale selectie), wat hij verder ook verklaart |
+| De basisklasse, met een projectlaag (de dienst zegt niets) | `None` - eerst op projectniveau aanzetten |
 | `allows_implicit_project_selection = True`, geen configuratie | `"mijn-dienst"` (kale selectie) |
 | ... met een standaardconfiguratie | `{"name": "mijn-dienst", "config": {...}}` |
-| De dienst declareert goedkeuringen (`config_approvals`) | `None`, wat hij verder ook verklaart |
+| De dienst declareert goedkeuringen (`config_approvals`) én heeft een projectlaag | `None`, wat hij verder ook verklaart |
 | Ja gezegd, maar de standaardconfiguratie valideert niet | `TypeError` - luid, bij de eerste aanroep |
 
-Twee regels staan hier in plaats van in elke dienst:
+Drie regels staan hier in plaats van in elke dienst:
 
-* **Een goedkeuring wint altijd.** Een dienst die zichzelf aanmeldt en daarmee een
-  goedkeuring van een beheerder omzeilt, is een gat. `config_approvals` blokkeert de
-  impliciete selectie, ongeacht de vlag.
+* **Zonder projectlaag is er niets te weigeren** (RC-103). Een weigering stuurt de
+  aanroeper naar de projectlaag; heeft de dienst die niet, dan verwijst de melding naar een
+  laag die `GET /v2/services/{naam}` niet meldt en die geen enkel endpoint kan zetten. Deze
+  regel gaat vóór de twee hieronder, want die beschermen allebei een projectbesluit - en
+  dat is er dan niet. Dit is wat `publish-on-web` blokkeerde: drie schrijfwegen weigerden op
+  een eis waaraan niet te voldoen was.
+* **Een goedkeuring wint altijd.** Een dienst met een projectlaag die zichzelf aanmeldt en
+  daarmee een goedkeuring van een beheerder omzeilt, is een gat. `config_approvals`
+  blokkeert de impliciete selectie, ongeacht de vlag. Een kale selectie op een dienst
+  zónder projectlaag draagt geen goed te keuren inhoud: de domeinen van `publish-on-web`
+  zijn een deployment-besluit en houden hun eigen goedkeuring.
 * **Ja zeggen verplicht tot een geldig item.** Voldoet de standaardconfiguratie niet aan het
   eigen projectlaag-model van de dienst, dan is dat een programmeerfout in die dienst; die
   faalt hier hard in plaats van een projectbestand te schrijven dat de opslagpoort afkeurt.
@@ -61,8 +70,11 @@ meerdere diensten wordt er niets geschreven als er één bij zit die het niet ma
 
 ## Het antwoord per dienst
 
-21 dienstpakketten, 14 mogen zichzelf aanmelden, 7 niet. Twijfelgevallen horen bij nee: een
-dienst die per ongeluk ontstaat met een verzonnen standaard is erger dan een foutmelding.
+21 dienstpakketten, 15 mogen zichzelf aanmelden, 6 niet. Twijfelgevallen horen bij nee: een
+dienst die per ongeluk ontstaat met een verzonnen standaard is erger dan een foutmelding -
+maar alleen als er een projectlaag is waar die keuze in past. Elk van de zes weigeraars
+heeft die laag, en de test `test_a_refusal_always_names_a_layer_the_caller_can_reach`
+bewaakt dat.
 
 | Dienst | Mag | Waarom |
 |---|---|---|
@@ -80,7 +92,7 @@ dienst die per ongeluk ontstaat met een verzonnen standaard is erger dan een fou
 | `deployment-health` | ja | Systeemdienst, idem. |
 | `user-env-vars` | ja | Systeemdienst waarvan de waarden een eigenschap van het component zijn. |
 | `aliases` | ja | Systeemdienst, idem. |
-| `publish-on-web` | **nee** | Het project legt vast op welke domeinen gepubliceerd mag worden; dat is geen standaard die te verzinnen is. Bovendien declareert de dienst goedkeuringen (`domain`, `subdomain`), en die blokkeren impliciete selectie sowieso. |
+| `publish-on-web` | ja (RC-103) | Draagt geen projectlaag: de domeinkeuze en de goedkeuringen (`domain`, `subdomain`) zitten op de **deployment**, niet op het project. Er was dus geen projectbesluit om op te wachten en ook geen endpoint om het te nemen - de weigering wees naar een laag die niet bestaat. De goedkeuring per deployment staat onveranderd. |
 | `keycloak` | **nee** | Realm en template zijn een keuze; een verzonnen realm is direct zichtbaar in de authenticatie van de gebruiker. |
 | `authorization-wall` | **nee** | Een muur voor de applicatie zetten is een beveiligingsbesluit op projectniveau, niet een bijeffect van een componentwijziging. |
 | `cross-domain-access` | **nee** | Legt vast welke domeinen elkaar mogen bereiken; zonder die keuze betekent de dienst niets. |
@@ -90,7 +102,9 @@ dienst die per ongeluk ontstaat met een verzonnen standaard is erger dan een fou
 
 De lijst staat als poort in `tests/test_implicit_project_selection.py`
 (`IMPLICIT_SERVICES`): een nieuwe dienst kan er niet stilzwijgend bij komen, want de
-basisklasse zegt nee en de test noemt de verzameling bij naam.
+basisklasse zegt nee zodra er een projectlaag is, en de test noemt de verzameling bij naam.
+Een nieuwe dienst *zonder* projectlaag komt er wel bij - dat is de bedoelde regel, en de
+poort dwingt af dat je hem in de tabel hierboven verantwoordt.
 
 ## En de UI?
 
