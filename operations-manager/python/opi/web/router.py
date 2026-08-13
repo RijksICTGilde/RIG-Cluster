@@ -45,6 +45,7 @@ from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.lotc_switch import (
     STANDAARD_TAB,
     TABS_MET_DEPLOYMENT,
+    TABS_MET_VOORWAARDE,
     build_deployment_status_column,
     build_lotc_dashboard,
     build_lotc_project_details,
@@ -1267,6 +1268,7 @@ async def dashboard(request: Request):
 @web_router.get("/projects/{project_name}/team", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/componenten", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/services", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/toegang", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/deployments", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/metrics", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/taken", response_class=HTMLResponse)
@@ -1297,10 +1299,17 @@ async def project_deployment_details(request: Request, project_name: str, deploy
 #: De tabbladpaden van voor RC-93, met het tabblad VOOR de projectnaam. Ze staan hier
 #: letterlijk en in dezelfde volgorde als hierboven, zodat de twee vormen naast elkaar te
 #: lezen zijn.
+#:
+#: Elk tabblad hoort hier te staan zolang zijn oude vorm hieronder als route geregistreerd
+#: is: die route zoekt zijn tabblad in deze tabel op, en een ontbrekende regel is dus geen
+#: doorverwijzing maar een 500. Zo stond ``team`` er niet in terwijl de route wel bestond
+#: (RC-101). tests/test_lotc_tabbladen_url.py loopt nu beide lijsten af.
 OUDE_TABBLADPADEN = {
     "details": "project",
+    "team": "team",
     "componenten": "componenten",
     "services": "services",
+    "toegang": "toegang",
     "deployments": "deployments",
     "metrics": "metrics",
     "taken": "taken",
@@ -1311,6 +1320,7 @@ OUDE_TABBLADPADEN = {
 @web_router.get("/projects/team/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/componenten/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/services/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/toegang/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/deployments/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/metrics/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/taken/{project_name}", response_class=HTMLResponse)
@@ -1767,6 +1777,18 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # credentials (e.g. keycloak realm admin details).
         service_detail_sections = collect_detail_page_sections(project_data_decrypted, role_for_services)
 
+        # Die blokken hebben sinds RC-101 een EIGEN tabblad (Toegang): het zijn de
+        # adressen, sleutels en bestanden waarmee je de diensten gebruikt, en daarvoor kom
+        # je terug. Tussen de rest van Overzicht waren ze niet te vinden.
+        #
+        # Levert geen enkele dienst iets, dan is er geen tabblad: een lege pagina achter
+        # een tab is een belofte die niet waargemaakt wordt. De tab valt uit de balk
+        # (``lege_tabs`` hieronder), en wie er via een gedeelde link toch op uitkomt gaat
+        # naar Overzicht in plaats van naar het niets.
+        lege_tabs = () if service_detail_sections else TABS_MET_VOORWAARDE
+        if tab_from_path(request.url.path) in lege_tabs:
+            return RedirectResponse(url=project_tab_url(project_name, STANDAARD_TAB), status_code=302)
+
         # Changes saved with rollout=false that nobody has rolled out yet (RC-46). Shown
         # above the tabs, because a project file that silently runs ahead of the cluster is
         # worse than a slow rollout. A task service that is not up must not take the page
@@ -1816,7 +1838,11 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 # ``config.keycloak`` and silently stopped rendering).
                 "service_detail_sections": service_detail_sections,
                 **build_lotc_project_details(
-                    request, user=user, project=project_details, deployment_open=deployment_open
+                    request,
+                    user=user,
+                    project=project_details,
+                    deployment_open=deployment_open,
+                    lege_tabs=lege_tabs,
                 ),
             },
         )
