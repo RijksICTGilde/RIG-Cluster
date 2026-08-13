@@ -87,8 +87,9 @@ def build_project_action(
             endpoint=f"/projects/{project_path}/refresh",
             message=(
                 f'Weet u zeker dat u het project "{display}" wilt herverwerken? '
-                "Dit synchroniseert alle deployments met het projectbestand. "
-                "Verwijderde deployments worden opgeruimd."
+                "Het projectbestand wordt opnieuw uit Git ingelezen, waarna alle "
+                "deployments daarmee worden gesynchroniseerd. Verwijderde deployments "
+                "worden opgeruimd."
             ),
             **_REFRESH_BUTTON,
         )
@@ -116,7 +117,7 @@ def build_project_action(
                 endpoint=f"/projects/{project_path}/refresh/{deployment_path}",
                 message=(
                     f'Weet u zeker dat u deployment "{target}" wilt herverwerken? '
-                    "Dit synchroniseert de manifesten voor deze deployment."
+                    "Dit synchroniseert alle onderdelen van deze deployment."
                 ),
                 **_REFRESH_BUTTON,
             )
