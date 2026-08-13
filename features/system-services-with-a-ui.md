@@ -66,8 +66,12 @@ tekst gaat door `validate_and_parse_env_vars`, dezelfde parser als de deploy-rou
 wat hier valideert deployt ook. Een dollar in een wachtwoord is geen fout: de deploy-route
 is daar bewust mild (`substitute_known_variables`), dus het model mag niet strenger zijn.
 
-`aliases` -- `AliasesConfig` controleert de sleutels: een alias wordt een
-omgevingsvariabele en moet een geldige naam hebben. Daarnaast eist de formuliervalidator
+`aliases` -- sinds RC-106 precies dezelfde drie vormen als `user-env-vars` hierboven, en om
+dezelfde reden: één AGE-blok met `KEY=value`-regels erbinnen. Daarvoor was het een mapping
+met elke waarde apart versleuteld, wat elke lezer een eigen ontsleutelstap gaf om te
+vergeten (zie `features/component-values-api.md`). `AliasesConfig` controleert de sleutels:
+een alias wordt een omgevingsvariabele en moet een geldige naam hebben. Daarnaast eist de
+formuliervalidator
 (`AliasMapValidator`) dat elke alias ergens naar verwijst (`$VAR` of `${VAR}`), want dat is
 wat een alias is; een vaste waarde hoort bij de omgevingsvariabelen ernaast.
 
@@ -76,15 +80,16 @@ opgeslagen alias zonder verwijzing deployt prima (`substitute_variables` laat he
 dus hem op bestandsniveau afkeuren zou werkende projecten breken. Op het formulier heeft de
 auteur de waarde nog voor zich.
 
-En dus alleen dan. Aliaswaarden worden per waarde versleuteld onder hun eigen (dynamische)
-naam, dus de redactie van de wizardsessie (`opi/forms/wizard/secrets.py`) vervangt ze een
-voor een door de plaatshouder `__opi-redacted-secret__`. Die kwam terug in het veld en werd
-gelezen als een constante zonder verwijzing, waarna elke volgende opslag van de
+En dus alleen dan. Toen aliaswaarden nog per waarde versleuteld werden onder hun eigen
+(dynamische) naam, verving de redactie van de wizardsessie (`opi/forms/wizard/secrets.py`)
+ze een voor een door de plaatshouder `__opi-redacted-secret__`. Die kwam terug in het veld
+en werd gelezen als een constante zonder verwijzing, waarna elke volgende opslag van de
 componenten-modal werd geweigerd -- voor elk component dat ooit een alias had opgeslagen,
-ook voor een gewone gebruiker die iets heel anders wilde wijzigen. De validator slaat de
-plaatshouder nu over, net als een AGE-blok: allebei waarden die de invuller niet op het
-scherm heeft en dus niet bedoeld kan hebben. Bij opslag zet `restore_redacted_secrets` de
-opgeslagen waarde terug.
+ook voor een gewone gebruiker die iets heel anders wilde wijzigen. Met één blok daalt de
+redactie niet meer af in de aliassen en ontstaat die plaatshouder daar niet meer; de
+validator slaat hem nog steeds over, net als een AGE-blok, want allebei zijn het waarden die
+de invuller niet op het scherm heeft en dus niet bedoeld kan hebben. Bij opslag zet
+`restore_redacted_secrets` de opgeslagen waarde terug.
 
 ## De haak voor de deployment-componentlaag
 
