@@ -467,7 +467,55 @@ wachten niets, en het blijft correct tegen oudere builds.
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+Jullie lezing klopt op alle drie de punten, en het antwoord op de vraag is: **het blijft
+asynchroon, en die 401 blijft ook.** Hieronder per punt, en dan waarom.
+
+**1. De sleutel wordt synchroon gemaakt. Klopt.** `POST /v2/projects` roept
+`generate_base_project_file()` aan, krijgt `(project_dict, api_key)` terug en maakt daarna pas
+de taak; de sleutel in de 202 is dus ouder dan de taak. Hij komt uit dezelfde bouwer als de
+wizard, dus het is geen aparte sleutel voor de API.
+
+**2. Authenticatie kijkt naar het record, niet naar de sleutel. Klopt, en dat is precies de
+formulering.** `validate_api_token` doet `get_project_store().get(project_name)` en pas als dat
+iets oplevert een `compare_digest`. Kent de store het project niet, dan is er niets om mee te
+vergelijken en valt hij op dezelfde regel om als een verkeerde sleutel: `401 Invalid API key`.
+De sleutel is niet fout; er is nog geen project.
+
+**3. De taak raakt het cluster niet. Klopt.** `"rollout": False`, met die opmerking er
+letterlijk bij. Wat de taak wel doet is niet niks: een `reconcile()` op de projecten-repo (een
+`ls-remote`), de controle of die projectnaam al bestaat, en dan `save_and_commit_project` —
+schemavalidatie, commit, push, cache verversen. Dat zijn twee netwerkrondes naar git, en daar
+zit jullie 3,5 seconde in.
+
+**Waarom het asynchroon blijft.** Niet omdat er iets te provisioneren valt — dat klopte al in
+jullie lezing — maar omdat dit een schrijfactie naar git is, en die zijn hier allemaal een taak.
+Dat levert twee dingen op die een synchrone 201 niet heeft: er is een record van de afloop dat
+je kunt opvragen nadat je verbinding is weggevallen, en het is dezelfde vorm als elke andere
+mutatie, dus jullie client heeft één weg in plaats van twee. Een `POST` die inline naar git
+commit is bovendien de enige plek waar een trage of even onbereikbare git-remote een verzoek
+van onbepaalde duur oplevert; nu is dat de taak, en die kun je bekijken. Eerlijkheidshalve:
+`create_project` draait met `max_attempts=1`, dus opnieuw proberen doen wij hier *niet* — de
+winst is de uniforme weg en het zichtbare resultaat, niet een retry.
+
+**De andere uitweg die jullie noemen — de store het project alvast laten kennen — willen wij
+niet.** De store is een spiegel van de projecten-repo, en de controle "bestaat deze naam al"
+gebeurt daar, in de taak, na de reconcile. Een record vooruitschrijven betekent een sleutel die
+werkt voor een project waarvan het bestand misschien nooit landt (schemafout, dubbele naam,
+push geweigerd), en dan is de fout stiller en later dan nu. Een sleutel die 3,5 seconde te
+vroeg is, is beter dan een project dat niet bestaat maar wel antwoordt.
+
+**Blijft die 401?** Ja, en wel om deze reden. Wij zijn het met jullie eens dat "nog niet,
+probeer zo weer" iets anders is dan "je sleutel klopt niet" — maar dat onderscheid hoort niet
+op dit endpoint. Wie alleen een `X-API-Key` meestuurt is voor ons niemand in het bijzonder; een
+ander antwoord voor "deze naam bestaat nog niet" dan voor "deze sleutel hoort niet bij deze
+naam" maakt van elk projectendpoint een manier om projectnamen af te tasten. Dat signaal
+bestaat wél, en het is preciezer dan een statuscode ooit kan zijn: de taak zelf. Sinds punt 2
+is `poll_url` te volgen met hetzelfde bearer-token waarmee je het project aanmaakte, en die
+zegt niet alleen "nog niet", maar ook of het misging en waaraan. Pol tot 200; daarna is de
+sleutel bruikbaar. De 202 met `Location` zegt hetzelfde in het antwoord zelf.
+
+Kortom: jullie `project create` die wacht, is hier niet een tijdelijke oplossing maar de
+bedoelde weg. Hij blijft goed werken en er komt niets aan dat hem overbodig maakt.
 
 ---
 
@@ -1093,4 +1141,46 @@ ongewijzigd, dus filteren aan onze kant zou betekenen dat wij gaan raden wat de 
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+Jullie diagnose klopt: `describe` had gelijk en de refresh verzon het adres. **Gerepareerd in
+deze PR, en wel door de bron samen te voegen in plaats van door de tekst te filteren.** Voor
+`p1-wan` geeft `:refresh` nu `urls.productie.urls = {}`, precies wat het deployment-endpoint
+zegt.
+
+**Waar dat adres vandaan kwam.** In de manifestgenerator, bij het opbouwen van de deployment,
+werd per component de hostnaam berekend en meteen als URL weggeschreven op het resultaat dat de
+refresh teruggeeft. Verderop in diezelfde lus staat het punt waar besloten wordt of er een
+ingress komt: `if publish_on_web: manifests.append("ingress.yaml.jinja")`. De eerste stap kende
+die voorwaarde niet. De hostnaam is er namelijk altijd — hij is een naam, niet een belofte — en
+alleen de tweede stap bepaalt of er ook iets naar luistert. Dus voor `worker` schreef de
+generator geen ingress en rapporteerde hij wel een adres.
+
+Het deployment-endpoint keek wel of het component publish-on-web had, en dat verklaart precies
+de twee antwoorden die jullie op hetzelfde moment kregen.
+
+**Wat wij van jullie vraag over de UI hebben gemaakt.** "Publieke links" op de deploymentpagina
+kwam uit een derde afleiding, in de dienst `publish-on-web` zelf, en de componentenlijst
+eronder uit een vierde, inline in de webrouter. Allebei controleerden ze publish-on-web, dus de
+pagina maakte de fout niet — maar vier plekken die elk netjes hun eigen antwoord samenstellen
+zijn vier plekken die kunnen gaan afwijken, en dat is precies hoe dit is ontstaan.
+
+**Er is nu één bron:** `public_url_map_for_deployment()` in
+`opi/services/catalog/publish_on_web/urls.py`, naast de bestaande lijstvorm die de paden
+meeneemt. Publish-on-web is de dienst die beslist of een component van buiten bereikbaar is,
+dus daar hoort het antwoord. Alle lezers halen het daar op:
+
+| lezer | wat er veranderde |
+|---|---|
+| `POST /v2/projects/{p}/:refresh` | de generator vult het resultaat uit die bron; geen ingress, geen adres |
+| `GET /v2/projects/{p}/deployments/{d}` | leest dezelfde functie in plaats van een eigen kopie |
+| "Publieke links" op de deploymentpagina | ongewijzigd, dit was al die bron |
+| de componentenlijst op de projectpagina | leest nu dezelfde links, per component gefilterd |
+| de voortgangsweergave tijdens een taak | toonde per component hetzelfde spookadres, en volgt nu de bron |
+
+Twee dingen blijven staan. De sleutels `root` en `bare-domain` in de refresh-uitvoer blijven,
+en die zijn te vertrouwen: ze worden weggeschreven op het moment dat die ingress werkelijk
+gegenereerd wordt. En het antwoord blijft een adres per component zonder pad; dat is wat het
+deployment-endpoint ook geeft, en het is de vorm waarop jullie afgaan.
+
+Vastgelegd in `tests/test_refresh_verzint_geen_webadres.py`: `p1-wan` met een `worker` zonder
+publish-on-web levert een lege map op, de refresh-kant en het deployment-endpoint geven per
+constructie hetzelfde, en de oude afleiding uit de naamgeving laat die eerste toets vallen.

@@ -89,6 +89,40 @@ def public_urls_for_deployment(
         return []
 
 
+def public_url_map_for_deployment(
+    project_data: dict[str, Any],
+    deployment: dict[str, Any],
+    project_name: str,
+    project_file_handler: Any,
+) -> dict[str, str]:
+    """Component name -> its primary public URL, for this deployment.
+
+    The same derivation as ``public_urls_for_deployment``, folded to one address per
+    component and without the path: what a caller means by "the address of this
+    component". A component that gets no ingress is absent from the map rather than
+    present with a guessed hostname -- an address that answers 404 is worse than no
+    address, because a client stores it and passes it on.
+
+    This is the one source for that answer. The refresh task reports it, the deployment
+    endpoint returns it and the detail page links it; deriving it three times is how they
+    came to disagree (RC-104, vraag 13).
+    """
+    cluster = deployment.get("cluster")
+    if not cluster:
+        return {}
+
+    try:
+        use_https = get_ingress_tls_enabled(cluster)
+    except (KeyError, ValueError) as exc:
+        logger.warning("Could not resolve ingress config for cluster '%s': %s", cluster, exc)
+        return {}
+
+    urls: dict[str, str] = {}
+    for link in public_urls_for_deployment(project_data, deployment, project_name, project_file_handler):
+        urls.setdefault(link["component_name"], generate_public_url(link["hostname"], use_https))
+    return urls
+
+
 def public_urls_for_project(project_data: dict[str, Any], project_file_handler: Any) -> list[dict[str, str]]:
     """Every public URL in the project, with the deployment name added to each entry.
 
