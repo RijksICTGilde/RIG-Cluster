@@ -125,6 +125,7 @@
        achter de bestaande. Hier gezet en niet in een tabblad, omdat zowel Overzicht als
        Deployments deze knop aanbiedt. #}
     {% set deployment_toevoegen = "openEditModal('modal-add-deployment-" ~ (project.deployments | length) ~ "', 'Deployment toevoegen')" %}
+    {% set project_herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
 
     <c-stack id="tab-{{ active_tab }}" gap="lg">
 
@@ -140,6 +141,11 @@
             {% call panel("Acties", "gear") %}
                 <c-action-group align="start">
                     <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
+                    {# Uit de Gevarenzone hierheen: herverwerken is een gewone handeling en
+                       geen onomkeerbare. De aanroep wordt boven de tag opgebouwd omdat een
+                       genest aanhalingsteken binnen :attrs als het einde van het attribuut
+                       gelezen wordt. #}
+                    <c-button type="secondary" size="sm" label="Project herverwerken" icon="refresh" show-icon="before" :attrs="{'onclick': project_herverwerken}" />
                 </c-action-group>
             {% endcall %}
         {% endif %}
@@ -386,10 +392,12 @@
                 {# De aanroep wordt hierboven opgebouwd en niet in de tag zelf: een
                    genest aanhalingsteken binnen :attrs leest de voorbewerker als het einde
                    van het attribuut. #}
-                {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
+                {# "Project herverwerken" stond hier en is naar Acties gegaan: het is een
+                   gewone handeling die je vaker doet, en niets eraan is onomkeerbaar. In de
+                   Gevarenzone hoort alleen wat je niet terug kunt draaien, anders verliest
+                   die kop zijn betekenis. #}
                 {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
                 <c-action-group align="start">
-                    <c-button type="secondary" label="Project herverwerken" :attrs="{'onclick': herverwerken}" />
                     <c-button type="warning" label="Project verwijderen" :attrs="{'onclick': verwijderen}" />
                 </c-action-group>
             {% endcall %}

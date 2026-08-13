@@ -83,6 +83,10 @@ SM_OP_EEN_PAGINA = {
         "bg/project-tabs.html.j2",
         "Deployment toevoegen",
     ): "in de kaart Acties, naast de andere acties van diezelfde kaart",
+    (
+        "bg/project-tabs.html.j2",
+        "Project herverwerken",
+    ): "in de kaart Acties, naast Deployment toevoegen; verhuisd uit de Gevarenzone",
     ("bg/admin-users.html.j2", "Gebruiker toevoegen"): "in de kopregel van het paneel, bij de tabel eronder",
     ("bg/admin-approvals.html.j2", "Sluiten"): "de sluitknop in de kopregel van de dialoog",
     ("test-template-variables.html.j2", "Verwijderen"): "ontwikkelpagina die een tabelrijknop naspeelt",
