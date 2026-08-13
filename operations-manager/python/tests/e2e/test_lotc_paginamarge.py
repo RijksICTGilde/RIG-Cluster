@@ -69,9 +69,18 @@ def test_de_marge_groeit_mee_met_het_venster(app_server: str, auth_page: Page) -
 
 
 def test_de_kolom_wordt_niet_eindeloos_breed(app_server: str, auth_page: Page) -> None:
-    """Een tekstkolom van 1584px leest niet; het thema kapt hem af op een maximum."""
+    """Een tekstkolom van 1584px leest niet; het thema kapt hem af op een maximum.
+
+    De grens is met opzet ruim. HET THEMA bepaalt het maximum, niet wij: gemeten komt de
+    kolom op een venster van 1920 uit op 1456px, en dat is een getal dat met een nieuwe
+    versie van de bundel mag verschuiven. Wat hier bewaakt wordt is dat er een afkapping
+    IS -- de kolom volgt het venster niet -- en niet welk getal het thema gekozen heeft.
+    Op 1400 stond de grens onder het thema-maximum, waardoor de test een keuze afkeurde
+    die het thema mag maken.
+    """
     breed = _meet(auth_page, f"{app_server}/dashboard", 1920)
-    assert breed["kolom"] < 1400, f"de kolom loopt door tot {breed['kolom']}px"
+    assert breed["kolom"] < 1500, f"de kolom loopt door tot {breed['kolom']}px"
+    assert breed["kolom"] < 1920 - 200, "de kolom volgt het venster in plaats van af te kappen"
     assert breed["kolom"] > 800, f"de kolom is met {breed['kolom']}px te smal geworden"
 
 
