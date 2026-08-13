@@ -1722,7 +1722,6 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             dep.get("name"): collect_deployment_state(project_data_decrypted, dep.get("name", ""))
             for dep in project_data_decrypted.get("deployments", [])
         }
-        deployment_state_facts = {name: state.facts for name, state in deployment_states.items()}
 
         # De statuskolom van de deploymenttabel op het tabblad Overzicht. Twee bronnen die
         # allebei per PROJECT worden opgehaald en niet per rij: de feiten van de diensten
@@ -1805,7 +1804,6 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "pending_rollout": pending_rollout,
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
-                "deployment_state_facts": deployment_state_facts,
                 # De statuslabels per rij van de deploymenttabel (Overzicht), en de
                 # gebundelde ArgoCD-stand waar de kolom "Laatste sync" uit leest.
                 "deployment_status_tags": deployment_status_tags,
