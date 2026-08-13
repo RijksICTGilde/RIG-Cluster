@@ -23,7 +23,11 @@ import httpx
 from playwright.sync_api import Page, sync_playwright
 from tests.e2e.helpers import cluster
 from tests.e2e.helpers.forgejo import ForgejoClient
-from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, create_project_with_services
+from tests.e2e.helpers.lifecycle import (
+    RUNNABLE_IMAGE,
+    project_name_from_progress,
+    walk_create_wizard_with_services,
+)
 from tests.e2e.helpers.wizard import _unique_project_name
 
 BASIS = os.environ.get("ZAD_SANDBOX_URL", "https://zad.sandbox.rijksapp.dev")
@@ -113,18 +117,19 @@ def main() -> int:
         else:
             weergavenaam = _unique_project_name()
             print(f"[doorloop] wizard: {weergavenaam}")
-            gemaakt = create_project_with_services(
+            walk_create_wizard_with_services(
                 page,
                 BASIS,
-                forgejo,
                 weergavenaam,
                 user_email=f"{GEBRUIKER}@sandbox.rijksapp.dev",
-                services=["publish-on-web", "namespace-postgresql-database", "keycloak"],
+                # postgresql-database en niet de namespace-variant: die is hidden=True en heeft
+                # dus bewust geen wizardkaart (hij gaat via de API).
+                services=["publish-on-web", "postgresql-database", "keycloak"],
                 component_name="web",
                 image=RUNNABLE_IMAGE,
             )
-            naam = gemaakt.name
-            print(f"[doorloop] aangemaakt: {naam} (deployment {gemaakt.deployment_name})")
+            naam = project_name_from_progress(page)
+            print(f"[doorloop] aangemaakt: {naam}")
 
         print("[doorloop] wachten tot ArgoCD Healthy meldt")
         cluster.wait_for_project_apps_healthy(naam, timeout=300)
