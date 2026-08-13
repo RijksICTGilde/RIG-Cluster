@@ -13,13 +13,15 @@ produces it. The fixture project therefore carries a realm with both secrets.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from tests.e2e.helpers.edit_modal import EditModalHelper
-from tests.e2e.helpers.tekst import veld
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from playwright.sync_api import Page
 
 pytestmark = pytest.mark.e2e
@@ -50,44 +52,36 @@ def _stored_realm() -> dict[str, Any]:
     return {}
 
 
-def test_identity_edit_leaves_the_realm_admin_connection_alone(app_server: str, auth_page: Page) -> None:
-    before = _stored_realm()
-    assert before.get("password"), "fixture must carry an encrypted realm password"
+@pytest.fixture(autouse=True)
+def _restore_the_shared_fixture_project(app_server: str) -> Iterator[None]:
+    """Put the project back exactly as it was after each test in this file.
 
-    modal = EditModalHelper(auth_page, app_server, PROJECT_NAME)
-    modal.open_detail_page()
-    modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
-    original_description = veld(modal.page, "description").input_value()
-    try:
-        modal.fill_field("description", "RC-102 controle")
-        modal.submit_step()
-        modal.wait_for_success()
-    finally:
-        # The project is shared with the rest of this suite and the app is session-scoped.
-        modal.open_detail_page()
-        modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
-        modal.fill_field("description", original_description)
-        modal.submit_step()
-        modal.wait_for_success()
-
-    assert _stored_realm() == before
-
-
-def test_services_edit_leaves_the_realm_admin_connection_alone(app_server: str, auth_page: Page) -> None:
-    """The edit that lost it: selecting an unrelated service and walking to the end.
-
-    The keycloak config step comes along because keycloak is selected, and it is that
-    step's own data -- written in the name-as-key shape -- that the restore had to pair
-    with the stored record.
+    ``test-project-detail`` is shared with the rest of this suite, and both the app and
+    the project store are session-scoped: what a test leaves behind, every later test that
+    opens this project sees. Undoing the edit through the UI is not enough -- any save
+    rewrites the whole file (``uses-services`` becomes ``services``, resources gain
+    requests/limits, the schema is migrated), and services that live only on a component,
+    such as ``persistent-storage``, do not survive that round trip. So restore the stored
+    data itself, through the same write-through cache the store uses.
     """
-    before = _stored_realm()
-    assert before.get("password"), "fixture must carry an encrypted realm password"
-    assert before.get("totp_secret"), "fixture must carry an optional second secret"
+    from opi.services.project_service import get_project_service
 
-    modal = EditModalHelper(auth_page, app_server, PROJECT_NAME)
+    service = get_project_service()
+    stored = service.get_project(PROJECT_NAME)
+    assert stored is not None, f"fixture project {PROJECT_NAME} is not registered"
+    assert stored.data, f"fixture project {PROJECT_NAME} carries no data"
+    original, filename = deepcopy(stored.data), stored.filename
+    try:
+        yield
+    finally:
+        service.load_project_from_data(deepcopy(original), filename)
+
+
+def _toggle_service_and_save(modal: EditModalHelper, service_name: str) -> None:
+    """Walk the services flow from the detail page, flipping one service, and confirm."""
     modal.open_detail_page()
     modal.open_edit_modal("modal-edit-services", "Services beheren")
-    modal.toggle_service("authorization-wall")
+    modal.toggle_service(service_name)
     modal.submit_step()
     modal.advance_to_review()
 
@@ -100,6 +94,37 @@ def test_services_edit_leaves_the_realm_admin_connection_alone(app_server: str, 
         lambda response: response.request.method == "POST" and response.url.split("?")[0].endswith("/confirm")
     ):
         confirm.click()
+
+
+def test_identity_edit_leaves_the_realm_admin_connection_alone(app_server: str, auth_page: Page) -> None:
+    before = _stored_realm()
+    assert before.get("password"), "fixture must carry an encrypted realm password"
+
+    modal = EditModalHelper(auth_page, app_server, PROJECT_NAME)
+    modal.open_detail_page()
+    modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
+    modal.fill_field("description", "RC-102 controle")
+    modal.submit_step()
+    modal.wait_for_success()
+
+    assert _stored_realm() == before
+
+
+def test_services_edit_leaves_the_realm_admin_connection_alone(app_server: str, auth_page: Page) -> None:
+    """The edit that lost it: selecting an unrelated service and walking to the end.
+
+    The keycloak config step comes along because keycloak is selected, and it is that
+    step's own data -- written in the name-as-key shape -- that the restore had to pair
+    with the stored record.
+    """
+    before = _stored_realm()
+    before_services = _stored_service_names()
+    assert before.get("password"), "fixture must carry an encrypted realm password"
+    assert before.get("totp_secret"), "fixture must carry an optional second secret"
+    assert "authorization-wall" not in before_services
+
+    modal = EditModalHelper(auth_page, app_server, PROJECT_NAME)
+    _toggle_service_and_save(modal, "authorization-wall")
 
     # Two ways this can go wrong and only both assertions together catch them: the save is
     # refused (the project file keeps its realm, but no edit gets through any more), or the
