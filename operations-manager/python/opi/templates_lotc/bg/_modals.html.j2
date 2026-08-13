@@ -33,10 +33,15 @@
        <c-cluster justify="between">. De lijn eronder en de marge blijven in
        modal.css - daar heeft het thema niets voor. #}
     <c-cluster justify="between" align="center" class="edit-section-header">
-        <c-heading type="h2" size="4" id="edit-section-title">
+        {# Het icoon staat NAAST de kop en niet erin: een kop legt zijn kinderen niet
+           naast elkaar, dus een icoon binnen <c-heading> zakt uit de lijn. Een cluster
+           doet dat wel. De id blijft op de kop staan, want aria-labelledby wijst ernaar. #}
+        <c-cluster gap="sm" align="center">
             <c-icon icon="pencil" size="lg" />
-            <span id="edit-section-title-text"></span>
-        </c-heading>
+            <c-heading type="h2" size="4" id="edit-section-title">
+                <span id="edit-section-title-text"></span>
+            </c-heading>
+        </c-cluster>
         <c-button type="tertiary"
                   size="sm"
                   label="Sluiten"
