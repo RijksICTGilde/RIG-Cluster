@@ -478,7 +478,6 @@ class Settings(BaseSettings):
     BACKUP_S3_ACCESS_KEY: str = "backup-admin"
     BACKUP_S3_SECRET_KEY: str = "backup-secret-key-local"
     BACKUP_S3_USE_TLS: bool = False  # Use HTTP (False) or HTTPS (True) for S3 endpoint
-    BACKUP_SNAPSHOT_CLASS: str = "ocs-storagecluster-rbdplugin-snapclass"
     BACKUP_TIMEOUT_SECONDS: int = 3600
     # Retention: Kopia keeps the union of all "keep-*" rules. With these
     # defaults a daily-scheduled deployment retains 30 daily snapshots, then
