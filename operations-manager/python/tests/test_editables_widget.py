@@ -66,7 +66,12 @@ class TestRenderDisplayCard:
     def test_default_icon(self) -> None:
         field = self._make_field(value="test")
         html = LOTCWidgetAdapter().render_display_card(field)
-        assert 'name="sleutel"' in html
+        # De naam wordt VERTAALD voordat hij bij <nldd-icon> aankomt: "sleutel" is onze
+        # eigen ROOS-naam en NLDD kent hem niet. Deze test eiste eerst de onvertaalde
+        # naam, en legde daarmee vast wat RC-94 juist repareerde - twaalf plekken gaven
+        # een naam uit gegevens rechtstreeks door en tekenden een lege plek.
+        assert 'name="lock-closed"' in html
+        assert 'name="sleutel"' not in html
         assert 'color="hemelblauw"' in html
 
     def test_label_rendered(self) -> None:

@@ -1,4 +1,13 @@
 - UI components must use the Lord of the Components tags (`<c-*>`, NLDD-thema) as much as possible; if a component seems to be missing, add it to the list in request_for_components.md with a detailed request for it so it can be built later. See `features/lotc-bouwlijn.md`.
+- **Never put a `{# ... #}` comment INSIDE a component tag.** The LOTC preprocessor parses the tag body as attributes, so the words in your comment become attribute names and rendering dies with `Duplicate attribute 'een'` — a message that points at a word, not at the comment. It has cost two reworks. Put the explanation above the tag:
+
+  ```jinja
+  {# WRONG: dies on 'Duplicate attribute'                 RIGHT: #}
+  <c-button                                               {# why this icon is filtered #}
+      {# why this icon is filtered #}                     <c-button
+      :icon="x | nldd_icon" />                                :icon="x | nldd_icon" />
+  ```
+
 - Python imports must always be at the top of the file, never inline or local. Use `ruff check --select I --fix` to sort and organize imports, then `ruff format .` to format.
 - **Build fast, test locally.** Only run the tests for what you changed (`uv run pytest tests/<file> -x -q --tb=short`), never the full suite. The unit suite is ~7900 tests and the browser suite ~350; running either in full costs minutes per attempt and is not your job — the full run happens once before the merge to main. Pick the files that cover your change; if you cannot name them, that is the signal your change lacks a test, not that you should run everything.
 - **Look at the screen for anything visual.** A green browser test does not prove a table renders as a table. Take a screenshot of what you built and judge it. This has been the cause of six reworks.
