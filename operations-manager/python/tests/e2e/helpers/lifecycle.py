@@ -302,7 +302,7 @@ def create_project_with_services(
         component_name=component_name,
         image=image,
     )
-    name = forgejo.wait_for_new_project(before, timeout=create_timeout)
+    name = forgejo.wait_for_new_project(before, display_name=display_name, timeout=create_timeout)
     assert name, f"No new project file appeared in Forgejo for display-name '{display_name}'"
     deployment_name = forgejo.get_first_deployment_name(name)
     api_key = read_api_key_with_retry(page, base_url, name)
@@ -347,7 +347,7 @@ def create_project_via_wizard(
     before = forgejo.list_project_names()
     walk_create_wizard(page, base_url, display_name, user_email=user_email, component_name=component_name, image=image)
 
-    name = forgejo.wait_for_new_project(before, timeout=create_timeout)
+    name = forgejo.wait_for_new_project(before, display_name=display_name, timeout=create_timeout)
     assert name, f"No new project file appeared in Forgejo for display-name '{display_name}'"
 
     deployment_name = forgejo.get_first_deployment_name(name)
