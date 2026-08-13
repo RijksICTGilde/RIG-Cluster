@@ -13,7 +13,7 @@ users:
 config:
   # Het AGE-sleutelpaar hoort bij ELK project: opi/web/router.py leest
   # config['age-private-key'] om de deploymentconfiguratie te ontsleutelen. Zonder die
-  # sleutels geeft /projects/details/<naam> een KeyError en dus een 500 - en dat viel
+  # sleutels geeft /projects/<naam>/details een KeyError en dus een 500 - en dat viel
   # nergens op, want geen enkele test opende de detailpagina van deze twee fixtures.
   # tests/e2e/test_lotc_links.py doet dat nu wel, via de links op /projects.
   age-public-key: "age1drxwupvn5eg8wd9cdf05nrxp6usrpk7tarc09yzk4c3m7jzzaups8757zy"
