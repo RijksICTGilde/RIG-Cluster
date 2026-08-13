@@ -5,7 +5,7 @@
 <c-card padding="md" outline>
     <c-layout-flow gap="xs">
         <div class="lotc-display-field__header">
-            <c-icon icon="{{ icon|e }}" size="md" color="{{ icon_color|e }}"/>
+            <c-icon icon="{{ icon|nldd_icon|e }}" size="md" color="{{ icon_color|e }}"/>
             <span class="utrecht-form-label">{{ field.label|e }}</span>
         </div>
         {% if val %}

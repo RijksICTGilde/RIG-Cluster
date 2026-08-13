@@ -65,6 +65,9 @@ ROOS_TO_NLDD_ICONS = {
     "netwerk": "link",
     "klok": "timer",
     "kruis": "dismiss",
+    # De preset "Lokale ontwikkeling" (configs/presets/keycloak-config.yaml) droeg
+    # "laptop"; NLDD heeft geen laptop, wel een werkplek met een scherm.
+    "laptop": "desk-with-screen",
     # folder-stack MAG HIER NIET STAAN, hoe goed hij ook past. Die naam bestaat in de
     # NLDD-bundel, maar LOTC heeft er in icons.json een alias van gemaakt die hem naar
     # ``folder-on-folder`` herschrijft, en DIE zit niet in de bundel. Het icoon rendeerde
