@@ -28,7 +28,9 @@
     <c-icon icon="question-mark-circle" size="md"
             class="field-help-btn"
             :attrs="{'onclick': hulp_js}" />
-    {% if field.description %}<c-span>{{ field.description }}</c-span>{% endif %}
+    {# Dezelfde voorwaarde als description_text(): zonder help_text zet combined_helper()
+       de omschrijving al in :help, en dan zou hij hier dubbel staan. #}
+    {% if field.description and field.help_text %}<c-span>{{ field.description }}</c-span>{% endif %}
 </c-cluster>
 {% else %}
 {{ description_text(field) }}
