@@ -36,11 +36,31 @@ Dit is de tweede grote lijn van deze release. Wie liever scriptt dan klikt, of e
 - **Zien wat een taak doet.** Een lopende taak toont zijn stappen en voortgang, dus je hoeft niet te raden of er nog iets gebeurt.
 - **Zelf je startcommando meegeven.** Een component kan een eigen startcommando krijgen, als één regel, inclusief argumenten tussen aanhalingstekens.
 
+##### Een nieuw portaal
+
+Dit stond vorige keer nog bij "voor de toekomst" en is er nu: het portaal is opnieuw opgebouwd op de rijkshuisstijl-componenten. Dat is niet alleen een ander uiterlijk. De projectpagina was één lange pagina waarop je moest zoeken; die is nu opgedeeld in tabbladen die elk over één ding gaan.
+
+- **Overzicht, Team, Componenten, Services, Services info, Deployments, Metrics, Backups en Taken.** Elk tabblad heeft zijn eigen adres, dus je kunt er rechtstreeks naartoe en een link naar iemand anders sturen.
+- **Je omgevingsvariabelen staan bij het component waar ze bij horen.** Voorheen stond er een verwijzing naar een lijst op een ander tabblad. Bij een deployment zie je alleen nog de overschrijvingen, en dus niet meer dezelfde variabele twee keer.
+- **Je aliassen zijn eindelijk terug te lezen.** Je kon ze wel invullen, maar nergens zien wat erin stond. Ze staan nu in de kaart van het component, met de verwijzing erbij, zodat te zien is waar een waarde vandaan komt.
+- **Wat een dienst je aanreikt staat bij elkaar.** Het Keycloak-adres, de beheerdersnaam, het wachtwoord en de gedeelde code, de uitnodigingslinks en je bijlagen staan op het tabblad Services info, in dezelfde vorm als de rest van je configuratie. Wachtwoorden en codes zijn afgeschermd, met een knop om ze te tonen en te kopiëren.
+- **Acties staan waar je ze zoekt.** Elk tabblad heeft een eigen Acties-kaart met de knoppen die bij dat onderwerp horen, in plaats van verspreid over de pagina.
+- **Het dashboard toont geheugen en CPU naast elkaar.** Geheugen staat voorop, want daar stuur je op, en beide balken staan in dezelfde volgorde zodat je ze kunt vergelijken.
+- **Een slapend project is gezond.** Het wordt niet meer als probleem geteld, maar wel apart benoemd, zodat je niet denkt dat er iets stuk is.
+- **Bij een taak staat wie hem uitvoerde.** De ingelogde gebruiker, of "API" als het via een sleutel ging.
+
+##### Veiliger
+
+- **De gedeelde registry heeft een eigenaar per tag.** Een image die je publiceert draagt de naam van je project, zodat een ander project er niet overheen kan schrijven. Dit kwam uit een technische toetsing tegen de BIO en NORA en is de zwaarste bevinding daaruit.
+- **De uitleg bij een dienst is een pagina op zich.** Open je de link rechtstreeks, dan krijg je een leesbare pagina in plaats van tekst zonder opmaak.
+
 ##### Duidelijker status, minder ruis
 
 - **Uitgeschakeld is niet ongezond.** Een deployment die je bewust hebt uitgezet wordt niet langer als een probleem gerapporteerd.
 - **Eén toestand, één badge.** De status die je in het portaal ziet komt uit één bron, zodat verschillende plekken niet meer verschillende dingen beweren.
 - **Fouten uit ArgoCD komen door.** Gaat het renderen van je manifesten mis, dan zie je die melding nu zelf, in plaats van een algemeen "mislukt".
+- **Een falende health-controle heet geen crash.** Een component dat draait maar de controle niet doorstaat werd gemeld als een applicatie die omvalt, en dan zoek je op de verkeerde plek. Nu staat er wat er werkelijk aan de hand is.
+- **Een herverwerking noemt alleen webadressen die bestaan.** Je kreeg een URL terug die vervolgens 404 gaf.
 - **Automatisch afgestemde resources.** Geheugen en CPU worden op basis van werkelijk gebruik bijgesteld, zodat je niet handmatig hoeft te schatten. Wil je dat niet, dan zet je het per project uit.
 
 ##### Onder de motorkap
@@ -49,4 +69,4 @@ Niet zichtbaar, wel merkbaar: elke dienst zit nu volledig in zijn eigen map, met
 
 ##### Voor de toekomst
 
-De eerstvolgende stappen zijn een **nieuwe vormgeving** van het portaal op basis van de rijkshuisstijl-componenten, en verdere uitbreiding van de commandoregel-tooling nu de API-kant er ligt. Daarnaast blijft staan: CI/CD voor ZAD zelf, en de vraag hoe ZAD op langere termijn meer kan leunen op bestaande producten en minder op eigen maatwerk.
+De eerstvolgende stap is verdere uitbreiding van de commandoregel-tooling nu de API-kant er ligt. Daarnaast blijft staan: CI/CD voor ZAD zelf, en de vraag hoe ZAD op langere termijn meer kan leunen op bestaande producten en minder op eigen maatwerk.
