@@ -23,6 +23,11 @@
   Wat wel anders is dan het origineel: de balk is <c-progress-bar> van het thema in plaats
   van een eigen div met een breedte in een style-attribuut. Die omzetting stond er al en
   blijft; het is de REGEL erboven die ontbrak.
+
+  ``value-display="tooltip"`` op die balk: het thema zet het percentage standaard NAAST de
+  balk, en dan staat het er twee keer - een keer in de regel hierboven en een keer bij de
+  balk. Met "tooltip" verhuist het naar de muisaanwijzer; gemeten in de browser, want
+  "none" is geen waarde die dit component kent (dan valt hij terug op inline).
 #}
 {% macro cores(v) %}{% if v < 1 %}{{ (v * 1000) | round | int }}m{% else %}{{ '%.1f' | format(v) }}{% endif %}{% endmacro %}
 {% macro gib(v) %}{% if (v / 1073741824) < 0.1 %}{{ (v / 1048576) | round | int }} MiB{% else %}{{ '%.1f' | format(v / 1073741824) }} GiB{% endif %}{% endmacro %}
@@ -50,6 +55,7 @@
                 <c-progress-bar
                     :value="usage.cpu_pct"
                     max="100"
+                    value-display="tooltip"
                     color="info"
                     accessible-label="CPU-gebruik ten opzichte van de limiet" />
             {% endif %}
@@ -65,6 +71,7 @@
                 <c-progress-bar
                     :value="usage.mem_pct"
                     max="100"
+                    value-display="tooltip"
                     color="success"
                     accessible-label="Geheugengebruik ten opzichte van de limiet" />
             {% endif %}
