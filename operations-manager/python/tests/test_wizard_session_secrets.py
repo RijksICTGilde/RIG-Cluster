@@ -83,6 +83,34 @@ class TestRedaction:
         redacted, _ = redact_unreachable_secrets(_project(), {"user-env-vars"})
         assert redacted["components"][0]["user-env-vars"] == OTHER_AGE_BLOCK
 
+    def test_keeps_the_whole_map_behind_a_reachable_key(self):
+        """Gemeld: in het aliassenveld stond letterlijk __opi-redacted-secret__.
+
+        Aliassen zijn PER WAARDE versleuteld, dus onder de bereikbare sleutel "aliases"
+        staan sleutels als POSTGRES_HOST -- en die kent geen editable. Er werd afgedaald
+        en binnenin opnieuw geoordeeld, waardoor precies de waarden verdwenen die het
+        formulier moest tonen. user-env-vars ontsprong de dans alleen omdat dat EEN blok
+        is en dus nooit een afdaling werd; het onderscheid zat in de opslagvorm en niet
+        in de bereikbaarheid, en dat is geen onderscheid dat iemand bedoeld heeft.
+        """
+        project = _project()
+        project["components"][0]["aliases"] = {"POSTGRES_HOST": AGE_BLOCK, "POSTGRES_USER": OTHER_AGE_BLOCK}
+
+        redacted, paths = redact_unreachable_secrets(project, {"aliases"})
+
+        assert redacted["components"][0]["aliases"]["POSTGRES_HOST"] == AGE_BLOCK
+        assert redacted["components"][0]["aliases"]["POSTGRES_USER"] == OTHER_AGE_BLOCK
+        assert not [p for p in paths if "aliases" in p]
+
+    def test_an_unreachable_map_still_goes(self):
+        """De tegenhanger: bereikbaar is de enige reden om te bewaren."""
+        project = _project()
+        project["components"][0]["aliases"] = {"POSTGRES_HOST": AGE_BLOCK}
+
+        redacted, _ = redact_unreachable_secrets(project, set())
+
+        assert redacted["components"][0]["aliases"]["POSTGRES_HOST"] == REDACTED
+
     def test_always_keeps_the_key_that_decrypts_the_others(self):
         # The converters decrypt and re-encrypt field values with it; without it,
         # editing any encrypted field breaks.

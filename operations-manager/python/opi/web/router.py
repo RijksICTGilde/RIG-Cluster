@@ -21,6 +21,7 @@ from datetime import UTC
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
+from opi.services.catalog.base import ValueStorage
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
@@ -28,6 +29,8 @@ from opi.services.catalog.publish_on_web.domain_config import (
     pop_domain_setting,
     set_domain_setting,
 )
+from opi.services.component_values import ComponentValuesError
+from opi.services.component_values import decode as decode_component_values
 from opi.services.config_location import binding_label, project_step_config_hint
 from opi.services.deployment_state import collect_deployment_state
 from opi.services.project import Project
@@ -1448,6 +1451,22 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                     project_private_key,
                     where=f"component '{component_name}'",
                 )
+            # Aliassen ook, en om dezelfde reden: de kaart toont ze en zonder dit staat er
+            # een AGE-blok op het scherm. Ze worden PER WAARDE versleuteld opgeslagen
+            # (ValueStorage.PER_VALUE), dus dit is niet hetzelfde pad als hierboven; het is
+            # wel dezelfde decoder als de leesendpoints gebruiken, zodat de pagina en de API
+            # niet uiteen kunnen lopen over wat er staat. Wat er daarna nog afgeschermd
+            # wordt bepaalt de dienst, in het sjabloon via het filter is_verwijzing.
+            if component.get("aliases"):
+                try:
+                    component["aliases"] = decode_component_values(
+                        component["aliases"], ValueStorage.PER_VALUE, project_data_decrypted, project_private_key
+                    )
+                except (ComponentValuesError, ValueError) as error:
+                    # Namen behouden, waarden niet: "onleesbaar" is iets anders dan "niet
+                    # aanwezig", en een kaart die de alias weglaat liegt over het component.
+                    logger.warning(f"Aliases of component '{component_name}' could not be read: {error}")
+                    component["aliases"] = dict.fromkeys(component["aliases"], "")
 
         # Decrypt helm-charts base helm-values
         for helm_chart in project_data_decrypted.get("helm-charts", []):
