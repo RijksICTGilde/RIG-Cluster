@@ -6,6 +6,8 @@ valkuilen die bij een volgende opzet opnieuw bijten.
 De onderbouwing (waarom een VPN, waarom headscale, wat er is afgevallen) staat in
 `features/futures/vlam-api-vpn-proxy.md`. Dit document is het bouwverslag.
 
+Alles wat over het gebruik van VLAM gaat is verhuisd naar een eigen project, `~/IdeaProjects/vlam`: het gebruikersdocument voor deelnemers, de CISO-samenvatting, het script dat nagaat welke API-routes openstaan, en de scripts om de tunnel te starten en er een agent tegenaan te zetten. Dit document blijft hier, want de valkuilen hieronder gaan over ZAD en niet over VLAM.
+
 ## Wat we bouwen
 
 ```
