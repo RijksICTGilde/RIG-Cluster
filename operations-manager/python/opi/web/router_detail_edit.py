@@ -47,6 +47,7 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
+from opi.handlers.project_file_handler import extract_attachment_catalog
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
@@ -62,6 +63,7 @@ from opi.web.router_wizard import (
     _find_sequence_editable,
     _split_data_across_sections,
 )
+from opi.web.router_wizard_attachments import REPLACE_TARGET_KEY
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -685,6 +687,17 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
                 backup_context["_selected_deployment"] = requested_dep
         state.base_data.update(backup_context)
 
+    # Vervangen: the dialog was opened at one specific attachment, and from here on that is
+    # the session's business rather than the request's. The upload endpoints check every
+    # id they are handed against this value, so a form that shows the id fixed and a POST
+    # that sends a different one get the same answer. Same shape as the two above:
+    # template-only, no editable names it, so it stays out of the saved project.
+    requested_replace = request.query_params.get("replace", "").strip()
+    if requested_replace:
+        if flow_id != "modal-edit-attachments" or requested_replace not in extract_attachment_catalog(project_data):
+            raise HTTPException(status_code=404, detail=f"Bijlage '{requested_replace}' bestaat niet in dit project")
+        state.base_data[REPLACE_TARGET_KEY] = requested_replace
+
     # Cross-domain-access needs the list of authorized peer projects; the same builder the
     # create wizard uses, so the two flows cannot drift apart again. Populated only for flows
     # that carry its section. Template-only: no editable names it, so it falls outside the
@@ -1300,8 +1313,6 @@ async def _process_and_save_modal_edit(
     # Capture existing attachments' encrypted content before the form merge: the wizard
     # strips it from the session (see _strip_attachment_content), so it is re-attached at
     # save by PreserveAttachmentContentHook keyed by id.
-    from opi.handlers.project_file_handler import extract_attachment_catalog
-
     original_attachment_content = {
         att_id: entry.get("content")
         for att_id, entry in extract_attachment_catalog(existing_data).items()

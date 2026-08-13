@@ -1,6 +1,13 @@
 {# Attachments: one unified list (catalog + staged) at the top, the upload form below.
    Used in the create wizard AND the modal-edit flow. CSRF inherits from the surrounding
-   wizard step form's hx-headers. _wizard_token routes staging to the modal session. #}
+   wizard step form's hx-headers. _wizard_token routes staging to the modal session.
+
+   VERVANGEN. Geopend via de knop Vervangen bij een bijlage staat _replace_attachment op
+   de id die overschreven wordt. Hetzelfde formulier, twee verschillen: de identifier ligt
+   vast (getoond, niet te wijzigen, en meegestuurd uit een verborgen veld) en er gaat
+   mode=replace mee, zodat de serverkant weet dat een BESTAANDE id hier juist goed is. Dat
+   de knop de id vastzet is geen beveiliging - de serverkant toetst hem tegen de sessie. #}
+{% set vervangt = _replace_attachment | default('', true) %}
 <c-layout-flow gap="lg">
     <c-card outline="true" padding="md" background-color="grijs-050">
         <c-layout-flow gap="sm">
@@ -19,9 +26,20 @@
 
     <c-card outline="true" padding="md" background-color="grijs-050">
         <c-layout-flow gap="sm">
+            {% if vervangt %}
+            <c-heading type="h3" label="Bijlage vervangen"/>
+            <c-paragraph size="sm">De inhoud van bijlage <strong>{{ vervangt }}</strong> wordt overschreven door het bestand dat je hier kiest. De identifier blijft hetzelfde, dus alle componenten die deze bijlage gebruiken blijven eraan gekoppeld. De vorige inhoud is daarna weg.</c-paragraph>
+            {% else %}
             <c-heading type="h3" label="Nieuwe bijlage uploaden"/>
+            {% endif %}
             <p class="rvo-text--sm rvo-text--subtle">Max 256 KB (bijvoorbeeld een certificaat). Koppelen doe je per component.</p>
             <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('', true) }}">
+            {% if vervangt %}
+            <input type="hidden" id="wiz-att-mode" name="mode" value="replace">
+            <c-text-input-field id="wiz-att-id-vast" label="Identifier" value="{{ vervangt }}" readonly="true"
+                help="De identifier van een vervanging staat vast; daar hangen de koppelingen aan."/>
+            <input type="hidden" id="wiz-att-id" name="attachment_id" value="{{ vervangt }}">
+            {% else %}
             {# On-change identifier validation lives on this wrapper, NOT on the #wiz-att-id
                input itself: htmx omits a request-source input from another element's
                hx-include, so an htmx-controlled id input would drop attachment_id from the
@@ -35,6 +53,7 @@
                  hx-swap="innerHTML">
                 {% include "wizard/partials/attachments_id_field.html.j2" %}
             </div>
+            {% endif %}
             <label class="utrecht-form-label attachment-upload__label" for="wiz-att-file">Bestand</label>
             <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
             <div class="attachment-upload__row">
@@ -45,12 +64,12 @@
                     'hx-post': '/forms/wizard/create-project/attachments/stage',
                     'hx-ext': 'ignore:json-enc',
                     'hx-encoding': 'multipart/form-data',
-                    'hx-include': '#wiz-att-id, #wiz-att-file, #wiz-att-token',
+                    'hx-include': '#wiz-att-id, #wiz-att-file, #wiz-att-token, #wiz-att-mode',
                     'hx-target': '#wiz-att-list',
                     'hx-swap': 'innerHTML',
                     'hx-disabled-elt': 'this',
                 } %}
-                <c-button type="secondary" size="sm" label="Uploaden" :attrs="uploaden_attrs"/>
+                <c-button type="secondary" size="sm" :label="'Vervangen' if vervangt else 'Uploaden'" :attrs="uploaden_attrs"/>
                 <span id="wiz-att-feedback"></span>
             </div>
         </c-layout-flow>
