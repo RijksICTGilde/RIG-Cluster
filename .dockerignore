@@ -74,6 +74,13 @@ Taskfile.yaml
 Dockerfile.*
 docker-compose*
 
+# Operationele hulpscripts. Ze gaan de image niet in (de Dockerfile kopieert alleen
+# opi, manifests, extensions en static), maar ze staan wel in de buildcontext, en dan
+# telt elke schrijfactie erin als een bouwafhankelijkheid. kijk_sandbox.py schrijft bij
+# iedere aanroep zijn sessiebestand hier weg, en dat kostte een volledige rebuild in
+# plaats van een sync.
+operations-manager/python/scripts/
+
 # Test files and data
 tests/
 test-*
