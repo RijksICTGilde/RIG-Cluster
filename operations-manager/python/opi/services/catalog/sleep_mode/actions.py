@@ -60,7 +60,12 @@ def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[De
     return [
         DeploymentAction(
             label="Applicatie wekken",
-            icon="uitvoering",
+            # "uitvoering" staat NIET in de vertaaltabel van navigation_lotc.py, dus
+            # to_nldd_icon() liet die naam ongewijzigd door, NLDD kent hem niet en er
+            # verscheen niets - stil, want een onbekende naam levert geen fout op.
+            # "klok" -> "timer" is het icoon dat deze dienst zelf al draagt en dat
+            # aantoonbaar rendert; de slaapstand is ook waar deze actie over gaat.
+            icon="klok",
             # Same weight as the other deployment actions (images bewerken, herverwerken):
             # waking is not more important than they are, it just happens less often.
             kind="secondary",
