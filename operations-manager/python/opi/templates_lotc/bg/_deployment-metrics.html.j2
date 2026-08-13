@@ -119,7 +119,12 @@
     {% set component_name = component.reference %}
     {% set m = metrics.get(component_name, {}) %}
     {% call panel(component_name, "puzzle-piece") %}
-        <c-auto-grid min="220px" gap="sm">
+        {# TWEE grafieken naast elkaar, niet vier. min is de kolombreedte waaronder
+           auto-fit een kolom laat vallen; op 220px pasten er vier in de kaart en dan is
+           elke grafiek zo smal dat een lijn niet meer te lezen is. Op 480px past er in
+           een kaart van ~1300px geen derde kolom meer, en op een smal scherm zakt het
+           vanzelf naar een. #}
+        <c-auto-grid min="480px" gap="sm">
             {# CPU Chart #}
             <div class="chart-item">
                 <div class="chart-label">CPU (millicores){% if m.cpu_limit %} - Limit: {{ m.cpu_limit|int }}m{% endif %}</div>
@@ -200,7 +205,12 @@
     {% set m = metrics.get(workload_name, {}) %}
     {% set pods %}<c-tag type="default" label="{{ workload.pod_count }} pod{% if workload.pod_count != 1 %}s{% endif %}"/>{% endset %}
     {% call panel(workload_name, "rectangle-stack", aside=pods) %}
-        <c-auto-grid min="220px" gap="sm">
+        {# TWEE grafieken naast elkaar, niet vier. min is de kolombreedte waaronder
+           auto-fit een kolom laat vallen; op 220px pasten er vier in de kaart en dan is
+           elke grafiek zo smal dat een lijn niet meer te lezen is. Op 480px past er in
+           een kaart van ~1300px geen derde kolom meer, en op een smal scherm zakt het
+           vanzelf naar een. #}
+        <c-auto-grid min="480px" gap="sm">
             {# CPU Chart #}
             <div class="chart-item">
                 <div class="chart-label">CPU (millicores){% if m.cpu_limit %} - Limit: {{ m.cpu_limit|int }}m{% endif %}</div>
