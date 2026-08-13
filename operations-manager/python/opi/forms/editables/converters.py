@@ -306,10 +306,11 @@ class KeyValueConverter:
 
     Two write modes controlled by ``write_as``:
 
-    - ``"dict"`` (default): Parses ``KEY=value`` text into a dict.
-      Used for ``aliases`` which are stored as YAML maps.
+    - ``"dict"`` (default): Parses ``KEY=value`` text into a dict, encrypting each
+      value on its own. No editable uses this since RC-106 moved ``aliases`` onto the
+      block shape; it is kept as the general map mode of this converter.
     - ``"string"``: Keeps the raw text as a string literal.
-      Used for ``user-env-vars`` which are stored as a string
+      Used for ``user-env-vars`` and ``aliases``, which are stored as one string
       (and later AGE-encrypted by a generator).
 
     When the stored value is AGE-encrypted, ``read()`` and ``view()``
@@ -353,7 +354,7 @@ class KeyValueConverter:
         if result and self.write_as == "string" and isinstance(result, str):
             result = self._maybe_encrypt(result, context_data)
         elif result and self.write_as == "dict" and isinstance(result, dict):
-            # Aliases: encrypt each value independently (values may hold secrets).
+            # Map mode: encrypt each value independently (values may hold secrets).
             result = {k: self._maybe_encrypt(str(v), context_data) for k, v in result.items()}
         logger.debug(
             "[KeyValueConverter.write] result type=%s", type(result).__name__ if result is not None else "None"

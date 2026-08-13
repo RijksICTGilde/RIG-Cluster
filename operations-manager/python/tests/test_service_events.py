@@ -127,13 +127,12 @@ class TestParticipationIsDerived:
             ServiceType.ATTACHMENTS,
             ServiceType.INVITE,
         }
-        # Every backupable service brings the backups block, plus the metrics block.
+        # Alleen het metrics-blok. De backupable diensten stonden hier ook, tot RC-100
+        # het backupblok een eigen tabblad gaf: de mixin declareert de haak sindsdien niet
+        # meer en het blok wordt bij naam opgevraagd (collect_backups_sections). Zie de
+        # module-docstring van opi/services/catalog/shared/backups.py voor de afweging.
         assert {s.service_type for s in listeners(UIEvent.DEPLOYMENT_SECTIONS)} == {
             ServiceType.METRICS_SCRAPER,
-            ServiceType.PERSISTENT_STORAGE,
-            ServiceType.POSTGRESQL_DATABASE,
-            ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
-            ServiceType.MINIO_STORAGE,
         }
 
     def test_a_project_narrows_the_listeners_to_the_services_it_uses(self) -> None:

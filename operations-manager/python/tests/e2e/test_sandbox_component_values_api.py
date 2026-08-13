@@ -96,23 +96,25 @@ def test_env_vars_round_trip_on_the_component(values_project, sandbox_url: str, 
     )
 
 
-def test_aliases_are_encrypted_per_value_with_readable_names(
+def test_aliases_land_in_the_project_file_as_one_age_block(
     values_project, sandbox_url: str, forgejo: ForgejoClient
 ) -> None:
-    """The other storage shape, op de laag die aliassen als enige hebben.
+    """De opslagvorm van aliassen, op de laag die ze als enige hebben.
 
     De waarden zijn hier VERWIJZINGEN (``$DATABASE_DB``) en geen los verzonnen tekst.
     Dat is geen detail van de test maar de regel van de dienst: een alias koppelt een
     eigen naam aan een platformvariabele, en ``validate_alias_value`` weigert sinds RC-79
-    een waarde zonder verwijzing. Met de oude vorm (een willekeurig geheim als waarde)
-    kwam deze test niet verder dan een 422 - hij toetste een vorm die met opzet niet meer
-    mag. De opslagvorm zelf is ongewijzigd en is nog steeds wat hier bewaakt wordt: per
-    waarde versleuteld, met de namen leesbaar in het bestand.
+    een waarde zonder verwijzing.
+
+    De vorm zelf is sinds RC-106 EEN AGE-blok met ``KEY=value``-regels erbinnen, precies
+    zoals ``user-env-vars``. Daarvoor was het een mapping met leesbare namen en elke
+    waarde apart versleuteld, en dat gaf elke lezer een eigen ontsleutelstap om te
+    vergeten -- wat ook gebeurde, zichtbaar als een AGE-blok op de componentkaart. Dit
+    is de toets daarop in het ECHTE projectbestand in Forgejo, want dat is de enige
+    plek waar de opslagvorm te zien is.
     """
     base = f"/api/v2/projects/{values_project.name}/services/aliases/values/component/web"
 
-    # Twee keer DEZELFDE verwijzing: AGE is niet deterministisch, dus gelijke cijfertekst
-    # zou betekenen dat de map als een blok is versleuteld in plaats van per waarde.
     _call(
         values_project,
         sandbox_url,
@@ -123,10 +125,11 @@ def test_aliases_are_encrypted_per_value_with_readable_names(
 
     stored = _component(forgejo, values_project.name).get("aliases")
     assert stored, "the aliases never reached the project file"
-    assert sorted(stored) == ["ONE", "TWO"], f"alias names must stay readable: {sorted(stored)}"
-    assert all(_AGE_ARMOR in str(value) for value in stored.values()), "an alias value is not encrypted"
-    assert stored["ONE"] != stored["TWO"], "identical ciphertext suggests the map was encrypted as one block"
-    assert _REFERENTIE not in str(stored)
+    assert isinstance(stored, str), f"aliases must be one block, not a mapping: {type(stored).__name__}"
+    assert _AGE_ARMOR in stored, "the aliases are not encrypted"
+    assert stored.count(_AGE_ARMOR) == 1, "one ciphertext for the set, not one per alias"
+    assert "ONE" not in stored, "the alias names belong inside the block, not next to it"
+    assert _REFERENTIE not in stored
 
     # De harde regel erbij, op de echte schrijfweg: geen verwijzing, geen alias.
     afgewezen = httpx.request(
@@ -140,7 +143,7 @@ def test_aliases_are_encrypted_per_value_with_readable_names(
     assert afgewezen.status_code == 422, (
         f"een aliaswaarde zonder platformverwijzing hoort geweigerd te worden, kreeg {afgewezen.status_code}"
     )
-    assert "DRIE" not in (_component(forgejo, values_project.name).get("aliases") or {})
+    assert "DRIE" not in str(_component(forgejo, values_project.name).get("aliases") or "")
 
     _call(values_project, sandbox_url, "POST", f"{base}/:delete?rollout=false", {"keys": ["ONE", "TWO"]})
     assert "aliases" not in _component(forgejo, values_project.name)
@@ -176,12 +179,12 @@ def test_the_same_value_twice_does_not_commit_again(values_project, sandbox_url:
     """AGE is not deterministic, so a no-op that re-encrypted would commit every call."""
     base = f"/api/v2/projects/{values_project.name}/services/aliases/values/component/web"
     _call(values_project, sandbox_url, "POST", f"{base}?rollout=false", {"values": {"NOOP": "$PUBLIC_HOST"}})
-    before = _component(forgejo, values_project.name)["aliases"]["NOOP"]
+    before = _component(forgejo, values_project.name)["aliases"]
 
     task = _call(values_project, sandbox_url, "PATCH", f"{base}?rollout=false", {"values": {"NOOP": "$PUBLIC_HOST"}})
 
     assert (task.get("result") or {}).get("changed") is False, "an unchanged patch reported a change"
-    after = _component(forgejo, values_project.name)["aliases"]["NOOP"]
+    after = _component(forgejo, values_project.name)["aliases"]
     assert after == before, "the ciphertext was rewritten for a value that did not change"
 
     _call(values_project, sandbox_url, "DELETE", f"{base}/NOOP?rollout=false")
