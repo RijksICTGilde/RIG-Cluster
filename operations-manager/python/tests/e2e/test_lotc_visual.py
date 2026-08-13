@@ -386,10 +386,11 @@ def test_real_project_page_renders_lotc(app_server: str, auth_page: Page) -> Non
     # projecten de testopstelling kent, hoort deze test niet te weten.
     page.goto(f"{app_server}/projects")
     page.wait_for_load_state("networkidle")
-    link = page.locator("a[href*='/projects/details/']").first
+    link = page.locator("a[href$='/details']").first
     href = link.get_attribute("href")
     assert href, "geen enkel project om te openen"
-    projectnaam = href.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+    # /projects/<naam>/details: de naam staat sinds RC-93 VOOR het tabblad.
+    projectnaam = href.split("?")[0].rstrip("/").split("/")[-2]
 
     for tab in ["project", "deployments", "metrics", "taken"]:
         page.goto(f"{app_server}{project_tab_url(projectnaam, tab)}")

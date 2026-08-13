@@ -51,6 +51,7 @@ from opi.web.lotc_switch import (
     build_lotc_projects,
     deployment_pagina_adres,
     kies_deployment,
+    project_tab_url,
     render,
     render_fragment,
     tab_from_path,
@@ -177,7 +178,7 @@ def _progress_page_context(task: dict, task_id: str) -> dict:
     if project_name:
         # Whether it finished or failed, the detail page is where the user goes next --
         # to use the project, or to fix what went wrong.
-        context["on_complete"] = f"window.location.href='/projects/details/{project_name}'"
+        context["on_complete"] = f"window.location.href='/projects/{project_name}/details'"
         context["on_complete_label"] = "Naar projectdetails"
     return context
 
@@ -1251,20 +1252,20 @@ async def dashboard(request: Request):
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
 
 
-@web_router.get("/projects/details/{project_name}", response_class=HTMLResponse)
-@web_router.get("/projects/componenten/{project_name}", response_class=HTMLResponse)
-@web_router.get("/projects/services/{project_name}", response_class=HTMLResponse)
-@web_router.get("/projects/deployments/{project_name}", response_class=HTMLResponse)
-@web_router.get("/projects/metrics/{project_name}", response_class=HTMLResponse)
-@web_router.get("/projects/taken/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/details", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/componenten", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/services", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/deployments", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/metrics", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/taken", response_class=HTMLResponse)
 @requires_sso
 async def project_details(request: Request, project_name: str):
     """De projectpagina zonder deployment in het pad; zie :func:`render_project_page`."""
     return await render_project_page(request, project_name, "")
 
 
-@web_router.get("/projects/deployments/{project_name}/{deployment_name}", response_class=HTMLResponse)
-@web_router.get("/projects/metrics/{project_name}/{deployment_name}", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/deployments/{deployment_name}", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
 async def project_deployment_details(request: Request, project_name: str, deployment_name: str):
     """EEN deployment op de tabbladen Deployments en Metrics.
@@ -1274,11 +1275,55 @@ async def project_deployment_details(request: Request, project_name: str, deploy
     niemand ziet, de pagina is deelbaar, de terugknop werkt, en de keuze blijft staan bij
     het wisselen van tabblad omdat de tabbalk hem in zijn adressen meeneemt.
 
-    De paden staan hier letterlijk en niet als ``/projects/{tab}/{project}/{deployment}``,
+    De paden staan hier letterlijk en niet als ``/projects/{project}/{tab}/{deployment}``,
     om dezelfde reden als bij de tabbladen zelf: dat laatste vangt ook paden op die een
     andere route toekomen.
     """
     return await render_project_page(request, project_name, deployment_name)
+
+
+#: De tabbladpaden van voor RC-93, met het tabblad VOOR de projectnaam. Ze staan hier
+#: letterlijk en in dezelfde volgorde als hierboven, zodat de twee vormen naast elkaar te
+#: lezen zijn.
+OUDE_TABBLADPADEN = {
+    "details": "project",
+    "componenten": "componenten",
+    "services": "services",
+    "deployments": "deployments",
+    "metrics": "metrics",
+    "taken": "taken",
+}
+
+
+@web_router.get("/projects/details/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/componenten/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/services/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/deployments/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/metrics/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/taken/{project_name}", response_class=HTMLResponse)
+@web_router.get("/projects/deployments/{project_name}/{deployment_name}", response_class=HTMLResponse)
+@web_router.get("/projects/metrics/{project_name}/{deployment_name}", response_class=HTMLResponse)
+async def project_tab_oude_vorm(request: Request, project_name: str, deployment_name: str = ""):
+    """De oude tabbladadressen (``/projects/deployments/<naam>``) verwijzen door.
+
+    Sinds RC-93 staat de projectnaam voorop: ``/projects/<naam>/deployments``. De oude vorm
+    heeft in de sandbox gestaan en kan gedeeld zijn, en een gedeelde link hoort niet stil
+    een 404 te worden - dus verwijst hij door in plaats van te verdwijnen.
+
+    Hier zit GEEN autorisatie op, en dat kan omdat er niets wordt opgezocht: dit is een
+    blinde herschrijving van het pad die niets prijsgeeft over het project (of het bestaat,
+    of je erbij mag). Het antwoord is voor elke naam hetzelfde. De echte pagina achter het
+    nieuwe adres doet de autorisatie zoals altijd.
+
+    Ze staan NA de nieuwe vorm geregistreerd, want bij een project dat toevallig
+    ``deployments`` of ``details`` heet zijn beide vormen te lezen; dan wint het adres van
+    vandaag, niet dat van gisteren.
+    """
+    tab = OUDE_TABBLADPADEN[request.url.path.strip("/").split("/")[1]]
+    return RedirectResponse(
+        url=project_tab_url(project_name, tab, request.url.query, deployment=deployment_name),
+        status_code=302,
+    )
 
 
 async def render_project_page(request: Request, project_name: str, deployment_name: str):
@@ -1286,12 +1331,12 @@ async def render_project_page(request: Request, project_name: str, deployment_na
     Serve the project details page showing comprehensive project information.
     Shows detailed project data including services, components, deployments, and configuration.
 
-    Elk tabblad heeft een EIGEN PAD - ``/projects/deployments/<naam>`` en zo voor de
+    Elk tabblad heeft een EIGEN PAD - ``/projects/<naam>/deployments`` en zo voor de
     andere - in plaats van ``?tab=deployments`` op een gedeeld adres. Een querystring
     leest als een filter, terwijl een tabblad een pagina is. De paden staan hierboven
-    letterlijk en niet als ``/projects/{tab}/{project_name}``: dat laatste zou ook
-    ``/projects/<naam>/tasks`` opvangen, en dan hangt het van de volgorde van registreren
-    af welke route wint.
+    letterlijk en niet als ``/projects/{project_name}/{tab}``: dat laatste zou ook
+    ``/projects/details/<naam>`` opvangen, met ``project_name="details"``, en dan hangt het
+    van de volgorde van registreren af welke route wint.
 
     Args:
         request: The FastAPI request object
@@ -2923,7 +2968,7 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
             content={
                 "success": True,
                 "message": f"Domain settings updated successfully for deployment '{deployment_name}'",
-                "redirect_url": f"/projects/details/{project_name}",
+                "redirect_url": f"/projects/{project_name}/details",
             }
         )
 

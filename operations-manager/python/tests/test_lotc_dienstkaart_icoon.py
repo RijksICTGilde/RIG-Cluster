@@ -1,6 +1,6 @@
 """De dienstkaarten op de projectpagina tonen het icoon van hun dienst.
 
-Op ``/projects/services/<naam>`` toonde elke kaart de naam, het bindingslabel en de
+Op ``/projects/<naam>/services`` toonde elke kaart de naam, het bindingslabel en de
 omschrijving, en verder niets. Elke dienst DECLAREERT een icoon (``service_def.icon``);
 het tabblad gebruikte het alleen nergens. Dat is geen icoon dat stukging maar een icoon
 dat nooit gerenderd werd, en dat is precies het soort gat dat een test niet vangt zolang
