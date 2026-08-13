@@ -131,7 +131,6 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "pending_rollout": {"count": 0, "since": None, "task_types": []},
         "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
         "deployment_service_actions": {},
-        "deployment_state_facts": {},
         "deployment_service_sections": {},
         # De blokken die de DIENSTEN zelf leveren, uit de echte registry en niet uit een
         # lijstje hier. Ze stonden leeg, en daardoor toonde de proefopstelling juist de
