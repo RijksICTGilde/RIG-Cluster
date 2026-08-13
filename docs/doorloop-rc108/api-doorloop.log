@@ -10,7 +10,7 @@ HTTP 202
  "task_type": "create_project",
  "poll_url": "/api/tasks/662445a0-a42b-46ed-9639-f2c3c527c9a8",
  "project_name": "radt-qfo",
- "api_key": "BcFSL11hPNgyoIB2HYCRJi74tADkjOGp"
+ "api_key": "<geredigeerd: 32 tekens>"
 }
 project=radt-qfo keylen=32
 
@@ -362,4 +362,4 @@ HTTP 200
 }
 
 PROJECT=radt-qfo
-APIKEY=BcFSL11hPNgyoIB2HYCRJi74tADkjOGp
+APIKEY=<geredigeerd: 32 tekens>

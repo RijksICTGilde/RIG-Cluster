@@ -296,25 +296,39 @@ _VOORTGANG_PAD = os.environ.get("PYTEST_VOORTGANG")
 _voortgang_stand = {"klaar": 0, "totaal": 0, "rood": 0}
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(items: list) -> None:
-    """Onthoud hoeveel tests er gaan draaien, zodat elke regel 'n van totaal' kan tonen."""
+    """Onthoud hoeveel tests er gaan draaien, zodat elke regel 'n van totaal' kan tonen.
+
+    ``trylast``, want de deselectie op markers (``-m e2e``) gebeurt ook in deze hook: tel je
+    eerder, dan staat er 9054 als totaal terwijl er 462 tests draaien.
+    """
     _voortgang_stand["totaal"] = len(items)
 
 
 def pytest_runtest_logreport(report: Any) -> None:
     """Schrijf een regel zodra een test klaar is.
 
-    Alleen op de call-fase, behalve als setup of teardown faalt: dan is DAT de uitkomst en
+    Alleen op de call-fase, behalve als setup of teardown faalt (dan is DAT de uitkomst en
     zou een test anders stil ontbreken in de lijst - wat bij een module-scoped fixture de
-    hele groep onzichtbaar maakt.
+    hele groep onzichtbaar maakt) en behalve een skip in setup, want dat is de gewone vorm
+    van overslaan.
+
+    Alleen een echte failure telt als rood: een skip en een verwachte failure zijn een
+    groene run, en een meetinstrument dat die rood meldt is precies de faalmodus die deze
+    tak opruimt.
     """
     if not _VOORTGANG_PAD:
         return
-    if report.when != "call" and not report.failed:
+    if report.when != "call" and not (report.failed or report.skipped):
         return
     _voortgang_stand["klaar"] += 1
-    uitslag = "PASSED" if report.passed else ("FAILED" if report.when == "call" else "ERROR")
-    if not report.passed:
+    if report.skipped:
+        uitslag = "XFAIL" if hasattr(report, "wasxfail") else "SKIP"
+    elif report.passed:
+        uitslag = "XPASS" if hasattr(report, "wasxfail") else "PASSED"
+    else:
+        uitslag = "FAILED" if report.when == "call" else "ERROR"
         _voortgang_stand["rood"] += 1
     regel = (
         f"{datetime.now(UTC).strftime('%H:%M:%S')}  "

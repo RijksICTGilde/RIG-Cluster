@@ -146,7 +146,7 @@ def aanvinkvakjes(page: Page, pad: str) -> Locator:
     return page.locator(f"[name='{pad}[]'][id]")
 
 
-def _unique_project_name(prefix: str = "e2e") -> str:
+def unique_project_name(prefix: str = "e2e") -> str:
     """Generate a unique project name: e2e-{timestamp}-{random}."""
     ts = int(time.time()) % 100000
     suffix = "".join(secrets.choice(string.ascii_lowercase) for _ in range(4))
@@ -251,7 +251,7 @@ class WizardHelper:
         both correct and event-based.
         """
         if display_name is None:
-            display_name = _unique_project_name()
+            display_name = unique_project_name()
         self.project_name = display_name
 
         # Verify we are actually on the identity step before filling. A clear
