@@ -2900,7 +2900,7 @@ class ProjectManager:
 
                 get_database_pool("main")  # guard: raises if the DB is unavailable -> immediate delete
                 marked_service = MarkedForDeletionService()
-            except (KeyError, ValueError):
+            except KeyError, ValueError:
                 logger.warning("Database pool not available - persistent resources will be deleted immediately")
 
             project_name = current_yaml.get("name", "unknown")
@@ -7203,7 +7203,7 @@ class ProjectManager:
                     result_create["warnings"] = normalized_warnings_create
                 return result_create
 
-        except (ConflictError, ConcurrencyError):
+        except ConflictError, ConcurrencyError:
             # Retried by upsert_deployment on a fresh read. Must propagate, not become a
             # generic error dict, or the retry never sees it.
             raise

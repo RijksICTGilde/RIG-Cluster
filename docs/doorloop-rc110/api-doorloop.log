@@ -1,0 +1,30 @@
+### 1. POST /api/v2/projects (Bearer, aud=zad-api) - rc110-d102
+  202 {"status": "accepted", "task_id": "9badea2e-2e43-4f21-b43e-5bd5c92f3110", "task_type": "create_project", "poll_url": "/api/tasks/9badea2e-2e43-4f21-b43e-5bd5c92f3110", "project_name": "rc110-n01"}
+  api_key: <geredigeerd: 32 tekens>  project=rc110-n01
+  taak 9badea2e: completed
+
+### 2. POST services: publish-on-web en minio-storage
+  publish-on-web: 202
+  taak b05d175b: completed
+  minio-storage: 202
+  taak b5f5b494: completed
+
+### 3. POST components
+  202 {'status': 'accepted', 'task_id': '7e62c12d-f984-4978-acb7-22faff4e2ecc', 'task_type': 'add_component', 'poll_url': '/api/tasks/7e62c12d-f984-4978-acb7-22faff4e2ecc'}
+  taak 7e62c12d: completed
+
+### 4. POST :upsert-deployment (uitrollen)
+  202 {'status': 'accepted', 'task_id': '6b7f44c3-6465-4a41-8e8d-7af8dfac1ca8', 'task_type': 'upsert_deployment', 'poll_url': '/api/tasks/6b7f44c3-6465-4a41-8e8d-7af8dfac1ca8'}
+  taak 6b7f44c3: completed
+
+### 5. GET opvragen
+  /api/v2/projects/rc110-n01 -> 200; {"project": {"name": "rc110-n01", "display_name": "rc110-d102", "description": "API-doorloop RC-110", "clusters": ["sandboxed-local"]}, "source": "project-file", "cluster": "sandboxed-local", "pending
+  /api/v2/projects/rc110-n01/deployments -> 200; pending_rollout in lijst: [None]
+  /api/v2/projects/rc110-n01/deployments/productie -> 200; source='project-file' pending_rollout={"project": "rc110-n01", "count": 1, "since": "2026-08-13T23:38:05.299281+00:00", "task_types": ["create_project"]}
+  /api/v2/projects/rc110-n01/pending-rollout -> 200; {"project": "rc110-n01", "count": 1, "since": "2026-08-13T23:38:05.299281+00:00", "task_types": ["create_project"]}
+
+### 6. restore met een ONBEKENDE referentie: noemt de 404 bestaande namen?
+  404 {'detail': "No deployment of project 'rc110-n01' has a database backup named 'bestaat-niet'. This project has: 'productie-postgresql', 'productie-namespace', 'productie-database'. Supply the target_database_* fields to restore into an external destination."}
+  backup list geeft: {"cluster": "sandboxed-local", "namespace": "rig-rc110-n01", "runs": []}
+
+PROJECT=rc110-n01
