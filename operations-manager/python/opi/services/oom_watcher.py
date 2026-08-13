@@ -36,6 +36,7 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, Kub
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
+from opi.handlers.project_file_handler import is_transient_registry_error
 from opi.services.catalog.base import SERVICE_ROLE_LABEL_KEY, application_pod_selector
 from opi.services.catalog.deployment_health import deployment_health_service
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
@@ -604,7 +605,17 @@ async def _run_oom_check(
         if health.oom_detected:
             oom_component_refs.append(component_ref)
         if health.image_pull_error:
-            image_pull_errors.append((component_ref, health.image_pull_error))
+            if is_transient_registry_error(health.image_pull_error):
+                logger.warning(
+                    "Health watcher: registry failure (not the image) for %s/%s component %s, "
+                    "leaving it enabled so kubelet retries the pull: %s",
+                    project_name,
+                    deployment_name,
+                    component_ref,
+                    health.image_pull_error,
+                )
+            else:
+                image_pull_errors.append((component_ref, health.image_pull_error))
         # CrashLoopBackOff: no remediation in fire-and-forget — only reported inline
 
     # Handle image pull errors: disable in YAML, then queue refresh task
