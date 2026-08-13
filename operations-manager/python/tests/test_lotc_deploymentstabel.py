@@ -24,8 +24,10 @@ from opi.core.templates_lotc import templates_lotc as templates
 from opi.web.lotc_switch import (
     DEPLOYMENT_SORTERINGEN,
     build_deployment_status_column,
+    deployment_pagina_adres,
     deployment_status_tags,
     filter_lotc_deployments,
+    kies_deployment,
 )
 from starlette.datastructures import QueryParams
 
@@ -42,14 +44,23 @@ class _Verzoek:
 
     def __init__(self, query: str = "") -> None:
         self.query_params = QueryParams(query)
+        self.url = _Url("/projects/details/demo", query)
+
+
+class _Url:
+    """Het stukje URL dat deployment_pagina_adres leest: het pad en de querystring."""
+
+    def __init__(self, path: str, query: str = "") -> None:
+        self.path = path
+        self.query = query
 
 
 def _deployments(*namen: str) -> list[dict[str, Any]]:
     return [{"name": naam, "cluster": "odcn-production", "components": []} for naam in namen]
 
 
-def _filter(query: str, deployments: list[dict[str, Any]]) -> dict[str, Any]:
-    return filter_lotc_deployments(_Verzoek(query), deployments)
+def _filter(query: str, deployments: list[dict[str, Any]], deployment_open: str = "") -> dict[str, Any]:
+    return filter_lotc_deployments(_Verzoek(query), deployments, deployment_open)
 
 
 # ---------------------------------------------------------------- zoeken en sorteren
@@ -131,48 +142,82 @@ def test_elke_sortering_uit_het_menu_werkt() -> None:
 
 
 # ------------------------------------------------------------ welke deployment open staat
+#
+# Sinds RC-92 staat de naam in het PAD (/projects/deployments/<project>/<naam>) en niet in
+# ``?deployment=``. De keuze wordt daarom door de ROUTE gemaakt, met kies_deployment(), en
+# komt hier binnen; filter_lotc_deployments zoekt er alleen de deployment bij.
 
 
-def test_de_url_wijst_de_deployment_aan_die_open_gaat() -> None:
-    """Zo werkt een rij als gewone link: geen JavaScript nodig, en deelbaar."""
-    resultaat = _filter("deployment=tweede", _deployments("eerste", "tweede"))
+def test_de_keuze_uit_het_pad_wordt_de_geopende_deployment() -> None:
+    resultaat = _filter("", _deployments("eerste", "tweede"), "tweede")
 
     assert resultaat["deployment_open"] == "tweede"
-    assert resultaat["deployment_gevraagd"] == "tweede"
+    assert resultaat["deployment_geopend"]["name"] == "tweede"
 
 
-def test_zonder_keuze_staat_de_eerste_open_maar_is_er_niets_gevraagd() -> None:
-    """Het verschil telt: alleen een GEVRAAGDE keuze mag in de browser over de onthouden
-    keuze van het vorige tabblad heen gaan."""
-    resultaat = _filter("", _deployments("tweede", "eerste"))
+def test_een_naam_die_niet_bestaat_levert_geen_paneel_op() -> None:
+    """De route verwijst zo'n adres door; komt hij hier toch binnen, dan is er niets open
+    in plaats van een halve pagina over een deployment die er niet is."""
+    resultaat = _filter("", _deployments("eerste"), "weg")
 
-    assert resultaat["deployment_open"] == "eerste"
-    assert resultaat["deployment_gevraagd"] == ""
-
-
-def test_een_verwijderde_deployment_in_de_url_valt_terug() -> None:
-    """Een oude link kan een deployment noemen die niet meer bestaat; dan hoort er een
-    pagina te staan en geen lege of kapotte."""
-    resultaat = _filter("deployment=weg", _deployments("eerste", "tweede"))
-
-    assert resultaat["deployment_open"] == "eerste"
-    assert resultaat["deployment_gevraagd"] == ""
-
-
-def test_een_weggezochte_deployment_kan_nog_steeds_open() -> None:
-    """De zoekterm hoort bij de TABEL op Overzicht, de keuze bij het tabblad Deployments.
-    Een deployment die het zoekveld wegfiltert bestaat nog steeds, en de link ernaartoe
-    hoort te werken."""
-    resultaat = _filter("q=tweede&deployment=eerste", _deployments("eerste", "tweede"))
-
-    assert resultaat["deployment_open"] == "eerste"
+    assert resultaat["deployment_geopend"] is None
 
 
 def test_een_project_zonder_deployments_heeft_niets_open() -> None:
-    resultaat = _filter("", [])
+    resultaat = _filter("", [], "")
 
     assert resultaat["deployment_open"] == ""
+    assert resultaat["deployment_geopend"] is None
     assert resultaat["deployments_zichtbaar"] == []
+
+
+def test_de_eerste_voorkeur_die_bestaat_wint() -> None:
+    """Het pad gaat voor de oude ``?deployment=``-vorm; die volgorde geeft de route mee."""
+    assert kies_deployment(["eerste", "tweede"], "tweede", "eerste") == "tweede"
+
+
+def test_een_verwijderde_deployment_valt_terug_op_de_eerste_op_naam() -> None:
+    """Een gedeelde link kan een deployment noemen die niet meer bestaat; dan hoort er een
+    pagina te staan en geen lege of kapotte."""
+    assert kies_deployment(["tweede", "eerste"], "weg") == "eerste"
+
+
+def test_zonder_voorkeur_opent_de_eerste_op_naam() -> None:
+    assert kies_deployment(["tweede", "eerste"]) == "eerste"
+
+
+def test_zonder_deployments_valt_er_niets_te_openen() -> None:
+    assert kies_deployment([], "weg") == ""
+
+
+def test_het_adres_zet_de_naam_in_het_pad() -> None:
+    verzoek = _Verzoek("")
+    verzoek.url = _Url("/projects/deployments/demo")
+
+    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/deployments/demo/tweede"
+
+
+def test_het_adres_houdt_het_tabblad_vast() -> None:
+    verzoek = _Verzoek("")
+    verzoek.url = _Url("/projects/metrics/demo")
+
+    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/metrics/demo/tweede"
+
+
+def test_de_oude_parameter_verdwijnt_uit_het_adres() -> None:
+    """``?deployment=<naam>`` was de vorige vorm. Hij mag niet naast het pad blijven
+    bestaan, anders zijn er twee adressen voor dezelfde pagina."""
+    verzoek = _Verzoek("deployment=tweede&q=pr")
+    verzoek.url = _Url("/projects/deployments/demo", "deployment=tweede&q=pr")
+
+    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/deployments/demo/tweede?q=pr"
+
+
+def test_een_project_zonder_deployments_krijgt_het_kale_adres() -> None:
+    verzoek = _Verzoek("")
+    verzoek.url = _Url("/projects/deployments/demo/weg")
+
+    assert deployment_pagina_adres(verzoek, "demo", "") == "/projects/deployments/demo"
 
 
 # --------------------------------------------------------------------- de statuskolom
@@ -306,7 +351,7 @@ def test_de_rij_wijst_naar_het_tabblad_deployments() -> None:
     """De tabel is de ingang; het detail staat op het tabblad Deployments."""
     html = _render("", _deployments("eerste", "tweede"))
 
-    assert "/projects/deployments/demo?deployment=tweede" in html
+    assert "/projects/deployments/demo/tweede" in html
 
 
 def test_de_statuskolom_staat_in_de_rij() -> None:

@@ -15,7 +15,13 @@ Wat hier bewaakt wordt:
 
 from __future__ import annotations
 
-from opi.web.lotc_switch import PROJECT_TABS, STANDAARD_TAB, project_tab_url, tab_from_path
+from opi.web.lotc_switch import (
+    PROJECT_TABS,
+    STANDAARD_TAB,
+    TABS_MET_DEPLOYMENT,
+    project_tab_url,
+    tab_from_path,
+)
 from opi.web.router import web_router
 
 
@@ -81,3 +87,61 @@ def test_elk_tabbladadres_komt_bij_de_projectpagina_uit() -> None:
         )
         assert gevonden is not None, f"{pad} wordt door geen enkele route bediend"
         assert gevonden.endpoint.__name__ == "project_details", f"{pad} komt uit bij {gevonden.path}"
+
+
+# --------------------------------------------------- de deployment in het pad (RC-92)
+
+
+def test_de_tabbladen_met_een_deployment_dragen_hem_in_hun_pad() -> None:
+    """Zo blijft de keuze staan bij het wisselen van tabblad: de tabbalk geeft de naam mee
+    en er hoeft niets onthouden te worden."""
+    assert project_tab_url("demo", "deployments", deployment="productie") == "/projects/deployments/demo/productie"
+    assert project_tab_url("demo", "metrics", deployment="productie") == "/projects/metrics/demo/productie"
+
+
+def test_de_andere_tabbladen_krijgen_de_deployment_niet() -> None:
+    """Overzicht toont ze allemaal in een tabel; ``/projects/details/demo/productie`` heeft
+    geen route, dus de tabbalk zou naar een 404 wijzen."""
+    for tab in PROJECT_TABS:
+        if tab in TABS_MET_DEPLOYMENT:
+            continue
+        assert project_tab_url("demo", tab, deployment="productie") == project_tab_url("demo", tab)
+
+
+def test_een_deploymentnaam_wordt_veilig_in_het_pad_gezet() -> None:
+    assert project_tab_url("demo", "deployments", deployment="a/b") == "/projects/deployments/demo/a%2Fb"
+
+
+def test_de_query_reist_mee_naast_de_deployment() -> None:
+    assert (
+        project_tab_url("demo", "deployments", "q=pr", deployment="productie")
+        == "/projects/deployments/demo/productie?q=pr"
+    )
+
+
+def test_elk_deploymentadres_heeft_een_route() -> None:
+    """Een kiezer die naar een niet-bestaand pad wijst is een dode knop."""
+    for tab in TABS_MET_DEPLOYMENT:
+        # De naam wordt in het pad ge-escaped (dat is de bedoeling: een deploymentnaam is
+        # gebruikersinvoer), dus het routepad wordt hier opgebouwd en niet gequote.
+        pad = project_tab_url("{project_name}", tab) + "/{deployment_name}"
+        assert pad in _paden(), f"tabblad {tab} wijst naar {pad}, en daar luistert geen route"
+
+
+def test_een_deploymentadres_komt_bij_de_projectpagina_uit() -> None:
+    """Zelfde reden als hierboven: de paden staan letterlijk geregistreerd, dus een route
+    die ertussen komt te staan valt hier door de mand."""
+    for tab in TABS_MET_DEPLOYMENT:
+        pad = project_tab_url("demo", tab, deployment="productie")
+        scope = {"type": "http", "method": "GET", "path": pad, "headers": [], "root_path": ""}
+        gevonden = next(
+            (route for route in web_router.routes if route.matches(scope)[0].value >= 2),
+            None,
+        )
+        assert gevonden is not None, f"{pad} wordt door geen enkele route bediend"
+        assert gevonden.endpoint.__name__ == "project_deployment_details", f"{pad} komt uit bij {gevonden.path}"
+
+
+def test_het_pad_met_een_deployment_wijst_nog_steeds_zijn_tabblad_aan() -> None:
+    assert tab_from_path("/projects/deployments/demo/productie") == "deployments"
+    assert tab_from_path("/projects/metrics/demo/productie") == "metrics"

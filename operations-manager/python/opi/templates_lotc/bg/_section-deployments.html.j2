@@ -25,9 +25,9 @@
   - De publieke links waren knoppen met @click="window.open(this.dataset.url)". Nu gewoon
     <c-button href=... target="_blank">: zelfde bestemming, zelfde nieuw venster, zonder
     tekst als JavaScript uit te voeren.
-  - De wikkel <div class="deployment-section is-hidden"> is weg. Die verbergt alle
-    deployments behalve de eerste, waarna de JavaScript van de oude pagina er een zichtbaar
-    maakt. Deze tab toont ze onder elkaar, dus er is niets te verbergen.
+  - De wikkel <div class="deployment-section is-hidden"> is weg. Die verborg alle
+    deployments behalve een, waarna JavaScript er een zichtbaar maakte. De tab rendert er
+    nog maar EEN (die uit het pad), dus er is niets te verbergen.
 #}
 {% from "bg/_patterns.html.j2" import panel %}
 
@@ -44,11 +44,10 @@
 
        De ArgoCD-kant laadt zichzelf, net als voorheen: de volledige diagnose kost een
        bevraging bij ArgoCD plus een bij kubectl, en die hoort de pagina niet op te houden.
-       Er staat er precies EEN open (switchDeployment toont een deployment tegelijk), dus
-       dit is geen bevraging per rij - de tabel op Overzicht heeft zijn eigen, gebundelde
-       bron. hx-trigger="intersect once" en niet "load", en dat is precies waarom: de
-       verborgen panelen staan op display:none, komen dus nooit in beeld, en halen niets
-       op. Met "load" zou elk paneel op de pagina alsnog zijn eigen bevraging doen.
+       Er staat er precies EEN op de pagina (de deployment uit het pad), dus dit is geen
+       bevraging per rij - de tabel op Overzicht heeft zijn eigen, gebundelde bron.
+       hx-trigger="intersect once" en niet "load": de kaart staat onder de acties, dus je
+       betaalt de bevraging pas als je zover scrolt.
 
        De prefix is de KALE deploymentnaam; die houdt de id's van de foutenlijst in de
        kaart uniek.

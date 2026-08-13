@@ -40,9 +40,9 @@
       hiermee weg, en een statusoverzicht zonder status is geen overzicht.
 
   DE RIJ WIJST NAAR HET TABBLAD DEPLOYMENTS, met een gewone link
-  (/projects/deployments/<project>?deployment=<naam>). Daar staat de deployment met zijn
-  acties. De server bepaalt welk paneel open staat, dus dat werkt zonder JavaScript en de
-  link is deelbaar.
+  (/projects/deployments/<project>/<naam>). Daar staat die ene deployment met zijn acties.
+  De naam staat in het PAD en niet in een parameter: het is een eigen pagina, dus dat werkt
+  zonder JavaScript en de link is deelbaar.
 #}
 
 {# De telling alleen als het project deployments HEEFT. "Totaal: 0 deployments" boven een
@@ -69,7 +69,7 @@
             {% set argocd = (deployment_argocd | default({})).get(deployment.name) %}
             <c-table-row>
                 <c-td>
-                    <c-link href="/projects/deployments/{{ project.name }}?deployment={{ deployment.name | urlencode }}">{{ deployment.name }}</c-link>
+                    <c-link href="/projects/deployments/{{ project.name }}/{{ deployment.name | urlencode }}">{{ deployment.name }}</c-link>
                 </c-td>
                 <c-td>{{ deployment.cluster or '-' }}</c-td>
                 <c-td>
