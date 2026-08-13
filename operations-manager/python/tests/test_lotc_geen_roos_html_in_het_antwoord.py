@@ -93,7 +93,12 @@ def test_de_projectpagina_toont_de_blokken_die_de_diensten_leveren(client: TestC
     Dit is de helft die stil kan wegvallen: het voorbeeldproject gaf ``[]`` mee voor de
     dienstsecties, en dan is "geen roos-HTML" waar om de verkeerde reden.
     """
-    tekst = client.get("/lotc/bg/project-tabs?tab=project").text
+    # De dienstblokken staan sinds RC-101 op het tabblad "toegang" en niet meer op
+    # Overzicht: ze gaan over hoe je bij een dienst KOMT (een adres, een wachtwoord, een
+    # code), en dat is iets anders dan de stand van het project. Deze test volgt ze
+    # daarheen; wat hij bewaakt is onveranderd, namelijk dat de proefopstelling ze
+    # werkelijk rendert en de poort hierboven dus niet om de verkeerde reden groen staat.
+    tekst = client.get("/lotc/bg/project-tabs?tab=toegang").text
 
     for blok in ("Bijlagen", "Uitnodigingen", "Keycloak"):
         assert blok in tekst, f"het dienstblok {blok} staat niet op de proefopstelling"
