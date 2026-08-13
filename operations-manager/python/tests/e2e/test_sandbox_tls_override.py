@@ -613,6 +613,18 @@ def test_doorloop_van_de_tls_override(
         f"{_certificaat_op_de_verbinding(host_productie)}"
     )
 
+    # Nu wijzen er TWEE plekken naar hetzelfde certificaat: het component (en daarmee
+    # productie) en de override van staging. Dat is de tweede helft van punt 5 -- de
+    # verwijdercontrole moet ze allebei noemen, want een override die niet meetelt maakt
+    # van een gebruikt certificaat een 'ongebruikt' certificaat.
+    with _api(sandbox_url, api_key) as client:
+        beide = client.delete(f"/api/v2/projects/{project_name}/services/attachments/attachment/{BIJLAGE_ID}")
+    print(f"[punt 5] delete met twee gebruikers: {beide.status_code} {beide.text}")
+    assert beide.status_code == 409, f"het certificaat is nu wel te verwijderen: {beide.status_code} {beide.text}"
+    plekken = {(plek.get("component"), plek.get("deployment")) for plek in beide.json().get("used_by") or []}
+    assert (COMPONENT, None) in plekken, f"de component-laag ontbreekt in de gebruikslijst: {plekken}"
+    assert (COMPONENT, STAGING) in plekken, f"de override van {STAGING} ontbreekt in de gebruikslijst: {plekken}"
+
     # ... en dan zet de override op staging dat weer uit.
     _zet_override_via_de_modal(sandbox_page, sandbox_url, project_name, staging_index, tls="standard")
     config = _wacht_op(
