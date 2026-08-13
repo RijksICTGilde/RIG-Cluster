@@ -8,6 +8,8 @@
       :icon="x | nldd_icon" />                                :icon="x | nldd_icon" />
   ```
 
+- **Schrijf de gebruiker aan met "je", nooit met "u".** Dat geldt voor alles wat op het scherm komt: bevestigingen, meldingen, labels, hulpteksten en foutmeldingen. Het portaal is een gereedschap voor collega's, geen brief van de overheid aan een burger. Kom je "u" of "uw" tegen in bestaande tekst, zet het om.
+
 - Python imports must always be at the top of the file, never inline or local. Use `ruff check --select I --fix` to sort and organize imports, then `ruff format .` to format.
 - **Build fast, test locally.** Only run the tests for what you changed (`uv run pytest tests/<file> -x -q --tb=short`), never the full suite. The unit suite is ~7900 tests and the browser suite ~350; running either in full costs minutes per attempt and is not your job — the full run happens once before the merge to main. Pick the files that cover your change; if you cannot name them, that is the signal your change lacks a test, not that you should run everything.
 - **Look at the screen for anything visual.** A green browser test does not prove a table renders as a table. Take a screenshot of what you built and judge it. This has been the cause of six reworks.
