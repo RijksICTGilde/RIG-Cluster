@@ -9,14 +9,19 @@
   Hier stond size="{{ submit.size }}", een maat die van buiten kwam en die niemand ooit
   zette - de enige waarde die er ooit uit kwam was de standaard. Zie
   features/knopmaten.md.
+
+  Het icoon gaat door nldd_icon: een verzendknop kan een ROOS-naam dragen (SubmitButton.icon
+  is vrije tekst uit de formulierdefinitie) en die rendert onvertaald als een lege plek.
+
+  Deze toelichting staat BOVEN de tag en niet erin: binnen een componenttag leest de
+  voorbewerker de woorden van een {# ... #} als attributen, en dan valt het renderen om op
+  'Duplicate attribute'.
 #}
 <c-button
     html-type="submit"
     type="{{ submit.kind|e }}"
     label="{{ submit.label|e }}"
     :show-icon="(submit.icon_position if submit.icon else none)"
-    {# Door nldd_icon: een verzendknop kan een ROOS-naam dragen (SubmitButton.icon is
-       vrije tekst uit de formulierdefinitie) en die rendert onvertaald als een lege plek. #}
     :icon="(submit.icon | nldd_icon) or none"
     :class="submit.css_class or none"
     :attrs="submit.attributes or {}"
