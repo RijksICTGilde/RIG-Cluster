@@ -71,11 +71,22 @@
             </div>
         {% endcall %}
 
+        {# Zonder meetpunten tekende hier een grafiek met een streepje op de as en twee
+           nullen: een leeg vlak, niet te onderscheiden van een grafiek die niet wil.
+           Dan liever zeggen wat er aan de hand is - dezelfde keuze als bij de metingen
+           per deployment. #}
         {% call panel("Network Traffic", "chart-x-y-axis-line") %}
-            <div class="chart-container">
-                <canvas id="network-chart" class="chart"></canvas>
-            </div>
-            <c-paragraph size="sm">Inbound/Outbound (KB/s, laatste 30 min)</c-paragraph>
+            {% if metrics.network_in_data or metrics.network_out_data %}
+                <div class="chart-container">
+                    <canvas id="network-chart" class="chart"></canvas>
+                </div>
+                <c-paragraph size="sm">Inbound/Outbound (KB/s, laatste 30 min)</c-paragraph>
+            {% else %}
+                <c-alert type="info" heading="Nog geen metingen">
+                    Prometheus heeft over de laatste 30 minuten geen netwerkverkeer gemeten.
+                    Vlak na een start hoort dat zo; het kan ook betekenen dat er geen verkeer was.
+                </c-alert>
+            {% endif %}
         {% endcall %}
     </c-auto-grid>
     {% endcall %}
@@ -85,17 +96,28 @@
         initializeCharts({{ metrics.network_in_data | tojson }}, {{ metrics.network_out_data | tojson }});
     </script>
 
+    {# De LEGENDA hoort erbij, en die was bij het hertekenen weggevallen: er stonden
+       balkjes met alleen een projectnaam, dus zonder te zien hoeveel dat is en waarvan
+       het het aandeel is. De bestaande kaart (dashboard/_resourceverdeling.html.j2) zet
+       naast elk segment ``0.030 cores (12.3%)``, en dat is precies wat hier nu ook naast
+       de balk staat - dezelfde schrijfwijze, geen tweede vorm ernaast. #}
     {% if total_cpu_usage > 0 %}
         {% call panel("Verdeling over projecten", "chart-x-y-axis-line") %}
-            <c-stack gap="sm">
+            <c-stack gap="md">
+                <c-paragraph size="sm">CPU-gebruik per project, als aandeel van het totaal.</c-paragraph>
                 {% for project in projects if project.cpu_cores is defined and project.cpu_cores > 0 %}
-                    <c-progress-bar
-                        text="{{ project.display_name }}"
-                        :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
-                        max="100"
-                        value-display="true"
-                        color="info"
-                        accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
+                    <c-stack gap="xs">
+                        <c-cluster justify="between" align="center" gap="sm">
+                            <c-span>{{ project.display_name }}</c-span>
+                            <c-span>{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</c-span>
+                        </c-cluster>
+                        <c-progress-bar
+                            :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
+                            max="100"
+                            value-display="tooltip"
+                            color="info"
+                            accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
+                    </c-stack>
                 {% endfor %}
             </c-stack>
         {% endcall %}
