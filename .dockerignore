@@ -81,11 +81,20 @@ docker-compose*
 # plaats van een sync.
 operations-manager/python/scripts/
 
-# Test files and data
-tests/
+# Test files and data.
+#
+# MET **/, want een patroon zonder wordt alleen tegen de wortel van de buildcontext
+# gelegd: "tests/" matchte een map ./tests die niet bestaat, en niet de map die er wel
+# is (operations-manager/python/tests). Ze zaten dus al die tijd in de context en elke
+# gewijzigde test kostte een rebuild in plaats van niets.
+#
+# Let ook op operations-manager/.dockerignore: dat bestand wordt NIET gelezen. Docker
+# kijkt alleen naar het .dockerignore bij de buildcontext, en die is de repo-wortel.
+# Wat daar staat moet hier staan.
+**/tests/
+**/functional_tests/
 test-*
-*_test.py
-functional_tests/
+**/*_test.py
 
 # Node.js (if any)
 node_modules/
