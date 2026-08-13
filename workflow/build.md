@@ -34,6 +34,23 @@
   - Genuinely doing something else meanwhile? Background it and wait on the **process**, not on its output — the exit code tells you what happened, an absent log line does not.
   - A log file is for reading afterwards, or for following a long-running service. It is not a completion signal.
 
+- **Een lange run moet zichtbaar zijn TERWIJL hij loopt.** Een sandboxsuite duurt bijna een
+  uur en pytest zegt tot het eind niets bruikbaars, dus wie meekijkt ziet niets en kan niet
+  beoordelen of het loopt, hoe snel, of waar het strandde. Zet daarom `PYTEST_VOORTGANG`:
+
+  ```bash
+  PYTEST_VOORTGANG=/tmp/voortgang.txt uv run pytest ... &
+  tail -f /tmp/voortgang.txt
+  ```
+
+  Dat schrijft per afgeronde test een regel met tijdstip, `n/totaal`, duur, het aantal rode
+  tot nu toe, de uitslag en de nodeid - uit pytest's eigen `report`-object
+  (`tests/conftest.py`), dus niet uit de uitvoer gegrepen. Zonder de variabele verandert er
+  niets aan een gewone run.
+
+  Draai je zo'n run voor iemand anders, deel die regels dan ook echt: een run op de
+  achtergrond met de uitvoer in een bestand is voor de ander hetzelfde als stilte.
+
 - **Ask the thing that knows, not the clock.** Sleeping until something is "probably done" is guessing twice: about the time, and about the outcome. Every state you might sleep on has an owner that will tell you:
   - a task → the task endpoint (`wait_for_task()` in the test helpers wraps it, and returns the *outcome*, not just "finished");
   - a deployment's health and sync → ArgoCD, via `opi/services/argocd_overview.py` for a whole project in one query;

@@ -34,7 +34,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     get_domain_setting,
 )
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
+from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -162,7 +162,7 @@ def created_project(app_server: str, auth_page: Page, captured_yaml: list[str]) 
     """Loop de create-wizard, vul de stap Webadres in, en geef het geschreven project terug."""
     wizard = WizardHelper(auth_page, app_server)
     wizard.open_create_wizard()
-    wizard.fill_identity(display_name=_unique_project_name("webadres"), description="webadres onder de dienst")
+    wizard.fill_identity(display_name=unique_project_name("webadres"), description="webadres onder de dienst")
     wizard.click_next()
 
     _walk(wizard, auth_page, until="domains")

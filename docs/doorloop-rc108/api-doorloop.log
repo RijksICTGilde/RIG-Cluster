@@ -1,0 +1,365 @@
+
+### 0. SSO-token halen (zad-cli, authorization code + PKCE, aud=zad-api)
+token: 1467 tekens, aud=['zad-api', 'account']
+
+### 1. POST /api/v2/projects (Bearer)
+HTTP 202
+{
+ "status": "accepted",
+ "task_id": "662445a0-a42b-46ed-9639-f2c3c527c9a8",
+ "task_type": "create_project",
+ "poll_url": "/api/tasks/662445a0-a42b-46ed-9639-f2c3c527c9a8",
+ "project_name": "radt-qfo",
+ "api_key": "<geredigeerd: 32 tekens>"
+}
+project=radt-qfo keylen=32
+
+### 1b. wachten tot de aanmaaktaak KLAAR is (create is asynchroon: 202 + task_id)
+  poll 1: status=
+  poll 2: status=completed
+{
+ "task_id": "662445a0-a42b-46ed-9639-f2c3c527c9a8",
+ "task_type": "create_project",
+ "status": "completed",
+ "progress_percent": 100,
+ "current_step": "Done",
+ "subtasks": [
+  {
+   "id": "56fce4ce-98ea-437b-8e0a-6fedf1b97fd6",
+   "name": "Project validatie",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "6d7fddbc-9231-4377-8af1-b15220c61fd1",
+   "name": "YAML configuratie controleren",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "8c67a6f6-adf4-448d-b736-02d05387d02b",
+   "name": "Git repository operaties",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "27ca795e-2a98-467c-89e3-2d7ee01ac9ac",
+   "name": "Uitrol overgesl
+
+### 2. POST services (publish-on-web)
+HTTP 202
+{
+ "status": "accepted",
+ "task_id": "8e08f395-697c-440e-b14a-481db755edaa",
+ "task_type": "add_service",
+ "poll_url": "/api/tasks/8e08f395-697c-440e-b14a-481db755edaa"
+}
+   taak 8e08f395-697c-440e-b14a-481db755edaa: completed
+
+### 2b. POST services (namespace-postgresql-database)
+HTTP 202
+{
+ "status": "accepted",
+ "task_id": "11f850a6-e6c0-496f-9f01-ca5228011c0c",
+ "task_type": "add_service",
+ "poll_url": "/api/tasks/11f850a6-e6c0-496f-9f01-ca5228011c0c"
+}
+   taak 11f850a6-e6c0-496f-9f01-ca5228011c0c: completed
+
+### 2c. GET services
+HTTP 200
+{
+ "project": "radt-qfo",
+ "source": "project-file",
+ "pending_rollout": {
+  "project": "radt-qfo",
+  "count": 1,
+  "since": "2026-08-13T17:45:28.006677+00:00",
+  "task_types": [
+   "create_project"
+  ]
+ },
+ "services": [
+  {
+   "name": "namespace-postgresql-database",
+   "usages": [
+    {
+     "target": "project",
+     "component": null,
+     "deployment": null,
+     "config": null
+    }
+   ]
+  },
+  {
+   "name": "publish-on-web",
+   "usages": [
+    {
+     "target": "project",
+     "component": null,
+     "deployment": null,
+     "config": null
+    }
+   ]
+  }
+ ]
+}
+
+### 3. POST components
+HTTP 202
+{
+ "status": "accepted",
+ "task_id": "6f0186fa-6241-41c7-87c3-6afff97ac6bf",
+ "task_type": "add_component",
+ "poll_url": "/api/tasks/6f0186fa-6241-41c7-87c3-6afff97ac6bf"
+}
+   taak 6f0186fa-6241-41c7-87c3-6afff97ac6bf: completed
+
+### 3b. GET components
+HTTP 200
+{
+ "project": "radt-qfo",
+ "source": "project-file",
+ "pending_rollout": {
+  "project": "radt-qfo",
+  "count": 1,
+  "since": "2026-08-13T17:45:28.006677+00:00",
+  "task_types": [
+   "create_project"
+  ]
+ },
+ "components": [
+  {
+   "name": "web",
+   "type": "single",
+   "ports": {
+    "inbound": [
+     8080
+    ],
+    "outbound": [
+     80,
+     443
+    ]
+   },
+   "path": [
+    {
+     "match": "/"
+    }
+   ],
+   "resources": {},
+   "services": [
+    "publish-on-web",
+    "namespace-postgresql-database"
+   ],
+   "env_var_names": [],
+   "aliases": {},
+   "attachments": []
+  }
+ ]
+}
+
+### 4. POST :upsert-deployment (uitrollen)
+HTTP 202
+{
+ "status": "accepted",
+ "task_id": "7dd2cd23-1e09-4dcf-b36e-0818abb7b839",
+ "task_type": "upsert_deployment",
+ "poll_url": "/api/tasks/7dd2cd23-1e09-4dcf-b36e-0818abb7b839"
+}
+   taak 7dd2cd23-1e09-4dcf-b36e-0818abb7b839: completed
+task=7dd2cd23-1e09-4dcf-b36e-0818abb7b839
+
+### 4b. wachten op de taak (poll /api/v2 of /api/tasks)
+  poll 1: HTTP 200 status=completed
+{
+ "task_id": "7dd2cd23-1e09-4dcf-b36e-0818abb7b839",
+ "task_type": "upsert_deployment",
+ "status": "completed",
+ "progress_percent": 100,
+ "current_step": "Done",
+ "subtasks": [
+  {
+   "id": "5220d067-61a3-426f-800d-0fbb3961f539",
+   "name": "Deployment validatie",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "f654f488-bbb8-4091-97e1-a2a4a7d59f12",
+   "name": "Deployment aanmaken of bijwerken",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "ea143ccb-11f5-4291-bc40-4cb6cf437605",
+   "name": "Deployment verwerken",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "728e60da-1049-4127-b16d-c97e5d4d7b76",
+   "name": "Projectbestand ophalen en controleren",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "d80bf024-8613-424d-bc02-ef3e0c32434c",
+   "name": "Diensten en manifesten bijwerken",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "dcb32e80-989d-4b7b-bbe7-1a456d8de1a2",
+   "name": "Project aanmaken",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "6d8de4da-24de-4988-ad19-6fd140ee6979",
+   "name": "Kubernetes namespace(s) aanmaken",
+   "error": null,
+   "status": "completed",
+   "subject": null,
+   "parent_id": null
+  },
+  {
+   "id": "b312b618-c8e
+   taak 7dd2cd23-1e09-4dcf-b36e-0818abb7b839: completed
+
+### 5. GET /api/v2/projects/radt-qfo (opvragen)
+HTTP 200
+{
+ "project": {
+  "name": "radt-qfo",
+  "display_name": "RC108 API doorloop tweede",
+  "description": "Doorloop van de v2-API voor RC-108",
+  "clusters": [
+   "sandboxed-local"
+  ]
+ },
+ "source": "project-file",
+ "cluster": "sandboxed-local",
+ "pending_rollout": {
+  "project": "radt-qfo",
+  "count": 1,
+  "since": "2026-08-13T17:45:28.006677+00:00",
+  "task_types": [
+   "create_project"
+  ]
+ },
+ "services": [
+  {
+   "name": "namespace-postgresql-database",
+   "usages": [
+    {
+     "target": "project",
+     "component": null,
+     "deployment": null,
+     "config": null
+    },
+    {
+     "target": "component",
+     "component": "web",
+     "deployment": null,
+     "config": null
+    }
+   ]
+  },
+  {
+   "name": "publish-on-web",
+   "usages": [
+    {
+     "target": "project",
+     "component": null,
+     "deployment": null,
+     "config": null
+    },
+    {
+     "target": "component",
+     "component": "web",
+     "deployment": null,
+     "config": null
+    }
+   ]
+  }
+ ],
+ "components": [
+  {
+   "name": "web",
+   "type": "single",
+   "ports": {
+    "inbound": [
+     8080
+    ],
+    "outbound": [
+     80,
+     443
+    ]
+   },
+   "path": [
+    {
+     "match": "/"
+    }
+   ],
+   "resources
+
+### 5b. GET deployments
+HTTP 200
+{
+ "project": "radt-qfo",
+ "cluster": "sandboxed-local",
+ "deployments": [
+  {
+   "name": "prod",
+   "project": "radt-qfo",
+   "cluster": "sandboxed-local",
+   "namespace": "radt-qfo",
+   "subdomain": null,
+   "components": [
+    {
+     "reference": "web",
+     "image": "nginxinc/nginx-unprivileged:stable-alpine"
+    }
+   ],
+   "urls": {
+    "web": "https://web-prod-radt-qfo.sandbox.rijksapp.dev"
+   },
+   "status": "Healthy",
+   "sync_revision": "0ad955667742b1feac24c40ff3cb085e4e529d09",
+   "last_synced_at": "2026-08-13T17:47:27Z",
+   "errors": []
+  }
+ ]
+}
+
+### 5c. GET pending-rollout
+HTTP 200
+{
+ "project": "radt-qfo",
+ "count": 1,
+ "since": "2026-08-13T17:45:28.006677+00:00",
+ "task_types": [
+  "create_project"
+ ]
+}
+
+PROJECT=radt-qfo
+APIKEY=<geredigeerd: 32 tekens>
