@@ -608,13 +608,14 @@
                         </c-card>
                     {% endfor %}
 
+                </c-stack>
+            {% endcall %}
+        {% endif %}
+
         {# De variabelen die op COMPONENTniveau staan horen hier, want daar zijn ze
            gedefinieerd. Ze stonden op het tabblad Deployments, samen met de
            overschrijvingen, en dan lijkt een standaardwaarde iets van de deployment. #}
         {% with env_niveau = "component" %}{% include "bg/_env-vars.html.j2" %}{% endwith %}
-                </c-stack>
-            {% endcall %}
-        {% endif %}
 
     {% elif active_tab == 'services' %}
 
@@ -745,7 +746,12 @@
                 </c-alert>
             {% endif %}
 
-            {% with env_niveau = "deployment" %}{% include "bg/_env-vars.html.j2" %}{% endwith %}
+            {# GEEN omgevingsvariabelenblok hier. Het deploymentpaneel toont onder
+               "Gebruikers configuratie" al de eigen variabelen van de GEOPENDE
+               deployment per component (_section-deployments.html.j2), en dat is
+               precies de overschrijvingsweergave. Hier stond een tweede lijst die
+               over ALLE deployments liep terwijl de pagina er een toont; twee
+               weergaven van hetzelfde, waarvan een op de verkeerde schaal. #}
         </c-stack>
 
     {% elif active_tab == 'metrics' %}
