@@ -75,7 +75,10 @@ KALE_BUTTON_TOEGESTAAN = {
 #: meer klopt - niet dat er een regel bij moet.
 SM_OP_EEN_PAGINA = {
     ("bg/project-tabs.html.j2", "Bewerken"): "in de kopregel van een paneel, naast de titel (panel(aside=...))",
-    ("bg/project-tabs.html.j2", "Toevoegen"): "in de kaart Componenten, bij de lijst eronder",
+    (
+        "bg/project-tabs.html.j2",
+        "Component toevoegen",
+    ): "in de kaart Acties op het tabblad Componenten, naast de andere acties",
     (
         "bg/project-tabs.html.j2",
         "Deployment toevoegen",
