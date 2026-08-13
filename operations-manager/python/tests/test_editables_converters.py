@@ -550,58 +550,80 @@ class TestUserEnvVarsEncryptGenerator:
 
 
 class TestComponentAliasesEncryptGenerator:
-    """Verify that the generator encrypts each component alias value."""
+    """Verify that the generator stores a component's aliases as ONE AGE block (RC-106).
 
-    def test_encrypts_plain_alias_values(self):
-        """Plain-text alias values on components must be encrypted; names stay readable."""
+    The block, not a mapping with a ciphertext per value: that per-value shape is what
+    made every reader of an alias depend on a decrypt step of its own, and forgetting it
+    put an AGE block on the component card and the redaction placeholder in the edit
+    field. Patching happens on ``opi.services.component_values``, because that is the
+    module whose name the encryption is called through.
+    """
+
+    ENCODER = "opi.services.component_values.encrypt_age_content_sync"
+
+    def test_encrypts_a_plain_alias_block(self):
+        """The KEY=value text the form posts must come out as one AGE block."""
         yaml_data = {
             "config": {"age-public-key": FAKE_PUBLIC_KEY},
-            "components": [
-                {"name": "frontend", "aliases": {"DB_PASS": "secret123", "SELF": "https://$PUBLIC_HOST"}},
-            ],
+            "components": [{"name": "frontend", "aliases": "DB_PASS=secret123\nSELF=https://$PUBLIC_HOST"}],
         }
 
-        with patch("opi.utils.age.encrypt_age_content_sync", return_value=FAKE_AGE_ENCRYPTED):
+        with patch(self.ENCODER, return_value=FAKE_AGE_ENCRYPTED) as mock:
             ComponentAliasesEncryptGenerator().generate(yaml_data)
 
         aliases = yaml_data["components"][0]["aliases"]
-        assert set(aliases.keys()) == {"DB_PASS", "SELF"}
-        for value in aliases.values():
-            assert "BEGIN AGE ENCRYPTED FILE" in str(value)
+        assert isinstance(aliases, str), "one block, not a mapping"
+        assert "BEGIN AGE ENCRYPTED FILE" in aliases
+        assert mock.call_count == 1, "one ciphertext for the set, not one per alias"
+        assert mock.call_args[0][0] == "DB_PASS=secret123\nSELF=https://$PUBLIC_HOST"
 
-    def test_skips_already_encrypted(self):
-        """Already-encrypted alias values must not be re-encrypted."""
+    def test_an_unencrypted_mapping_becomes_the_block(self):
+        """The shape a hand-written file may hold is joined into the block, not left."""
         yaml_data = {
             "config": {"age-public-key": FAKE_PUBLIC_KEY},
-            "components": [{"name": "frontend", "aliases": {"DB_PASS": FAKE_AGE_ENCRYPTED}}],
+            "components": [{"name": "frontend", "aliases": {"DB_PASS": "secret123", "SELF": "$PUBLIC_HOST"}}],
         }
 
-        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+        with patch(self.ENCODER, return_value=FAKE_AGE_ENCRYPTED) as mock:
+            ComponentAliasesEncryptGenerator().generate(yaml_data)
+
+        assert yaml_data["components"][0]["aliases"] == FAKE_AGE_ENCRYPTED
+        assert mock.call_args[0][0] == "DB_PASS=secret123\nSELF=$PUBLIC_HOST"
+
+    def test_skips_already_encrypted(self):
+        """An already-encrypted block must not be encrypted a second time."""
+        yaml_data = {
+            "config": {"age-public-key": FAKE_PUBLIC_KEY},
+            "components": [{"name": "frontend", "aliases": FAKE_AGE_ENCRYPTED}],
+        }
+
+        with patch(self.ENCODER) as mock:
             ComponentAliasesEncryptGenerator().generate(yaml_data)
 
         mock.assert_not_called()
+        assert yaml_data["components"][0]["aliases"] == FAKE_AGE_ENCRYPTED
 
     def test_skips_when_no_public_key(self):
         """Without a project public key, generator should skip (not crash)."""
         yaml_data = {
             "config": {},
-            "components": [{"name": "frontend", "aliases": {"DB_PASS": "secret"}}],
+            "components": [{"name": "frontend", "aliases": "DB_PASS=secret"}],
         }
 
-        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+        with patch(self.ENCODER) as mock:
             ComponentAliasesEncryptGenerator().generate(yaml_data)
 
         mock.assert_not_called()
-        assert yaml_data["components"][0]["aliases"]["DB_PASS"] == "secret"
+        assert yaml_data["components"][0]["aliases"] == "DB_PASS=secret"
 
     def test_skips_components_without_aliases(self):
-        """Components without an aliases map should be left alone."""
+        """Components without aliases should be left alone."""
         yaml_data = {
             "config": {"age-public-key": FAKE_PUBLIC_KEY},
             "components": [{"name": "frontend"}],
         }
 
-        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+        with patch(self.ENCODER) as mock:
             ComponentAliasesEncryptGenerator().generate(yaml_data)
 
         mock.assert_not_called()

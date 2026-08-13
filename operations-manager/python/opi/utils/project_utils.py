@@ -286,21 +286,18 @@ async def build_component_config(
             encrypted_env_vars = await encrypt_age_content(env_vars, public_key)
             component_config["user-env-vars"] = LiteralScalarString(encrypted_env_vars)
 
-    # Add aliases if provided. Alias values may hold secrets (e.g. a password), so
-    # encrypt each value with the project AGE key. Names stay readable. Plaintext
-    # values are kept as-is when no public key is available (backward compatible).
+    # Add aliases if provided. Stored as ONE AGE block whose plaintext is KEY=value
+    # lines, exactly like user-env-vars (RC-106). An unencrypted mapping is kept as-is
+    # when no public key is available (backward compatible).
     if aliases:
         aliases_dict = parse_aliases(aliases)
         if aliases_dict:
             if public_key:
-                for alias_name, alias_value in aliases_dict.items():
-                    if isinstance(alias_value, str) and "BEGIN AGE ENCRYPTED FILE" not in alias_value:
-                        aliases_dict[alias_name] = LiteralScalarString(
-                            await encrypt_age_content(alias_value, public_key)
-                        )
+                block = "\n".join(f"{key}={value}" for key, value in aliases_dict.items())
+                component_config["aliases"] = LiteralScalarString(await encrypt_age_content(block, public_key))
             else:
                 logger.warning("Could not encrypt aliases for component '%s': no AGE public key available", name)
-            component_config["aliases"] = aliases_dict
+                component_config["aliases"] = aliases_dict
 
     return component_config
 
