@@ -65,7 +65,20 @@ ROOS_TO_NLDD_ICONS = {
     "netwerk": "link",
     "klok": "timer",
     "kruis": "dismiss",
-    "map": "folder-stack",
+    # folder-stack MAG HIER NIET STAAN, hoe goed hij ook past. Die naam bestaat in de
+    # NLDD-bundel, maar LOTC heeft er in icons.json een alias van gemaakt die hem naar
+    # ``folder-on-folder`` herschrijft, en DIE zit niet in de bundel. Het icoon rendeerde
+    # dus leeg terwijl elke poort groen stond: de poort mat de naam die wij MEEGEVEN en
+    # niet de naam die er na de aliaslaag van LOTC uit komt. De toets meet nu het
+    # gerenderde ``name=`` (tests/test_lotc_icon_mapping.py).
+    "map": "folder",
+    # De raket stond op de wizardstap "Deployments" en rendeerde leeg. NLDD heeft geen
+    # raket; cylinder-split is het icoon dat een deployment hier overal draagt (zie
+    # "server" hieronder), dus de stap krijgt hetzelfde beeld als waar hij over gaat.
+    "raket": "cylinder-split",
+    # "Job uitvoeren" (postgres_pages.py): iets in gang zetten.
+    "uitvoering": "play",
+    "wolk": "cloud",
     "pijl-naar-rechts": "chevron-right",
     "publicatie": "file-text",
     "puzzel": "puzzle-piece",

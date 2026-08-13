@@ -6,6 +6,11 @@ is, dus stond het er ook hier. De omweg was de kiezer ``required`` noemen; dat h
 label weg en laat de HTML iets anders beweren - en dat is wat deze test scheidt: het
 label moet weg EN het veld mag niet verplicht heten.
 
+De reparatie zit in onze kopie van ``components/_forms.j2``: een KEUZELIJST krijgt de
+badge nooit, ongeacht het merk. Het merk ``data-no-optional-badge`` deed dat hier niet,
+want bij een ``c-select-field`` landt het op de omhullende ``nldd-form-field`` terwijl
+``nldd_field`` het in de BESTURING zoekt.
+
 De badge zit in de schaduwboom van ``nldd-form-field`` (``optionalLabel = "Optioneel"``,
 gerenderd zodra het ``optional``-attribuut staat), dus dit meet de zichtbare tekst van
 het component en niet alleen de markup eromheen.
@@ -36,15 +41,6 @@ def _open(page: Page, app_server: str) -> None:
     page.wait_for_function("() => document.querySelectorAll('nldd-form-field:not(:defined)').length === 0")
 
 
-@pytest.mark.xfail(
-    reason=(
-        "data-no-optional-badge werkt nog niet op een c-select-field: het attribuut landt "
-        "op de omhullende nldd-form-field terwijl nldd_field het in de BESTURING zoekt. "
-        "De omweg (required=true) is bewust niet gebruikt, want die zegt tegen een "
-        "schermlezer dat er iets ingevuld moet worden. Zie request_for_components.md."
-    ),
-    strict=True,
-)
 def test_de_kiezer_draagt_geen_optioneel(app_server: str, auth_page: Page) -> None:
     """Het veld eromheen is niet als optioneel gemarkeerd, en toont de badge dus niet."""
     _open(auth_page, app_server)

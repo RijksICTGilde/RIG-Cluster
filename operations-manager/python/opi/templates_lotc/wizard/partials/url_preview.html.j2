@@ -1,3 +1,11 @@
+{#
+  De voorbeeld-URL's onder de stap Webadres.
+
+  De tabel had geen kolommen. Onder NLDD is <c-table> een CSS-grid en niet een <table>:
+  zonder ``columns`` krijgt hij er een, en dan staan "Component" en "URL" onder elkaar in
+  plaats van naast elkaar - en elke rij ook. Zie project-details/section-tasks.html.j2,
+  dat het al zo doet.
+#}
 {% if has_urls %}
 <c-card outline="true">
     <c-layout-flow gap="sm">
@@ -9,19 +17,19 @@
         {% if needs_approval %}
         <c-alert>Deze URL's zijn pas beschikbaar na goedkeuring van het domein en/of subdomein.</c-alert>
         {% endif %}
-        <c-table>
+        <c-table columns="1fr 2fr">
             <c-table-head><c-table-row>
                 <c-th>Component</c-th>
                 <c-th>URL</c-th>
             </c-table-row></c-table-head>
-            
+
                 {% for entry in urls %}
                 <c-table-row>
                     <c-td>{{ entry.component }}</c-td>
                     <c-td><code>{{ entry.url }}</code></c-td>
                 </c-table-row>
                 {% endfor %}
-            
+
         </c-table>
     </c-layout-flow>
 </c-card>

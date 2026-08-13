@@ -1,4 +1,4 @@
-{# ONZE KOPIE van components/_forms.j2 uit lotc-forms, met TWEE wijzigingen in nldd_field:
+{# ONZE KOPIE van components/_forms.j2 uit lotc-forms, met DRIE wijzigingen in nldd_field:
 
    1. De foutmelding wordt bedraad, zodat je hem ook ZIET. Zie de macro onderaan en
       opi/forms/lotc_attrs.py (bedraad_foutmelding) voor de meting en de reden.
@@ -10,6 +10,12 @@
       dan zegt de HTML dat er iets ingevuld MOET worden - een andere onwaarheid. Dit
       attribuut zegt alleen wat het is: geen badge. Het derde standje hoort in het thema
       te zitten en staat als verzoek in request_for_components.md.
+   3. Een KEUZELIJST krijgt nooit "Optioneel", ongeacht dat attribuut. Bij een tekstveld
+      zegt de badge iets - je mag het leeg laten - maar in een keuzelijst staat altijd al
+      een waarde geselecteerd, dus hij belooft een vrijheid die er niet is. Wijziging 2
+      dekt dit geval NIET: bij ``c-select-field`` landt ``data-no-optional-badge`` op de
+      omhulling en niet op de besturing, dus de toets op ``besturing`` ziet hem daar nooit.
+      Vandaar de voorwaarde op ``kind``, de naam die het veldsjabloon zelf meegeeft.
 
    Dit bestand ligt op de searchpath VOOR de sjablonen van de design systems (die zet
    setup_components erachteraan), dus elk veldsjabloon van lotc-forms dat
@@ -101,7 +107,7 @@ document.addEventListener('click',function(e){
    Dutch-gov convention marks OPTIONAL, not required, so `optional` when not required. #}
 {% macro nldd_field(id, label, help, error, required, kind) -%}
 {% set besturing = caller() %}
-<nldd-form-field label="{{ label }}"{% if not required and 'data-no-optional-badge' not in besturing %} optional{% endif %} data-lotc-component="{{ kind }}">
+<nldd-form-field label="{{ label }}"{% if not required and kind != 'select-field' and 'data-no-optional-badge' not in besturing %} optional{% endif %} data-lotc-component="{{ kind }}">
   {% if error %}{{ besturing | foutbedrading(id ~ '-error') }}{% else %}{{ besturing }}{% endif %}
   {% if help %}<nldd-form-field-help-text id="{{ id }}-help">{{ help }}</nldd-form-field-help-text>{% endif %}
   {% if error %}<nldd-form-field-error-text id="{{ id }}-error" invalid>{{ error }}</nldd-form-field-error-text>{% endif %}
