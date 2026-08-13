@@ -87,10 +87,6 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
         "De breedte van de voortgangsbalk is de waarde zelf. Staat in de macro progress_bar, "
         "zodat die uitzondering op een plek blijft.",
     ),
-    "project-details/_resource-usage.html.j2": (
-        2,
-        "De breedte van de CPU- en van de geheugenbalk is de waarde zelf.",
-    ),
     "bg/_task-progress.html.j2": (
         1,
         "De breedte van de voortgangsbalk is de waarde zelf; zelfde uitzondering als in widgets/_macros.html.j2.",
