@@ -80,7 +80,6 @@ NOG_MET_KLASSEN = {
     "wizard/partials/attachments_upload.html.j2": 3,
     "wizard/partials/backup_select_deployment.html.j2": 8,
     "wizard/partials/deployment_info.html.j2": 3,
-    "wizard/partials/domain_info.html.j2": 7,
     "wizard/partials/restore_select_backup.html.j2": 4,
     "wizard/partials/restore_select_target.html.j2": 9,
 }
