@@ -101,24 +101,58 @@
        het het aandeel is. De bestaande kaart (dashboard/_resourceverdeling.html.j2) zet
        naast elk segment ``0.030 cores (12.3%)``, en dat is precies wat hier nu ook naast
        de balk staat - dezelfde schrijfwijze, geen tweede vorm ernaast. #}
-    {% if total_cpu_usage > 0 %}
+    {# GEHEUGEN EERST, en de sortering volgt het geheugen. Hier stond alleen CPU, en van
+       de twee is dat de minst interessante: op geheugen stuur je, want dat is waar een pod
+       op omvalt als het opraakt. Beide lijsten staan in DEZELFDE volgorde, zodat te zien is
+       dat het project dat het meeste geheugen gebruikt niet per se het meeste rekenwerk
+       doet; per lijst sorteren zou juist dat verband breken.
+
+       Alleen de projecten MET een meting gaan de sortering in: sort(attribute=...) valt om
+       op een project waar de sleutel ontbreekt, en dat komt in dit fragment langs. #}
+    {% set op_geheugen = projects | selectattr('memory_mb', 'defined') | rejectattr('memory_mb', 'none')
+                                  | sort(attribute='memory_mb', reverse=true) | list %}
+    {% if (total_memory_usage is defined and total_memory_usage > 0) or total_cpu_usage > 0 %}
         {% call panel("Verdeling over projecten", "chart-x-y-axis-line") %}
-            <c-stack gap="md">
-                <c-paragraph size="sm">CPU-gebruik per project, als aandeel van het totaal.</c-paragraph>
-                {% for project in projects if project.cpu_cores is defined and project.cpu_cores > 0 %}
-                    <c-stack gap="xs">
-                        <c-cluster justify="between" align="center" gap="sm">
-                            <c-span>{{ project.display_name }}</c-span>
-                            <c-span>{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</c-span>
-                        </c-cluster>
-                        <c-progress-bar
-                            :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
-                            max="100"
-                            value-display="tooltip"
-                            color="info"
-                            accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
+            <c-stack gap="lg">
+                {% if total_memory_usage is defined and total_memory_usage > 0 %}
+                    <c-stack gap="md">
+                        <c-paragraph size="sm">Geheugengebruik per project, als aandeel van het totaal.</c-paragraph>
+                        {% for project in op_geheugen if project.memory_mb is defined and project.memory_mb > 0 %}
+                            <c-stack gap="xs">
+                                <c-cluster justify="between" align="center" gap="sm">
+                                    <c-span>{{ project.display_name }}</c-span>
+                                    <c-span>{{ '%.0f' | format(project.memory_mb) }} MiB ({{ (project.memory_mb / total_memory_usage * 100) | round(1) }}%)</c-span>
+                                </c-cluster>
+                                <c-progress-bar
+                                    :value="(project.memory_mb / total_memory_usage * 100) | round(1)"
+                                    max="100"
+                                    value-display="tooltip"
+                                    color="info"
+                                    accessible-label="{{ project.display_name }}: {{ '%.0f' | format(project.memory_mb) }} MiB" />
+                            </c-stack>
+                        {% endfor %}
                     </c-stack>
-                {% endfor %}
+                {% endif %}
+
+                {% if total_cpu_usage is defined and total_cpu_usage > 0 %}
+                    <c-stack gap="md">
+                        <c-paragraph size="sm">CPU-gebruik per project, als aandeel van het totaal.</c-paragraph>
+                        {% for project in op_geheugen if project.cpu_cores is defined and project.cpu_cores > 0 %}
+                            <c-stack gap="xs">
+                                <c-cluster justify="between" align="center" gap="sm">
+                                    <c-span>{{ project.display_name }}</c-span>
+                                    <c-span>{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</c-span>
+                                </c-cluster>
+                                <c-progress-bar
+                                    :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
+                                    max="100"
+                                    value-display="tooltip"
+                                    color="info"
+                                    accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
+                            </c-stack>
+                        {% endfor %}
+                    </c-stack>
+                {% endif %}
             </c-stack>
         {% endcall %}
     {% endif %}
