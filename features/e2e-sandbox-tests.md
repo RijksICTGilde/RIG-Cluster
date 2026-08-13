@@ -144,6 +144,20 @@ a name the restore route accepts, for both kinds, plus the failure classificatio
 (`InvalidTarget`) that only appears once the restore gets far enough to reach the
 destination gate.
 
+### When the same wall stands on three roads
+
+`tests/e2e/test_sandbox_publish_on_web.py` (RC-103) guards the regression that stopped the
+zad-cli: `publish-on-web` could not be enabled through any of the three write routes
+(`PUT .../services/publish-on-web/config/component/{name}`, `PATCH .../components/{name}`,
+`POST .../components`), because the gate for implicit service selection sent the caller to a
+project layer the service does not have.
+
+The shape worth copying: **one fresh project per route.** All three roads pass through the
+same gate, and the first one that succeeds enrols the service at project level - after which
+the other two never reach the gate again and would be green on the broken build too. Three
+projects cost three creates (~6 minutes for the module), and that is the price of measuring
+what the test claims to measure.
+
 ## How to run
 
 ```bash
