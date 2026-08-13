@@ -1345,3 +1345,52 @@ het projectbestand?
 ### Antwoord
 
 <!-- ruimte voor RIG-Cluster -->
+
+---
+
+## 15. Waarom mag postgres zichzelf wel aanzetten en keycloak niet?
+
+Twee agents die alleen de CLI mochten gebruiken liepen hier los van elkaar op vast, en het
+is geen storing maar een ontwerpvraag.
+
+Dit werkt: het component vraagt om een dienst die nog nergens geconfigureerd is, en de
+dienst wordt stilzwijgend op projectniveau bijgeschakeld.
+
+```sh
+zad component add worker --service postgresql-database --service redis --service minio-storage
+# lukt
+```
+
+Dit niet:
+
+```sh
+zad component add frontend --service keycloak
+# Services that must be enabled at project level first: ['keycloak']. They need
+# project-level configuration that cannot be assumed, so they are not added automatically.
+```
+
+En `attachment assign` bindt de dienst `attachments` juist weer wél vanzelf aan het
+component, zonder dat iemand erom vroeg.
+
+Drie diensten, drie verschillende antwoorden op dezelfde handeling.
+
+**De vraag.** Kan een component dat om `keycloak` vraagt de projectlaag aanmaken met de
+standaardwaarden die het schema toch al kent, net als bij postgres? Wij zien het argument
+ertegen — een keycloak-realm is niet iets om ongevraagd aan te maken, en `template` is een
+keuze — maar dan is de vervolgvraag waarom `postgresql-database` dat wel mag, want een
+database aanmaken is niet minder ingrijpend.
+
+**Wat in elk geval helpt, ongeacht het antwoord:** laat de foutmelding het commando noemen
+dat het oplost. Nu zegt hij *dát* er projectconfiguratie nodig is, niet welke. Beide agents
+hebben daarna zelf moeten uitzoeken dat het
+`zad service config set keycloak --set template=sso-only` moest zijn, en de eerste kwam er
+niet uit.
+
+**Waar wij het aan onze kant hebben opgelost:** de volgorde in `zad guide` klopte niet. Die
+zette componenten vóór de dienstconfiguratie, wat precies de volgorde is die faalt. Nu staat
+"zet eerst de diensten aan die het project nodig heeft" als eigen stap, met keycloak als
+voorbeeld en de foutmelding erbij die je krijgt als je het overslaat.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
