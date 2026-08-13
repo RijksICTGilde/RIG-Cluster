@@ -1,7 +1,11 @@
-# Het tabblad Toegang
+# Het tabblad Services info
 
 De blokken die de diensten zelf op de projectpagina leveren staan op een eigen tabblad:
-**Toegang**, tussen Services en Deployments. Adres: `/projects/<naam>/toegang`.
+**Services info**, tussen Services en Deployments. Adres: `/projects/<naam>/services-info`.
+
+## Waarom het zo heet
+
+Het heette eerst "Toegang". Dat beschreef wat de eerste drie diensten toevallig tonen (een adres, een wachtwoord, een code) in plaats van wat het tabblad is, en het loopt scheef zodra een dienst hier iets anders neerzet. Wat het tabblad draagt is de haak `detail_page_sections`: elke dienst mag er zelf een blok op zetten. De naam noemt daarom de diensten en niet het onderwerp van de eerste drie.
 
 ## Wat er op staat
 
@@ -49,10 +53,10 @@ bereikt de pagina nooit. De seed geeft voor altijd codes, deze code vergaat binn
 periode. Wie hem kan zien mag ook het admin-wachtwoord zien - hetzelfde blok, dezelfde
 rolpoort (alleen admin/owner) - en dat wachtwoord is van de twee het langstlevende.
 
-## Waarom "Toegang" en niet iets anders
+## Waarom "Services info" en niet iets anders
 
 Het tabblad **Services** ernaast gaat over BEHEER: welke diensten staan aan, wat doen ze,
-hoe zijn ze gebonden, waar zet je ze aan of uit. Toegang gaat over GEBRUIK. Dat zijn twee
+hoe zijn ze gebonden, waar zet je ze aan of uit. Services info gaat over GEBRUIK. Dat zijn twee
 verschillende vragen, en daarom twee tabbladen.
 
 "Services gebruik" was de eerste ingeving en is afgevallen: gebruik leest als verbruik of
@@ -66,7 +70,7 @@ geworden:
   voor alle drie: een uitnodigingslink en een Keycloak-wachtwoord sluit je op aan, een
   geupload certificaat niet.
 
-"Toegang" is gekozen omdat het alle drie de blokken dekt zonder een van de drie te
+"Services info" is gekozen omdat het alle drie de blokken dekt zonder een van de drie te
 verdraaien: het Keycloak-blok is toegang tot je realm, de uitnodiging is toegang voor
 iemand anders, en een bijlage is het materiaal waarmee je component ergens bij komt. Hij
 blijft ook staan als de vierde dienst zich meldt - een MinIO-endpoint met sleutel, een
@@ -76,7 +80,7 @@ De naam staat bij de tabbladen zelf, in `opi/web/lotc_switch.py` (`PROJECT_TABS`
 
 ## Geen leeg tabblad
 
-Levert geen enkele dienst van het project een blok, dan is er geen tabblad Toegang: hij
+Levert geen enkele dienst van het project een blok, dan is er geen tabblad Services info: hij
 valt uit de tabbalk. Een tab die een lege pagina opent is een belofte die niet
 waargemaakt wordt.
 
@@ -96,8 +100,8 @@ nodig als een dienst een eigen indeling wil in plaats van een blok.
 
 ## Adressen
 
-* `/projects/<naam>/toegang` - het tabblad.
-* `/projects/toegang/<naam>` - de oude vorm (tabblad voor de projectnaam), verwijst door
+* `/projects/<naam>/services-info` - het tabblad.
+* `/projects/services-info/<naam>` - de oude vorm (tabblad voor de projectnaam), verwijst door
   naar het adres hierboven, net als bij de andere tabbladen. Beide vormen staan letterlijk
   als route geregistreerd; een van de twee als wildcard registreren zou de andere opvangen
   met de projectnaam op de verkeerde plek.
@@ -107,5 +111,5 @@ nodig als een dienst een eigen indeling wil in plaats van een blok.
 * `tests/test_lotc_toegang_tabblad.py` - het pad, de route, en de tabbalk die het lege
   tabblad weglaat.
 * `tests/e2e/test_lotc_toegang_tabblad.py` - op de draaiende pagina: het blok staat op
-  Toegang, staat NIET meer op Overzicht, en een project zonder blokken heeft geen tab en
+  Services info, staat NIET meer op Overzicht, en een project zonder blokken heeft geen tab en
   wordt van dat adres doorverwezen.

@@ -7,7 +7,7 @@ verdwenen zijn - zie je alleen aan de pagina zelf.
 Twee testprojecten dekken de twee gevallen:
 
 * ``test-project-services`` heeft een Keycloak-realm en dus een blok: er hoort een tabblad
-  Toegang te zijn, met het blok erop;
+  Services info te zijn, met het blok erop;
 * ``test-project-detail`` heeft geen enkele dienst die iets levert: daar hoort GEEN tabblad
   te staan, want een lege pagina achter een tab is een belofte die niet waargemaakt wordt.
 """
@@ -51,9 +51,9 @@ def _tabbladen(page: Page) -> list[str]:
 
 def test_het_dienstblok_staat_op_toegang(auth_page: Page, app_server: str) -> None:
     """Waar je naartoe gaat als je het adres, de gebruikersnaam of het wachtwoord nodig hebt."""
-    _open(auth_page, app_server, MET_BLOKKEN, "toegang")
+    _open(auth_page, app_server, MET_BLOKKEN, "services-info")
 
-    assert REALM in auth_page.content(), "het Keycloak-blok staat niet op het tabblad Toegang"
+    assert REALM in auth_page.content(), "het Keycloak-blok staat niet op het tabblad Services info"
 
 
 def test_de_otp_staat_er_als_code_en_niet_als_seed(auth_page: Page, app_server: str) -> None:
@@ -63,7 +63,7 @@ def test_de_otp_staat_er_als_code_en_niet_als_seed(auth_page: Page, app_server: 
     en de seed blijft op de server - die zou voor altijd codes geven, deze code vergaat
     binnen een periode.
     """
-    _open(auth_page, app_server, MET_BLOKKEN, "toegang")
+    _open(auth_page, app_server, MET_BLOKKEN, "services-info")
     html = auth_page.content()
 
     code, _ = totp_now(SEED)
@@ -82,7 +82,7 @@ def test_het_dienstblok_staat_niet_meer_op_overzicht(auth_page: Page, app_server
 def test_de_tabbalk_toont_toegang_als_er_iets_te_tonen_is(auth_page: Page, app_server: str) -> None:
     _open(auth_page, app_server, MET_BLOKKEN, "project")
 
-    assert "Toegang" in _tabbladen(auth_page)
+    assert "Services info" in _tabbladen(auth_page)
 
 
 def test_zonder_dienstblokken_is_er_geen_tabblad(auth_page: Page, app_server: str) -> None:
@@ -91,13 +91,13 @@ def test_zonder_dienstblokken_is_er_geen_tabblad(auth_page: Page, app_server: st
     _open(auth_page, app_server, ZONDER_BLOKKEN, "project")
 
     tabbladen = _tabbladen(auth_page)
-    assert "Toegang" not in tabbladen, f"leeg tabblad in de balk: {tabbladen}"
+    assert "Services info" not in tabbladen, f"leeg tabblad in de balk: {tabbladen}"
     assert "Services" in tabbladen, "alleen het lege tabblad hoort weg te vallen"
 
 
 def test_het_lege_tabblad_verwijst_door_naar_overzicht(auth_page: Page, app_server: str) -> None:
     """Een gedeelde link naar een tabblad dat er voor dit project niet is, hoort op de
     projectpagina uit te komen en niet op een lege pagina."""
-    _open(auth_page, app_server, ZONDER_BLOKKEN, "toegang")
+    _open(auth_page, app_server, ZONDER_BLOKKEN, "services-info")
 
     assert auth_page.url.endswith(project_tab_url(ZONDER_BLOKKEN, "project"))

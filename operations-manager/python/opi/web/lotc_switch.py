@@ -436,13 +436,17 @@ def build_deployment_status_column(
 #: en afgevallen: "Servicegegevens" (klopt, maar staat naast "Services" in dezelfde balk
 #: en die twee zijn dan niet uit elkaar te houden) en "Aansluiten" (een werkwoord tussen
 #: zelfstandige naamwoorden, en bijlagen sluit je nergens op aan). Zie
-#: features/toegang-tabblad.md voor de afweging.
+#: features/services-info-tabblad.md voor de afweging.
 PROJECT_TABS = {
     "project": {"label": "Overzicht", "path": "details"},
     "team": {"label": "Team", "path": "team"},
     "componenten": {"label": "Componenten", "path": "componenten"},
     "services": {"label": "Services", "path": "services"},
-    "toegang": {"label": "Toegang", "path": "toegang"},
+    # "Services info" en niet "Toegang": dit tabblad draagt de blokken die DIENSTEN zelf
+    # leveren via detail_page_sections, en dat is de haak en niet het onderwerp. "Toegang"
+    # beschreef wat de eerste drie diensten toevallig tonen (een adres, een wachtwoord,
+    # een code), en dat gaat scheef zodra een dienst iets anders levert.
+    "services-info": {"label": "Services info", "path": "services-info"},
     "deployments": {"label": "Deployments", "path": "deployments"},
     "metrics": {"label": "Metrics", "path": "metrics"},
     "backups": {"label": "Backups", "path": "backups"},
@@ -461,7 +465,7 @@ STANDAARD_TAB = next(iter(PROJECT_TABS))
 #: Welke tabbladen dat zijn staat hier en niet in het sjabloon, zodat de tabbalk en de
 #: route (die op zo'n leeg tabblad doorverwijst naar Overzicht) het over dezelfde regel
 #: hebben.
-TABS_MET_VOORWAARDE = ("toegang",)
+TABS_MET_VOORWAARDE = ("services-info",)
 
 #: De tabbladen die EEN deployment tegelijk tonen, en die hem daarom in hun PAD dragen:
 #: ``/projects/<project>/deployments/<deployment>``.
