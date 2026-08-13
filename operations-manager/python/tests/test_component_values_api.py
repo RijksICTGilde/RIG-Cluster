@@ -299,11 +299,13 @@ class TestInvalidPayloads:
         created_task.assert_not_called()
 
     @pytest.mark.parametrize("value", ['"$DATABASE_SERVER_HOST"', "'$DATABASE_SERVER_HOST'"])
-    def test_surrounding_quotes_are_a_422_for_env_vars_but_fine_for_aliases(self, client, created_task, value) -> None:
-        # Only the KEY=value block form removes them.
+    def test_surrounding_quotes_are_a_422_for_both_properties(self, client, created_task, value) -> None:
+        # The KEY=value block form removes them, and since RC-106 that is the form BOTH
+        # properties are stored in -- aliases used to be exempt because each value was
+        # encrypted on its own and never read back as a KEY=value line.
         assert client.post(ENV_COMPONENT, headers=HEADERS, json={"values": {"TOKEN": value}}).status_code == 422
-        assert client.post(ALIAS_COMPONENT, headers=HEADERS, json={"values": {"TOKEN": value}}).status_code == 202
-        created_task.assert_called_once()
+        assert client.post(ALIAS_COMPONENT, headers=HEADERS, json={"values": {"TOKEN": value}}).status_code == 422
+        created_task.assert_not_called()
 
     def test_the_restriction_is_documented_on_the_routes(self, client) -> None:
         spec = client.app.openapi()
@@ -313,7 +315,7 @@ class TestInvalidPayloads:
         assert "422" in env_description
         assert "surrounding quotes" in env_description
         assert "422" in alias_description
-        assert "surrounding quotes" not in alias_description
+        assert "surrounding quotes" in alias_description
 
     def test_a_bad_name_in_the_path_of_a_single_delete_is_refused(self, client, created_task) -> None:
         response = client.delete(f"{ENV_COMPONENT}/with-dash", headers=HEADERS)

@@ -91,9 +91,12 @@ SAMPLE_PROJECT_DATA: dict[str, Any] = {
             "ports": {"inbound": [8000], "outbound": [443]},
             "path": [{"match": "/api"}],
             "resources": {"cpu": "1", "limits": {"memory": "649Mi"}},
+            # The unencrypted mapping shape, which stays valid after RC-106 (a component
+            # that has not been saved since, or a hand-written file). The stored shape a
+            # write produces is one AGE block and is covered in test_component_values.py.
             "aliases": {
                 "POSTGRES_HOST": "$DATABASE_SERVER_HOST",
-                "LEGACY_TOKEN": AGE_BLOCK,
+                "LEGACY_TOKEN": "een-vaste-waarde",
             },
             "user-env-vars": AGE_BLOCK,
             "services": [
@@ -352,6 +355,7 @@ class TestProjectComponents:
         backend = next(c for c in components if c["name"] == "backend")
         # The whole reason to ask for an alias is what it points at.
         assert backend["aliases"]["POSTGRES_HOST"] == "$DATABASE_SERVER_HOST"
+        # Not a reference, so the owning service calls it a secret and it is masked.
         assert backend["aliases"]["LEGACY_TOKEN"] == "***"
 
     def test_attachment_coupling_without_content(self, client: TestClient) -> None:

@@ -22,7 +22,7 @@ from typing import Any
 
 from opi.services.catalog.aliases.config_model import AliasesConfig
 from opi.services.catalog.aliases.references import is_reference, validate_alias_value
-from opi.services.catalog.base import ConfigLayer, Service, ValueStorage
+from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
 
@@ -50,9 +50,9 @@ class AliasesService(Service):
     # component, so there is no project-level decision to make first.
     allows_implicit_project_selection = True
     owned_property = "aliases"
-    # A mapping with readable names and each value encrypted on its own: an alias value
-    # may hold a secret, but the names are what makes the map readable in the file.
-    owned_values_storage = ValueStorage.PER_VALUE
+    # One AGE block for the whole set, exactly like user-env-vars (RC-106). Stored per
+    # value before that, which made every reader depend on a decrypt step of its own.
+    owned_values_map = True
     # Directly above user-env-vars, matching the order of the hand-authored "Variabelen"
     # fieldset this replaces.
     config_component_order = 5
