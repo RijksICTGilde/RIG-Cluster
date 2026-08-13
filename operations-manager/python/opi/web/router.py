@@ -1616,10 +1616,8 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             backups_available = False
 
         # Generate ingress URLs for components with publish-on-web service
-        from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
         from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
-        from opi.utils.naming import HostnameFormat, generate_public_url, get_component_ingress_map
 
         project_file_handler = ProjectFileHandler()
 
@@ -1632,64 +1630,17 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 project_data, deployment, project_name, project_file_handler
             )
 
-        # Also add ingress information directly to components for the components section
+        # The same links, hung on the component instead of on the deployment, because the
+        # components section lists them per component. One derivation, so the two lists on
+        # one page cannot disagree.
         for component in project_details["components"]:
-            component["ingress_links"] = []
             component_name = component.get("name")
-            if component_name:
-                has_publish_on_web = project_file_handler.extract_component_publish_on_web(project_data, component_name)
-
-                if has_publish_on_web:
-                    # Find deployments that use this component
-                    for deployment in project_details["deployments"]:
-                        cluster = deployment.get("cluster")
-                        if cluster and any(
-                            c.get("reference") == component_name for c in deployment.get("components", [])
-                        ):
-                            try:
-                                ingress_postfix = get_ingress_postfix(cluster)
-                                use_https = get_ingress_tls_enabled(cluster)
-                                subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
-                                base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-                                hostname_format = HostnameFormat.from_domain_mode(
-                                    get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
-                                )
-                                domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
-
-                                ingress_map = get_component_ingress_map(
-                                    component_name=component_name,
-                                    deployment_name=deployment["name"],
-                                    project_name=project_name,
-                                    ingress_postfix=ingress_postfix,
-                                    subdomain=subdomain,
-                                    base_domain=base_domain,
-                                    hostname_format=hostname_format,
-                                    domain_format=domain_format,
-                                    project_data=project_data,
-                                    cluster=cluster,
-                                )
-
-                                paths = project_file_handler.extract_deployment_component_paths(
-                                    project_data, deployment, component_name
-                                )
-                                for ingress_name, hostname in ingress_map.items():
-                                    for path_config in paths:
-                                        match = path_config.get("match") or "/"
-                                        public_url = generate_public_url(hostname, use_https, match)
-                                        component["ingress_links"].append(
-                                            {
-                                                "deployment_name": deployment["name"],
-                                                "cluster": cluster,
-                                                "ingress_name": ingress_name,
-                                                "hostname": hostname,
-                                                "path": match,
-                                                "url": public_url,
-                                            }
-                                        )
-                            except Exception as ingress_error:
-                                logger.warning(
-                                    f"Failed to generate ingress links for component {component_name} in deployment {deployment['name']}: {ingress_error}"
-                                )
+            component["ingress_links"] = [
+                {**link, "deployment_name": deployment["name"], "cluster": deployment.get("cluster")}
+                for deployment in project_details["deployments"]
+                for link in deployment["ingress_links"]
+                if link["component_name"] == component_name
+            ]
 
         # Get cluster base domains for domain settings modal
         from opi.web.router_self_service import get_cluster_base_domains_for_template

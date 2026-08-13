@@ -151,6 +151,16 @@ uit `get_project_store()`, dus uit het projectbestand in de projectrepository. W
 `rollout=false` heeft opgeslagen, loopt met zijn bestand vooruit op het cluster; een
 `count` groter dan 0 betekent dat deze beschrijving vooruitloopt op wat er draait.
 
+## `urls` noemt alleen adressen die bestaan
+
+De `urls` van een deployment komen uit `public_url_map_for_deployment()` in
+`opi/services/catalog/publish_on_web/urls.py` — publish-on-web is de dienst die beslist of
+een component een ingress krijgt, dus die weet als enige of er een adres is. Een component
+zonder publish-on-web staat er niet in, ook al is zijn hostnaam af te leiden. Diezelfde
+functie voedt het resultaat van `:refresh` en de links op de project- en deploymentpagina:
+een adres dat 404 geeft is erger dan geen adres, want een client slaat het op en geeft het
+door.
+
 ## Eén ontsleutelpad
 
 Het lezen van `user-env-vars` zat in de webrouter, voor de projectdetailpagina. Het staat

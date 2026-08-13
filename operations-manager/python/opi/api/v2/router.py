@@ -76,7 +76,6 @@ from opi.api.validation import (
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
 from opi.core.auth_decorators import get_current_user
-from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
@@ -98,6 +97,7 @@ from opi.services.catalog.deployment_health.disabled import deployment_disabled_
 from opi.services.catalog.postgresql_database.config_model import schema_description_field, schema_postfix_field
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
 from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, ValuesOperation
 from opi.services.component_values import decode as decode_values
 from opi.services.component_values import locate as locate_values_node
@@ -119,13 +119,10 @@ from opi.services.services import ServiceAdapter, service_entry_config, service_
 from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.naming import (
-    HostnameFormat,
     generate_argocd_application_name,
     generate_database_schema,
     generate_extra_database_schema,
-    generate_public_url,
     generate_schema_variable_name,
-    get_component_ingress_map,
     sanitize_kubernetes_name,
 )
 from opi.utils.project_names import ensure_unique_project_name
@@ -164,52 +161,11 @@ def _compute_deployment_urls(
 ) -> dict[str, str]:
     """Compute public URLs for a deployment's components.
 
-    Uses the same ingress-map logic as the web UI detail page.
-    Only components with the publish-on-web service get URLs.
+    Delegates to publish-on-web, the service that decides whether a component is reachable
+    from the internet: the same map the refresh task reports and the detail page links, so
+    the three cannot say different things about the same deployment.
     """
-    cluster = deployment.get("cluster", "")
-    urls: dict[str, str] = {}
-
-    try:
-        ingress_postfix = get_ingress_postfix(cluster)
-        use_https = get_ingress_tls_enabled(cluster)
-    except KeyError, ValueError:
-        logger.debug("Could not resolve ingress config for cluster '%s'", cluster)
-        return urls
-
-    subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
-    base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-    hostname_format = HostnameFormat.from_domain_mode(get_domain_setting(deployment, DomainSetting.DOMAIN_MODE))
-    domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
-    deployment_name = deployment["name"]
-    project_file_handler = ProjectFileHandler()
-
-    for component in deployment.get("components", []):
-        component_name = component.get("reference")
-        if not component_name:
-            continue
-
-        has_publish = project_file_handler.extract_component_publish_on_web(project_data, component_name)
-        if not has_publish:
-            continue
-
-        ingress_map = get_component_ingress_map(
-            component_name=component_name,
-            deployment_name=deployment_name,
-            project_name=project_name,
-            ingress_postfix=ingress_postfix,
-            subdomain=subdomain,
-            base_domain=base_domain,
-            hostname_format=hostname_format,
-            domain_format=domain_format,
-            project_data=project_data,
-            cluster=cluster,
-        )
-        hostname = next(iter(ingress_map.values()), None)
-        if hostname:
-            urls[component_name] = generate_public_url(hostname, use_https)
-
-    return urls
+    return public_url_map_for_deployment(project_data, deployment, project_name, ProjectFileHandler())
 
 
 class _LiveStatus(NamedTuple):
