@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers.htmx import wait_for_htmx_quiet
 from tests.e2e.helpers.tekst import veld
 
@@ -86,10 +87,23 @@ class EditModalHelper:
         These steps return a progress panel that polls every 2s (hx-trigger
         "every 2s"), so the page never reaches network-idle - the swap wait used
         by submit_step() would hang. Wait for the panel element instead.
+
+        Blijft de voortgangsweergave weg, dan gaat de tekst van de modal mee in de
+        fout. De gewone tijdsoverschrijding zegt alleen dat ``.edit-progress-view``
+        er niet kwam; komt de stap terug met een veldfout, dan staat de oorzaak in
+        de modal en anders nergens.
         """
         submit_btn = self.page.locator("#modal-wizard-form button[type='submit']")
         submit_btn.click()
-        self.page.locator(".edit-progress-view").wait_for(state="visible", timeout=timeout or self.action_timeout_ms)
+        try:
+            self.page.locator(".edit-progress-view").wait_for(
+                state="visible", timeout=timeout or self.action_timeout_ms
+            )
+        except PlaywrightError as fout:
+            raise AssertionError(
+                "De voortgangsweergave kwam niet na het opslaan. Wat de modal toont:\n"
+                + " ".join(self.get_body_text().split())[:2000]
+            ) from fout
 
     def fill_codemirror_kv(self, field_name: str, text: str) -> None:
         """Set a CodeMirror-backed key-value textarea (data-cm-kv).
