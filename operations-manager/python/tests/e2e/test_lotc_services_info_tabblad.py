@@ -26,7 +26,13 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 MET_BLOKKEN = "test-project-services"
-ZONDER_BLOKKEN = "test-project-detail"
+
+#: Een project dat ECHT geen dienst met een blok heeft. Dit was ``test-project-detail``,
+#: maar dat kreeg in ``daa04886`` een keycloak-realm zodat de redactie van het
+#: realm-wachtwoord getest kon worden. Daarmee had het een blok, verscheen het tabblad
+#: terecht, en faalden de twee tests hieronder op hun eigen aanname in plaats van op de
+#: code. ``test-project`` heeft geen ``services``-sleutel en is dus het lege geval.
+ZONDER_BLOKKEN = "test-project"
 
 #: Uit de realm van de fixture; dit staat alleen in het Keycloak-blok.
 REALM = "test-project-services-local"

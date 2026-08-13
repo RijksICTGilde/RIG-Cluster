@@ -145,7 +145,11 @@ AANROEPEN_VAN_HET_PROJECTTABBLAD = {
 def test_geen_enkele_aanroep_van_het_projecttabblad_is_verdwenen(app_server: str, auth_page: Page) -> None:
     """Alles uit de lijst hierboven staat op een van de drie tabbladen."""
     aanwezig: set[str] = set()
-    for tab in ("project", "componenten", "services"):
+    # "team" staat er sinds a16338ee bij: het teamblok - en dus de knop die de
+    # teamdialoog opent - is van Overzicht naar een EIGEN tabblad verhuisd. Zonder dat
+    # tabblad in deze lijst meldt de vergelijking die knop als verdwenen, terwijl hij
+    # alleen ergens anders staat.
+    for tab in ("project", "team", "componenten", "services"):
         _open_project_tab(auth_page, app_server, tab)
         aanwezig |= _page_handlers(auth_page, "body")
 
@@ -162,8 +166,12 @@ def test_geen_enkele_aanroep_van_het_projecttabblad_is_verdwenen(app_server: str
         # In de KOP van het tabblad, niet die in de projectkop: sinds de knop
         # "Projectgegevens bewerken" daar terugstaat zijn er twee met dit opschrift, en
         # .first pakte de verkeerde. Vandaar de afbakening hieronder.
-        ("Bewerken", f"/projects/{PROJECT}/modal-wizard/modal-edit-team", "project"),
-        ("Toevoegen", f"/projects/{PROJECT}/modal-wizard/modal-edit-component-2", "componenten"),
+        # Op het tabblad TEAM en niet meer op Overzicht: a16338ee heeft het teamblok met
+        # zijn knop naar een eigen tabblad verplaatst.
+        ("Bewerken", f"/projects/{PROJECT}/modal-wizard/modal-edit-team", "team"),
+        # "Component toevoegen" en niet "Toevoegen": ae981a75 gaf het tabblad een eigen
+        # Acties-kaart en schreef het opschrift voluit.
+        ("Component toevoegen", f"/projects/{PROJECT}/modal-wizard/modal-edit-component-2", "componenten"),
     ],
 )
 def test_een_knop_opent_dezelfde_dialoog_als_op_de_oude_pagina(
