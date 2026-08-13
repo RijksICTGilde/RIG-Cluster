@@ -26,7 +26,7 @@
 <div class="wizard-step" id="modal-wizard-step-inner">
     <div class="wizard-step__header">
         <c-heading type="h2">
-            {% if section.icon %}<c-icon icon="{{ section.icon }}" size="xl"/>{% endif %}
+            {% if section.icon %}<c-icon icon="{{ section.icon | nldd_icon }}" size="xl"/>{% endif %}
             {{ section.title }}
             {# The service's own explanation, same question mark as on its card. This is
                where someone has to decide something, so it is the place that needed it
