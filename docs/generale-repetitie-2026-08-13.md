@@ -169,7 +169,7 @@ steeds wat er moet gebeuren.
 Er staat nu ook een vangrail op de LEVENDE weg: `tests/e2e/test_sandbox_repetitie.py`. De
 beslissing zelf was al gedekt door `tests/test_task_status_reports_failure.py`, maar dat toetst
 de worker met nagemaakte handlers; wat daar niet in zat is de weg die een aanroeper werkelijk
-loopt.
+loopt. Die module is tegen deze build op de sandbox gedraaid: **3 geslaagd in 3m42**.
 
 ### 4. Een tweede deployment, met de TLS-override - GESLAAGD, met een kanttekening
 
@@ -334,6 +334,12 @@ AppProject r8w-c98-r8w-c98      OutOfSync
 
 Dat zijn precies de twee resources die de root-applicatie `user-applications` daarna op
 `OutOfSync` zetten, en ze verdwijnen niet vanzelf.
+
+Dit is drie keer los waargenomen, en de derde is de schoonste: de nieuwe testmodule maakt één
+project (`repet-2b5`) en ruimt het in zijn eigen teardown op. Daarna was het projectbestand weg,
+was de projectmap uit de argo-repo weg, waren de namespace en de applicaties weg - en stonden
+`AppProject repet-2b5-repet-2b5` en `Secret repet-2b5-main-repo` er nog. Eén project, één nette
+verwijdering, twee achterblijvers. Er is dus geen samenloop of drukte voor nodig.
 
 **Waarom dat oploopt.** Bij aanvang stond er in `zad-projects` nog één projectbestand, maar in
 het cluster stonden **24 applicaties en 23 AppProjects**, en in `zad-argo-user-applications`
