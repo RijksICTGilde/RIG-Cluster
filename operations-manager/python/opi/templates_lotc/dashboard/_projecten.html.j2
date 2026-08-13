@@ -14,7 +14,7 @@
        auto-fit doet dat vanzelf. #}
     <c-auto-grid min="320px" gap="lg">
         {% for project in projects %}
-        <a href="/projects/details/{{ project.name }}" class="project-card-link">
+        <a href="/projects/{{ project.name }}/details" class="project-card-link">
             <c-card class="project-card project-card-{{ project.health | default('Unknown') | lower }}" outline="true" padding="lg" background-color="wit">
                 <c-layout-flow gap="md">
                     {# .project-header was flex + space-between + align-items:center:

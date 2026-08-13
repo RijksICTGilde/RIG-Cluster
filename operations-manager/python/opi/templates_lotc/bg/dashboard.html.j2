@@ -39,7 +39,7 @@
             <c-alert type="error" heading="{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen">
                 <c-stack gap="xs">
                     {% for project in projects if project.health == 'Degraded' %}
-                        <c-link href="/projects/details/{{ project.name }}#deployment-status">{{ project.display_name }} - bekijk de deploymentstatus</c-link>
+                        <c-link href="/projects/{{ project.name }}/details#deployment-status">{{ project.display_name }} - bekijk de deploymentstatus</c-link>
                     {% endfor %}
                 </c-stack>
             </c-alert>
@@ -47,7 +47,7 @@
             <c-alert type="warning" heading="{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt">
                 <c-stack gap="xs">
                     {% for project in projects if project.health == 'Progressing' %}
-                        <c-link href="/projects/details/{{ project.name }}#deployment-status">{{ project.display_name }} - bekijk de deploymentstatus</c-link>
+                        <c-link href="/projects/{{ project.name }}/details#deployment-status">{{ project.display_name }} - bekijk de deploymentstatus</c-link>
                     {% endfor %}
                 </c-stack>
             </c-alert>
