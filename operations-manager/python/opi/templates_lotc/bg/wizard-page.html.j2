@@ -31,7 +31,7 @@
         <c-breadcrumbs aria-label="Kruimelpad">
             <c-breadcrumbs-item label="Projecten" href="/projects" />
             {% if project_name %}
-                <c-breadcrumbs-item label="{{ project_name }}" href="/projects/details/{{ project_name }}" />
+                <c-breadcrumbs-item label="{{ project_name }}" href="/projects/{{ project_name }}/details" />
                 <c-breadcrumbs-item label="Bewerken" />
             {% else %}
                 <c-breadcrumbs-item label="Nieuw project" />

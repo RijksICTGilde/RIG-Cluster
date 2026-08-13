@@ -7,7 +7,7 @@
   en de tabbalk neemt hem mee.
 
   KIEZEN IS NAVIGEREN. De waarde van een optie is het ADRES van die deployment op dit
-  tabblad (/projects/<tabblad>/<project>/<naam>); wisselen haalt dus die pagina op, waarna
+  tabblad (/projects/<project>/<tabblad>/<naam>); wisselen haalt dus die pagina op, waarna
   de URL zegt wat je ziet en de terugknop werkt. Hier stond JavaScript die blokken toonde
   en verborg (switchDeployment); die blokken staan er niet meer, want de server rendert er
   nog maar een.
@@ -53,7 +53,7 @@
         data-no-optional-badge="true"
         :attrs="kiezer_gedrag">
         {% for deployment in project.deployments | sort(attribute='name') %}
-            <option value="/projects/{{ tabs[active_tab].path }}/{{ project.name }}/{{ deployment.name | urlencode }}"{% if deployment.name == deployment_open %} selected{% endif %}>{{ deployment.name }} ({{ deployment.cluster }})</option>
+            <option value="/projects/{{ project.name }}/{{ tabs[active_tab].path }}/{{ deployment.name | urlencode }}"{% if deployment.name == deployment_open %} selected{% endif %}>{{ deployment.name }} ({{ deployment.cluster }})</option>
         {% endfor %}
     </c-select-field>
 {% endif %}
