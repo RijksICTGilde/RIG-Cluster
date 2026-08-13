@@ -48,15 +48,46 @@ productie; die is teruggehaald:
 Zonder limiet vervalt het percentage en de balk: er is dan geen bovengrens om tegen af te
 zetten, en een balk zonder schaal is geen meting.
 
-De schrijfwijze zit in twee macro's in `bg/_resource-usage.html.j2`: onder een core in
+De schrijfwijze zit in twee macro's in `bg/_resource-formats.html.j2`: onder een core in
 millicores (`30m`), daarboven in cores met een decimaal (`22.5`); geheugen onder 0,1 GiB in
-MiB, daarboven in GiB.
+MiB, daarboven in GiB. Ze staan in een eigen bestand omdat het dashboard dezelfde getallen
+schrijft; een kopie in de tweede kaart zou vandaag kloppen en morgen uit de pas lopen.
 
 De balk krijgt `value-display="tooltip"`, anders zet het thema het percentage er nog een
 tweede keer naast.
 
-Dezelfde legenda ontbrak op `Verdeling over projecten` (dashboard) en staat er weer bij:
-`0.030 cores (12.3%)` per project.
+## Gebruik per project (dashboard)
+
+Onder `Resourcegebruik` op `/dashboard` staat per project wat dat project gebruikt, in
+dezelfde vorm als de projectkaart hierboven en gesorteerd op geheugen (aflopend):
+
+```
+Project B
+[icoon] Geheugen (in gebruik)    2.0 GiB / 4.0 GiB (50%)
+[balk]
+[icoon] CPU                        10m / 2.0 cores (0%)
+[balk]
+```
+
+Hier stond eerder `Verdeling over projecten` met alleen CPU als aandeel van het totaal. Dat
+had twee problemen: geheugen ontbrak - juist het cijfer waarop je stuurt, want daar valt een
+pod op om als het opraakt - en op een rustig cluster is het CPU-cijfer vrijwel nul, waardoor
+de kaart in de praktijk leeg stond.
+
+**De balk is het gebruik ten opzichte van de limiet van dat project**, niet het aandeel van
+het clustertotaal. Een project op 95% van zijn geheugenlimiet is een probleem, ook als het
+maar 3% van het cluster gebruikt; "wie is de grootste" is een andere en minder bruikbare
+vraag. Zonder limiet vervalt het percentage en de balk, net als op de projectkaart.
+
+De meting zit in `collect_dashboard_metrics()` en gebruikt vier queries met
+`by (namespace)` - vier voor alle projecten samen, in plaats van vier per project op een
+fragment dat toch al apart geladen wordt. Per project worden `cpu_cores`,
+`cpu_limit_cores`, `memory_mb` en `memory_limit_mb` gezet; een project zonder namespaces
+krijgt nullen.
+
+Is er van geen enkel project een meting, dan staat de kaart er MET een melding ("Nog geen
+metingen per project"). Een kaart die zonder uitleg verdwijnt leest als kapot, en een guard
+op het totaal liet eerder een kop zien met daaronder niets.
 
 ### De kaart staat op Overzicht
 
@@ -97,7 +128,9 @@ bevragingen, allebei voor de zichtbare deployment.
 |---|---|
 | `opi/templates_lotc/bg/_deployment-metrics.html.j2` | de meldingen, en een stack om de knoppenbalk en de kaarten (die plakten tegen elkaar) |
 | `opi/templates_lotc/bg/_resource-usage.html.j2` | de kaart Resourcegebruik |
-| `opi/templates_lotc/bg/_dashboard-usage.html.j2` | Network Traffic en de verdeling over projecten |
+| `opi/templates_lotc/bg/_resource-formats.html.j2` | de schrijfwijze van cores en GiB, gedeeld door beide kaarten |
+| `opi/templates_lotc/bg/_dashboard-usage.html.j2` | Network Traffic en Gebruik per project |
 | `opi/templates_lotc/bg/project-tabs.html.j2` | de plaats van de kaart, en de minuutklok |
-| `opi/web/router.py` | `_heeft_metingen()` en de twee vlaggen |
-| `tests/test_lotc_metingen.py` | de poorten |
+| `opi/web/router.py` | `_heeft_metingen()`, de twee vlaggen en `collect_dashboard_metrics()` |
+| `tests/test_lotc_metingen.py` | de poorten op de sjablonen |
+| `tests/test_dashboard_per_project_usage.py` | de poorten op de meting per project |

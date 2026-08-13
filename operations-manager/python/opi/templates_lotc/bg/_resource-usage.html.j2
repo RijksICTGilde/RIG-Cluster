@@ -29,8 +29,9 @@
   balk. Met "tooltip" verhuist het naar de muisaanwijzer; gemeten in de browser, want
   "none" is geen waarde die dit component kent (dan valt hij terug op inline).
 #}
-{% macro cores(v) %}{% if v < 1 %}{{ (v * 1000) | round | int }}m{% else %}{{ '%.1f' | format(v) }}{% endif %}{% endmacro %}
-{% macro gib(v) %}{% if (v / 1073741824) < 0.1 %}{{ (v / 1048576) | round | int }} MiB{% else %}{{ '%.1f' | format(v / 1073741824) }} GiB{% endif %}{% endmacro %}
+{# De twee schrijfwijze-macro's stonden hier; ze staan nu in bg/_resource-formats.html.j2,
+   omdat de kaart "Gebruik per project" op het dashboard dezelfde getallen schrijft. #}
+{% from "bg/_resource-formats.html.j2" import cores, gib %}
 
 {% if usage_error %}
     {# Een storing van de METING, niet van het project: Prometheus antwoordt niet. Dat is
