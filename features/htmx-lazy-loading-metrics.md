@@ -8,7 +8,7 @@ The project details page now lazy-loads deployment metrics via HTMX instead of f
 
 1. **Page load**: The metrics card renders immediately with a "Metrics laden..." placeholder
 2. **HTMX trigger**: `hx-trigger="load"` fires an async GET request to fetch metrics for the first deployment on the current cluster
-3. **Deployment switch**: When the user selects a different deployment via the global dropdown, `switchDeployment()` uses `htmx.ajax()` to load metrics for the newly selected deployment
+3. **Deployment switch**: sinds RC-92 toont het tabblad Metrics EEN deployment per pagina (`/projects/metrics/<project>/<naam>`). Een andere kiezen is navigeren; het fragment van die deployment laadt dan op de nieuwe pagina. `switchDeployment()` bestaat niet meer
 4. **Chart initialization**: The fragment includes a `<script>` tag that calls `initMetricsCharts()` after each HTMX swap to initialize Chart.js canvases
 
 ## Architecture
@@ -41,7 +41,7 @@ The fragment receives:
 
 ## Single deployment behavior
 
-When only one deployment exists, the global selector is hidden but metrics still lazy-load via `hx-trigger="load"`. The UX is identical, just without a dropdown.
+When only one deployment exists, the global selector is hidden but metrics still lazy-load. The UX is identical, just without a dropdown.
 
 ## Dependencies
 
