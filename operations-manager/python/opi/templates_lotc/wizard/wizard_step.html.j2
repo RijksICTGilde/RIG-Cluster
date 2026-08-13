@@ -21,7 +21,7 @@
 <div class="wizard-step" id="wizard-step-inner">
     <div class="wizard-step__header">
         <c-heading type="h2">
-            {% if section.icon %}<c-icon icon="{{ section.icon }}" size="xl"/>{% endif %}
+            {% if section.icon %}<c-icon icon="{{ section.icon | nldd_icon }}" size="xl"/>{% endif %}
             {{ section.title }}
         </c-heading>
         {% if section.description %}

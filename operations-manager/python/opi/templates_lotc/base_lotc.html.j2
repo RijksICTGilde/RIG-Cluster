@@ -157,7 +157,7 @@
                         <c-sidenav-item
                             label="{{ item.label }}"
                             href="{{ item.link }}"
-                            icon="{{ item.icon | default('', true) }}"
+                            icon="{{ item.icon | default('', true) | nldd_icon }}"
                             :active="item.active" />
                     {% endfor %}
                 {% endfor %}

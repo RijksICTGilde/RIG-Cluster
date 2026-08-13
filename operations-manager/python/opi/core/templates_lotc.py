@@ -34,13 +34,21 @@ from opi.services.registry import deployment_action_key
 logger = logging.getLogger(__name__)
 
 
-def _to_nldd_icon(naam: str) -> str:
+def _to_nldd_icon(naam: str | None) -> str | None:
     """Vertaal een iconnaam uit de dienstdefinities naar de NLDD-woordenschat.
 
     De import staat binnenin om dezelfde kringloop te vermijden als elders in dit bestand:
     navigation_lotc leunt op de menu-opbouw, en die komt via de routes hier langs.
+
+    Leeg blijft leeg. Het filter staat inmiddels op elke plek waar een iconnaam uit
+    GEGEVENS komt, en een deel daarvan is optioneel (``submit.icon`` is None zonder
+    icoon, een menu-item zonder icoon geeft ''). Zonder deze regel zou zo'n plek een
+    lege naam gaan vertalen en waarschuwen over niets.
     """
     from opi.web.navigation_lotc import to_nldd_icon
+
+    if not naam:
+        return naam
 
     return to_nldd_icon(naam)
 
