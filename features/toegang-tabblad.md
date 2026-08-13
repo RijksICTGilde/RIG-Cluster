@@ -17,6 +17,38 @@ Ze stonden onderaan Overzicht, tussen de rest van de detailpagina. Daar vielen z
 terwijl je er juist naartoe gaat als je iets nodig hebt: een adres om naartoe te gaan, een
 wachtwoord om mee in te loggen, een code om in te vullen.
 
+## De velden zien eruit als "Configuratie & Secrets"
+
+Het Keycloak-blok zette elke waarde in een eigen omkaderd subblok, met een codeblok en een
+losse tekstknop "Kopieer" ernaast. Drie kaders in elkaar (paneel > realm > veld), en elk
+veld anders dan het veld ernaast. Het volgt nu de vorm van het blok Configuratie & Secrets
+op Overzicht:
+
+* label boven, waarde in een `<c-secret-field>`, het klembord IN het veld;
+* een onthul-oogje alleen bij wat echt geheim is: `revealed show-copy` voor het
+  console-adres, het realm en de gebruikersnaam, en `show-copy` zonder `revealed` voor het
+  wachtwoord en de OTP;
+* geen subkaders en geen losse kopieerknoppen.
+
+Uitzondering: **Open Admin Console** blijft een knop, want dat is een actie en geen waarde.
+
+### De gedeelde OTP is ook een veld
+
+De OTP was een kop met twee regels uitleg en een knop "Toon code", die de code met htmx
+ophaalde bij `/projects/<p>/keycloak/<realm>/otp-code`. Hij is nu een veld zoals het
+wachtwoord ernaast; het endpoint en zijn fragment hadden daarmee geen aanroeper meer en
+zijn verwijderd.
+
+De code wordt bij het RENDEREN afgeleid (`totp_now`, in dezelfde lus die het wachtwoord
+ontsleutelt) en ververst niet vanzelf. De hulptekst onder het veld zegt dat: hij verloopt
+binnen 30 seconden en de pagina opnieuw laden geeft een verse code. Een code die stilletjes
+verlopen is, is erger dan een code die zegt dat hij oud is.
+
+Wat NIET verandert is de eigenschap waarvoor het endpoint ooit gemaakt is: de **seed**
+bereikt de pagina nooit. De seed geeft voor altijd codes, deze code vergaat binnen een
+periode. Wie hem kan zien mag ook het admin-wachtwoord zien - hetzelfde blok, dezelfde
+rolpoort (alleen admin/owner) - en dat wachtwoord is van de twee het langstlevende.
+
 ## Waarom "Toegang" en niet iets anders
 
 Het tabblad **Services** ernaast gaat over BEHEER: welke diensten staan aan, wat doen ze,
