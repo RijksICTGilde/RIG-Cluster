@@ -236,7 +236,11 @@
 {% if pvc_storage %}
 <div class="pvc-storage-section">
     <div class="pvc-storage-header">
-        <c-heading type="h4"><c-icon icon="database" size="md" color="donkerblauw"/>Persistent Storage</c-heading>
+        {# Icoon naast de kop, niet erin: een kop lijnt zijn kinderen niet uit. #}
+        <c-cluster gap="sm" align="center">
+            <c-icon icon="database" size="md" color="donkerblauw"/>
+            <c-heading type="h4">Persistent Storage</c-heading>
+        </c-cluster>
         <p class="rvo-text--subtle rvo-text--sm">PVC disk usage</p>
     </div>
     <div class="metrics-grid">

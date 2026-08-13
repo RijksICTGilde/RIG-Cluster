@@ -1,7 +1,11 @@
 {% if has_urls %}
 <c-card outline="true">
     <c-layout-flow gap="sm">
-        <c-heading type="h4" class="section-heading"><c-icon icon="globe" size="md"/>Gegenereerde URL's</c-heading>
+        {# Icoon naast de kop, niet erin: een kop lijnt zijn kinderen niet uit. #}
+        <c-cluster gap="sm" align="center">
+            <c-icon icon="globe" size="md"/>
+            <c-heading type="h4" class="section-heading">Gegenereerde URL's</c-heading>
+        </c-cluster>
         {% if needs_approval %}
         <c-alert>Deze URL's zijn pas beschikbaar na goedkeuring van het domein en/of subdomein.</c-alert>
         {% endif %}
