@@ -16,5 +16,9 @@ COMPONENT_ALIASES = EditableVisualizer(
         "Gebruik $VARIABELE_NAAM om platform-variabelen te refereren. "
         "Bijvoorbeeld: POSTGRES_HOST=$DATABASE_SERVER_HOST"
     ),
+    # De hulptekst somt de variabelen op die je hier mag gebruiken. Het hulptekstje
+    # hierboven zei "gebruik $VARIABELE_NAAM" zonder ooit een naam te noemen, en die
+    # staan verspreid over de dienstdefinities; niemand wist dus wat hier in moest.
+    help_template="aliassen.html.j2",
     attributes={"kv_format": "env"},
 )

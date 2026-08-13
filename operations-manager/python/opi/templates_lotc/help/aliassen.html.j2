@@ -1,0 +1,65 @@
+{# De uitleg bij het aliassenveld: welke variabelen kun je hier gebruiken.
+
+   Aanleiding: het hulptekstje zei "gebruik $VARIABELE_NAAM" zonder ergens te noemen
+   WELKE namen bestaan, en die staan verspreid over de dienstdefinities. Wie het niet uit
+   zijn hoofd wist moest de code in, dus vulde niemand het veld.
+
+   De lijst komt uit alias_variabelen(), die dezelfde bron leest als de validatie. Een
+   dienst die er een variabele bij krijgt staat daarmee vanzelf in deze uitleg, en er kan
+   hier nooit een naam staan die het formulier afkeurt. Zie
+   opi/services/catalog/aliases/overzicht.py.
+
+   copy_value_box levert het kopieerveld dat elders in de applicatie ook gebruikt wordt.
+   De iconen zijn onze eigen namen uit de dienstdefinities, dus door nldd_icon. #}
+{% from "components/_forms.j2" import copy_value_box %}
+
+<c-heading type="h2">
+    <c-icon icon="link" size="xl" color="hemelblauw"/>
+    Aliassen
+</c-heading>
+
+<c-paragraph>
+    Een alias geeft een platform-variabele een andere naam, zodat je applicatie de naam
+    krijgt die zij verwacht. Je verzint hier dus geen waarde: je verwijst naar een waarde
+    die het platform al voor je klaarzet.
+</c-paragraph>
+
+<c-paragraph>
+    Schrijf per regel <c-b>EIGEN_NAAM=$PLATFORM_VARIABELE</c-b>. Bijvoorbeeld
+    <c-b>POSTGRES_HOST=$DATABASE_SERVER_HOST</c-b>: je applicatie leest dan
+    <c-b>POSTGRES_HOST</c-b> en krijgt de hostnaam van de database die voor dit project is
+    aangemaakt.
+</c-paragraph>
+
+{# GEEN <c-b> in deze melding: een vetgedrukt stuk rendert hier als een eigen blok en
+   dan valt het dollarteken uit de zin ("Een regel zonder" / "$" / "wordt geweigerd").
+   Gemeten op het scherm, niet beredeneerd. #}
+<c-alert type="info" heading="Een alias moet ergens naar verwijzen">
+    Een regel zonder dollarteken wordt geweigerd. Een vaste waarde is geen alias; die hoort
+    bij de omgevingsvariabelen.
+</c-alert>
+
+<c-heading type="h3">Wat kun je gebruiken?</c-heading>
+
+<c-paragraph>
+    Hieronder staat elke variabele die het platform levert, per dienst. Je kunt alleen
+    variabelen gebruiken van diensten die dit component ook echt gebruikt.
+</c-paragraph>
+
+{% for dienst in alias_variabelen() %}
+    <c-heading type="h4">
+        <c-icon icon="{{ dienst.icoon | nldd_icon }}" size="lg" color="hemelblauw"/>
+        {{ dienst.label }}
+    </c-heading>
+    <c-stack gap="sm">
+        {% for variabele in dienst.variabelen %}
+            {{ copy_value_box("$" ~ variabele.naam) }}
+            <c-paragraph size="sm">
+                {{ variabele.beschrijving }}
+                {%- if variabele.andere_namen %}
+                    Werkt ook als: {{ variabele.andere_namen | map('string') | join(', ') }}.
+                {%- endif %}
+            </c-paragraph>
+        {% endfor %}
+    </c-stack>
+{% endfor %}
