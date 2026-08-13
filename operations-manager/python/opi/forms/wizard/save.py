@@ -194,6 +194,15 @@ async def apply_modal_edit(
     """
     from opi.web.router_wizard import _apply_literal_scalars
 
+    # The restore below pairs the two structures key by key, so both sides have to spell a
+    # service entry the same way. The editables write the legacy name-as-key shape
+    # ({keycloak: {config: ...}}) while the stored project carries the uniform record
+    # ({name: keycloak, config: ...}); walked against each other, nothing under a service
+    # config lines up and every redacted secret there is dropped instead of restored -- the
+    # realm admin password among them. Normalizing here (the same idempotent normalizer that
+    # already runs at the end of this function) puts both sides in one shape first.
+    normalize_service_entries(merged_data)
+
     # Put back the encrypted values the session was not allowed to carry, from the project
     # as just read from git. The write-path merge below already leaves them alone (nothing
     # names them, so nothing writes them), but the new-list-item branch right after this
