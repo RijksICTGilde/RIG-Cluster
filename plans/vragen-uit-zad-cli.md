@@ -832,7 +832,54 @@ database bedoelde.
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+**Jullie hebben niets fout gedaan: de naam die wij publiceerden was onbruikbaar.** De
+route verwacht `{deployment}-postgresql` (en `{deployment}-minio` voor een bucket) --
+precies wat wij bij vraag 7 opschreven. Wat `backup list` en `restore list` teruggaven
+was iets anders, en het leek alleen maar op een naam.
+
+**Waar `backup` vandaan kwam.** Een snapshot draagt zijn naam in een tag. Een
+PVC-snapshot heeft een `pvc`-tag; een database- en een bucketsnapshot hebben die niet,
+die hebben een `database`- respectievelijk `bucket`-tag. De lijstfunctie die *beide*
+leesendpoints voedt, las alleen de `pvc`-tag, en viel bij het ontbreken daarvan terug op
+het laatste stuk van het bronpad in de snapshot. Voor een databasedump is dat `/tmp/backup`
+en voor een gespiegelde bucket `/tmp/bucket-backup`. Zo werd een mapnaam uit een pod
+gepubliceerd als referentienaam. Dat de twee endpoints het eens waren met elkaar en oneens
+met de derde, komt doordat ze allebei uit diezelfde ene functie lazen.
+
+Het is opgelost waar het misging: die lijst geeft nu per soort de juiste tag door.
+Vanaf deze build:
+
+```sh
+zad backup list productie -o json | jq -c '[.runs[].items[] | {resource_type, reference_name}]'
+# [{"resource_type":"bucket","reference_name":"productie-minio"},
+#  {"resource_type":"database","reference_name":"productie-postgresql"}]
+
+zad restore list sandboxed-local rig-$P -o json | jq -c '[.[].pvc_name]'
+# ["productie-minio","productie-postgresql"]
+
+curl -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{}' \
+  "$BASE/v1/restore/database/sandboxed-local/rig-$P/productie-postgresql?project_name=$P"
+# 200 {"status":"success","message":"Restored database productie-postgresql to <db>", ...}
+```
+
+Een PVC houdt zijn PVC-naam, want dat is wat de PVC-restore in het pad neemt.
+
+**En de melding.** De 404 noemt nu de namen die er wél zijn:
+
+```
+No deployment of project 'p' has a database backup named 'backup'.
+This project has: 'productie-postgresql'.
+Supply the target_database_* fields to restore into an external destination.
+```
+
+**Hoe wij dit getoetst hebben, en waarom dat deze keer anders is.** Dit was de derde ronde
+over dezelfde weg, en de eerste twee waren per stuk groen en van buitenaf stuk. Daarom is
+dit gemeten zoals jullie het doen: een project aangemaakt op de sandbox, een backup gedraaid,
+de naam **uit het leesendpoint** genomen en daarmee teruggezet -- database en bucket, met
+alleen een API-sleutel en zonder in het projectbestand te kijken. Die hele gang staat als
+suite vast in `tests/e2e/test_sandbox_restore_van_buiten.py`, zodat de volgende wijziging
+hem opnieuw van buiten aflegt en niet alleen van binnen. De vertaling zelf en de
+404-melding liggen vast in `tests/test_restore_reference_van_buiten.py`.
 
 ---
 
@@ -863,4 +910,42 @@ is opnieuw proberen niet de conclusie, en de logs lezen wel.
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+**De bedrading is wél aangesloten; jullie kwamen er niet aan toe.** Dit is vraag 10 in
+een ander jasje, en dat was van buitenaf niet te zien.
+
+De restore-pod doet drie dingen op volgorde: verbinden met de repository, het snapshot
+**opzoeken op de referentienaam**, en dan pas de bestemmingspoort (`psql -c "SELECT 1"`,
+exitcode 20). Met `backup` als referentie strandde hij op stap twee -- geen snapshot met
+die tag -- en dat is een gewone exit 1. Terecht `Unknown`: op dat moment was er nog
+niets over jullie bestemming vastgesteld. Wij hebben dat nagespeeld en de pod-logs
+zeggen het letterlijk: `ERROR: No database snapshots found for backup`.
+
+Dat jullie eerder wél `could not translate host name` in de melding zagen, klopt met dat
+verhaal: die meting is van vóór vraag 10, en die logregels komen uit twee verschillende
+mislukkingen.
+
+Met de naam die er nu uit `backup list` komt, gebeurt precies wat wij bij vraag 9
+beloofden:
+
+```sh
+curl -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"target_database_host":"doel.invalid","target_database_name":"d",
+       "target_database_user":"u","target_database_password":"g"}' \
+  "$BASE/v1/restore/database/sandboxed-local/rig-$P/productie-postgresql?project_name=$P"
+# HTTP 400
+# {"status":"failed","error_category":"InvalidTarget","message":"... ERROR: target
+#  database is not usable (host, port, database name, user or password rejected)", ...}
+```
+
+Gemeten op de sandbox, met een API-sleutel, in dezelfde run als het antwoord op vraag 10.
+
+**De classificatie leunt nog steeds niet op tekst.** Wat de 400 bepaalt is de exitcode
+van de pod (20 uit de bestemmingspoort), niet de bewoording van psql of mc. In de logs
+hierboven staat `could not translate host name` gewoon weer -- maar niemand leest hem.
+Verandert PostgreSQL die zin morgen, dan blijft jullie exit code 1.
+
+**Eén ding dat blijft zoals het was.** `Unknown` betekent nog altijd "de fout lag niet
+aantoonbaar bij jouw bestemming", en dat is méér dan alleen platformpech: het dekt ook
+een aanroep die de bestemmingspoort nooit haalde, zoals hierboven. Jullie nieuwe
+behandeling ("niet toe te wijzen", exit 3, en de logs lezen) past daar beter bij dan
+"probeer opnieuw". Wij zouden hem zo laten.
