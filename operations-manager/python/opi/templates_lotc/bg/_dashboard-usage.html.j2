@@ -142,6 +142,7 @@
         {% if mem_mb or cpu %}
             {% set _ = regels.append({
                 'naam': project.display_name,
+                'pad': project.name,
                 'mem_used': mem_mb * 1048576,
                 'mem_limit': mem_limit_mb * 1048576,
                 'mem_pct': ([100, (mem_mb / mem_limit_mb * 100) | round | int] | min) if mem_limit_mb else 0,
@@ -159,7 +160,14 @@
                 <c-paragraph size="sm">Wat elk project gebruikt, gesorteerd op geheugen.</c-paragraph>
                 {% for regel in op_geheugen %}
                     <c-stack gap="sm">
-                        <c-heading type="h3" size="5" label="{{ regel.naam }}" />
+                        {# De naam is een LINK naar het project: je leest hier dat een
+                           project tegen zijn limiet aanloopt, en de eerste vraag daarna is
+                           altijd "waar zit dat in". Een gewone <a> en geen component: een
+                           kop met een label rendert zijn tekst zelf, dus de link moet er
+                           omheen. #}
+                        <c-heading type="h3" size="5">
+                            <a href="/projects/{{ regel.pad }}/details">{{ regel.naam }}</a>
+                        </c-heading>
 
                         {# Geheugen eerst: dat is waar je op stuurt. #}
                         <c-stack gap="xs">

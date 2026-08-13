@@ -532,3 +532,16 @@ def test_het_percentage_staat_er_maar_een_keer() -> None:
 
     assert html.count('value-display="tooltip"') == 2, html
     assert 'value-display="inline"' not in html
+
+
+def test_de_projectnaam_op_het_dashboard_is_een_link() -> None:
+    """Je leest op deze kaart dat een project tegen zijn limiet aanloopt, en de vraag
+    daarna is altijd "waar zit dat in". Dan wil je er rechtstreeks heen, niet eerst via
+    het projectoverzicht."""
+    html = _dashboard()
+
+    assert 'href="/projects/a/details"' in html
+    assert 'href="/projects/b/details"' in html
+    # Project C heeft geen meting en staat dus niet op de kaart; dan hoort er ook geen
+    # link naar te staan.
+    assert 'href="/projects/c/details"' not in html
