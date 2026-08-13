@@ -347,7 +347,7 @@ class TaskResponse[TResult: BaseModel](BaseModel):
     subtasks: list[SubtaskStatus] | None = Field(default=None, description="Progress subtasks")
     result: TResult | None = Field(
         default=None,
-        description="Task result, populated when the task finished — on 'completed' and on 'failed'",
+        description="Task result, populated when the task finished, on 'completed' and on 'failed'",
     )
     error_message: str | None = Field(default=None, description="Error details when status is 'failed'")
     created_at: str = Field(..., description="ISO 8601 timestamp when the task was created")

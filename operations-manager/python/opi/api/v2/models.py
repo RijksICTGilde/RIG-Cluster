@@ -211,7 +211,7 @@ class StatusError(BaseModel):
     """A single error or warning entry surfaced from the cluster."""
 
     resource: str = Field(..., description="Kind/name (e.g. 'Pod/frontend-abc') or 'Event/<obj>' for events")
-    message: str = Field(..., description="Raw cluster message — for automation, regex matching, correlation")
+    message: str = Field(..., description="Raw cluster message, for automation, regex matching, correlation")
     category: ErrorCategory = Field(..., description="Programmatic category for filtering, grouping, colorizing")
     explanation: str | None = Field(
         default=None,
