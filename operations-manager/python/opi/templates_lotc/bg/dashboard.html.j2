@@ -92,8 +92,13 @@
        te doen is samenvatten - de kerncijfers hierboven en het resourcegebruik - met een
        ingang naar de lijst zelf. #}
     <c-cluster gap="sm">
-        <c-button type="primary" size="sm" label="Nieuw Project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
-        <c-button type="secondary" size="sm" label="Alle projecten" icon="rectangle-stack" show-icon="before" href="/projects" />
+        {# GEEN size: dit zijn de hoofdacties van deze pagina, en de regel in
+           opi/core/buttons.py zegt dat `sm` alleen voor een herhaalde, dichte context is
+           (een rij in een tabel, een kaart in een raster). Alles daarbuiten krijgt de
+           standaard, en die schrijf je niet op. Ze stonden hier op `sm` en waren daardoor
+           kleiner dan dezelfde soort knop op elke andere pagina. #}
+        <c-button type="primary" label="Nieuw Project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
+        <c-button type="secondary" label="Alle projecten" icon="rectangle-stack" show-icon="before" href="/projects" />
     </c-cluster>
 
 {% endblock %}
