@@ -108,8 +108,8 @@
                 {% for project in projects if project.cpu_cores is defined and project.cpu_cores > 0 %}
                     <c-stack gap="xs">
                         <c-cluster justify="between" align="center" gap="sm">
-                            <c-paragraph size="sm">{{ project.display_name }}</c-paragraph>
-                            <c-paragraph size="sm">{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</c-paragraph>
+                            <c-span>{{ project.display_name }}</c-span>
+                            <c-span>{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</c-span>
                         </c-cluster>
                         <c-progress-bar
                             :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
