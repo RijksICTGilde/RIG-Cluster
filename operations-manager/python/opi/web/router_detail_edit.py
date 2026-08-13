@@ -1083,16 +1083,24 @@ def _attachment_review_items(yaml_data: dict, state) -> list[str]:
     The attachments section is a TemplatePartial whose staged uploads live in the
     wizard session (not yet in the YAML), so _build_section_fields finds nothing.
     Surface both here so the user sees the upload they just made before saving.
+
+    A staged replacement carries an id that is already in the catalog, and it is what the
+    save is going to write. Listing the stored line for that id would show the user the
+    file they are on their way to overwrite, so the replacement takes its place.
     """
+    staged = getattr(state, "staged_attachments", None) or {}
     items: list[str] = []
     seen: set[str] = set()
     for service in yaml_data.get("services", []):
         if isinstance(service, dict) and isinstance(service.get("attachments"), dict):
             for entry in service["attachments"].get("data", []) or []:
                 if isinstance(entry, dict) and entry.get("id"):
-                    items.append(f"{entry.get('filename', entry['id'])} ({entry['id']})")
+                    replacement = staged.get(entry["id"]) if staged.get(entry["id"], {}).get("replace") else None
+                    if replacement is not None:
+                        items.append(f"{replacement.get('filename', entry['id'])} ({entry['id']}, vervangen)")
+                    else:
+                        items.append(f"{entry.get('filename', entry['id'])} ({entry['id']})")
                     seen.add(entry["id"])
-    staged = getattr(state, "staged_attachments", None) or {}
     for att_id, info in staged.items():
         if att_id not in seen:
             items.append(f"{info.get('filename', att_id)} ({att_id})")
