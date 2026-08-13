@@ -10,7 +10,7 @@ annotatie op het ingress). Wat in geen van beide zat is het bewijs dat een clien
 een ander certificaat aangeboden krijgt -- en bij een certificaat is dat het enige dat telt.
 
 **Oordeel: het vermogen doet wat het belooft.** Alle zeven punten hebben een gemeten
-uitkomst, twee opeenvolgende volledige runs waren groen (4m35 en 4m54). Eén punt levert een
+uitkomst, drie volledige runs waren groen (4m35, 4m54 en 4m48). Eén punt levert een
 andere uitkomst op dan het plan veronderstelde: er is voor deze laag geen API-weg (punt 6).
 Dat is geen defect maar een ontbrekend vermogen, en het staat hieronder als bevinding.
 
@@ -130,12 +130,19 @@ Met `confirm_in_use=true` erbij: **eveneens 409, met dezelfde melding.** Dat is 
 -- een site van zijn certificaat halen is een besluit en geen bijwerking van het opruimen
 van een bestand.
 
-De override telt dus mee in de verwijdercontrole, inclusief de deployment waar hij staat.
-Wanneer er twee plekken naar hetzelfde certificaat wijzen (het component én de override van
-één deployment) noemt de weigering ze allebei, met `deployment: null` voor de component-laag
-en `deployment: staging` voor de override. Dat is dezelfde walk die
-`validate_attachment_references` gebruikt, zodat de controle en de validatie niet uit elkaar
-kunnen lopen; de twee-plekken-vorm staat ook als eenheidstest vast
+En met **twee** plekken die naar hetzelfde certificaat wijzen -- het component (en daarmee
+productie) én de override van staging -- worden ze allebei genoemd:
+
+```
+409 {"detail":"Bijlage 'doorloop-cert' wordt als certificaat gebruikt door: web, web (staging). ...",
+     "used_by":[{"component":"web","deployment":null,"kind":"certificate","label":"web"},
+                {"component":"web","deployment":"staging","kind":"certificate","label":"web (staging)"}]}
+```
+
+De override telt dus mee in de verwijdercontrole, inclusief de deployment waar hij staat:
+`deployment: null` voor de component-laag, `deployment: staging` voor de override. Dat is
+dezelfde walk die `validate_attachment_references` gebruikt, zodat de controle en de
+validatie niet uit elkaar kunnen lopen; de twee-plekken-vorm staat ook als eenheidstest vast
 (`test_component_and_override_pointing_at_one_certificate_are_both_reported`).
 
 ### 6. Via de UI en via de API -- bevinding: de API-weg bestaat niet
