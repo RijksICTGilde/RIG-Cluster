@@ -168,20 +168,30 @@
     {# De configuratievariabelen van de deployment zelf staan hier bewust niet; dat besluit
        (hoe geheimen getoond worden) staat nog open, net als op de bestaande pagina. #}
 
-    {# De gebruikersvariabelen van de componenten in deze deployment. #}
+    {# Alleen wat DEZE deployment zelf zet, niet wat het component al draagt.
+
+       Hier stond `project_component['user-env-vars']`: de variabelen van het PROJECT-
+       component, opgezocht via de referentie. Daardoor toonde dit blok de standaardwaarden
+       onder een kop die zegt dat het om deze deployment gaat, en stond elke variabele twee
+       keer op de pagina - een keer bij Componenten en een keer hier, met dezelfde waarde.
+
+       De deployment-componentregel draagt zijn eigen `user-env-vars`; dat zijn de
+       overschrijvingen, en dat is wat hier hoort. #}
     {% set deployment_components = deployment.components | sort(attribute='reference') if deployment.components else [] %}
     {% set eigen_vars = [] %}
     {% for component in deployment_components %}
-        {% for project_component in project.components %}
-            {% if project_component.name == component.reference and project_component.get('user-env-vars') %}
-                {% set _ = eigen_vars.append((component.reference, project_component['user-env-vars'])) %}
-            {% endif %}
-        {% endfor %}
+        {% if component.get('user-env-vars') %}
+            {% set _ = eigen_vars.append((component.reference, component['user-env-vars'])) %}
+        {% endif %}
     {% endfor %}
 
     {% if eigen_vars %}
-        <c-heading type="h4" size="5" label="Gebruikers configuratie" />
-        <c-paragraph size="sm">Gebruiker-specifieke omgevingsvariabelen voor deze deployment</c-paragraph>
+        {# Heet hetzelfde als op het tabblad Componenten, want het IS hetzelfde: de
+           omgevingsvariabelen van een component. Hier stond "Gebruikers configuratie", en
+           twee namen voor een ding laten de lezer zoeken naar het verschil. Het onderscheid
+           zit in de uitleg eronder, niet in de kop. #}
+        <c-heading type="h4" size="5" label="Omgevingsvariabelen" />
+        <c-paragraph size="sm">Wat deze deployment anders instelt dan het component. De standaardwaarden staan bij Componenten.</c-paragraph>
         <c-stack gap="md">
             {% for reference, variabelen in eigen_vars %}
                 <c-card outline padding="md">
