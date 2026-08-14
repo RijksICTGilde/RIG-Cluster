@@ -161,7 +161,111 @@ halen en de hele API een 503 te laten geven.
 
 ## Taak 2 - Unit, e2e en sandbox
 
-(volgt)
+### Unit
+
+De eigen standaardaanroep van het project, zonder eigen `-m` (de `addopts` in
+`pyproject.toml` sluiten `requires_infra` en `e2e` al uit):
+
+```
+uv run pytest tests/ -q
+= 8683 passed, 7 skipped, 533 deselected, 19 warnings in 351.46s (0:05:51) =    exit 0
+```
+
+Nul failures, nul errors. De 7 die overslaan zijn goed; de 533 deselected zijn de
+`requires_infra`- en `e2e`-tests die deze aanroep per definitie niet draait.
+
+### E2E (eigen server, geen cluster nodig)
+
+```
+uv run pytest -m e2e -q
+= 401 passed, 67 skipped, 8754 deselected, 1 xpassed, 33 warnings in 789.96s (0:13:09) =   exit 0
+```
+
+De 67 die overslaan zijn de `sandbox`-tests: die slaan zonder `E2E_BASE_URL` automatisch
+over. De `1 xpassed` is een test die als "verwacht rood" staat aangemerkt en toch slaagde;
+dat is geen failure, maar het is wel een aanwijzing dat een `xfail`-markering achterloopt.
+
+**Maar dit werd pas groen na een reparatie.** De eerste schone run op de gemeten tip gaf
+drie rode:
+
+```
+FAILED tests/e2e/test_lotc_projecten.py::test_de_pagina_levert_zelf_het_stuk_dat_het_zoekveld_ververst
+FAILED tests/e2e/test_lotc_projecten.py::test_zoeken_en_sorteren_staan_in_de_toolbar
+FAILED tests/e2e/test_gedragsoppervlak.py::test_de_pagina_kan_nog_alles_wat_er_vastligt[/projects]
+```
+
+#### Ligt het aan de test of aan de code? Aan de test.
+
+Alle drie hebben dezelfde oorzaak, en die is met `git log -S` op de bron te vinden en niet
+te raden. Commit `80da844c` (`fix(projecten): de gekozen sortering klopt met wat je ziet`)
+deed twee dingen:
+
+1. De projectenpagina swapt sindsdien het **hele zoekgebied** (`#projects-zoekgebied`) in
+   plaats van alleen de lijst (`#projects-lijst`). Reden staat in het sjabloon: de werkbalk
+   lag buiten het geswapte stuk, dus het vinkje bleef op de oude sortering staan en de
+   zoekterm sprong terug.
+2. Twee sorteeropties zijn eruit gehaald. Letterlijk in de commitboodschap: *"Meegenomen:
+   de twee sorteeropties die niemand gebruikte zijn eruit."* In `PROJECT_SORTERINGEN`
+   staan nu alleen `naam` en `naam-af`.
+
+De drie toetsen waren daar niet in meegegaan: één vroeg om vier sorteerlinks, één toetste
+de oude, kleinere swap, en het gedragsoppervlak had `?sort=deployments` en `?sort=teamleden`
+vastgelegd. Ze sloegen dus aan op een verwijdering die met opzet gedaan was.
+
+Empirisch bevestigd op het draaiende cluster, niet alleen in de test: op `/projects` komen
+`/projects?sort=naam` en `?sort=naam-af` wel voor en `?sort=deployments` en `?sort=teamleden`
+nul keer.
+
+#### Wat eraan gedaan is
+
+Commit `725762e2`. De eerste toets volgt nu de twee opties en toetst er bovendien bij dat de
+andere twee **weg blijven** - anders vangt hij een terugkeer niet. De tweede toetst
+`#projects-zoekgebied` (met `hx-select` en `hx-target`), en houdt de controle op
+`#projects-lijst` erbij zodat de lijst zelf niet stilletjes kan verdwijnen.
+
+Van het gedragsoppervlak is **alleen** de `/projects`-ingang bijgewerkt. Een volledige
+herschrijving met `ZAD_SCHRIJF_OPPERVLAK=1` legde ook drift op zeven andere paden vast
+(een nieuw `kerncijfer-pods` op `/dashboard`, een `services-info`-link op acht
+projectpaden, en een extra `hx-post` zonder wizardtoken op `modal-edit-services`). Die
+drift faalde niet - de toets bewaakt of het vastgelegde er nog **is**, niet of er iets bij
+gekomen is - maar hem stilzwijgend vastpinnen zou betekenen dat ik dingen als "beoordeeld"
+opschrijf die ik niet beoordeeld heb. Ze staan hier dus als waarneming en niet in de
+baseline.
+
+Na de reparatie: 401 passed, 0 failed.
+
+### Sandbox
+
+Zie de aparte kanttekening hieronder over wat `-m sandbox` werkelijk selecteert.
+
+### Kanttekening: `-m sandbox` trekt de lange suites mee
+
+Het plan schrijft voor taak 2 `uv run pytest -m sandbox -q` voor, en voor taak 3 apart
+`-m reallife` en `-m punt14`. Dat werkt niet zoals bedoeld: **beide** lange suites dragen
+óók de `sandbox`-marker.
+
+```python
+# tests/e2e/test_sandbox_reallife.py
+pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.reallife, pytest.mark.serial]
+# tests/e2e/test_sandbox_punt14.py
+pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.punt14, pytest.mark.serial]
+```
+
+`-m sandbox` selecteert ze dus allebei, en dan draait taak 2 er ruim een uur aan taak-3-werk
+bij - serieel bovendien, terwijl het plan die twee juist **gelijktijdig** wil hebben. Dat is
+in de eerste poging ook echt gebeurd: de run begon aan `test_sandbox_punt14.py` en is
+daarom afgebroken en opnieuw gestart.
+
+De Taskfile heeft dit half ondervangen:
+
+```
+task test-e2e-sandbox -> uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife" ...
+```
+
+`reallife` wordt uitgesloten, `punt14` niet - terwijl de markerbeschrijving in
+`pyproject.toml` zegt dat punt14 "buiten de standaard sandboxrun" hoort. Voor deze doorloop
+is daarom `-m "sandbox and not reallife and not punt14"` gebruikt, wat de gedocumenteerde
+bedoeling volgt.
 
 ## Taak 3 - De reallife-suite
 
@@ -204,10 +308,58 @@ Er gaat dus daadwerkelijk **een** verzoek uit, en de twee lijsten eronder komen 
 terug met de deployment en het component van het gekozen buurproject. Dat is precies wat
 er eerst niet gebeurde.
 
-Wat hierbij **niet** afgerond is, en dus open blijft staan: de bijlagenstap
-(bijlage toevoegen en verwijderen), dezelfde cross-domain-stap in de **create-wizard**
-(alleen de modal-edit is gemeten), het vervangen van een bijlage met behoud van id
-(punt 4) en het terugzetten van een backup (punt 5). Zie "Wat er niet gemeten is".
+**De bijlagenstap** is apart nagelopen, in de echte create-wizard (de stap verschijnt
+zodra je de dienst Bijlagen aanvinkt):
+
+```
+>> BIJLAGENSTAP bereikt
+--- toevoegen ---
+  lijst na upload: bijlage1.txt (id: cert, nog niet opgeslagen)
+--- verwijderen ---
+  knoppen in de lijst: 1 ['Verwijderen']
+  lijst na verwijderen: Nog geen bijlagen.
+  'cert' weg: True
+```
+
+Toevoegen levert een regel in de lijst op, verwijderen haalt hem er weer uit. Ook hier
+gaat er dus daadwerkelijk iets gebeuren waar eerst niets gebeurde.
+
+Wat **niet** gemeten is: dezelfde cross-domain-stap in de create-wizard. Alleen de
+modal-edit is gedreven. Zie "Wat er niet gemeten is".
+
+### 4. Een bijlage vervangen met behoud van de id - WERKT (maar niet waar je hem zoekt)
+
+Eerst het resultaat. Een bijlage `cert` met bestand `bijlage1.txt`, daarna vervangen door
+`bijlage2.txt`:
+
+```
+voor:  id=cert filename=bijlage1.txt
+PUT /api/v2/projects/rk-qfc/services/attachments/attachment/cert
+       {"attachment":"cert","replaced":true,"component":null}   HTTP 200
+na:    id=cert filename=bijlage2.txt
+```
+
+`replaced: true`, één regel in de catalogus, dezelfde id, ander bestand. Dat is precies
+wat het punt vraagt.
+
+**Maar dit is de API-weg en niet de UI-weg, en dat is een bevinding.** Het plan vraagt om
+het vervangen *via de UI*, en die route is op de projectpagina's niet te vinden:
+
+- Op het tabblad Services staat Bijlagen wel, maar als "Per component te kiezen", zonder
+  Configureer-knop en zonder bestandsveld (`file-inputs: 0` op die pagina). De enige twee
+  Configureer-knoppen daar zijn van sleep-mode en cross-domain.
+- Op de tabbladen Services, Componenten en Overzicht komt `modal-edit-attachments`
+  nergens voor als aanroep; wel `modal-edit-identity`, `modal-edit-services`,
+  `modal-edit-component-N`, `modal-edit-sleep-mode-config` en
+  `modal-edit-cross-domain-config`.
+- In de create-wizard bestaat de bijlagenstap wel, maar die **vervangt** niet: dezelfde id
+  opnieuw uploaden geeft daar "Er bestaat al een bijlage met de id 'cert'", en de oude
+  regel blijft staan. Dat is voor een stapelstap ook logisch - je haalt hem weg en zet een
+  nieuwe neer - maar het is geen vervangen.
+
+Kortom: het vervangen zelf werkt en houdt de id vast, maar op een bestaand project lijkt
+er geen schermweg naartoe. Dat is geen breuk in deze release (er is niets stuk gegaan),
+wel een gat tussen wat het plan verwacht en wat het portaal aanbiedt. Eigen taak waard.
 
 ### 2. Aliassen als een blok - WERKT
 
@@ -280,6 +432,39 @@ Kleinigheid, niet blokkerend: in het blok "Wat het is" op `/actions` staan de dr
 actienamen (`deploy`, `cleanup`, `scheduled-cleanup`) links uitgelijnd terwijl hun
 omschrijving rechts tegen de rand geplakt staat, met een groot gat ertussen. Dat leest
 als een omschrijvingslijst die zijn opmaak kwijt is.
+
+### 5. Een backup terugzetten - NIET GEMETEN
+
+Dit punt is **niet** afgerond, en het is eerlijker om te zeggen waarom dan om het als een
+half resultaat op te schrijven.
+
+De opzet was er wel: persistent-storage op het component, project verwerkt, PVC gebonden
+(`prod-web-data-pvc  Bound  100Mi`). Daarna liep het vast op de eigen opstelling. Voor punt
+"sleep-mode" was op dit project sleep-mode aangezet met `sleep-after-deploy: 5m`, en de
+deployment sliep dus (`prod-web 0/0`, waker ervoor). Om een backup te maken wilde ik hem
+weer wakker hebben.
+
+Wat ik deed werkte niet, en dat was mijn fout en geen fout van het portaal:
+`DELETE /api/v2/projects/{p}/services/sleep-mode/config/project` haalt de **configuratie**
+weg maar laat de **dienst** op het project staan. In het projectbestand stond `sleep-mode`
+daarna nog gewoon in de dienstenlijst, en de wekkermanifesten werden dus opnieuw
+gegenereerd (`web-waker-deployment.yaml`, `web-waker-config.yaml`,
+`prod-web-waker-token-secret.sops.yaml`). Een project- en een deployment-refresh
+veranderden daar niets aan, want er viel niets te veranderen.
+
+Wakker maken via `POST /api/sleep-mode/{p}/{d}/wake` lukte ook niet: dat endpoint eist een
+`X-Wake-Token`, die van de wekkerpagina zelf komt (`HTTP 401 X-Wake-Token header required`).
+Terecht - een willekeurige aanroeper hoort een applicatie niet te kunnen wekken - maar het
+betekende dat ik binnen de tijd geen wakkere deployment meer had om een backup van te maken.
+
+Daarmee is punt 5 open blijven staan: **niet gemeten, niet aangetoond, en dus ook niet
+groen gemeld.** Wat RC-111 beschreef (na een restore stond het project op slot) is in deze
+doorloop dus niet opnieuw getoetst.
+
+Wel een bijvangst die op zichzelf staat: **je kunt een dienst via de API wel toevoegen maar
+niet verwijderen.** `POST /api/v2/projects/{p}/services` bestaat, een `DELETE` op datzelfde
+pad niet - de enige routes zijn `get` en `post`. Dat is dezelfde soort asymmetrie als bij
+het aanmaken/verwijderen van een project, en het raakt de CLI op dezelfde manier.
 
 ### Nieuw uit `ab6ae614`: sleep-mode wekt niet meer vanzelf - WERKT
 
