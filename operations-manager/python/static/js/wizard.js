@@ -33,7 +33,6 @@ function _sequenceDispatch(action, path, index) {
      * dat iemand het moet reconstrueren. */
     var form = document.getElementById('wizard-step-form')
             || document.getElementById('modal-wizard-form');
-    console.info('[sequence]', action, path, index, '| formulier:', form ? form.id : 'GEEN');
     if (form) {
         /* A [data-rerender] change (e.g. toggling a service) fires its own re-render
            submit on this form. While that request is in flight, htmx drops a second
@@ -41,7 +40,6 @@ function _sequenceDispatch(action, path, index) {
            in-flight re-render would then swap the form out from under it. Wait for the
            in-flight request to settle, then re-dispatch against the fresh form. */
         if (form.classList.contains('htmx-request')) {
-            console.info('[sequence] verzoek loopt nog, in de wachtrij tot het settelt');
             document.body.addEventListener(
                 'htmx:afterSettle',
                 function () { _sequenceDispatch(action, path, index); },
@@ -73,35 +71,20 @@ function _sequenceDispatch(action, path, index) {
          * zodat de knop Volgende wel gewoon valideert. */
         var validatieStond = form.noValidate;
         form.noValidate = true;
-        console.info('[sequence] formulier indienen (validatie tijdelijk uit)');
         htmx.trigger(form, 'submit');
         form.noValidate = validatieStond;
-        /* Controle of htmx het ook echt oppakt. Een trigger die htmx negeert is stil: geen
-           fout, geen verzoek, en dan lijkt de knop stuk. Dat kan als het formulier niet
-           door htmx verwerkt is, of als een lopend verzoek in zijn boekhouding nooit
-           afsluit en de volgende in een wachtrij belandt. */
-        setTimeout(function () {
-            if (!form.classList.contains('htmx-request')) {
-                console.warn('[sequence] htmx heeft de indiening NIET opgepakt', {
-                    verwerkt: !!form['htmx-internal-data'],
-                    klasse: form.className,
-                    hxpost: form.getAttribute('hx-post'),
-                    hxsync: form.getAttribute('hx-sync'),
-                });
-            }
-        }, 300);
         return;
     }
 
     /* Detail-edit modal context (legacy non-wizard edit) */
     var modal = document.getElementById('edit-section-modal');
     if (modal && modal.dataset.projectName && modal.dataset.sectionId) {
-        console.info('[sequence] via de bewerkdialoog');
         _sequenceEditModal(modal, action, path, index);
         return;
     }
-    console.warn('[sequence] NIETS GEDAAN: geen wizardformulier en geen bewerkdialoog met project/sectie',
-                 {modal: !!modal, dataset: modal ? Object.assign({}, modal.dataset) : null});
+    /* Hier gebeurt er werkelijk niets meer: geen wizardformulier en geen bewerkdialoog.
+       Stilte kostte ons een middag zoeken, dus dit ene geval meldt zich wel. */
+    console.warn('[sequence] geen wizardformulier en geen bewerkdialoog gevonden; er is niets gebeurd');
 }
 
 /**
