@@ -117,9 +117,13 @@ POST /projects/{project}/deployments/{deployment}/sleep # sessie + CSRF, voor de
   zijn `@on(ActionEvent.REDEPLOY)`-handler (zie
   `features/redeploy-clears-recorded-state.md`); tot RC-37 riep
   `project_manager` deze dienst daarvoor bij naam aan.
-- De API-endpoints (wekkerpod) gebruiken een **wektoken per deployment** (`X-Wake-Token`),
-  bewust niet de project-API-key: een gelekt wektoken kan één deployment wekken en verder
-  niets. Het endpoint accepteert alleen `sleeping -> waking`; al het andere is een no-op.
+- De API-endpoints kennen **twee manieren om je te legitimeren**, omdat er twee soorten
+  aanroepers zijn. De wekkerpod stuurt een **wektoken per deployment** (`X-Wake-Token`):
+  een gelekt wektoken kan één deployment wekken en verder niets. Een projecteigenaar stuurt
+  de **project-API-key** (`X-API-Key`), gecontroleerd tegen het project uit de URL — de
+  sleutel van een ander project wordt geweigerd. Beide headers staan als parameter in
+  `/openapi.json`, zodat een gegenereerde client ze kan vinden. Het endpoint accepteert
+  alleen `sleeping -> waking`; al het andere is een no-op.
 
 ## Beveiliging van de wek-call
 
@@ -128,6 +132,12 @@ Per deployment wordt een wektoken gemunt, AGE-versleuteld op
 de namespace gerenderd voor de wekkerpod (`envFrom`). Blast radius bij lekken: één
 deployment wekken. Tweede laag: het endpoint accepteert alleen de overgang
 `sleeping -> waking` voor een matchende deployment; al het andere is een no-op.
+
+De project-API-key mag hetzelfde endpoint gebruiken, en dat is geen verruiming van het
+wektoken maar van wie er nog meer bij mag: die sleutel kan toch al alles met dit project.
+Zonder die weg kon de eigenaar zijn eigen deployment niet wekken via de API — het wektoken
+staat versleuteld in het projectbestand en wordt door geen enkel endpoint uitgedeeld, dus
+de twee `zadctl service sleep-mode`-commando's waren onbruikbaar.
 
 ## Onder de motorkap
 

@@ -574,7 +574,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(logs_websocket_router, include_in_schema=False)  # WebSocket for log streaming
     app.include_router(resource_router, include_in_schema=True)  # Resource tuning & sanitization
-    app.include_router(sleep_mode_router, include_in_schema=True)  # Sleep-mode wake/status (waker pod)
+    app.include_router(sleep_mode_router, include_in_schema=True)  # Sleep-mode wake/status (waker pod + projectsleutel)
     app.include_router(v2_router, include_in_schema=True)  # V2 async API endpoints
     app.include_router(task_router, include_in_schema=True)  # Async task status API
     app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
