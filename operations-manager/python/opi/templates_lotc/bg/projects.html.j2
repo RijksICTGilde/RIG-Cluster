@@ -78,7 +78,7 @@
        lopen. Ze horen bij elkaar, dus vervangen we ze samen: wat je zocht, waarop je
        sorteerde en wat dat opleverde zijn een antwoord. #}
     <div id="projects-zoekgebied" class="lotc-stack" style="--lotc-stack-gap: var(--lotc-space-lg);">
-    <form method="get" action="/projects"
+    <form autocomplete="off" method="get" action="/projects"
           hx-get="/projects"
           hx-select="#projects-zoekgebied"
           hx-target="#projects-zoekgebied"
@@ -93,14 +93,15 @@
            De inhoud van de slots zijn wel gewone componenten. #}
         <nldd-toolbar label="Projecten" size="md">
             <nldd-toolbar-item slot="start" size="md">
-                {# hx-preserve: htmx neemt DIT element ongewijzigd mee naar de nieuwe
-                   inhoud in plaats van het te vervangen. Zonder dat verlies je bij elke
-                   swap je focus en je cursorpositie, en dan is doortypen onmogelijk.
+                {# De id is nodig voor het focusherstel in htmx-formgedrag.js: dat
+                   onthoudt bij een swap welk veld de focus had en geeft hem daarna terug,
+                   met de cursorpositie erbij.
 
-                   De ID is niet optioneel: htmx bewaart een element OP ID, en zonder id
-                   doet hx-preserve stilzwijgend niets. #}
+                   hx-preserve stond hier eerst en werkte niet: de echte <input> zit in de
+                   schaduwboom van nldd-search-field, en al verplaatst htmx de huls
+                   ongewijzigd, de browser geeft de focus niet terug bij zo'n verplaatsing. #}
                 <c-search-field name="q"
-                                :attrs="{'id': 'projects-zoekveld', 'hx-preserve': 'true'}"
+                                :attrs="{'id': 'projects-zoekveld'}"
                                 value="{{ project_query }}"
                                 placeholder="Zoek op naam of omschrijving"
                                 accessible-label="Zoek een project"

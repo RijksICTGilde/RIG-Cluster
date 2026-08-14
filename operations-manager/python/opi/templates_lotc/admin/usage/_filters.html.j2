@@ -1,6 +1,6 @@
 {# Het formulier om op maand en project te filteren. #}
 <c-card outline="true" padding="md" background-color="wit">
-    <form method="get" action="/admin/usage">
+    <form autocomplete="off" method="get" action="/admin/usage">
         <c-layout-flow gap="md">
             <c-grid columns="four">
                 <c-select-field id="namespace" name="namespace" label="Namespace" value="{{ selected_namespace }}"/>
