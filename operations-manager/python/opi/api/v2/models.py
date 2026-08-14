@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DeploymentStatus(StrEnum):
@@ -326,3 +326,42 @@ class DeploymentListResponse(BaseModel):
         description="Saved changes that are not on the cluster yet, voor het hele project.",
     )
     deployments: list[DeploymentDetail] = Field(default_factory=list)
+
+
+class ClusterDomainOption(BaseModel):
+    """Een keuze voor ``base-domain`` op een deployment."""
+
+    value: str = Field(
+        description=(
+            "Wat je in base-domain zet. Leeg betekent het standaarddomein van het cluster, "
+            "__custom__ betekent een eigen domein dat je zelf invult."
+        ),
+        examples=["rijksapp.nl"],
+    )
+    label: str = Field(description="Hoe de portal deze keuze toont.", examples=["rijksapp.nl"])
+
+
+class ClusterInfo(BaseModel):
+    """Een cluster waar dit project op kan draaien, met wat het aan domeinen aanbiedt."""
+
+    name: str = Field(description="Naam van het cluster, zoals in deployments[].cluster.", examples=["odcn-production"])
+    manager: bool = Field(description="Of deze OPI-instantie dit cluster beheert.", examples=[True])
+    base_domains: list[ClusterDomainOption] = Field(
+        default_factory=list,
+        alias="base-domains",
+        description="De waarden die base-domain op een deployment van dit cluster accepteert.",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ClusterListResponse(BaseModel):
+    """Response for GET /projects/{project_name}/clusters.
+
+    Bestaat omdat ``base-domain`` een keuzelijst heeft die per cluster verschilt: het
+    OpenAPI-document kan die niet opsommen (dat zou een momentopname van een willekeurig
+    cluster zijn) en verwees daarom naar een endpoint dat er niet was.
+    """
+
+    project: str
+    clusters: list[ClusterInfo] = Field(default_factory=list)

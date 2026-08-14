@@ -46,6 +46,9 @@ from opi.api.task_models import (
 from opi.api.user_token_auth import validate_user_token
 from opi.api.v2.models import (
     AsyncTaskAcceptedResponse,
+    ClusterDomainOption,
+    ClusterInfo,
+    ClusterListResponse,
     CreateProjectAcceptedResponse,
     CreateProjectRequest,
     DeploymentComponentDetail,
@@ -77,6 +80,7 @@ from opi.api.validation import (
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
 from opi.core.auth_decorators import get_current_user
+from opi.core.cluster_config import get_selectable_clusters
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
@@ -443,6 +447,50 @@ async def _deployment_details(project_name: str, project_data: dict[str, Any]) -
         _build_deployment_detail(depl, project_name, project_data, statuses.get(depl["name"], _unavailable()))
         for depl in deployments
     ]
+
+
+@v2_router.get(
+    "/projects/{project_name}/clusters",
+    tags=["deployments"],
+    response_model=ClusterListResponse,
+)
+@validate_api_token
+async def list_clusters_v2(
+    request: Request,
+    project_name: str,
+) -> JSONResponse:
+    """De clusters waar dit project op kan draaien, met de domeinen die ze aanbieden.
+
+    Bestaat om een gat in de documentatie te dichten: ``base-domain`` op een deployment
+    heeft een keuzelijst die per cluster verschilt, dus het OpenAPI-document kan die niet
+    opsommen. Het verwees daarom naar een endpoint, en dat endpoint was er niet.
+
+    De domeinen komen uit dezelfde provider die het formulier zijn keuzelijst geeft
+    (``ClusterBaseDomainOptionsProvider``), zodat portal en API niet uit elkaar kunnen lopen.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    from opi.forms.visualizers.providers import ClusterBaseDomainOptionsProvider
+
+    _project_data_or_404(project_name)
+
+    # model_validate en niet de constructor: het veld heet in het antwoord "base-domains",
+    # en met een streepje is dat geen geldige parameternaam.
+    clusters = [
+        ClusterInfo.model_validate(
+            {
+                "name": cluster,
+                "manager": cluster == settings.CLUSTER_MANAGER,
+                "base-domains": [
+                    ClusterDomainOption(value=str(option["value"]), label=str(option["label"]))
+                    for option in ClusterBaseDomainOptionsProvider(cluster=cluster).get_options()
+                ],
+            }
+        )
+        for cluster in get_selectable_clusters()
+    ]
+    return JSONResponse(content=ClusterListResponse(project=project_name, clusters=clusters).model_dump(by_alias=True))
 
 
 @v2_router.get(
