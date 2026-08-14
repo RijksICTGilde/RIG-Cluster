@@ -3240,7 +3240,7 @@ class ProjectManager:
                             last = stall["line"] or f"{dep_name}: nog niet gezond"
                             progress_manager.fail_subtask(
                                 app_subtask,
-                                f"Time-out na 300s — {last}. Controleer de logs van het component.",
+                                f"Time-out na 300s: {last}. Controleer de logs van het component.",
                             )
                         return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
                     except RuntimeError as e:
