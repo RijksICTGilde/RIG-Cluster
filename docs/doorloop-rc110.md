@@ -163,13 +163,102 @@ uv run pytest tests/ -q
 Nul failures, nul errors, met de eigen standaardaanroep (geen eigen `-m`, dus
 `requires_infra` en `e2e` blijven gedeselecteerd).
 
-## Taak 3 - De e2e-tests
+## Taak 3 - De e2e-tests: GROEN
 
-<!-- INVULLEN -->
+```
+uv run pytest -m e2e -q
+400 passed, 62 skipped, 8626 deselected, 2 xfailed, 33 warnings in 664.29s (11m04)
+```
 
-## Taak 4 - De sandboxtests
+Nul failures, nul errors, in één run. Dat is het verschil met RC-108: daar kostte deze
+suite vijf reparaties in de testlaag voordat hij groen was. Die reparaties zitten er nu in
+en houden stand.
 
-<!-- INVULLEN -->
+## Taak 4 - De sandboxtests: GROEN, na een eigen meetfout
+
+Eindstand:
+
+```
+uv run pytest -m sandbox -q -o addopts=""
+2 failed, 60 passed, 9027 deselected, 1 xfailed in 3704.52s (1:01:44)
+```
+
+**De standaard sandboxset is 55/55 groen.** Beide falers zitten in
+`test_sandbox_reallife.py`, en die suite valt buiten deze doorloop: het plan zet hem
+expliciet buiten scope, en de eigen taak van het project draait
+`-m "e2e and sandbox and not reallife"` (Taskfile r. 2050). Plain `-m sandbox` sluit hem
+niet uit - een marker doet dat niet vanzelf - dus deze run pakte er acht extra tests bij
+(63 in plaats van 55). Dat is meer dekking, geen minder; hieronder staat wat de twee
+falers waren.
+
+### Faler 1 - een verouderde test, geen fout in de code
+
+`test_ui_env_vars_while_api_patches_same_file` zet omgevingsvariabelen via de UI op
+**componentniveau**, controleert dat ze versleuteld in git staan (dat lukt), en zoekt de
+naam daarna op het tabblad **Deployments**:
+
+```
+AssertionError: Env var 'RL_FROM_UI' not shown decrypted on the deployments tab of 'rl068-w81'
+```
+
+Dat is precies het gedrag dat drie commits met opzet hebben veranderd - `fc590e0a`
+*"componentniveau naar Componenten, alleen overschrijvingen bij Deployments"*, gevolgd door
+`804c226e` en `77f1a9a0`. Variabelen op componentniveau horen op **Componenten**;
+Deployments toont alleen wat daar anders is dan de standaard. In de handmatige doorloop is
+dat ook zo gezien: na het zetten van `DOORLOOP_RC110` en `LOGNIVEAU` staan die namen in de
+kaart van het component.
+
+Het commentaar in de test verwees bovendien naar `bg/_env-vars.html.j2` "onder
+`active_tab == 'deployments'`", en dat sjabloon wordt sinds diezelfde commits **nergens meer
+ingevoegd**: de variabelen worden nu direct in `bg/project-tabs.html.j2` (componentniveau)
+en `bg/_section-deployments.html.j2` (overschrijvingen) gerenderd. Het bestand is daarmee
+dood; niet verwijderd in deze PR, wel gemeld.
+
+De test wijst nu naar het tabblad Componenten. **Niet opnieuw met de hele reallife-suite
+nagemeten** - die kost een uur op het gedeelde cluster en valt buiten deze opdracht - maar
+de aanname erachter is met de hand gecontroleerd op precies dat scherm.
+
+### Faler 2 - het netwerk, niet de code
+
+`test_add_deployment_rolls_out_whole_project` viel om op een image-pull:
+
+```
+gamma: image ophalen mislukt (ErrImagePull): failed to pull and unpack image
+"ghcr.io/minbzk/base-images/e2e-allservices:latest": failed to do request:
+Head "https://ghcr.io/v2/.../manifests/latest": EOF
+```
+
+Hetzelfde image is in deze run tientallen keren wél binnengehaald. Een `EOF` op de
+manifest-HEAD is ghcr.io die de verbinding sluit, niet iets wat deze tak doet. Wel netjes
+om te zien dat de foutmelding het component noemt en zegt wat er misging - dat is precies
+wat een taak hoort te doen als hij faalt.
+
+### De eerste run was rood, en het lag aan mij
+
+De eerste poging leverde **8 failed en 46 errors in 6m31** op - bijna de hele suite - en dat
+zag eruit als een kapotte tak. Twee dingen wezen de andere kant op:
+
+- vrijwel elke test faalde in **precies 11,2 seconden**. Zoveel verschillende tests die
+  allemaal even lang doen over hun eigen mislukking, dat is één oorzaak en geen 54;
+- de suite deed er 6 minuten over waar hij normaal drie kwartier draait.
+
+De oorzaak: ik gaf `E2E_SECRET_KEY` mee uit
+`kubectl get cm operations-manager-config -o jsonpath='{.data.SECRET_KEY}'`, en die
+configmap heeft **geen** sleutel `SECRET_KEY`. Hij heeft er precies één, `.env`, met het
+hele bestand als waarde. `jsonpath` op een niet-bestaande sleutel geeft geen fout maar een
+**lege string**, dus de suite ondertekende al haar sessiecookies met een lege sleutel; het
+portaal wees ze af en elke test liep tegen de inlogpagina aan.
+
+De goede aanroep is:
+
+```bash
+kubectl -n rig-system get cm operations-manager-config -o jsonpath='{.data.\.env}' \
+  | grep -E '^SECRET_KEY=' | cut -d= -f2-
+```
+
+Opgeschreven omdat het precies het soort rood is waar deze doorloop voor waarschuwt: het
+ziet eruit als een gebroken applicatie, het is een gebroken meetopstelling. Met de echte
+sleutel is de suite groen.
 
 ## Taak 5 - De handmatige doorloop
 
@@ -433,3 +522,5 @@ Eerlijkheidshalve, want het kostte tijd en het staat de volgende keer weer klaar
 4. **De wezen in `zad-argo-user-applications`** uit eerdere rondes opruimen.
 5. **Een schone sandbox vanaf nul** op een machine met de sleutels; twee rondes op rij
    onbewezen is genoeg.
+6. **`bg/_env-vars.html.j2` opruimen**: het sjabloon wordt nergens meer ingevoegd sinds de
+   variabelen naar Componenten verhuisden. Hier gemeld, niet verwijderd.
