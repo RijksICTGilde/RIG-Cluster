@@ -262,6 +262,12 @@
             { "type": "object" }
           ]
         },
+        "user-env-vars-public": {
+          "description": "De namen van de omgevingsvariabelen hierboven waarvan de waarde geen geheim is, en die een read dus voluit teruggeeft. Alleen namen: de waarden zelf blijven allemaal in hetzelfde AGE-blok versleuteld staan, ook die van een naam die hier staat. Ontbreekt de lijst, of ontbreekt een naam erin, dan geldt de waarde als geheim en komt hij als *** terug.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" },
+          "uniqueItems": true
+        },
         "sso-rijk": { "type": "boolean" },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
@@ -368,6 +374,12 @@
             { "$ref": "#/$defs/age-encrypted" },
             { "type": "object" }
           ]
+        },
+        "user-env-vars-public": {
+          "description": "De namen van de omgevingsvariabelen hierboven waarvan de waarde geen geheim is, en die een read dus voluit teruggeeft. Alleen namen: de waarden zelf blijven allemaal in hetzelfde AGE-blok versleuteld staan, ook die van een naam die hier staat. Ontbreekt de lijst, of ontbreekt een naam erin, dan geldt de waarde als geheim en komt hij als *** terug.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" },
+          "uniqueItems": true
         },
         "env-vars": {
           "type": "object",

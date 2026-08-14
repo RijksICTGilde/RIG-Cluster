@@ -691,7 +691,7 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
 
     Expected payload keys:
         project_name, service, target, operation, component, deployment, values, keys,
-        rollout
+        public, rollout
     """
     from opi.manager.project_manager import ProjectManager
     from opi.utils.project_utils import validate_project_name
@@ -704,6 +704,7 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
     deployment_name: str | None = payload.get("deployment")
     values: dict[str, str] | None = payload.get("values")
     keys: list[str] | None = payload.get("keys")
+    public: list[str] | None = payload.get("public")
     project_manager: ProjectManager | None = None
 
     def failure(message: str, error_type: str = "unknown") -> dict:
@@ -744,6 +745,7 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
             deployment_name=deployment_name,
             values=values,
             keys=keys,
+            public=public,
         )
         if not result["success"]:
             error_msg = result.get("error", "Unknown error writing service values")

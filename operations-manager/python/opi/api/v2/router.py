@@ -65,6 +65,7 @@ from opi.api.v2.project_read import (
     ProjectServiceUsages,
     build_component_details,
     collect_project_services,
+    project_defines_anything,
 )
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
@@ -102,9 +103,11 @@ from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployme
 from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, ValuesOperation
 from opi.services.component_values import decode as decode_values
 from opi.services.component_values import locate as locate_values_node
+from opi.services.component_values import read_public_keys as read_values_public_keys
 from opi.services.component_values import validate_key as validate_values_key
 from opi.services.component_values import validate_value as validate_values_value
 from opi.services.component_values import validate_value_for_storage as validate_values_value_for_storage
+from opi.services.component_values import value_is_secret as values_value_is_secret
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.help_text import service_help_markdown
 from opi.services.postgres_scope import get_postgres_schemas
@@ -687,7 +690,10 @@ async def list_project_services_v2(request: Request, project_name: ProjectNamePa
     One call instead of asking each service in the catalog separately. A service selected
     without configuration is reported with ``config: null`` -- it is switched on, and that
     is the answer to "which services does this project use". Stored secrets in a config
-    are replaced by ``***``, and an attachment's file content is never included.
+    are replaced by ``***``, and an attachment's file content is never included -- the
+    attachments catalogue comes back under ``data`` as id, filename, size and the sha256
+    of the decrypted content, which is enough to check that what is stored is what was
+    uploaded without a byte of it travelling.
 
 
     The answer describes the project file, not the cluster: a change saved with
@@ -698,11 +704,14 @@ async def list_project_services_v2(request: Request, project_name: ProjectNamePa
         X-API-Key: The API key for the project (required)
     """
     project_data = _project_data_or_404(project_name)
+    # Only a DEFINE-side payload needs opening, so a project without one is not made to
+    # pay an `age` call for it -- and a project without an AGE key at all keeps working.
+    private_key = await get_decoded_project_private_key(project_data) if project_defines_anything(project_data) else ""
     return JSONResponse(
         content=ProjectServicesResponse(
             project=project_name,
             pending_rollout=await _pending_rollout(request, project_name),
-            services=collect_project_services(project_data),
+            services=collect_project_services(project_data, private_key),
         ).model_dump(mode="json")
     )
 
@@ -781,7 +790,7 @@ async def get_project_v2(request: Request, project_name: ProjectNamePath) -> JSO
             ),
             cluster=settings.CLUSTER_MANAGER,
             pending_rollout=await _pending_rollout(request, project_name),
-            services=collect_project_services(project_data),
+            services=collect_project_services(project_data, private_key),
             components=await build_component_details(project_data, private_key),
             deployments=await _deployment_details(project_name, project_data),
         ).model_dump(mode="json")
@@ -3258,6 +3267,20 @@ class ServiceValuesPayload(BaseModel):
         ),
         examples=[{"DATABASE_TIMEOUT": "30", "FEATURE_X": "on"}],
     )
+    public: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The names in `values` whose content is NOT a secret, so a read gives them back in "
+            "full instead of '***'. Everything left out is a secret: leaving this field out "
+            "entirely means the whole write is secret, which is what a caller who does not know "
+            "about the field gets. The flag does not change what is STORED -- every value stays "
+            "inside the same AGE-encrypted block in the project file -- only whether it may be "
+            "shown. It travels with the value: writing a name again without listing it here "
+            "makes it a secret once more. Only `user-env-vars` accepts it; `aliases` decides "
+            "from the value itself, and passing it there is a 422."
+        ),
+        examples=[["FEATURE_X"]],
+    )
 
     @field_validator("values")
     @classmethod
@@ -3268,6 +3291,19 @@ class ServiceValuesPayload(BaseModel):
             validate_values_key(key)
             validate_values_value(key, value)
         return values
+
+    @model_validator(mode="after")
+    def _public_names_are_written(self) -> ServiceValuesPayload:
+        # A name here that is not in `values` would be a flag about a value this request
+        # does not write -- either a typo, or an attempt to unmask something else through
+        # a write path. Both are refused rather than silently ignored.
+        unknown = sorted(set(self.public) - set(self.values))
+        if unknown:
+            raise ValueError(
+                f"'public' noemt namen die niet in 'values' staan: {', '.join(unknown)}. "
+                "De markering hoort bij de waarde die deze aanroep schrijft."
+            )
+        return self
 
 
 class ServiceValueKeysPayload(BaseModel):
@@ -3343,6 +3379,7 @@ async def _enqueue_values_write(
     deployment_name: str | None = None,
     values: dict[str, str] | None = None,
     keys: list[str] | None = None,
+    public: list[str] | None = None,
     rollout: bool = True,
 ) -> JSONResponse:
     """Check what can be checked now, then enqueue the write.
@@ -3375,6 +3412,7 @@ async def _enqueue_values_write(
             "deployment": deployment_name,
             "values": values,
             "keys": keys,
+            "public": public,
             "rollout": rollout,
         },
     )
@@ -3395,6 +3433,19 @@ def _make_values_endpoint(
         body = kwargs.get("body")
         keys: list[str] | None = None
         if operation in (ValuesOperation.ADD, ValuesOperation.PATCH):
+            if body.public and not service.owned_values_secret_flag:
+                # Service-dependent, so not a rule the shared payload model can carry:
+                # this service already answers "is it a secret" from the value, and a
+                # second, overridable answer would let a caller unmask what the service
+                # judged. Refused rather than ignored -- a flag that is quietly dropped
+                # reads to the caller as one that was honoured.
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Service '{service_name}' kent geen markering per waarde; de dienst bepaalt "
+                        "zelf welke waarde een geheim is. Laat 'public' weg."
+                    ),
+                )
             # Storage-dependent, so it cannot live in the shared payload model: a BLOCK
             # service loses edge whitespace and surrounding quotes on read-back, which
             # would make every write of such a value a fresh commit.
@@ -3426,6 +3477,7 @@ def _make_values_endpoint(
             deployment_name=kwargs.get("deployment_name"),
             values=body.values if operation in (ValuesOperation.ADD, ValuesOperation.PATCH) else None,
             keys=keys,
+            public=body.public if operation in (ValuesOperation.ADD, ValuesOperation.PATCH) else None,
             rollout=kwargs.get("rollout", True),
         )
 
@@ -3456,11 +3508,24 @@ class ServiceValuesRead(BaseModel):
         description=(
             "Name -> value, in the same shape a POST to this path writes. A value that is a "
             "secret comes back as '***': the names are what makes the map readable, the secrets "
-            "stay where they are. An alias value is NOT a secret -- it is a reference to a "
-            "platform variable, and the reference is exactly what a reader is checking -- so it "
-            "comes back as stored."
+            "stay where they are. Two things stop a value from being a secret. The service can "
+            "say so from the value itself -- an alias value is a reference to a platform "
+            "variable, and that reference is exactly what a reader is checking -- or the caller "
+            "marked it with 'public' when writing it (`user-env-vars`). Everything else is a "
+            "secret, including every value written before that flag existed."
         ),
         examples=[{"POSTGRES_HOST": "$DATABASE_SERVER_HOST"}],
+    )
+    public: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The names whose value was marked as not a secret when it was written, sorted. "
+            "Exactly the names in 'values' that are not '***' because of that marking, so a "
+            "caller can see the flag landed. Always empty for a service that does not take the "
+            "flag. These values are stored encrypted like all the others; the marking says only "
+            "that they may be shown."
+        ),
+        examples=[["APP_MODE"]],
     )
 
 
@@ -3492,6 +3557,7 @@ def _make_values_read_endpoint(service_name: str, service, layer: ConfigLayer):
             # Stored values that will not decrypt or parse. Not "none set": saying so is
             # the difference between an empty map and one nobody can read.
             raise HTTPException(status_code=422, detail=str(error)) from error
+        public = read_values_public_keys(node, service)
         return JSONResponse(
             ServiceValuesRead(
                 service=service_name,
@@ -3499,9 +3565,10 @@ def _make_values_read_endpoint(service_name: str, service, layer: ConfigLayer):
                 component=component_name,
                 deployment=deployment_name,
                 values={
-                    key: (REDACTED_VALUE if service.owned_value_is_secret(key, value) else value)
+                    key: (REDACTED_VALUE if values_value_is_secret(service, key, value, public) else value)
                     for key, value in sorted(stored.items())
                 },
+                public=sorted(public & set(stored)),
             ).model_dump(mode="json")
         )
 
@@ -3513,10 +3580,15 @@ def _make_values_read_endpoint(service_name: str, service, layer: ConfigLayer):
 def _values_read_description(service_name: str, layer: ConfigLayer) -> str:
     """What a values read gives back, and what it deliberately does not."""
     secrets = (
-        "The names are always readable. Whether a value comes back is the owning service's "
-        "call, asked per value: a value it treats as a secret comes back as `***`, and a value "
-        "that is a reference to a platform variable comes back as stored -- that reference IS "
-        "the coupling and masking it would hide exactly what was asked about."
+        "The names are always readable. Whether a value comes back is decided per value, and "
+        "the default is `***`. Two things lift that. The owning service can answer from the "
+        "value -- a reference to a platform variable comes back as stored, because that "
+        "reference IS the coupling and masking it would hide exactly what was asked about. Or "
+        "the caller marked the value with `public` when writing it, which is how a value the "
+        "service cannot judge (`user-env-vars`: `APP_MODE` and a password look the same) can "
+        "still be checked. `public` in the answer lists exactly those names. A value that was "
+        "not marked stays `***`, and so does every value written before the flag existed: "
+        "unknown means secret."
     )
     return "\n".join(
         [
@@ -3550,7 +3622,7 @@ _VALUES_RULE = {
 }
 
 
-def _values_description(service_name: str, layer: ConfigLayer, operation: ValuesOperation) -> str:
+def _values_description(service_name: str, service, layer: ConfigLayer, operation: ValuesOperation) -> str:
     """What a values write does, beyond what its summary already says."""
     stored = "The whole set is stored as ONE AGE-encrypted block of `KEY=value` lines"
     fidelity = [
@@ -3560,6 +3632,18 @@ def _values_description(service_name: str, layer: ConfigLayer, operation: Values
         "workload should receive it, without those edge characters.",
         "",
     ]
+    marking = []
+    if service.owned_values_secret_flag and operation in (ValuesOperation.ADD, ValuesOperation.PATCH):
+        marking = [
+            "`public` names the values in this request whose content is not a secret, so the GET "
+            "on this path gives them back in full instead of `***` -- that is how a typo in a "
+            "non-secret variable becomes findable without asking the running workload. It changes "
+            "nothing about storage: a value marked this way is encrypted in the project file "
+            "exactly like the rest, and only the NAME is kept in plain text next to the block. "
+            "Anything not listed is a secret, so a caller who does not send the field writes "
+            "secrets, and writing a name again without listing it makes it a secret once more.",
+            "",
+        ]
     return "\n".join(
         [
             f"Change the `{service_name}` values on {_VALUES_PLACE[layer]}, in the project's YAML "
@@ -3568,9 +3652,10 @@ def _values_description(service_name: str, layer: ConfigLayer, operation: Values
             _VALUES_RULE[operation],
             "",
             f"{stored}, so every change is a decrypt -> change -> re-encrypt of what is stored. "
-            "Values are never returned: reading one back would hand out the secret this endpoint "
-            "exists to keep encrypted.",
+            "This response never carries a value back; what a later GET may show is decided per "
+            "value (see that endpoint).",
             "",
+            *marking,
             *fidelity,
             "A request that leaves the stored values exactly as they were commits nothing and rolls "
             "nothing out (`changed: false` in the task result). Otherwise the change is rolled out: "
@@ -3630,7 +3715,7 @@ def _register_service_values_routes(router: APIRouter) -> None:
                     tags=[service_name],
                     responses=_VALUES_RESPONSES,
                     summary=summary,
-                    description=_values_description(service_name, layer, operation),
+                    description=_values_description(service_name, service, layer, operation),
                 )
 
             # The read side of the same path (RC-66, bevinding 3). Without it the values

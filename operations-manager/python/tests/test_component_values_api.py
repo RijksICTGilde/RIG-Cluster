@@ -183,6 +183,55 @@ class TestWhatReachesTheTask:
         assert payload["keys"] is None
 
 
+class TestTheNonSecretMarking:
+    """punt 5: the writer says which of these values is not a secret.
+
+    Only the write side is here; what the read then shows is in
+    ``tests/test_component_values_read_api.py`` and what lands in the file in
+    ``tests/test_component_values_manager.py``.
+    """
+
+    def test_the_marking_travels_to_the_task(self, client, created_task) -> None:
+        client.post(ENV_COMPONENT, headers=HEADERS, json={"values": {"A": "1", "B": "2"}, "public": ["A"]})
+
+        assert _payload(created_task)["public"] == ["A"]
+
+    def test_leaving_it_out_marks_nothing(self, client, created_task) -> None:
+        # The default a caller who never heard of the field gets: everything a secret.
+        client.post(ENV_COMPONENT, headers=HEADERS, json={"values": {"A": "1"}})
+
+        assert _payload(created_task)["public"] == []
+
+    def test_it_travels_on_the_deployment_layer_too(self, client, created_task) -> None:
+        client.patch(ENV_DEPLOYMENT, headers=HEADERS, json={"values": {"A": "1"}, "public": ["A"]})
+
+        assert _payload(created_task)["public"] == ["A"]
+
+    def test_marking_a_name_this_request_does_not_write_is_refused(self, client, created_task) -> None:
+        # Either a typo, or an attempt to unmask another value through a write path.
+        response = client.post(ENV_COMPONENT, headers=HEADERS, json={"values": {"A": "1"}, "public": ["B"]})
+
+        assert response.status_code == 422
+        assert "B" in response.text
+        created_task.assert_not_called()
+
+    def test_aliases_refuse_the_marking(self, client, created_task) -> None:
+        # aliases answers "is this a secret" from the value itself; a second, overridable
+        # answer would let a caller unmask a stored literal.
+        response = client.post(
+            ALIAS_COMPONENT, headers=HEADERS, json={"values": {"A": "$DATABASE_SERVER_HOST"}, "public": ["A"]}
+        )
+
+        assert response.status_code == 422
+        assert "public" in response.json()["detail"]
+        created_task.assert_not_called()
+
+    def test_aliases_without_the_marking_are_untouched(self, client) -> None:
+        response = client.post(ALIAS_COMPONENT, headers=HEADERS, json={"values": {"A": "$DATABASE_SERVER_HOST"}})
+
+        assert response.status_code == 202
+
+
 class TestRollout:
     def test_rollout_defaults_to_true(self, client, created_task) -> None:
         client.post(ENV_COMPONENT, headers=HEADERS, json={"values": {"A": "1"}})
