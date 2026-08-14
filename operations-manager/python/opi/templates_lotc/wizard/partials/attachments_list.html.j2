@@ -59,7 +59,10 @@
 <div id="wiz-att-id-field" hx-swap-oob="true">
     {% include "wizard/partials/attachments_id_field.html.j2" %}
 </div>
-<input type="file" id="wiz-att-file" name="file" class="rvo-file-input" hx-swap-oob="true">
+{# Moet tot in de klasse gelijk blijven aan het veld in attachments_upload.html.j2: deze
+   kopie VERVANGT dat veld (hx-swap-oob op de id), dus wat hier niet op staat, is na de
+   eerste upload weg. #}
+<input type="file" id="wiz-att-file" name="file" class="attachment-upload__file" hx-swap-oob="true">
 <div id="wiz-att-feedback" hx-swap-oob="true">
     <span class="att-upload-ok"><c-icon icon="check-mark-circle" color="groen" size="sm"/>Geüpload</span>
 </div>

@@ -585,6 +585,67 @@ c-fieldset c-fieldset {
     margin-top: 0.5rem;
 }
 
+/*
+ * De bestandskiezer van een bijlage.
+ *
+ * Dit is een KAAL <input type="file"> en dat blijft het ook. Er IS een
+ * <c-file-input-field> in lotc-forms, maar die wordt onder ons thema een
+ * <nldd-file-field>, en dat element bestaat niet in de NLDD-bundel die wij vast
+ * hebben staan. Gemeten in de browser op de stap Bijlagen:
+ *
+ *     customElements.get('nldd-file-field')  -> undefined
+ *     customElements.get('nldd-text-field')  -> aanwezig
+ *
+ * Een niet-geregistreerd custom element blijft een lege huls: je zou dan helemaal
+ * geen bestandskiezer meer hebben. Er komt bovendien een tweede bezwaar achteraan.
+ * De NLDD-velden zetten hun echte <input> in een schaduwboom - document.querySelector
+ * ('#wiz-att-id') levert null - en de uploadknop haalt dit veld op met
+ * hx-include="#wiz-att-file", terwijl attachments_list.html.j2 het na een upload leegt
+ * met hx-swap-oob op diezelfde id. Allebei zijn dat gewone document-selectors, dus het
+ * veld MOET in de lichte boom blijven staan.
+ *
+ * Wat er ontbrak was dus niet het component maar de OPMAAK: hier stond de klasse
+ * rvo-file-input, uit de oude bouwlijn, en die laadt onder LOTC niet (lotc_rvo staat
+ * niet in DESIGN_SYSTEMS). Het gevolg was de standaardknop van de browser midden in
+ * een kaart die verder helemaal van het thema is - dezelfde meting als bij het
+ * aanvinkvakje van een servicekaart verderop.
+ *
+ * De waarden hieronder zijn de tokens van het thema zelf, niet nagemaakte kleuren: de
+ * omtrek is die van een invoerveld, de knop erin die van <c-button type="secondary"
+ * size="sm">. Gemeten op het echte component: achtergrond, tekstkleur en font komen
+ * exact overeen. De tokens dragen light-dark(), dus de donkere weergave klopt mee.
+ */
+.attachment-upload__file {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 32rem;
+    min-height: 44px;
+    padding: 4px 10px;
+    border: var(--semantics-input-fields-border);
+    border-radius: 8px;
+    background-color: var(--semantics-input-fields-background-color);
+    /* Een invoerveld erft zijn font niet van de pagina; zonder deze regel staat de
+       bestandsnaam ernaast in het standaardlettertype van de browser. */
+    font: var(--semantics-input-fields-md-text-font);
+}
+
+.attachment-upload__file::file-selector-button {
+    margin-right: 0.75rem;
+    min-height: 32px;
+    padding: 6px 12px;
+    border: 0;
+    border-radius: 6px;
+    background-color: var(--semantics-buttons-neutral-tinted-background-color);
+    color: var(--semantics-buttons-neutral-tinted-content-color);
+    font: var(--semantics-buttons-sm-primary-text-font);
+    cursor: pointer;
+}
+
+.attachment-upload__file::file-selector-button:hover {
+    background-color: var(--semantics-buttons-neutral-tinted-is-hovered-background-color);
+}
+
 .attachment-upload__row {
     margin-top: 0.75rem;
     display: flex;
