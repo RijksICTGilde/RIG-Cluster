@@ -93,7 +93,7 @@ def mock_manager(project_data: dict[str, Any]) -> Any:
     manager = MagicMock()
     manager.get_contents = AsyncMock(return_value=project_data)
     manager.save_and_commit_project = AsyncMock()
-    manager.process_project_from_git = AsyncMock(return_value={"status": "ok"})
+    manager.process_project_from_git = AsyncMock(return_value=True)
     with patch("opi.api.restore_router.ProjectManager", return_value=manager):
         yield manager
 
@@ -253,3 +253,144 @@ class TestRestoreDeploymentResource:
         assert body["new_generation"] == 1
 
         _assert_read_mutate_save(mock_manager, project_data)
+
+
+class TestRefreshFailureIsReported:
+    """A restore that lands on the cluster but whose follow-up refresh falls over is not
+    a success. The refresh is what regenerates the manifests and secrets; without it the
+    deployment keeps running on the pre-restore ones. The response used to say
+    ``"status": "success"`` with ``"refresh_triggered": true`` regardless -- the return
+    value of process_project_from_git is a bool, and it was tested with ``is not None``,
+    which is true for False as well. A caller cannot read the OPI log, so the response
+    was the only place this could ever surface, and it did not.
+    """
+
+    def test_deployment_restore_reports_a_failed_refresh(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        mock_manager.process_project_from_git = AsyncMock(return_value=False)
+
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}/deployment/main",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "resource_type": "pvc",
+                "component_name": "web",
+                "reference_name": "data",
+                "snapshot_id": "snap-1",
+                "update_deployment": True,
+            },
+        )
+        assert response.status_code == 207, response.text
+        body = response.json()
+        assert body["status"] == "partial"
+        assert body["refresh_triggered"] is True
+        assert body["refresh_succeeded"] is False
+        assert "deployment" in body["message"]
+
+    def test_deployment_restore_reports_a_successful_refresh(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}/deployment/main",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "resource_type": "pvc",
+                "component_name": "web",
+                "reference_name": "data",
+                "snapshot_id": "snap-1",
+                "update_deployment": True,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "success"
+        assert body["refresh_succeeded"] is True
+
+    def test_no_refresh_requested_leaves_the_field_null(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}/deployment/main",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "resource_type": "pvc",
+                "component_name": "web",
+                "reference_name": "data",
+                "snapshot_id": "snap-1",
+                "update_deployment": False,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["refresh_triggered"] is False
+        assert body["refresh_succeeded"] is None
+
+    def test_pvc_restore_reports_a_failed_refresh(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        mock_manager.process_project_from_git = AsyncMock(return_value=False)
+
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}",
+            headers={"X-API-Key": API_KEY},
+            json={"deployment_name": "main", "component_name": "web", "storage_name": "data"},
+        )
+        assert response.status_code == 207, response.text
+        body = response.json()
+        assert body["status"] == "partial"
+        assert body["refresh_succeeded"] is False
+
+    def test_backup_run_restore_reports_a_failed_refresh(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        mock_manager.process_project_from_git = AsyncMock(return_value=False)
+        mock_backup_manager.list_snapshots = AsyncMock(
+            return_value=[
+                SnapshotInfo(
+                    snapshot_id="snap-1",
+                    pvc_name="pvc-main-web-data-0",
+                    timestamp="2026-07-21T00:00:00Z",
+                    component_name="web",
+                    storage_name="data",
+                    generation=0,
+                    backup_run_id="run-1",
+                    resource_type="pvc",
+                )
+            ]
+        )
+
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}/deployment/main/run/run-1",
+            headers={"X-API-Key": API_KEY},
+            json={},
+        )
+        assert response.status_code == 207, response.text
+        body = response.json()
+        assert body["status"] == "partial"
+        assert body["refresh_succeeded"] is False
