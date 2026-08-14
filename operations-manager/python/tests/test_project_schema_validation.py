@@ -450,6 +450,31 @@ def test_component_with_partial_security_block_is_accepted() -> None:
     validate_project_schema(project)
 
 
+def test_component_accepts_the_non_secret_env_var_marking() -> None:
+    """The names of non-secret env-vars are a plain list next to the encrypted block.
+
+    ``additionalProperties: false`` on the component means a write of this list fails
+    the save unless the schema knows it -- which is exactly how it would be discovered:
+    long after the API accepted the request.
+    """
+    project = _valid_project()
+    project["components"][0]["user-env-vars-public"] = ["APP_MODE", "LOG_LEVEL"]
+    validate_project_schema(project)
+
+
+def test_deployment_component_accepts_the_non_secret_env_var_marking() -> None:
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["user-env-vars-public"] = ["APP_MODE"]
+    validate_project_schema(project)
+
+
+def test_the_non_secret_marking_rejects_a_name_that_cannot_be_an_env_var() -> None:
+    project = _valid_project()
+    project["components"][0]["user-env-vars-public"] = ["niet geldig"]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
 def test_component_security_block_rejects_unknown_field() -> None:
     """additionalProperties:false on the security block must reject typos."""
     project = _valid_project()

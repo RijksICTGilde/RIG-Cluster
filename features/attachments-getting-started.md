@@ -85,6 +85,22 @@ De vlag heet `confirm_in_use` en niet `force`: je bevestigt dat je weet dát 'ie
 
 **Eén uitzondering.** Dient de bijlage als eigen webcertificaat (**Webadres** in de modus *eigen certificaat*), dan wordt verwijderen ook mét bevestiging geweigerd. Die verwijzing kun je niet zomaar weghalen: dan zou er wel *eigen certificaat* staan maar geen certificaat zijn. Zet het webadres eerst terug op een andere modus, dan kan de bijlage weg.
 
+## Controleren of het goede bestand er staat
+
+De inhoud komt nergens uit de API terug, en dat blijft zo. Wél terug komt wat je nodig hebt om te controleren dát het goede bestand er staat: `GET /api/v2/projects/{project}/services` geeft de catalogus terug onder `data` van de bijlagen-dienst op projectniveau, per bijlage met zijn `id`, `filename`, `size` in bytes en de `sha256` van de inhoud.
+
+```jsonc
+{"name": "attachments", "usages": [
+  {"target": "project", "config": null, "data": [
+    {"id": "server-cert", "filename": "server.pem", "size": 1834, "sha256": "9f86d0…"}
+  ]}
+]}
+```
+
+Die checksum gaat over de **ontsleutelde** inhoud, dus over het bestand zoals jij het uploadde. Een checksum over de versleutelde vorm zou niets zeggen: AGE versleutelt niet deterministisch, dus hetzelfde bestand levert bij elke upload een ander blok en dus een andere checksum. Vergelijk met `sha256sum server.pem` en je weet of wat er staat is wat je stuurde.
+
+Staat er `"size": null` en `"sha256": null`, dan is de bijlage er wel maar was de opgeslagen inhoud niet te lezen. Dat is iets anders dan een leeg bestand.
+
 ## Goed om te weten
 
 - Maximaal 64 KB per bestand.
