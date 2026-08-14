@@ -8,11 +8,12 @@ the entire application, from form submission to project processing.
 import logging
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, get_args
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import ValidationError
 
 from opi.core.buttons import check_button_variant
+from opi.services.config_lists import find_patchable_list
 from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
 
 if TYPE_CHECKING:
@@ -961,23 +962,31 @@ class ServiceAdapter:
         service_name: str,
         layer: ConfigLayer,
         *,
-        add: list[dict[str, Any]],
+        add: list[Any],
         remove: list[str],
+        list_field: str | None = None,
         component_name: str | None = None,
         deployment_name: str | None = None,
     ) -> dict[str, int]:
-        """Add, update or remove items in one service's list-shaped config at ``layer``.
+        """Add, update or remove items in one list of a service's config at ``layer``.
 
         The PATCH counterpart of ``set_service_config``: instead of replacing the whole
-        list, only the named items change. ``add`` takes full entries (validated against
+        block, only the named items change. ``add`` takes full entries (validated against
         the service's own item model here, so a malformed entry fails before anything is
         written); an entry whose key already exists replaces it. ``remove`` takes keys
         only, and a key that is not there is a no-op -- removing twice is fine. Remove
         runs first, so a key in both lists is replaced outright.
 
-        The item key comes from the config model itself: ``SomeConfig.ITEM_KEY`` (e.g.
-        ``"name"`` for storage mounts, ``"reference"`` for attachment couplings). A
-        service whose config at this layer is not a keyed list has nothing to patch.
+        Which list, and what identifies one entry, comes from the config model itself
+        (``opi/services/config_lists.py``). ``list_field`` is ``None`` for a config that
+        IS a list (storage mounts, attachment couplings) and names the field for a config
+        that CONTAINS one (``invite.active``, ``cross-domain-access.inbound``,
+        ``sleep-mode.match``). In the second case the surrounding fields are carried over
+        untouched -- that is the whole point: a PUT there rewrites them, and a caller who
+        does not resend them wipes them.
+
+        A list of plain values (``sleep-mode.match``) has no key field: the value IS its
+        identity, so add is a set union and remove takes values.
 
         Writes through ``set_service_config`` afterwards, so project-level selection and
         entry normalization stay on the one path. Returns per-action counts so the
@@ -992,20 +1001,25 @@ class ServiceAdapter:
             raise ServiceValidationError(f"Unknown service: {service_name}") from None
         service = get_service(service_type)
         model = service.config_model_for(layer)
-        item_key: str | None = getattr(model, "ITEM_KEY", None) if model is not None else None
-        if model is None or item_key is None:
+        spec = find_patchable_list(model, list_field)
+        if model is None or spec is None:
+            named = f" list '{list_field}'" if list_field else ""
             raise ServiceValidationError(
-                f"Service '{service_name}' has no patchable list config at the {layer.value} layer"
+                f"Service '{service_name}' has no patchable{named} config at the {layer.value} layer"
             )
 
-        root_annotation = model.model_fields["root"].annotation
-        item_model = get_args(root_annotation)[0]
-        try:
-            validated_add = [
-                item_model.model_validate(item).model_dump(by_alias=True, exclude_unset=True) for item in add
-            ]
-        except ValidationError as e:
-            raise ServiceValidationError(f"Invalid '{service_name}' entry: {e.errors(include_url=False)}") from e
+        item_model = spec.item_model
+        if item_model is None:
+            # Plain values; validated below, through the model that owns the list (a
+            # match pattern is checked by sleep-mode's own field validator, not here).
+            validated_add: list[Any] = list(add)
+        else:
+            try:
+                validated_add = [
+                    item_model.model_validate(item).model_dump(by_alias=True, exclude_unset=True) for item in add
+                ]
+            except ValidationError as e:
+                raise ServiceValidationError(f"Invalid '{service_name}' entry: {e.errors(include_url=False)}") from e
 
         target_list = cls._resolve_target_services_list(
             project_data, layer, component_name=component_name, deployment_name=deployment_name, create=True
@@ -1015,13 +1029,22 @@ class ServiceAdapter:
             if service_entry_name(entry) == service_name:
                 current_config = service_entry_config(entry)
                 break
-        if current_config is not None and not isinstance(current_config, list):
+        expected = dict if spec.name else list
+        if current_config is not None and not isinstance(current_config, expected):
             raise ServiceValidationError(
-                f"The config of '{service_name}' at the {layer.value} layer is not a list; only the PUT can replace it"
+                f"The config of '{service_name}' at the {layer.value} layer is not "
+                f"{'an object' if spec.name else 'a list'}; only the PUT can replace it"
             )
-        current: list[Any] = list(current_config or [])
+        if spec.name:
+            current: list[Any] = list((current_config or {}).get(spec.name) or [])
+        else:
+            current = list(current_config or [])
+
+        item_key = spec.item_key
 
         def key_of(item: Any) -> Any:
+            if item_key is None:
+                return item
             return item.get(item_key) if isinstance(item, dict) else None
 
         removed_keys = set(remove)
@@ -1042,7 +1065,28 @@ class ServiceAdapter:
                 merged.append(item)
                 added += 1
 
+        new_config: dict[str, Any] | list[Any]
+        if spec.name:
+            # Everything around the patched list is carried over verbatim: not re-dumped
+            # through the model, so a field this call does not touch keeps exactly the
+            # value (and the spelling) it had on disk. Validated as a whole, because the
+            # rules that matter here live on the owning model -- the match-pattern check
+            # on sleep-mode, the unique-rule-name check on cross-domain-access.
+            new_config = dict(current_config or {})
+            new_config[spec.name] = merged
+            try:
+                model.model_validate(new_config)
+            except ValidationError as e:
+                raise ServiceValidationError(f"Invalid '{service_name}' config: {e.errors(include_url=False)}") from e
+        else:
+            new_config = merged
+
         cls.set_service_config(
-            project_data, service_name, layer, merged, component_name=component_name, deployment_name=deployment_name
+            project_data,
+            service_name,
+            layer,
+            new_config,
+            component_name=component_name,
+            deployment_name=deployment_name,
         )
         return {"added": added, "updated": updated, "removed": removed}
