@@ -37,9 +37,9 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
 
     menu_items = [
         {"label": "Dashboard", "link": "/dashboard", "icon": "home"},
-        {"label": "Projecten", "link": "/projects", "icon": "applicatie"},
+        {"label": "Mijn projecten", "link": "/projects", "icon": "applicatie"},
         {"label": "Nieuw Project", "link": "/forms/wizard/restart", "icon": "plus"},
-        {"label": "Services", "link": "/services", "icon": "server"},
+        {"label": "Services overzicht", "link": "/services", "icon": "server"},
         {"label": "CLI", "link": "/cli", "icon": "computercode"},
         {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},

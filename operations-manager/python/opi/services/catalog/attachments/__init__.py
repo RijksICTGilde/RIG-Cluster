@@ -33,6 +33,21 @@ if TYPE_CHECKING:
     from opi.services.catalog.actions import ServiceAction
 
 
+def _attachments_summary(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """De bijlagen die het project heeft, als naam en bestandsnaam.
+
+    Wat de gebruiker op deze stap doet is bestanden uploaden, dus dat is wat een
+    samenvatting hoort te tonen. Niet de dienstenlijst die deze sectie toevallig
+    meedraagt om te weten welke diensten aanstaan.
+    """
+    from opi.handlers.project_file_handler import extract_attachment_catalog
+
+    catalogus = extract_attachment_catalog(data)
+    if not catalogus:
+        return [("Bijlagen", "geen")]
+    return [(entry.get("filename") or naam, naam) for naam, entry in catalogus.items()]
+
+
 class AttachmentsService(Service):
     service_type = ServiceType.ATTACHMENTS
     definition = ServiceDefinition(
@@ -152,6 +167,13 @@ class AttachmentsService(Service):
                 visible=self._config_selected,
                 editables=[services_carrier],
                 layout=[TemplatePartial(template="wizard/partials/attachments_upload.html.j2")],
+                # De sectie vat ZICHZELF samen. De generieke samenvatting loopt over
+                # ``editables``, en dat is het gegevenscontract en niet wat de gebruiker
+                # ziet: hier staat alleen de verborgen drager in, en die kwam als een rauwe
+                # dienstenlijst in beeld. Een sectie waarvan de layout een TemplatePartial
+                # is, valt sowieso niet samen te vatten door velden af te lopen; dan hoort
+                # ze het zelf te zeggen.
+                summary_fn=_attachments_summary,
             )
             self._config_section_cache = cached
         return cached
