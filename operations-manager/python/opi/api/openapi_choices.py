@@ -127,12 +127,64 @@ def annotate_config_choices(openapi_schema: dict[str, Any]) -> None:
                 continue
             proposals.setdefault(id(node), (node, []))[1].append(annotation)
 
+        for yaml_path, voorbeelden in _examples_for(service, layer).items():
+            node = _locate(body, yaml_path, schemas)
+            if node is not None:
+                _attach_examples(node, voorbeelden, schemas)
+
     for node, proposed in proposals.values():
         first = proposed[0]
         if any(annotation != first for annotation in proposed):
             logger.debug("Keuzelijst overgeslagen: twee lagen delen dit schema en bieden verschillende waarden")
             continue
         node.update(first)
+
+
+# --- voorbeelden ------------------------------------------------------------
+
+
+def _examples_for(service: Any, layer: ConfigLayer) -> dict[str, list[str]]:
+    """De voorbeeldwaarden per yaml-pad, uit de formuliersectie van *service*.
+
+    Een veld met een vrij formaat is voor een API-gebruiker het lastigst: bij ``match`` van
+    sleep-mode weet je dat er een string in moet, maar niet dat het om een glob op de
+    deploymentnaam gaat. Het formulier heeft dat antwoord wel, want daar staan voorbeelden
+    onder het veld. Die horen dus ook in het document.
+
+    Alleen ``examples`` van de visualizer, niet zijn ``placeholder``. Een placeholder is
+    geschreven om in een leeg invoerveld te staan en is even vaak een aanwijzing als een
+    waarde ("Naam van de applicatie"); dat als voorbeeld publiceren zou een client een
+    onmogelijke waarde voorhouden. Een voorbeeld is bedoeld om te kunnen versturen.
+    """
+    section = service.config_form_section(layer)
+    if section is None:
+        return {}
+
+    found: dict[str, list[str]] = {}
+
+    def walk(visualizers: list[Any]) -> None:
+        for visualizer in visualizers or []:
+            editable = getattr(visualizer, "editable", None)
+            examples = getattr(visualizer, "examples", None)
+            if editable is not None and examples:
+                found[editable.yaml_path] = list(examples)
+            walk(getattr(visualizer, "children", None) or [])
+
+    walk(section.editables)
+    return found
+
+
+def _attach_examples(node: dict[str, Any], examples: list[str], schemas: dict[str, Any]) -> None:
+    """Zet *examples* op *node*, of op de items als het veld een lijst is.
+
+    ``examples`` in JSON Schema zijn instanties van het schema waar ze op staan. Bij een
+    lijstveld (``match``) is een instantie dus een LIJST, terwijl de voorbeelden die het
+    formulier toont losse waarden zijn; die horen daarom een laag dieper, op de items. Zo
+    leest een client ze als "zo ziet een element eruit" en niet als "dit is de hele lijst".
+    """
+    items_branch = _branch_with(node, "items", schemas)
+    doel = _resolve(items_branch["items"], schemas) if items_branch else node
+    doel.setdefault("examples", examples)
 
 
 # --- wat een veld aanbiedt --------------------------------------------------
