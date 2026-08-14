@@ -7,7 +7,8 @@ for populating select/radio fields with dynamic data from OPI's domain.
 
 import logging
 import re
-from typing import Any, ClassVar, Protocol
+from dataclasses import dataclass
+from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.services.services import ServiceAdapter, service_entry_name
@@ -16,12 +17,61 @@ from opi.services.services_enums import ServiceKind, ServiceType
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class OptionsSource:
+    """Waar de keuzes van een veld vandaan komen als ze per project verschillen.
+
+    De keuzelijst van een formulierveld is ook het antwoord op "welke waarden mag ik
+    hier sturen", en dat antwoord hoort in de API-documentatie te staan. Voor een vaste
+    lijst kan dat als opsomming. Voor een lijst die uit het project zelf komt (de
+    componenten, de deployments van een peer, de bijlagen in de catalogus) kan dat niet:
+    een opsomming zou een momentopname zijn die voor elk ander project onwaar is. Dan is
+    het eerlijke antwoord de BRON, en die staat hier: waar een client de lijst zelf
+    ophaalt en, als er geen endpoint voor is, waarvan de lijst afhangt.
+    """
+
+    description: str
+    """Wat de lijst is, in het Nederlands. Dit is de tekst die een lezer krijgt."""
+    endpoint: str | None = None
+    """Methode en pad van het endpoint dat de opties levert, of None als er geen is."""
+    path: str | None = None
+    """Waar in het antwoord van dat endpoint de waarden staan, bijvoorbeeld
+    ``components[].name``. None als er geen endpoint is."""
+
+    def as_json(self) -> dict[str, str]:
+        """Machineleesbare vorm; lege velden blijven weg in plaats van als null."""
+        data = {"description": self.description}
+        if self.endpoint:
+            data["endpoint"] = self.endpoint
+        if self.path:
+            data["path"] = self.path
+        return data
+
+
+#: Een provider die nog niet heeft gezegd of zijn lijst vastligt of per project verschilt.
+#:
+#: Onderscheiden van ``options_source = None`` (de lijst ligt vast): wie het niet declareert
+#: krijgt geen keuzelijst in de API-documentatie, want een lijst die een projectafhankelijke
+#: provider zonder projectcontext oplevert is niet leeg maar FOUT -- hij toont dan de paar
+#: opties die zonder context overblijven alsof dat de toegestane waarden zijn.
+UNDECLARED_SOURCE: Final = object()
+
+
 class OptionsProvider(Protocol):
     """
     Protocol for dynamic options providers.
 
     Options providers are used to populate select/radio fields
     with options from external data sources (databases, configs, APIs).
+    """
+
+    options_source: ClassVar[OptionsSource | None]
+    """None als de lijst vastligt, een ``OptionsSource`` als hij per project verschilt.
+
+    Elke provider die een service-configveld vult declareert dit, want de API-documentatie
+    leest hem hier af (``opi/api/openapi_choices.py``); ``tests/test_openapi_config_choices.py``
+    houdt daar iedereen aan. Een provider die alleen buiten de service-config gebruikt wordt
+    hoeft niets te zeggen.
     """
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -327,6 +377,9 @@ class MemoryRequestOptionsProvider(MemoryOptionsProvider):
 class DomainModeOptionsProvider:
     """Provides domain mode options for URL configuration."""
 
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
+
     def get_options(self) -> list[dict[str, Any]]:
         """Get available domain mode options."""
         return [
@@ -375,6 +428,9 @@ class StorageTypeOptionsProvider:
 class StorageSizeOptionsProvider:
     """Provides storage size options for persistent volumes."""
 
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
+
     def get_options(self) -> list[dict[str, Any]]:
         """Get available storage size options."""
         return [
@@ -398,6 +454,9 @@ class KeycloakTemplateOptionsProvider:
     configuratie" describes something else entirely, and someone picking it had no way
     to know they were also turning on local accounts.
     """
+
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available Keycloak template options."""
@@ -445,6 +504,14 @@ class ClusterBaseDomainOptionsProvider:
     Reads supported nice-URL domains from CLUSTER_CONFIG. When no cluster
     is specified, returns all known domains across all clusters.
     """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "De domeinen die het cluster van deze deployment ondersteunt (nice_url in de "
+            "clusterconfiguratie). Leeg betekent het standaarddomein van het cluster, "
+            "__custom__ betekent een eigen domein dat je zelf invult."
+        ),
+    )
 
     def __init__(self, cluster: str | None = None) -> None:
         self.cluster = cluster
@@ -512,6 +579,12 @@ class ComponentReferenceOptionsProvider:
 
     Used by deployment component reference selects (cross-part dependency).
     """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description="De componenten van dit project.",
+        endpoint="GET /api/v2/projects/{project_name}/components",
+        path="components[].name",
+    )
 
     def __init__(
         self,
@@ -732,6 +805,13 @@ class DomainFormatOptionsProvider:
         "deployment.subdomain",
     ]
 
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "Hangt af van het gekozen base-domain: de streepjes-varianten kunnen altijd, de "
+            "punt-varianten alleen als dat domein losse subdomeinen met punten ondersteunt."
+        ),
+    )
+
     def __init__(self, base_domain: str | None = None, cluster: str | None = None) -> None:
         self.base_domain = base_domain
         self.cluster = cluster
@@ -795,6 +875,15 @@ class ApprovalStatusOptionsProvider:
 class AttachmentOptionsProvider:
     """Provides the ids of attachments in the project-level attachments catalog as options."""
 
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "De ids van de bijlagen in de catalogus van dit project, dus wat er op het "
+            "project-niveau van de attachments-service staat."
+        ),
+        endpoint="GET /api/v2/projects/{project_name}/services/attachments/config",
+        path="[target=project].config",
+    )
+
     def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
         self._yaml_data = yaml_data or {}
 
@@ -822,6 +911,9 @@ class AttachmentOptionsProvider:
 class AttachmentProvideAsOptionsProvider:
     """Static options for how an attachment is delivered into the pod."""
 
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
+
     def get_options(self) -> list[dict[str, Any]]:
         return [
             {"value": "file", "label": "Als bestand (gemount op een pad)"},
@@ -839,6 +931,9 @@ _PUBLISH_TLS_MODE_OPTIONS = [
 class PublishTlsModeOptionsProvider:
     """Static options for how TLS is handled on a published component."""
 
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
+
     def get_options(self) -> list[dict[str, Any]]:
         return list(_PUBLISH_TLS_MODE_OPTIONS)
 
@@ -855,6 +950,11 @@ class PublishTlsOverrideOptionsProvider:
     to every provider that accepts them (see ``bridge._resolve_options``); without them the
     option falls back to the plain wording rather than guessing.
     """
+
+    # Geen bron: de waarden liggen vast (dezelfde drie modi als op het component, plus leeg
+    # voor erven). Alleen het LABEL van de lege keuze wordt uit het project afgeleid, en een
+    # label verandert niets aan wat je mag sturen.
+    options_source: ClassVar[OptionsSource | None] = None
 
     def __init__(self, yaml_data: dict[str, Any] | None = None, yaml_path: str | None = None) -> None:
         self._yaml_data = yaml_data or {}
@@ -884,6 +984,9 @@ class PublishTlsOverrideOptionsProvider:
 class YesNoOptionsProvider:
     """Ja/Nee options for boolean config fields (stored as an explicit YAML boolean)."""
 
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
+
     def get_options(self) -> list[dict[str, Any]]:
         return [
             {"value": "true", "label": "Ja"},
@@ -893,6 +996,9 @@ class YesNoOptionsProvider:
 
 class WakeModeOptionsProvider:
     """The three sleep-mode wake modes: how a sleeping deployment is woken."""
+
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
         return [
@@ -922,6 +1028,10 @@ class SleepAfterDeployOptionsProvider:
     a test run). This only asks.
     """
 
+    # De lijst ligt vast per cluster: hij hangt niet van het project af, alleen van het
+    # cluster dat deze OPI beheert, en dat is ook het cluster dat deze documentatie serveert.
+    options_source: ClassVar[OptionsSource | None] = None
+
     def get_options(self) -> list[dict[str, Any]]:
         from opi.core.config import settings
         from opi.services.catalog.sleep_mode.options import sleep_after_deploy_options
@@ -931,6 +1041,10 @@ class SleepAfterDeployOptionsProvider:
 
 class SleepAfterWakeOptionsProvider:
     """How long a woken deployment stays awake before its deadline is set again."""
+
+    # De lijst ligt vast per cluster: hij hangt niet van het project af, alleen van het
+    # cluster dat deze OPI beheert, en dat is ook het cluster dat deze documentatie serveert.
+    options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
         from opi.core.config import settings
@@ -946,6 +1060,15 @@ class WakerComponentOptionsProvider:
     populated in the edit flow and empty (only the auto option) in the create wizard,
     where components are not defined yet. Empty = let sleep-mode pick automatically.
     """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "De componenten van dit project. Laat het veld weg om sleep-mode zelf te laten "
+            "kiezen; dan bedient de wekker het root-component van de deployment."
+        ),
+        endpoint="GET /api/v2/projects/{project_name}/components",
+        path="components[].name",
+    )
 
     def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
         self.yaml_data = yaml_data or {}
@@ -1079,6 +1202,15 @@ class CrossDomainProjectOptionsProvider:
     every user and is a separate decision.
     """
 
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "De projecten waar je zelf toegang op hebt, zonder dit project zelf. Een peer die "
+            "je niet mag zien kun je hier niet noemen."
+        ),
+        endpoint="GET /api/v2/projects",
+        path="projects[].name",
+    )
+
     def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
         self.yaml_data = yaml_data or {}
         self.current_value = current_value
@@ -1107,6 +1239,15 @@ class CrossDomainPeerDeploymentOptionsProvider:
     and be filled per deployment (that is what the deployment layer is for), hence no
     ``required`` on this field.
     """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "De deployments van het peer-project uit deze regel, alleen die op dit cluster "
+            "draaien. Leeg laten mag op projectniveau: dan vul je hem per deployment in."
+        ),
+        endpoint="GET /api/v2/projects/{peer_project}/deployments",
+        path="deployments[].name",
+    )
 
     def __init__(
         self,
@@ -1153,6 +1294,12 @@ class CrossDomainPeerComponentOptionsProvider:
     a component name is a project-level definition, deployments only reference it, so the
     union is exactly the set of names that could be valid once a deployment is filled in.
     """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description="De componenten van het peer-project uit deze regel.",
+        endpoint="GET /api/v2/projects/{peer_project}/components",
+        path="components[].name",
+    )
 
     def __init__(
         self,
@@ -1208,6 +1355,15 @@ class CrossDomainRuleNameOptionsProvider:
     own, which the merge explicitly allows.
     """
 
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "De namen van de regels op projectniveau: dezelfde naam gebruiken betekent die "
+            "regel aanpassen, een nieuwe naam betekent een eigen regel voor deze deployment."
+        ),
+        endpoint="GET /api/v2/projects/{project_name}/services/cross-domain-access/config",
+        path="[target=project].config.inbound[].name",
+    )
+
     def __init__(
         self,
         yaml_data: dict[str, Any] | None = None,
@@ -1240,6 +1396,12 @@ class CrossDomainLocalComponentOptionsProvider:
     Reads ``components`` from the surrounding form data, like ``WakerComponentOptionsProvider``.
     Empty in the create wizard (no components yet), populated in the edit flow.
     """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description="De componenten van dit project.",
+        endpoint="GET /api/v2/projects/{project_name}/components",
+        path="components[].name",
+    )
 
     def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
         self.yaml_data = yaml_data or {}
@@ -1308,6 +1470,12 @@ class CrossDomainPortOptionsProvider:
     With no component chosen yet the list falls back to the union of the own project's ports
     (``_cross_domain_ports``) for inbound, and stays empty with an explanation for outbound.
     """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "De inkomende poorten van het ontvangende component, plus 4180 als daar een authorization-wall voor staat."
+        ),
+    )
 
     def __init__(
         self,
@@ -1414,6 +1582,9 @@ class KeycloakAccountLinkOptionsProvider:
     is weg -- uit de enum, uit het schema en hier.
     """
 
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
+
     def get_options(self) -> list[dict[str, Any]]:
         return [
             {
@@ -1440,6 +1611,9 @@ class KeycloakAccountLinkOptionsProvider:
 class InviteLanguageOptionsProvider:
     """The two languages an invite's default-language can take."""
 
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
+
     def get_options(self) -> list[dict[str, Any]]:
         return [
             {"value": "nl", "label": "Nederlands"},
@@ -1460,6 +1634,13 @@ class InviteAuthMethodOptionsProvider:
     Offering "Lokaal account" under sso-only would therefore be a choice that silently does
     nothing. Empty selection still means "fall back to whatever the realm allows".
     """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "sso kan altijd; local alleen als het keycloak-template van dit project lokale "
+            "accounts toestaat (services/keycloak/config/template is dan niet sso-only)."
+        ),
+    )
 
     def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
         self.yaml_data = yaml_data or {}
@@ -1493,6 +1674,15 @@ class InviteRealmRoleOptionsProvider:
     never silently drops a role that was removed from the keycloak config on the next save.
     """
 
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "De realm-rollen van dit project: de rollen onder de keycloak-config plus de rol "
+            "van de authorization-wall. Leeg betekent geen rol toekennen."
+        ),
+        endpoint="GET /api/v2/projects/{project_name}/services/keycloak/config",
+        path="[target=project].config.realm-roles[].name",
+    )
+
     def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
         self.yaml_data = yaml_data or {}
         self.current_value = current_value
@@ -1524,6 +1714,9 @@ class HealthCheckSchemeOptionsProvider:
     """Probe scheme options for the health-check service. The empty value means
     'default': fall back to a plain TCP probe on the first inbound port."""
 
+    # De lijst ligt vast: elk project krijgt deze keuzes.
+    options_source: ClassVar[OptionsSource | None] = None
+
     def get_options(self) -> list[dict[str, Any]]:
         return [
             {"value": "", "label": "Standaard (tcp op eerste poort)"},
@@ -1547,6 +1740,15 @@ class InviteApplicationUrlOptionsProvider:
     Anything already stored that is no longer derivable stays selectable, flagged, so
     saving the form does not silently drop it.
     """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description=(
+            "De publieke URL's van dit project, afgeleid uit de deployments en hun "
+            "publish-on-web-instellingen. Leeg betekent geen knop tonen."
+        ),
+        endpoint="GET /api/v2/projects/{project_name}/deployments",
+        path="deployments[].components[].url",
+    )
 
     def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
         self.yaml_data = yaml_data or {}
