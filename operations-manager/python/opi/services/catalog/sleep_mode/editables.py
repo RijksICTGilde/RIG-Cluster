@@ -37,7 +37,7 @@ SLEEP_WAKE_MODE_EDITABLE = Editable(
     values_provider="WakeModeOptionsProvider",
     # Gelijk aan de default van het configmodel; wijken die twee af, dan krijgt wie het
     # formulier gebruikt iets anders dan wie de API gebruikt.
-    default="manual",
+    default="confirm",
     virtualize=SERVICE_VIRTUALIZE,
 )
 
