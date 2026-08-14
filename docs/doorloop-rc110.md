@@ -157,11 +157,15 @@ het verdient een eigen taak op een machine die het wel kan, niet nog een vermeld
 
 ```
 uv run pytest tests/ -q
-8551 passed, 7 skipped, 528 deselected, 20 warnings in 344.50s (5m44)
+8551 passed, 7 skipped, 528 deselected, 20 warnings in 344.50s (5m44)    # b0541eb9
+8555 passed, 7 skipped, 528 deselected, 19 warnings in 326.60s (5m26)    # 74db82f0
 ```
 
 Nul failures, nul errors, met de eigen standaardaanroep (geen eigen `-m`, dus
-`requires_infra` en `e2e` blijven gedeselecteerd).
+`requires_infra` en `e2e` blijven gedeselecteerd). Twee keer gedraaid: één keer op de
+commit waarop de doorloop begon en één keer op de eindcommit, want daar zitten de
+reparaties uit taak 5 in. De vier tests erbij zijn
+`tests/test_dashboard_pods_kerncijfer.py`.
 
 ## Taak 3 - De e2e-tests: GROEN
 
