@@ -40,8 +40,8 @@
 
 {% block content %}
     {{ page_head(
-        "Projecten Overzicht",
-        "Overzicht van alle actieve projecten in het platform met hun status, team en geactiveerde services."
+        "Mijn projecten",
+        "Overzicht van alle projecten waar je rechten op hebt in het platform."
     ) }}
 
     {# ---- Actiebalk (projects-overview/_actiebalk.html.j2) ------------------- #}
@@ -73,6 +73,12 @@
     <form method="get" action="/projects"
           hx-get="/projects"
           hx-select="#projects-lijst"
+          {# De werkbalk ligt BUITEN #projects-lijst en werd dus nooit ververst: de URL
+             verhuisde naar de nieuwe sortering, de lijst sorteerde mee, maar het vinkje
+             bleef op de oude optie staan. hx-select-oob haalt de werkbalk uit hetzelfde
+             antwoord en zet hem apart terug, zodat de gekozen sortering klopt met wat je
+             ziet. Dat kost geen extra verzoek: de pagina komt toch al binnen. #}
+          hx-select-oob="#projects-werkbalk"
           hx-target="#projects-lijst"
           hx-swap="outerHTML"
           hx-trigger="input delay:300ms, search, submit"
@@ -83,7 +89,7 @@
            niet uit gemak: c-toolbar gooit ELK kind weg, ook een kind met een slot, want
            het component heeft geen standaard-slot. Zo verdween het hele zoekveld.
            De inhoud van de slots zijn wel gewone componenten. #}
-        <nldd-toolbar label="Projecten" size="md">
+        <nldd-toolbar id="projects-werkbalk" label="Projecten" size="md">
             <nldd-toolbar-item slot="start" size="md">
                 <c-search-field name="q"
                                 value="{{ project_query }}"
