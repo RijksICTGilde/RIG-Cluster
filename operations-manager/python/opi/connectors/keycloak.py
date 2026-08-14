@@ -415,6 +415,32 @@ class KeycloakConnector:
                 return False
             raise
 
+    async def realm_discovery_available(self, realm_name: str) -> bool:
+        """Second opinion on whether a realm exists, independent of the admin API.
+
+        Every realm serves its own OIDC discovery document, and that document needs
+        no token, no master-realm session and no role: a 200 there proves the realm
+        is up and serving, whatever the admin API just said about it. Callers use
+        this to confirm a negative before anything acts on "the realm is gone" -
+        re-creating a realm that is in fact healthy is the expensive mistake.
+
+        Returns False when the endpoint answers 404 AND when it cannot be reached
+        at all: this only ever overrules a negative, never a positive, so an
+        unreachable endpoint simply leaves the earlier answer standing.
+        """
+        discovery_url = self.get_discovery_url(realm_name)
+        timeout = aiohttp.ClientTimeout(total=10)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session, session.get(discovery_url) as response:
+                if response.status == 200:
+                    logger.debug(f"Realm '{realm_name}' serves its OIDC discovery document")
+                    return True
+                logger.debug(f"Discovery document for realm '{realm_name}' returned HTTP {response.status}")
+                return False
+        except aiohttp.ClientError as e:
+            logger.warning(f"Could not reach the discovery document for realm '{realm_name}': {e}")
+            return False
+
     async def get_realm(self, realm_name: str) -> dict[str, Any] | None:
         """
         Get realm configuration.
