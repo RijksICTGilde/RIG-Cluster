@@ -16,7 +16,7 @@ from jinja2 import Template
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
-from opi.core.cluster_config import assigns_uid_via_scc, get_argo_namespace
+from opi.core.cluster_config import assigns_uid_via_scc, get_argo_namespace, get_namespace_metadata
 from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -314,7 +314,11 @@ class KubectlConnector:
         logger.debug(f"Templating manifest with variables: {variables.keys()}")
 
         template = Template(manifest_content)
-        result = template.render(assigns_uid_via_scc=assigns_uid_via_scc, **variables)
+        result = template.render(
+            assigns_uid_via_scc=assigns_uid_via_scc,
+            namespace_metadata=get_namespace_metadata(settings.CLUSTER_MANAGER),
+            **variables,
+        )
         # convention: files should end with a newline
         if not result.endswith("\n"):
             result += "\n"

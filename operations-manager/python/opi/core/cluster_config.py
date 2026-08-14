@@ -63,6 +63,8 @@ CLUSTER_CONFIG = {
         # nagemeten. Afwezig betekent zwijgen, en dat is het eerlijke antwoord bij een
         # cluster waarvan we het niet weten.
         "assigns_uid_via_scc": False,
+        # Geen platformafspraak op dit cluster: tenant-namespaces krijgen niets extra's.
+        "namespace_metadata": {"labels": {}, "annotations": {}},
         "ca_certificate": {
             "enabled": True,
             "node_path": "/etc/ssl/certs/kind-local-ca.crt",
@@ -143,6 +145,8 @@ CLUSTER_CONFIG = {
             "port": 8081,
         },
         "assigns_uid_via_scc": False,
+        # Geen platformafspraak op dit cluster: tenant-namespaces krijgen niets extra's.
+        "namespace_metadata": {"labels": {}, "annotations": {}},
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
@@ -222,6 +226,13 @@ CLUSTER_CONFIG = {
             "port": 8081,
         },
         "assigns_uid_via_scc": True,
+        # De egress-gateway-annotatie is een ODCN-afspraak, door Kyverno gecontroleerd:
+        # https://docs.rijksapps.nl/egress-internet-traffic/. Bij een foutieve waarde
+        # wordt de namespace onbruikbaar, dus alleen hier zetten.
+        "namespace_metadata": {
+            "labels": {},
+            "annotations": {"egress.projectcalico.org/egressGatewayPolicy": "internet"},
+        },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
@@ -986,6 +997,39 @@ def assigns_uid_via_scc(cluster_name: str) -> bool:
     except ValueError:
         return False
     return cluster_config.get("assigns_uid_via_scc", False)
+
+
+def get_namespace_metadata(cluster_name: str) -> dict[str, dict[str, str]]:
+    """
+    Get the labels and annotations a tenant namespace needs on this cluster.
+
+    Platforms attach requirements to namespaces, and they differ per platform:
+    ODCN wants a Calico egress-gateway annotation that Kyverno validates, other
+    clusters want nothing. Keeping the set here rather than in the template means
+    a new cluster declares its own instead of inheriting someone else's, which is
+    the difference between an inert annotation and a rejected namespace.
+
+    Deliberately a free-form dict and not a fixed `egress_policy` key: the next
+    platform agreement will have a different name.
+
+    Unknown clusters get empty dicts, the same graceful fallback as
+    assigns_uid_via_scc.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        A dict with "labels" and "annotations" keys, each a str -> str mapping
+    """
+    try:
+        cluster_config = get_cluster_config(cluster_name)
+    except ValueError:
+        return {"labels": {}, "annotations": {}}
+    metadata = cluster_config.get("namespace_metadata", {})
+    return {
+        "labels": metadata.get("labels", {}),
+        "annotations": metadata.get("annotations", {}),
+    }
 
 
 def get_min_cpu_m(cluster_name: str) -> int:
