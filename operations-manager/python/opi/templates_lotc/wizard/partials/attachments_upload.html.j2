@@ -58,7 +58,11 @@
             </div>
             {% endif %}
             <label class="utrecht-form-label attachment-upload__label" for="wiz-att-file">Bestand</label>
-            <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
+            {# Een kaal invoerveld, met de vorm van het thema uit wizard.css. Hier stond
+               rvo-file-input, een klasse van de oude bouwlijn die onder LOTC niets laadt.
+               Waarom hier geen <c-file-input-field> staat, en waarom dit veld in de LICHTE
+               boom moet blijven, staat bij .attachment-upload__file in wizard.css. #}
+            <input type="file" id="wiz-att-file" name="file" class="attachment-upload__file">
             <div class="attachment-upload__row">
                 {# De htmx-bedrading gaat via :attrs. Een componenttag laat een los
                    hx-attribuut niet door - de automatische omzetting liet ze daarom
