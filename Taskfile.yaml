@@ -37,33 +37,46 @@ tasks:
         echo "🎯 Cluster Selection"
         echo "=================="
         echo ""
+        # De lijst komt uit de aanwezige .env-taskfile-* bestanden. Stond hier eerder als
+        # hardgecodeerde cases plus een menutekst plus een prompt-bereik: drie plaatsen om
+        # te vergeten bij een nieuw cluster.
+        set --
+        for f in .env-taskfile-*; do
+          [ -f "$f" ] || continue
+          [ "$f" = ".env-taskfile-current" ] && continue
+          set -- "$@" "$f"
+        done
+
+        if [ "$#" -eq 0 ]; then
+          echo "❌ No .env-taskfile-<cluster> files found."
+          exit 1
+        fi
+
         echo "Available clusters:"
-        echo "1) local (kind cluster)"
-        echo "2) odcn-production"
-        echo "3) sandboxed-local (self-contained sandbox with Forgejo)"
+        i=1
+        for f in "$@"; do
+          echo "$i) ${f#.env-taskfile-}"
+          i=$((i + 1))
+        done
         echo ""
-        printf "Select cluster [1-3]: "
+        printf "Select cluster [1-%d]: " "$#"
         read -r CLUSTER_CHOICE
 
-        case $CLUSTER_CHOICE in
-          1)
-            ENV_FILE=".env-taskfile-local"
-            CLUSTER_NAME="local"
-            ;;
-          2)
-            ENV_FILE=".env-taskfile-odcn-production"
-            CLUSTER_NAME="odcn-production"
-            ;;
-          3)
-            ENV_FILE=".env-taskfile-sandboxed-local"
-            CLUSTER_NAME="sandboxed-local"
-            ;;
-          *)
-            echo "❌ Invalid selection. Defaulting to local cluster."
-            ENV_FILE=".env-taskfile-local"
-            CLUSTER_NAME="local"
+        # Geen terugval op local bij een vergissing: stil het verkeerde cluster selecteren is
+        # precies hoe je per ongeluk tegen productie werkt.
+        case "$CLUSTER_CHOICE" in
+          ''|*[!0-9]*)
+            echo "❌ Not a number: '$CLUSTER_CHOICE'"
+            exit 1
             ;;
         esac
+        if [ "$CLUSTER_CHOICE" -lt 1 ] || [ "$CLUSTER_CHOICE" -gt "$#" ]; then
+          echo "❌ Out of range: '$CLUSTER_CHOICE' (expected 1-$#)"
+          exit 1
+        fi
+
+        eval "ENV_FILE=\$$CLUSTER_CHOICE"
+        CLUSTER_NAME="${ENV_FILE#.env-taskfile-}"
 
         if [ ! -f "$ENV_FILE" ]; then
           echo "❌ Environment file not found: $ENV_FILE"
@@ -3355,4 +3368,163 @@ tasks:
         rm -f .sandbox-sso
 
         echo "Cluster rig-sandbox deleted and sandbox artifacts cleaned up"
+    silent: true
+
+  # ---------------------------------------------------------------------------
+  # fundament-poc: het Fundament-platform levert een kaal cluster, dus de laag
+  # tussen Kubernetes en ZAD brengen we zelf mee. Zie
+  # docs/fundament-cluster-checklist.md voor waarom elk onderdeel hier staat.
+  #
+  # Alles is idempotent: opnieuw draaien is veilig en de aangewezen manier om
+  # bij te werken. Dat is geen luxe maar noodzaak, want bij een node-vervanging
+  # moet dit opnieuw.
+  # ---------------------------------------------------------------------------
+
+  fundament:check:
+    desc: "Verify the fundament-poc prerequisites: functl, authentication, and the right cluster"
+    vars:
+      CTX: '{{.KUBE_CONTEXT}}'
+    cmds:
+      - |
+        fail() { echo "❌ $1"; exit 1; }
+
+        [ -n "{{.CTX}}" ] || fail "KUBE_CONTEXT is niet gezet. Draai 'task select-cluster' en kies fundament-poc."
+
+        command -v functl >/dev/null 2>&1 || fail "functl staat niet op de PATH. De kubeconfig gebruikt hem als exec-plugin, dus zonder functl werkt geen enkel kubectl-commando tegen dit cluster."
+
+        functl auth status 2>/dev/null | grep -q "Authenticated: *yes" || fail "functl is niet ingelogd. Draai 'functl auth login' met een API-key uit https://console.fundament-poc.nl (gebruikersmenu rechtsboven, API keys)."
+
+        kubectl config get-contexts -o name 2>/dev/null | grep -qx "{{.CTX}}" || fail "kubectl-context '{{.CTX}}' bestaat niet. Merge de kubeconfig van het cluster erin."
+
+        SERVER=$(kubectl config view --minify --context "{{.CTX}}" -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null)
+        echo "$SERVER" | grep -q "fundament" || fail "Context '{{.CTX}}' wijst naar '$SERVER', en dat lijkt geen Fundament-cluster. Gestopt voordat er iets geïnstalleerd wordt."
+
+        kubectl --context "{{.CTX}}" --request-timeout=30s auth can-i create customresourcedefinitions >/dev/null 2>&1 || fail "Geen rechten om CRD's aan te maken op '{{.CTX}}'."
+
+        echo "✅ functl aanwezig en ingelogd"
+        echo "✅ context {{.CTX}} -> $SERVER"
+        echo "✅ rechten voor CRD's aanwezig"
+    silent: true
+
+  fundament:install-platform:
+    desc: "Install the platform layer fundament-poc does not provide: ingress, TLS, storage, database operator"
+    deps: [fundament:check]
+    vars:
+      CTX: '{{.KUBE_CONTEXT}}'
+      # Gepind, niet 'latest': een installatie moet over een maand hetzelfde opleveren.
+      INGRESS_NGINX_VERSION: '{{default "v1.15.1" .INGRESS_NGINX_VERSION}}'
+      CERT_MANAGER_VERSION: '{{default "v1.21.1" .CERT_MANAGER_VERSION}}'
+      LOCAL_PATH_VERSION: '{{default "v0.0.37" .LOCAL_PATH_VERSION}}'
+      CNPG_VERSION: '{{default "1.27.3" .CNPG_VERSION}}'
+    cmds:
+      - |
+        K="kubectl --context {{.CTX}} --request-timeout=180s"
+
+        # ingress-nginx: de cloud-variant, niet de Kind-variant. MetalLB en de metal-ccm
+        # kennen we hier een echte LoadBalancer toe; de Kind-variant patcht hostPorts en
+        # gaat uit van poortmappings op de control-plane node die hier niet bestaan.
+        echo "📦 ingress-nginx {{.INGRESS_NGINX_VERSION}}"
+        $K apply -f "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-{{.INGRESS_NGINX_VERSION}}/deploy/static/provider/cloud/deploy.yaml" >/dev/null
+        $K -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=180s
+
+        # cert-manager: het platform levert de Gardener cert-extensie (cert.gardener.cloud),
+        # maar onze manifests genereren cert-manager.io-resources. Zelf meebrengen scheelt
+        # een verbouwing van issuer-letsencrypt.yaml.jinja.
+        echo "📦 cert-manager {{.CERT_MANAGER_VERSION}}"
+        $K apply -f "https://github.com/cert-manager/cert-manager/releases/download/{{.CERT_MANAGER_VERSION}}/cert-manager.yaml" >/dev/null
+        for d in cert-manager cert-manager-webhook cert-manager-cainjector; do
+          $K -n cert-manager rollout status "deployment/$d" --timeout=180s
+        done
+
+        # local-path-provisioner: de meegeleverde csi-lvm kan niets provisionen omdat zijn
+        # device-patroon de systeemschijf meepakt, en die configuratie is gardener-beheerd.
+        # Tijdelijk tot de Rook/Ceph-plugin van het platform er is; die brengt ook de
+        # VolumeSnapshotClass mee die local-path niet heeft.
+        echo "📦 local-path-provisioner {{.LOCAL_PATH_VERSION}}"
+        $K apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/{{.LOCAL_PATH_VERSION}}/deploy/local-path-storage.yaml" >/dev/null
+
+        # De default /opt/local-path-provisioner staat op de 24GB-rootpartitie.
+        # /var/lib zit op de grote partitie (2,7 TB vrij), waar kubelet en containerd ook staan.
+        $K -n local-path-storage patch configmap local-path-config --type merge -p \
+          '{"data":{"config.json":"{\n  \"nodePathMap\":[\n    {\n      \"node\":\"DEFAULT_PATH_FOR_NON_LISTED_NODES\",\n      \"paths\":[\"/var/lib/local-path-provisioner\"]\n    }\n  ]\n}\n"}}' >/dev/null
+        $K -n local-path-storage rollout restart deployment/local-path-provisioner >/dev/null
+        $K -n local-path-storage rollout status deployment/local-path-provisioner --timeout=180s
+
+        echo "📦 CloudNativePG {{.CNPG_VERSION}}"
+        $K apply --server-side -f "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-{{.CNPG_VERSION}}.yaml" >/dev/null
+        $K -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=180s
+
+        echo ""
+        echo "✅ Platformlaag geïnstalleerd. Draai 'task fundament:verify' om te controleren dat het werkt."
+    silent: true
+
+  fundament:verify:
+    desc: "Prove the fundament-poc platform layer works: a PVC binds and the ingress has a public address"
+    deps: [fundament:check]
+    vars:
+      CTX: '{{.KUBE_CONTEXT}}'
+      NS: zad-verify
+    cmds:
+      - |
+        K="kubectl --context {{.CTX}} --request-timeout=180s"
+        trap '$K delete namespace {{.NS}} --wait=false >/dev/null 2>&1 || true' EXIT
+
+        echo "🔎 ingress-adres"
+        IP=$($K -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+        [ -n "$IP" ] || { echo "❌ De ingresscontroller heeft geen adres. Zonder MetalLB-toewijzing blijft de service Pending."; exit 1; }
+        echo "   $IP"
+
+        echo "🔎 opslag: bindt een PVC en kan een non-root pod erin schrijven?"
+        $K create namespace {{.NS}} >/dev/null 2>&1 || true
+        cat <<'YAML' | $K apply -f - >/dev/null
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata: {name: verify-data, namespace: zad-verify}
+        spec:
+          accessModes: [ReadWriteOnce]
+          storageClassName: local-path
+          resources: {requests: {storage: 1Gi}}
+        ---
+        apiVersion: v1
+        kind: Pod
+        metadata: {name: verify-write, namespace: zad-verify}
+        spec:
+          restartPolicy: Never
+          # Dezelfde securityContext die deployment.yaml.jinja hier rendert
+          # (assigns_uid_via_scc=false): niemand wijst een UID toe, dus wij pinnen er een.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            fsGroup: 1001
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: probe
+              image: busybox:1.36
+              command: ["sh","-c","echo ok > /data/test.txt && cat /data/test.txt"]
+              volumeMounts: [{name: data, mountPath: /data}]
+          volumes:
+            - {name: data, persistentVolumeClaim: {claimName: verify-data}}
+        YAML
+
+        if ! $K -n {{.NS}} wait --for=jsonpath='{.status.phase}'=Succeeded pod/verify-write --timeout=180s >/dev/null 2>&1; then
+          echo "❌ De schrijftest is niet geslaagd. Toestand:"
+          $K -n {{.NS}} get pvc,pod
+          $K -n {{.NS}} describe pvc verify-data | tail -20
+          exit 1
+        fi
+        echo "   PVC gebonden en beschrijfbaar als uid 1001"
+
+        echo "🔎 cert-manager"
+        $K -n cert-manager get deployment cert-manager >/dev/null 2>&1 || { echo "❌ cert-manager ontbreekt"; exit 1; }
+        echo "   aanwezig"
+
+        echo "🔎 CloudNativePG"
+        $K -n cnpg-system get deployment cnpg-controller-manager >/dev/null 2>&1 || { echo "❌ CloudNativePG ontbreekt"; exit 1; }
+        echo "   aanwezig"
+
+        echo ""
+        echo "✅ Platformlaag werkt. Ingress: $IP"
+        echo "   Zet een A-record router.fundament-poc.rijksapp.dev naar dit adres."
+        echo "   Let op: dit adres is ephemeer, het verschuift als de service herbouwd wordt."
     silent: true
