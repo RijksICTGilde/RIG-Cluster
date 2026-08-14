@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rig-system
+resources:
+  - ../../base
+
+# De base laat storageClassName weg en zou dus de default van het cluster pakken.
+# Op de andere clusters is dat een werkende klasse, hier is het de kapotte csi-lvm.
+# Daarom expliciet zetten in plaats van vervangen.
+patches:
+  - target:
+      kind: PersistentVolumeClaim
+      name: rig-redis-data
+    patch: |-
+      - op: add
+        path: /spec/storageClassName
+        value: local-path

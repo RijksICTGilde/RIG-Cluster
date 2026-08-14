@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rig-system
+resources:
+  - ../../base
+
+# Geen SCC en geen Pod Security Admission op dit cluster, dus niemand wijst een UID toe.
+# Zelfde reden als op de Kind-clusters; zie assigns_uid_via_scc in cluster_config.
+patches:
+  - target:
+      kind: Deployment
+      name: keycloak
+    patch: |-
+      - op: add
+        path: /spec/template/spec/securityContext/runAsUser
+        value: 1000
+      - op: add
+        path: /spec/template/spec/securityContext/runAsGroup
+        value: 1000
+      - op: add
+        path: /spec/template/spec/securityContext/fsGroup
+        value: 1000

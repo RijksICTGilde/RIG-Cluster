@@ -1,0 +1,48 @@
+# podSelector + policyTypes maakt minio-pods automatisch deny-by-default;
+# alleen verkeer dat hieronder expliciet allowed wordt komt door.
+#
+# Overgenomen van de odcn-variant, met één verschil: die selecteert tenant-namespaces
+# op het Capsule-tenantlabel, en Capsule draait hier niet. Dat label zou nergens op
+# matchen en de policy zou dichtvallen (punt 2.2o van een-nieuw-cluster-installeren.md).
+# `created-by: operations-manager` zet onze eigen namespace-template en werkt dus wel.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio-access
+  namespace: rig-system
+spec:
+  podSelector:
+    matchLabels:
+      app: minio
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Platform namespace (OPI gebruikt S3 API + Console).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-system
+      ports:
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 9001
+    # Tenant namespaces gebruiken alleen S3 API.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
+      ports:
+        - protocol: TCP
+          port: 9000
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

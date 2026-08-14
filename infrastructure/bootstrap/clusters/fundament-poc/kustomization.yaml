@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Infrastructuurcomponenten voor fundament-poc.
+#
+# Begonnen bij de negen die op ODCN echt draaien, met twee bewuste weglatingen:
+#
+# - forgejo: alleen de sandbox draait een eigen git-server. Hier gebruiken we dezelfde
+#   git-server als ODCN, dus die hoort niet in de clusterlaag.
+# - registry: egress staat open naar 0.0.0.0/0 op 443, dus ghcr.io en docker.io zijn
+#   direct bereikbaar. Er is geen mirror nodig (zie extensions: [] in cluster_config).
+#
+# Nog niet opgenomen, wachtend op een beslissing:
+#
+# - external-dns: vraagt de DNS-zone en TransIP-credentials. Zodra het A-record
+#   router.fundament-poc.rijksapp.dev staat, kan dit erbij.
+# - backup-destination: staat ook op ODCN buiten de clusterlijst en gaat via
+#   `task bootstrap-backup-destination`. Let op punt 2.2o: die overlay selecteert
+#   tenant-namespaces op het Capsule-tenantlabel, en Capsule draait hier niet.
+#   De selector moet `created-by: operations-manager` worden, zoals in minio/config.
+#
+# secrets/config wordt gegenereerd, niet met de hand geschreven. Draai eerst
+# `task generate-infrastructure-secrets-for-cluster` (met CLUSTER_TYPE=fundament-poc),
+# anders faalt de build hieronder op een ontbrekende map.
+resources:
+  - ../../infrastructure/secrets/config/overlays/fundament-poc
+  - ../../infrastructure/postgresql/database/overlays/fundament-poc
+  - ../../infrastructure/keycloak/controller/overlays/fundament-poc
+  - ../../infrastructure/keycloak/config/overlays/fundament-poc
+  - ../../infrastructure/minio/controller/overlays/fundament-poc
+  - ../../infrastructure/minio/config/overlays/fundament-poc
+  - ../../infrastructure/prometheus/controller/overlays/fundament-poc
+  - ../../infrastructure/redis/controller/overlays/fundament-poc
