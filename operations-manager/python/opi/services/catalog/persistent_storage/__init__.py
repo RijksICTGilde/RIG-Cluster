@@ -27,7 +27,9 @@ class PersistentStorageService(BackupsPageMixin, Service):
         color="grijs-600",
         binding=ServiceBinding.COMPONENT,
         backup_label="pvc",
-        storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
+        # 100Mi, gelijk aan temp-storage: een startwaarde, geen inschatting. Een PVC kan wel
+        # groeien en niet krimpen, dus te ruim beginnen is duurder dan te krap beginnen.
+        storage_config={"name": "data", "type": "persistent", "size": "100Mi", "mount-path": "/data"},
         variables=[var.value for var in PersistentStorageVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
     )
