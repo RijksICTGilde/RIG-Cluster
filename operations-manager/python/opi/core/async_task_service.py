@@ -586,9 +586,18 @@ class AsyncTaskService:
         the whole file, so it clears everything before it -- one refresh is enough, the
         deferred changes do not have to be replayed one by one.
 
-        Returns ``{"count": int, "since": str | None, "task_types": list[str]}``. ``since``
-        is the ISO timestamp of the oldest change still waiting, so the UI can say how long
-        the project has been running ahead of the cluster rather than only that it is.
+        Returns ``{"count": int, "since": str | None, "task_types": list[str],
+        "rollout_in_progress": bool}``. ``since`` is the ISO timestamp of the oldest change
+        still waiting, so the UI can say how long the project has been running ahead of the
+        cluster rather than only that it is.
+
+        ``rollout_in_progress`` covers the gap the count itself cannot: the cutoff above only
+        looks at COMPLETED tasks, so a rollout that is running right now clears nothing yet
+        and ``count`` keeps standing until it finishes. Reporting only the count then makes
+        the UI claim that nothing reached the cluster while a refresh is doing exactly that.
+        It is deliberately the same predicate as the cutoff: only a task that will clear this
+        drift when it completes counts, otherwise an unrelated running task (a sleep, a
+        clone) would announce a rollout that is not happening.
 
         The cutoff is when the rolling-out task STARTED, not when it completed (RC-82). A
         refresh reads the project file once, at the beginning of its own run, and processes
@@ -623,11 +632,27 @@ class AsyncTaskService:
                 .all()
             )
 
+            # _OPEN_STATES en niet _ACTIVE_STATES: een uitrol die nog in de wachtrij staat is
+            # voor wie de pagina leest net zo goed onderweg, en "er is niets naar het cluster
+            # gegaan" is dan al misleidend.
+            running_rollout = (
+                await session.execute(
+                    select(AsyncTask.id)
+                    .where(
+                        AsyncTask.project_name == project_name,
+                        AsyncTask.status.in_(_OPEN_STATES),
+                        _rolled_out(),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
         oldest = rows[0].completed_at if rows else None
         return {
             "count": len(rows),
             "since": oldest.isoformat() if oldest else None,
             "task_types": sorted({row.task_type for row in rows}),
+            "rollout_in_progress": running_rollout is not None,
         }
 
     async def cleanup_old_tasks(self, retention_hours: int = 168) -> int:
