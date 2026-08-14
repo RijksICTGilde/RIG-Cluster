@@ -30,6 +30,7 @@ asking and the easiest to drop while "just showing the deployments".
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -56,6 +57,12 @@ PLAIN_PASSWORD_SECRET = "hunter2-in-the-clear"
 AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nY2lwaGVydGV4dA==\n-----END AGE ENCRYPTED FILE-----"
 DECRYPTED_ENV_VARS = f"DATABASE_PASSWORD={ENV_VALUE_ONE}\nAPI_TOKEN={ENV_VALUE_TWO}\n"
 
+# The bytes of the one attachment that is stored properly encrypted, and what a client
+# holding the same file computes over it. Both must be derivable from the response
+# without a single byte of the file being in it (punt 8).
+ATTACHMENT_BYTES = b"-----BEGIN CERTIFICATE-----\nnot-really-a-cert\n-----END CERTIFICATE-----\n"
+ATTACHMENT_SHA256 = hashlib.sha256(ATTACHMENT_BYTES).hexdigest()
+
 SAMPLE_PROJECT_DATA: dict[str, Any] = {
     "name": PROJECT,
     "display-name": "Test Project",
@@ -81,8 +88,18 @@ SAMPLE_PROJECT_DATA: dict[str, Any] = {
             },
         },
         # The attachments CATALOG: a definition, in the legacy single-key shape whose
-        # body is the definition itself. Its content must never be reported.
-        {"attachments": {"data": [{"id": "server-cert", "content": ATTACHMENT_CONTENT}]}},
+        # body is the definition itself. Its content must never be reported. Two
+        # entries: one stored as it should be (encrypted, so it can be described), and
+        # one whose content is not an AGE block at all -- a file that cannot be measured
+        # must be reported as unmeasured, not as empty.
+        {
+            "attachments": {
+                "data": [
+                    {"id": "server-cert", "filename": "server.pem", "content": AGE_BLOCK},
+                    {"id": "onleesbaar", "filename": "kapot.bin", "content": ATTACHMENT_CONTENT},
+                ]
+            }
+        },
     ],
     "components": [
         {
@@ -212,6 +229,9 @@ def client(mock_settings: Any, mock_project_service: Any) -> TestClient:
         patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
         patch("opi.api.v2.router.get_decoded_project_private_key", AsyncMock(return_value=PRIVATE_KEY)),
         patch("opi.services.project_env_vars.decrypt_age_content", AsyncMock(return_value=DECRYPTED_ENV_VARS)),
+        # The attachments catalogue is described from the DECRYPTED bytes, so the read
+        # opens the block. Imported inside the summary, hence patched at the source.
+        patch("opi.utils.age.decrypt_age_block_to_bytes_sync", return_value=ATTACHMENT_BYTES),
         patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value=f"rig-{PROJECT}"),
     ):
         yield TestClient(app)
@@ -299,7 +319,14 @@ class TestProjectServices:
     def test_deployment_layer_is_reported(self, client: TestClient) -> None:
         usages = _usages(_get(client, f"/api/v2/projects/{PROJECT}/services"), "sleep-mode")
         assert usages == [
-            {"target": "deployment", "component": None, "deployment": "production", "config": {"enabled": True}}
+            {
+                "target": "deployment",
+                "component": None,
+                "deployment": "production",
+                "config": {"enabled": True},
+                # A service that defines nothing describes nothing; only attachments does.
+                "data": None,
+            }
         ]
 
     def test_pending_rollout_travels_with_the_answer(self, client: TestClient) -> None:
@@ -431,6 +458,74 @@ class TestNoSecretEverLeaves:
         assert len(project_level) == 1
         # The catalog is a definition, not configuration: it is reported as "in use", period.
         assert project_level[0]["config"] is None
+
+
+class TestTheAttachmentCatalogueCanBeChecked:
+    """punt 8: facts about each file, so a client can prove the mount holds what it sent.
+
+    The rule that the content never travels is unchanged. What is added is the pair that
+    makes the content checkable without travelling: the byte count and the sha256 of the
+    DECRYPTED file. Over the decrypted bytes because AGE is not deterministic -- a digest
+    of the stored block differs on every upload of the same file and equals nothing the
+    client can compute.
+    """
+
+    def _catalogue(self, client: TestClient) -> dict[str, dict[str, Any]]:
+        usages = _usages(_get(client, f"/api/v2/projects/{PROJECT}/services"), "attachments")
+        project_level = next(u for u in usages if u["target"] == "project")
+        return {entry["id"]: entry for entry in project_level["data"]}
+
+    def test_every_attachment_is_named_with_its_filename(self, client: TestClient) -> None:
+        catalogue = self._catalogue(client)
+        assert sorted(catalogue) == ["onleesbaar", "server-cert"]
+        assert catalogue["server-cert"]["filename"] == "server.pem"
+
+    def test_the_size_and_checksum_describe_the_decrypted_file(self, client: TestClient) -> None:
+        entry = self._catalogue(client)["server-cert"]
+        assert entry["size"] == len(ATTACHMENT_BYTES)
+        assert entry["sha256"] == ATTACHMENT_SHA256
+
+    def test_the_content_itself_is_still_absent(self, client: TestClient) -> None:
+        entry = self._catalogue(client)["server-cert"]
+        assert set(entry) == {"id", "filename", "size", "sha256"}
+        body = client.get(f"/api/v2/projects/{PROJECT}/services", headers={"X-API-Key": API_KEY}).text
+        assert ATTACHMENT_BYTES.decode() not in body
+        assert "CERTIFICATE" not in body
+
+    def test_content_that_cannot_be_read_is_unmeasured_not_empty(self, client: TestClient) -> None:
+        # 0 bytes would be a claim about a file that is there; null says we could not look.
+        entry = self._catalogue(client)["onleesbaar"]
+        assert entry["size"] is None
+        assert entry["sha256"] is None
+
+    def test_a_component_usage_describes_no_catalogue(self, client: TestClient) -> None:
+        # The couplings are a config, not a definition; only the DEFINE side has data.
+        usages = _usages(_get(client, f"/api/v2/projects/{PROJECT}/services"), "attachments")
+        component_level = next(u for u in usages if u["target"] == "component")
+        assert component_level["data"] is None
+
+    def test_a_service_that_defines_nothing_describes_nothing(self, client: TestClient) -> None:
+        for usage in _usages(_get(client, f"/api/v2/projects/{PROJECT}/services"), "keycloak"):
+            assert usage["data"] is None
+
+    def test_a_project_that_defines_nothing_needs_no_key(self, client: TestClient, mock_project_service: Any) -> None:
+        """Describing a definition needs the project key; having no definition must not.
+
+        Resolving that key costs an ``age`` call and RAISES for a project without one, so
+        a services read of a project with no attachments has to stay exactly as cheap and
+        as forgiving as it was.
+        """
+        project = mock_project_service.get(PROJECT)
+        project.data = {"name": PROJECT, "services": ["publish-on-web"], "config": {}}
+        try:
+            with patch(
+                "opi.api.v2.router.get_decoded_project_private_key",
+                AsyncMock(side_effect=AssertionError("the key was resolved for nothing")),
+            ):
+                payload = _get(client, f"/api/v2/projects/{PROJECT}/services")
+            assert [entry["name"] for entry in payload["services"]] == ["publish-on-web"]
+        finally:
+            project.data = SAMPLE_PROJECT_DATA
 
 
 # ---------------------------------------------------------------------------

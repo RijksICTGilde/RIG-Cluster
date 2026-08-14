@@ -12,6 +12,8 @@ guardrailed by the attachment-data-entry / attachment-use-entry $defs in project
 
 from __future__ import annotations
 
+import hashlib
+import logging
 from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.attachments.catalog_model import AttachmentCatalog
@@ -31,6 +33,8 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from opi.services.catalog.actions import ServiceAction
+
+logger = logging.getLogger(__name__)
 
 
 def _attachments_summary(data: dict[str, Any]) -> list[tuple[str, str]]:
@@ -74,6 +78,66 @@ class AttachmentsService(Service):
         validates the ``data`` block against it.
         """
         return AttachmentCatalog if layer is ConfigLayer.PROJECT else None
+
+    def summarize_data(self, data: Any, private_key: str) -> Any:
+        """The catalog as facts about each file: id, filename, size and sha256.
+
+        Never the content, and that stays the rule -- a read response is not a download.
+        What it fixes is the other half of that rule: with the coupling visible and the
+        content invisible there was nothing at all to check, so "the right file is on the
+        mount" was the one thing two practice runs could not demonstrate. A size and a
+        digest let a client compare against the bytes it sent, which is the whole
+        question, without a byte coming back.
+
+        The digest is over the DECRYPTED content, because a digest over the ciphertext
+        answers nothing: AGE is not deterministic, so encrypting the same file twice
+        gives two different blocks and therefore two different digests, and none of them
+        equals what the client can compute over the file on its disk.
+
+        That is not a leak. Reaching this response already requires the project's API key,
+        and the same key can replace this attachment, read every component and deploy the
+        project -- a sha256 of a file that holder uploaded gives them nothing they do not
+        already have. It is a one-way digest of at most 64 KB, so it hands out no bytes;
+        what it does hand out is confirmability, which is what was asked for. The one
+        thing worth naming: for a file whose plaintext is guessable from a small set, a
+        digest confirms which one it is. That is a property of any checksum, it is scoped
+        to holders of the project key, and it is the price of the answer.
+
+        Unreadable content gives ``null`` for both facts rather than a zero: the entry
+        exists, we could not measure it, and 0 bytes would be a lie about a file that is
+        there.
+        """
+        from opi.utils.age import decrypt_age_block_to_bytes_sync, is_age_encrypted
+
+        if not isinstance(data, list):
+            return None
+        summary: list[dict[str, Any]] = []
+        for entry in data:
+            if not isinstance(entry, dict) or not entry.get("id"):
+                continue
+            size: int | None = None
+            digest: str | None = None
+            content = entry.get("content")
+            if isinstance(content, str) and is_age_encrypted(content):
+                try:
+                    raw = decrypt_age_block_to_bytes_sync(content, private_key)
+                except ValueError as error:
+                    # Both ways this fails: age refusing the block, and base64 that is
+                    # not base64. Not the platform's `age` being gone -- that is a
+                    # broken instance and must not read as a broken attachment.
+                    logger.warning("Attachment '%s' could not be read to describe it: %s", entry["id"], error)
+                else:
+                    size = len(raw)
+                    digest = hashlib.sha256(raw).hexdigest()
+            summary.append(
+                {
+                    "id": entry["id"],
+                    "filename": entry.get("filename"),
+                    "size": size,
+                    "sha256": digest,
+                }
+            )
+        return summary
 
     def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         """The coupling list, on the two layers where a coupling means something.
