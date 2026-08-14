@@ -927,7 +927,8 @@ class AddComponentRequest(BaseModel):
     services: list[str] | None = Field(
         None,
         description="Component services list (e.g. ['postgresql-database']), bare names only. NOT inherited from "
-        "project. Per-service config is set separately via PUT /api/v2/projects/{project}/services/{service}.",
+        "project. Per-service config is set separately via "
+        "PUT /api/v2/projects/{project}/services/{service}/config/component/{component}.",
     )
     cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'")
     memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'")
@@ -1274,8 +1275,29 @@ class UpdateComponentRequest(BaseModel):
     )
     services: list[str] | None = Field(
         None,
-        description="Component services list (replaces the existing list), bare names only. Per-service config is "
-        "set separately via PUT /api/v2/projects/{project}/services/{service}.",
+        description=(
+            "Component services list (replaces the named set), bare names only. Services already on the "
+            "component keep their configuration; a name left out is removed with its config. To add or "
+            "remove a single service without naming the rest, use 'add_services' / 'remove_services' "
+            "instead. Per-service config is set separately via "
+            "PUT /api/v2/projects/{project}/services/{service}/config/component/{component}."
+        ),
+    )
+    add_services: list[str] | None = Field(
+        None,
+        description=(
+            "Services to add to this component, bare names only. Appended to the existing list; the rest of "
+            "the list is left untouched, and a service that is already present is skipped. Mutually "
+            "exclusive with 'services'."
+        ),
+    )
+    remove_services: list[str] | None = Field(
+        None,
+        description=(
+            "Services to remove from this component, bare names only. Only the named entries leave this "
+            "component's list (with their config); the project-level selection and every other entry stay. "
+            "Mutually exclusive with 'services'."
+        ),
     )
     cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'.")
     memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'.")
@@ -1284,6 +1306,16 @@ class UpdateComponentRequest(BaseModel):
     def _ports_mutually_exclusive(self) -> UpdateComponentRequest:
         if self.port is not None and self.ports is not None:
             raise ValueError("Provide either 'port' or 'ports', not both")
+        return self
+
+    @model_validator(mode="after")
+    def _service_fields_mutually_exclusive(self) -> UpdateComponentRequest:
+        if self.services is not None and (self.add_services is not None or self.remove_services is not None):
+            raise ValueError("Provide either 'services' or 'add_services'/'remove_services', not both")
+        if self.add_services is not None and self.remove_services is not None:
+            overlap = sorted(set(self.add_services) & set(self.remove_services))
+            if overlap:
+                raise ValueError(f"Services in both 'add_services' and 'remove_services': {overlap}")
         return self
 
 
@@ -1517,6 +1549,8 @@ async def update_component(
                 "path": component_data.path,
                 "rewrite": component_data.rewrite,
                 "services": component_data.services,
+                "add_services": component_data.add_services,
+                "remove_services": component_data.remove_services,
                 "cpu_limit": component_data.cpu_limit,
                 "memory_limit": component_data.memory_limit,
             },
@@ -1540,6 +1574,8 @@ async def update_component(
             path=component_data.path,
             rewrite=component_data.rewrite,
             services=component_data.services,
+            add_services=component_data.add_services,
+            remove_services=component_data.remove_services,
             cpu_limit=component_data.cpu_limit,
             memory_limit=component_data.memory_limit,
         )
@@ -1753,7 +1789,6 @@ async def add_component_to_deployment(
     responses={
         201: {"description": "Service added (or already present) successfully"},
     },
-    deprecated=True,
 )
 @validate_api_token
 async def add_service(
@@ -1766,8 +1801,8 @@ async def add_service(
     Add a service to an existing project.
 
     The service (and any auto-resolved dependencies) is added at the
-    project level.  If ``components`` is provided, those components'
-    ``services`` lists are updated as well.
+    project level.  If ``components`` is provided, the service is appended to those
+    components' ``services`` lists; entries already there keep their config.
 
     The request always succeeds - if the service already exists it is
     reported in ``services_skipped`` / ``warnings``.

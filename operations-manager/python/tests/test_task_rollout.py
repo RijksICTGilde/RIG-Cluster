@@ -181,6 +181,35 @@ class TestComponentHandlersRollout:
         assert result["processing"]["reason"] == SKIPPED_REASON
 
     @pytest.mark.asyncio
+    async def test_update_component_forwards_add_and_remove_services(self):
+        from opi.core.task_handlers_components import handle_update_component
+
+        pm = AsyncMock()
+        pm.update_component = AsyncMock(return_value={"success": True})
+        pm.process_project_from_git = AsyncMock(return_value=True)
+        pm.get_processing_error = MagicMock(return_value=None)
+        pm.get_component_failures = MagicMock(return_value=None)
+        pm.close = AsyncMock()
+
+        progress = _make_progress()
+        with patch(PM_PATH, return_value=pm):
+            await handle_update_component(
+                {
+                    "project_name": "test-project",
+                    "name": "web",
+                    "add_services": ["redis"],
+                    "remove_services": ["attachments"],
+                    "rollout": False,
+                },
+                progress,
+            )
+
+        call_kwargs = pm.update_component.call_args[1]
+        assert call_kwargs["add_services"] == ["redis"]
+        assert call_kwargs["remove_services"] == ["attachments"]
+        assert call_kwargs["services"] is None
+
+    @pytest.mark.asyncio
     async def test_add_component_to_deployment_defers(self):
         from opi.core.task_handlers_components import handle_add_component_to_deployment
 
@@ -285,6 +314,44 @@ class TestServiceHandlersRollout:
         pm.process_project_from_git.assert_not_called()
         assert result["status"] == "success"
         assert result["processing"]["reason"] == SKIPPED_REASON
+
+    @pytest.mark.asyncio
+    async def test_configure_service_patch_forwards_add_and_remove_and_reports_counts(self):
+        from opi.core.task_handlers_components import handle_configure_service
+
+        pm = AsyncMock()
+        pm.patch_service_config_list = AsyncMock(return_value={"success": True, "added": 1, "updated": 0, "removed": 2})
+        pm.process_project_from_git = AsyncMock(return_value=True)
+        pm.get_processing_error = MagicMock(return_value=None)
+        pm.close = AsyncMock()
+
+        progress = _make_progress()
+        with patch(PM_PATH, return_value=pm):
+            result = await handle_configure_service(
+                {
+                    "project_name": "test-project",
+                    "service": "persistent-storage",
+                    "target": "component",
+                    "operation": "patch",
+                    "add": [{"name": "data3", "size": "1Gi", "mount-path": "/data3"}],
+                    "remove": ["data1", "data2"],
+                    "component": "web",
+                    "rollout": False,
+                },
+                progress,
+            )
+
+        call_kwargs = pm.patch_service_config_list.call_args[1]
+        assert call_kwargs["add"] == [{"name": "data3", "size": "1Gi", "mount-path": "/data3"}]
+        assert call_kwargs["remove"] == ["data1", "data2"]
+        assert call_kwargs["component_name"] == "web"
+        pm.configure_service.assert_not_called()
+        pm.clear_service_config.assert_not_called()
+        pm.process_project_from_git.assert_not_called()
+        assert result["status"] == "success"
+        assert result["added"] == 1
+        assert result["updated"] == 0
+        assert result["removed"] == 2
 
 
 # ---------------------------------------------------------------------------

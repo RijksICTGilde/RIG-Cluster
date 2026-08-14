@@ -32,7 +32,7 @@
             {% else %}
             <c-heading type="h3" label="Nieuwe bijlage uploaden"/>
             {% endif %}
-            <p class="rvo-text--sm rvo-text--subtle">Max 256 KB (bijvoorbeeld een certificaat). Koppelen doe je per component.</p>
+            <p class="rvo-text--sm rvo-text--subtle">Max 64 KB (bijvoorbeeld een certificaat). Koppelen doe je per component.</p>
             <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('', true) }}">
             {% if vervangt %}
             <input type="hidden" id="wiz-att-mode" name="mode" value="replace">
