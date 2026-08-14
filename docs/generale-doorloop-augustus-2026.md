@@ -131,4 +131,139 @@ halen en de hele API een 503 te laten geven.
 
 ## Taak 5 - De API-weg en de documentatie
 
-(volgt)
+### De doorloop met curl tegen `/api/v2`
+
+Alle stappen op `e187015e`, tegen het draaiende cluster. Elke asynchrone stap is
+afgewacht op zijn **taak**, niet op een klok.
+
+| Stap | Aanroep | Uitkomst |
+|---|---|---|
+| Aanmaken | `POST /api/v2/projects` | 202, `project_name=rd-xyt`, taak `completed` |
+| Opvragen | `GET /api/v2/projects/rd-xyt` | 200 |
+| Dienst | `POST /api/v2/projects/rd-xyt/services` (`postgresql-database`) | 202, taak `completed` |
+| Deployment | `POST /api/v2/projects/rd-xyt/:upsert-deployment` (`prod`) | 202, taak `completed` |
+| Component | `POST /api/v2/projects/rd-xyt/components` (`web`, gekoppeld aan `prod`) | 202, taak `completed` |
+| Opvragen | `GET /api/v2/projects/rd-xyt` | component `web` + deployment `prod` staan erin |
+| Verwijderen | `DELETE /api/projects/rd-xyt` | 200, alle 17 opruimstappen `success` |
+
+De uitrol is ook echt op het cluster gecontroleerd en niet alleen op het antwoord:
+
+```
+namespace  rig-rd-xyt              Active
+pod        prod-web-...            1/1 Running   0 herstarts
+argocd     rd-xyt-prod             Synced  Healthy
+```
+
+Na het verwijderen was de namespace weg.
+
+### Bevinding 1 - `/openapi.json` noemt de verkeerde beveiliging voor het aanmaken
+
+**Dit is de bevinding die de CLI raakt.**
+
+`POST /api/v2/projects` is het enige endpoint dat geen projectsleutel kan gebruiken -
+het project bestaat nog niet. De code eist daarom een SSO-token
+(`@validate_user_token`, `Authorization: Bearer <token>`), en de docstring van het
+endpoint legt dat ook netjes uit.
+
+Het OpenAPI-document zegt iets anders:
+
+```
+$ jq '.paths["/api/v2/projects"].post.security' openapi.json
+[ { "APIKeyHeader": [] } ]
+
+$ jq '.components.securitySchemes | keys' openapi.json
+[ "APIKeyHeader" ]
+```
+
+Er staat maar één beveiligingsschema in het hele document, en dat wordt aan alle
+**95** v2-operaties gehangen, inclusief deze. Een bearer-schema komt in het document
+niet voor. Wie zich op het document baseert - en dat is precies wat een gegenereerde
+client doet - stuurt `X-API-Key` en krijgt:
+
+```
+HTTP 401 {"detail":"Authentication required - provide a valid Authorization: Bearer token"}
+```
+
+Empirisch bevestigd: met de `ADMIN_API_KEY` in de header geeft dit endpoint 401, met
+een `zad-cli`-token met `aud: zad-api` geeft het 202.
+
+Het is een fout in het **document**, niet in het gedrag: de API doet precies wat hij
+hoort te doen. Maar het document is hier de machineleesbare afspraak, en die klopt niet.
+
+### Bevinding 2 - aanmaken zit op v2, verwijderen niet
+
+`POST /api/v2/projects` bestaat; `DELETE /api/v2/projects/{project_name}` niet. Het
+verwijderen zit op de oude route `DELETE /api/projects/{project_name}`. Wie de v2-API
+afloopt vindt geen manier om een project op te ruimen. Werkt allemaal, maar de
+levenscyclus staat op twee plekken.
+
+Kleinigheid daarbij: die DELETE eist een body (`{"confirmDeletion": true}`) en geeft
+zonder body een 422 met `loc: ["body"]`. Correct, maar niet te raden zonder het
+document erbij.
+
+### De toegestane waarden in `/openapi.json` (nieuw in deze release)
+
+Dit is het stuk dat expliciet getoetst moest worden, en het klopt.
+
+**Een vaste keuzelijst krijgt een echte `enum`.** Niet alleen een zin in de
+beschrijving. Bijvoorbeeld `SleepModeConfig.wake-mode`:
+
+```json
+"enum": ["auto", "confirm", "manual"],
+"x-choices": [
+  {"const": "auto",    "title": "Automatisch", "description": "Wekt bij het eerste bezoek; ..."},
+  {"const": "confirm", "title": "Met bevestiging", ...},
+  {"const": "manual",  "title": "Alleen handmatig", ...}
+]
+```
+
+**Een veld waarvan de keuzes per project verschillen krijgt géén verzonnen `enum`,
+maar een machineleesbare verwijzing.** 25 keer in het document, bijvoorbeeld
+`SleepModeConfig.waker-component`:
+
+```json
+"x-choices-source": {
+  "endpoint": "GET /api/v2/projects/{project_name}/components",
+  "path": "components[].name",
+  "description": "De componenten van dit project. ..."
+}
+```
+
+Er staat dus een endpoint en een pad naar de waarden - genoeg om een client de lijst
+zelf te laten ophalen. Dat is precies wat het plan vroeg.
+
+Alle 12 velden met `x-choices` zijn nagelopen, met `$ref`/`anyOf` opgelost:
+
+- waar een `enum` bestaat, is die **exact gelijk** aan de `x-choices` (4 velden:
+  `provide-as`, `scheme`, `account-link`, `tls`, `wake-mode`);
+- waar geen `enum` staat, accepteert het configmodel ook werkelijk vrije tekst
+  (`domain-mode` is `str | None` en legacy, `keycloak/template` is een bestandsnaam
+  die op schijf bestaat, de duur- en maatvelden zijn vrije Kubernetes-quantities).
+  De lijst is daar een suggestie en geen grens, en dat is een verdedigbaar verschil.
+
+### Het formulier tegenover het configmodel
+
+Het plan zegt: wijkt een keuzelijst in het formulier af van wat het configmodel
+toestaat, dan is **dat** de bevinding. Dat was bij de eerste meting op `418533e5`
+precies het geval, en het is de reden dat deze doorloop opnieuw moest:
+
+- `NamespacePostgresConfig.storage` had `default: "10Gi"`, terwijl de keuzelijst
+  `["50Mi","100Mi","250Mi","500Mi","1Gi"]` is. De standaardwaarde stond dus niet in
+  de lijst waaruit je hem kon kiezen, en het document sprak zichzelf tegen.
+
+`e187015e` repareert dat. Opnieuw gemeten op het draaiende cluster, met een controle
+die per veld de `default` tegen de `x-choices` legt:
+
+```
+velden met x-choices: 12   OK: 12   PROBLEEM: 0
+
+default-language     default='nl'
+template             default='sso-only'
+storage              default='1Gi'      <- was 10Gi
+sleep-after-deploy   default='48h'
+sleep-after-wake     default='1h'
+wake-mode            default='auto'
+```
+
+Elke standaardwaarde staat nu in zijn eigen keuzelijst. De commit zet er bovendien een
+test op, zodat het niet stilletjes terug kan komen.
