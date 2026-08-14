@@ -39,6 +39,7 @@ from opi.core.startup import run_startup_tasks
 from opi.core.static_files import CacheControlledStaticFiles
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
+from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.web.router import web_router
@@ -477,6 +478,19 @@ def create_app() -> FastAPI:
         sorted_paths = dict(sorted(paths.items(), key=lambda p: (not p[0].startswith("/api/v2"), p[0])))
         openapi_schema["paths"] = sorted_paths
 
+        # Welke build dit document maakte. info.version is het nummer van de API en beweegt
+        # niet mee met een wijziging aan de spec; een client die wil weten of hij nog naar
+        # dezelfde waarheid kijkt, had daar dus niets aan. De commit is wat er werkelijk
+        # veranderde, en die staat al in /version. Naast de ETag op het document zelf (zie
+        # opi/middleware/openapi_etag.py): dit is te lezen zonder tweede verzoek, die maakt
+        # een conditionele GET mogelijk.
+        from opi.core.version import get_version_info
+
+        version_info = get_version_info()
+        openapi_schema["info"]["x-spec-revision"] = {
+            key: version_info.get(key, "") for key in ("commit", "branch", "build_date")
+        }
+
         # Add API version info
         openapi_schema["info"]["x-api-info"] = {
             "v1_status": "deprecated - use /api/v2 endpoints",
@@ -528,6 +542,9 @@ def create_app() -> FastAPI:
 
     from opi.middleware.security_headers import SecurityHeadersMiddleware
 
+    # Als eerste toegevoegd, dus als binnenste uitgevoerd: het document wordt pas
+    # beantwoord nadat onderhoud en autorisatie het verzoek hebben doorgelaten.
+    app.add_middleware(OpenApiETagMiddleware)
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(MaintenanceMiddleware)

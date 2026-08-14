@@ -511,6 +511,8 @@ class ClusterBaseDomainOptionsProvider:
             "clusterconfiguratie). Leeg betekent het standaarddomein van het cluster, "
             "__custom__ betekent een eigen domein dat je zelf invult."
         ),
+        endpoint="GET /api/v2/projects/{project_name}/clusters",
+        path="clusters[].base-domains[].value",
     )
 
     def __init__(self, cluster: str | None = None) -> None:
