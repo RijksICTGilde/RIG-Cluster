@@ -310,6 +310,46 @@ class TestElkeConfigRouteIsBekeken:
         assert not missing, f"deze velden hebben een keuzelijst in het formulier maar niet in de API: {missing}"
 
 
+class TestVoorbeeldenUitHetFormulier:
+    """Een veld met een vrij formaat is zonder voorbeeld het lastigst voor een client.
+
+    ``match`` van sleep-mode is een lijst strings; het schema zegt "string" en verder niets,
+    terwijl het om een glob op de deploymentnaam gaat. Het formulier toont dat wel. Daarom
+    gaan de voorbeelden van de visualizer mee naar het document, als het standaard
+    ``examples`` uit JSON Schema.
+
+    Alleen ``examples``, niet ``placeholder``: een placeholder is even vaak een aanwijzing
+    ("Naam van de applicatie") als een waarde, en die als voorbeeld publiceren zou een client
+    iets voorhouden dat hij niet kan versturen.
+    """
+
+    def test_match_toont_hoe_een_patroon_eruitziet(self, sleep_mode_properties: dict[str, Any]) -> None:
+        # Op de items en niet op het veld zelf: een voorbeeld is een instantie van het schema
+        # waar het op staat, en een instantie van een lijstveld zou een lijst zijn.
+        assert sleep_mode_properties["match"]["items"]["examples"] == ["pr-*", "*-preview", "acceptatie"]
+
+    def test_elk_voorbeeld_in_het_formulier_staat_ook_in_de_api(self, spec: dict[str, Any], schemas: dict[str, Any]):
+        from opi.api.openapi_choices import _examples_for, _layer_for, _locate, _service_for
+
+        missing: list[str] = []
+        for path, item in spec["paths"].items():
+            match = _CONFIG_ROUTE_RE.match(path)
+            if not match or "put" not in item:
+                continue
+            body = item["put"]["requestBody"]["content"]["application/json"]["schema"]
+            service, layer = _service_for(match.group("service")), _layer_for(match.group("target"))
+            if service is None or layer is None:
+                continue
+            for yaml_path, examples in _examples_for(service, layer).items():
+                node = _locate(body, yaml_path, schemas)
+                if node is None:
+                    continue
+                gevonden = node.get("examples") or (node.get("items") or {}).get("examples")
+                if gevonden != examples:
+                    missing.append(f"{match.group('service')}:{yaml_path}")
+        assert not missing, f"deze velden tonen voorbeelden in het formulier maar niet in de API: {missing}"
+
+
 class TestEenStandaardwaardeIsKiesbaar:
     """Een standaardwaarde die niet in de keuzelijst staat, is een fout aan één van beide.
 

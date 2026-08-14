@@ -36,6 +36,10 @@ SLEEP_MATCH = EditableVisualizer(
     label="Van toepassing op",
     help_text="Comma-gescheiden. Alleen begint-met (pr-*) of eindigt-met (*-preview), geen andere patronen.",
     placeholder="pr-*, *-preview",
+    # Ook voor de API-documentatie: dit veld is een vrije string, dus zonder voorbeeld weet
+    # een client wel dat er tekst in moet maar niet dat het om een glob op de deploymentnaam
+    # gaat (zie opi/api/openapi_choices.py).
+    examples=["pr-*", "*-preview", "acceptatie"],
 )
 
 SLEEP_AFTER_DEPLOY = EditableVisualizer(
