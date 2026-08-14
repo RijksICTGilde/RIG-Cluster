@@ -223,6 +223,17 @@ def authorize_claims(claims: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: Marker attribute set on a decorated route so the OpenAPI document can tell which
+#: endpoints want a bearer token instead of the project's API key.
+#:
+#: Without it the document said ``X-API-Key`` for every ``/api/`` operation, including the
+#: two that cannot use one -- a client generated from the document sent the wrong header
+#: and got a 401 it could not explain (RC-113, bevinding 1). Reading the marker rather than
+#: listing paths keeps that from happening again: the next route that takes this decorator
+#: is documented correctly without anyone remembering to update a list.
+REQUIRES_USER_TOKEN = "zad_requires_user_token"
+
+
 def validate_user_token(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator requiring a valid SSO bearer token on a route.
 
@@ -249,4 +260,5 @@ def validate_user_token(func: Callable[..., Any]) -> Callable[..., Any]:
         request.state.user = user
         return await func(*args, request=request, **kwargs)
 
+    setattr(wrapper, REQUIRES_USER_TOKEN, True)
     return wrapper
