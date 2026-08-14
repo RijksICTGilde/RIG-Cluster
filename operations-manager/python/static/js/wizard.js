@@ -561,5 +561,14 @@ document.addEventListener('change', function(e) {
             || document.getElementById('modal-wizard-form');
     if (!form) return;
     _seqHidden(form, '_rerender', '1');
+    /* Zelfde reden als bij een rij toevoegen of verwijderen: dit is HERTEKENEN en geen
+       opslaan. Een cascade vult juist de velden waar de volgende keuze van afhangt, dus op
+       dat moment staan er per definitie verplichte velden leeg. Zonder dit weigert de
+       browser de indiening zonder een woord te zeggen: geen fout, geen verzoek, en dan
+       lijkt het alsof de lijst eronder niet reageert.
+       Gemeld op Bron-project bij cross-domain: kiezen leverde geen enkele POST op. */
+    var validatieStond = form.noValidate;
+    form.noValidate = true;
     htmx.trigger(form, 'submit');
+    form.noValidate = validatieStond;
 });
