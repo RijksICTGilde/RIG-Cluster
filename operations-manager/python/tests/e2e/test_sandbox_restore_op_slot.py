@@ -31,7 +31,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 import subprocess
 from typing import TYPE_CHECKING, Any
 
@@ -78,7 +77,7 @@ def database_project(
         yield created
     finally:
         page.close()
-        if created is not None and not os.environ.get("E2E_KEEP_PROJECT"):
+        if created is not None:
             sandbox_api.delete_project_via_api(sandbox_url, created.name, created.api_key, verify_ssl=_VERIFY_SSL)
 
 
