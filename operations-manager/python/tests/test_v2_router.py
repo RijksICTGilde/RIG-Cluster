@@ -222,6 +222,123 @@ class TestServiceConfigPatch:
         mock_task_service.create_task.assert_not_called()
 
 
+class TestListInsideObjectConfigPatch:
+    """The same PATCH on a list that sits inside an object-shaped config.
+
+    ``invite.active``, ``cross-domain-access.inbound``/``outbound`` and
+    ``sleep-mode.match`` are lists with only a PUT to reach them, so putting one entry in
+    meant resending all the others -- and the invite key, which no read response gives
+    back. Each list gets its own route (the two directions of cross-domain-access hold
+    different entries, so one body could not be typed for both), with the same add/remove
+    body as storage and attachments.
+    """
+
+    _INVITE = "/api/v2/projects/{project_name}/services/invite/config/project/active"
+    _MATCH = "/api/v2/projects/{project_name}/services/sleep-mode/config/project/match"
+
+    def test_every_list_config_has_its_own_patch_route(self, v2_client: TestClient) -> None:
+        spec = v2_client.get("/openapi.json").json()
+        for path in (
+            self._INVITE,
+            self._MATCH,
+            "/api/v2/projects/{project_name}/services/cross-domain-access/config/project/inbound",
+            "/api/v2/projects/{project_name}/services/cross-domain-access/config/project/outbound",
+            "/api/v2/projects/{project_name}/services/cross-domain-access/config/deployment/{deployment_name}/inbound",
+        ):
+            assert "patch" in spec["paths"].get(path, {}), f"no PATCH on {path}"
+
+    def test_body_is_typed_per_list(self, v2_client: TestClient) -> None:
+        spec = v2_client.get("/openapi.json").json()
+        schemas = spec["components"]["schemas"]
+
+        invite_ref = spec["paths"][self._INVITE]["patch"]["requestBody"]["content"]["application/json"]["schema"][
+            "$ref"
+        ]
+        assert invite_ref.endswith("InviteConfigActivePatch")
+        assert schemas["InviteConfigActivePatch"]["properties"]["add"]["anyOf"][0]["items"]["$ref"].endswith(
+            "InviteEntry"
+        )
+
+        # a list of plain strings has no item model: the value itself is the entry
+        match_ref = spec["paths"][self._MATCH]["patch"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        assert match_ref.endswith("SleepModeConfigMatchPatch")
+        assert schemas["SleepModeConfigMatchPatch"]["properties"]["add"]["anyOf"][0]["items"] == {"type": "string"}
+
+    def test_adding_an_invite_forwards_only_that_entry(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/services/invite/config/project/active",
+            headers={"X-API-Key": API_KEY},
+            json={"add": [{"key": "tweede-geheim", "realm-roles": ["editor"]}]},
+        )
+
+        _assert_accepted(response, "configure_service")
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["operation"] == "patch"
+        assert payload["list_field"] == "active"
+        assert payload["add"] == [{"key": "tweede-geheim", "realm-roles": ["editor"]}]
+        assert payload["remove"] == []
+
+    def test_removing_a_cross_domain_rule_names_its_direction(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/services/cross-domain-access/config/project/outbound",
+            headers={"X-API-Key": API_KEY},
+            json={"remove": ["naar-api"]},
+        )
+
+        _assert_accepted(response, "configure_service")
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["list_field"] == "outbound"
+        assert payload["remove"] == ["naar-api"]
+        assert payload["add"] == []
+
+    def test_a_plain_value_list_forwards_the_values_themselves(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/services/sleep-mode/config/project/match",
+            headers={"X-API-Key": API_KEY},
+            json={"add": ["test-*"], "remove": ["acc-*"]},
+        )
+
+        _assert_accepted(response, "configure_service")
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["list_field"] == "match"
+        assert payload["add"] == ["test-*"]
+        assert payload["remove"] == ["acc-*"]
+
+    def test_a_list_the_service_does_not_have_is_a_404(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/services/invite/config/project/niet-bestaand",
+            headers={"X-API-Key": API_KEY},
+            json={"add": [{"key": "x"}]},
+        )
+
+        assert response.status_code == 404
+        mock_task_service.create_task.assert_not_called()
+
+    def test_patch_without_add_or_remove_is_a_422(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/services/invite/config/project/active",
+            headers={"X-API-Key": API_KEY},
+            json={},
+        )
+
+        assert response.status_code == 422
+        mock_task_service.create_task.assert_not_called()
+
+
 class TestV2UpsertDeployment:
     """Tests for POST /api/v2/projects/{project_name}/:upsert-deployment."""
 
