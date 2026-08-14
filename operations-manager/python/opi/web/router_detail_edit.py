@@ -1350,7 +1350,13 @@ async def _process_and_save_modal_edit(
     try:
         await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow.flow_id})")
     except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
-        logger.warning("Modal wizard save rejected by validation for %s (flow=%s): %s", project_name, flow.flow_id, e)
+        logger.warning(
+            "Modal wizard save rejected for %s (flow=%s, %s): %s",
+            project_name,
+            flow.flow_id,
+            type(e).__name__,
+            e,
+        )
         return existing_data, _render_modal_review(
             request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
         )
