@@ -805,6 +805,117 @@ Expliciet, zodat niemand het voor gemeten aanziet.
    `c0be0074`; daarna kwam er nog een additieve OpenAPI-commit bij. Zie taak 2.
 5. **Productie.** Buiten scope, zoals het plan zegt.
 
+## Naschrift - verweesde ArgoCD-mappen, gevonden en gerepareerd
+
+Na afloop van de metingen viel op dat de git-server verkeer bleef krijgen terwijl er niets
+draaide, en dat de ArgoCD-UI **"Unable to load data: revision main must be resolved"** gaf.
+
+### Wat er aan de hand was
+
+Vijf projecten waren verwijderd - projectbestand 404, namespace weg - maar hun map stond
+nog in `zad-argo-user-applications`:
+
+```
+sandboxed-local/enval-ft5/   enval-ft5-productie-argocd-application.yaml
+sandboxed-local/enval-l34/   ...
+sandboxed-local/invit-05n/   ...
+sandboxed-local/sleep-bsz/   ...
+sandboxed-local/sleep-j18/   ...
+```
+
+De app-of-apps `user-applications` leest elke submap, dus maakte hij hun Application
+telkens opnieuw aan. Die faalde vervolgens op:
+
+```
+Failed to load target state: ... ./sandboxed-local/enval-l34/productie: app path does not exist
+```
+
+`kubectl delete application` hielp niet: de Application stond meteen weer terug met
+`deletionTimestamp: null`. En met deze syncPolicy houdt dat nooit op:
+
+```
+retry: { limit: -1, backoff: { duration: 30s, maxDuration: 30s } }
+```
+
+Oneindig opnieuw proberen, elke 30 seconden, zonder oplopende backoff. De UI-fout is
+dezelfde oorzaak van de andere kant: `GetRevisionMetadata` heeft geen opgeloste revisie
+om metadata bij op te halen, en meldt dan "revision main must be resolved".
+
+### Eerlijk over de diagnose
+
+Ik heb deze wezen eerst als **oorzaak van de git-belasting** aangewezen. Dat was
+redeneren, geen meten, en het klopte niet. De telling over drie minuten:
+
+```
+healthz-probes : 54     (kubelet, geen git)
+git-fetches    :  4
+git-pushes     :  3
+API-aanroepen  : 12
+```
+
+Vier fetches in drie minuten. De echte piek kwam van de suites zelf - elke projectmutatie
+in ZAD is een commit met push, en de sandbox-, reallife- en punt14-suites maken er samen
+duizenden. De wezen zijn een correctheidsprobleem, geen belastingprobleem.
+
+### Hoe ze konden ontstaan
+
+Drie lagen die het elk hadden moeten tegenhouden.
+
+**1. De verwijdering besliste op een verouderde checkout.**
+
+```python
+project_argocd_folder = os.path.join(working_dir, cluster, project_name)
+if os.path.exists(project_argocd_folder):
+    shutil.rmtree(...)
+else:
+    ... "status": "not_found"      # geen fout, gewoon door
+```
+
+`working_dir` is een lokale kloon. De connector wordt **gecached** op de project-manager,
+`ensure_repo_cloned()` ververst **hooguit een keer per proces** (`_fetched_in_session`), en
+`git fetch` verplaatst alleen de remote refs en raakt de werkboom niet aan. `os.path.exists`
+kijkt dus naar een checkout die ouder kan zijn dan het project zelf.
+
+**2. Een ontbrekende map was geen fout.** Bij een project zonder deployments op dit cluster
+is "niet gevonden" correct. Bij een project **met** deployments hoort de map er te zijn, en
+betekent "niet gevonden" dat we hem niet konden vinden. Dat onderscheid ontbrak, dus werd
+het projectbestand weggegooid terwijl de map bleef staan - en daarna is er geen bron meer
+om tegen te vergelijken.
+
+**3. Niets meldde het achteraf.** Er is een opruimrapport
+(`GET /api/v2/admin/orphans/report`), maar het keek naar databases, Keycloak-realms,
+Keycloak-clients, MinIO-buckets en stale marks. ArgoCD-Applications en GitOps-mappen zaten
+er **niet** in.
+
+Daar bovenop, in de testlaag: de sandboxfixtures ruimen op binnen
+`with contextlib.suppress(Exception)`, dus een mislukte verwijdering is onzichtbaar.
+
+Het zijn testprojecten (`invit-`, `sleep-`, `enval-` uit de invite-, sleep-mode- en
+env-vars-tests), maar de fout zit in het platform; de suite maakte hem alleen op schaal
+zichtbaar. Het is **geen regressie van deze release**: de verwijdercode zit niet in de
+commits van `release-augustus-2026`.
+
+### Wat er gerepareerd is
+
+| | |
+|---|---|
+| `GitConnector.refresh_working_tree()` | nieuw: verse checkout voordat iemand op de aanwezigheid van een pad afgaat |
+| `_delete_project_argocd_folder` | ververst nu eerst, en een ontbrekende map bij een project **met** deployments is een fout (`status: missing`, `success: False`) - dan wordt het projectbestand niet weggegooid |
+| `sweep()` | nieuwe categorie `gitops_folders`: een map zonder bijbehorend project is een `orphan_candidate` |
+
+Met toetsen erop: dat de werkboom ververst wordt vóór de bestaanscontrole, dat een
+ontbrekende-maar-verwachte map `success` op False zet, en dat het rapport een map zonder
+project als wees aanmerkt.
+
+De vijf bestaande wezen zijn met de hand uit `zad-argo-user-applications` verwijderd.
+Daarna: **32 -> 27 Applications, 0 niet-Synced**, en de UI-fout weg.
+
+### Wat hier nog open blijft
+
+De `contextlib.suppress(Exception)` in de sandboxfixtures is **niet** aangepast. Die hoort
+in een eigen taak thuis: een opruiming die stilletjes faalt hoort de suite te laten klagen,
+en dat raakt meer fixtures dan deze ene.
+
 ## Bevindingen op een rij
 
 Geen enkele hiervan blokkeert de merge, tenzij anders vermeld.
@@ -821,3 +932,7 @@ Geen enkele hiervan blokkeert de merge, tenzij anders vermeld.
 | 8 | Het gedragsoppervlak heeft niet-vastgelegde drift op zeven andere paden | testlaag | waarneming |
 | 9 | Op `/actions` staan de actienamen en hun omschrijving tegen tegenoverliggende randen | UI, cosmetisch | klein |
 | 10 | Eén `xpassed` in de e2e-suite: een `xfail`-markering loopt achter | testlaag | klein |
+| 11 | Verwijderen van een project liet zijn ArgoCD-map staan (beslissing op een verouderde checkout; ontbrekende map werd weggeslikt) | opruimweg | **gerepareerd in deze PR** |
+| 12 | Het opruimrapport keek niet naar ArgoCD-Applications of GitOps-mappen | detectie | **gerepareerd in deze PR** |
+| 13 | Sandboxfixtures ruimen op binnen `contextlib.suppress(Exception)`: een mislukte opruiming is onzichtbaar | testlaag | eigen taak |
+| 14 | Onder zware gelijktijdige belasting overschrijdt `GET /api/tasks/{id}` de 30 seconden terwijl de probes `ok` blijven melden | API | waarneming |
