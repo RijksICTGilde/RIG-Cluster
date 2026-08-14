@@ -205,20 +205,19 @@ class MinioConnector:
         from opi.core.metrics import track_subprocess_memory
 
         if stdin_input:
-            # Use shell execution with EOF markers for stdin input
-            # Create cmd_str for shell command
-            cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
-            cmd_str = f"mc {cmd_args_str}"
-            shell_cmd = f"{cmd_str} <<'EOF'\n{stdin_input}\nEOF"
-
-            logger.debug("Running mc shell command with stdin")
-
-            process = await asyncio.create_subprocess_shell(
-                shell_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env
+            # No shell: args and stdin go to mc verbatim, so names with spaces or
+            # shell metacharacters stay data and never become command text.
+            process = await asyncio.create_subprocess_exec(
+                "mc",
+                *args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=cmd_env,
             )
 
             async with track_subprocess_memory("minio-mc"):
-                stdout, stderr = await process.communicate()
+                stdout, stderr = await process.communicate(input=stdin_input.encode())
         else:
             # Use regular exec for commands without stdin
             cmd = ["mc"]
