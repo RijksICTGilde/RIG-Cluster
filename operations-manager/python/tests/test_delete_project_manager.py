@@ -350,17 +350,73 @@ class TestDeleteProjectArgocdFolder:
         assert deletion_results["errors"] == []
 
     @pytest.mark.asyncio
+    async def test_missing_folder_is_an_error_when_the_project_had_deployments(self):
+        """Een map die er HOORT te zijn en er niet is, is een fout en geen schouderophalen.
+
+        Dit is de wees uit de generale doorloop: vijf projecten waren weg (projectbestand
+        404, namespace weg) terwijl hun map in zad-argo-user-applications bleef staan. De
+        root-application maakte hun Application telkens opnieuw aan, die faalde op
+        'app path does not exist', en met retry limit -1 gebeurde dat elke 30 seconden
+        opnieuw. Ze waren met kubectl niet weg te krijgen.
+
+        De poort is dat `success` op False gaat: daarop hangt of het projectbestand
+        verwijderd wordt, en juist dat mag niet gebeuren zolang de map er nog staat.
+        """
+        mock_pm = _make_project_manager_mock()
+        manager = DeleteProjectManager(mock_pm)
+        deletion_results: dict = {"operations": [], "errors": [], "success": True}
+
+        with patch("os.path.exists", return_value=False):
+            await manager._delete_project_argocd_folder("test-project", "local", deletion_results, expect_folder=True)
+
+        folder_ops = [op for op in deletion_results["operations"] if op["type"] == "project_argocd_folder_deletion"]
+        assert len(folder_ops) == 1
+        assert folder_ops[0]["status"] == "missing"
+        assert deletion_results["errors"], "een ontbrekende map hoort een fout op te leveren"
+        assert deletion_results["success"] is False, (
+            "success moet False worden, anders wordt het projectbestand alsnog weggegooid "
+            "en blijft de map als wees achter"
+        )
+
+    @pytest.mark.asyncio
+    async def test_working_tree_is_refreshed_before_the_existence_check(self):
+        """De aanwezigheid van de map wordt op een VERSE checkout bepaald.
+
+        De connector wordt gecached op de project-manager en `ensure_repo_cloned` fetcht
+        hooguit eenmaal per proces - en `git fetch` verplaatst alleen de remote refs, niet
+        de werkboom. Zonder verversen beslist `os.path.exists` op een checkout die ouder
+        kan zijn dan het project zelf, en dat is hoe de wezen ontstonden.
+        """
+        mock_pm = _make_project_manager_mock()
+        manager = DeleteProjectManager(mock_pm)
+        deletion_results: dict = {"operations": [], "errors": [], "success": True}
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("os.path.exists", return_value=True),
+            patch("shutil.rmtree"),
+        ):
+            await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
+
+        gitops_connector = await mock_pm.get_git_connector_for_argocd()
+        gitops_connector.refresh_working_tree.assert_awaited()
+
+    @pytest.mark.asyncio
     async def test_errors_are_captured_not_raised(self):
         """Errors should be captured in results, not raised."""
         mock_pm = _make_project_manager_mock()
         mock_pm.get_git_connector_for_argocd = AsyncMock(side_effect=RuntimeError("git error"))
         manager = DeleteProjectManager(mock_pm)
-        deletion_results: dict = {"operations": [], "errors": []}
+        deletion_results: dict = {"operations": [], "errors": [], "success": True}
 
         await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
 
         assert len(deletion_results["errors"]) > 0
         assert "git error" in deletion_results["errors"][0]
+        assert deletion_results["success"] is False, "een mislukte opruiming mag niet als geslaagd doorgaan"
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +570,11 @@ class TestDeleteProjectOrchestration:
             patch.object(manager, "delete_deployment", new_callable=AsyncMock) as mock_delete_dep,
             patch.object(manager, "_cleanup_project_infrastructure", new_callable=AsyncMock) as mock_infra_cleanup,
             patch.object(manager, "_cleanup_project_keycloak_realm", new_callable=AsyncMock) as mock_realm_cleanup,
+            # Deze stap hoort bij de gepatchte opruimstappen: dit project heeft een deployment
+            # op dit cluster, dus de ArgoCD-map WORDT verwacht, en een ontbrekende map is sinds
+            # die controle een echte fout. Zonder patch faalt deze test op iets waar hij niet
+            # over gaat; het gedrag zelf staat in TestDeleteProjectArgocdFolder.
+            patch.object(manager, "_delete_project_argocd_folder", new_callable=AsyncMock),
             patch.object(manager, "_delete_project_file", new_callable=AsyncMock) as mock_delete_file,
             patch(
                 "opi.manager.delete_project_manager.get_project_store",
