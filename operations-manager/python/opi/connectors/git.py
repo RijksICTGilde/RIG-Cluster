@@ -803,6 +803,28 @@ class GitConnector:
             logger.warning(f"Error ensuring correct branch: {e}")
             # Don't raise here, as the repository might still be usable
 
+    async def refresh_working_tree(self) -> None:
+        """Bring the local checkout in line with the remote branch.
+
+        ``ensure_repo_cloned`` is niet genoeg voor wie een BESLISSING neemt op wat er wel
+        of niet op schijf staat. Twee redenen, allebei gemeten:
+
+        - hij ververst hooguit EEN keer per proces (``_fetched_in_session``), en een
+          connector wordt gecached op de project-manager. Een langlopende pod kijkt dus
+          naar een checkout die willekeurig oud kan zijn;
+        - ``git fetch`` verplaatst alleen de remote refs en raakt de werkboom niet aan.
+          ``os.path.exists`` ziet daarna nog steeds de oude toestand.
+
+        Dat kostte vijf verweesde ArgoCD-mappen: het opruimen van een project keek met
+        ``os.path.exists`` in zo'n verouderde kloon, concludeerde "niet aanwezig", en liet
+        de map in de repo staan terwijl het projectbestand wel verdween.
+
+        Alles wat op de aanwezigheid van een pad afgaat, hoort dit eerst aan te roepen.
+        """
+        await self.ensure_repo_cloned()
+        await self._pull_latest()
+        self._fetched_in_session = True
+
     async def _fetch_latest(self) -> None:
         """Fetch the latest changes from the repository."""
         if not self._repo_cloned:
