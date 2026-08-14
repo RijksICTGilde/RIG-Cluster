@@ -133,7 +133,7 @@ class TestSleepMode:
         # Een standaard hoort in `default`, en hij moet ook echt een van de keuzes zijn.
         assert sleep_mode_properties["sleep-after-deploy"]["default"] == "48h"
         assert sleep_mode_properties["sleep-after-wake"]["default"] == "1h"
-        assert sleep_mode_properties["wake-mode"]["default"] == "manual"
+        assert sleep_mode_properties["wake-mode"]["default"] == "confirm"
         assert "48h" in _consts(sleep_mode_properties["sleep-after-deploy"])
 
     def test_waker_component_wijst_de_bron_aan_in_plaats_van_een_vaste_lijst(

@@ -48,7 +48,7 @@
       "title": "Title"
     },
     "wake-mode": {
-      "default": "manual",
+      "default": "confirm",
       "description": "What the waker does with a visitor: 'auto' wakes on the first browser GET, 'confirm' shows a button first, 'manual' only informs.",
       "enum": [
         "auto",
