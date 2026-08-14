@@ -1437,7 +1437,22 @@ voorbeeld en de foutmelding erbij die je krijgt als je het overslaat.
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+**Keycloak vraagt om een besluit op projectniveau, een database niet.** Dat is het hele
+verschil, en het is geen inconsistentie maar de regel zelf.
+
+Een database die vanzelf wordt bijgeschakeld krijgt een configuratie die volledig af te
+leiden is: het project is bekend, de naam volgt eruit, en er valt niets te kiezen wat
+iemand anders zou hebben gekozen. Bij `keycloak` is dat niet zo. Daar staat een keuze aan
+het begin -- welke `template` -- en die bepaalt hoe de realm eruitziet en wat er wel en niet
+in staat. Die keuze namens iemand maken is niet hetzelfde als een gat invullen; het is
+beslissen wat het project is.
+
+Vandaar dat de weigering blijft. `postgresql-database` mag zichzelf aanzetten omdat er
+niets te beslissen viel, `keycloak` niet omdat er wél iets te beslissen valt.
+
+**Wat daarmee nog niet beantwoord is,** en waar wij het mee eens zijn: de foutmelding zegt
+*dát* er projectconfiguratie nodig is en niet welke. Dat blijft staan als losse verbetering,
+los van dit antwoord -- zie de vraag hierboven, laatste alinea.
 
 ---
 
@@ -1495,7 +1510,58 @@ Concreet dus drie vragen:
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+Op alle drie de vragen een antwoord, en jullie voorstel voor de toevoeg-vorm is
+ingegeven.
+
+**1. Dat pad komt er niet -- hij heeft nooit bestaan.** `PUT .../services/{service}`
+stond alleen in teksten: in de `deprecated`-verwijzing van `POST /services` en in de
+beschrijving van het `services`-veld. De echte schrijfroutes zijn de gegenereerde
+`PUT /projects/{p}/services/{service}/config/component/{component}` (en
+`config/project`, `config/deployment/{d}`). Die upsert zet de configuratie, én bindt
+de dienst aan dat ene component als hij er nog niet was -- maar hij bestaat alleen voor
+diensten die op die laag config dragen, én hij wil een config-lichaam zien. Een kale
+binding zonder rest te noemen was er inderdaad niet. De veldbeschrijvingen zijn
+rechtgezet.
+
+**2. De toevoeg-vorm is er, met letterlijk jullie namen.** De PATCH kent nu
+`add_services` en `remove_services` naast `services`:
+
+```sh
+curl -X PATCH -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"add_services":["redis"]}'         "$BASE/v2/projects/$P/components/api"
+curl -X PATCH -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"remove_services":["attachments"]}' "$BASE/v2/projects/$P/components/api"
+```
+
+- `add_services` voegt toe zonder de rest te noemen. Een dienst die er al stond blijft
+  staan, mét zijn configuratie. De projectselectie loopt mee zoals bij add_component:
+  een dienst die een projectbesluit vraagt (keycloak, attachments zonder catalogus)
+  weigert nog steeds met dezelfde melding -- die orde blijft.
+- `remove_services` haalt alleen de genoemde dienst van alleen dat component, met zijn
+  config (dat ís wat weghalen betekent). De projectselectie en alle andere entries
+  blijven staan.
+- Beide samen mag (remove gaat eerst). `services` naast `add_`/`remove_services` is een
+  422 met een volzin, geen gok. Een naam die in beide lijsten staat eveneens.
+- De racy-lijn uit jullie bezwaar verdwijnt hierdoor aan de serverkant: de aanroeper
+  berekent geen lijst meer, de server past de delta toe op het bestand dat hij op dat
+  moment zelf heeft, achter de taakmachinerie.
+
+`services` zelf verandert van betekenis in precies één opzicht, en dat is de reparatie
+uit vraag 17: een dienst die in de nieuwe lijst voorkomt én er al stond, behoudt zijn
+entry -- de configuratie wordt niet meer herbouwd. Wie uit de lijst valt, verdwijnt
+met zijn config. Voor een client die de hele lijst stuurt verandert er daardoor niets
+aan de uitkomst van diens bedoeling, alleen aan het onbedoelde verlies.
+
+**3. De afraden-status was geen echte waarschuwing, en hij is weg.** `POST /services`
+verwees naar een opvolger die niet bestond; het label was dus overijverig, niet
+beschermend. Het label is van beide versies gehaald. Het endpoint voegt toe en vervangt
+nooit -- bestaande entries blijven staan -- en blijft prima bruikbaar voor "bind aan
+deze component(en)". Wat het niet kan is weghalen; daarvoor is nu `remove_services`.
+
+Vastgelegd in `tests/test_update_component.py::TestUpdateComponentServices` (inclusief
+de weigeringsgevallen), met de routerdoorvoer in `tests/test_v2_router.py` en
+`tests/test_v1_router_async.py`, en de opgeheven afraden-status vastgepind in
+`tests/test_v2_flow.py`.
 
 ## 17. Wist het vervangen van `services` de attachment-koppeling?
 
@@ -1518,4 +1584,185 @@ bewaren dat op dezelfde manier verdwijnt.
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+**De melding klopt, de diagnose is er nu ook, en het is gerepareerd.** Wij hoefden hem
+niet te reproduceren: het zit in de code zichtbaar, en de `attachments: []` die jullie
+zagen is precies de vorm die het optreedt.
+
+**De schuldige regel.** De PATCH verving de lijst door een versie die alleen uit de
+namen werd herbouwd (`build_component_service_entries`). Die functie kent de bestaande
+entries niet: een dienst werd een kale string, storage kreeg verse defaults. Wat er eerst
+als `{"reference": "attachments", "config": [koppelingen]}` stond, werd `"attachments"`.
+De selectie bleef, de koppelingen waren weg -- en het viel niet op omdat het component
+er achteraf onschuldig uitziet: `attachments` staat er nog, alleen zijn config leeg.
+
+**Waar `attachments: []` vandaan kwam.** Uit het leesmodel, niet uit het projectbestand.
+`GET /projects/{p}` bouwt per component een `attachments`-lijst uit diens config; geen
+config meer, dus een lege lijst. Precies wat de doorloop rapporteerde: "`attachments`
+stond gewoon in die lijst". De catalogus met de bestanden zelf (projectlaag, `data`)
+werd nooit aangeraakt -- de inhoud bestond nog, alleen de koppelingen waren weg.
+
+**Op de vervolgvraag: welke diensten bewaren nog meer per component iets.** Alles met
+een config-model op de componentlaag liep hetzelfde risico: attachments-koppelingen,
+`persistent-storage`- en `temp-storage`-mounts (die werden nog erger: herbouwd op
+defaults, zodat de lijst alleszins *lijkt* te kloppen maar de waarden weg zijn), en
+componentconfig aan elke dienst die die laag kent -- `publish-on-web` (`tls`),
+`postgresql-database`, health-check. Aliases en eigen env-vars zijn geen
+services-entries en werden er niet door geraakt.
+
+**De reparatie.** Een dienst die in de nieuwe lijst staat én er eerder stond, behoudt
+zijn entry zoals hij was; alleen een écht nieuwe naam krijgt een verse entry
+(`merge_component_service_entries`). Wie uit de lijst valt, verdwijnt met zijn config --
+dat is en blijft de betekenis van vervangen, maar nu is vervangen alleen vervangen waar
+je het zegt. De spec zei al dat per-service config er los van staat; het gedrag zegt dat
+nu ook. Het is een compatiebele wijziging: geen client die de hele lijst stuurde krijgt
+een andere uitkomst, behalve dat het stille verlies weg is.
+
+Vastgelegd in `tests/test_update_component.py::TestUpdateComponentServices`:
+weggegooide couplings, herbouwde storage en behouden entries zijn alle drie een test.
+
+---
+
+## 18. Config-blokken die een lijst zijn hebben hetzelfde probleem als `services` had
+
+Vastgesteld 2026-08-14 tegen `af9c12f0` (release-augustus-2026, build 11:51Z), naar
+aanleiding van de vraag van een gebruiker: *hoe voeg ik twee volumes toe aan een component,
+en hoe haal ik er daarna één van weg?*
+
+Het eerste kan. Het tweede niet, en het is dezelfde vorm als vraag 16, één laag dieper.
+
+Drie config-blokken zijn een lijst in plaats van een object:
+
+| endpoint | schema | lijst van |
+|---|---|---|
+| `persistent-storage/config/component/{c}` | `StorageConfig` | `StorageEntry` |
+| `temp-storage/config/component/{c}` | `StorageConfig` | `StorageEntry` |
+| `attachments/config/component/{c}` | `AttachmentsConfig` | `AttachmentUse` |
+
+Twee volumes zetten gaat prima, want dat is één schrijfactie:
+
+```sh
+curl -X PUT -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '[{"name":"data1","size":"1Gi","mount-path":"/data1"},
+       {"name":"data2","size":"1Gi","mount-path":"/data2"}]' \
+  "$BASE/v2/projects/$P/services/persistent-storage/config/component/backend"
+# 202, taak completed, beide volumes staan in het projectbestand
+```
+
+`data2` weghalen kan alleen door `data1` opnieuw op te sturen:
+
+```sh
+curl -X PUT -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '[{"name":"data1","size":"1Gi","mount-path":"/data1"}]' \
+  "$BASE/v2/projects/$P/services/persistent-storage/config/component/backend"
+# 202 -- en data2 is weg omdat hij niet genoemd is, niet omdat iemand dat vroeg
+```
+
+en de DELETE gooit het hele blok weg, dus allebei de volumes.
+
+**De vraag.** Kunnen deze drie dezelfde behandeling krijgen als `services` net gekregen
+heeft: een vorm waarin je alleen de entry noemt waar je mee bezig bent? Iets als een PATCH
+op hetzelfde pad met `add` en `remove`, naast de bestaande PUT die het hele blok zet.
+
+Waarop je een entry aanwijst is aan jullie -- `name` en `mount-path` zijn allebei uniek
+binnen een component bij storage, `reference` bij attachments -- als het maar één sleutel is
+die stabiel blijft. Wij hebben geen voorkeur en volgen wat jullie kiezen; wat wij niet
+kunnen is hem afleiden uit de rest van de entry, want dan zijn we terug bij het hele blok
+meesturen.
+
+De twee argumenten uit vraag 16 gelden hier onverkort -- lezen-wijzigen-schrijven is racy,
+en elke client bouwt hem opnieuw -- maar er is een derde bij, en die weegt zwaarder:
+
+**hier hangt data aan.** Een verloren race bij `services` kost een binding, en die zet je
+terug. Een verloren race bij `persistent-storage` laat een volume uit de lijst vallen. Wij
+weten niet wat er dan met de PVC gebeurt en dat is precies het punt: dat wil niemand
+uitzoeken op het moment dat het gebeurt. Als het antwoord "de PVC blijft staan en wordt
+alleen niet meer gemount" is, is dat goed nieuws dat in de documentatie hoort; als het
+opruimen meebeweegt, is het een reden om dit met voorrang te doen.
+
+**Waar wij het aan onze kant hebben opgelost:** nergens, bewust. Wij hebben de
+lees-wijzig-schrijf voor `services` er gisteren juist uitgehaald toen `add_services` er
+kwam, en gaan hem niet voor storage terugbouwen -- een verborgen race die een volume kan
+laten vallen is erger dan een commando dat eerlijk zegt dat het het hele blok schrijft.
+Tot die tijd zegt `zadctl service config set` bij een lijstvormig blok dat de rest van de
+lijst overschreven wordt, en verwijst hij naar `service config get` om eerst te lezen.
+
+### Antwoord
+
+**Dezelfde behandeling, op precies de voorgestelde plek.** Er komt een PATCH naast de
+bestaande PUT en DELETE op dezelfde route, voor elke dienst waarvan het config-model een
+lijst is met een unieke sleutel. Vandaag zijn dat er drie, allemaal op de componentlaag:
+
+| route | sleutelveld |
+|---|---|
+| `PATCH /api/v2/projects/{p}/services/persistent-storage/config/component/{c}` | `name` |
+| `PATCH /api/v2/projects/{p}/services/temp-storage/config/component/{c}` | `name` |
+| `PATCH /api/v2/projects/{p}/services/attachments/config/component/{c}` | `reference` |
+
+Voorbeeld, met het scenario uit jullie vraag:
+
+```sh
+# data2 toevoegen; de rest van de lijst wordt niet genoemd
+curl -X PATCH -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"add":[{"name":"data2","size":"1Gi","mount-path":"/data2"}]}' \
+  "$BASE/v2/projects/$P/services/persistent-storage/config/component/backend"
+
+# data1 weghalen; alleen de sleutel noemen
+curl -X PATCH -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"remove":["data1"]}' \
+  "$BASE/v2/projects/$P/services/persistent-storage/config/component/backend"
+```
+
+De regels:
+
+- **Body:** `{"add": [...], "remove": [...]}`. `add` neemt hele entries in precies de
+  vorm die de PUT kent (per dienst getypeerd in de spec: `StorageEntry` resp.
+  `AttachmentUse`); `remove` neemt alleen sleutels. Minstens één van beide met inhoud
+  is verplicht; een leeg lichaam is een 422.
+- **`add` is een upsert op sleutel.** Staat de sleutel er nog niet, dan wordt de entry
+  toegevoegd; staat hij er al, dan vervangt deze entry hem. Eén onderdeel aanpassen is
+  dus één entry opsturen, niet de hele lijst.
+- **`remove` is idempotent.** Een sleutel die er niet staat is een no-op.
+- **remove eerst, dan add.** Wie dezelfde sleutel in beide zet, vervangt hem.
+- **De merge gebeurt op de server**, in de taak, op het vers gelezen projectbestand --
+  er is geen lees-wijzig-schrijf meer aan de clientkant, dus de race uit jullie vraag
+  valt weg zodra jullie deze vorm gebruiken.
+- **Asynchroon zoals alles hier:** 202 met `task_id` en `poll_url`; `?rollout=false`
+  werkt zoals bij de PUT. Het taakresultaat rapporteert `added`, `updated` en `removed`
+  naast `status`/`service`/`target`, zodat een no-op zichtbaar is zonder in git te kijken.
+- Validatie ongewijzigd: elke item valideert tegen het model van de dienst, en de
+  gemergde lijst gaat door dezelfde schema- en structuurvalidatie als de PUT. De
+  projectselectie-voorwaarden blijven ook: attachments op een component zonder
+  projectcatalogus weigert nog steeds.
+- De PUT en DELETE blijven wat ze zijn: PUT zet het hele blok, DELETE maakt de selectie
+  weer kaal. De PATCH is geen vervanging maar de veilige korte weg.
+
+**Welke sleutel, en waarom.** Jullie boden "id, of pad, of wat maar uniek is". Voor
+storage is dat `name`: die naam is ook de volumenaam en is per component uniek; het
+pad is wél een veld maar mag dubbel voorkomen als string zonder dat het een entry is.
+Voor attachments is het `reference`: dat is per definitie de coupling naar de catalogus.
+De sleutel staat voortaan op het config-model zelf, dus elke volgende lijstvormige
+dienst die eraan komt krijgt deze PATCH automatisch.
+
+**Over wat er met de PVC gebeurt -- gemeten, en het antwoord is harder dan jullie
+hoopten.** De deferred-deletion-machinerie (markeren, herstelbaar) dekt de
+teardown-paden: project, deployment en component weg. Een mount die uit de lijst
+verdwijnt terwijl het component blijft, gaat er niet doorheen: het PVC-manifest
+verdwijnt bij de volgende verwerking en ArgoCD pruned de PVC uit het cluster. De code
+zelf zegt over die route: dat pruned "de PVC and its data immediately". Dus:
+
+| wat je doet | wat er gebeurt |
+|---|---|
+| `remove` op `persistent-storage` | PVC verdwijnt via ArgoCD-prune; data weg |
+| `remove` op `temp-storage` | geen data-genoegen; het volume was al vluchtig |
+| `remove` op `attachments` | alleen de coupling verdwijnt; het bestand blijft in de projectcatalogus |
+
+Dat klinkt als een reden om af te zien van remove op storage, maar dat is het niet: de
+PUT had precies dit gevolg al, alleen onzichtbaarder. De PATCH maakt dezelfde
+vernietiging tenminste expliciet gevraagd -- je noemt `data2` omdat `data2` weg moet,
+niet omdat je `data1` vergat op te sturen. Jullie instinct ("dit met voorrang doen")
+klopte daarmee. Als daarna de wens komt dat ook dit pad door deferred deletion loopt,
+is dat een eigen stuk werk; zeg het maar.
+
+Jullie CLI kan hierop acteren: `service config set` kan bij een lijstvormig blok naar
+de PATCH verwijzen voor één-onderdeel-handelingen, en de waarschuwing op persistent
+remove kan precies woorden wat hierboven staat.
