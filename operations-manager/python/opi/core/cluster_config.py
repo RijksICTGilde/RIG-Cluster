@@ -162,6 +162,74 @@ CLUSTER_CONFIG = {
             ],
         },
     },
+    # Fundament-platform (Gardener shoot op metal-stack), organisatie zad, cluster zad-cluster.
+    # Alle waarden hieronder zijn op het cluster gemeten, niet overgenomen van een ander cluster.
+    # Zie docs/fundament-cluster-checklist.md voor de metingen en wat er nog open staat.
+    "fundament-poc": {
+        "ingress_postfix": ".fundament-poc.rijksapp.dev",
+        "namespace_prefix": "rig-",
+        "argo_namespace": "rig-system",
+        "namespace": "rig-system",
+        "keycloak_discovery_url": "https://keycloak.fundament-poc.rijksapp.dev",
+        "database_server": "rig-db-rw.rig-system.svc.cluster.local",
+        "minio_host": "minio.rig-system.svc.cluster.local",
+        "minio_port": 9000,
+        "redis_server": "rig-redis.rig-system.svc.cluster.local",
+        "backup_namespace": "rig-backup-destination",
+        "database_operator_namespace": "cnpg-system",
+        # Zelf geïnstalleerde ingress-nginx (cloud-variant, niet de Kind-variant): het
+        # platform levert geen ingresscontroller. Podlabel gemeten op de draaiende controller.
+        "ingress_controller_selector": {
+            "namespace": "ingress-nginx",
+            "pod_labels": {"app.kubernetes.io/name": "ingress-nginx"},
+        },
+        "ingress": {
+            "enable_tls": True,
+            "ip_whitelist": "0.0.0.0/0,::/0",
+        },
+        # local-path-provisioner op de vrije ruimte van de node. Bewust geen
+        # volume_snapshot_class: die kan local-path niet, dus PVC-back-ups melden dat en
+        # stoppen (zie PVCBackupManager._backup_pvc). Database- en bucketback-ups werken wel.
+        # Vervalt zodra het platform zijn Rook/Ceph-plugin levert; dan komt de snapshotclass mee.
+        "storage": {
+            "storage_class_name": "local-path",
+            "access_modes": ["ReadWriteOnce"],
+        },
+        "keycloak": {
+            "support_http": False,
+        },
+        # Geen LimitRange of ResourceQuota op dit cluster, dus dit zijn onze eigen grenzen.
+        "min_memory_limit_mi": 25,
+        "max_memory_limit_mi": 4096,
+        "max_memory_request_mi": 1024,
+        "uses_capsule": False,
+        "min_cpu_m": 25,
+        "max_cpu_request_m": 250,
+        "max_cpu_limit_m": 4000,
+        # VPA draait hier wel en levert aanbevelingen, anders dan op de andere niet-ODCN clusters.
+        "supports_vpa": True,
+        # Geen SCC en geen Pod Security Admission: niemand wijst een UID toe, dus wij pinnen er een.
+        "assigns_uid_via_scc": False,
+        # Geen policy-engine die iets van een namespace verlangt.
+        "namespace_metadata": {"labels": {}, "annotations": {}},
+        # Egress staat open naar 0.0.0.0/0 op 443, dus ghcr.io en docker.io zijn direct
+        # bereikbaar en er is geen registry-mirror nodig.
+        "extensions": [],
+        "letsencrypt": {
+            "contact_email": "rig-platform@rijksoverheid.nl",
+        },
+        "nice_url": {
+            "supported_domains": [
+                {
+                    "domain": "fundament-poc.rijksapp.dev",
+                    "supports_dots": False,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                    "external_dns_target": "router.fundament-poc.rijksapp.dev",
+                },
+            ],
+        },
+    },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
         "namespace_prefix": "rig-prd-",
