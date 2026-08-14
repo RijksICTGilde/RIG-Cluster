@@ -194,7 +194,7 @@ class DeleteProjectManager:
             deletion_results["errors"].append(f"Orphaned ArgoCD cleanup error: {e}")
 
     async def _delete_project_argocd_folder(
-        self, project_name: str, cluster: str, deletion_results: dict[str, Any]
+        self, project_name: str, cluster: str, deletion_results: dict[str, Any], expect_folder: bool = False
     ) -> None:
         """
         Delete the project's ArgoCD folder from the GitOps repository.
@@ -209,13 +209,31 @@ class DeleteProjectManager:
             project_name: Name of the project
             cluster: Cluster name (e.g., "local", "odcn-production")
             deletion_results: Results dictionary to append operations/errors to
+            expect_folder: True wanneer het project deployments op DIT cluster had. Dan
+                HOORT de map er te zijn en is een ontbrekende map een fout, geen
+                schouderophalen. Zie hieronder waarom dat verschil telt.
+
+        Een ontbrekende map is namelijk twee heel verschillende dingen. Bij een project
+        zonder deployments op dit cluster is er nooit een map geweest en klopt "niet
+        gevonden". Bij een project MET deployments hoort hij er te zijn, en betekent
+        "niet gevonden" dat we hem niet konden vinden - niet dat hij er niet is.
+
+        Dat onderscheid ontbrak, en dat is precies hoe er vijf verweesde ArgoCD-mappen
+        ontstonden: de verwijdering noteerde ``not_found``, ging door, en gooide het
+        projectbestand weg. Daarna stond de map in de repo zonder project ernaast, maakte
+        de root-application de Application telkens opnieuw aan, faalde die op
+        ``app path does not exist`` en probeerde het met ``retry limit -1`` elke 30
+        seconden opnieuw. Niets ruimde dat ooit op.
         """
         project_argocd_folder_rel = os.path.join(cluster, project_name)
         logger.info(f"Deleting project ArgoCD folder: {project_argocd_folder_rel}")
 
         try:
             gitops_connector = await self.project_manager.get_git_connector_for_argocd()
-            await gitops_connector.ensure_repo_cloned()
+            # Verversen en niet alleen klonen: de connector is gecached en ensure_repo_cloned
+            # fetcht hooguit eenmaal per proces, terwijl we hieronder een BESLISSING nemen op
+            # wat er op schijf staat.
+            await gitops_connector.refresh_working_tree()
             working_dir = await gitops_connector.get_working_dir()
             project_argocd_folder = os.path.join(working_dir, project_argocd_folder_rel)
 
@@ -240,6 +258,24 @@ class DeleteProjectManager:
                 # repository secret are pruned promptly
                 argo_connector = create_argo_connector()
                 await argo_connector.refresh_application("user-applications")
+            elif expect_folder:
+                # Hij hoorde er te zijn. Doorgaan zou het projectbestand weggooien en de map
+                # laten staan, en dat is precies de wees die niemand daarna nog terugvindt.
+                message = (
+                    f"ArgoCD folder '{project_argocd_folder_rel}' was expected but not found in the GitOps "
+                    f"repository; refusing to continue so the project file is not removed while its ArgoCD "
+                    f"resources stay behind"
+                )
+                logger.error(message)
+                deletion_results["operations"].append(
+                    {
+                        "type": "project_argocd_folder_deletion",
+                        "target": project_argocd_folder_rel,
+                        "status": "missing",
+                    }
+                )
+                deletion_results["errors"].append(message)
+                deletion_results["success"] = False
             else:
                 deletion_results["operations"].append(
                     {
@@ -251,6 +287,7 @@ class DeleteProjectManager:
         except Exception as e:
             logger.exception(f"Error deleting project ArgoCD folder for {project_name}")
             deletion_results["errors"].append(f"Failed to delete project ArgoCD folder: {e}")
+            deletion_results["success"] = False
 
     async def _cleanup_project_keycloak_realm(
         self,
@@ -849,7 +886,12 @@ class DeleteProjectManager:
             # Step 4.7: Delete the project's ArgoCD folder (AppProject, repository secret, kustomization)
             # from the GitOps repo, so the root application prunes these resources
             if deletion_results["success"] or force:
-                await self._delete_project_argocd_folder(project_name, current_cluster, deletion_results)
+                await self._delete_project_argocd_folder(
+                    project_name,
+                    current_cluster,
+                    deletion_results,
+                    expect_folder=len(current_cluster_deployments) > 0,
+                )
 
             # Step 5: Delete the project file if all deployment deletions succeeded (or in force mode)
             should_delete_project_file = deletion_results["success"] or force

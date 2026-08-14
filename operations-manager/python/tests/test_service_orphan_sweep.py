@@ -13,6 +13,7 @@ from opi.jobs.service_orphan_sweep import (
     _classify_database,
     _classify_project_realm_client,
     _live_deployments,
+    sweep,
 )
 
 PROJECTS = {"regel-k4c": ["regelrecht", "pr781"], "waggl-9et": ["productie"]}
@@ -250,3 +251,53 @@ class TestConfirmEndpointSafety:
             c for c in mock_service.mark_resource.await_args_list if c.kwargs["resource_type"] == "keycloak_client"
         )
         assert keycloak_call.kwargs["metadata"]["realm"] == "regel-k4c-odcn-production"
+
+
+class TestGitopsFolderInventory:
+    """De GitOps-mappen horen in het rapport.
+
+    Deze categorie ontbrak, en daardoor meldde niets dat er vijf verwijderde projecten
+    hun map in zad-argo-user-applications hadden laten staan. De root-application maakte
+    hun Application telkens opnieuw aan, die faalde op 'app path does not exist', en met
+    retry limit -1 herhaalde dat zich elke 30 seconden - eindeloos, en met kubectl niet
+    weg te krijgen omdat de app-of-apps hem meteen terugzette.
+    """
+
+    @pytest.mark.asyncio
+    async def test_folder_without_project_is_an_orphan_candidate(self, tmp_path) -> None:
+        cluster = "sandboxed-local"
+        cluster_dir = tmp_path / cluster
+        (cluster_dir / "leeft-abc").mkdir(parents=True)
+        (cluster_dir / "weg-xyz").mkdir(parents=True)
+
+        gitops = AsyncMock()
+        gitops.refresh_working_tree = AsyncMock()
+        gitops.get_working_dir = AsyncMock(return_value=str(tmp_path))
+
+        with patch(
+            "opi.jobs.service_orphan_sweep.create_git_connector_for_argocd",
+            AsyncMock(return_value=gitops),
+        ):
+            report = await sweep([{"name": "leeft-abc", "deployments": []}], cluster=cluster)
+
+        mappen = {entry["project"]: entry for entry in report["gitops_folders"]}
+        assert mappen["leeft-abc"]["classification"] == "expected"
+        assert mappen["weg-xyz"]["classification"] == CONFIRMABLE
+        assert mappen["weg-xyz"]["path"] == f"{cluster}/weg-xyz"
+
+    @pytest.mark.asyncio
+    async def test_working_tree_is_refreshed_before_listing(self, tmp_path) -> None:
+        """Zonder verversen wordt er geoordeeld op een checkout die willekeurig oud kan zijn."""
+        (tmp_path / "sandboxed-local").mkdir()
+
+        gitops = AsyncMock()
+        gitops.refresh_working_tree = AsyncMock()
+        gitops.get_working_dir = AsyncMock(return_value=str(tmp_path))
+
+        with patch(
+            "opi.jobs.service_orphan_sweep.create_git_connector_for_argocd",
+            AsyncMock(return_value=gitops),
+        ):
+            await sweep([], cluster="sandboxed-local")
+
+        gitops.refresh_working_tree.assert_awaited()
