@@ -13,7 +13,7 @@ Met bijlagen koppel je een bestand aan een component, bijvoorbeeld een certifica
 
 Je geeft elke bijlage een identifier en kiest per component hoe hij wordt aangeleverd: als **bestand** op een pad in de pod, of als **omgevingsvariabele** met de inhoud als waarde (alleen voor tekstbestanden). Een bijlage kan aan meerdere componenten gekoppeld worden, en je kunt per deployment afwijken.
 
-Een bestand is maximaal 256 KB. De inhoud wordt versleuteld opgeslagen; er is geen database of aparte opslag voor nodig.
+Een bestand is maximaal 64 KB. De inhoud wordt versleuteld opgeslagen; er is geen database of aparte opslag voor nodig.
 
 ## Een bijlage vervangen
 

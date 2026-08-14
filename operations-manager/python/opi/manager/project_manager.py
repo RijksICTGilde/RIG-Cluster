@@ -105,6 +105,7 @@ from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import deployment_manifest_services, manifest_services, provisioning_services
+from opi.services.services import service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
@@ -7497,6 +7498,8 @@ class ProjectManager:
         path: str | None = None,
         rewrite: str | None = None,
         services: list[str] | None = None,
+        add_services: list[str] | None = None,
+        remove_services: list[str] | None = None,
         cpu_limit: str | None = None,
         memory_limit: str | None = None,
     ) -> dict[str, Any]:
@@ -7570,7 +7573,43 @@ class ProjectManager:
                     ServiceAdapter.ensure_project_selection(project_data, *services)
                 except ServiceValidationError as e:
                     return {"success": False, "error": str(e), "error_type": "invalid_services"}
-                component["services"] = ServiceAdapter.build_component_service_entries(services)
+                component["services"] = ServiceAdapter.merge_component_service_entries(
+                    component.get("services") or [], services
+                )
+            elif remove_services:
+                # Component-local only: the entry leaves with its config; the project-level
+                # selection stays (another component may still use the service).
+                try:
+                    ServiceAdapter.parse_services_from_strings(remove_services)
+                except ServiceValidationError as e:
+                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
+                removed = set(remove_services)
+                component["services"] = [
+                    entry for entry in component.get("services") or [] if service_entry_name(entry) not in removed
+                ]
+                if add_services:
+                    try:
+                        ServiceAdapter.ensure_project_selection(project_data, *add_services)
+                    except ServiceValidationError as e:
+                        return {"success": False, "error": str(e), "error_type": "invalid_services"}
+                    existing_names = set(
+                        ServiceAdapter.extract_service_names_from_project_services(component["services"])
+                    )
+                    component["services"].extend(
+                        ServiceAdapter.build_component_service_entries(
+                            [svc for svc in add_services if svc not in existing_names]
+                        )
+                    )
+            elif add_services:
+                try:
+                    ServiceAdapter.ensure_project_selection(project_data, *add_services)
+                except ServiceValidationError as e:
+                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
+                existing_entries = component.get("services") or []
+                existing_names = set(ServiceAdapter.extract_service_names_from_project_services(existing_entries))
+                component["services"] = existing_entries + ServiceAdapter.build_component_service_entries(
+                    [svc for svc in add_services if svc not in existing_names]
+                )
 
             if cpu_limit is not None or memory_limit is not None:
                 resources = component.setdefault("resources", {})
@@ -7980,6 +8019,63 @@ class ProjectManager:
 
         except Exception as e:
             error_msg = f"Error clearing service '{service_name}' config: {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def patch_service_config_list(
+        self,
+        service_name: str,
+        target: str,
+        *,
+        add: list[dict[str, Any]],
+        remove: list[str],
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Add/update/remove items in one service's list-shaped config, then persist.
+
+        The merge itself is the pure ``ServiceAdapter.patch_service_config_list``: only
+        the named items change, on the freshly read project file, so a caller that
+        adjusts one storage mount or attachment coupling never rewrites the rest (and
+        cannot silently drop them). Commits through ``save_and_commit_project`` like
+        every write. Even a full no-op commits nothing extra -- an unchanged file is
+        an unchanged push, and the counts in the result tell which run it was.
+        """
+        from opi.services.catalog.base import ConfigLayer
+
+        try:
+            layer = ConfigLayer(target)
+        except ValueError:
+            return {"success": False, "error": f"Unknown target '{target}'", "error_type": "invalid_target"}
+
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            try:
+                counts = ServiceAdapter.patch_service_config_list(
+                    project_data,
+                    service_name,
+                    layer,
+                    add=add,
+                    remove=remove,
+                    component_name=component_name,
+                    deployment_name=deployment_name,
+                )
+            except ServiceValidationError as e:
+                return {"success": False, "error": str(e), "error_type": "invalid_target"}
+
+            commit_message = f"Patch service '{service_name}' config at {target} target in project '{project_name}'"
+            try:
+                await self.save_and_commit_project(project_data, commit_message)
+            except (ProjectSchemaError, ProjectIntegrityError) as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            logger.info(f"Patched service '{service_name}' config at {target} target in project '{project_name}'")
+            return {"success": True, "service": service_name, "target": target, **counts}
+
+        except Exception as e:
+            error_msg = f"Error patching service '{service_name}' config: {e}"
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 

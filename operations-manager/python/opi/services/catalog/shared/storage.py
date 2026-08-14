@@ -17,6 +17,7 @@ one config model not owned by a single service package.
 from __future__ import annotations
 
 import re
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator
 
@@ -58,6 +59,10 @@ class StorageEntry(BaseModel):
 
 class StorageConfig(RootModel[list[StorageEntry]]):
     """The component-level storage config: a list of mount specs."""
+
+    #: The field that identifies one entry in the list -- the PATCH config endpoint
+    #: adds/removes/updates entries by this key (the PUT replaces the whole list).
+    ITEM_KEY: ClassVar[str] = "name"
 
     root: list[StorageEntry] = Field(
         default_factory=list, description="The volumes this component mounts, one entry per mount."

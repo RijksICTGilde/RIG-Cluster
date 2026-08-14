@@ -585,6 +585,13 @@ class TestAddServiceFlow:
         payload = mock_task_service.create_task.call_args[1]["payload"]
         assert payload["components"] is None
 
+    def test_not_marked_deprecated_in_the_spec(self, v2_client: TestClient) -> None:
+        # It was marked deprecated with a successor that never shipped; as it is the
+        # append-bind that touches nothing else, the mark has been lifted.
+        spec = v2_client.get("/openapi.json").json()
+        op = spec["paths"]["/api/v2/projects/{project_name}/services"]["post"]
+        assert op.get("deprecated") is not True
+
 
 # ---------------------------------------------------------------------------
 # Configure Service - unified service-config endpoint

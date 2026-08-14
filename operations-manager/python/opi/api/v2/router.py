@@ -9,7 +9,7 @@ Read-only GET endpoints return deployment state directly (no task queue).
 import asyncio
 import logging
 from inspect import Parameter, Signature
-from typing import Annotated, Any, NamedTuple
+from typing import Annotated, Any, NamedTuple, get_args
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Path as FastAPIPath
@@ -129,7 +129,7 @@ from opi.utils.naming import (
 from opi.utils.project_names import ensure_unique_project_name
 from opi.utils.project_utils import ProjectApiKeyError, generate_base_project_file, validate_project_name
 from opi.utils.yaml_util import dump_yaml_to_string
-from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, create_model, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -1432,6 +1432,8 @@ async def update_component_v2(
             "path": component_data.path,
             "rewrite": component_data.rewrite,
             "services": component_data.services,
+            "add_services": component_data.add_services,
+            "remove_services": component_data.remove_services,
             "cpu_limit": component_data.cpu_limit,
             "memory_limit": component_data.memory_limit,
             "rollout": rollout,
@@ -1622,7 +1624,6 @@ async def add_component_to_deployment_v2(
         200: {"model": TaskResponse[AddServiceResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
-    deprecated=True,
 )
 @validate_api_token
 async def add_service_v2(
@@ -1631,11 +1632,13 @@ async def add_service_v2(
     service_data: AddServiceRequest = Body(...),
     rollout: RolloutQuery = True,
 ) -> JSONResponse:
-    """Add a service to a project by name (async). DEPRECATED.
+    """Add a service to a project by name (async).
 
-    Superseded by ``PUT /api/v2/projects/{project}/services/{service}``, which both
-    selects a service and sets its config in one call. This endpoint only adds a
-    bare selection. Returns immediately with a task ID; poll /api/tasks/{task_id}.
+    Adds a bare selection (no config) at the project level, and appends the service to
+    the services list of every component named in ``components`` -- entries already
+    there keep their config. Per-service config is set separately via
+    ``PUT /api/v2/projects/{project}/services/{service}/config/<target>``. Returns
+    immediately with a task ID; poll /api/tasks/{task_id}.
 
     Headers:
         X-API-Key: The API key for the project (required)
@@ -2153,15 +2156,17 @@ async def _enqueue_config_write(
     operation: str,
     *,
     config: dict[str, Any] | list[Any] | None = None,
+    add: list[dict[str, Any]] | None = None,
+    remove: list[str] | None = None,
     component: str | None = None,
     deployment: str | None = None,
     rollout: bool = True,
 ) -> JSONResponse:
     """Validate the (service, target) pair and enqueue a configure_service task.
 
-    Shared by the per-target upsert (PUT) and clear (DELETE) routes so the target
-    lives in the path while the guards stay in one place. An unknown service is
-    404 and a target the service does not support is 422, both before enqueue.
+    Shared by the per-target upsert (PUT), patch (PATCH) and clear (DELETE) routes so
+    the target lives in the path while the guards stay in one place. An unknown service
+    is 404 and a target the service does not support is 422, both before enqueue.
     """
     logger.info("V2 %s service config '%s' at %s in project: %s", operation, service_name, target, project_name)
     if not validate_project_name(project_name):
@@ -2169,20 +2174,25 @@ async def _enqueue_config_write(
     service = _service_or_404(service_name)
     _resolve_supported_layer(service, service_name, target)
 
+    payload: dict[str, Any] = {
+        "project_name": project_name,
+        "service": service_name,
+        "target": target,
+        "operation": operation,
+        "config": config,
+        "component": component,
+        "deployment": deployment,
+        "rollout": rollout,
+    }
+    if operation == "patch":
+        payload["add"] = add
+        payload["remove"] = remove
+
     task = await create_async_task(
         request=request,
         task_type="configure_service",
         project_name=project_name,
-        payload={
-            "project_name": project_name,
-            "service": service_name,
-            "target": target,
-            "operation": operation,
-            "config": config,
-            "component": component,
-            "deployment": deployment,
-            "rollout": rollout,
-        },
+        payload=payload,
     )
     return _accepted_response(task, "configure_service")
 
@@ -2273,6 +2283,105 @@ def _make_clear_endpoint(service_name: str, target: str, name_param: str | None)
     return endpoint
 
 
+def _list_item_model_and_key(config_model: type) -> tuple[type[BaseModel], str] | None:
+    """The item model and identity field of a list-shaped config model, or None.
+
+    A config model that is a list of records with a declared key (``ITEM_KEY``) gets
+    a PATCH route alongside its PUT/DELETE so one entry can be added, updated or
+    removed without resending the rest. Everything else has nothing to patch.
+    """
+    if not (isinstance(config_model, type) and issubclass(config_model, RootModel)):
+        return None
+    item_key = getattr(config_model, "ITEM_KEY", None)
+    if not isinstance(item_key, str):
+        return None
+    args = get_args(config_model.model_fields["root"].annotation)
+    if len(args) != 1 or not (isinstance(args[0], type) and issubclass(args[0], BaseModel)):
+        return None
+    return args[0], item_key
+
+
+class _ListConfigPatch(BaseModel):
+    """Shared base for the generated PATCH bodies: at least one operation, so an empty
+    ``{}`` is a 422 instead of a silent no-op across the task machinery."""
+
+    add: list[Any] | None = None
+    remove: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_operation(self) -> _ListConfigPatch:
+        if not self.add and not self.remove:
+            raise ValueError("Provide 'add' or 'remove' with at least one item")
+        return self
+
+
+def _make_patch_body_model(config_model: type, item_model: type[BaseModel], item_key: str) -> type[BaseModel]:
+    """The typed PATCH body for one list-shaped config model: whole entries to `add`
+    (upserted by key), plain keys to `remove`."""
+    return create_model(
+        f"{config_model.__name__}Patch",
+        __base__=_ListConfigPatch,
+        add=(
+            list[item_model] | None,
+            Field(
+                default=None,
+                description=(
+                    f"Entries to add or replace, in the same shape as one item of the PUT body. "
+                    f"An entry whose '{item_key}' already exists is replaced; the others stay as-is."
+                ),
+            ),
+        ),
+        remove=(
+            list[str] | None,
+            Field(
+                default=None,
+                description=(
+                    f"Keys ('{item_key}') of entries to remove. A key that is not there is a no-op, "
+                    "so removing twice is fine."
+                ),
+            ),
+        ),
+    )
+
+
+def _config_patch_description(service_name: str, layer: ConfigLayer, item_key: str) -> str:
+    place = _CONFIG_WRITE_PLACE[layer]
+    return (
+        f"Add, update or remove individual entries in the `{service_name}` config in {place} "
+        "-- without resending the entries you are not touching (the PUT replaces the whole list).\n\n"
+        f"`add` takes full entries: one whose `{item_key}` is new is appended, one whose `{item_key}` "
+        f"exists replaces it. `remove` takes `{item_key}` values only; unknown keys are a no-op. "
+        "Remove runs first, so a key in both lists is replaced outright.\n\n"
+        "A change that reaches the file is rolled out: the project is processed again, manifests are "
+        "regenerated and ArgoCD applies them. This is not a save-only endpoint.\n\n"
+        "Asynchronous: the response is 202 with a task id. Poll `/api/tasks/{task_id}` for the result; "
+        "the task result reports how many entries were `added`, `updated` and `removed`."
+    )
+
+
+def _make_patch_endpoint(service_name: str, target: str, name_param: str | None, body_model: type):
+    """Build a typed PATCH endpoint whose body is the service's add/remove patch model."""
+
+    async def endpoint(**kwargs: Any) -> JSONResponse:
+        body = kwargs["body"]
+        return await _enqueue_config_write(
+            kwargs["request"],
+            kwargs["project_name"],
+            service_name,
+            target,
+            "patch",
+            add=[item.model_dump(by_alias=True, exclude_unset=True) for item in body.add or []],
+            remove=body.remove or [],
+            component=kwargs.get("component_name"),
+            deployment=kwargs.get("deployment_name"),
+            rollout=kwargs.get("rollout", True),
+        )
+
+    endpoint.__signature__ = _config_write_signature(name_param, body_model)
+    endpoint.__name__ = f"patch_{service_name.replace('-', '_')}_{target.replace('-', '_')}"
+    return endpoint
+
+
 #: Where a config block lands in the project file, per layer, in the caller's terms.
 _CONFIG_WRITE_PLACE = {
     ConfigLayer.PROJECT: "the project's own `services` list",
@@ -2354,6 +2463,19 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 summary=f"Clear {service_name} config ({target})",
                 description=_config_write_description(service_name, layer, clearing=True),
             )
+            list_ctx = _list_item_model_and_key(model)
+            if list_ctx is not None:
+                item_model, item_key = list_ctx
+                patch_body = _make_patch_body_model(model, item_model, item_key)
+                router.add_api_route(
+                    path,
+                    validate_api_token(_make_patch_endpoint(service_name, target, name_param, patch_body)),
+                    methods=["PATCH"],
+                    tags=[service_name],
+                    responses=_CONFIG_WRITE_RESPONSES,
+                    summary=f"Patch {service_name} config ({target})",
+                    description=_config_patch_description(service_name, layer, item_key),
+                )
 
 
 #: The layers we generate write routes for (deployment-component intentionally out).
