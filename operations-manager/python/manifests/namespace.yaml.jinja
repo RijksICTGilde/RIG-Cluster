@@ -1,10 +1,20 @@
+{# Labels en annotaties komen per cluster uit cluster_config.namespace_metadata.
+   Wat een platform van een namespace verlangt verschilt per platform, en een
+   overgeërfde annotatie van een ander cluster is daar niet inert maar fout:
+   op ODCN bewaakt Kyverno de egress-waarde en wordt de namespace onbruikbaar
+   bij een verkeerde. Zie get_namespace_metadata(). #}
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ namespace }}
   labels:
     created-by: operations-manager
+{% for key, value in namespace_metadata.labels.items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+{% if namespace_metadata.annotations %}
   annotations:
-    # NOTE: we need manifests per cluster
-    # https://docs.rijksapps.nl/egress-internet-traffic/
-    egress.projectcalico.org/egressGatewayPolicy: "internet"
+{% for key, value in namespace_metadata.annotations.items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
