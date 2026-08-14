@@ -77,7 +77,7 @@
        (hx-select-oob) loste het vinkje op maar hield twee stukken die uit de pas kunnen
        lopen. Ze horen bij elkaar, dus vervangen we ze samen: wat je zocht, waarop je
        sorteerde en wat dat opleverde zijn een antwoord. #}
-    <div id="projects-zoekgebied">
+    <div id="projects-zoekgebied" class="lotc-stack" style="--lotc-stack-gap: var(--lotc-space-lg);">
     <form method="get" action="/projects"
           hx-get="/projects"
           hx-select="#projects-zoekgebied"
@@ -93,7 +93,14 @@
            De inhoud van de slots zijn wel gewone componenten. #}
         <nldd-toolbar label="Projecten" size="md">
             <nldd-toolbar-item slot="start" size="md">
+                {# hx-preserve: htmx neemt DIT element ongewijzigd mee naar de nieuwe
+                   inhoud in plaats van het te vervangen. Zonder dat verlies je bij elke
+                   swap je focus en je cursorpositie, en dan is doortypen onmogelijk.
+
+                   De ID is niet optioneel: htmx bewaart een element OP ID, en zonder id
+                   doet hx-preserve stilzwijgend niets. #}
                 <c-search-field name="q"
+                                :attrs="{'id': 'projects-zoekveld', 'hx-preserve': 'true'}"
                                 value="{{ project_query }}"
                                 placeholder="Zoek op naam of omschrijving"
                                 accessible-label="Zoek een project"
