@@ -1,12 +1,16 @@
 {#
   De ZAD CLI.
 
-  Een wegwijzer, geen handleiding: de repository houdt zijn eigen documentatie bij en die
-  loopt vooruit op wat hier zou staan. Wat hier hoort is genoeg om te weten wat het is,
-  wat je ermee doet en wanneer je het pakt - en dan door naar de repository.
+  EEN WEGWIJZER, GEEN HANDLEIDING, en sinds vandaag ook echt kort.
 
-  De opdrachten komen letterlijk uit de README, zodat er hier niets staat dat daar niet
-  ook staat.
+  Hier stonden opdrachten, een uitleg over de instellingenvolgorde en een stukje over
+  --no-wait. Dat is drie keer misgegaan op dezelfde manier: de repository loopt vooruit,
+  en dan staat hier een handleiding die het gereedschap van vorige maand beschrijft. Het
+  gereedschap heet inmiddels zadctl en niet meer zad, en het wordt bij voorkeur als binary
+  geinstalleerd en niet meer met uv - allebei stond het hier fout.
+
+  Wat er dus WEL hoort: wat het is, hoe je aan de laatste versie komt, en een link. De
+  installatieregels komen letterlijk uit de README van de repository.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -19,48 +23,38 @@
         "Dezelfde handelingen als in deze interface, maar vanaf de opdrachtregel."
     ) }}
 
-    {% call panel("Wat het is", "terminal") %}
+    {% call panel("Installeren", "arrow-down") %}
         <c-paragraph>
-            Een opdrachtregeltool die met de API van ZAD praat. Alles wat je hier aanklikt -
-            een deployment aanmaken of bijwerken, logs lezen, een backup maken, een taak
-            volgen - kan er ook mee, met je projectsleutel als toegang.
+            De CLI is een enkel bestand. Je hebt er geen Python voor nodig en geen
+            beheerdersrechten: hij komt in <c-code>~/.local/bin</c-code> te staan, en
+            weggooien is dat ene bestand verwijderen.
         </c-paragraph>
-        <c-paragraph>
-            Je pakt hem als je toch al in een terminal zit, als je een handeling vaker doet
-            dan een keer, of als je hem in een script wilt zetten. Voor eenmalig werk is
-            deze interface sneller; voor herhaling is de CLI dat.
+
+        <c-heading type="h3" size="6" label="macOS" />
+        <c-code-viewer language="bash">mkdir -p ~/.local/bin
+curl -fsSL https://github.com/RijksICTGilde/zad-cli/releases/latest/download/zadctl_darwin_arm64.tar.gz \
+  | tar -xzf - -C ~/.local/bin zadctl
+xattr -d com.apple.quarantine ~/.local/bin/zadctl 2>/dev/null || true
+zadctl --version</c-code-viewer>
+        <c-paragraph size="sm">
+            Op een Intel-Mac vervang je <c-code>darwin_arm64</c-code> door
+            <c-code>darwin_amd64</c-code>. De regel met <c-code>xattr</c-code> haalt het
+            quarantainevlaggetje weg dat macOS op elk gedownload bestand zet; zonder die
+            regel weigert Gatekeeper het te openen.
         </c-paragraph>
+
+        <c-heading type="h3" size="6" label="Linux" />
+        <c-code-viewer language="bash">mkdir -p ~/.local/bin
+curl -fsSL https://github.com/RijksICTGilde/zad-cli/releases/latest/download/zadctl_linux_amd64.tar.gz \
+  | tar -xzf - -C ~/.local/bin zadctl
+zadctl --version</c-code-viewer>
     {% endcall %}
 
-    {% call panel("Installeren en instellen", "arrow-down") %}
-        <c-code-viewer language="bash">uv tool install git+https://github.com/RijksICTGilde/zad-cli.git</c-code-viewer>
-
-        <c-paragraph size="sm">
-            Daarna eenmalig instellen. Dit vraagt om je API-sleutel en je project en schrijft
-            ze in een <c-code>.env</c-code>. De sleutel staat op de projectpagina, onder
-            Configuratie &amp; Secrets.
+    {% call panel("Verder lezen", "book-open") %}
+        <c-paragraph>
+            Alles wat de CLI kan, hoe je hem instelt en wat er per opdracht uit komt staat in
+            de repository. Die documentatie hoort bij de versie die je net hebt gehaald.
         </c-paragraph>
-        <c-code-viewer language="bash">zad config init</c-code-viewer>
-
-        <c-paragraph size="sm">
-            Liever zelf zetten? <c-code>ZAD_API_KEY</c-code> en <c-code>ZAD_PROJECT_ID</c-code>
-            als omgevingsvariabelen doen hetzelfde. Een vlag op de opdracht wint van een
-            omgevingsvariabele, en die weer van het configuratiebestand.
-        </c-paragraph>
-    {% endcall %}
-
-    {% call panel("Wat je ermee doet", "play") %}
-        <c-code-viewer language="bash">zad deployment create staging --component web --image ghcr.io/org/app:v1.0
-zad logs production
-zad backup create production</c-code-viewer>
-
-        <c-paragraph size="sm">
-            Opdrachten die iets in gang zetten wachten standaard tot het klaar is. Met
-            <c-code>--no-wait</c-code> krijg je meteen een taak-id terug en volg je hem zelf
-            met <c-code>zad task status &lt;id&gt;</c-code> - handig in een script dat niet
-            wil blijven hangen.
-        </c-paragraph>
-
-        <c-link href="https://github.com/RijksICTGilde/zad-cli" label="Alle opdrachten en instellingen: zad-cli op GitHub" target="_blank" />
+        <c-link href="https://github.com/RijksICTGilde/zad-cli" label="zad-cli op GitHub" target="_blank" />
     {% endcall %}
 {% endblock %}
