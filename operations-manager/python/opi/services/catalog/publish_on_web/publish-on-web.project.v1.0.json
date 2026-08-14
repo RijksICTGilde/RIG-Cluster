@@ -236,7 +236,8 @@
         }
       ],
       "default": null,
-      "description": "Project-level domain approvals. Written by the platform's approval flow."
+      "description": "Project-level domain approvals. Written by the platform's approval flow and carried over on a write, so a caller neither has to send it nor can lose it by leaving it out.",
+      "x-platform-managed": true
     },
     "tls": {
       "anyOf": [
