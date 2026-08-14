@@ -47,17 +47,6 @@
     {% endif %}
 
     <form id="wizard-step-form"
-              {# hx-sync, want zonder dit verdwijnt een tweede klik geruisloos.
-                 Een rij toevoegen of verwijderen dient dit formulier in. Klik je vlak
-                 na de vorige actie, dan loopt dat verzoek nog en GOOIT htmx de tweede
-                 indiening weg: geen fout, geen verzoek, de knop lijkt stuk. Gemeten in
-                 tests/e2e: verwijderen gevolgd door toevoegen leverde geen enkel
-                 verzoek op, met net wat meer tijd ertussen wel.
-                 "queue last" zet de laatste klik in de wachtrij in plaats van hem weg
-                 te gooien, zodat hij alsnog uitgevoerd wordt zodra het lopende verzoek
-                 klaar is. Niet "replace": dat breekt het lopende verzoek af, en dat is
-                 precies het verzoek dat de vorige klik van de gebruiker uitvoert. #}
-              hx-sync="this:queue last"
           autocomplete="off"
           hx-ext="json-enc"
           hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
