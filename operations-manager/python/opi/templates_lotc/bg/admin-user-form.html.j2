@@ -28,7 +28,7 @@
     {{ page_head(page_heading) }}
 
     {% call panel("") %}
-        <form method="post" action="{{ form_action }}">
+        <form autocomplete="off" method="post" action="{{ form_action }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
 
             <c-stack gap="lg">

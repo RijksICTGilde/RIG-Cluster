@@ -37,7 +37,7 @@
                            als kind van een cluster is het vanzelf al een flex-item. #}
                         <c-cluster gap="xs">
                             {% set lotc_onclick_1 %}window.location.href='/admin/users/{{ user.id }}/edit'{% endset %}<c-button label="Bewerken" size="sm" show-icon="before" icon="pencil-on-square"/>
-                            <form method="post" action="/admin/users/{{ user.id }}/delete"
+                            <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/delete"
                                   onsubmit="return confirm('Weet je zeker dat je {{ user.full_name }} wilt verwijderen?');">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                 <c-button label="Verwijderen" size="sm" show-icon="before" icon="trash" html-type="submit" type="warning"/>

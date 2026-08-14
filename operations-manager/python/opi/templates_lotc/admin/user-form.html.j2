@@ -10,7 +10,7 @@
     </div>
 
     <c-card outline="true" padding="xl" background-color="wit">
-        <form method="post" action="{{ form_action }}">
+        <form autocomplete="off" method="post" action="{{ form_action }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
 
             <c-layout-flow gap="lg">

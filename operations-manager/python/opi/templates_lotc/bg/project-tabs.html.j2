@@ -270,7 +270,7 @@
                        dat kan gaan afwijken. #}
                     {% set tabblad_url = tabs['project'].url %}
                     {% set huidige_sortering = deployment_sorteringen | selectattr('0', 'equalto', deployment_sort) | map(attribute='1') | first | default('Naam (A-Z)') %}
-                    <form method="get" action="{{ tabblad_url }}"
+                    <form autocomplete="off" method="get" action="{{ tabblad_url }}"
                           hx-get="{{ tabblad_url }}"
                           hx-select="#deployments-lijst"
                           hx-target="#deployments-lijst"
