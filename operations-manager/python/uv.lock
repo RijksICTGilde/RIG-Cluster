@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = "==3.14.*"
 
 [[package]]
@@ -1037,7 +1037,7 @@ wheels = [
 [[package]]
 name = "lord-of-the-components"
 version = "0.1.0"
-source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=python&rev=762e570#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=python&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
 dependencies = [
     { name = "jinja2" },
 ]
@@ -1045,12 +1045,12 @@ dependencies = [
 [[package]]
 name = "lotc-forms"
 version = "0.1.0"
-source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=762e570#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
 
 [[package]]
 name = "lotc-layout"
 version = "0.1.0"
-source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=762e570#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
 dependencies = [
     { name = "lord-of-the-components" },
 ]
@@ -1058,7 +1058,7 @@ dependencies = [
 [[package]]
 name = "lotc-nldd"
 version = "0.1.0"
-source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=762e570#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
 dependencies = [
     { name = "lord-of-the-components" },
 ]
@@ -1066,7 +1066,7 @@ dependencies = [
 [[package]]
 name = "lotc-rvo"
 version = "0.1.0"
-source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=762e570#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
 dependencies = [
     { name = "lord-of-the-components" },
 ]
@@ -2867,11 +2867,11 @@ requires-dist = [
     { name = "jinja2-base64-filters", specifier = ">=0.1.4" },
     { name = "jsonpath-ng", specifier = ">=1.7.0" },
     { name = "jsonschema", specifier = ">=4.26.0" },
-    { name = "lord-of-the-components", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=python&rev=762e570" },
-    { name = "lotc-forms", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=762e570" },
-    { name = "lotc-layout", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=762e570" },
-    { name = "lotc-nldd", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=762e570" },
-    { name = "lotc-rvo", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=762e570" },
+    { name = "lord-of-the-components", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=python&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
+    { name = "lotc-forms", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
+    { name = "lotc-layout", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
+    { name = "lotc-nldd", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
+    { name = "lotc-rvo", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
     { name = "lxml", specifier = ">=6.0.1" },
     { name = "mako", specifier = ">=1.3.12" },
     { name = "opentelemetry-api", specifier = ">=1.27.0" },
