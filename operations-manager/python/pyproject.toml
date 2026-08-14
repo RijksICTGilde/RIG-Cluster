@@ -113,6 +113,19 @@ exclude = ["opi/migrations"]
 [tool.ruff.format]
 line-ending = "lf"
 
+[tool.djlint]
+profile = "jinja"
+extension = "html.j2"
+# Negeerlijst, per regel met de reden:
+# T003 (endblock zonder naam): de templates gebruiken consequent kale endblocks.
+# H021 (inline styles): het componentensysteem gebruikt style-attributen bewust.
+# H025 (orphan tag): false positive op de LOTC custom elementen (<c-card> e.d.).
+# T027/T001: vallen over bewuste jinja-escapes zoals {{' }} om `${{ }}` letterlijk
+#            te renderen (actions.html.j2).
+# T028 (spaceless in attribuut): meerdere-regel class-attributen zijn daar leesbaar.
+# J018 (url_for): de templates gebruiken bewust vaste paden; urls hebben geen namen.
+ignore = "T003,H021,H025,T027,T001,T028,J018"
+
 [tool.ruff.lint]
 select = ["I", "SIM", "B", "UP", "F", "E", "S", "C90", "DTZ", "LOG", "PIE", "PT", "ERA", "W", "C", "TRY", "RUF", "ANN", "A", "ICN", "RSE", "FLY", "ISC", "PLE", "FURB", "PERF", "TCH"]
 fixable = ["ALL"]
@@ -274,6 +287,10 @@ authorized_licenses = [
     "Public Domain",
     "The Unlicense (Unlicense)",
 ]
+# lotc-forms draagt (nog) geen license-metadata in zijn pyproject, anders dan de vier
+# andere lotc-packages; de licentie is daarmee UNKNOWN terwijl de repo MIT is.
+[tool.liccheck.authorized_packages]
+lotc-forms = "*"
 
 [tool.ruff.lint.flake8-type-checking]
 # Both FastAPI and Pydantic read these annotations at runtime -- FastAPI to build the

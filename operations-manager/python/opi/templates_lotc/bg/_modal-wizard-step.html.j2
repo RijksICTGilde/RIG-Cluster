@@ -145,7 +145,7 @@
                             {# Backup en restore slaan niets op maar starten een taak; daar
                                staat "Bezig met opslaan" dus niet. Zoals in het origineel. #}
                             {% if not (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) %}
-                                <span class="wizard-step__saving" aria-hidden="true">Bezig met opslaan&hellip;</span>
+                                <span class="wizard-step__saving" aria-hidden="true">Bezig met opslaan…</span>
                             {% endif %}
                             <c-button
                                 html-type="submit"

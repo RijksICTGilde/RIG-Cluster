@@ -60,7 +60,7 @@
             {{ page_head(display_name) }}
 
             {% call panel(new_account_heading, "person-badge-plus") %}
-            <form method="POST" action="/invite/{{ invite_key }}/register" autocomplete="off">
+            <form method="post" action="/invite/{{ invite_key }}/register" autocomplete="off">
                 <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
                 <c-stack gap="lg">
                     {% if general_error %}
