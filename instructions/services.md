@@ -304,6 +304,16 @@ why this used to name a shape (`owned_values_storage = ValueStorage.PER_VALUE`);
 is gone, because a second shape only meant every reader needed a decrypt step of its own to
 forget. See `features/component-values-api.md`.
 
+Whether such a value comes back out of a read is the service's own call
+(`owned_value_is_secret`), default yes. A service that cannot answer it from the value
+adds `owned_values_secret_flag = True`, and then the *writer* marks per value which ones
+are not secret (`public` on the write, a plain `<owned_property>-public` name list next to
+the block). That changes nothing about storage -- everything stays in the one AGE block --
+only whether a read may show it, and an absent or unreadable marking means secret.
+`user-env-vars` needs it (`APP_MODE` and a password are the same kind of string);
+`aliases` deliberately does not, because a second overridable answer could unmask a stored
+literal.
+
 ### Project-level config: what "declarative" does and does not cover
 
 The service builds the whole `FormSection` itself (auth-wall is the smallest complete

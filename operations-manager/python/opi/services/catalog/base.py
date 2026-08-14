@@ -635,6 +635,30 @@ class Service(ABC):
     #: yes/no. ``opi/services/component_values.py`` is the one implementation of it.
     owned_values_map: ClassVar[bool] = False
 
+    #: Whether the writer of one of those values may say per value that it is NOT a
+    #: secret, so a read gives it back in full instead of ``***``.
+    #:
+    #: Only for a service that cannot answer the question from the value itself.
+    #: ``user-env-vars`` cannot: ``production`` and a database password are the same
+    #: kind of string, so only the person writing it knows which it is, and without the
+    #: flag every value came back masked -- including one the caller had just written,
+    #: which made a typo in a non-secret variable invisible. ``aliases`` deliberately
+    #: leaves this off: it answers from the value (a ``$PLATFORM_VAR`` reference is not
+    #: a secret, see ``owned_value_is_secret``), so a flag there would be a second,
+    #: overridable answer to a question that already has one.
+    #:
+    #: The flag never changes what is STORED: the whole set stays one AGE block, so a
+    #: value marked non-secret is encrypted in ``zad-projects`` exactly like the rest.
+    #: What it changes is only whether a read may show it. That is the conservative
+    #: direction on purpose -- re-marking a value as secret later then costs nothing,
+    #: where storing it in plain text would have put it in git history for good.
+    #:
+    #: Absent means secret. The names of the non-secret values are stored in a plain
+    #: sibling property (``<owned_property>-public``), so a project file written before
+    #: this existed has no list, and every one of its values stays masked.
+    #: ``opi/services/component_values.py`` implements it.
+    owned_values_secret_flag: ClassVar[bool] = False
+
     #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
     #: meaningful for providers that override ``provision``. The defaults on the four
     #: provisioning providers reproduce today's fixed db -> minio -> keycloak -> redis
@@ -710,6 +734,24 @@ class Service(ABC):
         Separate from ``config_model_for`` on purpose: a service can both define
         something at project level and be configured at component level, with two
         different shapes, and one hook cannot answer both.
+        """
+        return None
+
+    def summarize_data(self, data: Any, private_key: str) -> Any:
+        """What a read may show of this service's DEFINE-side payload at that layer.
+
+        A definition is the thing being used, so it is the one place in a project file
+        where the payload IS the secret -- for attachments, the file. The read endpoints
+        therefore drop ``data`` wholesale and always have, which is right and is also why
+        a client could not check anything about it at all.
+
+        This is the narrow way back: the service, and only the service, says what of its
+        definition may be described. Default None -- nothing, for the same reason the
+        blanket drop existed. A service that answers must never return content; it
+        returns facts *about* the content.
+
+        *private_key* is the project's decoded AGE private key, because a definition is
+        stored encrypted and there is nothing to describe without opening it.
         """
         return None
 
