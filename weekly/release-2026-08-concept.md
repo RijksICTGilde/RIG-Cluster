@@ -45,7 +45,8 @@ Dit stond vorige keer nog bij "voor de toekomst" en is er nu: het portaal is opn
 - **Je aliassen zijn eindelijk terug te lezen.** Je kon ze wel invullen, maar nergens zien wat erin stond. Ze staan nu in de kaart van het component, met de verwijzing erbij, zodat te zien is waar een waarde vandaan komt.
 - **Wat een dienst je aanreikt staat bij elkaar.** Het Keycloak-adres, de beheerdersnaam, het wachtwoord en de gedeelde code, de uitnodigingslinks en je bijlagen staan op het tabblad Services info, in dezelfde vorm als de rest van je configuratie. Wachtwoorden en codes zijn afgeschermd, met een knop om ze te tonen en te kopiëren.
 - **Acties staan waar je ze zoekt.** Elk tabblad heeft een eigen Acties-kaart met de knoppen die bij dat onderwerp horen, in plaats van verspreid over de pagina.
-- **Het dashboard toont geheugen en CPU naast elkaar.** Geheugen staat voorop, want daar stuur je op, en beide balken staan in dezelfde volgorde zodat je ze kunt vergelijken.
+- **Het dashboard toont per project wat het gebruikt**, geheugen boven CPU en gesorteerd op geheugen, met de projectnaam als link naar dat project. Zo zie je in een oogopslag wie tegen zijn limiet aanloopt, ook als dat in absolute zin een klein project is.
+- **Een bijlage is te vervangen zonder je koppelingen kwijt te raken.** Een verlopen certificaat verving je door hem weg te gooien en opnieuw te uploaden, en dan verwees geen enkel component er meer naar. Nu overschrijf je de inhoud en blijft alles gekoppeld.
 - **Een slapend project is gezond.** Het wordt niet meer als probleem geteld, maar wel apart benoemd, zodat je niet denkt dat er iets stuk is.
 - **Bij een taak staat wie hem uitvoerde.** De ingelogde gebruiker, of "API" als het via een sleutel ging.
 
@@ -53,6 +54,17 @@ Dit stond vorige keer nog bij "voor de toekomst" en is er nu: het portaal is opn
 
 - **De gedeelde registry heeft een eigenaar per tag.** Een image die je publiceert draagt de naam van je project, zodat een ander project er niet overheen kan schrijven. Dit kwam uit een technische toetsing tegen de BIO en NORA en is de zwaarste bevinding daaruit.
 - **De uitleg bij een dienst is een pagina op zich.** Open je de link rechtstreeks, dan krijg je een leesbare pagina in plaats van tekst zonder opmaak.
+- **Wachtwoorden staan niet meer in de procestabel.** Bij het bijwerken van een geheim ging de waarde via de commandoregel naar Kubernetes, en die is voor iedereen op die machine leesbaar. Dat gaat nu via een bestand dat alleen het proces zelf mag lezen.
+
+##### Sneller uitrollen
+
+- **Een uitrol wacht niet meer op de klok.** Er zaten vaste wachttijden in het uitrolpad uit de tijd dat ArgoCD zijn status traag bijwerkte. Die zijn weg: de laatste stap van een projectaanmaak duurde dertien seconden en is nu minder dan een tiende seconde. Het portaal kijkt bovendien elke twee seconden of een stap klaar is in plaats van elke vijf of tien, dus je ziet eerder dat er iets gebeurd is.
+- **Geen excuus meer dat nergens op slaat.** Bij het aanmaken van een project stond een melding dat het door een bug in ArgoCD een paar minuten kon duren. Die bug is verholpen en de melding is weg. Wat blijft staan is de zin die er wel toe doet: duurt het lang, dan betekent een time-out niet dat het aanmaken is mislukt.
+
+##### Terugzetten van een backup
+
+- **Een restore laat je project werkend achter.** Terugzetten in je eigen database wisselde het databasewachtwoord, terwijl het opgeslagen wachtwoord in je omgeving bleef staan. Het gevolg was een project dat het niet meer deed en waarop ook geen enkele wijziging meer lukte. Dat wachtwoord wordt nu niet meer gewisseld; het is er niet voor nodig.
+- **En het antwoord vertelt de waarheid.** Een restore die zelf slaagde maar waarvan het bijwerken daarna misging, meldde toch "gelukt". Nu krijg je in dat geval "gedeeltelijk", met erbij of dat bijwerken wel of niet is voltooid.
 
 ##### Duidelijker status, minder ruis
 
