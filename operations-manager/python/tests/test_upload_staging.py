@@ -5,6 +5,7 @@ import time
 
 import pytest
 from opi.services import upload_staging
+from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 
 
 def test_stage_read_delete_round_trip() -> None:
@@ -26,7 +27,7 @@ def test_empty_and_oversized_rejected() -> None:
     with pytest.raises(ValueError, match="Leeg"):
         upload_staging.stage_file(b"", "x")
     with pytest.raises(ValueError, match="te groot"):
-        upload_staging.stage_file(b"x" * (upload_staging.MAX_SIZE_BYTES + 1), "x")
+        upload_staging.stage_file(b"x" * (MAX_ATTACHMENT_BYTES + 1), "x")
 
 
 def test_invalid_token_rejected() -> None:

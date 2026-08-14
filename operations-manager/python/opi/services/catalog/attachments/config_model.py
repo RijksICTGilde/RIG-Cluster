@@ -19,7 +19,7 @@ Secret nothing mounts.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
 
@@ -88,6 +88,10 @@ class AttachmentUse(BaseModel):
 
 class AttachmentsConfig(RootModel[list[AttachmentUse]]):
     """The component-level attachments config: a list of couplings."""
+
+    #: The field that identifies one coupling -- the PATCH config endpoint
+    #: adds/removes/updates entries by this key (the PUT replaces the whole list).
+    ITEM_KEY: ClassVar[str] = "reference"
 
     root: list[AttachmentUse] = Field(
         default_factory=list,

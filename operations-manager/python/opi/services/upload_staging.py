@@ -19,12 +19,12 @@ import time
 import uuid
 
 from opi.core.config import settings
+from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_KB
 
 logger = logging.getLogger(__name__)
 
 STAGING_DIR = os.path.join(settings.TEMP_DIR, "upload-staging")
 STAGING_TTL_SECONDS = 24 * 60 * 60
-MAX_SIZE_BYTES = 256 * 1024
 
 _TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -71,8 +71,8 @@ def stage_file(content: bytes, filename: str) -> str:
     """
     if not content:
         raise ValueError("Leeg bestand geupload")
-    if len(content) > MAX_SIZE_BYTES:
-        raise ValueError(f"Bestand te groot (max {MAX_SIZE_BYTES // 1024} KB)")
+    if len(content) > MAX_ATTACHMENT_BYTES:
+        raise ValueError(f"Bestand te groot (max {MAX_ATTACHMENT_KB} KB)")
 
     sweep()
     _ensure_dir()

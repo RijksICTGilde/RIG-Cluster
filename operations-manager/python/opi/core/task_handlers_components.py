@@ -211,6 +211,8 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
             path=payload.get("path"),
             rewrite=payload.get("rewrite"),
             services=payload.get("services"),
+            add_services=payload.get("add_services"),
+            remove_services=payload.get("remove_services"),
             cpu_limit=payload.get("cpu_limit"),
             memory_limit=payload.get("memory_limit"),
         )
@@ -596,6 +598,15 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             result = await project_manager.clear_service_config(
                 service_name, target, component_name=component_name, deployment_name=deployment_name
             )
+        elif operation == "patch":
+            result = await project_manager.patch_service_config_list(
+                service_name,
+                target,
+                add=payload.get("add") or [],
+                remove=payload.get("remove") or [],
+                component_name=component_name,
+                deployment_name=deployment_name,
+            )
         else:
             if config is None:
                 msg = f"Upsert van service '{service_name}' zonder config"
@@ -640,11 +651,16 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
                 progress.fail_project(processing_error)
 
         succeeded = processing["status"] != "failed"
+        counts = (
+            {key: result[key] for key in ("added", "updated", "removed") if key in result}
+            if operation == "patch"
+            else {"removed": result.get("removed")}
+        )
         return {
             "status": "success" if succeeded else "failed",
             "service": service_name,
             "target": target,
-            "removed": result.get("removed"),
+            **counts,
             "processing": {
                 **processing,
                 **(

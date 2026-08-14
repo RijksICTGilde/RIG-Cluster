@@ -8,7 +8,9 @@ the entire application, from form submission to project processing.
 import logging
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, get_args
+
+from pydantic import ValidationError
 
 from opi.core.buttons import check_button_variant
 from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
@@ -481,6 +483,33 @@ class ServiceAdapter:
         return entries
 
     @classmethod
+    def merge_component_service_entries(
+        cls, existing: list[Any], service_names: list[str]
+    ) -> list[str | dict[str, Any]]:
+        """Rebuild a component's services list from names, keeping existing entries.
+
+        Rebuilding from bare names alone (``build_component_service_entries``) silently
+        drops the config an entry carries -- attachment couplings, storage mounts, a
+        component-level ``tls`` -- because the PATCH body has names only. A name that is
+        already present keeps its entry as it stands; only a genuinely new name gets a
+        freshly built entry (storage services get their default config, as in
+        add_component). Names missing from ``service_names`` fall out, along with their
+        config: that is what removal means. The order follows the requested list.
+        """
+        kept: dict[str, Any] = {}
+        for entry in existing or []:
+            entry_name = service_entry_name(entry)
+            if entry_name is not None and entry_name not in kept:
+                kept[entry_name] = entry
+        merged: list[str | dict[str, Any]] = []
+        for name in service_names:
+            if name in kept:
+                merged.append(kept[name])
+            else:
+                merged.extend(cls.build_component_service_entries([name]))
+        return merged
+
+    @classmethod
     def extract_service_names_from_project_services(cls, project_services: list[str | dict]) -> list[str]:
         """
         Extract service names from project-level services list.
@@ -924,3 +953,96 @@ class ServiceAdapter:
                 target_list[index] = service_name
                 return True
         return False
+
+    @classmethod
+    def patch_service_config_list(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        *,
+        add: list[dict[str, Any]],
+        remove: list[str],
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> dict[str, int]:
+        """Add, update or remove items in one service's list-shaped config at ``layer``.
+
+        The PATCH counterpart of ``set_service_config``: instead of replacing the whole
+        list, only the named items change. ``add`` takes full entries (validated against
+        the service's own item model here, so a malformed entry fails before anything is
+        written); an entry whose key already exists replaces it. ``remove`` takes keys
+        only, and a key that is not there is a no-op -- removing twice is fine. Remove
+        runs first, so a key in both lists is replaced outright.
+
+        The item key comes from the config model itself: ``SomeConfig.ITEM_KEY`` (e.g.
+        ``"name"`` for storage mounts, ``"reference"`` for attachment couplings). A
+        service whose config at this layer is not a keyed list has nothing to patch.
+
+        Writes through ``set_service_config`` afterwards, so project-level selection and
+        entry normalization stay on the one path. Returns per-action counts so the
+        caller can report a no-op as a no-op.
+        """
+        # Lazy: the registry imports this module, so it cannot be imported at load time.
+        from opi.services.registry import get_service
+
+        try:
+            service_type = ServiceType(service_name)
+        except ValueError:
+            raise ServiceValidationError(f"Unknown service: {service_name}") from None
+        service = get_service(service_type)
+        model = service.config_model_for(layer)
+        item_key: str | None = getattr(model, "ITEM_KEY", None) if model is not None else None
+        if model is None or item_key is None:
+            raise ServiceValidationError(
+                f"Service '{service_name}' has no patchable list config at the {layer.value} layer"
+            )
+
+        root_annotation = model.model_fields["root"].annotation
+        item_model = get_args(root_annotation)[0]
+        try:
+            validated_add = [
+                item_model.model_validate(item).model_dump(by_alias=True, exclude_unset=True) for item in add
+            ]
+        except ValidationError as e:
+            raise ServiceValidationError(f"Invalid '{service_name}' entry: {e.errors(include_url=False)}") from e
+
+        target_list = cls._resolve_target_services_list(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=True
+        )
+        current_config: Any = None
+        for entry in target_list:
+            if service_entry_name(entry) == service_name:
+                current_config = service_entry_config(entry)
+                break
+        if current_config is not None and not isinstance(current_config, list):
+            raise ServiceValidationError(
+                f"The config of '{service_name}' at the {layer.value} layer is not a list; only the PUT can replace it"
+            )
+        current: list[Any] = list(current_config or [])
+
+        def key_of(item: Any) -> Any:
+            return item.get(item_key) if isinstance(item, dict) else None
+
+        removed_keys = set(remove)
+        kept = [item for item in current if key_of(item) not in removed_keys]
+        removed = len(current) - len(kept)
+
+        merged: list[Any] = list(kept)
+        positions = {key_of(item): index for index, item in enumerate(merged)}
+        added = 0
+        updated = 0
+        for item in validated_add:
+            item_key_value = key_of(item)
+            if item_key_value in positions:
+                merged[positions[item_key_value]] = item
+                updated += 1
+            else:
+                positions[item_key_value] = len(merged)
+                merged.append(item)
+                added += 1
+
+        cls.set_service_config(
+            project_data, service_name, layer, merged, component_name=component_name, deployment_name=deployment_name
+        )
+        return {"added": added, "updated": updated, "removed": removed}
