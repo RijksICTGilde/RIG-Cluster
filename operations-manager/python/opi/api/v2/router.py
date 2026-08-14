@@ -2114,6 +2114,15 @@ async def get_service_config_v2(
 ) -> JSONResponse:
     """Read a service's current config across every target it is set on.
 
+    Each entry carries ``target`` (the layer) and ``config`` (what is set there).
+
+    **The shape of ``config`` depends on the layer, and the service decides it.** The
+    attachments service is the clearest case: on the project layer it is an object (the
+    catalogue of files), on a component layer it is a LIST (the couplings to that
+    component). A client that assumes one shape crashes on the first project that has
+    both, which is every project that ever used an attachment. Read ``target`` first, or
+    check the type before you index into it.
+
     Headers:
         X-API-Key: The API key for the project (required)
     """

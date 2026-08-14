@@ -98,7 +98,13 @@ class ServiceUsage(BaseModel):
         default=None,
         description=(
             "The service's own config at this usage, with stored secrets replaced by '***'. "
-            "Null means the service is selected here without configuration, which still means it is on."
+            "Null means the service is selected here without configuration, which still means it is on. "
+            "THE SHAPE DEPENDS ON THE LAYER, and it is the service that decides: attachments, for "
+            "example, is an object on the project layer (the catalogue of files) and a LIST on a "
+            "component layer (the couplings to that component). A client that assumes one shape "
+            "crashes on the first project that has both, which is every project that ever used an "
+            "attachment. Check the type before you read it, or read 'target' first to know which "
+            "layer you are looking at."
         ),
     )
 
