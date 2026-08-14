@@ -174,12 +174,13 @@
       "type": "array"
     },
     "realms": {
-      "description": "Per-cluster realm admin connections. Written and managed by the platform.",
+      "description": "Per-cluster realm admin connections. Written and managed by the platform: it is carried over on a write, so a caller neither has to send it nor can lose it by leaving it out.",
       "items": {
         "$ref": "#/$defs/KeycloakRealm"
       },
       "title": "Realms",
-      "type": "array"
+      "type": "array",
+      "x-platform-managed": true
     },
     "restrict-access": {
       "anyOf": [
