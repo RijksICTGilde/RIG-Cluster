@@ -163,7 +163,6 @@ def test_services_without_cleanup_have_no_manager_key():
 
 
 def test_handle_service_removal_delegates_to_resolved_manager():
-
     manager = AsyncMock()
     manager.handle_service_removal.return_value = {"errors": []}
     resolved_keys = []
@@ -197,7 +196,6 @@ def test_handle_service_removal_delegates_to_resolved_manager():
 
 
 def test_handle_service_removal_noop_without_manager_key():
-
     called = False
 
     async def get_manager(key):

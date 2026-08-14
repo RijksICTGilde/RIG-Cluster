@@ -11,4 +11,3 @@ NUL van de 160 sjablonen gebruikt. Het is dus geen half werk maar dood gewicht m
 beslissing eromheen.
 
 - [x] GEBOUWD 6 augustus: het startcommando van een component is instelbaar als editable, optioneel, met de waarschuwing in de helptekst (`features/futures/component-command-instelbaar.md` beschrijft het waarom). Leeg wordt niet weggeschreven maar verwijderd, want het schema eist minItems 1 en een lege lijst zou de entrypoint met niets overschrijven. Elk argument is een eigen regel, zodat sh -c "x y" niet stilzwijgend een enkel argument wordt. NOG OPEN uit dat document: de deployment-componentlaag (het schema staat het toe, de UI biedt het niet), en de exec-fout tonen na een mislukte uitrol in plaats van alleen CrashLoopBackOff.
-

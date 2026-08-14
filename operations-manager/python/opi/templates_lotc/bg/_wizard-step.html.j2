@@ -98,7 +98,7 @@
                         hx-vals='{"_goto": "prev"}'
                         hx-ext="json-enc" />
                 {% else %}
-                    <span></span>
+                    <!-- djlint:off H020 --><span></span><!-- djlint:on -->
                 {% endif %}
 
                 <c-cluster gap="sm" align="center">
@@ -120,7 +120,7 @@
                     {# De klasse blijft: wizard.css laat dit alleen zien tijdens een
                        htmx-verzoek. Het draaiende pijltje eromheen is weg, want NLDD
                        heeft geen refresh-icoon. #}
-                    <span class="wizard-step__saving" aria-hidden="true">Bezig&hellip;</span>
+                    <span class="wizard-step__saving" aria-hidden="true">Bezig…</span>
 
                     {% if steps.is_last %}
                         {% if show_review %}
