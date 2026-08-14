@@ -62,6 +62,40 @@ def test_a_reader_sees_the_drift_but_not_the_button() -> None:
     assert "Nu verwerken" not in html
 
 
+def test_a_running_rollout_says_so_instead_of_claiming_nothing_happened() -> None:
+    """De teller staat er tijdens het uitrollen nog; de tekst mag dan niet liegen."""
+    html = _render(
+        {
+            "count": 2,
+            "since": "2026-08-01T09:30:00+00:00",
+            "task_types": ["add_component"],
+            "rollout_in_progress": True,
+        }
+    )
+
+    assert "op dit moment uitgerold" in html
+    assert "er is niets naar het cluster gegaan" not in html
+    assert "nog niet uitgerold" not in html
+    # De knop vraagt om precies de verwerking die al loopt.
+    assert "Nu verwerken" not in html
+
+
+def test_one_change_being_rolled_out_reads_as_one_change() -> None:
+    html = _render({"count": 1, "since": None, "task_types": [], "rollout_in_progress": True})
+
+    assert "1 wijziging uit het projectbestand" in html
+    assert "wordt nu verwerkt" in html
+    assert "wijzigingen" not in html
+
+
+def test_without_a_running_rollout_the_warning_stays() -> None:
+    html = _render({"count": 2, "since": None, "task_types": [], "rollout_in_progress": False})
+
+    assert "nog niet uitgerold" in html
+    assert "er is niets naar het cluster gegaan" in html
+    assert "op dit moment uitgerold" not in html
+
+
 def test_the_notice_is_rendered_above_the_tabs() -> None:
     """Drift is about the whole project; it must not hide behind the right tab."""
     page = (_TEMPLATE_DIR / "bg" / "project-tabs.html.j2").read_text()

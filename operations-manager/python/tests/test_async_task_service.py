@@ -307,7 +307,7 @@ async def test_no_deferred_rollouts_when_nothing_was_deferred(orm_db):
     await _completed(svc, project="p1", task_type="add_component", payload={"name": "web"})
 
     pending = await svc.get_deferred_rollouts("p1")
-    assert pending == {"count": 0, "since": None, "task_types": []}
+    assert pending == {"count": 0, "since": None, "task_types": [], "rollout_in_progress": False}
 
 
 async def test_deferred_rollouts_are_counted_and_dated(orm_db):
@@ -353,6 +353,56 @@ async def test_a_partial_rollout_does_not_clear_the_drift(orm_db):
     await _completed(svc, project="p1", task_type="refresh_deployment", payload={"deployment_name": "dev"})
 
     assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
+
+
+async def test_a_running_rollout_is_reported_while_the_count_still_stands(orm_db):
+    """De teller loopt pas terug als de uitrol klaar is, dus de melding moet het weten."""
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    refresh = await _create(svc, project="p1", deployment=None, task_type="refresh_project", payload={"f": False})
+    await svc.start_task(refresh["task_id"])
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == 1
+    assert pending["rollout_in_progress"] is True
+
+
+async def test_a_queued_rollout_already_counts_as_in_progress(orm_db):
+    """Nog niet opgepakt is voor de lezer net zo goed onderweg."""
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _create(svc, project="p1", deployment=None, task_type="refresh_project", payload={"f": False})
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is True
+
+
+async def test_no_rollout_in_progress_once_it_finished(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == 0
+    assert pending["rollout_in_progress"] is False
+
+
+async def test_a_running_task_that_rolls_nothing_out_is_not_reported(orm_db):
+    """Anders zou een slaapstand of een kloon een uitrol aankondigen die niet gebeurt."""
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    other = await _create(svc, project="p1", deployment="d1", task_type="sleep_deployment", payload={"a": 1})
+    await svc.start_task(other["task_id"])
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is False
+
+
+async def test_a_running_rollout_in_another_project_is_not_reported(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    refresh = await _create(svc, project="p2", deployment=None, task_type="refresh_project", payload={"f": False})
+    await svc.start_task(refresh["task_id"])
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is False
 
 
 async def test_cleanup_keeps_a_deferred_rollout_that_was_never_rolled_out(orm_db):
