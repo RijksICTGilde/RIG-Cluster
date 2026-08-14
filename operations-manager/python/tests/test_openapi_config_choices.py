@@ -77,6 +77,19 @@ class TestGeserveerdDocument:
             == "GET /api/v2/projects/{project_name}/components"
         )
 
+    def test_het_document_legt_zijn_eigen_uitbreidingen_uit(self) -> None:
+        """x-choices en x-choices-source zijn geen standaardvocabulaire.
+
+        Wie ze tegenkomt zonder uitleg kan er twee kanten mee op, en de verkeerde kant
+        (x-choices lezen als validatie) breekt een gegenereerde client op een bestaand
+        projectbestand. De uitleg hoort dus in het document zelf te staan.
+        """
+        description = TestClient(app).get("/openapi.json").json()["info"]["description"]
+
+        assert "x-choices" in description
+        assert "x-choices-source" in description
+        assert "endpoint" in description
+
 
 class TestSleepMode:
     """Het geval uit de melding: sleep-mode accepteert per veld een beperkte set."""

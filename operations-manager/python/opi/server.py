@@ -21,7 +21,7 @@ from opi.api.image_router import image_router
 from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
-from opi.api.openapi_choices import annotate_config_choices
+from opi.api.openapi_choices import API_DESCRIPTION, annotate_config_choices
 from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
@@ -400,7 +400,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         lifespan=lifespan,
         title="RIG Operations Manager API",
-        description="GitOps Operations and Project Infrastructure API for self-service Kubernetes environments",
+        description=API_DESCRIPTION,
         summary=PROJECT_DESCRIPTION,
         version=VERSION,
         docs_url="/docs",
