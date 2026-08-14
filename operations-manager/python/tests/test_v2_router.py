@@ -143,6 +143,84 @@ class TestV2ComponentPorts:
         call_kwargs = mock_task_service.create_task.call_args[1]
         assert call_kwargs["payload"]["ports"] == [8443, 9443, 9444]
 
+    def test_patch_forwards_add_and_remove_services(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="update_component")
+
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"add_services": ["redis"], "remove_services": ["attachments"]},
+        )
+
+        _assert_accepted(response, "update_component")
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["payload"]["add_services"] == ["redis"]
+        assert call_kwargs["payload"]["remove_services"] == ["attachments"]
+
+    def test_patch_rejects_services_with_add_services(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"services": ["redis"], "add_services": ["minio-storage"]},
+        )
+
+        assert response.status_code == 422
+        mock_task_service.create_task.assert_not_called()
+
+
+class TestServiceConfigPatch:
+    """The PATCH sibling on list-shaped service configs (RC: vraag 18).
+
+    Exists per (service, target) exactly when the config model is a keyed list, with a
+    typed body per service; forwards operation/add/remove into the configure_service task.
+    """
+
+    def test_patch_route_only_for_keyed_list_models(self, v2_client: TestClient) -> None:
+        spec = v2_client.get("/openapi.json").json()
+        for service_name in ("persistent-storage", "temp-storage", "attachments"):
+            path = f"/api/v2/projects/{{project_name}}/services/{service_name}/config/component/{{component_name}}"
+            assert "patch" in spec["paths"][path], f"{service_name} has no PATCH on its config route"
+        # keycloak's config is an object, not a keyed list: no PATCH
+        assert "patch" not in spec["paths"]["/api/v2/projects/{project_name}/services/keycloak/config/project"]
+
+    def test_patch_body_is_typed_per_service(self, v2_client: TestClient) -> None:
+        spec = v2_client.get("/openapi.json").json()
+        patch = spec["paths"][
+            "/api/v2/projects/{project_name}/services/persistent-storage/config/component/{component_name}"
+        ]["patch"]
+        ref = patch["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        assert ref.endswith("StorageConfigPatch")
+        add_items = spec["components"]["schemas"]["StorageConfigPatch"]["properties"]["add"]["anyOf"][0]["items"]
+        assert add_items["$ref"].endswith("StorageEntry")
+
+    def test_patch_forwards_operation_add_and_remove(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/services/persistent-storage/config/component/backend",
+            headers={"X-API-Key": API_KEY},
+            json={"add": [{"name": "data2", "size": "1Gi", "mount-path": "/data2"}], "remove": ["data1"]},
+        )
+
+        _assert_accepted(response, "configure_service")
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["operation"] == "patch"
+        assert payload["add"] == [{"name": "data2", "size": "1Gi", "mount-path": "/data2"}]
+        assert payload["remove"] == ["data1"]
+        assert payload["component"] == "backend"
+
+    def test_patch_without_add_or_remove_is_a_422(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/services/attachments/config/component/backend",
+            headers={"X-API-Key": API_KEY},
+            json={},
+        )
+
+        assert response.status_code == 422
+        mock_task_service.create_task.assert_not_called()
+
 
 class TestV2UpsertDeployment:
     """Tests for POST /api/v2/projects/{project_name}/:upsert-deployment."""

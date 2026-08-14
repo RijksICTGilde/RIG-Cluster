@@ -271,6 +271,181 @@ class TestRoundTripThroughValidationChokepoint:
             validate_service_configs(data)
 
 
+class TestPatchServiceConfigList:
+    """The add/remove-by-key patch on list-shaped component configs (RC: vraag 18).
+
+    Storage mounts and attachment couplings change one entry at a time, so a single
+    volume or coupling is named instead of the whole list being resent -- the same
+    race the ``services`` list had, one level deeper. Remove is by key on the model's
+    own ``ITEM_KEY``; add upserts on that key.
+    """
+
+    def _backend(self, data: dict) -> dict:
+        return next(c for c in data["components"] if c["name"] == "backend")
+
+    def test_add_appends_a_new_entry_and_validates(self) -> None:
+        data = _project()
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.PERSISTENT_STORAGE.value,
+            ConfigLayer.COMPONENT,
+            add=[{"name": "data1", "size": "1Gi", "mount-path": "/data1"}],
+            remove=[],
+            component_name="backend",
+        )
+        entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "persistent-storage")
+        assert service_entry_config(entry) == [{"name": "data1", "size": "1Gi", "mount-path": "/data1"}]
+        assert counts == {"added": 1, "updated": 0, "removed": 0}
+        validate_service_configs(data)  # the merged list passes the save chokepoint
+
+    def test_add_replaces_the_entry_with_the_same_key(self) -> None:
+        data = _project()
+        self._backend(data)["services"].append(
+            {
+                "reference": "persistent-storage",
+                "config": [
+                    {"name": "data1", "size": "1Gi", "mount-path": "/data1"},
+                    {"name": "data2", "size": "1Gi", "mount-path": "/data2"},
+                ],
+            }
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.PERSISTENT_STORAGE.value,
+            ConfigLayer.COMPONENT,
+            add=[{"name": "data2", "size": "2Gi", "mount-path": "/data2"}],
+            remove=[],
+            component_name="backend",
+        )
+        entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "persistent-storage")
+        assert service_entry_config(entry) == [
+            {"name": "data1", "size": "1Gi", "mount-path": "/data1"},
+            {"name": "data2", "size": "2Gi", "mount-path": "/data2"},
+        ]
+        assert counts["updated"] == 1
+        assert counts["added"] == 0
+        validate_service_configs(data)
+
+    def test_remove_drops_only_the_named_entries(self) -> None:
+        data = _project()
+        self._backend(data)["services"].append(
+            {
+                "reference": "temp-storage",
+                "config": [
+                    {"name": "data1", "size": "1Gi", "mount-path": "/data1"},
+                    {"name": "data2", "size": "1Gi", "mount-path": "/data2"},
+                ],
+            }
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.TEMP_STORAGE.value,
+            ConfigLayer.COMPONENT,
+            add=[],
+            remove=["data2"],
+            component_name="backend",
+        )
+        entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "temp-storage")
+        assert service_entry_config(entry) == [{"name": "data1", "size": "1Gi", "mount-path": "/data1"}]
+        assert counts == {"added": 0, "updated": 0, "removed": 1}
+        validate_service_configs(data)
+
+    def test_remove_an_unknown_key_is_a_no_op(self) -> None:
+        data = _project()
+        self._backend(data)["services"].append(
+            {"reference": "persistent-storage", "config": [{"name": "data1", "size": "1Gi", "mount-path": "/data1"}]}
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.PERSISTENT_STORAGE.value,
+            ConfigLayer.COMPONENT,
+            add=[],
+            remove=["no-such-mount"],
+            component_name="backend",
+        )
+        entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "persistent-storage")
+        assert service_entry_config(entry) == [{"name": "data1", "size": "1Gi", "mount-path": "/data1"}]
+        assert counts == {"added": 0, "updated": 0, "removed": 0}
+
+    def test_remove_then_add_replaces_the_entry(self) -> None:
+        data = _project()
+        self._backend(data)["services"].append(
+            {"reference": "persistent-storage", "config": [{"name": "data1", "size": "1Gi", "mount-path": "/data1"}]}
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.PERSISTENT_STORAGE.value,
+            ConfigLayer.COMPONENT,
+            add=[{"name": "data1", "size": "4Gi", "mount-path": "/data1"}],
+            remove=["data1"],
+            component_name="backend",
+        )
+        entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "persistent-storage")
+        assert service_entry_config(entry) == [{"name": "data1", "size": "4Gi", "mount-path": "/data1"}]
+        assert counts == {"added": 1, "updated": 0, "removed": 1}
+
+    def test_invalid_entry_is_refused_before_anything_is_written(self) -> None:
+        data = _project()
+        with pytest.raises(ServiceValidationError):
+            ServiceAdapter.patch_service_config_list(
+                data,
+                ServiceType.PERSISTENT_STORAGE.value,
+                ConfigLayer.COMPONENT,
+                add=[{"name": "data1", "size": "1Gi"}],  # mount-path missing
+                remove=[],
+                component_name="backend",
+            )
+        assert "persistent-storage" not in [service_entry_name(e) for e in self._backend(data)["services"]]
+        # a traversal path is refused on the same guard, by the model's own validator
+        with pytest.raises(ServiceValidationError):
+            ServiceAdapter.patch_service_config_list(
+                data,
+                ServiceType.PERSISTENT_STORAGE.value,
+                ConfigLayer.COMPONENT,
+                add=[{"name": "data1", "size": "1Gi", "mount-path": "/../etc"}],
+                remove=[],
+                component_name="backend",
+            )
+
+    def test_attachments_patch_keys_on_the_reference(self) -> None:
+        data = _project()
+        data["services"].append("attachments")
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.ATTACHMENTS.value,
+            ConfigLayer.COMPONENT,
+            add=[{"reference": "rapport", "provide-as": "env-var", "env-name": "RAPPORT"}],
+            remove=[],
+            component_name="backend",
+        )
+        entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "attachments")
+        assert service_entry_config(entry) == [{"reference": "rapport", "provide-as": "env-var", "env-name": "RAPPORT"}]
+        assert counts == {"added": 1, "updated": 0, "removed": 0}
+
+    def test_a_service_without_a_list_model_has_nothing_to_patch(self) -> None:
+        data = _project()
+        with pytest.raises(ServiceValidationError):
+            ServiceAdapter.patch_service_config_list(
+                data,
+                ServiceType.KEYCLOAK.value,
+                ConfigLayer.PROJECT,
+                add=[{"template": "x"}],
+                remove=[],
+            )
+
+    def test_an_unknown_service_is_refused_as_validation(self) -> None:
+        data = _project()
+        with pytest.raises(ServiceValidationError):
+            ServiceAdapter.patch_service_config_list(
+                data,
+                "not-a-service",
+                ConfigLayer.COMPONENT,
+                add=[],
+                remove=["x"],
+                component_name="backend",
+            )
+
+
 class TestPortRangeExcludesPrivilegedPorts:
     """Probe/scrape ports must be non-privileged (>=1024): images run non-root, so a
     port below 1024 can never be bound or reached. The constraint lives in the config

@@ -201,6 +201,25 @@ class TestV1AsyncUpdateComponent:
         # Pydantic model_validator (mutual exclusion) -> 422
         assert response.status_code == 422
 
+    def test_forwards_add_and_remove_services_in_payload(
+        self, client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="update_component")
+
+        client.patch(
+            "/api/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"add_services": ["redis"], "remove_services": ["attachments"]},
+        )
+
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["payload"]["add_services"] == ["redis"]
+        assert call_kwargs["payload"]["remove_services"] == ["attachments"]
+
+    def test_add_service_not_marked_deprecated(self, client: TestClient) -> None:
+        op = client.app.openapi()["paths"]["/api/projects/{project_name}/services"]["post"]
+        assert op.get("deprecated") is not True
+
 
 class TestV1AsyncDeleteDeployment:
     """V1 delete deployment with async mode (default)."""
