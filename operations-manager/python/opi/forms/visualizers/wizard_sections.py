@@ -171,7 +171,16 @@ COMPONENTS_SECTION = FormSection(
                 Fieldset(
                     legend="Services",
                     description="Selecteer welke services dit component gebruikt.",
-                    children=["services"],
+                    children=[
+                        "services",
+                        # De wegwijzer van de auth wall, direct onder het vinkje waarmee je
+                        # hem aanzet. Hij staat hier en niet bij de andere dienstblokken
+                        # (*_service_component_layouts()) omdat die haak een configlaag
+                        # claimt, en deze dienst heeft op componentniveau geen configuratie:
+                        # aanzetten doe je hier, instellen doe je projectbreed. Zie
+                        # AuthorizationWallService.config_component_visualizers.
+                        "_authorization-wall-info",
+                    ],
                 ),
                 Fieldset(
                     legend="Publicatie",
