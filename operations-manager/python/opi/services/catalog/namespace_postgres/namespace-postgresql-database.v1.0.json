@@ -144,8 +144,8 @@
       "description": "CPU and memory requests and limits for the database pods."
     },
     "storage": {
-      "default": "10Gi",
-      "description": "Size of the database volume as a Kubernetes quantity, e.g. 10Gi.",
+      "default": "1Gi",
+      "description": "Size of the database volume as a Kubernetes quantity, e.g. 1Gi.",
       "title": "Storage",
       "type": "string"
     }
