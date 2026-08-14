@@ -51,6 +51,38 @@ CHOICES_KEY = "x-choices"
 CHOICES_SOURCE_KEY = "x-choices-source"
 """Waar de waarden vandaan komen als ze per project verschillen."""
 
+API_DESCRIPTION = """\
+GitOps Operations and Project Infrastructure API for self-service Kubernetes environments.
+
+## Allowed values on service config fields
+
+Service config schemas carry the same choices the portal offers in its forms, so a client
+does not have to guess or probe. Two keys, and the difference matters:
+
+* `enum` (standard JSON Schema) is present when the field itself is closed: those values,
+  and nothing else, are accepted.
+* `x-choices` lists what the portal OFFERS: an array of `{const, title, description?}`.
+  Alongside an `enum` it only adds a label per value. Without one the field accepts more
+  than the list shows (`sleep-after-deploy` takes any duration, `90m` included), so treat
+  it as a menu, not as validation.
+* `x-choices-source` appears when the values come from the project itself (its components,
+  its attachments, the deployments of a peer). It holds `{description, endpoint?, path?}`:
+  call that endpoint for the current list, and read the values at `path`. An enumeration
+  here would be one project's snapshot and wrong for every other.
+"""
+"""De begeleidende tekst bij ``info.description``.
+
+De twee sleutels hierboven zijn eigen uitbreidingen, en een uitbreiding die nergens wordt
+uitgelegd is voor een lezer niet te onderscheiden van ruis. De uitleg hoort daarom in het
+document zelf en niet alleen in een bestand in git: wie ``/docs`` of ``/openapi.json``
+openslaat heeft alles bij de hand.
+
+Waarom een keuzelijst zonder ``enum`` bestaat, staat er met zoveel woorden bij. Dat is het
+enige punt waarop een lezer zich kan vergissen: ``x-choices`` lezen als validatie zou een
+gegenereerde client laten struikelen over een bestaand projectbestand met een waarde die de
+portal niet aanbiedt maar de API wel accepteert.
+"""
+
 #: De gegenereerde configroutes, waar service en laag in het pad staan.
 _CONFIG_ROUTE_RE = re.compile(
     r"^/api/v2/projects/\{project_name\}/services/(?P<service>[^/]+)/config/(?P<target>[a-z-]+)"
