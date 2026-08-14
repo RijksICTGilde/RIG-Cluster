@@ -23,6 +23,11 @@ than by one blanket filter: env-var values never ship, an alias value ships when
 reference to a platform variable and is masked when it is anything else (the owning
 service decides -- RC-66), an attachment's coupling ships but its content never does, and
 any value stored as an encrypted or ``plain:``-marked secret is replaced by ``***``.
+
+An attachment's *size and sha256* do ship, on the catalogue usage, because "the file on
+the mount is the file I uploaded" was otherwise unprovable through the API. Facts about
+the content, computed over the decrypted bytes and never a byte of them; the reasoning is
+in ``AttachmentsService.summarize_data``.
 """
 
 from __future__ import annotations
@@ -51,6 +56,10 @@ PLAIN_PREFIX = "plain:"
 
 #: The service whose component config is the attachment couplings.
 ATTACHMENTS_SERVICE = "attachments"
+
+#: Every service name the registry knows, so an entry naming something else (a typo, a
+#: service that was removed) is described by nobody instead of raising.
+_SERVICE_NAMES = {service_type.value for service_type in ServiceType}
 
 
 def redact_secrets(value: Any) -> Any:
@@ -105,6 +114,19 @@ class ServiceUsage(BaseModel):
             "crashes on the first project that has both, which is every project that ever used an "
             "attachment. Check the type before you read it, or read 'target' first to know which "
             "layer you are looking at."
+        ),
+    )
+    data: Any = Field(
+        default=None,
+        description=(
+            "What the owning service allows to be shown of its DEFINE-side payload here -- the "
+            "thing the project put in place for its components to use, as opposed to the config "
+            "of a use. Null for every service that defines nothing, which is all of them but "
+            "attachments. For the attachments catalogue it is a list of "
+            "{id, filename, size, sha256}: the file's byte count and the sha256 of its DECRYPTED "
+            "content, so a client can check that what is stored is what it uploaded. Never the "
+            "content itself, at any layer. 'size' and 'sha256' are null when the stored content "
+            "could not be read, which is not the same as an empty file."
         ),
     )
 
@@ -176,22 +198,48 @@ class ComponentDetail(BaseModel):
     )
 
 
-def _usage(target: ConfigLayer, entry: Any, **ids: str | None) -> ServiceUsage:
+def project_defines_anything(project_data: dict[str, Any]) -> bool:
+    """Whether any service entry in this project carries a DEFINE-side payload.
+
+    The read only needs the project's AGE private key in order to describe such a
+    payload, and resolving that key costs an ``age`` call -- and raises for a project
+    that has no key at all, which a services read never used to care about. So the
+    caller asks this first and hands over an empty key when there is nothing to open.
+    """
+    return any(service_entry_data(entry) is not None for entry in project_data.get("services") or [])
+
+
+def _usage(target: ConfigLayer, entry: Any, private_key: str, **ids: str | None) -> ServiceUsage:
     """Build one usage record from a services-list entry.
 
-    The ``data`` of a definition is dropped before anything else happens. On the legacy
-    single-key form ``service_entry_config`` falls back to the whole entry body, and for
-    a DEFINE-side entry that body IS the definition -- for the attachments catalog, the
-    base64 content of every uploaded file. A definition is not configuration, and its
-    content has no place in any read response.
+    The ``data`` of a definition is dropped from ``config`` before anything else happens.
+    On the legacy single-key form ``service_entry_config`` falls back to the whole entry
+    body, and for a DEFINE-side entry that body IS the definition -- for the attachments
+    catalog, the base64 content of every uploaded file. A definition is not
+    configuration, and its content has no place in any read response.
+
+    What the definition may say about *itself* is a separate question, and only the
+    owning service can answer it (``summarize_data``). The default answer is still
+    nothing; attachments answers with facts about each file and never with a byte of it.
     """
     config = service_entry_config(entry)
-    if service_entry_data(entry) is not None and isinstance(config, dict) and "data" in config:
+    data = service_entry_data(entry)
+    if data is not None and isinstance(config, dict) and "data" in config:
         config = {key: value for key, value in config.items() if key != "data"} or None
-    return ServiceUsage(target=target, config=redact_secrets(config) if config is not None else None, **ids)
+    summary = None
+    if data is not None:
+        name = service_entry_name(entry)
+        service = get_service(ServiceType(name)) if name in _SERVICE_NAMES else None
+        summary = service.summarize_data(data, private_key) if service is not None else None
+    return ServiceUsage(
+        target=target,
+        config=redact_secrets(config) if config is not None else None,
+        data=summary,
+        **ids,
+    )
 
 
-def collect_project_services(project_data: dict[str, Any]) -> list[ProjectServiceUsages]:
+def collect_project_services(project_data: dict[str, Any], private_key: str) -> list[ProjectServiceUsages]:
     """Which services this project uses, per layer, with config where there is any.
 
     Deliberately a different rule than ``_collect_service_config`` in the router, which
@@ -214,7 +262,7 @@ def collect_project_services(project_data: dict[str, Any]) -> list[ProjectServic
             if name is None:
                 logger.warning(f"Skipping unrecognisable services entry at {target.value}: {type(entry).__name__}")
                 continue
-            found.setdefault(name, []).append(_usage(target, entry, **ids))
+            found.setdefault(name, []).append(_usage(target, entry, private_key, **ids))
 
     add(project_data.get("services"), ConfigLayer.PROJECT)
     for component in project_data.get("components", []):

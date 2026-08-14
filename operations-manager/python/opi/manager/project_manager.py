@@ -8203,6 +8203,7 @@ class ProjectManager:
         deployment_name: str | None = None,
         values: dict[str, str] | None = None,
         keys: list[str] | None = None,
+        public: list[str] | None = None,
     ) -> dict[str, Any]:
         """Add, patch, delete or clear the values a service owns on one component (RC-55).
 
@@ -8213,10 +8214,18 @@ class ProjectManager:
         if someone else pushed first -- a block ciphertext computed before the read would
         otherwise drop the other writer's entries.
 
+        ``public`` names the values in *values* whose content is not a secret, so a read
+        may show them in full. It changes nothing about what is stored -- the whole set
+        stays one AGE block -- only the plain list of names kept next to it. A name
+        written without being listed there goes back to being a secret, which is the
+        direction that can only ever hide more.
+
         Returns ``changed=False`` when the resulting values equal what is already stored.
         AGE is not deterministic, so re-encrypting an unchanged set would produce a
         different ciphertext and therefore a commit per call; comparing after decryption
-        is the only comparison that means anything here.
+        is the only comparison that means anything here. The name list counts as part of
+        "the resulting values": marking an existing value as no longer secret changes the
+        file and must be committed, even though no value moved.
         """
         from opi.services.catalog.base import ConfigLayer
         from opi.services.component_values import (
@@ -8224,7 +8233,10 @@ class ProjectManager:
             apply_operation,
             encode,
             locate,
+            next_public_keys,
+            read_public_keys,
             validate_value_for_storage,
+            write_public_keys,
         )
         from opi.services.registry import get_service
         from opi.services.services_enums import ServiceType
@@ -8261,13 +8273,24 @@ class ProjectManager:
                 )
             current = decode_component_values(node.get(owned_property), project_data)
             updated = apply_operation(current, values_operation, values=values, keys=keys)
-            if updated == current:
+            current_public = read_public_keys(node, service)
+            updated_public = next_public_keys(
+                current_public,
+                values_operation,
+                values=values,
+                keys=keys,
+                public=set(public or []),
+                remaining=set(updated),
+            )
+            if updated == current and updated_public == current_public:
                 return None
-            encoded = encode(updated, project_data)
-            if encoded is None:
-                node.pop(owned_property, None)
-            else:
-                node[owned_property] = encoded
+            if updated != current:
+                encoded = encode(updated, project_data)
+                if encoded is None:
+                    node.pop(owned_property, None)
+                else:
+                    node[owned_property] = encoded
+            write_public_keys(node, service, updated_public)
             return project_data
 
         where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
