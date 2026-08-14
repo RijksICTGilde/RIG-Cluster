@@ -91,6 +91,56 @@ kan hem weghalen; een invite die iemand anders (of de portal) aanmaakte is via d
 niet te verwijderen zonder die sleutel. Toevoegen -- het punt waar het misging -- kan nu
 wel zonder.
 
+## Velden die het platform schrijft
+
+Dezelfde klasse fout, een scherpere rand. Een configblok mengt twee soorten veld:
+instellingen die een gebruiker kiest, en velden die OPI zelf schrijft. De PUT dumpt met
+`exclude_unset=True` en vervangt het HELE blok, dus een veld dat de afzender niet noemde
+verdween. Bij een instelling is dat "terug naar de standaard"; bij platformdata was het
+onherstelbaar:
+
+- **`keycloak.realms`** bevat host, realm en het AGE-versleutelde wachtwoord van de
+  realm-admin. Dat wachtwoord staat nergens anders. Een `PUT {"template": "sso-only"}`
+  liet precies dat over, en daarna liep het project vast op de duplicate-admin-klep in
+  `keycloak_manager`; de enige uitwegen waren de git-historie van het projectbestand of
+  een beheerder op de master-realm.
+- **`publish-on-web.domains`** bevat de domeingoedkeuringen met hun verdicthistorie, in
+  hetzelfde projectblok als de overgeërfde gebruikersinstellingen `tls` en `attachment`.
+  Een PUT die alleen `tls` zette nam elke goedkeuring en het auditspoor mee.
+
+Zo'n veld meldt dat bij zichzelf, naast zijn eigen beschrijving:
+
+```python
+realms: list[KeycloakRealm] = Field(
+    default_factory=list,
+    json_schema_extra={PLATFORM_MANAGED: True},
+    description="Per-cluster realm admin connections. Written and managed by the platform...",
+)
+```
+
+Op het veld en niet in een lijst met sleutelnamen elders, om twee redenen. Het kan niet
+uit de pas lopen met het veld dat het beschermt -- een hernoemd veld neemt zijn markering
+mee, waar een aparte lijst stil een sleutel zou beschermen die niet meer bestaat. En het
+komt in het schemafragment en in `/openapi.json` terecht (`x-platform-managed: true`),
+dus een client ziet dat het veld niet van hem is in plaats van dat te ontdekken door het
+kwijt te raken.
+
+Het behoud zit op `ServiceAdapter.set_service_config` en zijn DELETE-broer, het ene pure
+mutatiepunt waar elke schrijfweg langsgaat, dus een nieuwe schrijfweg erft de bescherming
+in plaats van hem te moeten onthouden. Wat er staat wint: een PUT die het veld wél
+meestuurt wordt genegeerd (met een waarschuwing in het takenlog), want er is geen verzoek
+dat deze velden mag vervangen en weigeren zou een replay breken die onschuldig terugstuurt
+wat er al stond. Een DELETE houdt precies deze velden over en laat de rest vallen: "reset
+mijn instellingen" mag niet "gooi het realm-adminwachtwoord weg" betekenen.
+
+Nog niet gemarkeerd, bewust: de clone state (`generation`/`revisions`) van
+`postgresql-database` en `minio-storage` op deploymentniveau, en van de opslagdiensten op
+deployment-componentniveau. Die blokken bevatten uitsluitend platformdata, dus de fout
+"ik wilde mijn instelling wijzigen en raakte platformdata kwijt" kan er niet optreden --
+en markeren zou de generieke PUT daar stil krachteloos maken. `invite.active[].key` is
+platform-gegenereerd maar zit IN een lijstitem; een veldmarkering reikt daar niet, de
+PATCH hierboven is die bescherming.
+
 ### Example
 
 ```bash

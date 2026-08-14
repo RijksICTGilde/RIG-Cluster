@@ -32,6 +32,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opi.services.config_managed import PLATFORM_MANAGED
+
 #: ``standard`` = platform certificate (Let's Encrypt); ``passthrough`` = the pod presents
 #: its own certificate; ``provided`` = own certificate terminated on the ingress.
 TlsMode = Literal["standard", "passthrough", "provided"]
@@ -190,5 +192,15 @@ class PublishOnWebProjectConfig(PublishOnWebComponentConfig):
     """
 
     domains: DomainsConfig | None = Field(
-        default=None, description="Project-level domain approvals. Written by the platform's approval flow."
+        default=None,
+        # Platform-written, and it shares this block with the inherited user settings tls
+        # and attachment -- so a PUT that sets only tls used to take every domain verdict
+        # and its history with it. An approval is an approver's decision plus an audit
+        # trail; a caller may not clear it by not mentioning it. See
+        # opi/services/config_managed.py.
+        json_schema_extra={PLATFORM_MANAGED: True},
+        description=(
+            "Project-level domain approvals. Written by the platform's approval flow and carried over on a "
+            "write, so a caller neither has to send it nor can lose it by leaving it out."
+        ),
     )
