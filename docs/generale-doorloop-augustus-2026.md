@@ -2,15 +2,18 @@
 
 Laatste meting van `release-augustus-2026` voor de merge naar `main`.
 
-- **Gemeten commit**: `3bf67766`, de taakbranch bovenop `de87fc65`
-  (`feat(api): de voorbeelden uit het formulier staan ook in de API-docs`)
+- **Gemeten commit**: `74a97587`, de taakbranch bovenop `db82ffe1`
+  (`docs(api): voorbeeldwaarden bij de velden van component en deployment`)
+- **Laatste commit op de tak**: `f822ae1d` - de reparatie uit het naschrift, na afloop
+  van de metingen toegevoegd
 - **Cluster**: `kind-rig-sandbox`, `sandboxed-local`
 - **Datum**: 14 augustus 2026
 
-> Deze doorloop is **drie keer verlegd**. Hij begon op `418533e5`; daarna kwam de
+> Deze doorloop is **vier keer verlegd**. Hij begon op `418533e5`; daarna kwam de
 > opdracht om op `e187015e` te meten (de standaardmaten), vervolgens op `ab6ae614`
-> (wake-mode standaard `manual`) en ten slotte op `de87fc65` (voorbeelden in het
-> OpenAPI-document). Elke ronde is opnieuw gebouwd, opnieuw uitgerold en opnieuw
+> (wake-mode standaard `manual`), toen op `de87fc65` (voorbeelden in het
+> OpenAPI-document) en ten slotte op `db82ffe1` (voorbeelden bij component- en
+> deploymentvelden). Elke ronde is opnieuw gebouwd, opnieuw uitgerold en opnieuw
 > gemeten.
 >
 > Per meting staat erbij op welke tip hij gedaan is, want dat is niet overal dezelfde:
@@ -25,7 +28,51 @@ Laatste meting van `release-augustus-2026` voor de merge naar `main`.
 
 ## Oordeel
 
-(volgt aan het eind van de doorloop)
+**Deze tak kan naar main.**
+
+Alles wat gemeten is, is groen, en elk nieuw ding uit deze release is apart aangetoond in
+plaats van aangenomen. Dat oordeel staat op twee voorbehouden die hieronder ook echt
+uitgeschreven staan: de sandboxsuite draaide op `c0be0074` en niet op de eindtip, en het
+terugzetten van een backup is niet gemeten.
+
+### De metingen
+
+| suite | uitslag | op welke tip |
+|---|---|---|
+| `pytest tests/ -q` | **8689 passed, 7 skipped, 0 failed** | `f822ae1d` (incl. reparatie) |
+| `pytest -m e2e -q` | **401 passed, 67 skipped, 1 xpassed, 0 failed** | `3bf67766` |
+| `pytest -m "sandbox and not reallife and not punt14"` | **56 passed, 0 failed** (58 min) | `c0be0074` |
+| `pytest -m reallife -q` | **7 passed, 1 xfailed, 0 failed** (28 min) | `3bf67766` |
+| `pytest -m punt14 -q` | 3 passed, 1 failed -> **alleen gedraaid groen** | `3bf67766` / `74a97587` |
+
+Die ene rode is uitgezocht en niet weggewuifd: hij viel om op een `ReadTimeout` en niet op
+de punt-14-conditie, en apart gedraaid - zonder de twee andere suites ernaast op dezelfde
+machine - is hij groen. Het lag aan mijn meetopstelling.
+
+### Wat deze release nieuw heeft, en of het werkt
+
+| | |
+|---|---|
+| Probeserver op eigen poort 8001 | WERKT - twee containerpoorten, drie probes op `probe`, `/healthz` en `/readyz` HTTP 200, Ready met 0 herstarts |
+| Formulierverzending langs de browservalidatie | WERKT - cross-domain modal-edit doet 1 POST en vult de lijsten; bijlagenstap voegt toe en verwijdert |
+| Toegestane waarden in `/openapi.json` | WERKT - vaste lijsten krijgen een echte `enum`, projectafhankelijke een `x-choices-source` met endpoint en pad |
+| Standaardmaten die je kunt kiezen (`e187015e`) | WERKT - `storage` 1Gi, persistent/temp 100Mi, alle 12 defaults staan in hun eigen lijst |
+| Sleep-mode wekt niet vanzelf (`ab6ae614`) | WERKT - drie GETs op de publieke URL, replicas bleef 0, geen startknop |
+| Voorbeelden in de API-docs (`de87fc65`, `db82ffe1`) | WERKT - `match` heeft `examples` op de items, geen placeholders gelekt |
+| Aliassen als blok, dashboard, hernoemde schermen, CLI/Actions | WERKT - alle vier nagelopen met de schermafdruk erbij |
+
+### Waar het oordeel op steunt, en waar niet
+
+Niet gemeten, en dus ook niet groen gemeld: een verse sandbox (`destroy` + `setup` kan in
+deze omgeving niet), het terugzetten van een backup, de cross-domain-stap in de
+create-wizard, en de sandboxsuite op de allerlaatste tip. Details staan onder "Wat er niet
+gemeten is".
+
+Van de veertien bevindingen blokkeert er geen. Drie zijn in deze PR gerepareerd (de drie
+achterlopende e2e-toetsen, en de twee lagen van de verweesde ArgoCD-mappen). De rest hoort
+in eigen taken thuis - met als zwaarste twee: `sandbox-deploy` kan stilzwijgend de vorige
+build laten draaien, en `/openapi.json` noemt de verkeerde beveiliging voor het aanmaken
+van een project.
 
 ## Taak 1 - Verse sandbox met een verse build
 
@@ -909,6 +956,23 @@ project als wees aanmerkt.
 
 De vijf bestaande wezen zijn met de hand uit `zad-argo-user-applications` verwijderd.
 Daarna: **32 -> 27 Applications, 0 niet-Synced**, en de UI-fout weg.
+
+Daarna zijn de vier resterende testprojecten via de API opgeruimd, en dat is meteen de
+proef op de som geweest voor de reparatie: alle vier meldden
+
+```
+argocd_folder_deletion: success
+```
+
+vier keer `success` en geen enkele `not_found` - precies de stap die eerder de wezen
+maakte. Eindstand: geen projectbestanden, geen GitOps-mappen, alleen `rig-system` en
+`rig-backup-destination` als namespace, ArgoCD terug van 32 naar 2 Applications en nul
+git-fetches in de minuut erna.
+
+`user-applications` staat daarbij op `OutOfSync` met `health: Healthy` en de melding
+"Skipping sync attempt: auto-sync will wipe out all resources". Dat is `allowEmpty: false`
+die zijn werk doet - er is geen enkel project meer, dus ArgoCD weigert een sync die alles
+zou wegvagen. Zodra er weer een project is, gaat hij vanzelf naar Synced.
 
 ### Wat hier nog open blijft
 
