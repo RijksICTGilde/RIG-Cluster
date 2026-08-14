@@ -21,7 +21,7 @@
 
   NIEUW zijn het zoekveld en de sorteerknop. Die zijn gevraagd, en ze werken
   SERVER-SIDE via htmx: het formulier haalt /projects opnieuw op en vervangt daarmee
-  alleen #projects-lijst. Zo werkt het ook zonder JavaScript (het is een gewoon formulier
+  alleen #projects-zoekgebied. Zo werkt het ook zonder JavaScript (het is een gewoon formulier
   met GET), is een gefilterde lijst deelbaar als URL, en kan de telling niet uit de pas
   lopen met wat eronder staat.
 
@@ -61,7 +61,7 @@
        vergelijken en daardoor werd de voorwaarde nooit waar - er ging simpelweg nooit een
        verzoek uit. #}
     {% set huidige_sortering = project_sorteringen | selectattr('0', 'equalto', project_sort) | map(attribute='1') | first | default('Naam (A-Z)') %}
-    {# htmx haalt de PAGINA op en pakt daar #projects-lijst uit (hx-select), in plaats van
+    {# htmx haalt de PAGINA op en pakt daar #projects-zoekgebied uit (hx-select), in plaats van
        een apart fragmentadres. Twee redenen, allebei uit meten:
 
        1. Met een eigen fragmentadres zette hx-push-url dat adres in de adresbalk. Wie dan
@@ -70,16 +70,18 @@
        2. Een tweede adres met dezelfde gegevens is een tweede plek die kan gaan afwijken.
 
        Dit kost een pagina in plaats van een fragment over de lijn; dat is het waard. #}
+    {# EEN gebied: zoekveld, sorteerknop en resultaten samen.
+       Eerst werd alleen #projects-lijst geswapt. De werkbalk lag daarbuiten en werd dus
+       nooit ververst: de gekozen sortering bleef op de oude optie staan, en je zoekterm
+       sprong terug omdat het veld uit de oude render bleef staan. Een tweede swap erbij
+       (hx-select-oob) loste het vinkje op maar hield twee stukken die uit de pas kunnen
+       lopen. Ze horen bij elkaar, dus vervangen we ze samen: wat je zocht, waarop je
+       sorteerde en wat dat opleverde zijn een antwoord. #}
+    <div id="projects-zoekgebied">
     <form method="get" action="/projects"
           hx-get="/projects"
-          hx-select="#projects-lijst"
-          {# De werkbalk ligt BUITEN #projects-lijst en werd dus nooit ververst: de URL
-             verhuisde naar de nieuwe sortering, de lijst sorteerde mee, maar het vinkje
-             bleef op de oude optie staan. hx-select-oob haalt de werkbalk uit hetzelfde
-             antwoord en zet hem apart terug, zodat de gekozen sortering klopt met wat je
-             ziet. Dat kost geen extra verzoek: de pagina komt toch al binnen. #}
-          hx-select-oob="#projects-werkbalk"
-          hx-target="#projects-lijst"
+          hx-select="#projects-zoekgebied"
+          hx-target="#projects-zoekgebied"
           hx-swap="outerHTML"
           hx-trigger="input delay:300ms, search, submit"
           hx-push-url="true">
@@ -89,7 +91,7 @@
            niet uit gemak: c-toolbar gooit ELK kind weg, ook een kind met een slot, want
            het component heeft geen standaard-slot. Zo verdween het hele zoekveld.
            De inhoud van de slots zijn wel gewone componenten. #}
-        <nldd-toolbar id="projects-werkbalk" label="Projecten" size="md">
+        <nldd-toolbar label="Projecten" size="md">
             <nldd-toolbar-item slot="start" size="md">
                 <c-search-field name="q"
                                 value="{{ project_query }}"
@@ -129,8 +131,8 @@
                             <nldd-menu-item type="radio" text="{{ label }}"
                                             href="{{ sorteer_url }}"
                                             hx-get="{{ sorteer_url }}"
-                                            hx-select="#projects-lijst"
-                                            hx-target="#projects-lijst"
+                                            hx-select="#projects-zoekgebied"
+                                            hx-target="#projects-zoekgebied"
                                             hx-swap="outerHTML"
                                             hx-push-url="true"
                                             {% if sleutel == project_sort %}selected{% endif %}></nldd-menu-item>
@@ -147,8 +149,8 @@
                     <nldd-menu-item type="radio" text="{{ label }}"
                                     href="{{ sorteer_url }}"
                                     hx-get="{{ sorteer_url }}"
-                                    hx-select="#projects-lijst"
-                                    hx-target="#projects-lijst"
+                                    hx-select="#projects-zoekgebied"
+                                    hx-target="#projects-zoekgebied"
                                     hx-swap="outerHTML"
                                     hx-push-url="true"
                                     {% if sleutel == project_sort %}selected{% endif %}></nldd-menu-item>
@@ -160,6 +162,7 @@
     {# ---- De lijst (projects-overview/_tabel.html.j2) ------------------------ #}
     <div id="projects-lijst">
         {% include "bg/_projects-lijst.html.j2" %}
+    </div>
     </div>
 
 {% endblock %}
