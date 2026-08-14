@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -63,6 +63,12 @@ class SleepModeConfig(BaseModel):
     # extra="forbid" turns a config typo into a loud failure; populate_by_name lets
     # tests build it with the Python field names while the file uses hyphens.
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    #: ``match`` is patchable entry by entry. Its entries are plain glob patterns, so
+    #: there is no key field to identify one by: the pattern IS its identity, add is a
+    #: set union and remove takes patterns. Mapped to ``None`` for exactly that reason.
+    #: See ``opi/services/config_lists.py``.
+    ITEM_KEYS: ClassVar[dict[str, str | None]] = {"match": None}
 
     enabled: bool = Field(default=False, description="Whether sleep-mode is active for this project.")
     match: list[str] = Field(

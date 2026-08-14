@@ -8027,19 +8027,22 @@ class ProjectManager:
         service_name: str,
         target: str,
         *,
-        add: list[dict[str, Any]],
+        add: list[Any],
         remove: list[str],
+        list_field: str | None = None,
         component_name: str | None = None,
         deployment_name: str | None = None,
     ) -> dict[str, Any]:
-        """Add/update/remove items in one service's list-shaped config, then persist.
+        """Add/update/remove items in one list of a service's config, then persist.
 
         The merge itself is the pure ``ServiceAdapter.patch_service_config_list``: only
         the named items change, on the freshly read project file, so a caller that
-        adjusts one storage mount or attachment coupling never rewrites the rest (and
-        cannot silently drop them). Commits through ``save_and_commit_project`` like
-        every write. Even a full no-op commits nothing extra -- an unchanged file is
-        an unchanged push, and the counts in the result tell which run it was.
+        adjusts one storage mount, attachment coupling, invite, access rule or sleep-mode
+        pattern never rewrites the rest (and cannot silently drop them). ``list_field``
+        names the list inside an object-shaped config and is ``None`` when the config
+        itself is the list. Commits through ``save_and_commit_project`` like every write.
+        Even a full no-op commits nothing extra -- an unchanged file is an unchanged
+        push, and the counts in the result tell which run it was.
         """
         from opi.services.catalog.base import ConfigLayer
 
@@ -8059,6 +8062,7 @@ class ProjectManager:
                     layer,
                     add=add,
                     remove=remove,
+                    list_field=list_field,
                     component_name=component_name,
                     deployment_name=deployment_name,
                 )
