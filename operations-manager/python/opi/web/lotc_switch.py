@@ -145,8 +145,6 @@ def build_lotc_admin(*, user: dict[str, Any] | None, current_path: str) -> dict[
 PROJECT_SORTERINGEN: list[tuple[str, str, Any]] = [
     ("naam", "Naam (A-Z)", lambda p: (p["display_name"] or p["name"]).lower()),
     ("naam-af", "Naam (Z-A)", lambda p: (p["display_name"] or p["name"]).lower()),
-    ("deployments", "Meeste deployments", lambda p: -p["deployment_count"]),
-    ("teamleden", "Meeste teamleden", lambda p: -len(p["users"])),
 ]
 
 
