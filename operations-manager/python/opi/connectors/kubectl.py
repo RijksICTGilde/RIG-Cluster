@@ -9,6 +9,7 @@ import base64
 import json
 import logging
 import os
+import tempfile
 from datetime import UTC
 from typing import Any
 
@@ -413,10 +414,15 @@ class KubectlConnector:
         """
         Set keys on an existing secret, leaving every other key and all metadata alone.
 
-        A strategic merge patch, deliberately not an apply: the secrets in a project
-        namespace are owned by ArgoCD, and `kubectl apply` would rewrite the
-        last-applied-configuration and drop the tracking labels ArgoCD put there.
-        A merge patch only writes the keys handed to it.
+        A merge patch, deliberately not an apply: the secrets in a project namespace are
+        owned by ArgoCD, and `kubectl apply` would rewrite the last-applied-configuration
+        and drop the tracking labels ArgoCD put there. A merge patch only writes the keys
+        handed to it.
+
+        The patch goes in through ``--patch-file`` and not through ``-p``, so the secret
+        values never appear in the argument list of the kubectl process. This module
+        already keeps them out of the log (see ``_summarize_kubectl_command``); argv is
+        the other place they would otherwise be readable.
 
         Args:
             secret_name: Name of the secret to patch
@@ -429,8 +435,16 @@ class KubectlConnector:
         encoded = {key: base64.b64encode(value.encode("utf-8")).decode("utf-8") for key, value in data.items()}
         patch = json.dumps({"data": encoded})
 
-        args = ["patch", "secret", secret_name, "-n", namespace, "--type", "merge", "-p", patch]
-        stdout, stderr, code = await self._run_kubectl_command(args)
+        # NamedTemporaryFile creates with mode 0600, so the values are not world-readable.
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as patch_file:
+            patch_file.write(patch)
+            patch_path = patch_file.name
+
+        try:
+            args = ["patch", "secret", secret_name, "-n", namespace, "--type", "merge", "--patch-file", patch_path]
+            stdout, stderr, code = await self._run_kubectl_command(args)
+        finally:
+            os.unlink(patch_path)
 
         if code != 0:
             reason = " ".join(stderr.split()) or f"kubectl exited {code} with no stderr"
