@@ -27,6 +27,11 @@ Dit is de tweede grote lijn van deze release. Wie liever scriptt dan klikt, of e
 - **Opslaan zonder verwerken.** In de opbouwfase wil je tien dingen achter elkaar toevoegen en daarna één keer uitrollen, niet tien keer. Dat kan nu: elk endpoint dat normaal verwerkt, accepteert dat je het even laat wachten.
 - **Configuratie per niveau.** Instellingen van een dienst zijn via de API te zetten op project-, deployment- of componentniveau, precies zoals in het portaal.
 
+##### De commandoregel
+
+- **Een enkel bestand, geen installatie.** De CLI heet `zadctl` en is een kant-en-klaar programma per platform. Je hebt er geen Python voor nodig en geen beheerdersrechten: hij komt in je eigen `~/.local/bin` te staan en weggooien is dat ene bestand verwijderen. De pagina CLI in het portaal geeft de regels om hem binnen te halen.
+- **Alles wat het portaal kan.** Een deployment aanmaken of bijwerken, logs lezen, een backup maken, een taak volgen. Handig als je toch al in een terminal zit of als je het in een script wilt zetten.
+
 ##### De wizard is volwassener geworden
 
 - **Uitleg bij elke dienst.** Bij elke keuze staat nu een toelichting: wat het is, wanneer je het gebruikt en hoe je het invult. Diezelfde uitleg is ook via de API op te vragen, dus er is één verhaal en niet twee.
@@ -71,7 +76,7 @@ Dit stond vorige keer nog bij "voor de toekomst" en is er nu: het portaal is opn
 - **Uitgeschakeld is niet ongezond.** Een deployment die je bewust hebt uitgezet wordt niet langer als een probleem gerapporteerd.
 - **Eén toestand, één badge.** De status die je in het portaal ziet komt uit één bron, zodat verschillende plekken niet meer verschillende dingen beweren.
 - **Fouten uit ArgoCD komen door.** Gaat het renderen van je manifesten mis, dan zie je die melding nu zelf, in plaats van een algemeen "mislukt".
-- **Een falende health-controle heet geen crash.** Een component dat draait maar de controle niet doorstaat werd gemeld als een applicatie die omvalt, en dan zoek je op de verkeerde plek. Nu staat er wat er werkelijk aan de hand is.
+- **Een falende health-controle heet meestal geen crash meer.** Een component dat draait maar de controle niet doorstaat werd gemeld als een applicatie die omvalt, en dan zoek je op de verkeerde plek. Nu staat er wat er werkelijk aan de hand is, mits ArgoCD de bijbehorende melding meestuurt. Doet hij dat niet, dan zie je de oude tekst nog; daar wordt aan gewerkt.
 - **Een herverwerking noemt alleen webadressen die bestaan.** Je kreeg een URL terug die vervolgens 404 gaf.
 - **Automatisch afgestemde resources.** Geheugen en CPU worden op basis van werkelijk gebruik bijgesteld, zodat je niet handmatig hoeft te schatten. Wil je dat niet, dan zet je het per project uit.
 
@@ -81,4 +86,6 @@ Niet zichtbaar, wel merkbaar: elke dienst zit nu volledig in zijn eigen map, met
 
 ##### Voor de toekomst
 
-De eerstvolgende stap is verdere uitbreiding van de commandoregel-tooling nu de API-kant er ligt. Daarnaast blijft staan: CI/CD voor ZAD zelf, en de vraag hoe ZAD op langere termijn meer kan leunen op bestaande producten en minder op eigen maatwerk.
+Twee dingen die we bij het testen zijn tegengekomen en bewust niet meer in deze release hebben gestopt. Onder zware gelijktijdige belasting kan het portaal even onbereikbaar zijn doordat een controle op de achtergrond zijn tijd niet haalt; dat gedrag zit er al langer in en verandert met deze release niet, maar we weten nu waar het vandaan komt. En de melding bij een falende health-controle klopt nog niet in alle gevallen.
+
+Verder blijft staan: CI/CD voor ZAD zelf, en de vraag hoe ZAD op langere termijn meer kan leunen op bestaande producten en minder op eigen maatwerk.
