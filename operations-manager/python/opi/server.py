@@ -82,6 +82,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     print_boot_banner()
 
+    # De probeserver ALS EERSTE, op zijn eigen draad. Hij moet antwoorden ongeacht wat de
+    # eventloop doet, en dus ook al tijdens de rest van deze opstart. Zie
+    # opi/core/probe_server.py voor waarom hij niet in FastAPI zit.
+    from opi.core.probe_server import start_probe_server, stop_probe_server
+
+    start_probe_server()
+
     # Set up Prometheus metrics collectors
     from opi.core.metrics import setup_metrics, setup_tracemalloc, start_peak_memory_tracking
 
@@ -299,6 +306,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     begin_drain()
 
+    # De probeserver gaat als LAATSTE uit, verderop: zolang we aan het afsluiten zijn moet
+    # de kubelet nog antwoord krijgen.
+
     # Stop backup scheduler
     backup_scheduler = getattr(app.state, "backup_scheduler", None)
     if backup_scheduler is not None:
@@ -377,6 +387,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     from opi.core.tracing import shutdown_tracing
 
     shutdown_tracing()
+
+    # Als allerlaatste: tot hier kon de kubelet nog antwoord krijgen.
+    stop_probe_server()
 
     logger.info(f"Stopping application {PROJECT_NAME} version {VERSION}")
     logging.shutdown()
