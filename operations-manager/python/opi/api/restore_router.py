@@ -33,12 +33,14 @@ from opi.manager.backup import (
 )
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
+from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project_store import get_project_store
 from opi.services.services import service_entry_name
 from opi.utils.naming import (
     generate_bucket_name,
     generate_database_name,
     generate_database_username,
+    generate_extra_database_schema,
     generate_pvc_name,
     generate_storage_name,
     generate_unique_name,
@@ -191,6 +193,13 @@ class ProjectRestoreResponse(BaseModel):
     new_generation: int | None = Field(default=None, description="New PVC generation number")
     project_updated: bool = Field(default=False, description="Whether the project file was updated")
     refresh_triggered: bool = Field(default=False, description="Whether project refresh was triggered")
+    refresh_succeeded: bool | None = Field(
+        default=None,
+        description=(
+            "Whether that refresh actually completed. False means the data was restored but the "
+            "deployment was not updated to use it; null means no refresh was triggered."
+        ),
+    )
 
 
 class PVCRestoreDetail(BaseModel):
@@ -216,6 +225,13 @@ class BackupRunRestoreResponse(BaseModel):
     pvcs_restored: list[PVCRestoreDetail] = Field(default_factory=list)
     project_updated: bool = Field(default=False, description="Whether the project file was updated")
     refresh_triggered: bool = Field(default=False, description="Whether project refresh was triggered")
+    refresh_succeeded: bool | None = Field(
+        default=None,
+        description=(
+            "Whether that refresh actually completed. False means the data was restored but the "
+            "deployment was not updated to use it; null means no refresh was triggered."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -466,6 +482,13 @@ class DeploymentRestoreResponse(BaseModel):
     new_resource_name: str | None = Field(default=None, description="New versioned resource name")
     project_updated: bool = Field(default=False, description="Whether the project file was updated")
     refresh_triggered: bool = Field(default=False, description="Whether project refresh was triggered")
+    refresh_succeeded: bool | None = Field(
+        default=None,
+        description=(
+            "Whether that refresh actually completed. False means the data was restored but the "
+            "deployment was not updated to use it; null means no refresh was triggered."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -516,6 +539,31 @@ def _result_to_model(result: RestoreResult) -> RestoreResultModel:
         error=result.error,
         duration_seconds=result.duration_seconds,
     )
+
+
+#: Appended to the message of a restore whose follow-up refresh failed. The restore
+#: itself did land, so this is not a failure -- but the deployment is still running on
+#: the pre-restore manifests, and the caller cannot see the OPI log to find that out.
+_REFRESH_FAILED_SUFFIX = (
+    ", but updating the deployment afterwards failed. The restored data is in place; the "
+    "deployment has not been switched over to it. Check the platform logs and retry the "
+    "restore or trigger a project refresh."
+)
+
+
+def _restore_outcome(
+    message: str, refresh_triggered: bool, refresh_succeeded: bool
+) -> tuple[OperationStatus, str, int]:
+    """The status, message and HTTP code for a restore that succeeded on the cluster.
+
+    A restore whose follow-up refresh failed is reported as ``partial`` with a 207, not
+    as ``success``. The refresh is what regenerates the manifests and secrets, so
+    without it the deployment is left on the old ones -- and the response was the only
+    place a caller could ever learn that.
+    """
+    if refresh_triggered and not refresh_succeeded:
+        return OperationStatus.PARTIAL, message + _REFRESH_FAILED_SUFFIX, 207
+    return OperationStatus.SUCCESS, message, 200
 
 
 def _failed_restore_status(target_unusable: bool, caller_named_target: bool) -> tuple[int, ErrorCategory]:
@@ -948,23 +996,28 @@ async def restore_project_pvc(
         # 12. Trigger project refresh for the specific deployment
         logger.info(f"Triggering project refresh for {project_name}, deployment: {body.deployment_name}")
         project_manager = ProjectManager()
-        refresh_result = await project_manager.process_project_from_git(
+        refresh_succeeded = await project_manager.process_project_from_git(
             f"projects/{project.filename}",
             deployment_name=body.deployment_name,
             force_clone=True,
         )
-        refresh_triggered = refresh_result is not None
 
+        status, message, status_code = _restore_outcome(
+            f"Restored {source_pvc_name} to {target_pvc_name}",
+            refresh_triggered=True,
+            refresh_succeeded=refresh_succeeded,
+        )
         return JSONResponse(
             content={
-                "status": "success",
-                "message": f"Restored {source_pvc_name} to {target_pvc_name}",
+                "status": status,
+                "message": message,
                 "result": _result_to_model(result).model_dump(),
                 "new_generation": next_generation,
                 "project_updated": True,
-                "refresh_triggered": refresh_triggered,
+                "refresh_triggered": True,
+                "refresh_succeeded": refresh_succeeded,
             },
-            status_code=200,
+            status_code=status_code,
         )
 
     except HTTPException:
@@ -1387,26 +1440,37 @@ async def restore_backup_run(
 
         # Trigger project refresh
         refresh_triggered = False
+        refresh_succeeded = False
         if project_updated:
             logger.info(f"Triggering project refresh for {project_name}")
             project_manager = ProjectManager()
-            refresh_result = await project_manager.process_project_from_git(
+            refresh_succeeded = await project_manager.process_project_from_git(
                 f"projects/{project.filename}",
                 deployment_name=deployment_name,
                 force_clone=True,
             )
-            refresh_triggered = refresh_result is not None
+            refresh_triggered = True
 
         # Build response
         success_count = sum(1 for d in restore_details if d.success)
         total_count = len(restore_details)
 
         if success_count == total_count:
-            status, message = "success", f"Restored all {total_count} resource(s)"
+            status, message, status_code = _restore_outcome(
+                f"Restored all {total_count} resource(s)",
+                refresh_triggered=refresh_triggered,
+                refresh_succeeded=refresh_succeeded,
+            )
         elif success_count > 0:
-            status, message = "partial", f"Restored {success_count}/{total_count} resource(s)"
+            status, message, status_code = (
+                OperationStatus.PARTIAL,
+                f"Restored {success_count}/{total_count} resource(s)",
+                207,
+            )
+            if refresh_triggered and not refresh_succeeded:
+                message += _REFRESH_FAILED_SUFFIX
         else:
-            status, message = "failed", "Failed to restore any resources"
+            status, message, status_code = OperationStatus.FAILED, "Failed to restore any resources", 500
 
         return JSONResponse(
             content={
@@ -1416,8 +1480,9 @@ async def restore_backup_run(
                 "pvcs_restored": [d.model_dump() for d in restore_details],
                 "project_updated": project_updated,
                 "refresh_triggered": refresh_triggered,
+                "refresh_succeeded": refresh_succeeded if refresh_triggered else None,
             },
-            status_code=200 if status == "success" else (207 if status == "partial" else 500),
+            status_code=status_code,
         )
 
     except HTTPException:
@@ -2190,20 +2255,26 @@ async def restore_deployment_resource(
 
         # 6. Trigger project refresh if requested
         refresh_triggered = False
+        refresh_succeeded = False
         if body.update_deployment:
             logger.info(f"Triggering project refresh for {project_name}, deployment: {deployment_name}")
             project_manager = ProjectManager()
-            refresh_result = await project_manager.process_project_from_git(
+            refresh_succeeded = await project_manager.process_project_from_git(
                 f"projects/{project.filename}",
                 deployment_name=deployment_name,
                 force_clone=True,
             )
-            refresh_triggered = refresh_result is not None
+            refresh_triggered = True
 
+        status, message, status_code = _restore_outcome(
+            f"Restored {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}",
+            refresh_triggered=refresh_triggered,
+            refresh_succeeded=refresh_succeeded,
+        )
         return JSONResponse(
             content={
-                "status": "success",
-                "message": f"Restored {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}",
+                "status": status,
+                "message": message,
                 "resource_type": body.resource_type,
                 "reference_name": body.reference_name,
                 "old_generation": result["old_generation"],
@@ -2212,8 +2283,9 @@ async def restore_deployment_resource(
                 "new_resource_name": result["new_resource_name"],
                 "project_updated": True,
                 "refresh_triggered": refresh_triggered,
+                "refresh_succeeded": refresh_succeeded if refresh_triggered else None,
             },
-            status_code=200,
+            status_code=status_code,
         )
 
     except HTTPException:
@@ -2320,6 +2392,69 @@ async def _restore_pvc_with_versioning(
         "old_resource_name": source_pvc_name,
         "new_resource_name": target_pvc_name,
     }
+
+
+async def _write_restored_database_secret(
+    project_name: str,
+    deployment_name: str,
+    namespace: str,
+    project_data: dict[str, Any],
+    db_host: str,
+    db_username: str,
+    db_password: str,
+    db_database: str,
+) -> None:
+    """Write the credentials the restore just created into the deployment's database secret.
+
+    A versioned database restore rotates the database user's password and moves the data
+    into a new generation of the database. Nobody else knows that password. The project
+    refresh that follows reads this secret, tests it, and refuses to touch a secret whose
+    credentials do not work ("Manual intervention required to fix database user or update
+    secret"). Leaving the old password in the secret therefore does not merely break the
+    restored deployment: the refresh aborts, no manifests are written, and every later
+    change to the project hits the same wall. The rule stays "OPI does not overwrite a
+    secret it cannot account for" -- this one path can, because it is the one that
+    rotated the credentials in the first place.
+
+    Only the keys that changed are written; the read-only role, the extra-schema
+    variables and anything else in the secret are left as they are. The refresh that
+    follows regenerates the same secret into the deployments repository, so ArgoCD
+    converges on the same values instead of reverting this patch.
+    """
+    kubectl_connector = create_kubectl_connector()
+    secret_name = DatabaseSecret.get_secret_name(deployment_name)
+
+    existing_data = await kubectl_connector.get_secret(secret_name, namespace)
+    if not existing_data:
+        logger.info(
+            f"No database secret {secret_name} in namespace {namespace} yet; "
+            f"the project refresh will create it with the restored credentials"
+        )
+        return
+
+    existing = DatabaseSecret.from_k8s_secret_data(existing_data)
+
+    # Schemas are project-wide and unversioned, so the restore does not change them --
+    # but they are part of the search_path in the connection string that is rewritten here.
+    extra_schemas = [
+        (entry["postfix"], generate_extra_database_schema(project_name, deployment_name, entry["postfix"]))
+        for entry in get_postgres_schemas(project_data)
+    ]
+
+    restored = DatabaseSecret(
+        host=db_host,
+        port=existing.port or 5432,
+        username=db_username,
+        password=db_password,
+        database=db_database,
+        schema=db_database,  # Schema name matches database name
+        ro_username=existing.ro_username,
+        ro_password=existing.ro_password,
+        extra_schemas=extra_schemas,
+    )
+
+    await kubectl_connector.patch_secret_data(secret_name, namespace, restored.to_k8s_secret_data())
+    logger.info(f"Updated database secret {secret_name} in {namespace} to restored database {db_database}")
 
 
 async def _restore_database_with_versioning(
@@ -2435,6 +2570,20 @@ async def _restore_database_with_versioning(
                 "old_resource_name": old_database_name,
                 "new_resource_name": new_database_name,
             }
+
+        # Whoever rotates, writes: the password above is known only here, so the secret
+        # is updated here too. Skipping this does not just leave the deployment on dead
+        # credentials, it locks the project (see _write_restored_database_secret).
+        await _write_restored_database_secret(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            namespace=namespace,
+            project_data=project_data,
+            db_host=db_host,
+            db_username=db_username,
+            db_password=db_password,
+            db_database=new_database_name,
+        )
 
         return {
             "success": True,
