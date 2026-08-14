@@ -27,6 +27,7 @@ from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
 from opi.api.task_router import task_router
+from opi.api.user_token_auth import REQUIRES_USER_TOKEN
 from opi.api.v2.router import v2_router
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
@@ -431,22 +432,45 @@ def create_app() -> FastAPI:
             routes=app.routes,
         )
 
-        # Add security scheme for X-API-Key header
+        # Twee manieren om je te legitimeren, want er zijn twee soorten endpoints.
         openapi_schema["components"]["securitySchemes"] = {
             "APIKeyHeader": {
                 "type": "apiKey",
                 "in": "header",
                 "name": "X-API-Key",
                 "description": "API key for project authentication",
-            }
+            },
+            "BearerToken": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+                "description": (
+                    "SSO access token, for the endpoints that cannot use a project's API key "
+                    "because they are not about one project yet: listing the projects you may "
+                    "see, and creating a project. Send it as 'Authorization: Bearer <token>'."
+                ),
+            },
         }
 
-        # Apply security to all API routes
+        # Welke route welk schema wil, gelezen uit de route zelf. Hier stond eerder
+        # APIKeyHeader op ALLE /api/-operaties, ook op de twee die geen projectsleutel
+        # kunnen gebruiken; een client die op dit document afging stuurde X-API-Key en
+        # kreeg een 401 die nergens uit te verklaren was (RC-113, bevinding 1).
+        bearer_operations = {
+            (route.path, method.lower())
+            for route in app.routes
+            if getattr(route, "endpoint", None) is not None and getattr(route.endpoint, REQUIRES_USER_TOKEN, False)
+            for method in getattr(route, "methods", None) or []
+        }
+
         for path, methods in openapi_schema["paths"].items():
-            if path.startswith("/api/"):
-                for method in methods.values():
-                    if isinstance(method, dict) and "operationId" in method:
-                        method["security"] = [{"APIKeyHeader": []}]
+            if not path.startswith("/api/"):
+                continue
+            for verb, method in methods.items():
+                if not isinstance(method, dict) or "operationId" not in method:
+                    continue
+                scheme = "BearerToken" if (path, verb) in bearer_operations else "APIKeyHeader"
+                method["security"] = [{scheme: []}]
 
         # Sort paths: V2 first, then v1, for clarity in docs
         paths = openapi_schema.get("paths", {})
