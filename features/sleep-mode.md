@@ -62,7 +62,7 @@ services:
       sleep-after-wake: 1h      # nieuwe deadline na een wek-call
       waker: true               # een wekkerpod genereren
       waker-component: frontend # optioneel; verplicht bij meerdere web-componenten
-      wake-mode: manual         # manual (standaard) | confirm | auto
+      wake-mode: confirm        # confirm (standaard) | manual | auto
       title: "{deployment}"     # optioneel; {project} {deployment} {component}
       description: ""           # optioneel
 ```
