@@ -30,12 +30,66 @@ the project-scoped calls require the project's `X-API-Key`.
 | `PUT /projects/{p}/services/{service}/config/component/{component}` | Upsert component-level config. Async. |
 | `PUT /projects/{p}/services/{service}/config/deployment/{deployment}` | Upsert deployment-level config. Async. |
 | `DELETE /projects/{p}/services/{service}/config/{target}[/{name}]` | Clear the config at a target (keeps the service selected). Async. |
+| `PATCH /projects/{p}/services/{service}/config/{target}[/{name}]` | Add or remove single entries in a config that IS a list. Async. |
+| `PATCH /projects/{p}/services/{service}/config/{target}[/{name}]/{list}` | Add or remove single entries in a named list INSIDE a config object. Async. |
 
 The write routes exist only for the (service, target) pairs a service actually
 supports -- e.g. `keycloak/config/project` exists, `keycloak/config/component/...`
 does not (404). `deployment-component` is intentionally not generated: no service
 accepts config there today (per-mount storage clone state is set via the image-update
 endpoint's actions, which is an operation, not config).
+
+## Een lijst bijwerken zonder de rest over te typen
+
+Een PUT schrijft het hele blok. Bij een lijst betekent dat: één regel erbij zetten is
+alle andere regels opnieuw meesturen, en wie dat niet weet wist ze. Dat is echt gebeurd
+-- een project raakte zijn invites kwijt, en omdat de invitesleutel bewust in geen enkel
+leesantwoord staat (het is het geheim in de link) was de eerste invite daarna niet eens
+meer te reconstrueren. Een tweede invite kostte dus de eerste.
+
+Daarom heeft elke lijst een PATCH met `{add, remove}`, in twee smaken die dezelfde body
+hebben:
+
+- **De config IS een lijst** (`persistent-storage`, `temp-storage`, `attachments` op
+  componentniveau). De PATCH staat op het configpad zelf.
+- **De config BEVAT een lijst** (`invite.active`, `cross-domain-access.inbound` en
+  `.outbound`, `sleep-mode.match`). De PATCH staat op het configpad plus de naam van de
+  lijst. Eén route per lijst, want de twee richtingen van cross-domain-access bevatten
+  verschillende regels en één body kan niet voor allebei getypeerd zijn. Alles wat naast
+  de lijst in het blok staat blijft ongemoeid.
+
+Regels, in beide smaken gelijk: `add` neemt hele entries, `remove` neemt sleutels.
+Verwijderen gaat eerst, dus een sleutel die in beide lijsten staat wordt vervangen. Een
+sleutel die er niet is, is een no-op. Het taakresultaat meldt `added`, `updated` en
+`removed`.
+
+De sleutel komt uit het configmodel zelf (`opi/services/config_lists.py`): `ITEM_KEY` op
+een `RootModel`-lijst, `ITEM_KEYS` op een model met lijsten erin. Een lijst met platte
+waarden (`sleep-mode.match` bevat globpatronen) heeft geen sleutelveld en mapt naar
+`None`: de waarde IS zijn identiteit, dus `add` is een vereniging en `remove` neemt
+waarden. Zo'n lijst wordt gecontroleerd door het model dat hem bezit -- de
+patrooncontrole van sleep-mode -- want er is geen entrymodel om tegenaan te valideren.
+
+```bash
+# een tweede invite erbij, zonder de eerste aan te raken
+curl -X PATCH https://.../api/v2/projects/algor-odc/services/invite/config/project/active \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"add": [{"key": "tweede-geheim", "realm-roles": ["editor"]}]}'
+
+# één toegangsregel weg, de andere richting blijft staan
+curl -X PATCH https://.../api/v2/projects/algor-odc/services/cross-domain-access/config/project/outbound \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"remove": ["naar-api"]}'
+
+# een patroon erbij; de overige sleep-mode-instellingen blijven zoals ze staan
+curl -X PATCH https://.../api/v2/projects/algor-odc/services/sleep-mode/config/project/match \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"add": ["test-*"]}'
+```
+
+Wat dit NIET oplost: verwijderen gaat op de sleutel, en bij `invite.active` is die
+sleutel het geheim dat niet terug te lezen is. Wie een invite zelf aanmaakte kent hem en
+kan hem weghalen; een invite die iemand anders (of de portal) aanmaakte is via de API
+niet te verwijderen zonder die sleutel. Toevoegen -- het punt waar het misging -- kan nu
+wel zonder.
 
 ### Example
 

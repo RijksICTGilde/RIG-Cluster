@@ -446,6 +446,215 @@ class TestPatchServiceConfigList:
             )
 
 
+class TestPatchListInsideAnObjectConfig:
+    """The same add/remove patch on a list that sits INSIDE a config object.
+
+    ``invite.active``, ``cross-domain-access.inbound``/``outbound`` and
+    ``sleep-mode.match`` are lists too, but their config block is an object, so until now
+    only the PUT reached them -- and a PUT rewrites the block, so adding one entry meant
+    resending every other one. Whoever did not know that wiped the rest, which is exactly
+    what happened in practice. These tests hold the two things that must be true: one
+    entry changes, and everything around it (the other entries AND the sibling fields)
+    stays byte-for-byte as it was.
+    """
+
+    def _project_config(self, data: dict, service: str) -> dict:
+        entry = next(e for e in data["services"] if service_entry_name(e) == service)
+        return service_entry_config(entry)
+
+    def test_a_second_invite_leaves_the_first_and_its_key_alone(self) -> None:
+        """Vraag 3: the invite key is deliberately absent from every read response, so a
+        PUT-only world could not resend the first invite and a second one cost it."""
+        data = _project()
+        data["services"].append(
+            {
+                "name": "invite",
+                "config": {
+                    "default-language": "en",
+                    "active": [{"key": "eerste-geheim", "realm-roles": ["viewer"], "contact-email": "a@b.nl"}],
+                },
+            }
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.INVITE.value,
+            ConfigLayer.PROJECT,
+            add=[{"key": "tweede-geheim", "realm-roles": ["editor"]}],
+            remove=[],
+            list_field="active",
+        )
+        config = self._project_config(data, "invite")
+        assert config["active"] == [
+            {"key": "eerste-geheim", "realm-roles": ["viewer"], "contact-email": "a@b.nl"},
+            {"key": "tweede-geheim", "realm-roles": ["editor"]},
+        ]
+        assert config["default-language"] == "en"  # the sibling field is not rewritten
+        assert counts == {"added": 1, "updated": 0, "removed": 0}
+        validate_service_configs(data)
+
+    def test_removing_one_invite_keeps_the_other(self) -> None:
+        data = _project()
+        data["services"].append(
+            {
+                "name": "invite",
+                "config": {
+                    "default-language": "nl",
+                    "active": [{"key": "eerste-geheim"}, {"key": "tweede-geheim"}],
+                },
+            }
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.INVITE.value,
+            ConfigLayer.PROJECT,
+            add=[],
+            remove=["eerste-geheim"],
+            list_field="active",
+        )
+        config = self._project_config(data, "invite")
+        assert config["active"] == [{"key": "tweede-geheim"}]
+        assert config["default-language"] == "nl"
+        assert counts == {"added": 0, "updated": 0, "removed": 1}
+        validate_service_configs(data)
+
+    def test_cross_domain_inbound_add_leaves_outbound_untouched(self) -> None:
+        data = _project()
+        data["services"].append(
+            {
+                "name": "cross-domain-access",
+                "config": {
+                    "inbound": [{"name": "van-portaal", "from": {"project": "portaal", "component": "web"}, "to": {}}],
+                    "outbound": [{"name": "naar-api", "to": {"project": "andere", "component": "api", "port": 8080}}],
+                },
+            }
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.CROSS_DOMAIN_ACCESS.value,
+            ConfigLayer.PROJECT,
+            add=[{"name": "van-monitor", "from": {"project": "monitor", "component": "scraper"}}],
+            remove=[],
+            list_field="inbound",
+        )
+        config = self._project_config(data, "cross-domain-access")
+        assert [rule["name"] for rule in config["inbound"]] == ["van-portaal", "van-monitor"]
+        assert config["outbound"] == [
+            {"name": "naar-api", "to": {"project": "andere", "component": "api", "port": 8080}}
+        ]
+        assert counts == {"added": 1, "updated": 0, "removed": 0}
+        validate_service_configs(data)
+
+    def test_cross_domain_outbound_remove_keeps_the_other_rules(self) -> None:
+        data = _project()
+        data["services"].append(
+            {
+                "name": "cross-domain-access",
+                "config": {
+                    "inbound": [{"name": "van-portaal", "from": {"project": "portaal", "component": "web"}}],
+                    "outbound": [
+                        {"name": "naar-api", "to": {"project": "andere", "component": "api", "port": 8080}},
+                        {"name": "naar-log", "to": {"project": "logboek", "component": "in", "port": 443}},
+                    ],
+                },
+            }
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.CROSS_DOMAIN_ACCESS.value,
+            ConfigLayer.PROJECT,
+            add=[],
+            remove=["naar-api"],
+            list_field="outbound",
+        )
+        config = self._project_config(data, "cross-domain-access")
+        assert [rule["name"] for rule in config["outbound"]] == ["naar-log"]
+        assert [rule["name"] for rule in config["inbound"]] == ["van-portaal"]
+        assert counts == {"added": 0, "updated": 0, "removed": 1}
+        validate_service_configs(data)
+
+    def test_sleep_mode_match_is_a_set_of_plain_patterns(self) -> None:
+        """A match pattern has no key field, so the pattern IS its identity: add is a
+        union, and adding one that is already there is neither an append nor an error."""
+        data = _project()
+        data["services"].append(
+            {"name": "sleep-mode", "config": {"enabled": True, "match": ["acc-*"], "sleep-after-deploy": "12h"}}
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.SLEEP_MODE.value,
+            ConfigLayer.PROJECT,
+            add=["test-*", "acc-*"],
+            remove=[],
+            list_field="match",
+        )
+        config = self._project_config(data, "sleep-mode")
+        assert config["match"] == ["acc-*", "test-*"]
+        assert config["sleep-after-deploy"] == "12h"  # the sibling fields are not rewritten
+        assert config["enabled"] is True
+        assert counts == {"added": 1, "updated": 1, "removed": 0}
+        validate_service_configs(data)
+
+    def test_sleep_mode_match_remove_drops_only_that_pattern(self) -> None:
+        data = _project()
+        data["services"].append(
+            {"name": "sleep-mode", "config": {"enabled": True, "match": ["acc-*", "test-*"], "wake-mode": "manual"}}
+        )
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            ServiceType.SLEEP_MODE.value,
+            ConfigLayer.PROJECT,
+            add=[],
+            remove=["acc-*"],
+            list_field="match",
+        )
+        config = self._project_config(data, "sleep-mode")
+        assert config["match"] == ["test-*"]
+        assert config["wake-mode"] == "manual"
+        assert counts == {"added": 0, "updated": 0, "removed": 1}
+        validate_service_configs(data)
+
+    def test_an_invalid_pattern_is_refused_by_the_owning_model(self) -> None:
+        """A plain-value list has no item model to validate against, so the check has to
+        come from the model that owns the list -- here sleep-mode's own match validator."""
+        data = _project()
+        data["services"].append({"name": "sleep-mode", "config": {"enabled": True, "match": ["acc-*"]}})
+        with pytest.raises(ServiceValidationError):
+            ServiceAdapter.patch_service_config_list(
+                data,
+                ServiceType.SLEEP_MODE.value,
+                ConfigLayer.PROJECT,
+                add=["ac*-*"],  # a '*' in the middle is refused
+                remove=[],
+                list_field="match",
+            )
+        assert self._project_config(data, "sleep-mode")["match"] == ["acc-*"]
+
+    def test_patching_a_list_the_service_does_not_have_is_refused(self) -> None:
+        data = _project()
+        with pytest.raises(ServiceValidationError):
+            ServiceAdapter.patch_service_config_list(
+                data,
+                ServiceType.INVITE.value,
+                ConfigLayer.PROJECT,
+                add=[{"key": "x"}],
+                remove=[],
+                list_field="niet-bestaand",
+            )
+
+    def test_patching_the_block_as_a_whole_is_still_refused(self) -> None:
+        """The root-list patch and the named-list patch are not interchangeable: invite's
+        config is an object, so there is nothing to patch without naming a list."""
+        data = _project()
+        with pytest.raises(ServiceValidationError):
+            ServiceAdapter.patch_service_config_list(
+                data,
+                ServiceType.INVITE.value,
+                ConfigLayer.PROJECT,
+                add=[{"key": "x"}],
+                remove=[],
+            )
+
+
 class TestPortRangeExcludesPrivilegedPorts:
     """Probe/scrape ports must be non-privileged (>=1024): images run non-root, so a
     port below 1024 can never be bound or reached. The constraint lives in the config
