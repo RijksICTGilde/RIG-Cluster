@@ -126,6 +126,7 @@ def _render_step_html(
     errors: dict[str, list[str]] | None = None,
     edit_mode: bool = False,
     warnings: dict[str, list[str]] | None = None,
+    flow_id: str | None = None,
 ) -> str:
     """Render the form fields for a single wizard step.
 
@@ -206,6 +207,9 @@ def _render_step_html(
         errors=errors,
         edit_mode=edit_mode,
         warnings=warnings,
+        # De wizard waarin we staan, zodat een partial met eigen endpoints (bijlagen) de
+        # goede URL opbouwt in plaats van een vaste create-project.
+        flow_id=flow_id,
     )
 
 
@@ -487,6 +491,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         section,
         yaml_data=yaml_data,
         edit_mode=state.is_edit,
+        flow_id=flow_id,
     )
 
     active_sections = resolve_active_sections(flow, state.step_data)
@@ -571,7 +576,7 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
 
     # Render the first step with pre-filled data
     section = _get_section_from_flow(flow_id, first_step)
-    step_html = _render_step_html(request, section, yaml_data=project_data, edit_mode=True)
+    step_html = _render_step_html(request, section, yaml_data=project_data, edit_mode=True, flow_id=flow_id)
 
     active_sections = resolve_active_sections(flow, state.step_data)
     section_meta = get_section_metadata(active_sections)
@@ -733,6 +738,7 @@ async def _navigate_to_step(
         yaml_data=yaml_data,
         errors=errors,
         edit_mode=edit_mode,
+        flow_id=flow_id,
     )
     context = _build_step_context(
         request,
@@ -797,6 +803,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
         yaml_data=yaml_data,
         errors=errors,
         edit_mode=edit_mode,
+        flow_id=flow_id,
     )
 
     flow = get_flow(flow_id)
@@ -916,7 +923,12 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         save_wizard_state(request, state)
 
         step_html = _render_step_html(
-            request, section, yaml_data=submitted_yaml, edit_mode=edit_mode, warnings=processor.field_warnings
+            request,
+            section,
+            yaml_data=submitted_yaml,
+            edit_mode=edit_mode,
+            warnings=processor.field_warnings,
+            flow_id=flow_id,
         )
         context = _build_step_context(request, flow_id, section, step_html)
         return _step_response(request, context)
@@ -968,6 +980,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
             errors=errors,
             edit_mode=edit_mode,
             warnings=processor.field_warnings,
+            flow_id=flow_id,
         )
         context = _build_step_context(
             request,
@@ -999,6 +1012,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 errors=errors,
                 edit_mode=edit_mode,
                 warnings=processor.field_warnings,
+                flow_id=flow_id,
             )
             context = _build_step_context(
                 request,

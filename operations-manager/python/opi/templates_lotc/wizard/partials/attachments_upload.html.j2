@@ -13,7 +13,7 @@
         <c-layout-flow gap="sm">
             <c-heading type="h3" label="Bijlagen in dit project"/>
             <div id="wiz-att-list"
-                 hx-get="/forms/wizard/create-project/attachments/list"
+                 hx-get="/forms/wizard/{{ flow_id if flow_id is defined and flow_id else 'create-project' }}/attachments/list"
                  hx-trigger="load"
                  hx-vals='{"_wizard_token": "{{ _wizard_token | default('', true) }}"}'
                  hx-target="this"
@@ -48,7 +48,7 @@
                hx-include, so an htmx-controlled id input would drop attachment_id from the
                upload below. The change event bubbles from the plain input to this wrapper. #}
             <div id="wiz-att-id-field"
-                 hx-post="/forms/wizard/create-project/attachments/validate-id"
+                 hx-post="/forms/wizard/{{ flow_id if flow_id is defined and flow_id else 'create-project' }}/attachments/validate-id"
                  hx-ext="ignore:json-enc"
                  hx-trigger="change from:#wiz-att-id"
                  hx-include="#wiz-att-id, #wiz-att-token"
@@ -68,7 +68,7 @@
                    hx-attribuut niet door - de automatische omzetting liet ze daarom
                    allemaal vallen, en de knop stond er wel maar stuurde niets. #}
                 {% set uploaden_attrs = {
-                    'hx-post': '/forms/wizard/create-project/attachments/stage',
+                    'hx-post': '/forms/wizard/' ~ (flow_id if flow_id is defined and flow_id else 'create-project') ~ '/attachments/stage',
                     'hx-ext': 'ignore:json-enc',
                     'hx-encoding': 'multipart/form-data',
                     'hx-include': '#wiz-att-id, #wiz-att-file, #wiz-att-token, #wiz-att-mode',
