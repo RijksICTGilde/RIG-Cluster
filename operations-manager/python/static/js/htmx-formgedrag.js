@@ -1,5 +1,12 @@
 /* Twee dingen die elk htmx-formulier in dit portaal nodig heeft.
  *
+ * LET OP: de luisteraars hangen aan `document` en NIET aan `document.body`. Dit bestand
+ * wordt in de <head> geladen (base_lotc.html.j2), en op dat moment bestaat document.body
+ * nog niet. `document.body.addEventListener` gooide daar een TypeError, waarmee dit hele
+ * script stierf voor het iets had gedaan: geen scrollherstel, geen dubbelklikbescherming.
+ * In de console was dat te zien als "can't access property addEventListener,
+ * document.body is null". htmx-gebeurtenissen bubbelen tot document, dus daar horen ze.
+ *
  * 1. DE SCROLLPOSITIE BLIJFT STAAN.
  *    Een stap in de wizard vervangt bij elke keuze een groot deel van het formulier - vink
  *    je een dienst aan bij een component, dan komt het hele configuratieblok erbij. htmx
@@ -35,11 +42,11 @@
         return el.closest("form") || el.closest("[data-htmx-blokkeer]");
     }
 
-    document.body.addEventListener("htmx:beforeSwap", function () {
+    document.addEventListener("htmx:beforeSwap", function () {
         scrollY = window.scrollY;
     });
 
-    document.body.addEventListener("htmx:afterSettle", function () {
+    document.addEventListener("htmx:afterSettle", function () {
         if (scrollY === null) return;
         var doel = scrollY;
         scrollY = null;
@@ -50,7 +57,7 @@
         });
     });
 
-    document.body.addEventListener("htmx:beforeRequest", function (e) {
+    document.addEventListener("htmx:beforeRequest", function (e) {
         var f = formulierVan(e.target);
         if (f) f.classList.add("is-bezig");
     });
@@ -65,8 +72,8 @@
         });
     }
 
-    document.body.addEventListener("htmx:afterRequest", klaar);
-    document.body.addEventListener("htmx:responseError", klaar);
-    document.body.addEventListener("htmx:sendError", klaar);
-    document.body.addEventListener("htmx:timeout", klaar);
+    document.addEventListener("htmx:afterRequest", klaar);
+    document.addEventListener("htmx:responseError", klaar);
+    document.addEventListener("htmx:sendError", klaar);
+    document.addEventListener("htmx:timeout", klaar);
 })();
