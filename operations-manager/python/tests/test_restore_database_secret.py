@@ -1,20 +1,22 @@
-"""A versioned database restore must leave working credentials behind.
+"""Een versie-restore mag de inloggegevens van de deployment niet ongeldig maken.
 
-The restore rotates the password of the database user and moves the data into a new
-generation of the database. That password is known nowhere else, so if the restore does
-not write it into the deployment's database secret, the secret keeps pointing at the old
-database with a password that no longer authenticates.
+De restore maakte een nieuwe generatie van de database en **roteerde daarbij het
+wachtwoord van de databasegebruiker**. Dat wachtwoord staat in een geheim dat ArgoCD
+beheert -- het manifest ligt in ``zad-deployments`` en de applicatie synchroniseert met
+``selfHeal: true`` -- dus het nieuwe wachtwoord kan daar alleen via de projectrefresh in
+komen. En juist die refresh leest het geheim eerst, toetst het, en weigert door te gaan
+als de inloggegevens niet werken (``Manual intervention required to fix database user or
+update secret``). Gevolg: de restore meldde ``success``, de refresh brak af vóór er ook
+maar één manifest geschreven was, en elke volgende wijziging op het project liep op
+dezelfde melding vast.
 
-The damage is not limited to the restored deployment. The project refresh that runs
-right after the restore reads that secret, tests it, finds it broken and refuses to
-touch a secret it did not author ("Manual intervention required to fix database user or
-update secret"). It aborts before writing any manifests -- and so does every later
-change to the project. A restore reported ``success`` and left the project on a lock.
+Het wachtwoord roteren levert hier niets op: de gebruiker bestaat al en wordt gewoon ook
+eigenaar van de nieuwe generatie. Deze tests leggen dat vast:
 
-These tests pin both halves:
-
-* the secret carries the credentials the restore actually created;
-* a change made after the restore still resolves those credentials instead of raising.
+* de restore laat het wachtwoord staan dat de deployment al heeft;
+* alleen zonder geheim om uit te lezen wordt er een gemaakt en gezet;
+* een wijziging ná de restore lost de inloggegevens gewoon op in plaats van te
+  struikelen -- dat is de fout die de gebruiker treft.
 """
 
 from typing import Any
@@ -29,13 +31,10 @@ PROJECT = "e2e62-glv"
 DEPLOYMENT = "productie"
 NAMESPACE = "rig-e2e62-glv"
 HOST = "postgresql.rig-system.svc.cluster.local"
-# Username and generation-0 database name are the same string by construction, which is
-# exactly why the secret cannot be repaired with a blind search-and-replace.
 USERNAME = "e2e62_glv_productie"
 OLD_DATABASE = "e2e62_glv_productie"
 NEW_DATABASE = "e2e62_glv_productie_v1"
-OLD_PASSWORD = "OldPassword123old"
-SECRET_NAME = f"{DEPLOYMENT}-database"
+LIVE_PASSWORD = "LivePassword123live"
 
 
 class _FakePostgresServer:
@@ -43,8 +42,9 @@ class _FakePostgresServer:
 
     def __init__(self) -> None:
         self.username = USERNAME
-        self.live_password = OLD_PASSWORD
+        self.live_password = LIVE_PASSWORD
         self.databases = {OLD_DATABASE}
+        self.password_writes: list[str] = []
 
     def authenticates(self, username: str, password: str, database: str) -> bool:
         return username == self.username and password == self.live_password and database in self.databases
@@ -59,10 +59,12 @@ class _FakePostgresConnector:
             return {"status": "exists"}
         self.server.username = username
         self.server.live_password = password
+        self.server.password_writes.append(password)
         return {"status": "created"}
 
     async def update_user_password(self, username: str, new_password: str) -> dict[str, str]:
         self.server.live_password = new_password
+        self.server.password_writes.append(new_password)
         return {"status": "success"}
 
     async def update_user_privileges(self, username: str, database_privileges: Any = None) -> dict[str, str]:
@@ -80,28 +82,29 @@ class _FakePostgresConnector:
 
 
 class _FakeKubectlConnector:
-    """An in-memory stand-in for the two secret calls the restore makes."""
+    """An in-memory stand-in for the secret read the restore does.
 
-    def __init__(self, secrets: dict[tuple[str, str], dict[str, str]]) -> None:
-        self.secrets = secrets
+    It deliberately has no write method: a test that made the restore write to the live
+    secret would fail with an AttributeError, which is the point -- ArgoCD owns that
+    object and reverts a direct patch within milliseconds.
+    """
+
+    def __init__(self, secret_data: dict[str, str] | None) -> None:
+        self.secret_data = secret_data
+        self.reads: list[tuple[str, str]] = []
 
     async def get_secret(self, secret_name: str, namespace: str) -> dict[str, str] | None:
-        stored = self.secrets.get((secret_name, namespace))
-        return dict(stored) if stored is not None else None
-
-    async def patch_secret_data(self, secret_name: str, namespace: str, data: dict[str, str]) -> None:
-        if (secret_name, namespace) not in self.secrets:
-            raise AssertionError(f"patch of a non-existent secret {secret_name} in {namespace}")
-        self.secrets[(secret_name, namespace)].update(data)
+        self.reads.append((secret_name, namespace))
+        return dict(self.secret_data) if self.secret_data is not None else None
 
 
 def _live_secret_data() -> dict[str, str]:
-    """The secret as it stands before the restore: generation 0, the then-current password."""
+    """The secret as it stands before the restore: generation 0, the live password."""
     return DatabaseSecret(
         host=HOST,
         port=5432,
         username=USERNAME,
-        password=OLD_PASSWORD,
+        password=LIVE_PASSWORD,
         database=OLD_DATABASE,
         schema=OLD_DATABASE,
         ro_username=f"{USERNAME}_ro",
@@ -128,13 +131,8 @@ def server() -> _FakePostgresServer:
 
 
 @pytest.fixture
-def secrets() -> dict[tuple[str, str], dict[str, str]]:
-    return {(SECRET_NAME, NAMESPACE): _live_secret_data()}
-
-
-@pytest.fixture
-def kubectl(secrets: dict[tuple[str, str], dict[str, str]]) -> _FakeKubectlConnector:
-    return _FakeKubectlConnector(secrets)
+def kubectl() -> _FakeKubectlConnector:
+    return _FakeKubectlConnector(_live_secret_data())
 
 
 @pytest.fixture
@@ -152,7 +150,7 @@ def restore_environment(server: _FakePostgresServer, kubectl: _FakeKubectlConnec
         yield backup_manager
 
 
-async def _run_restore(project_data: dict[str, Any] | None = None) -> dict[str, Any]:
+async def _run_restore() -> dict[str, Any]:
     project_file_handler = MagicMock()
     project_file_handler.get_database_generation = MagicMock(return_value=0)
     return await _restore_database_with_versioning(
@@ -163,87 +161,67 @@ async def _run_restore(project_data: dict[str, Any] | None = None) -> dict[str, 
         snapshot_id="k1234567890abcdef",
         deployment_cluster="local",
         namespace=NAMESPACE,
-        project_data=project_data if project_data is not None else _project_data(),
+        project_data=_project_data(),
         project_file_handler=project_file_handler,
     )
 
 
-class TestRestoredCredentialsLandInTheSecret:
+class TestDeRestoreLaatHetWachtwoordStaan:
     @pytest.mark.asyncio
-    async def test_secret_carries_the_password_the_restore_set(
-        self,
-        server: _FakePostgresServer,
-        secrets: dict[tuple[str, str], dict[str, str]],
-        restore_environment: Any,
-    ) -> None:
+    async def test_wachtwoord_wordt_niet_geroteerd(self, server: _FakePostgresServer, restore_environment: Any) -> None:
         result = await _run_restore()
+
         assert result["success"] is True
-
-        stored = secrets[(SECRET_NAME, NAMESPACE)]
-        # Not "different from the old one" but "the one that authenticates": the check
-        # that a text comparison against the old value would have passed regardless.
-        assert stored["DATABASE_PASSWORD"] == server.live_password
-        assert server.live_password != OLD_PASSWORD
-        assert server.authenticates(USERNAME, stored["DATABASE_PASSWORD"], stored["DATABASE_DB"])
+        assert result["new_resource_name"] == NEW_DATABASE
+        assert server.live_password == LIVE_PASSWORD
+        assert server.password_writes == [], f"de restore schreef alsnog een wachtwoord: {server.password_writes}"
 
     @pytest.mark.asyncio
-    async def test_secret_points_at_the_database_the_restore_filled(
-        self, secrets: dict[tuple[str, str], dict[str, str]], restore_environment: Any
-    ) -> None:
+    async def test_de_restorepod_krijgt_het_levende_wachtwoord(self, restore_environment: Any) -> None:
+        """Het wachtwoord dat naar de restorepod gaat moet er wel een zijn dat werkt --
+        anders komt de gegevens nooit in de nieuwe database terecht."""
         await _run_restore()
 
-        stored = secrets[(SECRET_NAME, NAMESPACE)]
-        assert stored["DATABASE_DB"] == NEW_DATABASE
-        assert stored["DATABASE_SCHEMA"] == NEW_DATABASE
-        assert NEW_DATABASE in stored["DATABASE_SERVER_FULL"]
-        assert stored["DATABASE_PASSWORD"] in stored["DATABASE_SERVER_FULL"]
+        call = restore_environment.restore_database.await_args.kwargs
+        assert call["target_database_password"] == LIVE_PASSWORD
+        assert call["target_database_name"] == NEW_DATABASE
+        assert call["target_database_user"] == USERNAME
 
     @pytest.mark.asyncio
-    async def test_read_only_role_is_left_alone(
-        self, secrets: dict[tuple[str, str], dict[str, str]], restore_environment: Any
+    async def test_zonder_geheim_wordt_er_wel_een_wachtwoord_gezet(
+        self, server: _FakePostgresServer, kubectl: _FakeKubectlConnector, restore_environment: Any
     ) -> None:
-        """The restore rotated the main user, not the read-only one; that credential
-        must survive so the refresh can re-grant it instead of re-issuing it."""
-        await _run_restore()
-
-        stored = secrets[(SECRET_NAME, NAMESPACE)]
-        assert stored["DATABASE_SERVER_USER_RO"] == f"{USERNAME}_ro"
-        assert stored["DATABASE_PASSWORD_RO"] == "ReadOnlyPassword123"
-
-    @pytest.mark.asyncio
-    async def test_absent_secret_does_not_fail_the_restore(
-        self, secrets: dict[tuple[str, str], dict[str, str]], restore_environment: Any
-    ) -> None:
-        """A deployment that was never provisioned has no secret yet; the refresh
-        creates it. That must not turn a successful restore into a failure."""
-        secrets.clear()
+        """Is er geen geheim om uit te lezen, dan is er ook geen wachtwoord om te hergebruiken;
+        de restorepod moet ergens mee kunnen inloggen."""
+        kubectl.secret_data = None
 
         result = await _run_restore()
+
         assert result["success"] is True
+        assert server.password_writes, "zonder geheim moet de restore wel een wachtwoord zetten"
+        assert server.live_password == server.password_writes[-1]
 
 
-class TestChangeAfterRestoreStillWorks:
-    """The assertion that matters most: what the user hits is not the restore itself
-    but everything after it."""
+class TestWijzigingNaDeRestore:
+    """De assertie die er het meest toe doet: wat de gebruiker treft is niet de restore
+    zelf maar alles daarna."""
 
     @pytest.mark.asyncio
-    async def test_credential_resolution_after_restore_does_not_demand_intervention(
-        self,
-        server: _FakePostgresServer,
-        secrets: dict[tuple[str, str], dict[str, str]],
-        restore_environment: Any,
+    async def test_inloggegevens_oplossen_vraagt_geen_handmatig_ingrijpen(
+        self, server: _FakePostgresServer, kubectl: _FakeKubectlConnector, restore_environment: Any
     ) -> None:
         await _run_restore()
 
-        # This is what the project refresh -- and every later change to the project --
-        # does first: read the secret, test it, and give up on the whole project if it
-        # does not work.
+        # Dit is wat de projectrefresh -- en elke volgende wijziging op het project --
+        # als eerste doet: het geheim lezen, het toetsen, en het hele project opgeven
+        # als het niet werkt. Het geheim is ONVERANDERD (ArgoCD beheert het), maar wijst
+        # nu naar de nieuwe generatie omdat de refresh die uit het projectbestand haalt.
         manager = DatabaseManager(
             project_manager=MagicMock(), db_host=HOST, admin_username="admin", admin_password="admin"
         )
         manager._postgres_connector = _FakePostgresConnector(server)  # type: ignore[assignment]
 
-        stored = DatabaseSecret.from_k8s_secret_data(secrets[(SECRET_NAME, NAMESPACE)])
+        stored = DatabaseSecret.from_k8s_secret_data(_live_secret_data())
 
         async def _test_connection(username: str, password: str, database: str, schema: str, host: str) -> bool:
             return server.authenticates(username, password, database)
@@ -266,4 +244,4 @@ class TestChangeAfterRestoreStillWorks:
                 admin_password="admin",
             )
 
-        assert password == server.live_password
+        assert password == LIVE_PASSWORD

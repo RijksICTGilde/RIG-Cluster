@@ -33,14 +33,12 @@ from opi.manager.backup import (
 )
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
-from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project_store import get_project_store
 from opi.services.services import service_entry_name
 from opi.utils.naming import (
     generate_bucket_name,
     generate_database_name,
     generate_database_username,
-    generate_extra_database_schema,
     generate_pvc_name,
     generate_storage_name,
     generate_unique_name,
@@ -2394,69 +2392,6 @@ async def _restore_pvc_with_versioning(
     }
 
 
-async def _write_restored_database_secret(
-    project_name: str,
-    deployment_name: str,
-    namespace: str,
-    project_data: dict[str, Any],
-    db_host: str,
-    db_username: str,
-    db_password: str,
-    db_database: str,
-) -> None:
-    """Write the credentials the restore just created into the deployment's database secret.
-
-    A versioned database restore rotates the database user's password and moves the data
-    into a new generation of the database. Nobody else knows that password. The project
-    refresh that follows reads this secret, tests it, and refuses to touch a secret whose
-    credentials do not work ("Manual intervention required to fix database user or update
-    secret"). Leaving the old password in the secret therefore does not merely break the
-    restored deployment: the refresh aborts, no manifests are written, and every later
-    change to the project hits the same wall. The rule stays "OPI does not overwrite a
-    secret it cannot account for" -- this one path can, because it is the one that
-    rotated the credentials in the first place.
-
-    Only the keys that changed are written; the read-only role, the extra-schema
-    variables and anything else in the secret are left as they are. The refresh that
-    follows regenerates the same secret into the deployments repository, so ArgoCD
-    converges on the same values instead of reverting this patch.
-    """
-    kubectl_connector = create_kubectl_connector()
-    secret_name = DatabaseSecret.get_secret_name(deployment_name)
-
-    existing_data = await kubectl_connector.get_secret(secret_name, namespace)
-    if not existing_data:
-        logger.info(
-            f"No database secret {secret_name} in namespace {namespace} yet; "
-            f"the project refresh will create it with the restored credentials"
-        )
-        return
-
-    existing = DatabaseSecret.from_k8s_secret_data(existing_data)
-
-    # Schemas are project-wide and unversioned, so the restore does not change them --
-    # but they are part of the search_path in the connection string that is rewritten here.
-    extra_schemas = [
-        (entry["postfix"], generate_extra_database_schema(project_name, deployment_name, entry["postfix"]))
-        for entry in get_postgres_schemas(project_data)
-    ]
-
-    restored = DatabaseSecret(
-        host=db_host,
-        port=existing.port or 5432,
-        username=db_username,
-        password=db_password,
-        database=db_database,
-        schema=db_database,  # Schema name matches database name
-        ro_username=existing.ro_username,
-        ro_password=existing.ro_password,
-        extra_schemas=extra_schemas,
-    )
-
-    await kubectl_connector.patch_secret_data(secret_name, namespace, restored.to_k8s_secret_data())
-    logger.info(f"Updated database secret {secret_name} in {namespace} to restored database {db_database}")
-
-
 async def _restore_database_with_versioning(
     project_name: str,
     deployment_name: str,
@@ -2509,16 +2444,35 @@ async def _restore_database_with_versioning(
             admin_password=admin_password,
         )
 
-        # Generate credentials for new database
-        db_password = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
-
-        # Create new user if needed (or reuse existing user from old database)
-        # For versioned databases, we use the same username (no generation suffix)
+        # The versioned database is owned by the SAME user as every other generation --
+        # the username carries no generation suffix.
         db_username = generate_database_username(project_name, deployment_name)
 
-        # Create user (will update password if exists)
+        # Keep the password the deployment already has. Rotating it here left the whole
+        # project on a lock: that password lives in a secret that ArgoCD owns (the
+        # manifest is in zad-deployments, syncPolicy selfHeal), so a new one cannot be
+        # written into the running namespace -- ArgoCD reverts a direct patch within
+        # milliseconds. The only route into that secret is the project refresh, and the
+        # refresh reads the secret first and refuses to run when its credentials no
+        # longer work. So the restore reported success, the refresh aborted before
+        # writing any manifest, and every later change to the project hit the same wall.
+        #
+        # There is nothing a new password buys here: the user already exists and simply
+        # becomes the owner of the new generation as well. Only when there is no secret
+        # to read from is a password generated (and then set on the user), because the
+        # restore pod needs one to connect with.
+        existing_secret = await DatabaseSecret.get_data(
+            kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
+        )
+        reuse_password = bool(existing_secret and existing_secret.password)
+        db_password = (
+            existing_secret.password  # type: ignore[union-attr]
+            if reuse_password
+            else generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
+        )
+
         user_result = await postgres_connector.create_user(username=db_username, password=db_password)
-        if user_result["status"] == "exists":
+        if user_result["status"] == "exists" and not reuse_password:
             await postgres_connector.update_user_password(username=db_username, new_password=db_password)
 
         # Create new versioned database
@@ -2570,20 +2524,6 @@ async def _restore_database_with_versioning(
                 "old_resource_name": old_database_name,
                 "new_resource_name": new_database_name,
             }
-
-        # Whoever rotates, writes: the password above is known only here, so the secret
-        # is updated here too. Skipping this does not just leave the deployment on dead
-        # credentials, it locks the project (see _write_restored_database_secret).
-        await _write_restored_database_secret(
-            project_name=project_name,
-            deployment_name=deployment_name,
-            namespace=namespace,
-            project_data=project_data,
-            db_host=db_host,
-            db_username=db_username,
-            db_password=db_password,
-            db_database=new_database_name,
-        )
 
         return {
             "success": True,
