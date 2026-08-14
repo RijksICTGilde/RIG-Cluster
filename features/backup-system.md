@@ -334,9 +334,49 @@ snapshots — see "Trigger metadata and retention isolation" below.
   },
   "new_generation": 2,
   "project_updated": true,
-  "refresh_triggered": true
+  "refresh_triggered": true,
+  "refresh_succeeded": true
 }
 ```
+
+### A restore that lands but is not applied
+
+A versioned restore does two things: it puts the data in a new generation of the
+resource, and it then triggers a project refresh that regenerates the manifests and
+secrets so the deployment starts using that new generation. The second half can fail on
+its own, and then the data is restored while the deployment keeps running on the old
+manifests.
+
+That is reported, not hidden in the OPI log:
+
+| Outcome | `status` | HTTP | `refresh_triggered` | `refresh_succeeded` |
+|---|---|---|---|---|
+| Restored and applied | `success` | `200` | `true` | `true` |
+| Restored, applying it failed | `partial` | `207` | `true` | `false` |
+| Restored, no refresh asked for (`update_deployment: false`) | `success` | `200` | `false` | `null` |
+| The restore itself failed | `failed` | `500` | `false` | `false` |
+
+On `partial` the message says so as well. The restored data is in place; retry the
+restore or trigger a project refresh once the cause is cleared.
+
+### Restoring a database rewrites the deployment's database secret
+
+A database restore creates a new generation of the database **and rotates the password
+of the database user** — the old database stays behind untouched, so the user cannot
+keep a password that still opens it. That password exists nowhere else, so the restore
+writes it into the deployment's `{deployment}-database` secret itself, together with the
+new `DATABASE_DB`/`DATABASE_SCHEMA`. It is a merge patch: the read-only role, the
+extra-schema variables and the ArgoCD tracking metadata on the secret are left alone,
+and the refresh that follows regenerates the same values into `zad-deployments` so
+ArgoCD converges instead of reverting.
+
+This is the single exception to "OPI never overwrites a database secret whose
+credentials do not verify" (`Manual intervention required to fix database user or update
+secret`). That guard is what stops OPI from stepping on a secret somebody else manages —
+and it applies to this path least of all, because this path is the one that rotated the
+credentials. Without the write-back the guard fired on the refresh right after the
+restore, which aborted before writing any manifests, and every later change to the
+project hit the same wall. Pinned in `tests/test_restore_database_secret.py`.
 
 ### Failed restore: whose fault was it?
 
