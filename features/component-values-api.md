@@ -73,6 +73,58 @@ zetten), kent dus geen `rollout`-parameter en geeft 200. Een component of deploy
 er niet is, is een 404; opgeslagen waarden die niet te ontsleutelen zijn een 422, want dat
 is iets anders dan "er zijn er geen".
 
+### Een eigen omgevingsvariabele die geen geheim is
+
+`aliases` kan uit de waarde zelf afleiden dat er niets te verbergen valt; `user-env-vars`
+kan dat niet. `APP_MODE=productie` en een databasewachtwoord zijn dezelfde soort tekst, dus
+kwam álles als `***` terug, ook een waarde die de aanroeper zojuist zelf had gezet. Een
+typefout in een niet-geheime variabele was daardoor alleen te vinden door de draaiende
+workload te ondervragen, en twee bijna identieke functies gedroegen zich verschillend.
+
+Wie schrijft, markeert daarom zelf. Het schrijfverzoek krijgt een lijst `public` met de
+namen uit `values` waarvan de waarde géén geheim is:
+
+```bash
+curl -X POST "$BASE/user-env-vars/values/component/backend" \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"values": {"APP_MODE": "productie", "DB_PASSWORD": "geheim"}, "public": ["APP_MODE"]}'
+
+# GET .../services/user-env-vars/values/component/backend
+{"values": {"APP_MODE": "productie", "DB_PASSWORD": "***"}, "public": ["APP_MODE"]}
+```
+
+**Wat er wél en niet versleuteld staat.** De markering verandert niets aan de opslag. De
+hele set blijft één AGE-blok, dus ook een waarde die als niet-geheim gemarkeerd is staat
+versleuteld in `zad-projects`. Het enige dat er in platte tekst bij komt, is de *naam*, in
+een lijst naast het blok:
+
+```yaml
+components:
+  - name: backend
+    user-env-vars: |
+      -----BEGIN AGE ENCRYPTED FILE-----
+      ...
+    user-env-vars-public:
+      - APP_MODE
+```
+
+Dat is met opzet de voorzichtige kant. De namen kwamen altijd al uit een read, dus die
+lijst geeft niets nieuws weg; en een waarde later alsnog als geheim aanmerken kost zo
+niets, terwijl hem in platte tekst opslaan hem voorgoed in de git-historie had gezet.
+
+**Onbekend is geheim.** Ontbreekt de lijst, ontbreekt een naam erin, of is de lijst geen
+lijst van namen, dan geldt de waarde als geheim. Een projectbestand van vóór deze
+markering leest dus precies zoals het altijd las. De markering reist bovendien mee met de
+waarde: een naam opnieuw schrijven zonder hem in `public` te noemen maakt hem weer een
+geheim, en een verwijderde naam neemt zijn markering mee. Een `public` die een naam noemt
+die dit verzoek niet schrijft, is een 422 -- dat is een typefout of een poging om via een
+schrijfpad iets anders te ontmaskeren.
+
+De dienst zegt zelf of hij de markering aanvaardt (`owned_values_secret_flag`). `aliases`
+doet dat niet: die heeft al een antwoord uit de waarde, en een tweede, overrulebaar
+antwoord zou een opgeslagen letterlijke waarde alsnog kunnen tonen. `public` meesturen
+naar `aliases` is daarom een 422.
+
 ### Aliassen hebben geen deploymentniveau
 
 `user-env-vars` heeft endpoints op **beide** niveaus, `aliases` **alleen op
@@ -319,6 +371,7 @@ curl -X POST "https://.../api/v2/projects/mijnproject/:refresh" -H "X-API-Key: $
 | de schrijfactie | `ProjectManager.set_component_values` |
 | de taak | `opi/core/task_handlers_components.py` (`handle_configure_service_values`) |
 | lezen (maskering per dienst) | `opi/api/v2/router.py` (`_make_values_read_endpoint`), `Service.owned_value_is_secret` |
+| markering "geen geheim" per waarde | `opi/services/component_values.py` (`read_public_keys`, `next_public_keys`, `value_is_secret`), `Service.owned_values_secret_flag`, `user-env-vars-public` in `opi/schemas/project_v2.json` |
 | aliasregel (verwijzing bestaat) | `opi/services/catalog/aliases/references.py` |
 | toetsen | `tests/test_component_values.py`, `tests/test_component_values_api.py`, `tests/test_component_values_manager.py`, `tests/test_component_values_read_api.py`, `tests/test_alias_reference_validation.py` |
 
