@@ -43,18 +43,48 @@
     // a sequence row (e.g. an attachment coupling) re-renders the inner content
     // via htmx, which otherwise resets the scroll container to the top and makes
     // the user lose their place. htmx's own swap events are the idiomatic hook.
+    // WAAROM DIT ZO OMSLACHTIG IS
+    //
+    // Terugzetten op htmx:afterSwap alleen werkte niet, en dat is te meten. afterSwap
+    // vuurt VOOR de settle-vertraging en dus voordat de NLDD-componenten zijn opgebouwd.
+    // Op dat moment is de nieuwe inhoud nog laag, en de browser KLEMT scrollTop op wat er
+    // dan past. Daarna groeit de inhoud naar zijn echte hoogte en sta jij bovenaan, precies
+    // de klacht: na een herlading kom je niet terug waar je was.
+    //
+    // Vandaar terugzetten NA het settelen en daarna nog een paar keer opnieuw, zolang de
+    // inhoud nog groeit. Zodra de gewenste positie haalbaar is, houdt het op. De grens van
+    // 600 ms is een vangnet: componenten die daarna nog groeien zijn een ander probleem, en
+    // eindeloos herstellen zou de gebruiker tegenwerken die zelf is gaan scrollen.
     var savedModalScroll = null;
+
+    function herstelScroll(modal, gewenst, pogingenOver) {
+        modal.scrollTop = gewenst;
+        // Gelukt, of de inhoud is echt korter geworden en dan is dit het maximum.
+        var bereikt = Math.abs(modal.scrollTop - gewenst) < 2;
+        if (bereikt || pogingenOver <= 0) return;
+        // Nog niet haalbaar: de inhoud groeit nog. Opnieuw op het volgende frame.
+        requestAnimationFrame(function () {
+            herstelScroll(modal, gewenst, pogingenOver - 1);
+        });
+    }
+
     document.addEventListener('htmx:beforeSwap', function (evt) {
         var tgt = evt.detail && evt.detail.target;
         var modal = tgt && tgt.closest && tgt.closest('.edit-section-modal');
         savedModalScroll = modal ? modal.scrollTop : null;
     });
-    document.addEventListener('htmx:afterSwap', function (evt) {
+
+    // afterSettle en niet afterSwap: op afterSwap staat de nieuwe inhoud er wel, maar is er
+    // nog niet opgemaakt en gemeten.
+    document.addEventListener('htmx:afterSettle', function (evt) {
         if (savedModalScroll === null) return;
-        var tgt = evt.detail && evt.detail.target;
-        var modal = tgt && tgt.closest && tgt.closest('.edit-section-modal');
-        if (modal) modal.scrollTop = savedModalScroll;
+        var gewenst = savedModalScroll;
         savedModalScroll = null;
+        if (gewenst <= 0) return;
+        var modal = document.querySelector('.edit-section-modal.is-open');
+        if (!modal) return;
+        // Ongeveer 600 ms aan frames.
+        herstelScroll(modal, gewenst, 36);
     });
 
     // -- What makes a modal busy --
