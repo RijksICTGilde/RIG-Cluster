@@ -359,24 +359,31 @@ That is reported, not hidden in the OPI log:
 On `partial` the message says so as well. The restored data is in place; retry the
 restore or trigger a project refresh once the cause is cleared.
 
-### Restoring a database rewrites the deployment's database secret
+### Restoring a database keeps the deployment's credentials
 
-A database restore creates a new generation of the database **and rotates the password
-of the database user** — the old database stays behind untouched, so the user cannot
-keep a password that still opens it. That password exists nowhere else, so the restore
-writes it into the deployment's `{deployment}-database` secret itself, together with the
-new `DATABASE_DB`/`DATABASE_SCHEMA`. It is a merge patch: the read-only role, the
-extra-schema variables and the ArgoCD tracking metadata on the secret are left alone,
-and the refresh that follows regenerates the same values into `zad-deployments` so
-ArgoCD converges instead of reverting.
+A database restore creates a **new generation** of the database (`myproject_prod` ->
+`myproject_prod_v1`) owned by the same database user, and bumps the generation in the
+project file. It deliberately does **not** touch that user's password.
 
-This is the single exception to "OPI never overwrites a database secret whose
-credentials do not verify" (`Manual intervention required to fix database user or update
-secret`). That guard is what stops OPI from stepping on a secret somebody else manages —
-and it applies to this path least of all, because this path is the one that rotated the
-credentials. Without the write-back the guard fired on the refresh right after the
-restore, which aborted before writing any manifests, and every later change to the
-project hit the same wall. Pinned in `tests/test_restore_database_secret.py`.
+That is not a detail, it is the whole reason the restore works. The password lives in
+the `{deployment}-database` secret, whose manifest is in `zad-deployments` and which
+ArgoCD applies with `syncPolicy.automated.selfHeal: true`. A direct `kubectl patch` of
+that secret is reverted within milliseconds, so the **only** route into it is the
+project refresh -- and the refresh reads the secret first, tests it, and refuses to
+touch a secret whose credentials no longer work (`Manual intervention required to fix
+database user or update secret`). Rotating the password therefore locked the project:
+the restore reported `success`, the refresh aborted before writing any manifest, and
+every later change hit the same wall.
+
+Nothing was gained by rotating: the user already exists and simply becomes the owner of
+the new generation as well. A password is only generated when there is no secret to read
+one from -- the restore pod needs something to connect with.
+
+The switch-over runs the ordinary GitOps route: the refresh writes the new
+`DATABASE_DB`/`DATABASE_SCHEMA` into `zad-deployments`, ArgoCD syncs, and the pods pick
+up the new generation. Pinned in `tests/test_restore_database_secret.py` (unit) and
+`tests/e2e/test_sandbox_restore_op_slot.py` (against a live sandbox, including a change
+made after the restore).
 
 ### Failed restore: whose fault was it?
 
