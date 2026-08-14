@@ -2,22 +2,26 @@
 
 Laatste meting van `release-augustus-2026` voor de merge naar `main`.
 
-- **Gemeten commit**: `c0be0074`, de taakbranch bovenop `ab6ae614`
-  (`feat(sleep-mode): een slapende applicatie wordt niet meer vanzelf gewekt`)
+- **Gemeten commit**: `3bf67766`, de taakbranch bovenop `de87fc65`
+  (`feat(api): de voorbeelden uit het formulier staan ook in de API-docs`)
 - **Cluster**: `kind-rig-sandbox`, `sandboxed-local`
 - **Datum**: 14 augustus 2026
 
-> Deze doorloop is twee keer verlegd. Hij begon op `418533e5`; daarna kwam de
-> opdracht om op `e187015e` te meten (de standaardmaten), en vervolgens om op
-> `ab6ae614` te meten (wake-mode standaard `manual`). Alles hieronder is de meting
-> op de laatste tip. Metingen van een eerdere ronde staan er expliciet bij, en zijn
-> alleen blijven staan waar ze iets aantonen dat later niet meer zichtbaar is.
+> Deze doorloop is **drie keer verlegd**. Hij begon op `418533e5`; daarna kwam de
+> opdracht om op `e187015e` te meten (de standaardmaten), vervolgens op `ab6ae614`
+> (wake-mode standaard `manual`) en ten slotte op `de87fc65` (voorbeelden in het
+> OpenAPI-document). Elke ronde is opnieuw gebouwd, opnieuw uitgerold en opnieuw
+> gemeten.
+>
+> Per meting staat erbij op welke tip hij gedaan is, want dat is niet overal dezelfde:
+> de sandboxsuite van 58 minuten is gedraaid op `c0be0074` (bovenop `ab6ae614`), de
+> rest op de eindtip. Waar dat afwijkt staat het er met de reden bij.
 >
 > Dat verleggen is niet gratis geweest: twee keer is een lopende e2e-run ongeldig
 > geworden doordat de werkboom onder de suite uit veranderde. Dat is te zien ook -
 > de voettekst van een pagina in een faalrapport noemde al de nieuwe commit terwijl
 > de run op de oude begonnen was. Zulke runs zijn weggegooid en overgedaan, niet
-> geinterpreteerd.
+> geinterpreteerd. Ruim veertig minuten meetwerk is daarmee vervallen.
 
 ## Oordeel
 
@@ -236,6 +240,17 @@ Na de reparatie: 401 passed, 0 failed.
 
 ### Sandbox
 
+```
+uv run pytest -m "sandbox and not reallife and not punt14" -q -o addopts="" --timeout=300
+========= 56 passed, 9167 deselected, 1 warning in 3488.22s (0:58:08) ==========    exit 0
+```
+
+56 tegen 56, nul failures, nul errors, bijna een uur. Deze run is gedaan op `c0be0074`
+(de tak bovenop `ab6ae614`), niet op de eindtip. De commit die daarna kwam
+(`de87fc65`) voegt alleen `examples` toe aan het OpenAPI-document en raakt geen enkel
+pad dat deze suite aanloopt - drie bestanden, allemaal additief. Dat is een afweging en
+geen vaststelling: wie het scherper wil, draait deze 58 minuten opnieuw op de eindtip.
+
 Zie de aparte kanttekening hieronder over wat `-m sandbox` werkelijk selecteert.
 
 ### Kanttekening: `-m sandbox` trekt de lange suites mee
@@ -269,7 +284,19 @@ bedoeling volgt.
 
 ## Taak 3 - De reallife-suite
 
-(volgt)
+Gedraaid zoals het plan het wil: **gelijktijdig**, zodat de punt-14-jacht werkelijk
+belasting op de ProjectStore ziet en niet in een stille sandbox loopt.
+
+```
+uv run pytest -m reallife -q -o addopts="" --timeout=900     &
+uv run pytest -m punt14   -q -o addopts="" --timeout=900     &
+```
+
+(uitslag hieronder ingevuld na afloop)
+
+Over punt 14: in RC-112 is die in 92 pogingen niet gereproduceerd. Dat blijft het
+vertrekpunt; deze doorloop heeft er niet opnieuw op gejaagd, maar meldt het als het zich
+alsnog voordoet.
 
 ## Taak 4 - Wat deze release nieuw heeft, in de browser
 
@@ -627,6 +654,51 @@ Alle 12 velden met `x-choices` zijn nagelopen, met `$ref`/`anyOf` opgelost:
   die op schijf bestaat, de duur- en maatvelden zijn vrije Kubernetes-quantities).
   De lijst is daar een suggestie en geen grens, en dat is een verdedigbaar verschil.
 
+### Nieuw uit `de87fc65`: de voorbeelden uit het formulier staan ook in de API-docs
+
+Het extra controlepunt: `SleepModeConfig.match` moet `examples` op de **items** dragen.
+Opgehaald van het draaiende cluster:
+
+```json
+"match": {
+  "items": {
+    "type": "string",
+    "examples": ["pr-*", "*-preview", "acceptatie"]
+  },
+  "type": "array",
+  "title": "Match",
+  "description": "Which deployments are in scope, by name: an exact name, 'prefix*' ..."
+}
+```
+
+De drie voorbeelden staan er, en ze staan op `items` en **niet** op het veld zelf. Dat is
+de juiste plek: een voorbeeld is een instantie van het schema waar het op staat, dus op het
+arrayveld zou `["pr-*", "*-preview", "acceptatie"]` betekenen "dit is de hele lijst" in
+plaats van "zo ziet een regel eruit". Nagemeten:
+
+```
+examples op items      : ['pr-*', '*-preview', 'acceptatie']
+examples op het veld   : (geen - correct)
+```
+
+Dit is precies het veld waar het om ging: het schema zei "een lijst strings" terwijl het om
+een glob op de deploymentnaam gaat, en dat kon een client niet raden.
+
+In het hele document dragen nu 75 velden `examples`. Twee dingen apart nagekeken, omdat de
+commit ze zelf als keuze noemt:
+
+- **Placeholders lekken niet mee.** De commit zegt dat alleen `examples` van de visualizer
+  meegaan en niet zijn `placeholder`, omdat een placeholder even vaak een aanwijzing als
+  een waarde is. De proef daarop: "Naam van de applicatie" komt in het document **niet**
+  voor. Het woord "placeholder" staat er wel, maar in een beschrijvingstekst
+  ("Values filled into the realm template's placeholders"), niet als gepubliceerde waarde.
+- **Het voorbeeld van een API-sleutel is geen echte sleutel.**
+  `ProjectListItem.api_key` toont `Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ`, wat er precies
+  uitziet als een projectsleutel. Het is een vaste literal in `opi/api/v2/models.py`
+  (regel 134 en 165) en dus voor elke installatie dezelfde verzonnen waarde - geen lek.
+
+De eigen toetsen van dat gebied: `tests/test_openapi_config_choices.py` -> 68 passed.
+
 ### Het formulier tegenover het configmodel
 
 Het plan zegt: wijkt een keuzelijst in het formulier af van wat het configmodel
@@ -653,3 +725,39 @@ wake-mode            default='auto'
 
 Elke standaardwaarde staat nu in zijn eigen keuzelijst. De commit zet er bovendien een
 test op, zodat het niet stilletjes terug kan komen.
+
+## Wat er niet gemeten is
+
+Expliciet, zodat niemand het voor gemeten aanziet.
+
+1. **Een verse sandbox (`destroy` + `setup`).** Kan in deze sessie niet: `sops`, `yq` en
+   `pwgen` ontbreken en `security/developer-key.txt` is er niet, dus het cluster zou wel
+   te slopen maar niet te herbouwen zijn. Alles is dus gemeten op een cluster dat al
+   draaide. Zie taak 1.
+2. **Een backup terugzetten (taak 4, punt 5).** Vastgelopen op de eigen opstelling; zie
+   daar. De automatische sandboxsuite raakt backup en restore wel (er lopen
+   snapshot- en restore-aanroepen in door), maar het specifieke punt uit RC-111 - kun je
+   na een restore gewoon verder werken, of staat het project op slot - is niet apart
+   getoetst.
+3. **De cross-domain-stap in de create-wizard.** Alleen de modal-edit is gedreven. De
+   bijlagenstap is wel in de echte create-wizard gedaan.
+4. **De sandboxsuite op de allerlaatste tip.** Die 58 minuten zijn gedraaid op
+   `c0be0074`; daarna kwam er nog een additieve OpenAPI-commit bij. Zie taak 2.
+5. **Productie.** Buiten scope, zoals het plan zegt.
+
+## Bevindingen op een rij
+
+Geen enkele hiervan blokkeert de merge, tenzij anders vermeld.
+
+| # | Bevinding | Waar | Soort |
+|---|---|---|---|
+| 1 | `sandbox-deploy` kan stilzwijgend de vorige build laten draaien (vaste tag + `set image` = geen nieuwe pod); het advies in de eigen WARN werkt niet | meetopstelling | **gereedschap, hoge impact** |
+| 2 | `/openapi.json` hangt `APIKeyHeader` aan `POST /api/v2/projects`, dat in werkelijkheid een Bearer-token eist | API-document | raakt de CLI |
+| 3 | `-m sandbox` selecteert ook `reallife` en `punt14`; de Taskfile sluit alleen `reallife` uit | testmarkers | proces |
+| 4 | Aanmaken op v2, verwijderen alleen op `DELETE /api/projects/{name}` | API-vorm | raakt de CLI |
+| 5 | Een dienst kun je wel toevoegen maar niet verwijderen; geen `DELETE` op `.../services` | API-vorm | raakt de CLI |
+| 6 | Een bijlage vervangen kan alleen via de API; op de projectpagina's is er geen schermweg | UI | gat |
+| 7 | Drie e2e-toetsen liepen achter op een bewuste wijziging (`80da844c`) | testlaag | **gerepareerd in deze PR** |
+| 8 | Het gedragsoppervlak heeft niet-vastgelegde drift op zeven andere paden | testlaag | waarneming |
+| 9 | Op `/actions` staan de actienamen en hun omschrijving tegen tegenoverliggende randen | UI, cosmetisch | klein |
+| 10 | Eén `xpassed` in de e2e-suite: een `xfail`-markering loopt achter | testlaag | klein |
