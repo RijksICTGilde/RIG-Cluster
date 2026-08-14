@@ -257,10 +257,8 @@
       "/projects/test-project-services/details",
       "/projects/test-project/details",
       "/projects?refresh=true",
-      "/projects?sort=deployments",
       "/projects?sort=naam",
       "/projects?sort=naam-af",
-      "/projects?sort=teamleden",
       "/services",
       "/weergave?scheme=&terug=/projects",
       "/weergave?scheme=dark&terug=/projects",
@@ -269,14 +267,14 @@
     "functies": [],
     "htmx": [
       "hx-get=/projects",
-      "hx-get=/projects?sort=deployments",
       "hx-get=/projects?sort=naam",
-      "hx-get=/projects?sort=naam-af",
-      "hx-get=/projects?sort=teamleden"
+      "hx-get=/projects?sort=naam-af"
     ],
     "ids": [
       "hoofdinhoud",
-      "projects-lijst"
+      "projects-lijst",
+      "projects-zoekgebied",
+      "projects-zoekveld"
     ],
     "velden": [
       "q",
