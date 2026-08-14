@@ -406,9 +406,13 @@ class UpsertDeploymentRequest(BaseModel):
         ),
     )
     cloneFrom: str | None = Field(
-        None, description="Deployment name to clone data from (only on create, or if forceClone is true)"
+        None,
+        description="Deployment name to clone data from (only on create, or if forceClone is true)",
+        examples=["main"],
     )
-    forceClone: bool = Field(False, description="Force clone even if target resources exist (runtime parameter)")
+    forceClone: bool = Field(
+        False, description="Force clone even if target resources exist (runtime parameter)", examples=[False]
+    )
     domain_format: DomainFormatId | None = Field(
         None,
         description=(
@@ -603,6 +607,7 @@ class UpdateImageRequest(BaseModel):
     registry: str | None = Field(
         None,
         max_length=63,
+        examples=["github-registry"],
         description="Registry name to use for pulling this image (must be defined in project registries). "
         "When set, links the deployment component to the registry for imagePullSecret creation.",
     )
@@ -852,6 +857,7 @@ class SelfServiceComponent(BaseModel):
     aliases: str | None = Field(
         None,
         max_length=4096,
+        examples=["DATABASE_URL: $POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DATABASE"],
         description="YAML string of alias definitions, newline-separated. "
         "Example: 'DATABASE_URL: $HOST:$PORT/$DB_NAME\\nS3: $OBJECT_STORE_URL'",
     )
@@ -881,11 +887,17 @@ class AddRegistryByCredentialsRequest(BaseModel):
 class AddComponentRequest(BaseModel):
     """Request to add a new component definition to an existing project."""
 
-    name: str = Field(..., max_length=63, description="Component name (must be K8s-compliant)")
-    type: str = Field("single", max_length=32, description="Component type (e.g. 'single', 'frontend', 'backend')")
+    name: str = Field(..., max_length=63, description="Component name (must be K8s-compliant)", examples=["frontend"])
+    type: str = Field(
+        "single",
+        max_length=32,
+        description="Component type (e.g. 'single', 'frontend', 'backend')",
+        examples=["single"],
+    )
     image: str | None = Field(
         None,
         max_length=512,
+        examples=["ghcr.io/rijksictgilde/mijn-app:1.4.0"],
         description=(
             "Container image URL. Only needed when the component is attached to a deployment, "
             "because that is where the image is stored: the component definition itself never "
@@ -896,15 +908,18 @@ class AddComponentRequest(BaseModel):
         None,
         ge=1,
         le=65535,
+        examples=[8080],
         description="Single inbound port (convenience alias; omit for background workers). Use 'ports' for multiple; 'ports' takes precedence.",
     )
     ports: list[Annotated[int, Field(ge=1, le=65535)]] | None = Field(
         None,
+        examples=[[8443, 9443]],
         description="Inbound ports as an array, e.g. [8443, 9443]. Use either 'port' or 'ports', not both. The first port is used for the ingress.",
     )
     path: str = Field(
         "/",
         max_length=256,
+        examples=["/", "/api"],
         description=(
             "Ingress path (only relevant with publish-on-web service). The component gets its own "
             "hostname, and this is the path prefix it answers on there. A non-root path is passed "
@@ -917,6 +932,7 @@ class AddComponentRequest(BaseModel):
     rewrite: str | None = Field(
         None,
         max_length=256,
+        examples=["/"],
         description=(
             "Path the ingress rewrites 'path' to before the request reaches the container. With "
             "path '/api' and rewrite '/' the request https://<host>/api/status arrives as /status, "
@@ -926,25 +942,33 @@ class AddComponentRequest(BaseModel):
     )
     services: list[str] | None = Field(
         None,
+        examples=[["postgresql-database", "persistent-storage"]],
         description="Component services list (e.g. ['postgresql-database']), bare names only. NOT inherited from "
         "project. Per-service config is set separately via "
         "PUT /api/v2/projects/{project}/services/{service}/config/component/{component}.",
     )
-    cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'")
-    memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'")
+    cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'", examples=["500m"])
+    memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'", examples=["512Mi"])
     env_vars: str | None = Field(
         None,
         max_length=65536,
+        examples=["DB_HOST=localhost\\nAPI_KEY=secret123"],
         description="User env vars in KEY=value format, newline-separated (will be encrypted). Example: 'DB_HOST=localhost\\nAPI_KEY=secret123'",
     )
     aliases: str | None = Field(
         None,
         max_length=4096,
+        examples=["DATABASE_URL: $POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DATABASE"],
         description="YAML string of alias definitions, newline-separated. Example: 'DATABASE_URL: $HOST:$PORT/$DB_NAME\\nS3: $OBJECT_STORE_URL'",
     )
-    root: bool = Field(False, description="Mark as root component for nice-url mode (receives bare subdomain traffic)")
+    root: bool = Field(
+        False,
+        description="Mark as root component for nice-url mode (receives bare subdomain traffic)",
+        examples=[False],
+    )
     deployment_names: list[str] = Field(
         default_factory=list,
+        examples=[["main"]],
         description=(
             "Deployments to add this component to (must already exist). Leave it out to define the "
             "component without attaching it anywhere; couple it later with POST "
@@ -975,16 +999,26 @@ class AddComponentRequest(BaseModel):
 class AddComponentToDeploymentRequest(BaseModel):
     """Request to add an existing component to a deployment that doesn't yet include it."""
 
-    component_name: str = Field(..., max_length=63, description="Name of an existing component in the project")
-    image: str = Field(..., max_length=512, description="Container image URL for this deployment")
+    component_name: str = Field(
+        ..., max_length=63, description="Name of an existing component in the project", examples=["frontend"]
+    )
+    image: str = Field(
+        ...,
+        max_length=512,
+        description="Container image URL for this deployment",
+        examples=["ghcr.io/rijksictgilde/mijn-app:1.4.0"],
+    )
 
 
 class AddServiceRequest(BaseModel):
     """Request to add a service to an existing project."""
 
-    service: str = Field(..., max_length=63, description="Service name (e.g. 'postgresql-database')")
+    service: str = Field(
+        ..., max_length=63, description="Service name (e.g. 'postgresql-database')", examples=["postgresql-database"]
+    )
     components: list[str] | None = Field(
         None,
+        examples=[["frontend"]],
         description="Optional list of component names whose services list should also be updated. "
         "If omitted/empty, the service is only added at the project level.",
     )
@@ -1252,21 +1286,28 @@ async def upsert_deployment(
 class UpdateComponentRequest(BaseModel):
     """Partial update of an existing component. Only provided fields are changed."""
 
-    image: str | None = Field(None, max_length=512, description="Container image URL")
+    image: str | None = Field(
+        None, max_length=512, description="Container image URL", examples=["ghcr.io/rijksictgilde/mijn-app:1.4.0"]
+    )
     port: int | None = Field(
         None,
         ge=1,
         le=65535,
+        examples=[8080],
         description="Single inbound port (alias; use 'ports' for multiple, which takes precedence).",
     )
     ports: list[Annotated[int, Field(ge=1, le=65535)]] | None = Field(
         None,
+        examples=[[8443, 9443]],
         description="Inbound ports as an array; replaces the component's inbound ports (use [] to clear). Use either 'port' or 'ports', not both.",
     )
-    path: str | None = Field(None, max_length=256, description="Ingress path (only relevant with publish-on-web).")
+    path: str | None = Field(
+        None, max_length=256, description="Ingress path (only relevant with publish-on-web).", examples=["/", "/api"]
+    )
     rewrite: str | None = Field(
         None,
         max_length=256,
+        examples=["/"],
         description=(
             "Path the ingress rewrites 'path' to before the request reaches the container "
             "(e.g. '/' to strip an '/api' prefix). Leaving it out keeps the component's current "
@@ -1275,6 +1316,7 @@ class UpdateComponentRequest(BaseModel):
     )
     services: list[str] | None = Field(
         None,
+        examples=[["postgresql-database", "persistent-storage"]],
         description=(
             "Component services list (replaces the named set), bare names only. Services already on the "
             "component keep their configuration; a name left out is removed with its config. To add or "
@@ -1285,6 +1327,7 @@ class UpdateComponentRequest(BaseModel):
     )
     add_services: list[str] | None = Field(
         None,
+        examples=[["persistent-storage"]],
         description=(
             "Services to add to this component, bare names only. Appended to the existing list; the rest of "
             "the list is left untouched, and a service that is already present is skipped. Mutually "
@@ -1293,14 +1336,15 @@ class UpdateComponentRequest(BaseModel):
     )
     remove_services: list[str] | None = Field(
         None,
+        examples=[["temp-storage"]],
         description=(
             "Services to remove from this component, bare names only. Only the named entries leave this "
             "component's list (with their config); the project-level selection and every other entry stay. "
             "Mutually exclusive with 'services'."
         ),
     )
-    cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'.")
-    memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'.")
+    cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'.", examples=["500m"])
+    memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'.", examples=["512Mi"])
 
     @model_validator(mode="after")
     def _ports_mutually_exclusive(self) -> UpdateComponentRequest:
