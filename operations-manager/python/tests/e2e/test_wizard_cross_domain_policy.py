@@ -220,6 +220,7 @@ def _ingress_peers(policy: dict[str, Any]) -> list[tuple[str, dict[str, str], li
 #: GEEN ENKEL verzoek, en de tweede lijst blijft leeg. Ook een handmatige
 #: ``htmx.trigger(document.getElementById('wizard-step-form'), 'submit')`` in de console
 
+
 class TestTheWizardProducesANetworkPolicy:
     def test_a_rule_filled_in_the_browser_becomes_a_networkpolicy(
         self, app_server: str, auth_page: Page, captured_yaml: list[str]
