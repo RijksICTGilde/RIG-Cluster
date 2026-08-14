@@ -20,7 +20,7 @@ repos:
         exclude: ^operations-manager/python/static/promo\.mp4$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.11
+    rev: v0.15.5
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -39,7 +39,7 @@ repos:
 
       - id: djlint
         name: djlint
-        entry: uv run --directory operations-manager/python djlint --lint opi/templates/
+        entry: uv run --directory operations-manager/python djlint --lint opi/templates_lotc/
         language: system
         files: ^operations-manager/python/.*\.(html|html\.j2)$
         pass_filenames: false

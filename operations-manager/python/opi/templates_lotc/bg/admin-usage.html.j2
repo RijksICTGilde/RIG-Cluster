@@ -62,7 +62,7 @@
                         </select>
                     </div>
                     <div>
-                        <label class="usage-filter-label" id="price-label" for="price">Prijs per GiB (&euro;)</label>
+                        <label class="usage-filter-label" id="price-label" for="price">Prijs per GiB (€)</label>
                         <input class="usage-filter-control" id="price" name="price" type="number" step="any" value="{{ price_per_gib }}" />
                     </div>
                     <div>
@@ -82,19 +82,19 @@
             <c-table-head>
                 <c-th>Maand</c-th>
                 <c-th>Gebruik (GiB)</c-th>
-                <c-th>Kosten (&euro;)</c-th>
+                <c-th>Kosten (€)</c-th>
             </c-table-head>
             {% for month in month_data %}
                 <c-table-row>
                     <c-td>{{ month.name }} {{ month.year }}</c-td>
                     <c-td>{{ month.gib }}</c-td>
-                    <c-td>&euro; {{ month.cost }}</c-td>
+                    <c-td>€ {{ month.cost }}</c-td>
                 </c-table-row>
             {% endfor %}
             <c-table-row>
                 <c-td><c-b>Totaal</c-b></c-td>
                 <c-td><c-b>{{ total_gib }}</c-b></c-td>
-                <c-td><c-b>&euro; {{ total_cost }}</c-b></c-td>
+                <c-td><c-b>€ {{ total_cost }}</c-b></c-td>
             </c-table-row>
         </c-table>
     {% endcall %}

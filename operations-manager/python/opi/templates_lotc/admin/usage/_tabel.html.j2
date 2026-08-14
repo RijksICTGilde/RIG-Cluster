@@ -4,21 +4,21 @@
         <c-table-row>
             <c-th>Maand</c-th>
             <c-th>Gebruik (GiB)</c-th>
-            <c-th>Kosten (&euro;)</c-th>
+            <c-th>Kosten (€)</c-th>
         </c-table-row>
     </c-table-head>
-    
+
         {% for month in month_data %}
         <c-table-row>
             <c-td>{{ month.name }} {{ month.year }}</c-td>
             <c-td>{{ month.gib }}</c-td>
-            <c-td>&euro; {{ month.cost }}</c-td>
+            <c-td>€ {{ month.cost }}</c-td>
         </c-table-row>
         {% endfor %}
         <c-table-row>
             <c-td><strong>Totaal</strong></c-td>
             <c-td><strong>{{ total_gib }}</strong></c-td>
-            <c-td><strong>&euro; {{ total_cost }}</strong></c-td>
+            <c-td><strong>€ {{ total_cost }}</strong></c-td>
         </c-table-row>
-    
+
 </c-table>
