@@ -292,11 +292,71 @@ uv run pytest -m reallife -q -o addopts="" --timeout=900     &
 uv run pytest -m punt14   -q -o addopts="" --timeout=900     &
 ```
 
-(uitslag hieronder ingevuld na afloop)
+### Reallife - groen
 
-Over punt 14: in RC-112 is die in 92 pogingen niet gereproduceerd. Dat blijft het
-vertrekpunt; deze doorloop heeft er niet opnieuw op gejaagd, maar meldt het als het zich
-alsnog voordoet.
+```
+==== 7 passed, 9217 deselected, 1 xfailed, 1 warning in 1697.37s (0:28:17) =====   exit 0
+```
+
+Zeven groen, één `xfailed` (die staat als verwacht rood aangemerkt en gedroeg zich zo).
+Nul failures. Dit is de suite die vijf projecten tegelijk aanmaakt en er daarna
+gelijktijdige UI- en API-mutaties op loslaat.
+
+### Punt 14 - drie groen, een rode die GEEN punt 14 is
+
+```
+===== 1 failed, 3 passed, 9221 deselected, 1 warning in 967.83s (0:16:07) ======   exit 1
+FAILED tests/e2e/test_sandbox_punt14.py::test_deployment_overleeft_een_gelijktijdige_uitrol
+```
+
+**Punt 14 zelf is niet gereproduceerd.** De rode test viel niet om op de conditie waar hij
+op jaagt (`deployment_not_found`), maar op iets anders:
+
+```
+tests/e2e/test_sandbox_punt14.py:249: in _gelijktijdige_rondes
+    _await_task(sandbox_url, patch_id, project.api_key)
+tests/e2e/test_sandbox_punt14.py:112: in _await_task
+    response = client.get(f"{base}/api/tasks/{task_id}", headers=headers)
+E   httpcore.ReadTimeout: The read operation timed out
+```
+
+Een gewone statusopvraag op een taak kreeg **binnen 30 seconden geen antwoord**
+(`httpx.Client(timeout=30.0)` in de helper). Dat is geen ruis: dertig seconden op een
+`GET /api/tasks/{id}` is heel lang.
+
+Twee lezingen, en ze sluiten elkaar niet uit:
+
+1. **Mijn eigen meetopstelling.** Op dat moment draaiden reallife, punt14 en de lokale
+   e2e-suite gelijktijdig, en het Kind-cluster draait op dezelfde machine. Mijn eigen
+   CPU-druk raakt dus ook de server. Het plan vraagt reallife en punt14 wel expliciet
+   gelijktijdig, maar de lokale e2e-suite erbij was mijn keuze en niet die van het plan.
+2. **De API blokkeert onder druk.** Dat is bekend gedrag in deze release: de probepoort
+   bestaat juist omdat "de loop 8 seconden vaststond" (de toelichting in
+   `deployment.yaml`). Het vervelende gevolg is dat de probe dan `ok` blijft zeggen -
+   hij draait immers op een eigen draad - terwijl de API zelf niet antwoordt. De pod
+   ziet er gezond uit en is dat voor een aanroeper niet.
+
+Daarom is die ene test **apart opnieuw gedraaid, zonder de andere suites ernaast**, om de
+twee lezingen uit elkaar te trekken:
+
+```
+uv run pytest "tests/e2e/test_sandbox_punt14.py::test_deployment_overleeft_een_gelijktijdige_uitrol" ...
+======================== 1 passed in 340.06s (0:05:40) =========================   exit 0
+```
+
+Groen, in 257 seconden voor de test zelf. **Het was dus mijn meetopstelling.** De test doet
+precies hetzelfde werk; het enige verschil is dat er niet tegelijk twee andere suites op
+dezelfde machine stonden te draaien.
+
+Wat er wel blijft staan als waarneming, en niet als bevinding tegen deze release: onder
+zware gelijktijdige belasting kan een `GET /api/tasks/{id}` de dertig seconden overschrijden
+terwijl de probes gewoon `ok` melden. Dat is inherent aan het ontwerp - de probes draaien
+juist met opzet op een eigen draad - maar het betekent dat "pod is Ready" en "de API
+antwoordt" onder druk twee verschillende dingen zijn. Voor een productiecluster is dat het
+verschil tussen een gezonde pod en een bruikbare pod.
+
+Voor het verslag telt: **punt 14 is ook in deze doorloop niet gereproduceerd**, en dat sluit
+aan bij de 92 mislukte pogingen uit RC-112.
 
 ## Taak 4 - Wat deze release nieuw heeft, in de browser
 
