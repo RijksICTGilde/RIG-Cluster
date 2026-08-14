@@ -237,14 +237,22 @@ tasks:
     silent: true
 
   generate-age-key:
-    desc: "Generate AGE key for SOPS encryption (only if security/key.txt doesn't exist)"
+    desc: "Generate the AGE key for the selected cluster (only if it does not exist yet)"
+    vars:
+      # Zelfde variabele als de taken die de sleutel lezen. Zonder dit maakte deze taak
+      # altijd de ODCN-sleutel, ongeacht welk cluster geselecteerd was, en had het
+      # AGE_KEY_FILE-mechanisme geen manier om aan zijn eerste sleutel te komen.
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Draai 'task select-cluster' of geef KEY_FILE expliciet mee."
     cmds:
       - |
         # Check if key already exists
-        if [[ -f "security/key.txt" ]]; then
-          echo "✅ AGE key already exists: security/key.txt"
-          echo "🔑 Current public key: $(sed -n '2p' security/key.txt | sed 's/# public key: //')"
-          echo "⚠️  To generate a new key, first remove the existing security/key.txt file"
+        if [[ -f "{{.KEY_FILE}}" ]]; then
+          echo "✅ AGE key already exists: {{.KEY_FILE}}"
+          echo "🔑 Current public key: $(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')"
+          echo "⚠️  To generate a new key, first remove the existing {{.KEY_FILE}} file"
           exit 0
         fi
 
@@ -259,19 +267,19 @@ tasks:
         # Create security directory if it doesn't exist
         mkdir -p security
 
-        # Generate a new age key directly to security/key.txt
+        # Generate a new age key directly to {{.KEY_FILE}}
         echo "🔐 Generating new AGE key for SOPS encryption..."
-        age-keygen -o security/key.txt
+        age-keygen -o {{.KEY_FILE}}
 
         # Extract the public key
-        PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         echo ""
         echo "✅ AGE key generated successfully!"
-        echo "🔑 Key saved to: security/key.txt"
+        echo "🔑 Key saved to: {{.KEY_FILE}}"
         echo "🔑 Public key: $PUBLIC_KEY"
         echo ""
-        echo "⚠️  IMPORTANT: The security/key.txt file is gitignored and must be managed securely!"
+        echo "⚠️  IMPORTANT: The {{.KEY_FILE}} file is gitignored and must be managed securely!"
         echo "⚠️  For production use, consider storing the key in a secure vault or HSM."
     silent: true
 
