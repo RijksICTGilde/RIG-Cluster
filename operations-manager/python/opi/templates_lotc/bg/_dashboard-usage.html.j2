@@ -162,11 +162,14 @@
                     <c-stack gap="sm">
                         {# De naam is een LINK naar het project: je leest hier dat een
                            project tegen zijn limiet aanloopt, en de eerste vraag daarna is
-                           altijd "waar zit dat in". Een gewone <a> en geen component: een
-                           kop met een label rendert zijn tekst zelf, dus de link moet er
-                           omheen. #}
+                           altijd "waar zit dat in".
+
+                           <c-link> en geen kale <a>: die laatste stond er als onopgemaakt
+                           blauw met een streep eronder, want het thema styleert alleen zijn
+                           eigen componenten. De kop krijgt daarom geen label-attribuut maar
+                           een kind, zodat de link erin past. #}
                         <c-heading type="h3" size="5">
-                            <a href="/projects/{{ regel.pad }}/details">{{ regel.naam }}</a>
+                            <c-link href="/projects/{{ regel.pad }}/details" label="{{ regel.naam }}" />
                         </c-heading>
 
                         {# Geheugen eerst: dat is waar je op stuurt. #}
