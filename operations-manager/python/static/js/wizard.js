@@ -53,8 +53,29 @@ function _sequenceDispatch(action, path, index) {
         _seqHidden(form, '_seq_action', action);
         _seqHidden(form, '_seq_path', path);
         _seqHidden(form, '_seq_index', index);
-        console.info('[sequence] formulier indienen via htmx');
+
+        /* GEEN BROWSERVALIDATIE OP EEN RIJ ERBIJ OF ERAF.
+         *
+         * Dit is geen opslaan maar een herteken-actie: de server krijgt de stap terug met
+         * een rij meer of minder. Toch liep hij op de validatie van het formulier stuk.
+         *
+         * Gemeten in de modal-wizard bij Bijlagen: een nieuwe rij brengt een <select
+         * required> mee die leeg begint ("-- Kies een bijlage --"). Vanaf dat moment
+         * weigert de browser ELKE indiening van dit formulier, en omdat het veld in een
+         * nldd-form-field zit zie je ook de foutbel niet. Het gevolg is dat alle knoppen
+         * dood lijken, ook die van andere secties, want het is een formulier. Geen fout,
+         * geen verzoek, niets.
+         *
+         * Bij poorten en paden viel het niet op: daar komt een nieuwe rij met een waarde.
+         *
+         * noValidate rond de indiening zet dat uit voor deze ene actie. htmx kijkt naar
+         * dezelfde vlag, dus dit dekt zijn eigen validatiestap mee. Daarna meteen terug,
+         * zodat de knop Volgende wel gewoon valideert. */
+        var validatieStond = form.noValidate;
+        form.noValidate = true;
+        console.info('[sequence] formulier indienen (validatie tijdelijk uit)');
         htmx.trigger(form, 'submit');
+        form.noValidate = validatieStond;
         /* Controle of htmx het ook echt oppakt. Een trigger die htmx negeert is stil: geen
            fout, geen verzoek, en dan lijkt de knop stuk. Dat kan als het formulier niet
            door htmx verwerkt is, of als een lopend verzoek in zijn boekhouding nooit
