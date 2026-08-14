@@ -72,11 +72,18 @@ def test_de_pagina_levert_zelf_het_stuk_dat_het_zoekveld_ververst(client: httpx.
     adres in de adresbalk, en wie dan verversde of de link deelde kreeg een kale lijst
     zonder navigatie of voettekst. Bovendien is een tweede adres met dezelfde gegevens
     een tweede plek die kan gaan afwijken.
+
+    Wat er geswapt wordt is inmiddels het hele ZOEKGEBIED en niet alleen de lijst. Eerst
+    lag de werkbalk buiten het geswapte stuk, en dan bleef het vinkje op de oude sortering
+    staan en sprong je zoekterm terug. Zoekterm, sortering en resultaat zijn een antwoord,
+    dus ze worden samen vervangen. Deze test toetste nog de oude, kleinere swap.
     """
     antwoord = client.get("/projects?q=detail").text
 
-    assert 'id="projects-lijst"' in antwoord, "het doel van hx-select staat niet in de pagina"
-    assert 'hx-select="#projects-lijst"' in antwoord, "het formulier pakt niet het juiste stuk uit het antwoord"
+    assert 'id="projects-zoekgebied"' in antwoord, "het doel van hx-select staat niet in de pagina"
+    assert 'hx-select="#projects-zoekgebied"' in antwoord, "het formulier pakt niet het juiste stuk uit het antwoord"
+    assert 'hx-target="#projects-zoekgebied"' in antwoord, "het formulier zet het antwoord niet op het zoekgebied terug"
+    assert 'id="projects-lijst"' in antwoord, "de lijst zelf staat niet in de pagina"
     assert 'hx-get="/projects"' in antwoord, "het formulier haalt niet de pagina zelf op"
     assert _projectnamen(antwoord) == ["test-project-detail"]
 
@@ -150,8 +157,18 @@ def test_zoeken_en_sorteren_staan_in_de_toolbar(client: httpx.Client) -> None:
     )
 
     # De sorteeropties zijn LINKS: dan werkt sorteren ook zonder JavaScript.
-    for sleutel in ("naam", "naam-af", "deployments", "teamleden"):
+    #
+    # Het zijn er TWEE. Hier stonden er vier; "Meeste deployments" en "Meeste teamleden"
+    # zijn er in 80da844c uit gehaald omdat niemand ze gebruikte. Die test bleef staan en
+    # sloeg daarna aan op een verwijdering die met opzet gedaan was. De lijst hoort mee te
+    # bewegen met PROJECT_SORTERINGEN in opi/web/lotc_switch.py.
+    for sleutel in ("naam", "naam-af"):
         assert f"/projects?sort={sleutel}" in antwoord, f"sorteeroptie {sleutel} is geen link"
+
+    for weg in ("deployments", "teamleden"):
+        assert f"/projects?sort={weg}" not in antwoord, (
+            f"sorteeroptie {weg} is er weer; die is bewust verwijderd (80da844c)"
+        )
 
     # En de gekozen sortering is aangevinkt: het item met de huidige sortering draagt
     # selected, de andere niet.
