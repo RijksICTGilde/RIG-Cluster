@@ -11,7 +11,7 @@ Tweede doel: **punt 14** uit `plans/vragen-uit-zad-cli.md` -- de intermitterende
 ## Wat er gedraaid is
 
 Sandbox `kind-rig-sandbox`, eigen build, `/version` vijf keer achter elkaar gelijk aan de
-commit onder toets. Twee volledige rondes, met de reparatie uit ronde 1 ertussen.
+commit onder toets. Drie volledige rondes, met de reparatie uit ronde 1 ertussen.
 
 | Ronde | Commit | Suite | Uitkomst | Duur |
 |---|---|---|---|---|
@@ -21,14 +21,24 @@ commit onder toets. Twee volledige rondes, met de reparatie uit ronde 1 ertussen
 | 2 | `f56433a9` | `pytest -m punt14` (30 rondes x 2 vormen) | 3 passed, **0 rood** | 21m00s |
 | 3 | `ec9ab51a` | `pytest -m reallife` | 7 passed, 1 xfailed, **0 rood** | 16m31s |
 | 3 | `ec9ab51a` | `pytest -m punt14` (patches MET uitrol) | 5 rondes OK, daarna afgebroken op een 503 -- zie hieronder | |
-| 3b | `ec9ab51a` | dezelfde variant, zonder tweede suite ernaast | zie hieronder | |
+| 3b | `ec9ab51a` | dezelfde variant, zonder tweede suite ernaast | 2 passed, 8/8 rondes OK | 9m07s |
 
 De twee suites liepen in ronde 2 en 3 **gelijktijdig**, zodat de punt-14-jacht werkelijke
 belasting op de ProjectStore had en niet op een stil cluster meette.
 
 ## Punt 14: het oordeel
 
-**Niet gereproduceerd, in ruim tachtig gerichte pogingen, waarvan het merendeel onder belasting.**
+**Niet gereproduceerd, in 92 gerichte pogingen.**
+
+| Vorm | Rondes | Uitkomst |
+|---|---|---|
+| Wachtend (zoals de zad-cli) | 38 | 38x OK |
+| Gelijktijdig, patches met `rollout=false` | 38 | 38x OK, deployment steeds in git |
+| Gelijktijdig, patches MET uitrol | 13 | 13x OK, deployment steeds in git |
+| Zonder wachten op de eerste taak | 3 | 3x OK |
+
+Geen enkele ronde gaf `deployment_not_found`. Het merendeel liep onder belasting: de
+reallife-suite draaide er gelijktijdig naast.
 
 Dat is een expliciet "niet gereproduceerd", geen "het lijkt over". Wat er precies
 geprobeerd is, zodat de volgende niet bij nul begint:
@@ -38,7 +48,7 @@ De toestand die de zad-cli beschrijft is nagebouwd: een project met drie compone
 verder groeit (drie componentpatches per ronde). Daarna per ronde het paar dat bij hen
 faalde: `:upsert-deployment` en meteen daarna `POST /deployments/<naam>/components`.
 
-Drie vormen, in `tests/e2e/test_sandbox_punt14.py`:
+Vier vormen, in `tests/e2e/test_sandbox_punt14.py`:
 
 1. **Wachtend** (wat de zad-cli doet): wacht tot de upserttaak KLAAR is, dan pas het
    component eraan hangen. 8 + 30 rondes. Alle rondes OK.
@@ -49,12 +59,13 @@ Drie vormen, in `tests/e2e/test_sandbox_punt14.py`:
 3. **Gelijktijdig MET uitrol** (het grootste venster): dezelfde vorm, maar de
    componentpatches met `rollout=true`, zodat ze het hele project verwerken en minuten
    duren in plaats van seconden. Ze lopen dan gegarandeerd nog terwijl de deployment
-   geschreven wordt. Alle rondes OK.
+   geschreven wordt.
 4. **Zonder wachten**: het paar afvuren zonder de eerste taak af te wachten. Ook dit
    gaat goed -- en dat is zelf een bevinding, zie hieronder.
 
-Meetregels per ronde staan in de test zelf (`PUNT14_METINGEN`); een ronde kost 4 tot 8
-seconden voor beide taken samen.
+Meetregels per ronde schrijft de test zelf weg (`PUNT14_METINGEN`). Een ronde met
+`rollout=false` kost 4 tot 8 seconden voor beide taken samen; met uitrol aan 45 tot 80
+seconden.
 
 ### Wat we wel hebben aangewezen, en wat het waarschijnlijk niet is
 
