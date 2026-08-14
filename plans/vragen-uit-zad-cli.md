@@ -1438,3 +1438,84 @@ voorbeeld en de foutmelding erbij die je krijgt als je het overslaat.
 ### Antwoord
 
 <!-- ruimte voor RIG-Cluster -->
+
+---
+
+## 16. Een dienst aan een component binden vraagt om de hele lijst
+
+Vastgesteld 2026-08-14, na twee praktijkdoorlopen door agents die alleen de CLI mochten
+gebruiken.
+
+`PATCH /api/v2/projects/{project}/components/{component}` beschrijft zichzelf als een
+partiële update, en dat klopt op veldniveau: *"Only the fields present in the body change;
+the rest stay as-is."* Maar het veld `services` draagt de complete lijst:
+
+> `services`: Component services list **(replaces the existing list)**, bare names only.
+
+Wie één dienst wil bijbinden moet dus alle andere opnieuw opnoemen. Dat ging fout op de
+manier die je verwacht: een doorloop stuurde `--service` met de lijst zoals hij hem meende
+te kennen, en raakte de attachment-koppeling van dat component kwijt. Niets zei dat.
+
+**Waar wij het aan onze kant hebben opgelost:** `zadctl component update --service` telt nu
+op bij wat het component al heeft, weghalen is `--remove-service`, en `--replace-services`
+is de oude betekenis onder een naam die zegt wat hij doet. Dat kost een GET vóór de PATCH.
+
+**De vraag.** Wij vinden dat lezen-wijzigen-schrijven niet in de client thuishoort, en de
+gebruiker die dit meldde verwoordde het scherper: *als ik één dienst toevoeg, ben ik alleen
+met die dienst bezig, dus dan geef ik de andere ook niet mee.* Twee bezwaren:
+
+1. **Het is racy.** Twee gelijktijdige toevoegingen berekenen allebei hun lijst vóór de
+   ander landde, dus één van de twee verdwijnt. Precies het geval waarin een van jullie
+   taken "superseded" meldt (vraag 4 in de bevindingen) is dus ook het geval waarin een
+   binding stilletjes kan verdampen.
+2. **Elke client krijgt hetzelfde probleem.** De web-UI, deze CLI en elk script moeten
+   dezelfde read-modify-write bouwen, en fouten daarin zien er identiek uit: een dienst die
+   er gisteren was, is er niet meer.
+
+Bestaat er al een weg die we over het hoofd zien? `POST /api/v2/projects/{project}/services`
+lijkt precies dit te doen:
+
+> `components`: Optional list of component names whose services list should also be
+> updated. If omitted/empty, the service is only added at the project level.
+
+maar hij staat als **DEPRECATED** aangemerkt, met als opvolger
+`PUT /api/v2/projects/{project}/services/{service}` — en dat pad staat niet in de spec (wel
+`PUT /api/v2/services/{service_name}`, wat iets anders is). Zolang de opvolger er niet is,
+is het afgeraden endpoint het enige dat één binding kan toevoegen zonder de rest te noemen.
+
+Concreet dus drie vragen:
+
+- Komt `PUT /api/v2/projects/{project}/services/{service}` er, en kan die één component
+  bijbinden zonder de andere te noemen?
+- Zo niet: kan `services` op de PATCH een toevoeg-vorm krijgen, bijvoorbeeld
+  `add_services` / `remove_services` naast het bestaande veld? Dan blijft de huidige
+  betekenis intact en is de veilige handeling ook de korte.
+- En tot die tijd: mogen we `POST /services` met `components` gebruiken, of is de
+  afraden-status een echte waarschuwing?
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
+
+## 17. Wist het vervangen van `services` de attachment-koppeling?
+
+Hoort bij vraag 16, maar is een aparte bewering en mogelijk een echte fout.
+
+De doorloop meldde dat na een `component update` met een `services`-lijst de koppeling weg
+was **terwijl `attachments` gewoon in die lijst stond**: `attachments: []` op het component.
+Als dat klopt is het meer dan lastige semantiek, want de spec zegt juist dat die twee los
+staan:
+
+> Per-service config is set separately via `PUT /api/v2/projects/{project}/services/{service}`.
+
+Staat de per-component configuratie van een dienst los van de `services`-lijst, zoals de
+spec zegt, of wordt hij opnieuw opgebouwd zodra die lijst geschreven wordt?
+
+Wij hebben dit **niet zelf kunnen reproduceren** — de waarneming komt uit een doorloop en
+het project is opgeruimd — dus behandel het als een melding, niet als een diagnose. Als
+jullie het wel zien is de vervolgvraag welke diensten er nog meer per component iets
+bewaren dat op dezelfde manier verdwijnt.
+
+### Antwoord
+
+<!-- ruimte voor RIG-Cluster -->
