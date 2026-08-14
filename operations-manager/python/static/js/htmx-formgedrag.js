@@ -57,6 +57,55 @@
         });
     });
 
+    /* 3. DE FOCUS BLIJFT WAAR HIJ WAS.
+     *
+     * Bij zoeken-tijdens-typen wordt het zoekveld meegeswapt, en dan sta je na elke
+     * toetsaanslag buiten het veld. hx-preserve lost dat hier niet op: de echte <input>
+     * zit in de schaduwboom van nldd-search-field, en al verplaatst htmx de huls
+     * ongewijzigd, de browser geeft de focus niet terug bij zo'n verplaatsing.
+     *
+     * Vandaar zelf onthouden en teruggeven. Op ID, want het element zelf is na de swap een
+     * ander object. De cursorpositie gaat mee, anders springt hij naar het begin en typ je
+     * je volgende letter op de verkeerde plek.
+     *
+     * Na afterSettle en niet na afterSwap, om dezelfde reden als het scrollen hierboven:
+     * op dat eerste moment staan de web-componenten nog niet. */
+    var focusId = null;
+    var cursor = null;
+
+    function actiefVeld() {
+        var el = document.activeElement;
+        /* Staat de focus in een schaduwboom, dan is activeElement de HOST; daar zoeken we
+           naar door tot we bij het element met een id zijn. */
+        while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+        return el;
+    }
+
+    document.addEventListener("htmx:beforeSwap", function () {
+        var el = actiefVeld();
+        var drager = el && el.closest ? el.closest("[id]") : null;
+        focusId = drager ? drager.id : null;
+        cursor = el && typeof el.selectionStart === "number" ? el.selectionStart : null;
+    });
+
+    document.addEventListener("htmx:afterSettle", function () {
+        if (!focusId) return;
+        var doel = document.getElementById(focusId);
+        focusId = null;
+        if (!doel) return;
+        var invoer = doel.shadowRoot ? doel.shadowRoot.querySelector("input, textarea") : doel;
+        if (!invoer || !invoer.focus) return;
+        invoer.focus();
+        if (cursor !== null && typeof invoer.setSelectionRange === "function") {
+            try {
+                invoer.setSelectionRange(cursor, cursor);
+            } catch (e) {
+                /* Een veldtype dat geen selectie kent; de focus is het belangrijkste. */
+            }
+        }
+        cursor = null;
+    });
+
     document.addEventListener("htmx:beforeRequest", function (e) {
         var f = formulierVan(e.target);
         if (f) f.classList.add("is-bezig");

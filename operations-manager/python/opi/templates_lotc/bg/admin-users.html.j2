@@ -60,7 +60,7 @@
                                     href="/admin/users/{{ user.id }}/edit" />
                                 {# Het formulier draagt de bevestiging en het CSRF-token, net als nu.
                                    De knop erin is alleen de verzendknop. #}
-                                <form method="post" action="/admin/users/{{ user.id }}/delete"
+                                <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/delete"
                                       onsubmit="return confirm('Weet je zeker dat je {{ user.full_name }} wilt verwijderen?');">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                     <c-button
