@@ -95,7 +95,10 @@ class DedicatedPostgresFields(BaseModel):
         default=1, ge=1, description="Number of PostgreSQL instances; more than one gives a replicated cluster."
     )
     # Not pattern-constrained, matching today's behaviour (required, non-empty).
-    storage: str = Field(default="10Gi", description="Size of the database volume as a Kubernetes quantity, e.g. 10Gi.")
+    # 1Gi en niet 10Gi: de keuzelijst van het formulier (StorageSizeOptionsProvider) loopt tot
+    # 1Gi, dus de oude standaardwaarde stond niet in de lijst waaruit je hem kon kiezen. Dat is
+    # de bovenkant van de lijst, want een database is de plek waar ruimte het eerst opraakt.
+    storage: str = Field(default="1Gi", description="Size of the database volume as a Kubernetes quantity, e.g. 1Gi.")
     privileges: list[DatabasePrivilege] = Field(
         default_factory=list,
         description="Extra PostgreSQL role privileges for the project's database user, from the allowed set.",

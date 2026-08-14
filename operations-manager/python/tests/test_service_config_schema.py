@@ -101,11 +101,13 @@ class TestLayerFragmentDriftLock:
 
 class TestNamespacePostgresConfigModel:
     def test_defaults_reproduce_default_config(self) -> None:
-        # These are exactly DatabaseManager.DEFAULT_CONFIG's values.
+        # These are exactly DatabaseManager.DEFAULT_CONFIG's values, except for storage:
+        # that default was 10Gi while the form only ever offered 50Mi up to 1Gi, so it was
+        # not a value anyone could pick. It is now the top of that list.
         m = NamespacePostgresConfig()
         assert m.image == "ghcr.io/cloudnative-pg/postgresql:17"
         assert m.instances == 1
-        assert m.storage == "10Gi"
+        assert m.storage == "1Gi"
         assert m.privileges == []
         assert m.postInitSQL == []
         assert m.registry is None

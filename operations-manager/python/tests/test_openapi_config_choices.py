@@ -22,6 +22,7 @@ from opi.forms.visualizers.providers import (
     PROVIDER_REGISTRY,
     UNDECLARED_SOURCE,
     OptionsSource,
+    StorageSizeOptionsProvider,
     WakeModeOptionsProvider,
 )
 from opi.server import app
@@ -307,3 +308,43 @@ class TestElkeConfigRouteIsBekeken:
                 if CHOICES_KEY not in node and CHOICES_SOURCE_KEY not in node:
                     missing.append(f"{match.group('service')}/{match.group('target')}:{editable.yaml_path}")
         assert not missing, f"deze velden hebben een keuzelijst in het formulier maar niet in de API: {missing}"
+
+
+class TestEenStandaardwaardeIsKiesbaar:
+    """Een standaardwaarde die niet in de keuzelijst staat, is een fout aan één van beide.
+
+    Gevonden op de database van een project: het configmodel gaf ``10Gi`` mee terwijl het
+    formulier 50Mi tot en met 1Gi aanbood. De standaardwaarde was dus niet te kiezen, en wie
+    het veld in de wizard aanraakte kreeg stilzwijgend iets anders dan wat er stond. Dat kan
+    omdat de twee verschillende eigenaren hebben: de lijst hangt aan de editable
+    (``values_provider``) en de standaardwaarde aan het Pydantic-configmodel. Niemand hield ze
+    naast elkaar; deze test doet dat.
+
+    Merk op dat een provider niets afdwingt. De lijst is een aanbod, geen validatie: via de
+    API kan een andere waarde er gewoon in. Juist daarom moet wat wij zelf als standaard
+    invullen er wél in staan.
+    """
+
+    def test_elke_standaardwaarde_staat_in_zijn_eigen_keuzelijst(
+        self, annotated: list[tuple[str, dict[str, Any]]]
+    ) -> None:
+        offenders = [
+            f"{trail}: default {node['default']!r} staat niet in {_consts(node)}"
+            for trail, node in annotated
+            if CHOICES_KEY in node and "default" in node and node["default"] not in _consts(node)
+        ]
+        assert not offenders, f"een standaardwaarde die je niet kunt kiezen: {offenders}"
+
+    def test_de_startmaat_van_de_opslagdiensten_is_te_kiezen(self) -> None:
+        """Hetzelfde voor een waarde die niet uit een configmodel komt.
+
+        persistent-storage en temp-storage schrijven bij het aanzetten een eerste mount in het
+        projectbestand (``storage_config``). Die maat komt niet uit een default van het model
+        maar uit de dienstdefinitie, dus de test hierboven ziet hem niet.
+        """
+        maten = {str(option["value"]) for option in StorageSizeOptionsProvider().get_options()}
+
+        for service_type in (ServiceType.PERSISTENT_STORAGE, ServiceType.TEMP_STORAGE):
+            start = SERVICES[service_type].definition.storage_config
+            assert start is not None
+            assert start["size"] in maten, f"{service_type.value} begint op {start['size']}, niet in {sorted(maten)}"
