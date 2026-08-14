@@ -23,13 +23,17 @@
         "Dezelfde handelingen als in deze interface, maar vanaf de opdrachtregel."
     ) }}
 
-    {% call panel("Installeren", "arrow-down") %}
-        <c-paragraph>
-            De CLI is een enkel bestand. Je hebt er geen Python voor nodig en geen
-            beheerdersrechten: hij komt in <c-code>~/.local/bin</c-code> te staan, en
-            weggooien is dat ene bestand verwijderen.
-        </c-paragraph>
+    {# De link BOVENAAN en niet onderaan. Deze pagina is een wegwijzer: alles wat de CLI
+       kan staat in de repository, en die documentatie hoort bij de versie die je net
+       hebt gehaald. Onderaan zag je hem pas nadat je de installatie had doorgelezen. #}
+    <c-cluster gap="sm" align="center" class="repo-verwijzing">
+        <c-icon icon="terminal" size="md" color="hemelblauw" />
+        <c-link href="https://github.com/RijksICTGilde/zad-cli"
+                label="Alle opdrachten en instellingen: zad-cli op GitHub"
+                weight="bold" target="_blank" />
+    </c-cluster>
 
+    {% call panel("Installeren", "arrow-down") %}
         <c-heading type="h3" size="6" label="macOS" />
         <c-code-viewer language="bash">mkdir -p ~/.local/bin
 curl -fsSL https://github.com/RijksICTGilde/zad-cli/releases/latest/download/zadctl_darwin_arm64.tar.gz \
@@ -50,11 +54,4 @@ curl -fsSL https://github.com/RijksICTGilde/zad-cli/releases/latest/download/zad
 zadctl --version</c-code-viewer>
     {% endcall %}
 
-    {% call panel("Verder lezen", "book-open") %}
-        <c-paragraph>
-            Alles wat de CLI kan, hoe je hem instelt en wat er per opdracht uit komt staat in
-            de repository. Die documentatie hoort bij de versie die je net hebt gehaald.
-        </c-paragraph>
-        <c-link href="https://github.com/RijksICTGilde/zad-cli" label="zad-cli op GitHub" target="_blank" />
-    {% endcall %}
 {% endblock %}

@@ -15,6 +15,13 @@
         "Vanuit je eigen GitHub-pijplijn naar ZAD deployen."
     ) }}
 
+    <c-cluster gap="sm" align="center" class="repo-verwijzing">
+        <c-icon icon="chevron-left-forward-slash-chevron-right" size="md" color="hemelblauw" />
+        <c-link href="https://github.com/RijksICTGilde/zad-actions"
+                label="Alle invoerwaarden en voorbeelden: zad-actions op GitHub"
+                weight="bold" target="_blank" />
+    </c-cluster>
+
     {% call panel("Wat het is", "chevron-left-forward-slash-chevron-right") %}
         <c-paragraph>
             Herbruikbare GitHub Actions die met dezelfde API praten als de CLI. Je zet ze in
@@ -45,14 +52,10 @@
     image: ghcr.io/org/app:latest</c-code-viewer>
 
         <c-paragraph size="sm">
-            De API-sleutel hoort in de secrets van je repository, niet in de workflow zelf.
-            Hij staat op de projectpagina onder Configuratie &amp; Secrets.
+            De API-sleutel hoort in de secrets van je CI/CD, niet in de workflow zelf.
+            Je vindt de API-sleutel op de projectpagina onder Configuratie &amp; Secrets.
         </c-paragraph>
 
-        {# Dit voorbeeld stond er niet, en daardoor nam iedereen het enkelvoudige over: dan
-           krijg je een stap per component, en dus een uitrol per component in plaats van
-           een. De vorm komt uit deploy/action.yml van zad-actions, waar components
-           voorrang heeft op component en image. #}
         <c-heading type="h3" size="6" label="Meerdere componenten in een keer" />
         <c-paragraph size="sm">
             Werk je meer dan een image bij, gebruik dan <c-code>components</c-code> in plaats
@@ -90,6 +93,5 @@
     delete-github-env: true
     delete-container: true</c-code-viewer>
 
-        <c-link href="https://github.com/RijksICTGilde/zad-actions" label="Alle invoerwaarden en voorbeelden: zad-actions op GitHub" target="_blank" />
     {% endcall %}
 {% endblock %}
