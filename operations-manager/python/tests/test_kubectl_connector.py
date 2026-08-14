@@ -2,8 +2,11 @@
 Tests for the kubectl connector.
 """
 
+import base64
+import json
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -90,6 +93,50 @@ async def test_apply_manifest_failure(connector, manifest_file, variables):
 
         with pytest.raises(KubectlExecutionError, match="unable to recognize"):
             await connector.apply_manifest(manifest_file, variables)
+
+
+class TestPatchSecretData:
+    """Patching a secret must reach kubectl through a file, never through argv.
+
+    This connector already keeps secret values out of the log; the argument list of
+    the kubectl process is the other place they would be readable. The patch is a
+    merge patch on purpose: the secrets in a project namespace are ArgoCD's, and an
+    apply would rewrite the last-applied-configuration and drop its tracking labels.
+    """
+
+    async def test_values_go_in_through_a_file_and_not_through_argv(self, connector) -> None:
+        captured: dict[str, str] = {}
+
+        async def _run(args: list[str], **kwargs: object) -> tuple[str, str, int]:
+            patch_path = args[args.index("--patch-file") + 1]
+            captured["args"] = " ".join(args)
+            captured["patch"] = Path(patch_path).read_text()
+            return ("secret/main-database patched", "", 0)
+
+        with patch.object(connector, "_run_kubectl_command", new=AsyncMock(side_effect=_run)):
+            await connector.patch_secret_data("main-database", "rig-demo", {"DATABASE_PASSWORD": "Sup3rSecret"})
+
+        assert "Sup3rSecret" not in captured["args"]
+        assert "--type merge" in captured["args"]
+        assert "-p" not in captured["args"].split()
+
+        payload = json.loads(captured["patch"])
+        assert payload == {"data": {"DATABASE_PASSWORD": base64.b64encode(b"Sup3rSecret").decode()}}
+
+    async def test_patch_file_is_removed_even_when_kubectl_fails(self, connector) -> None:
+        seen: list[str] = []
+
+        async def _run(args: list[str], **kwargs: object) -> tuple[str, str, int]:
+            seen.append(args[args.index("--patch-file") + 1])
+            return ("", 'Error from server (NotFound): secrets "main-database" not found', 1)
+
+        with (
+            patch.object(connector, "_run_kubectl_command", new=AsyncMock(side_effect=_run)),
+            pytest.raises(KubectlExecutionError, match="NotFound"),
+        ):
+            await connector.patch_secret_data("main-database", "rig-demo", {"DATABASE_PASSWORD": "x"})
+
+        assert not Path(seen[0]).exists()
 
 
 if __name__ == "__main__":
