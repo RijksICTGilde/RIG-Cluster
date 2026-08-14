@@ -71,6 +71,21 @@ EXTRA_COMPONENTS = ("alpha", "beta")
 RONDES = int(os.environ.get("PUNT14_RONDES", "10"))
 TASK_TIMEOUT = 600.0
 
+#: Waar de meetregels per ronde naartoe gaan. Pytest toont de logregels van de call-fase
+#: van een geslaagde test niet, en juist bij "niet gereproduceerd" IS die opsomming het
+#: resultaat: hoe vaak, hoe snel, en met welke uitkomst. Dus schrijven we ze zelf weg,
+#: net als PYTEST_VOORTGANG doet. Zonder de variabele verandert er niets.
+METINGEN = os.environ.get("PUNT14_METINGEN")
+
+
+def _meet(regel: str) -> None:
+    """Log een meetregel en schrijf hem weg als PUNT14_METINGEN gezet is."""
+    logger.info("Punt 14: %s", regel)
+    if not METINGEN:
+        return
+    with open(METINGEN, "a", encoding="utf-8") as bestand:
+        bestand.write(f"{time.strftime('%H:%M:%S')}  {regel}\n")
+
 
 def _post(base_url: str, path: str, api_key: str, body: dict) -> str:
     return sandbox_api.start_task(base_url, "POST", path, api_key, body, verify_ssl=_VERIFY_SSL)
@@ -235,7 +250,7 @@ def test_deployment_create_vindt_zijn_eigen_deployment(
             f"uitkomst {'OK' if add_failure is None else add_failure[0]}"
         )
         gemeten.append(regel)
-        logger.info("Punt 14: %s", regel)
+        _meet(regel)
         if add_failure is not None:
             bevindingen.append(f"ronde {ronde}: component aan '{deployment}' hangen faalde: {add_failure}")
 
@@ -291,11 +306,9 @@ def test_deployment_overleeft_een_gelijktijdige_componentwijziging(
 
         add_failure = _failure(_hang_component_aan_deployment(sandbox_url, project, deployment, EXTRA_COMPONENTS[0]))
         in_git = _deployment_in_git(forgejo, project.name, deployment)
-        logger.info(
-            "Punt 14 gelijktijdig, ronde %d: uitkomst %s, deployment in git: %s",
-            ronde,
-            "OK" if add_failure is None else add_failure[0],
-            in_git,
+        _meet(
+            f"gelijktijdig, ronde {ronde}: uitkomst {'OK' if add_failure is None else add_failure[0]}, "
+            f"deployment in git: {in_git}"
         )
         if add_failure is not None:
             bevindingen.append(
@@ -335,8 +348,4 @@ def test_zonder_wachten_is_de_deployment_er_nog_niet(
     add_failure = _failure(add)
 
     upsert = _await_task(sandbox_url, upsert_task_id, project.api_key)
-    logger.info(
-        "Punt 14 zonder wachten: upsert=%s, component erbij=%s",
-        _failure(upsert) or "OK",
-        add_failure or "OK",
-    )
+    _meet(f"zonder wachten: upsert={_failure(upsert) or 'OK'}, component erbij={add_failure or 'OK'}")

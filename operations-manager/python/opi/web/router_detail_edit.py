@@ -52,7 +52,7 @@ from opi.services.catalog.cross_domain_access.context import build_cross_domain_
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
-from opi.services.project_store import get_project_store
+from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.lotc_switch import render_fragment
 from opi.web.navigation_lotc import to_nldd_icon
@@ -1341,9 +1341,15 @@ async def _process_and_save_modal_edit(
     # validation, canonical dumper, commit + push, and cache refresh in one shot.
     # A validation failure (e.g. pre-existing structural drift surfaced by the
     # full-project check) is returned to the caller as a review re-render.
+    #
+    # ConflictError hoort in dezelfde rij. Hij komt uit de compare-and-swap als er
+    # tijdens het bewerken iemand anders in hetzelfde onderdeel schreef, en draagt zelf
+    # de uitleg voor de gebruiker mee. Zonder deze regel viel hij door naar buiten als
+    # een kale 500: gemeten in de reallife-doorloop van RC-112, waar een API-patch en
+    # een verwijdering in de componenten-modal elkaar op hetzelfde bestand raakten.
     try:
         await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow.flow_id})")
-    except (ProjectSchemaError, ProjectIntegrityError) as e:
+    except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
         logger.warning("Modal wizard save rejected by validation for %s (flow=%s): %s", project_name, flow.flow_id, e)
         return existing_data, _render_modal_review(
             request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
