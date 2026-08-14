@@ -89,6 +89,11 @@ class FormRenderer:
         self.translator = translator or IdentityTranslator()
         self.providers = options_providers or {}
         self._edit_mode = False
+        # De wizard waarin dit formulier staat. Een TemplatePartial met EIGEN endpoints
+        # (bijlagen) heeft die nodig om de goede URL op te bouwen; zonder dit stond er een
+        # vaste "create-project" in het sjabloon, en dan schreven de bijlagen van een
+        # modal-edit-wizard naar de sessie van de aanmaakwizard.
+        self._flow_id: str | None = None
 
     def render(
         self,
@@ -287,6 +292,7 @@ class FormRenderer:
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
         warnings: dict[str, list[str]] | None = None,
+        flow_id: str | None = None,
     ) -> str:
         """Render form fields without form wrapper (for HTMX partial updates).
 
@@ -295,6 +301,7 @@ class FormRenderer:
         renderers above build.
         """
         self._edit_mode = edit_mode
+        self._flow_id = flow_id
         fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode, warnings=warnings)
         if layout is None:
             layout = list(fields_by_name)
@@ -916,7 +923,9 @@ class FormRenderer:
             from opi.core.templates_lotc import templates_lotc
 
             tmpl = templates_lotc.env.get_template(element.template)
-            ctx = {**(yaml_data or {}), **element.context}
+            # flow_id erbij: een partial met eigen endpoints moet weten in WELKE wizard hij
+            # staat. element.context wint, zodat een partial hem desgewenst kan overschrijven.
+            ctx = {"flow_id": self._flow_id, **(yaml_data or {}), **element.context}
             return tmpl.render(ctx)
 
         # Display block (server-rendered via HTMX)
