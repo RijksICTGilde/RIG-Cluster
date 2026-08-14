@@ -68,13 +68,25 @@ De node heeft twee NVMe-schijven van elk 3 TB. `nvme0n1` is de systeemschijf (dr
 
 Dit is niet van ons te repareren. Zowel de StorageClass als de controller dragen `resources.gardener.cloud/managed-by: gardener` met de annotatie "DO NOT EDIT - Any modifications are discarded and the resource is returned to the original state". De configuratie komt uit de metal-stack-extensie in de seed (`extension-controlplane-storageclasses`).
 
-Dit is dus een platformvraag, en een heel concrete. Drie mogelijke antwoorden, oplopend in wat ze ons opleveren:
+Zonder werkende opslag is ZAD hier niet uit te rollen: PostgreSQL, MinIO en Keycloak vragen allemaal een PVC.
 
-1. Het device-patroon beperken tot de vrije schijf (`/dev/nvme1n[0-9]`) en het type op `linear`. Kleinste ingreep, geeft werkende PVC's, geen snapshots.
-2. De worker pool extra vrije schijven geven, zodat `mirror` klopt. Geeft werkende PVC's met redundantie, nog steeds geen snapshots.
-3. Een andere StorageClass met een echte CSI-driver die snapshots ondersteunt. Lost 3.1 in één keer mee op.
+**Het antwoord van platformbeheer (14 augustus): csi-lvm wordt niet gerepareerd, het gaat weg.** Opslag is nog niet stabiel op Fundament, clusters gaan standaard *zonder* StorageClass geleverd worden zodat je er zelf een kiest via het plugin-mechanisme, en er wordt gewerkt aan een storage-plugin op basis van Rook/Ceph. Dat komt overeen met hun eigen ADR-0015.
 
-Zonder een van deze drie is ZAD hier niet uit te rollen: PostgreSQL, MinIO en Keycloak vragen allemaal opslag.
+Dat maakt het een keuze van ons in plaats van een verzoek aan hen. De pluginlijst bevat vandaag `cert-manager`, `external-dns`, `gateway-api`, `openfsc` en `sandbox`, en dus nog geen storage.
+
+**Wat we gekozen hebben: `local-path-provisioner`**, met het pad op `/var/lib/local-path-provisioner`. De default van die chart is `/opt/local-path-provisioner` en dat staat op de 24 GB rootpartitie; `/var/lib` zit op de grote partitie met 2,7 TB vrij. Gemeten schijfindeling van de node:
+
+| substraat | grootte | staat |
+|---|---|---|
+| `/` (`nvme0n1p2`) | 24 GB, 21 vrij | te klein |
+| `/var/lib` (`nvme0n1p3`) | 2,8 TB, 2,7 TB vrij | deelt met kubelet en containerd |
+| `nvme1n1` | 3 TB | volledig vrij, rauw |
+
+Dit is bewust de snelle en niet de mooie keuze: het doel was ZAD kunnen testen. Wat je ermee inlevert: geen snapshots, dus geen PVC-back-ups; geen volume-uitbreiding; en de data staat als gewone mappen op één node, dus bij een node-vervanging is hij weg. Prima om op te testen, niets om productiedata op te zetten.
+
+De betere kandidaat voor later is **TopoLVM op `nvme1n1` met een thin pool**: dat geeft wel een VolumeSnapshotClass, gebruikt de eigen vrije schijf, en de node-afhankelijkheid (LVM) is aantoonbaar aanwezig. Longhorn viel af omdat het `open-iscsi` op het worker-image vraagt en dat beheren wij niet. Beide zijn hoe dan ook tijdelijk tot de Rook/Ceph-plugin er is; die brengt de snapshotclass mee en is dezelfde technologie als ODCN's ODF.
+
+**Dit wordt niet teruggedraaid door Gardener.** De resource-manager reconcilieert alleen wat uit een ManagedResource in de seed komt, herkenbaar aan `resources.gardener.cloud/managed-by: gardener`. Onze componenten dragen dat label niet. Empirisch bevestigd: ingress-nginx en cert-manager draaiden 24 uur met nul herstarts, ongewijzigd. Het verschil met een `set env` op de gardener-beheerde csi-lvm-controller is fundamenteel: die werd binnen één seconde teruggezet.
 
 ### 3.1 Opslag en back-up: dit is het scherpste punt
 
@@ -248,3 +260,42 @@ En de beslissingen A tot en met E en J uit paragraaf 5.7 staan nog steeds allema
 Het cluster is vriendelijker dan het hoofddocument vreesde. Geen OpenShift, geen policy-engine, geen SCC, cluster-admin, open egress, werkende VPA. De helft van de "dit kan de installatie laten stranden"-punten valt weg omdat er simpelweg niets is dat weigert.
 
 Daar staat één ding tegenover dat zwaarder weegt dan alle vervallen punten samen: **de opslag.** Eén node, node-lokale LVM, geen uitbreiding, geen snapshots. Dat raakt back-up direct en HA fundamenteel. Als het antwoord op 3.5-19 blijft "csi-lvm en verder niets", dan is dit geen tweede productiecluster maar een testomgeving, en dan hoort dat besluit expliciet genomen te worden in plaats van er per ongeluk in te rollen.
+
+## 7. Wat er nu staat: het clusterblok en de installatietaak
+
+Clustersleutel **`fundament-poc`**, DNS-zone **`.fundament-poc.rijksapp.dev`**. Beide zijn keuzes, geen gegevenheden; de sleutel bepaalt vijf bestandsnamen, dus hernoemen is werk.
+
+### 7.1 Het clusterblok
+
+`CLUSTER_CONFIG["fundament-poc"]` in `opi/core/cluster_config.py`. Elke waarde is op het cluster gemeten en niet van een ander cluster overgenomen. De opvallende:
+
+| sleutel | waarde | grond |
+|---|---|---|
+| `supports_vpa` | `True` | VPA draait en levert aanbevelingen, anders dan op de andere niet-ODCN clusters |
+| `uses_capsule` | `False` | geen Capsule aanwezig |
+| `assigns_uid_via_scc` | `False` | geen SCC en geen Pod Security Admission |
+| `storage.storage_class_name` | `local-path` | zie paragraaf 3.0 |
+| `storage.volume_snapshot_class` | ontbreekt bewust | local-path kan het niet; PVC-back-ups melden dat en stoppen |
+| `extensions` | `[]` | egress open op 443, dus geen registry-mirror nodig |
+| `namespace_metadata` | leeg | geen policy-engine die iets van een namespace verlangt |
+| `ingress_controller_selector` | ns `ingress-nginx`, label `app.kubernetes.io/name` | gemeten op de draaiende controller |
+
+Dat `storage_class_name` expliciet gezet wordt, lost meteen een probleem op: `csi-lvm` staat nog als default gemarkeerd en blijft stuk, maar ZAD vraagt nooit om de default en raakt hem dus niet aan.
+
+### 7.2 De installatietaken
+
+Drie taken, allemaal idempotent. Opnieuw draaien is veilig en de aangewezen manier om bij te werken; dat is geen luxe, want bij een node-vervanging moet dit opnieuw.
+
+- **`task fundament:check`** controleert de voorwaarden: staat `functl` op de PATH, is hij ingelogd, bestaat de context, en wijst die context echt naar een Fundament-cluster. Dat laatste is de belangrijkste: zonder die controle landt een installatie op wat er toevallig in `kubectl config current-context` staat.
+- **`task fundament:install-platform`** installeert de laag die het platform niet levert: ingress-nginx v1.15.1 (cloud-variant, niet de Kind-variant), cert-manager v1.21.1, local-path-provisioner v0.0.37 inclusief de padwijziging, en CloudNativePG 1.27.3. Alle versies gepind, niet `latest`.
+- **`task fundament:verify`** bewijst dat het werkt: de ingresscontroller heeft een adres, een PVC bindt en is beschrijfbaar door een non-root pod met exact de securityContext die `deployment.yaml.jinja` hier rendert, en cert-manager en CNPG draaien. De testresources worden altijd opgeruimd, ook als de taak faalt.
+
+Gedraaid op 14 augustus, tweede keer over bestaande componenten, alles groen. Ingressadres `194.135.48.69`.
+
+### 7.3 Wat hierna nog moet
+
+- Een A-record `router.fundament-poc.rijksapp.dev` naar het ingressadres. Let op dat dat adres ephemeer is: het verschuift als de LoadBalancer-service herbouwd wordt.
+- De AGE-sleutel `security/fundament-poc-key.txt` genereren en de secrets ermee versleutelen.
+- De overlays: `infrastructure/bootstrap/clusters/fundament-poc/` en de twee onder `bootstrap/rig-system/kustomize/`. Begin bij de componenten die op ODCN echt draaien, en let op de twee punten uit 2.2n en 2.2o van het hoofddocument: de storageclass staat op vijf plaatsen, en de backup-networkpolicy selecteert op een Capsule-tenantlabel dat hier niets matcht.
+- external-dns, bij voorkeur als Fundament-plugin in plaats van uit onze eigen tree.
+- Overwegen om cert-manager om te zetten naar de Fundament-plugin, zodat het platformbeheerd is in plaats van iets van ons.
