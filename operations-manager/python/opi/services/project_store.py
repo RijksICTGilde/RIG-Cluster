@@ -669,7 +669,7 @@ class GitProjectStore(ProjectStore):
         merged = _apply_our_change_to(base=base, ours=data, theirs=current)
         if merged is None:
             raise ConflictError(
-                f"Project '{name}' is gewijzigd sinds u begon met bewerken, en die wijziging raakt "
+                f"Project '{name}' is gewijzigd sinds je begon met bewerken, en die wijziging raakt "
                 f"hetzelfde onderdeel als dat van jou. Haal de laatste versie op en voer je wijziging opnieuw uit."
             )
 
@@ -680,7 +680,7 @@ class GitProjectStore(ProjectStore):
             await validate_project_structure(merged)
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             raise ConflictError(
-                f"Project '{name}' is gewijzigd sinds u begon met bewerken en de samengevoegde "
+                f"Project '{name}' is gewijzigd sinds je begon met bewerken en de samengevoegde "
                 f"versie is ongeldig ({e}). Haal de laatste versie op en probeer opnieuw."
             ) from e
 
