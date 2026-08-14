@@ -23,8 +23,12 @@ Deze module bouwt precies die toestand en herhaalt het paar dan een aantal keer:
 
 Het wachten op de eerste taak is essentieel voor de bewijswaarde. Vuur je het paar zonder
 te wachten af, dan is "niet gevonden" geen bug maar de verwachte uitkomst; de zad-cli
-wacht wel, dus deze test ook. Ronde 0 draait daarnaast eenmalig de niet-wachtende variant,
-puur om vast te leggen wat die doet - hij telt niet mee in het oordeel.
+wacht wel, dus deze test ook. Die niet-wachtende variant staat er apart in, puur om vast
+te leggen wat hij doet - hij telt niet mee in het oordeel.
+
+De derde test is de scherpste: die laat een componentwijziging NOG lopen terwijl de
+deployment wordt aangemaakt. Dat kan echt, want de taakpoort sluit alleen taken met
+dezelfde deploymentnaam uit en een componentwijziging heeft er geen.
 
 Bedoeld om te draaien TERWIJL de reallife-suite loopt, zodat er werkelijk belasting op de
 store staat. Eigen marker (``punt14``), buiten de standaard sandboxrun::
@@ -152,6 +156,12 @@ def punt14_project(
             sandbox_api.delete_project_via_api(sandbox_url, project.name, project.api_key, verify_ssl=_VERIFY_SSL)
 
 
+def _deployment_in_git(forgejo: ForgejoClient, project_name: str, deployment: str) -> bool:
+    """Staat de deployment in het gecommitte projectbestand? De git-stand is de waarheid."""
+    data = forgejo.get_project_yaml(project_name) or {}
+    return any(d.get("name") == deployment for d in (data.get("deployments") or []) if isinstance(d, dict))
+
+
 def _stapel_wachtende_wijzigingen(base_url: str, project: CreatedProject, ronde: int) -> None:
     """Voeg niet-uitgerolde wijzigingen toe, zodat de stapel per ronde groeit."""
     for index, component in enumerate((WEB, *EXTRA_COMPONENTS)):
@@ -232,6 +242,71 @@ def test_deployment_create_vindt_zijn_eigen_deployment(
     logger.info("Punt 14 metingen:\n%s", "\n".join(gemeten))
     assert not bevindingen, f"Punt 14 gereproduceerd in {len(bevindingen)} van de {RONDES} rondes:\n" + "\n".join(
         bevindingen
+    )
+
+
+@pytest.mark.timeout(5400)
+def test_deployment_overleeft_een_gelijktijdige_componentwijziging(
+    punt14_project: CreatedProject,
+    sandbox_url: str,
+    forgejo: ForgejoClient,
+) -> None:
+    """De scherpste vorm: een componentpatch loopt NOG terwijl de deployment wordt aangemaakt.
+
+    De taakpoort in ``claim_next_task`` sluit twee taken op hetzelfde project alleen uit
+    als hun ``deployment_name`` gelijk is (``is_not_distinct_from``). Een
+    ``update_component``-taak krijgt GEEN deploymentnaam en een ``upsert_deployment``-taak
+    wel, dus die twee draaien wel degelijk tegelijk over hetzelfde projectbestand. Wint de
+    patch, dan is de zojuist geschreven deployment weer weg en vindt de volgende stap hem
+    niet - precies wat punt 14 beschrijft.
+
+    Daarom hier: patch starten zonder te wachten, meteen de deployment aanmaken, beide
+    afwachten, en dan pas het component eraan hangen. De controle op het projectbestand in
+    git staat erbij, want die zegt of de deployment werkelijk verdwenen is (verloren
+    wijziging) of dat alleen de lezing hem miste (cache).
+    """
+    project = punt14_project
+    bevindingen: list[str] = []
+
+    for ronde in range(RONDES):
+        deployment = f"p14g{ronde}"
+
+        patch_ids = [
+            _patch(
+                sandbox_url,
+                f"/api/v2/projects/{project.name}/components/{component}?rollout=false",
+                project.api_key,
+                {"memory_limit": f"{256 + 8 * ronde + index}Mi"},
+            )
+            for index, component in enumerate(EXTRA_COMPONENTS)
+        ]
+        upsert = _maak_deployment(sandbox_url, project, deployment)
+        for patch_id in patch_ids:
+            _await_task(sandbox_url, patch_id, project.api_key)
+
+        upsert_failure = _failure(upsert)
+        if upsert_failure is not None:
+            bevindingen.append(f"ronde {ronde}: upsert van '{deployment}' mislukte: {upsert_failure}")
+            continue
+
+        add_failure = _failure(_hang_component_aan_deployment(sandbox_url, project, deployment, EXTRA_COMPONENTS[0]))
+        in_git = _deployment_in_git(forgejo, project.name, deployment)
+        logger.info(
+            "Punt 14 gelijktijdig, ronde %d: uitkomst %s, deployment in git: %s",
+            ronde,
+            "OK" if add_failure is None else add_failure[0],
+            in_git,
+        )
+        if add_failure is not None:
+            bevindingen.append(
+                f"ronde {ronde}: component aan '{deployment}' hangen faalde: {add_failure}; "
+                f"deployment staat {'WEL' if in_git else 'NIET'} in het projectbestand in git"
+            )
+        elif not in_git:
+            bevindingen.append(f"ronde {ronde}: '{deployment}' ontbreekt in het projectbestand in git")
+
+    assert not bevindingen, (
+        f"Punt 14 gereproduceerd in {len(bevindingen)} van de {RONDES} gelijktijdige rondes:\n" + "\n".join(bevindingen)
     )
 
 
