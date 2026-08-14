@@ -73,8 +73,10 @@ class TestSequenceEditables:
         assert str(COMPONENTS_SEQUENCE.widget) == "sequence"
         assert COMPONENTS_SEQUENCE.children is not None
         # +4 over the base for the health-check service's component fields
-        # (scheme, port, liveness-path, readiness-path), +1 for the optional start command.
-        assert len(COMPONENTS_SEQUENCE.children) == 24
+        # (scheme, port, liveness-path, readiness-path), +1 for the optional start command,
+        # +1 for the authorization-wall signpost (a read-only pointer to the project-level
+        # setting, shown only when that service is on this component).
+        assert len(COMPONENTS_SEQUENCE.children) == 25
         assert COMPONENTS_SEQUENCE.editable.min_items == 1
 
     def test_deployments_sequence_has_children(self):
