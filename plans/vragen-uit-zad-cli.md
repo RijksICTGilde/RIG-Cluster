@@ -1344,7 +1344,39 @@ het projectbestand?
 
 ### Antwoord
 
-<!-- ruimte voor RIG-Cluster -->
+**Wij hebben het niet gereproduceerd, in 92 gerichte pogingen.** Volledige verantwoording
+in `docs/reallife-run-2026-08-14-rc112.md`; het harnas staat in
+`tests/e2e/test_sandbox_punt14.py` (marker `punt14`), zodat een volgende poging niet bij
+nul begint.
+
+Wat wij geprobeerd hebben, steeds op de toestand die jullie beschrijven (drie componenten,
+een groeiende stapel wijzigingen met `rollout=false`) en grotendeels onder belasting, met
+de reallife-suite ernaast:
+
+| Vorm | Rondes | Uitkomst |
+|---|---|---|
+| Wachten tot de upserttaak KLAAR is, dan pas het component eraan hangen | 38 | 38x goed |
+| De componentpatches nog laten lopen tijdens het aanmaken (`rollout=false`) | 38 | 38x goed |
+| Idem, maar met de patches MET uitrol, dus minuten in plaats van seconden | 13 | 13x goed |
+| Het paar afvuren zonder op de eerste taak te wachten | 3 | 3x goed |
+
+Op jullie vraag ("gaat daar iets langs een cache of een tweede lezing?"): de deelstap die
+het component toevoegt leest inderdaad uit de in-memory cache van de ProjectStore en niet
+uit git. Die cache wordt echter write-through bijgewerkt, pas na een geslaagde push, en de
+store logt het zelf als hij van git zou zijn afgedreven. Die regel kwam in geen van onze
+rondes voor. Die verklaring is dus niet de onze.
+
+Wat wij wel gevonden hebben, en wat de beste kandidaat blijft: twee taken op hetzelfde
+project worden alleen tegen elkaar uitgesloten als ze **dezelfde deploymentnaam** hebben.
+Een componentwijziging heeft er geen en een deploymentaanmaak wel, dus die twee draaien wel
+degelijk gelijktijdig over hetzelfde projectbestand. Dat het toch goed gaat, komt door de
+compare-and-swap met drieweg-merge in de laag eronder. Dat is de plek om te kijken als het
+weer optreedt.
+
+Wat wij niet hebben nagebootst is jullie draaiboek zelf: 44 stappen achter elkaar. Wij
+hebben het paar uit stap 11 geisoleerd en herhaald. Hangt het aan een specifieke VOLGORDE
+van eerdere stappen, dan zit het daar. Als jullie het nog een keer zien: stuur het
+`task_id` en het tijdstip mee, dan is het in onze logs terug te vinden.
 
 ---
 
