@@ -59,6 +59,17 @@ curl -X DELETE -H "X-API-Key: $KEY" \
   https://.../api/v2/projects/algor-odc/services/keycloak/config/project
 ```
 
+## Toegestane waarden per veld
+
+Het schema zegt welke velden er zijn; `x-choices` en `x-choices-source` zeggen welke waarden erin mogen. Ze worden bij het opbouwen van `/openapi.json` afgeleid uit dezelfde `values_provider` waarmee het formulier in de portal zijn keuzelijst vult (`opi/api/openapi_choices.py`), dus er is geen tweede lijst die kan gaan afwijken.
+
+- **`x-choices`** staat op een veld met een vaste lijst en bevat per waarde `const` (de waarde), `title` (het label) en soms `description`. Kent het configmodel de keuze zelf, dan staat er ook een gewone `enum` en zijn dat dezelfde waarden; `x-choices` voegt dan alleen het label toe. Staat er geen `enum`, dan accepteert het model een breder formaat en is dit de lijst die de portal aanbiedt: `sleep-after-deploy` neemt elke duur (`90m` mag), maar biedt `4h` tot en met `168h` aan.
+- **`x-choices-source`** staat op een veld waarvan de waarden uit het project komen, met `description` en, als er een endpoint voor is, `endpoint` en `path`. Een opsomming zou daar een momentopname van een willekeurig project zijn. Voorbeeld: `waker-component` van sleep-mode wijst naar `GET /api/v2/projects/{project_name}/components`, `components[].name`.
+- Booleans krijgen geen keuzelijst: het formulier toont Ja/Nee, maar de API wil een echte JSON-boolean, en dat zegt het type al.
+- Een standaardwaarde staat gewoon in `default`.
+
+Elke provider die een service-configveld vult declareert zelf welke van de twee het is (`options_source` op de provider, `None` als de lijst vastligt). Zonder die declaratie komt er geen keuzelijst in de documentatie, want een projectafhankelijke lijst zonder project zou de paar overgebleven opties tonen alsof dat de toegestane waarden zijn.
+
 ## How it works
 
 The typed body is validated by FastAPI at request time (an unknown or out-of-enum
@@ -129,3 +140,6 @@ are out of scope.
 - `tests/test_v2_flow.py::TestConfigureServiceFlow` -- the HTTP surface: the catalog
   list, the typed-body upsert/clear task payloads, the OpenAPI per-service schema,
   auth, and the 404/422 gates.
+- `tests/test_openapi_config_choices.py` -- de toegestane waarden in `/openapi.json`,
+  met sleep-mode als concreet geval, plus de drift-lock tussen keuzelijst en `enum` en
+  de eis dat elke provider zijn bron declareert.
