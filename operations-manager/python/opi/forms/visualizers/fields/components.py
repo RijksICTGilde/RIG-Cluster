@@ -28,7 +28,7 @@ from opi.forms.visualizers.visualizer import EditableVisualizer
 # of COMPONENTS_SEQUENCE is not a hand-synced list. (The visualizer definitions still
 # authored below move into their service packages one service at a time; temp-storage
 # already lives in catalog/temp_storage/visualizers.py.)
-from opi.services.registry import component_service_visualizers
+from opi.services.registry import component_service_notices, component_service_visualizers
 
 COMPONENT_NAME = EditableVisualizer(
     editable=COMPONENT_NAME_EDITABLE,
@@ -178,5 +178,8 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
         # Per-service component visualizers, gathered from the registry in config_component_order.
         # Includes the aliases / user-env-vars system services (RC-25), which sort first.
         *component_service_visualizers(),
+        # En wat de diensten te MELDEN hebben op dit niveau zonder er iets te configureren
+        # (Service.component_form_notices). Readonly, dus de verwerking slaat ze over.
+        *component_service_notices(),
     ],
 )

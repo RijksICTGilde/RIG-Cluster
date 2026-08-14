@@ -336,6 +336,19 @@ def component_service_visualizers() -> list[EditableVisualizer]:
     return visualizers
 
 
+def component_service_notices() -> list[EditableVisualizer]:
+    """De informatieblokken die diensten aan het componentformulier meegeven.
+
+    Naast ``component_service_visualizers``, en bewust apart: die gaan over velden die je
+    invult, deze over iets wat je moet weten. Zie ``Service.component_form_notices`` voor
+    waarom een mededeling geen configlaag mag claimen.
+    """
+    notices: list[EditableVisualizer] = []
+    for service in sorted(SERVICES.values(), key=lambda s: s.config_component_order):
+        notices.extend(service.component_form_notices())
+    return notices
+
+
 def deployment_service_editables() -> list[Editable]:
     """Deployment-level editables every service contributes, in ``config_component_order``.
 
