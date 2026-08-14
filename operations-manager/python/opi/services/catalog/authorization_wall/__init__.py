@@ -72,6 +72,33 @@ class AuthorizationWallService(Service):
 
         return [AUTH_WALL_BANNER_EDITABLE]
 
+    def config_component_visualizers(self):
+        """Een wegwijzer in het componentformulier, geen configuratie.
+
+        Deze dienst is de enige in de catalogus die je op het ENE niveau aanzet en op het
+        ANDERE instelt: aanvinken doe je per component (daar komt de oauth2-proxy voor de
+        pod), maar de bannertekst is er een voor het hele project. Wie hem aanvinkte kreeg
+        daarna niets te zien en had geen enkele aanwijzing waar die instelling dan wel
+        staat.
+
+        Het blijft bij een verwijzing. De echte oplossing is dat de projectconfiguratie
+        bereikbaar is ongeacht hoe de dienst is aangezet -- vandaag hangt de knop
+        'Configureer' aan de dienstenlijst op PROJECTniveau, dus een project dat de auth
+        wall alleen op een component heeft staan, kan er helemaal niet bij. Dat is een
+        eigen taak; dit is de wegwijzer tot die er is.
+
+        Er hoort GEEN component-laag bij: ``config_editables(COMPONENT)`` blijft leeg en
+        ``config_form_section(COMPONENT)`` blijft None, want er valt op dat niveau niets
+        te bewaren. Om diezelfde reden haakt dit blok NIET via ``config_component_layout()``
+        in: die haak telt mee in ``config_layers()``, en dan zou er een configroute
+        ``/services/authorization-wall/config/component/{component}`` in de API bijkomen
+        voor iets wat geen configuratie is. De plek in het formulier staat daarom in de
+        Services-fieldset van COMPONENTS_SECTION, naast het vinkje waar je de dienst aanzet.
+        """
+        from opi.services.catalog.authorization_wall.visualizers import AUTH_WALL_COMPONENT_INFO
+
+        return [AUTH_WALL_COMPONENT_INFO]
+
     def config_form_section(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
             return None
