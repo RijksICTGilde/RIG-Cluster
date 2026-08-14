@@ -98,11 +98,11 @@ class SleepModeConfig(BaseModel):
         description="Which component the waker answers for; by default the deployment's root component.",
     )
     wake_mode: WakeMode = Field(
-        # 'manual' en niet 'auto': wakker worden kost een halve minuut, en dat gebeurt bij
-        # 'auto' op elk browserverzoek dat langskomt, ook van een crawler of een monitor. Wie
-        # zijn applicatie wel zo wil laten wekken zet het bij; het omgekeerde (er per ongeluk
-        # achterkomen dat iets vanzelf aanging) is de vervelendere kant om op te vergissen.
-        default="manual",
+        # 'confirm' en niet 'auto': wakker worden kost een halve minuut, en bij 'auto' gebeurt
+        # dat op elk browserverzoek dat langskomt, ook van een crawler of een monitor. Bij
+        # 'confirm' beslist een mens: de bezoeker ziet een knop en kan zelf starten, zonder
+        # dat hij een beheerder nodig heeft zoals bij 'manual'.
+        default="confirm",
         alias="wake-mode",
         description=(
             "What the waker does with a visitor: 'auto' wakes on the first browser GET, 'confirm' "
