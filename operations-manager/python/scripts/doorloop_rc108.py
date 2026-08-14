@@ -28,6 +28,7 @@ from tests.e2e.helpers.lifecycle import (
     project_name_from_progress,
     walk_create_wizard_with_services,
 )
+from tests.e2e.helpers.sandbox_api import delete_project_via_api, read_api_key
 from tests.e2e.helpers.wizard import unique_project_name
 
 BASIS = os.environ.get("ZAD_SANDBOX_URL", "https://zad.sandbox.rijksapp.dev")
@@ -147,6 +148,13 @@ def main() -> int:
         # Het projectbestand zoals het in git staat: waar RC-106 over gaat.
         (uit / "projectbestand.yaml").write_text(projectbestand(naam))
         print(f"[doorloop] projectbestand weggeschreven ({naam}.yaml)")
+
+        # De vlag stond er wel maar deed niets: twee metingen in RC-110 lieten hun project
+        # gewoon staan, en een doorloop die zijn eigen projecten laat liggen meet de
+        # volgende keer een voller cluster.
+        if a.opruimen:
+            print(f"[doorloop] opruimen: {naam}")
+            delete_project_via_api(BASIS, naam, read_api_key(page, BASIS, naam), verify_ssl=VERIFIEER)
 
         print(f"PROJECT={naam}")
         browser.close()
