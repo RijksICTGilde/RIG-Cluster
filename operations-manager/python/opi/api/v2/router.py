@@ -9,7 +9,7 @@ Read-only GET endpoints return deployment state directly (no task queue).
 import asyncio
 import logging
 from inspect import Parameter, Signature
-from typing import Annotated, Any, NamedTuple, get_args
+from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Path as FastAPIPath
@@ -105,6 +105,7 @@ from opi.services.component_values import locate as locate_values_node
 from opi.services.component_values import validate_key as validate_values_key
 from opi.services.component_values import validate_value as validate_values_value
 from opi.services.component_values import validate_value_for_storage as validate_values_value_for_storage
+from opi.services.config_lists import PatchableList, patchable_lists
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.help_text import service_help_markdown
 from opi.services.postgres_scope import get_postgres_schemas
@@ -129,7 +130,7 @@ from opi.utils.naming import (
 from opi.utils.project_names import ensure_unique_project_name
 from opi.utils.project_utils import ProjectApiKeyError, generate_base_project_file, validate_project_name
 from opi.utils.yaml_util import dump_yaml_to_string
-from pydantic import BaseModel, ConfigDict, Field, RootModel, create_model, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -2158,8 +2159,9 @@ async def _enqueue_config_write(
     operation: str,
     *,
     config: dict[str, Any] | list[Any] | None = None,
-    add: list[dict[str, Any]] | None = None,
+    add: list[Any] | None = None,
     remove: list[str] | None = None,
+    list_field: str | None = None,
     component: str | None = None,
     deployment: str | None = None,
     rollout: bool = True,
@@ -2189,6 +2191,7 @@ async def _enqueue_config_write(
     if operation == "patch":
         payload["add"] = add
         payload["remove"] = remove
+        payload["list_field"] = list_field
 
     task = await create_async_task(
         request=request,
@@ -2285,24 +2288,6 @@ def _make_clear_endpoint(service_name: str, target: str, name_param: str | None)
     return endpoint
 
 
-def _list_item_model_and_key(config_model: type) -> tuple[type[BaseModel], str] | None:
-    """The item model and identity field of a list-shaped config model, or None.
-
-    A config model that is a list of records with a declared key (``ITEM_KEY``) gets
-    a PATCH route alongside its PUT/DELETE so one entry can be added, updated or
-    removed without resending the rest. Everything else has nothing to patch.
-    """
-    if not (isinstance(config_model, type) and issubclass(config_model, RootModel)):
-        return None
-    item_key = getattr(config_model, "ITEM_KEY", None)
-    if not isinstance(item_key, str):
-        return None
-    args = get_args(config_model.model_fields["root"].annotation)
-    if len(args) != 1 or not (isinstance(args[0], type) and issubclass(args[0], BaseModel)):
-        return None
-    return args[0], item_key
-
-
 class _ListConfigPatch(BaseModel):
     """Shared base for the generated PATCH bodies: at least one operation, so an empty
     ``{}`` is a 422 instead of a silent no-op across the task machinery."""
@@ -2317,43 +2302,69 @@ class _ListConfigPatch(BaseModel):
         return self
 
 
-def _make_patch_body_model(config_model: type, item_model: type[BaseModel], item_key: str) -> type[BaseModel]:
-    """The typed PATCH body for one list-shaped config model: whole entries to `add`
-    (upserted by key), plain keys to `remove`."""
+def _patch_model_name(config_model: type, spec: PatchableList) -> str:
+    """``StorageConfigPatch`` for a root list, ``InviteConfigActivePatch`` for a named one
+    -- so the two lists of one model (cross-domain-access) cannot collide in the spec."""
+    if spec.name is None:
+        return f"{config_model.__name__}Patch"
+    part = "".join(word.capitalize() for word in spec.name.replace("_", "-").split("-"))
+    return f"{config_model.__name__}{part}Patch"
+
+
+def _make_patch_body_model(config_model: type, spec: PatchableList) -> type[BaseModel]:
+    """The typed PATCH body for one patchable list: whole entries to `add` (upserted by
+    key), plain keys to `remove`. A list of plain values takes the values on both sides,
+    because there the value IS the key."""
+    item_type = spec.item_type
+    if spec.item_key is None:
+        add_description = (
+            "Values to add, in the same shape as one item of the PUT body. A value that is already "
+            "there stays as it is: the value is its own identity, so this list is a set."
+        )
+        remove_description = "Values to remove. A value that is not there is a no-op, so removing twice is fine."
+    else:
+        add_description = (
+            f"Entries to add or replace, in the same shape as one item of the PUT body. "
+            f"An entry whose '{spec.item_key}' already exists is replaced; the others stay as-is."
+        )
+        remove_description = (
+            f"Keys ('{spec.item_key}') of entries to remove. A key that is not there is a no-op, "
+            "so removing twice is fine."
+        )
     return create_model(
-        f"{config_model.__name__}Patch",
+        _patch_model_name(config_model, spec),
         __base__=_ListConfigPatch,
-        add=(
-            list[item_model] | None,
-            Field(
-                default=None,
-                description=(
-                    f"Entries to add or replace, in the same shape as one item of the PUT body. "
-                    f"An entry whose '{item_key}' already exists is replaced; the others stay as-is."
-                ),
-            ),
-        ),
-        remove=(
-            list[str] | None,
-            Field(
-                default=None,
-                description=(
-                    f"Keys ('{item_key}') of entries to remove. A key that is not there is a no-op, "
-                    "so removing twice is fine."
-                ),
-            ),
-        ),
+        add=(list[item_type] | None, Field(default=None, description=add_description)),
+        remove=(list[str] | None, Field(default=None, description=remove_description)),
     )
 
 
-def _config_patch_description(service_name: str, layer: ConfigLayer, item_key: str) -> str:
+def _config_patch_description(service_name: str, layer: ConfigLayer, spec: PatchableList) -> str:
     place = _CONFIG_WRITE_PLACE[layer]
+    what = f"the `{spec.name}` list of the `{service_name}` config" if spec.name else f"the `{service_name}` config"
+    if spec.item_key is None:
+        rules = (
+            "`add` and `remove` both take plain values: an entry here has no key field, so the value is its "
+            "own identity. Adding one that is already there changes nothing, removing one that is not there "
+            "changes nothing.\n\n"
+            f"Everything else in the `{service_name}` config is left exactly as it stands -- only this list "
+            "is touched."
+        )
+    else:
+        rules = (
+            f"`add` takes full entries: one whose `{spec.item_key}` is new is appended, one whose "
+            f"`{spec.item_key}` exists replaces it. `remove` takes `{spec.item_key}` values only; unknown "
+            "keys are a no-op. Remove runs first, so a key in both lists is replaced outright."
+        )
+        if spec.name:
+            rules += (
+                f"\n\nEverything else in the `{service_name}` config is left exactly as it stands -- only this "
+                "list is touched."
+            )
     return (
-        f"Add, update or remove individual entries in the `{service_name}` config in {place} "
-        "-- without resending the entries you are not touching (the PUT replaces the whole list).\n\n"
-        f"`add` takes full entries: one whose `{item_key}` is new is appended, one whose `{item_key}` "
-        f"exists replaces it. `remove` takes `{item_key}` values only; unknown keys are a no-op. "
-        "Remove runs first, so a key in both lists is replaced outright.\n\n"
+        f"Add, update or remove individual entries in {what} in {place} "
+        "-- without resending the entries you are not touching (the PUT replaces the whole block).\n\n"
+        f"{rules}\n\n"
         "A change that reaches the file is rolled out: the project is processed again, manifests are "
         "regenerated and ArgoCD applies them. This is not a save-only endpoint.\n\n"
         "Asynchronous: the response is 202 with a task id. Poll `/api/tasks/{task_id}` for the result; "
@@ -2361,7 +2372,9 @@ def _config_patch_description(service_name: str, layer: ConfigLayer, item_key: s
     )
 
 
-def _make_patch_endpoint(service_name: str, target: str, name_param: str | None, body_model: type):
+def _make_patch_endpoint(
+    service_name: str, target: str, name_param: str | None, body_model: type, list_field: str | None
+):
     """Build a typed PATCH endpoint whose body is the service's add/remove patch model."""
 
     async def endpoint(**kwargs: Any) -> JSONResponse:
@@ -2372,15 +2385,20 @@ def _make_patch_endpoint(service_name: str, target: str, name_param: str | None,
             service_name,
             target,
             "patch",
-            add=[item.model_dump(by_alias=True, exclude_unset=True) for item in body.add or []],
+            add=[
+                item.model_dump(by_alias=True, exclude_unset=True) if isinstance(item, BaseModel) else item
+                for item in body.add or []
+            ],
             remove=body.remove or [],
+            list_field=list_field,
             component=kwargs.get("component_name"),
             deployment=kwargs.get("deployment_name"),
             rollout=kwargs.get("rollout", True),
         )
 
     endpoint.__signature__ = _config_write_signature(name_param, body_model)
-    endpoint.__name__ = f"patch_{service_name.replace('-', '_')}_{target.replace('-', '_')}"
+    suffix = f"_{list_field.replace('-', '_')}" if list_field else ""
+    endpoint.__name__ = f"patch_{service_name.replace('-', '_')}_{target.replace('-', '_')}{suffix}"
     return endpoint
 
 
@@ -2465,18 +2483,21 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 summary=f"Clear {service_name} config ({target})",
                 description=_config_write_description(service_name, layer, clearing=True),
             )
-            list_ctx = _list_item_model_and_key(model)
-            if list_ctx is not None:
-                item_model, item_key = list_ctx
-                patch_body = _make_patch_body_model(model, item_model, item_key)
+            # One PATCH per patchable list. A config that IS a list keeps its address
+            # (storage, attachments); a config that CONTAINS lists gets one route per
+            # list, because the two lists of cross-domain-access hold different entries
+            # and a single body could not be typed for both.
+            for spec in patchable_lists(model):
+                patch_body = _make_patch_body_model(model, spec)
+                what = f"{service_name} {spec.name}" if spec.name else f"{service_name} config"
                 router.add_api_route(
-                    path,
-                    validate_api_token(_make_patch_endpoint(service_name, target, name_param, patch_body)),
+                    path + spec.path_suffix,
+                    validate_api_token(_make_patch_endpoint(service_name, target, name_param, patch_body, spec.name)),
                     methods=["PATCH"],
                     tags=[service_name],
                     responses=_CONFIG_WRITE_RESPONSES,
-                    summary=f"Patch {service_name} config ({target})",
-                    description=_config_patch_description(service_name, layer, item_key),
+                    summary=f"Patch {what} ({target})",
+                    description=_config_patch_description(service_name, layer, spec),
                 )
 
 

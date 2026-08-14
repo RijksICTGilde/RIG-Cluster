@@ -26,7 +26,7 @@ keeps validating (like ``KeycloakClientEntry``'s pass-through fields).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -100,6 +100,12 @@ class InviteConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    #: ``active`` is patchable entry by entry, keyed on the invite's own ``key``. Without
+    #: it only the PUT existed, and the PUT wants every invite resent -- including the
+    #: keys, which no read response gives back (they are the secret in the link). A
+    #: second invite therefore cost the first one. See ``opi/services/config_lists.py``.
+    ITEM_KEYS: ClassVar[dict[str, str | None]] = {"active": "key"}
 
     default_language: str = Field(
         default="nl",
