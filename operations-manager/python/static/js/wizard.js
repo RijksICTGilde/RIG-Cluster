@@ -55,6 +55,20 @@ function _sequenceDispatch(action, path, index) {
         _seqHidden(form, '_seq_index', index);
         console.info('[sequence] formulier indienen via htmx');
         htmx.trigger(form, 'submit');
+        /* Controle of htmx het ook echt oppakt. Een trigger die htmx negeert is stil: geen
+           fout, geen verzoek, en dan lijkt de knop stuk. Dat kan als het formulier niet
+           door htmx verwerkt is, of als een lopend verzoek in zijn boekhouding nooit
+           afsluit en de volgende in een wachtrij belandt. */
+        setTimeout(function () {
+            if (!form.classList.contains('htmx-request')) {
+                console.warn('[sequence] htmx heeft de indiening NIET opgepakt', {
+                    verwerkt: !!form['htmx-internal-data'],
+                    klasse: form.className,
+                    hxpost: form.getAttribute('hx-post'),
+                    hxsync: form.getAttribute('hx-sync'),
+                });
+            }
+        }, 300);
         return;
     }
 
