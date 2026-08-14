@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-from opi.connectors.keycloak import create_keycloak_connector
+from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector
 from opi.core.cluster_config import (
     get_ingress_postfix,
     get_keycloak_discovery_url,
@@ -84,6 +84,21 @@ def build_project_realm_context(
         # Per-realm SSO account-linking mode (automatic | confirm; None -> Keycloak's stock flow)
         "account_link": account_link,
     }
+
+
+def find_realm_entry_for_admin(project_data: dict[str, Any], admin_username: str) -> dict[str, Any] | None:
+    """The project file's own realm entry for this realm-admin account, if it has one.
+
+    The realm-admin password is generated once and stored nowhere but the project
+    file, so "does the file know this user" is the question that decides whether
+    re-creating anything could make file and Keycloak diverge. An entry without a
+    password does not count as knowing him.
+    """
+    realms = Project(project_data).get("services/keycloak/config/realms") or []
+    return next(
+        (entry for entry in realms if entry.get("username") == admin_username and entry.get("password")),
+        None,
+    )
 
 
 class KeycloakManager:
@@ -856,6 +871,34 @@ class KeycloakManager:
 
     # Hostname calculation moved to centralized naming.py
 
+    async def _project_realm_is_present(self, keycloak: KeycloakConnector, realm_name: str) -> bool:
+        """Whether the project realm is really there, asked in two independent ways.
+
+        Concluding "gone" wrongly is the expensive mistake: it sends the run down the
+        re-create path, where the realm-admin user that is still in the master realm
+        trips the duplicate-admin guard, and every later run trips it again. The
+        project is then stuck for good. Concluding "present" wrongly costs nothing
+        that the idempotent reconciliation below does not fix on the next run.
+
+        So one negative answer is not enough. ``realm_exists()`` already refuses to
+        read anything but a 404 as "missing" (a 5xx or a connection error raises, and
+        the run fails loudly instead of re-creating). On top of that, a 404 from the
+        admin API is checked against the realm's own OIDC discovery document, which
+        is public and needs no admin session at all. If that answers, the realm is
+        serving traffic and we leave it alone.
+        """
+        if await keycloak.realm_exists(realm_name):
+            return True
+
+        if await keycloak.realm_discovery_available(realm_name):
+            logger.warning(
+                f"Keycloak's admin API reports realm {realm_name} as missing, but the realm serves "
+                f"its OIDC discovery document - treating it as present and not re-creating it"
+            )
+            return True
+
+        return False
+
     async def _setup_sso_rijk_integration(
         self,
         project_name: str,
@@ -897,14 +940,18 @@ class KeycloakManager:
                 realm_name = kc_config["realm"]
                 keycloak_host = kc_config["host"]
 
-                # Check if realm exists in Keycloak
+                # Ask the cluster's current Keycloak, not the host recorded in the file:
+                # every step below this check already talks to keycloak_url, and a stale
+                # recorded host (domain migration) would answer "no such realm" for a realm
+                # that is alive and well on the current one - which sends a healthy project
+                # down the re-create path it can never come back from.
                 verify_keycloak = await create_keycloak_connector(
-                    keycloak_url=keycloak_host,
+                    keycloak_url=keycloak_url,
                     admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
                     admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
                 )
 
-                if await verify_keycloak.realm_exists(realm_name):
+                if await self._project_realm_is_present(verify_keycloak, realm_name):
                     logger.info(f"Verified project realm {realm_name} exists in Keycloak")
 
                     # Update project file if keycloak host has changed (e.g., domain migration)
@@ -943,7 +990,8 @@ class KeycloakManager:
                     await self._ensure_admin_otp(project_name, cluster, realm_name, keycloak_url)
                 else:
                     logger.warning(
-                        f"Project realm config exists but realm {realm_name} not found in Keycloak - will recreate"
+                        f"Project realm config exists but realm {realm_name} is not in Keycloak's admin API "
+                        f"and serves no discovery document - will recreate"
                     )
                     need_to_create_realm = True
 
@@ -1701,11 +1749,16 @@ class KeycloakManager:
             ingress_hosts: Optional list of ingress hostnames for redirect URIs
 
         Returns:
-            Dictionary with host, realm, username, password (plain text for immediate use)
+            Dictionary with host, realm, username, password (plain text for immediate use).
+            When the realm and its admin user turn out to exist already and the project
+            file holds that admin's password, nothing is created and the existing entry is
+            returned as-is - the password then has the form the file stores it in.
 
         Raises:
             FileNotFoundError: If template file doesn't exist
             ValueError: If config is malformed
+            RuntimeError: If the admin user exists but no realm entry in the project file
+                carries his password (his password is then unrecoverable)
         """
         logger.info(f"Setting up project Keycloak realm for {project_name} in cluster {cluster} using YAML")
 
@@ -1725,23 +1778,47 @@ class KeycloakManager:
         # Guard against silent drift: if the admin user already exists in master,
         # the create_user call later would 409 and silently keep the existing
         # credential, while we would still write a freshly generated password to
-        # the project YAML. Refuse to proceed so YAML and Keycloak cannot diverge.
+        # the project YAML. So an existing admin user means we do not create.
+        #
+        # It does not always mean we have to give up, though. Two things can be
+        # true at once: the user is there AND the project file already carries his
+        # password. Then nothing can diverge - there is no new password to write
+        # and no realm to build - so we continue with what is already there. The
+        # guard bites only in the case it was built for: an admin user that the
+        # project file does not know, whose password is therefore unrecoverable.
         existing_admin = await keycloak.get_user_by_username("master", admin_username)
+        project_data = await self.project_manager.get_contents()
         if existing_admin is not None:
+            known_entry = find_realm_entry_for_admin(project_data, admin_username)
+            if known_entry is not None and await self._project_realm_is_present(keycloak, realm_name):
+                logger.warning(
+                    f"Project realm {realm_name} and its admin user '{admin_username}' already exist and "
+                    f"the project file holds this admin's password - continuing with the existing realm "
+                    f"instead of re-creating it"
+                )
+                return {
+                    "host": known_entry.get("host", keycloak_url),
+                    "realm": known_entry.get("realm", realm_name),
+                    "username": admin_username,
+                    # Stored form (AGE-encrypted or 'plain:'-prefixed): on this path the
+                    # plaintext is not ours to know, and we will not reset it to find out.
+                    "password": known_entry["password"],
+                }
+
             raise RuntimeError(
                 f"Refusing to re-create project Keycloak realm for {project_name}/{cluster}: "
-                f"admin user '{admin_username}' already exists in master realm. "
-                f"Either a previous run failed after creating this user but before its "
-                f"generated password was persisted to the project file (the old password "
-                f"is then unrecoverable: verify no project file references this user, "
-                f"delete it from the master realm, and re-run), or a transient Keycloak "
-                f"error caused realm_exists() to return False for a healthy realm "
-                f"(retry once Keycloak is healthy)."
+                f"admin user '{admin_username}' already exists in master realm, and no realm entry "
+                f"in this project file carries his password. A previous run created this user but "
+                f"never persisted its generated password, or the realm entry that held it was "
+                f"overwritten since. Re-creating would write a new password to the project file "
+                f"that Keycloak does not accept, so this needs a hand: put the realm entry back "
+                f"from the project file's git history (it still carries the working, AGE-encrypted "
+                f"password), or have an administrator delete user '{admin_username}' from the "
+                f"master realm - after either, a re-run continues on its own."
             )
 
         # Generate and encrypt password
         admin_password = generate_secure_password()
-        project_data = await self.project_manager.get_contents()
         project_public_key = get_project_public_key(project_data)
 
         if not project_public_key:
