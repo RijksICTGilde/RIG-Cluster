@@ -64,7 +64,6 @@ CONTENT_BLOCK_EXCEPTIONS: dict[str, str] = {
     "bg/permission-denied.html.j2": WERKLIJST,
     "bg/admin-usage.html.j2": WERKLIJST,
     "bg/actions.html.j2": WERKLIJST,
-    "bg/cli.html.j2": WERKLIJST,
 }
 
 # Templates die een eigen <style>-blok mogen houden, met de reden.
