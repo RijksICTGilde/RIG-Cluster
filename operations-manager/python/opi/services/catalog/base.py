@@ -1010,6 +1010,28 @@ class Service(ABC):
         component-level service owns the display of its own fields."""
         return []
 
+    def component_form_notices(self) -> list[EditableVisualizer]:
+        """Informatieblokken die deze dienst aan het componentformulier meegeeft.
+
+        Een dienst kan iets te MELDEN hebben op een niveau waar hij niets te CONFIGUREREN
+        heeft. De authorization wall is het geval waarvoor deze haak bestaat: je zet hem per
+        component aan (daar komt de oauth2-proxy voor de pod) terwijl zijn enige instelling
+        projectbreed is, dus in het componentformulier is er wel iets uit te leggen en niets
+        in te vullen.
+
+        Waarom niet ``config_component_visualizers`` + ``config_component_layout``: die twee
+        horen bij elkaar en de layouthaak telt mee in ``config_layers()``. Een dienst die er
+        alleen tekst in wil hangen, zou daarmee een configlaag claimen die hij niet heeft, en
+        de API krijgt er een configroute bij voor iets wat je niet kunt instellen. Deze haak
+        raakt ``config_layers()`` niet, dus een mededeling blijft een mededeling.
+
+        Elk blok is een readonly visualizer op een eigen pad; readonly betekent dat de
+        verwerking het overslaat, dus er komt niets van in het projectbestand. Het
+        componentformulier zet ze onder de dienstenkeuze neer, elk als eigen kaart, in
+        ``config_component_order``.
+        """
+        return []
+
     def config_deployment_component_layout(self) -> list[Any]:
         """Layout node(s) this service hooks into the per-deployment component form.
 

@@ -22,7 +22,10 @@ AUTH_WALL_COMPONENT_INFO = EditableVisualizer(
     widget=WidgetType.DISPLAY_CARD,
     label="Authorization wall",
     readonly=True,
-    attributes={"icon": "schild-met-vinkje-erop", "icon_color": "groen"},
+    # gap md en niet de standaard xs: die is bedoeld voor een kaart met een waarde onder
+    # zijn label (een sleutel, een tag), en dan hoort het dicht op elkaar. Dit is een lopende
+    # tekst onder een kop, en die plakte eraan vast.
+    attributes={"icon": "schild-met-vinkje-erop", "icon_color": "groen", "gap": "md"},
     help_text=(
         "Dit component komt achter een inlogpagina te staan. De instellingen daarvan "
         "gelden voor het hele project en staan op het tabblad Services, bij de kaart "

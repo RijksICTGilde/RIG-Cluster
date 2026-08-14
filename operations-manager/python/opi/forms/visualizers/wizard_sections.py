@@ -79,6 +79,19 @@ def _service_component_layouts() -> list[Any]:
     return nodes
 
 
+def _service_component_notices() -> list[Any]:
+    """De layoutplekken van de informatieblokken uit ``component_service_notices()``.
+
+    Afgeleid van het pad van het blok zelf (het laatste segment), zodat het formulier geen
+    enkele dienstnaam kent: een dienst die zo'n blok toevoegt, verschijnt vanzelf, en een
+    dienst die het weghaalt verdwijnt vanzelf. Los van ``_service_component_layouts()``
+    omdat dat de haak voor CONFIGURATIE is, en die telt mee in ``config_layers()``.
+    """
+    from opi.services.registry import component_service_notices
+
+    return [notice.editable.yaml_path.rsplit("/", 1)[-1] for notice in component_service_notices()]
+
+
 def _service_deployment_component_layouts() -> list[Any]:
     """Collect the per-deployment-component layout nodes each service hooks into the
     deployment-edit form (RC-25), in ``config_component_order``.
@@ -171,17 +184,14 @@ COMPONENTS_SECTION = FormSection(
                 Fieldset(
                     legend="Services",
                     description="Selecteer welke services dit component gebruikt.",
-                    children=[
-                        "services",
-                        # De wegwijzer van de auth wall, direct onder het vinkje waarmee je
-                        # hem aanzet. Hij staat hier en niet bij de andere dienstblokken
-                        # (*_service_component_layouts()) omdat die haak een configlaag
-                        # claimt, en deze dienst heeft op componentniveau geen configuratie:
-                        # aanzetten doe je hier, instellen doe je projectbreed. Zie
-                        # AuthorizationWallService.config_component_visualizers.
-                        "_authorization-wall-info",
-                    ],
+                    children=["services"],
                 ),
+                # Wat de gekozen diensten te MELDEN hebben, elk als eigen kaart, direct na
+                # de keuze waar het over gaat. Binnen de fieldset hierboven oogde zo'n blok
+                # als onderdeel van het keuzevak terwijl het een mededeling is over wat je
+                # zojuist aanzette. Welke blokken dit zijn bepaalt de dienst zelf; zie
+                # Service.component_form_notices.
+                *_service_component_notices(),
                 Fieldset(
                     legend="Publicatie",
                     description=(
