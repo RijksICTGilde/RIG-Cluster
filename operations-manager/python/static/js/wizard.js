@@ -24,8 +24,16 @@ function sequenceRemove(path, index) {
  * Route the sequence action to the correct handler based on context.
  */
 function _sequenceDispatch(action, path, index) {
+    /* MELDEN WAT ER GEBEURT.
+     *
+     * Deze functie had drie stille uitgangen: geen formulier, verzoek nog bezig, of geen
+     * bewerkdialoog. In alle drie gebeurde er niets, zonder fout en zonder verzoek, en dan
+     * lijkt de knop stuk terwijl hij keurig is aangeroepen. Dat kostte een middag zoeken.
+     * Elke uitgang zegt nu wat hij doet, zodat de console het antwoord geeft in plaats van
+     * dat iemand het moet reconstrueren. */
     var form = document.getElementById('wizard-step-form')
             || document.getElementById('modal-wizard-form');
+    console.info('[sequence]', action, path, index, '| formulier:', form ? form.id : 'GEEN');
     if (form) {
         /* A [data-rerender] change (e.g. toggling a service) fires its own re-render
            submit on this form. While that request is in flight, htmx drops a second
@@ -33,6 +41,7 @@ function _sequenceDispatch(action, path, index) {
            in-flight re-render would then swap the form out from under it. Wait for the
            in-flight request to settle, then re-dispatch against the fresh form. */
         if (form.classList.contains('htmx-request')) {
+            console.info('[sequence] verzoek loopt nog, in de wachtrij tot het settelt');
             document.body.addEventListener(
                 'htmx:afterSettle',
                 function () { _sequenceDispatch(action, path, index); },
@@ -44,6 +53,7 @@ function _sequenceDispatch(action, path, index) {
         _seqHidden(form, '_seq_action', action);
         _seqHidden(form, '_seq_path', path);
         _seqHidden(form, '_seq_index', index);
+        console.info('[sequence] formulier indienen via htmx');
         htmx.trigger(form, 'submit');
         return;
     }
@@ -51,8 +61,12 @@ function _sequenceDispatch(action, path, index) {
     /* Detail-edit modal context (legacy non-wizard edit) */
     var modal = document.getElementById('edit-section-modal');
     if (modal && modal.dataset.projectName && modal.dataset.sectionId) {
+        console.info('[sequence] via de bewerkdialoog');
         _sequenceEditModal(modal, action, path, index);
+        return;
     }
+    console.warn('[sequence] NIETS GEDAAN: geen wizardformulier en geen bewerkdialoog met project/sectie',
+                 {modal: !!modal, dataset: modal ? Object.assign({}, modal.dataset) : null});
 }
 
 /**
