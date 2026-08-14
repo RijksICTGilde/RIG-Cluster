@@ -2,14 +2,22 @@
 
 Laatste meting van `release-augustus-2026` voor de merge naar `main`.
 
-- **Gemeten commit**: `e187015e` (`fix(services): een standaardmaat die je ook echt kunt kiezen`)
+- **Gemeten commit**: `c0be0074`, de taakbranch bovenop `ab6ae614`
+  (`feat(sleep-mode): een slapende applicatie wordt niet meer vanzelf gewekt`)
 - **Cluster**: `kind-rig-sandbox`, `sandboxed-local`
 - **Datum**: 14 augustus 2026
 
-> Deze doorloop begon op `418533e5`. Halverwege kwam de opdracht binnen om op
-> `e187015e` te meten, omdat daar de standaardmaten in zitten die deze release
-> juist moet aantonen. Alles hieronder is opnieuw gemeten op `e187015e`; wat nog
-> van de eerste ronde stamt staat er expliciet bij.
+> Deze doorloop is twee keer verlegd. Hij begon op `418533e5`; daarna kwam de
+> opdracht om op `e187015e` te meten (de standaardmaten), en vervolgens om op
+> `ab6ae614` te meten (wake-mode standaard `manual`). Alles hieronder is de meting
+> op de laatste tip. Metingen van een eerdere ronde staan er expliciet bij, en zijn
+> alleen blijven staan waar ze iets aantonen dat later niet meer zichtbaar is.
+>
+> Dat verleggen is niet gratis geweest: twee keer is een lopende e2e-run ongeldig
+> geworden doordat de werkboom onder de suite uit veranderde. Dat is te zien ook -
+> de voettekst van een pagina in een faalrapport noemde al de nieuwe commit terwijl
+> de run op de oude begonnen was. Zulke runs zijn weggegooid en overgedaan, niet
+> geinterpreteerd.
 
 ## Oordeel
 
@@ -58,21 +66,55 @@ wil, moet die op een machine draaien die de developersleutel en `sops` heeft.
 Vijf keer achter elkaar, na afloop van de rollout:
 
 ```
-expect=e187015e
-1: e187015e pod=operations-manager-747d6b5698-t54jn
-2: e187015e pod=operations-manager-747d6b5698-t54jn
-3: e187015e pod=operations-manager-747d6b5698-t54jn
-4: e187015e pod=operations-manager-747d6b5698-t54jn
-5: e187015e pod=operations-manager-747d6b5698-t54jn
+1: c0be0074 dirty=false pod=operations-manager-7994df4c9-gttlx
+2: c0be0074 dirty=false pod=operations-manager-7994df4c9-gttlx
+3: c0be0074 dirty=false pod=operations-manager-7994df4c9-gttlx
+4: c0be0074 dirty=false pod=operations-manager-7994df4c9-gttlx
+5: c0be0074 dirty=false pod=operations-manager-7994df4c9-gttlx
 ```
 
 Eén pod, één commit, geen mengsel.
 
-**Wat hier misging**: `sandbox-deploy` meldde bij de tweede build zelf
-`WARN - /version does not clearly show e187015e`. Het script leest `/version`
-direct na `kubectl set image`, terwijl de oude pod dan nog antwoordt. Na
-`kubectl rollout status` klopte het beeld wel. De waarschuwing is dus terecht
-maar te vroeg gemeten - precies de valkuil die het plan beschrijft.
+### Bevinding - `sandbox-deploy` kan stilzwijgend de vorige build laten staan
+
+Dit is de belangrijkste vondst van taak 1, en hij raakt iedereen die op de sandbox meet.
+
+`sandbox-deploy` bouwt met een **vaste imagetag** (`operations-manager:rc-113-`) en
+zet die daarna met `kubectl set image`. Bij de tweede en derde deploy is die tag
+ongewijzigd, dus `kubectl set image` verandert niets aan de podspec en Kubernetes
+start **geen nieuwe pod**. De nieuwe image staat wel op de node, maar de draaiende pod
+blijft de oude draaien.
+
+Wat het script dan meldt:
+
+```
+[sandbox-deploy] deployed version : c0be0074
+[sandbox-deploy] running /version : {"version":"e187015e", ..., "dirty":true,
+                                     "pod":"operations-manager-747d6b5698-t54jn"}
+[sandbox-deploy] WARN - /version does not clearly show c0be0074. Re-run after the pod is ready.
+```
+
+`deployment "operations-manager" successfully rolled out` stond er nota bene boven.
+De rollout slaagde ook - er was alleen niets te rollen.
+
+Twee dingen deugen hier niet:
+
+1. **Het advies in de waarschuwing werkt niet.** "Re-run after the pod is ready"
+   levert exact hetzelfde resultaat op, want de tag blijft gelijk en er komt weer geen
+   nieuwe pod. Wie het advies opvolgt blijft in een lus zitten en meet ondertussen de
+   vorige release. Wat wel werkt is `kubectl -n rig-system rollout restart deployment/operations-manager`.
+2. **De waarschuwing kan ook onterecht zijn.** Bij de eerste deploy verscheen dezelfde
+   WARN, maar toen was het een echte race: het script leest `/version` voordat de oude
+   pod weg is. Na `kubectl rollout status` klopte het beeld wel. Dezelfde melding dekt
+   dus twee heel verschillende situaties - een die vanzelf goed komt en een die dat
+   nooit doet.
+
+Het `"dirty":true` in dat antwoord is het derde signaal: `version.json` was gebouwd
+van een werkboom met wijzigingen erin.
+
+Dit is geen bevinding over de release zelf, maar wel een over de meetopstelling, en
+hij is precies zwaar genoeg om een groene suite betekenisloos te maken. Na
+`rollout restart` gaf `/version` vijf keer `c0be0074` met `dirty=false`.
 
 ### De probepoort (nieuw in deze release)
 
@@ -127,7 +169,166 @@ halen en de hele API een 503 te laten geven.
 
 ## Taak 4 - Wat deze release nieuw heeft, in de browser
 
-(volgt)
+Gedaan op een eigen project (`rk-qfc`, "RC113 Kijken") met een deployment `prod` en een
+component `web`, met `scripts/kijk_sandbox.py` voor de schermafdrukken. Er is per punt
+ook echt naar het plaatje gekeken.
+
+### 1. De wizard slikt geen verzendingen meer - WERKT (cross-domain, modal-edit)
+
+Dit is de fix uit `4225c610`: de hertekenhandler deed `htmx.trigger(form, 'submit')`
+terwijl de velden die je juist gaat invullen nog leeg en verplicht waren, waarop de
+browser stil weigerde - geen fout, geen verzoek, en de lijsten eronder bleven op "Kies
+eerst een project" staan.
+
+Nagelopen in de modal-edit van cross-domain, op een project met een echte buur
+(`rb-47q`, met deployment `acc` en component `api`). Voor het kiezen:
+
+```
+inbound[0]/from/project     ['-- Kies een project --', 'invit-05n', 'p1431-9x9', 'rb-47q', ...]
+inbound[0]/from/deployment  ['Kies eerst een project']
+inbound[0]/from/component   ['Kies eerst een project']
+```
+
+Toen `rb-47q` gekozen, met de netwerkverzoeken meegeteld:
+
+```
+POSTs voor de keuze: 1
+POSTs na de keuze  : 2   (nieuw: 1)
+     POST /projects/rk-qfc/modal-wizard/modal-edit-cross-domain-config/step/cross-domain-access-config
+
+NA: inbound[0]/from/deployment -> ['-- Elke deployment (per deployment invullen) --', 'acc']
+NA: inbound[0]/from/component  -> ['-- Kies een component --', 'api']
+```
+
+Er gaat dus daadwerkelijk **een** verzoek uit, en de twee lijsten eronder komen gevuld
+terug met de deployment en het component van het gekozen buurproject. Dat is precies wat
+er eerst niet gebeurde.
+
+Wat hierbij **niet** afgerond is, en dus open blijft staan: de bijlagenstap
+(bijlage toevoegen en verwijderen), dezelfde cross-domain-stap in de **create-wizard**
+(alleen de modal-edit is gemeten), het vervangen van een bijlage met behoud van id
+(punt 4) en het terugzetten van een backup (punt 5). Zie "Wat er niet gemeten is".
+
+### 2. Aliassen als een blok - WERKT
+
+In de bewerkdialoog van het component staat het aliasveld als leesbare tekst:
+
+```
+DB_HOST=$DATABASE_SERVER_HOST
+DB_PORT=$DATABASE_SERVER_PORT
+```
+
+Op het scherm staat **geen** versleutelde tekst en **geen** redactiemarkering. Expliciet
+gemeten op de gerenderde HTML van de dialoog:
+
+```
+BEGIN AGE ENCRYPTED FILE in HTML: False
+redactiemarkering 'REDACTED'   : False
+redactiemarkering '<redacted>' : False
+redactiemarkering '***'        : False
+```
+
+En in de projectenrepository staat het als **een** blok, niet per sleutel:
+
+```yaml
+    aliases: |-
+      -----BEGIN AGE ENCRYPTED FILE-----
+      YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBuUWx3TnNpUXU0bHZlQmVV
+      ...
+```
+
+Eén `aliases:`-sleutel met één AGE-blok eronder. Op het tabblad Componenten worden de
+aliassen gewoon leesbaar getoond (`DB_HOST -> $DATABASE_SERVER_HOST`).
+
+### 3. Het dashboard - WERKT
+
+"Gebruik per project" toont per project **geheugen en CPU**, met eronder de tekst
+"Wat elk project gebruikt, gesorteerd op geheugen". De projectnaam ("RC113 Kijken") is
+een link naar het project. Balken voor beide waarden, met absolute waarde en percentage
+ernaast (`5 MiB / 0.5 GiB (1%)`, `0m / 500m cores (0%)`).
+
+### 6. De schermen die van naam zijn veranderd - WERKT
+
+- **Mijn projecten**: zowel het menu-item als de paginakop.
+- **Services overzicht**: zowel het menu-item als de paginakop.
+- Het zoek- en sorteergebied staat als één `<nldd-toolbar>` met het zoekveld in
+  `slot="start"`, de sorteerknop in `slot="end"` en een `slot="overflow"` voor smalle
+  schermen; het sorteermenu is een `<nldd-menu slot="popup">`.
+- Het gebied ververst **als een geheel**: het formulier doet
+  `hx-get="/projects"` met `hx-select="#projects-zoekgebied"` en
+  `hx-target="#projects-zoekgebied"`, dus zoekterm, sorteerkeuze en resultaat komen uit
+  één antwoord terug. Focusherstel loopt via `id="projects-zoekveld"` en
+  `htmx-formgedrag.js`, omdat de echte `<input>` in de schaduwboom van
+  `nldd-search-field` zit en `hx-preserve` daar niet werkt.
+
+Let op: er zijn **twee** sorteeropties (Naam A-Z en Naam Z-A), niet vier. "Meeste
+deployments" en "Meeste teamleden" zijn in `80da844c` bewust verwijderd. Drie toetsen
+waren daar niet in meegegaan; zie taak 2.
+
+### 7. De CLI- en Actions-pagina - WERKT
+
+- **`/cli`**: de repositorylink ("Alle opdrachten en instellingen: zad-cli op GitHub")
+  staat bovenaan, direct onder de paginatitel en boven het blok Installeren.
+- **`/actions`**: dezelfde vorm ("Alle invoerwaarden en voorbeelden: zad-actions op
+  GitHub") bovenaan. Het bijwerken van meerdere images in een keer staat er als een eigen
+  kopje "Meerdere componenten in een keer", met een voorbeeld dat `components` gebruikt
+  in plaats van `component`/`image`, en de zin "Zet je `components`, dan worden
+  `component` en `image` genegeerd". Er staat expliciet bij dat het **een** uitrol is en
+  niet een per component.
+
+Kleinigheid, niet blokkerend: in het blok "Wat het is" op `/actions` staan de drie
+actienamen (`deploy`, `cleanup`, `scheduled-cleanup`) links uitgelijnd terwijl hun
+omschrijving rechts tegen de rand geplakt staat, met een groot gat ertussen. Dat leest
+als een omschrijvingslijst die zijn opmaak kwijt is.
+
+### Nieuw uit `ab6ae614`: sleep-mode wekt niet meer vanzelf - WERKT
+
+Op een vers project sleep-mode aangezet **zonder `wake-mode` mee te geven**, zodat de
+standaardwaarde het werk doet. Op beide plekken waar die standaard staat:
+
+- **De API**: `/openapi.json` geeft voor `SleepModeConfig.wake-mode` nu
+  `"default": "manual"` (was `auto`), met de enum `["auto","confirm","manual"]` er nog
+  gewoon omheen.
+- **Het formulier**: in de bewerkdialoog van sleep-mode staat
+  `<option value="manual" selected>`; `auto` en `confirm` staan er als keuze naast, maar
+  niet voorgeselecteerd.
+
+Dat is precies wat `ab6ae614` beoogt, maar de standaardwaarde in een document bewijst nog
+niet dat er niets meer vanzelf wekt. Daarom is het ook echt uitgevoerd: sleep-mode aan met
+`sleep-after-deploy: 5m`, en gewacht tot de deployment werkelijk sliep.
+
+```
+deployment.apps/prod-web         0/0     0            0     24m
+deployment.apps/prod-web-waker   1/1     1            1     6m22s
+```
+
+Daarna drie keer de publieke URL opgehaald. Onder de oude standaard `auto` had het
+**eerste** verzoek de applicatie gewekt:
+
+```
+1: HTTP 200
+2: HTTP 200
+3: HTTP 200
+na 3 GETs: replicas=0
+```
+
+De wekkerpagina antwoordt, en de applicatie blijft slapen. Ook met een echte browser
+(JavaScript aan, dus de wekkerpagina kon zelf een verzoek doen):
+
+```
+ZICHTBARE TEKST: prod staat in slaapstand
+                 Deze applicatie staat in slaapstand en moet door een beheerder
+                 worden gestart.
+                 Slaapstand - de applicatie start koud op, sessies blijven niet bewaard.
+knop 'Applicatie starten': aanwezig=False
+na browserbezoek: replicas=0
+```
+
+Let op bij het nameten: de wekkerpagina levert de teksten van **alle drie** de standen mee
+in de HTML ("wordt gestart", "Applicatie starten", "moet door een beheerder worden
+gestart"), en JavaScript kiest welke zichtbaar is. Wie op de ruwe HTML grept vindt dus ook
+de knop "Applicatie starten" terwijl die niet getoond wordt. De poort is wat er
+**zichtbaar** is, plus het aantal replicas erna.
 
 ## Taak 5 - De API-weg en de documentatie
 
