@@ -1822,6 +1822,14 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
 
     def _collect_summary(vis_list: list[Any]) -> None:
         for editable in vis_list:
+            # Een VERBORGEN veld heeft de gebruiker nooit ingevuld, dus het hoort nooit in
+            # een samenvatting. Het gaat om dragers: de bijlagensectie draagt bijvoorbeeld
+            # de hele dienstenlijst mee zodat het uploadscherm weet welke diensten aanstaan
+            # (zie AttachmentsService.config_form_section). Die belandde hier als een rauwe
+            # Python-dump in beeld, inclusief de AGE-blokken van het realm-wachtwoord en de
+            # OTP. Versleuteld, maar het hoort niet op het scherm van een samenvatting.
+            if str(editable.widget) == "hidden":
+                continue
             if str(editable.widget) == "group":
                 _collect_summary(editable.children or [])
             elif str(editable.widget) == "sequence":
