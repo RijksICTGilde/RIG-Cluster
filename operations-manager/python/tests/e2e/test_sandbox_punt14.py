@@ -69,6 +69,8 @@ WEB = "web"  # door de wizard aangemaakt
 EXTRA_COMPONENTS = ("alpha", "beta")
 
 RONDES = int(os.environ.get("PUNT14_RONDES", "10"))
+#: Rondes voor de variant MET uitrol: die kost minuten per ronde.
+RONDES_UITROL = int(os.environ.get("PUNT14_RONDES_UITROL", "5"))
 TASK_TIMEOUT = 600.0
 
 #: Waar de meetregels per ronde naartoe gaan. Pytest toont de logregels van de call-fase
@@ -214,6 +216,60 @@ def _hang_component_aan_deployment(
     return _await_task(base_url, task_id, project.api_key)
 
 
+def _gelijktijdige_rondes(
+    project: CreatedProject,
+    sandbox_url: str,
+    forgejo: ForgejoClient,
+    *,
+    prefix: str,
+    rondes: int,
+    patch_uitrol: bool,
+) -> list[str]:
+    """Rondes waarin componentpatches NOG lopen terwijl de deployment wordt aangemaakt.
+
+    Geeft de bevindingen terug; een lege lijst betekent dat punt 14 zich niet voordeed.
+    """
+    bevindingen: list[str] = []
+    uitrol = "true" if patch_uitrol else "false"
+
+    for ronde in range(rondes):
+        deployment = f"{prefix}{ronde}"
+
+        patch_ids = [
+            _patch(
+                sandbox_url,
+                f"/api/v2/projects/{project.name}/components/{component}?rollout={uitrol}",
+                project.api_key,
+                {"memory_limit": f"{256 + 8 * ronde + index}Mi"},
+            )
+            for index, component in enumerate(EXTRA_COMPONENTS)
+        ]
+        upsert = _maak_deployment(sandbox_url, project, deployment)
+        for patch_id in patch_ids:
+            _await_task(sandbox_url, patch_id, project.api_key)
+
+        upsert_failure = _failure(upsert)
+        if upsert_failure is not None:
+            bevindingen.append(f"ronde {ronde}: upsert van '{deployment}' mislukte: {upsert_failure}")
+            continue
+
+        add_failure = _failure(_hang_component_aan_deployment(sandbox_url, project, deployment, EXTRA_COMPONENTS[0]))
+        in_git = _deployment_in_git(forgejo, project.name, deployment)
+        _meet(
+            f"gelijktijdig (uitrol={uitrol}), ronde {ronde}: "
+            f"uitkomst {'OK' if add_failure is None else add_failure[0]}, deployment in git: {in_git}"
+        )
+        if add_failure is not None:
+            bevindingen.append(
+                f"ronde {ronde}: component aan '{deployment}' hangen faalde: {add_failure}; "
+                f"deployment staat {'WEL' if in_git else 'NIET'} in het projectbestand in git"
+            )
+        elif not in_git:
+            bevindingen.append(f"ronde {ronde}: '{deployment}' ontbreekt in het projectbestand in git")
+
+    return bevindingen
+
+
 @pytest.mark.timeout(5400)
 def test_deployment_create_vindt_zijn_eigen_deployment(
     punt14_project: CreatedProject,
@@ -280,46 +336,36 @@ def test_deployment_overleeft_een_gelijktijdige_componentwijziging(
     git staat erbij, want die zegt of de deployment werkelijk verdwenen is (verloren
     wijziging) of dat alleen de lezing hem miste (cache).
     """
-    project = punt14_project
-    bevindingen: list[str] = []
-
-    for ronde in range(RONDES):
-        deployment = f"p14g{ronde}"
-
-        patch_ids = [
-            _patch(
-                sandbox_url,
-                f"/api/v2/projects/{project.name}/components/{component}?rollout=false",
-                project.api_key,
-                {"memory_limit": f"{256 + 8 * ronde + index}Mi"},
-            )
-            for index, component in enumerate(EXTRA_COMPONENTS)
-        ]
-        upsert = _maak_deployment(sandbox_url, project, deployment)
-        for patch_id in patch_ids:
-            _await_task(sandbox_url, patch_id, project.api_key)
-
-        upsert_failure = _failure(upsert)
-        if upsert_failure is not None:
-            bevindingen.append(f"ronde {ronde}: upsert van '{deployment}' mislukte: {upsert_failure}")
-            continue
-
-        add_failure = _failure(_hang_component_aan_deployment(sandbox_url, project, deployment, EXTRA_COMPONENTS[0]))
-        in_git = _deployment_in_git(forgejo, project.name, deployment)
-        _meet(
-            f"gelijktijdig, ronde {ronde}: uitkomst {'OK' if add_failure is None else add_failure[0]}, "
-            f"deployment in git: {in_git}"
-        )
-        if add_failure is not None:
-            bevindingen.append(
-                f"ronde {ronde}: component aan '{deployment}' hangen faalde: {add_failure}; "
-                f"deployment staat {'WEL' if in_git else 'NIET'} in het projectbestand in git"
-            )
-        elif not in_git:
-            bevindingen.append(f"ronde {ronde}: '{deployment}' ontbreekt in het projectbestand in git")
-
+    bevindingen = _gelijktijdige_rondes(
+        punt14_project, sandbox_url, forgejo, prefix="p14g", rondes=RONDES, patch_uitrol=False
+    )
     assert not bevindingen, (
         f"Punt 14 gereproduceerd in {len(bevindingen)} van de {RONDES} gelijktijdige rondes:\n" + "\n".join(bevindingen)
+    )
+
+
+@pytest.mark.timeout(7200)
+def test_deployment_overleeft_een_gelijktijdige_uitrol(
+    punt14_project: CreatedProject,
+    sandbox_url: str,
+    forgejo: ForgejoClient,
+) -> None:
+    """Dezelfde vorm, maar met de componentwijziging MET uitrol - het grootste venster.
+
+    Met ``rollout=false`` is een componentpatch in seconden klaar, en dan is de kans dat
+    hij een gelijktijdige deploymentaanmaak raakt klein. Met uitrol aan verwerkt hij het
+    hele project (manifesten, ArgoCD) en duurt hij minuten, dus loopt hij gegarandeerd
+    nog terwijl de deployment geschreven wordt. Is de gelijktijdigheid uit de taakpoort
+    de oorzaak van punt 14, dan is dit de vorm waarin het zich laat zien.
+
+    Weinig rondes, want elke ronde kost minuten. Regelbaar met ``PUNT14_RONDES_UITROL``.
+    """
+    bevindingen = _gelijktijdige_rondes(
+        punt14_project, sandbox_url, forgejo, prefix="p14u", rondes=RONDES_UITROL, patch_uitrol=True
+    )
+    assert not bevindingen, (
+        f"Punt 14 gereproduceerd in {len(bevindingen)} van de {RONDES_UITROL} rondes met uitrol:\n"
+        + "\n".join(bevindingen)
     )
 
 
