@@ -90,7 +90,7 @@
                 {% if steps.is_last %}
                 {% if not (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) %}
                 <span class="wizard-step__saving" aria-hidden="true">
-                    <c-icon icon="refresh" size="sm"/>Bezig met opslaan&hellip;
+                    <c-icon icon="refresh" size="sm"/>Bezig met opslaan…
                 </span>
                 {% endif %}
                 <c-button html-type="submit" type="primary" show-icon="before" icon="file-text" :label="('Verder') if (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) else ('Opslaan')"/>

@@ -142,7 +142,7 @@
 
                     {% if wizard_token %}<input type="hidden" id="modal-wizard-confirm-token" name="_wizard_token" value="{{ wizard_token }}" />{% endif %}
 
-                    <span id="modal-wizard-confirm-saving" aria-hidden="true">Bezig&hellip;</span>
+                    <span id="modal-wizard-confirm-saving" aria-hidden="true">Bezig…</span>
 
                     {% set bevestig_attrs = {
                         'hx-post': "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/confirm" ~ _token_qs,
