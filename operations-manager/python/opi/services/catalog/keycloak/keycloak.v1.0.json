@@ -90,7 +90,38 @@
     },
     "RestrictAccessConfig": {
       "additionalProperties": false,
-      "description": "``restrict-access`` sub-object; keys are well-defined so extras are forbidden.",
+      "anyOf": [
+        {
+          "properties": {
+            "enabled": {
+              "const": false
+            }
+          }
+        },
+        {
+          "properties": {
+            "role": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "properties": {
+            "realm-role": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "realm-role"
+          ]
+        }
+      ],
+      "description": "``restrict-access`` sub-object; keys are well-defined so extras are forbidden.\n\nEnabling the restriction without naming a role is refused here, so the rule lives in\none place: the model. See ``ROLE_REQUIRED_WHEN_ENABLED`` for why it is also written\nout in the schema.",
       "properties": {
         "enabled": {
           "default": false,

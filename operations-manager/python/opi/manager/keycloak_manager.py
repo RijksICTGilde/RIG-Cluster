@@ -20,7 +20,7 @@ from opi.core.config import settings
 from opi.core.startup import keycloak_operation_with_retry
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
-from opi.services.catalog.keycloak.config_model import LEGACY_ACCOUNT_LINK, AccountLink
+from opi.services.catalog.keycloak.config_model import LEGACY_ACCOUNT_LINK, AccountLink, RestrictAccessConfig
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
@@ -572,31 +572,19 @@ class KeycloakManager:
             if not isinstance(restrict_access, dict):
                 raise ValueError(f"restrict-access must be a dict, got {type(restrict_access).__name__}")
 
-            # Validate required fields if enabled
-            if restrict_access.get("enabled", False):
-                # Either role (client role) or realm-role must be specified
-                has_role = "role" in restrict_access
-                has_realm_role = "realm-role" in restrict_access
-                if not has_role and not has_realm_role:
-                    raise ValueError(
-                        "restrict-access.role or restrict-access.realm-role is required "
-                        "when restrict-access.enabled is True"
-                    )
-                if has_role and not isinstance(restrict_access["role"], str):
-                    raise ValueError(
-                        f"restrict-access.role must be a string, got {type(restrict_access['role']).__name__}"
-                    )
-                if has_realm_role and not isinstance(restrict_access["realm-role"], str):
-                    raise ValueError(
-                        f"restrict-access.realm-role must be a string, "
-                        f"got {type(restrict_access['realm-role']).__name__}"
-                    )
+            # Guardrail through the model, niet nog een keer met de hand. De eis dat
+            # ``enabled`` een rol nodig heeft stond hier uitgeschreven en nergens anders,
+            # dus hij sloeg pas hier toe en stond niet in het schema dat een client leest.
+            # RestrictAccessConfig kent hem nu, en dit is dezelfde controle als die van
+            # ``validate_service_configs``: één waarheid, twee momenten.
+            # ValidationError is een ValueError, dus aanroepers merken geen verschil.
+            checked = RestrictAccessConfig.model_validate(restrict_access)
 
             merged_config["restrict_access"] = {
-                "enabled": restrict_access.get("enabled", False),
-                "role": restrict_access.get("role"),  # Client role (may be None if realm-role is used)
-                "realm_role": restrict_access.get("realm-role"),  # Realm role (takes precedence)
-                "error_message": restrict_access.get("error-message", "${accessDeniedNoPermission}"),
+                "enabled": checked.enabled,
+                "role": checked.role,  # Client role (may be None if realm-role is used)
+                "realm_role": checked.realm_role,  # Realm role (takes precedence)
+                "error_message": checked.error_message,
             }
             if merged_config["restrict_access"]["realm_role"]:
                 logger.info(
