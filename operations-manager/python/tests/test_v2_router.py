@@ -724,6 +724,7 @@ class TestV2RolloutFlag:
             "count": 2,
             "since": "2026-08-01T09:30:00+00:00",
             "task_types": ["add_component", "configure_service"],
+            "rollout_in_progress": True,
         }
 
         response = v2_client.get(
@@ -737,7 +738,26 @@ class TestV2RolloutFlag:
             "count": 2,
             "since": "2026-08-01T09:30:00+00:00",
             "task_types": ["add_component", "configure_service"],
+            "rollout_in_progress": True,
         }
+
+    def test_pending_rollout_endpoint_defaults_to_no_rollout_running(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """Het veld is bijgekomen; een antwoord zonder mag geen 500 geven."""
+        mock_task_service.get_deferred_rollouts.return_value = {
+            "count": 1,
+            "since": None,
+            "task_types": ["add_component"],
+        }
+
+        response = v2_client.get(
+            "/api/v2/projects/test-project/pending-rollout",
+            headers={"X-API-Key": API_KEY},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["rollout_in_progress"] is False
 
     def test_pending_rollout_endpoint_reports_being_in_sync(
         self, v2_client: TestClient, mock_task_service: AsyncMock

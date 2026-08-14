@@ -128,7 +128,7 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "current_cluster": "odcn-production",
         "cluster_base_domains": {},
         "csrf_token": "voorbeeld-token",
-        "pending_rollout": {"count": 0, "since": None, "task_types": []},
+        "pending_rollout": {"count": 0, "since": None, "task_types": [], "rollout_in_progress": False},
         "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
         "deployment_service_actions": {},
         "deployment_service_sections": {},

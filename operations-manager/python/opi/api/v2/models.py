@@ -239,6 +239,15 @@ class PendingRolloutResponse(BaseModel):
         default_factory=list,
         description="Which kinds of change are waiting (e.g. 'configure_service'), deduplicated and sorted.",
     )
+    rollout_in_progress: bool = Field(
+        default=False,
+        description=(
+            "True when a rollout that reconciles the WHOLE project is queued or running right "
+            "now. 'count' only drops once that task completes, so a non-zero count with this "
+            "flag set means the changes are being rolled out at this moment, not that they are "
+            "sitting untouched. Defaults to false, so an older caller reads it as before."
+        ),
+    )
 
 
 class DeploymentDetail(BaseModel):

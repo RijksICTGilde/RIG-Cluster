@@ -1810,7 +1810,12 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # above the tabs, because a project file that silently runs ahead of the cluster is
         # worse than a slow rollout. A task service that is not up must not take the page
         # down with it, so a failure here degrades to "no notice".
-        pending_rollout: dict[str, Any] = {"count": 0, "since": None, "task_types": []}
+        pending_rollout: dict[str, Any] = {
+            "count": 0,
+            "since": None,
+            "task_types": [],
+            "rollout_in_progress": False,
+        }
         task_service = getattr(request.app.state, "task_service", None)
         if task_service is not None:
             try:
