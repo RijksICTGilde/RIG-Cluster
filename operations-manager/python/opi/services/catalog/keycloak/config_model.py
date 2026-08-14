@@ -26,7 +26,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class AccountLink(StrEnum):
@@ -47,10 +47,35 @@ class AccountLink(StrEnum):
 LEGACY_ACCOUNT_LINK = "verify"
 
 
-class RestrictAccessConfig(BaseModel):
-    """``restrict-access`` sub-object; keys are well-defined so extras are forbidden."""
+#: De eis "aan zetten kan alleen mét een rol", uitgedrukt in standaard JSON Schema.
+#:
+#: Diezelfde eis stond alleen in ``KeycloakManager._get_keycloak_service_config`` en sloeg
+#: dus pas toe bij de UITROL, terwijl een client die het schema leest niets zag dat hem
+#: tegenhield. Een ``model_validator`` alleen repareert dat half: die bewaakt de API, maar
+#: verschijnt niet in het gegenereerde schema en dus niet in het OpenAPI-document. Beide
+#: dus, uit één model: de ``anyOf`` beschrijft de regel voor wie hem leest, de validator
+#: dwingt hem af voor wie hem negeert.
+#:
+#: De takken, op volgorde: ``enabled`` staat uit (of ontbreekt, dan geldt de default False),
+#: of er staat een niet-lege ``role``, of er staat een niet-lege ``realm-role``.
+ROLE_REQUIRED_WHEN_ENABLED: dict[str, Any] = {
+    "anyOf": [
+        {"properties": {"enabled": {"const": False}}},
+        {"required": ["role"], "properties": {"role": {"type": "string", "minLength": 1}}},
+        {"required": ["realm-role"], "properties": {"realm-role": {"type": "string", "minLength": 1}}},
+    ]
+}
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+class RestrictAccessConfig(BaseModel):
+    """``restrict-access`` sub-object; keys are well-defined so extras are forbidden.
+
+    Enabling the restriction without naming a role is refused here, so the rule lives in
+    one place: the model. See ``ROLE_REQUIRED_WHEN_ENABLED`` for why it is also written
+    out in the schema.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, json_schema_extra=ROLE_REQUIRED_WHEN_ENABLED)
 
     enabled: bool = Field(default=False, description="Whether sign-in is limited to users holding the role below.")
     role: str | None = Field(default=None, description="Client role a user must hold to be let in.")
@@ -62,6 +87,15 @@ class RestrictAccessConfig(BaseModel):
         alias="error-message",
         description="Message shown to a user without the role; a ${...} value is a Keycloak message key.",
     )
+
+    @model_validator(mode="after")
+    def _rol_verplicht_als_ingeschakeld(self) -> RestrictAccessConfig:
+        """De regel zelf. De tekst is die van de uitrolfout, zodat wie hem kent hem herkent."""
+        if self.enabled and not self.role and not self.realm_role:
+            raise ValueError(
+                "restrict-access.role or restrict-access.realm-role is required when restrict-access.enabled is True"
+            )
+        return self
 
 
 class KeycloakClientEntry(BaseModel):
