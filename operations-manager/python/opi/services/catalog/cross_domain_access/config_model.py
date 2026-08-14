@@ -37,6 +37,8 @@ the ``from`` side simply do not exist in the relevant model and are rejected by
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 #: DNS-1123 label: the shape a project / deployment / component name has, mirroring the
@@ -223,6 +225,12 @@ class CrossDomainAccessConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    #: Both directions are patchable entry by entry, keyed on the ``name`` that already
+    #: is the merge key between the project and deployment layer. Adding one rule with
+    #: the PUT meant resending every other rule, so the rule you forgot was gone. See
+    #: ``opi/services/config_lists.py``.
+    ITEM_KEYS: ClassVar[dict[str, str | None]] = {"inbound": "name", "outbound": "name"}
 
     inbound: list[InboundRulePatch] = Field(
         default_factory=list, description="Rules letting another project's component reach one of mine."

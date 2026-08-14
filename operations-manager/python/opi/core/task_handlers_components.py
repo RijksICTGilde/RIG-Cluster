@@ -604,6 +604,7 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
                 target,
                 add=payload.get("add") or [],
                 remove=payload.get("remove") or [],
+                list_field=payload.get("list_field"),
                 component_name=component_name,
                 deployment_name=deployment_name,
             )
