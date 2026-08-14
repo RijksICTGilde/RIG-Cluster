@@ -30,6 +30,19 @@ page. Run it with `task test-e2e-sandbox`.
 | **Local (in-process)** | `pytest.mark.e2e` | pre-signed cookie for `test@example.com` (`auth_page`) | mocked (no DB/Keycloak/git/k8s) | `task test-e2e` | UI/form/wizard *flow* logic - fast, deterministic, no sandbox |
 | **Sandbox (live)** | `pytest.mark.e2e` + `pytest.mark.sandbox` | pre-signed cookie for `admin@sandbox.rijksapp.dev` (`sandbox_page`) | the real running sandbox | `task test-e2e-sandbox` | proving a change actually works end-to-end + lands in Forgejo |
 
+Twee sandboxsuites staan daarnaast nog een marker verder weg, omdat ze te lang duren voor
+een gewone sandboxrun:
+
+| Marker | Bestand | Wat het doet | Duur |
+|---|---|---|---|
+| `reallife` | `test_sandbox_reallife.py` | vijf projecten, semi-gelijktijdige mutaties via UI en API op hetzelfde projectbestand | ~15 min |
+| `punt14` | `test_sandbox_punt14.py` | gerichte jacht op de intermitterende `deployment_not_found` uit de zad-cli (punt 14) | 9-25 min |
+
+De punt-14-jacht is regelbaar met `PUNT14_RONDES` (rondes met `rollout=false`),
+`PUNT14_RONDES_UITROL` (rondes met uitrol aan, minuten per stuk) en `PUNT14_METINGEN` (een
+bestand waarin hij per ronde een meetregel schrijft -- pytest toont die van een geslaagde
+test niet). Uitkomst van de laatste doorloop: `docs/reallife-run-2026-08-14-rc112.md`.
+
 Both are excluded from the default `pytest` run (`addopts = ... -m 'not ... and not e2e'`), so they
 only run when you select the marker. Prefer **local** unless you specifically need the live cluster.
 
