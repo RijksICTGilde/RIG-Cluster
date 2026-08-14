@@ -25,7 +25,11 @@ class TempStorageService(Service):
         icon="klok",
         color="oranje",
         binding=ServiceBinding.COMPONENT,
-        storage_config={"name": "temp", "type": "ephemeral", "size": "500Mi", "mount-path": "/tmp"},
+        # 100Mi: de kleinste maat die voor echt gebruik iets voorstelt, en een waarde die in
+        # de keuzelijst van het formulier staat (StorageSizeOptionsProvider). Wie meer nodig
+        # heeft zet het bij; een startwaarde hoort niet groter te zijn dan wat de meeste
+        # componenten werkelijk gebruiken.
+        storage_config={"name": "temp", "type": "ephemeral", "size": "100Mi", "mount-path": "/tmp"},
         variables=[var.value for var in TempStorageVariables],
     )
     config_model = StorageConfig

@@ -40,7 +40,7 @@ def test_project_scope_carries_cnpg_defaults():
     dumped = cfg.root.model_dump()
     assert dumped["scope"] == "project"
     assert dumped["instances"] == 1
-    assert dumped["storage"] == "10Gi"
+    assert dumped["storage"] == "1Gi"
     assert dumped["image"].startswith("ghcr.io/cloudnative-pg/postgresql")
 
 
