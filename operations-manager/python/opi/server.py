@@ -21,6 +21,7 @@ from opi.api.image_router import image_router
 from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
+from opi.api.openapi_choices import annotate_config_choices
 from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
@@ -456,7 +457,17 @@ def create_app() -> FastAPI:
         openapi_schema["info"]["x-api-info"] = {
             "v1_status": "deprecated - use /api/v2 endpoints",
             "v2_status": "current - recommended",
+            "choices": (
+                "Config fields that offer a fixed set of values carry `x-choices` "
+                "(`{const, title}` per value); fields whose values depend on the project "
+                "carry `x-choices-source`, naming the endpoint that serves the list."
+            ),
         }
+
+        # De toegestane waarden per configveld, afgeleid uit dezelfde declaratie die het
+        # formulier gebruikt. Hier en niet in de modellen: een keuzelijst kan per cluster
+        # verschillen, en dit document wordt door dat cluster geserveerd.
+        annotate_config_choices(openapi_schema)
 
         app.openapi_schema = openapi_schema
         return app.openapi_schema

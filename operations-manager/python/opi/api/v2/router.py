@@ -1909,8 +1909,10 @@ class ServiceLayerInfo(BaseModel):
         description=(
             "The endpoint that writes this layer's config, method and path. The request body IS "
             "the service's config schema, so the schema itself is read from that operation in the "
-            "OpenAPI document rather than copied here. Null for a layer that carries config but "
-            "has no write route."
+            "OpenAPI document rather than copied here. That schema also carries the values a field "
+            "accepts: a fixed set as `enum` and/or `x-choices` (`const` + `title` per value), and a "
+            "set that depends on the project as `x-choices-source`, naming the endpoint that serves "
+            "the list. Null for a layer that carries config but has no write route."
         ),
     )
     has_form: bool = Field(
