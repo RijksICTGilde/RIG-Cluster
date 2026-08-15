@@ -20,6 +20,8 @@ from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
 from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_namespace, get_mail_relay_port
 from opi.manager.mail_manager import MailManager
@@ -939,8 +941,6 @@ class TestDeRelayAntwoordtGeen404:
     """
 
     def _app(self, aangemaakt: list[dict]) -> web.Application:
-        from aiohttp import web
-
         async def get_principal(request: web.Request) -> web.Response:
             naam = request.match_info["naam"]
             if naam == "bestaat":
@@ -964,8 +964,6 @@ class TestDeRelayAntwoordtGeen404:
         return app
 
     async def _connector(self, aangemaakt: list[dict]):
-        from aiohttp.test_utils import TestServer
-
         server = TestServer(self._app(aangemaakt))
         await server.start_server()
         return MailConnector(str(server.make_url("")).rstrip("/"), "admin", "geheim", verify_tls=False), server
