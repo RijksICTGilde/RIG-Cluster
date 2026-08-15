@@ -281,12 +281,8 @@ class SendEmailService(Service):
         return cached
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
-        """Section visibility, derived from this service's own service_type."""
-        from opi.services.services import service_entry_name
-
-        return self.service_type.value in [
-            service_entry_name(entry) for entry in project_data.get("services", []) or []
-        ]
+        """Section visibility: the same question as everywhere else in this module."""
+        return _selected(project_data)
 
     def config_approvals(self, layer: ConfigLayer):
         """One approval per project: may this project send mail at all.

@@ -80,7 +80,10 @@ class MailConnector:
                 return None
             body = await response.text()
             if response.status >= 400:
-                raise MailRelayError(f"{method} {path} gaf {response.status}: {body}")
+                # Afgekapt: het foutlichaam van de relay kan een heel antwoord zijn en de
+                # tekst komt in de logregel terecht. De eerste regel zegt wat er mis is.
+                detail = body.strip().splitlines()[0][:200] if body.strip() else ""
+                raise MailRelayError(f"{method} {path} gaf {response.status}: {detail}")
             if not body:
                 return {}
             return await response.json(content_type=None)
