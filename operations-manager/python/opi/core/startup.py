@@ -399,6 +399,32 @@ async def keycloak_client_exists_and_works() -> bool:
     return await ensure_keycloak_credentials()
 
 
+async def ensure_platform_mail_account() -> bool:
+    """Make sure ZAD's own account exists on the mail relay.
+
+    Here and not in a project run, because ZAD is not a project: it has no project file to
+    hang an account on and no processing cycle that would create one. Setting up the relay
+    is when the platform account belongs, and a boot IS that moment -- it repeats harmlessly
+    and repairs an account that was removed by hand.
+
+    Non-critical: a cluster without a relay simply has no platform mail yet, and that must
+    not stop OPI from booting. What it does block is password reset and invite mail, which
+    is why the outcome is logged either way.
+    """
+    from opi.connectors.mail import MailRelayError
+    from opi.manager.mail_manager import MailManager
+
+    try:
+        account = await MailManager.ensure_platform_account()
+    except MailRelayError as error:
+        logger.error(f"Platform-mailaccount kon niet worden ingericht: {error}")
+        return False
+    if account is None:
+        return False
+    logger.info(f"Platform-mailaccount {account.username} staat klaar ({account.from_address})")
+    return True
+
+
 async def check_minio_availability() -> bool:
     """
     Check MinIO CLI availability and basic functionality.
@@ -710,6 +736,10 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # Phase 3: MinIO check (non-critical, no retry)
     if not skip_checks:
         await check_minio_availability()
+
+    # Phase 3b: ZAD's own SMTP account (non-critical, no retry)
+    if not skip_checks:
+        await ensure_platform_mail_account()
 
     # Phase 4: Keycloak
     await _setup_keycloak(readiness, skip_checks)
