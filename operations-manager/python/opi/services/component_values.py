@@ -39,7 +39,7 @@ from typing import Any
 
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.base import ConfigLayer
 from opi.utils.age import (
     decrypt_age_content_sync,
     encrypt_age_content_sync,
@@ -296,95 +296,3 @@ def apply_operation(
             )
     updated.update(incoming)
     return updated
-
-
-# --- which of those values may be read back in full (punt 5) ------------------
-#
-# Everything here is about SHOWING, never about storing. The values themselves stay in
-# the one AGE block ``encode`` writes, whether they are marked as a secret or not; the
-# only thing that lands in the project file in plain text is the NAMES of the values
-# that are not secret, and those names were already readable (a read has always returned
-# them, and the whole point of the endpoint is that it does).
-#
-# It is a list of what may be shown rather than a list of what must be hidden, because
-# the two fail in opposite directions. A missing entry in a "these are secret" list
-# hands out a secret; a missing entry here masks a value that did not need masking. A
-# project file written before this existed carries no list at all, so every one of its
-# values keeps coming back as ``***`` -- unchanged behaviour, on purpose.
-
-#: Suffix of the plain sibling property naming the values whose content is not a secret.
-PUBLIC_SUFFIX = "-public"
-
-
-def public_property(owned_property: str) -> str:
-    """The property next to *owned_property* that names its non-secret values."""
-    return f"{owned_property}{PUBLIC_SUFFIX}"
-
-
-def read_public_keys(node: dict[str, Any], service: Service) -> set[str]:
-    """The names at *node* whose value the writer marked as not a secret.
-
-    Empty for a service that does not take the flag, for a node that has no list, and
-    for a list that is not a list of names -- "I cannot tell" and "it is a secret" are
-    deliberately the same answer here.
-    """
-    if not service.owned_values_secret_flag or service.owned_property is None:
-        return set()
-    raw = node.get(public_property(service.owned_property))
-    if not isinstance(raw, list):
-        return set()
-    return {str(key) for key in raw if isinstance(key, str)}
-
-
-def write_public_keys(node: dict[str, Any], service: Service, keys: set[str]) -> None:
-    """Store *keys* as the non-secret names at *node*, or remove the property when empty.
-
-    Sorted, so the same set never produces a different line and therefore never a commit
-    of its own.
-    """
-    if service.owned_property is None:  # pragma: no cover - guarded by the caller
-        return
-    prop = public_property(service.owned_property)
-    if keys:
-        node[prop] = sorted(keys)
-    else:
-        node.pop(prop, None)
-
-
-def value_is_secret(service: Service, key: str, value: str, public: set[str]) -> bool:
-    """Whether *value* must be masked when it is read back.
-
-    Two answers combined, in the only order that is safe. The service answers first from
-    the value itself (``aliases`` knows a reference is not a secret); a name the writer
-    explicitly marked as public overrides that, because for ``user-env-vars`` the value
-    cannot be judged and the writer is the only one who knows.
-    """
-    return key not in public and service.owned_value_is_secret(key, value)
-
-
-def next_public_keys(
-    current: set[str],
-    operation: ValuesOperation,
-    *,
-    values: dict[str, str] | None = None,
-    keys: list[str] | None = None,
-    public: set[str] | None = None,
-    remaining: set[str],
-) -> set[str]:
-    """The set of non-secret names after *operation*.
-
-    The flag travels with the write and with nothing else. Writing a name without
-    listing it as public makes it a secret again, in both directions: an omitted flag
-    can only ever hide more, never less, so a caller who forgets the field cannot
-    accidentally publish a value they just replaced with a password.
-
-    *remaining* is the set of names that still exist afterwards; a flag for a name that
-    was deleted has nothing left to describe and is dropped rather than left to describe
-    the next value that happens to get that name.
-    """
-    if operation is ValuesOperation.CLEAR:
-        return set()
-    if operation is ValuesOperation.DELETE:
-        return (current - set(keys or [])) & remaining
-    written = set(values or {})
-    return ((current - written) | ((public or set()) & written)) & remaining

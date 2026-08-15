@@ -450,27 +450,22 @@ def test_component_with_partial_security_block_is_accepted() -> None:
     validate_project_schema(project)
 
 
-def test_component_accepts_the_non_secret_env_var_marking() -> None:
-    """The names of non-secret env-vars are a plain list next to the encrypted block.
+def test_component_rejects_a_marking_of_non_secret_env_vars() -> None:
+    """There is no way to say an env-var value may be read back, not even in the file.
 
-    ``additionalProperties: false`` on the component means a write of this list fails
-    the save unless the schema knows it -- which is exactly how it would be discovered:
-    long after the API accepted the request.
+    Such a list existed briefly and was withdrawn: an env-var value can hold a secret,
+    and the API must not have a road that hands one out. ``additionalProperties: false``
+    is what keeps the door shut for a hand-edited project file too.
     """
     project = _valid_project()
-    project["components"][0]["user-env-vars-public"] = ["APP_MODE", "LOG_LEVEL"]
-    validate_project_schema(project)
+    project["components"][0]["user-env-vars-public"] = ["APP_MODE"]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
 
 
-def test_deployment_component_accepts_the_non_secret_env_var_marking() -> None:
+def test_deployment_component_rejects_a_marking_of_non_secret_env_vars() -> None:
     project = _valid_project()
     project["deployments"][0]["components"][0]["user-env-vars-public"] = ["APP_MODE"]
-    validate_project_schema(project)
-
-
-def test_the_non_secret_marking_rejects_a_name_that_cannot_be_an_env_var() -> None:
-    project = _valid_project()
-    project["components"][0]["user-env-vars-public"] = ["niet geldig"]
     with pytest.raises(ProjectSchemaError):
         validate_project_schema(project)
 
