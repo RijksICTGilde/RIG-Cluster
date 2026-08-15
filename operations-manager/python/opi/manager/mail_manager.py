@@ -31,7 +31,7 @@ from opi.services import ServiceType
 from opi.services.catalog.send_email import is_approved
 from opi.services.project import Project
 from opi.utils.age import decrypt_password_smart_auto, encrypt_age_content, get_project_public_key
-from opi.utils.naming import generate_mail_account_name
+from opi.utils.naming import MAIL_PROJECT_ACCOUNT_PREFIX, generate_mail_account_name
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import SendEmailSecret
 
@@ -42,6 +42,40 @@ logger = logging.getLogger(__name__)
 
 #: Config path of the send-email block on the project level.
 _CONFIG_BASE = f"services/{ServiceType.SEND_EMAIL.value}/config"
+
+
+class MailAccountNameError(ValueError):
+    """An account name is being used on a path that may not have it.
+
+    The relay has one flat account namespace: ZAD's own account stands next to the
+    project accounts. Two things keep a project off the platform account, and both are
+    needed. The names are disjoint by construction (project accounts carry
+    ``MAIL_PROJECT_ACCOUNT_PREFIX``), and the project path refuses the platform name
+    outright -- because the prefix only holds while nobody points
+    ``MAIL_PLATFORM_ACCOUNT`` INTO that prefix, and because the project path also gets
+    account names out of the project file, which a repair or an older file can carry.
+    """
+
+
+def _refuse_platform_account(username: str) -> None:
+    """Refuse the platform account on the project path.
+
+    Both directions of the collision are caught: a project account that is called like
+    the platform account, and a platform account that has been configured into the
+    project prefix. In either case a project would create, update or DELETE the account
+    ZAD sends its password-reset mail from.
+    """
+    platform = settings.MAIL_PLATFORM_ACCOUNT
+    if username == platform:
+        raise MailAccountNameError(
+            f"Mailaccount {username} is het platformaccount van ZAD zelf en is niet van een project; "
+            "de projectweg raakt het niet aan"
+        )
+    if platform.startswith(MAIL_PROJECT_ACCOUNT_PREFIX):
+        raise MailAccountNameError(
+            f"MAIL_PLATFORM_ACCOUNT ({platform}) staat in de naamruimte van de projectaccounts "
+            f"({MAIL_PROJECT_ACCOUNT_PREFIX}...): dan kan een project het platformaccount overnemen"
+        )
 
 
 class MailManager:
@@ -60,12 +94,18 @@ class MailManager:
         from_address: str,
         bounce_address: str,
         messages_per_day: int,
+        is_platform_account: bool = False,
     ) -> MailAccount:
         """Make the relay hold exactly this account. The ONE place an account is made.
 
         Replay-safe by contract (``instructions/services.md``): an account that already
         exists is brought in line rather than refused, so processing a project twice is a
         no-op and a changed limit takes effect on the next run.
+
+        Which is exactly why the platform account has to be refused HERE and not only at
+        the caller: "an existing account is brought in line" means a project that reaches
+        this method with ZAD's account name gets the relay to overwrite ZAD's password and
+        sender address. Only the platform caller says so itself.
 
         Args:
             connector: The relay connector to act through.
@@ -76,10 +116,25 @@ class MailManager:
             messages_per_day: Daily budget recorded for this account. Not handed to the
                 relay: Stalwart v0.11 has no per-account limit, so the relay enforces one
                 ceiling for every account from its own configuration.
+            is_platform_account: Only the platform caller sets this. Everything else is
+                the project path and may not touch ZAD's own account.
 
         Returns:
             The account as it now stands on the relay.
+
+        Raises:
+            MailAccountNameError: The project path asked for the platform account.
         """
+        if not is_platform_account:
+            _refuse_platform_account(username)
+
+        # The relay refuses an account whose address is in a domain it does not know
+        # ({"error":"notFound","item":"<domein>"} on the create, measured against
+        # v0.11.8), so the domain of both addresses is made first. Idempotent: an
+        # existing domain is left alone.
+        await connector.ensure_domain(from_address.rpartition("@")[2])
+        await connector.ensure_domain(bounce_address.rpartition("@")[2])
+
         existing = await connector.get_principal(username)
         if existing is None:
             await connector.create_principal(
@@ -233,6 +288,7 @@ class MailManager:
             from_address=from_address,
             bounce_address=f"bounce+{username}@{domain}",
             messages_per_day=settings.MAIL_PLATFORM_MESSAGES_PER_DAY,
+            is_platform_account=True,
         )
         logger.info(f"Platform-mailaccount {username} staat klaar op de relay")
         return account
@@ -356,7 +412,16 @@ class MailManager:
         The ONE removal, so a withdrawn approval and a deleted project take the same path.
         Two removals would differ the moment one of them learns something the other does
         not, and the withdrawal path is the one nobody exercises.
+
+        Every removal is a PROJECT removal -- the platform account has no lifecycle that
+        ends -- so the platform name is refused here without an exception for anyone. That
+        also covers the name that comes out of the project FILE in ``_revoke``, which is
+        the one path where the name is not computed but read.
+
+        Raises:
+            MailAccountNameError: The name is the platform account of ZAD itself.
         """
+        _refuse_platform_account(username)
         try:
             connector = await create_mail_connector()
         except MailRelayNotConfiguredError:
