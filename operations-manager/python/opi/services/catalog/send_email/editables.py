@@ -5,9 +5,9 @@ of the address, and the daily budget. The domain is not editable here -- a domai
 own needs a DKIM record in that zone before a single message arrives, so it is a request,
 not a form field (see ``help.md`` and the plan's afzenderdomein paragraph).
 
-``from-domain`` therefore exists in the config model but has no editable: it is reachable
-through the API and the file for the projects the platform sets it up for, which is
-exactly the state the model comment describes.
+``from-domain`` therefore exists in the config model but has no editable AND is marked
+platform-managed: no editable keeps it out of the form, but the generated PUT is the other
+door, and one that stays open after the single approval verdict has been given.
 """
 
 from __future__ import annotations

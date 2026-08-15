@@ -10,6 +10,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
 import httpx
 
 if TYPE_CHECKING:
@@ -410,13 +411,20 @@ async def ensure_platform_mail_account() -> bool:
     Non-critical: a cluster without a relay simply has no platform mail yet, and that must
     not stop OPI from booting. What it does block is password reset and invite mail, which
     is why the outcome is logged either way.
+
+    "Non-critical" only holds if every way this can fail is caught HERE: ``server.py`` awaits
+    ``run_startup_tasks`` without a guard, so an exception escaping this function takes the
+    boot down and phases 4 and 5 (Keycloak, OAuth) never run. A relay that is configured but
+    unreachable does not raise ``MailRelayError`` -- aiohttp raises its own
+    ``ClientConnectorError`` before there is any HTTP answer to turn into one. So catch what
+    ``check_minio_availability`` right below catches too: the transport errors as well.
     """
     from opi.connectors.mail import MailRelayError
     from opi.manager.mail_manager import MailManager
 
     try:
         account = await MailManager.ensure_platform_account()
-    except MailRelayError as error:
+    except (MailRelayError, aiohttp.ClientError, OSError) as error:
         logger.error(f"Platform-mailaccount kon niet worden ingericht: {error}")
         return False
     if account is None:

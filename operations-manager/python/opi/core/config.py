@@ -390,7 +390,6 @@ class Settings(BaseSettings):
     MAIL_PLATFORM_ACCOUNT: str = "zad-platform"
     MAIL_PLATFORM_PASSWORD: str = ""
     MAIL_PLATFORM_FROM_LOCAL_PART: str = "noreply"
-    MAIL_PLATFORM_FROM_NAME: str = "ZAD"
     MAIL_PLATFORM_MESSAGES_PER_DAY: int = 2000
 
     # Default daily message budget for a project account when it sets none itself.

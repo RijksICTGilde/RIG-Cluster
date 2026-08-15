@@ -143,7 +143,11 @@ class MailManager:
             messages_per_day=messages_per_day,
         )
 
-        if entry is None:
+        # Also when the entry EXISTS but no longer says what the relay holds: a project that
+        # changes its local part gets a new sender address on the relay, and a project file
+        # that keeps showing the old one is a wrong answer to "who does this project send
+        # as". Only on a real difference, so a run that changes nothing makes no commit.
+        if entry is None or self._entry_is_stale(entry, account):
             await self._store_account(view, project_data, project_name, cluster, account, password)
 
         self.project_manager._add_secret_to_create(
@@ -321,6 +325,20 @@ class MailManager:
         if entry is None or not entry.get("password"):
             return None, None
         return entry, await decrypt_password_smart_auto(entry["password"])
+
+    @staticmethod
+    def _entry_is_stale(entry: dict[str, Any], account: MailAccount) -> bool:
+        """Whether the stored entry still describes the account the relay now holds.
+
+        Only the fields the relay is the authority on. The password is deliberately not
+        compared: it is the stored one BY construction (it is where the run got it from),
+        and comparing an AGE ciphertext to a plaintext would call every run stale.
+        """
+        return (
+            entry.get("username") != account.username
+            or entry.get("from-address") != account.from_address
+            or entry.get("bounce-address") != account.bounce_address
+        )
 
     async def _store_account(
         self,
