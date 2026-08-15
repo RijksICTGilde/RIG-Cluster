@@ -58,11 +58,17 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # De upstream mailserver, via de egressgateway. Alleen submission; verder heeft de
-    # relay buiten het cluster niets te zoeken.
+    # De upstream mailserver, via de egressgateway. Alleen submission naar DAT adres:
+    # rmrmail.rijksweb.nl resolvet naar 145.21.161.201 (gemeten vanuit rig-prd-vlam-wt8,
+    # zie plans/mailrelay.md, aanvulling 1). Een 0.0.0.0/0 hierop zou van de relay een
+    # uitgang naar elke mailserver op internet maken, en dat is precies de open relay die
+    # de rest van dit ontwerp probeert te vermijden.
+    #
+    # Verandert dat adres, dan verandert deze regel mee. Een NetworkPolicy kent geen
+    # namen, alleen CIDR's, dus dit is niet af te leiden uit MAIL_UPSTREAM_HOST.
     - to:
         - ipBlock:
-            cidr: 0.0.0.0/0
+            cidr: 145.21.161.201/32
       ports:
         - protocol: TCP
           port: 587
