@@ -105,7 +105,12 @@ from opi.services.postgres_scope import project_uses_dedicated_postgres, schema_
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.redeploy import run_redeploy_hooks
-from opi.services.registry import deployment_manifest_services, manifest_services, provisioning_services
+from opi.services.registry import (
+    deployment_manifest_services,
+    generate_missing_values,
+    manifest_services,
+    provisioning_services,
+)
 from opi.services.services import service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
@@ -8003,6 +8008,12 @@ class ProjectManager:
             except ServiceValidationError as e:
                 return {"success": False, "error": str(e), "error_type": "invalid_target"}
 
+            # Wat de schrijver leeg liet en de dienst zelf invult -- vandaag een
+            # uitnodigingssleutel. De portal deed dit al via post_merge; deze weg deed het
+            # niet, dus een via de API aangemaakte uitnodiging hield de lege string en had
+            # een link waar niemand iets mee kon.
+            generated = generate_missing_values(project_data)
+
             # Domeinen en subdomeinen zijn op aanvraag, en deze weg kon er een claimen
             # zonder de aanvraag te doen: de config werd geschreven, er kwam geen ingress
             # op het gevraagde adres en niets vertelde de client waarom. Dit is dezelfde
@@ -8020,6 +8031,7 @@ class ProjectManager:
                 "success": True,
                 "service": service_name,
                 "target": target,
+                "generated": generated,
                 "approvals": self._approval_notices(project_data, deployment_name),
             }
 
@@ -8124,6 +8136,10 @@ class ProjectManager:
             except ServiceValidationError as e:
                 return {"success": False, "error": str(e), "error_type": "invalid_target"}
 
+            # Een toegevoegde entry kan net zo goed een lege uitnodigingssleutel dragen
+            # als een hele config dat kan; zie configure_service.
+            generated = generate_missing_values(project_data)
+
             commit_message = f"Patch service '{service_name}' config at {target} target in project '{project_name}'"
             try:
                 await self.save_and_commit_project(project_data, commit_message)
@@ -8131,7 +8147,7 @@ class ProjectManager:
                 return {"success": False, "error": str(e), "error_type": "validation_error"}
 
             logger.info(f"Patched service '{service_name}' config at {target} target in project '{project_name}'")
-            return {"success": True, "service": service_name, "target": target, **counts}
+            return {"success": True, "service": service_name, "target": target, "generated": generated, **counts}
 
         except Exception as e:
             error_msg = f"Error patching service '{service_name}' config: {e}"

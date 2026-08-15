@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 
+from opi.services.catalog.approval import ApprovalStatus
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -250,6 +251,36 @@ class PendingRolloutResponse(BaseModel):
     )
 
 
+class ApprovalNoticeStatus(StrEnum):
+    """De stand van een goedkeuring die deze deployment nog NIET heeft.
+
+    Een echte enum en geen kale string, want dit veld is bedoeld om op te vertakken: een
+    pijplijn hoort te falen op een AFGEWEZEN aanvraag en te wachten op een LOPENDE. Op
+    drie woorden vertakken die de spec niet belooft is stil kapotgaan zodra er een vierde
+    bijkomt, dus staat de verzameling nu in ``/openapi.json``.
+
+    Wat elke waarde betekent, en wat een client ermee moet:
+
+    * ``requested`` -- de aanvraag staat open en wacht op een beheerder. Er is niets mis;
+      wachten of zwijgen is het juiste gedrag. De aanvraag kan dagen lopen.
+    * ``denied`` -- een beheerder heeft de aanvraag afgewezen. Dit gaat vanzelf niet meer
+      goed komen: hier hoort een pijplijn op te falen. ``by``, ``date`` en ``message``
+      dragen het oordeel.
+    * ``none`` -- er staat nog geen aanvraag op naam van deze waarde. Ook dit is niet
+      goedgekeurd, dus het gevolg in ``text`` geldt onverkort, maar er is nog niemand die
+      erop zit te wachten.
+
+    ``approved`` ontbreekt met opzet: deze lijst bevat alleen wat een deployment nog niet
+    heeft, dus wat is goedgekeurd staat er niet in. De leden zijn afgeleid van
+    :class:`ApprovalStatus`, de levenscyclus die in het projectbestand staat, zodat de
+    spelling hier niet los kan raken van de opgeslagen waarde.
+    """
+
+    NONE = ApprovalStatus.NONE
+    REQUESTED = ApprovalStatus.REQUESTED
+    DENIED = ApprovalStatus.DENIED
+
+
 class ApprovalNoticeResponse(BaseModel):
     """Een goedkeuring die deze deployment nodig heeft en (nog) niet heeft.
 
@@ -270,12 +301,14 @@ class ApprovalNoticeResponse(BaseModel):
     type: str = Field(..., description="Wat er goedgekeurd moet worden binnen die dienst.", examples=["domain"])
     label: str = Field(..., description="Hoe de portal dit soort goedkeuring noemt.", examples=["Domein"])
     subject: str = Field(..., description="Wat er is aangevraagd.", examples=["mijn-app.nl"])
-    status: str = Field(
+    status: ApprovalNoticeStatus = Field(
         ...,
         description=(
-            "De stand van de aanvraag: 'requested' (aangevraagd, wacht op een beheerder), "
-            "'denied' (afgewezen) of 'none' (nog niets aangevraagd). 'approved' komt hier "
-            "niet voor: wat is goedgekeurd staat niet in deze lijst."
+            "De stand van de aanvraag, om op te vertakken: 'requested' (aangevraagd, wacht op een "
+            "beheerder -- wachten of zwijgen), 'denied' (afgewezen door een beheerder -- dit komt "
+            "vanzelf niet goed, hier hoort een pijplijn op te falen) of 'none' (nog niets "
+            "aangevraagd). 'approved' komt hier niet voor: wat is goedgekeurd staat niet in deze "
+            "lijst."
         ),
         examples=["requested"],
     )
