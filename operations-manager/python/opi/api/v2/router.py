@@ -2220,6 +2220,12 @@ async def get_service_config_v2(
     `invite.active`, see `Service.api_singular_lists`). If the file holds more than one,
     this is a 409 rather than the first entry with the rest quietly missing.
 
+    **The invite key comes back**, and that is a decision rather than an oversight: the
+    code IS the invitation, so whoever cannot read it back cannot send it on -- only
+    replace it, which invalidates a link that may already be on its way. The reasoning in
+    full is in the module docstring of `opi.services.catalog.invite`. It does not
+    generalise: `user-env-vars` values stay unreadable, for reasons of their own.
+
     Headers:
         X-API-Key: The API key for the project (required)
     """
@@ -2368,7 +2374,8 @@ def _refuse_singular_overflow(service_name: str, target: str, stored: Any, singu
     which is true for as long as there is one entry. It is a facade, not a fact, so the
     moment the file disagrees this layer stops pretending: showing the first entry would
     hide the rest and writing one would replace them, and for an invite that loss cannot
-    be undone -- the key is the secret in the link and no read gives it back.
+    be undone -- the project file is the only place that invitation exists, and an
+    overwritten link stops working for whoever already had it.
 
     The way out is the PATCH on the list itself, which addresses entries one at a time and
     has no singular surface to trip over. Naming it here matters: a refusal that does not
