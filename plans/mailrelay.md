@@ -231,3 +231,21 @@ Sinds 15 augustus geldt in de API de regel dat configdata die OPI zelf zet niet 
 ## Wat deze aanvulling niet verandert
 
 De identiteitsregels, het afzenderdomein, de limieten, de bouwlijst voor OPI en de gefaseerde uitrol blijven zoals ze hierboven staan. Openstaande beslissing 5 (de servicenaam) blijft open; mijn voorkeur is nog steeds `send-email`.
+
+## 6. Het gebruik van de mailrelay loopt via goedkeuring
+
+Toegevoegd na het shippen, en het is geen detail aan de rand: **een project dat de maildienst aanzet, krijgt pas iets als een beheerder dat heeft goedgekeurd.**
+
+Dat gaat via de generieke goedkeuringsweg die er inmiddels is, dezelfde die publish-on-web voor domeinen en subdomeinen gebruikt: de dienst declareert zijn goedkeuring met een `ApprovalSpec` in `config_approvals(...)`, en beantwoordt `ensure_approval_requests()` zodat het aanzetten van de dienst de aanvraag aanmaakt. Geen tweede mechanisme, geen eigen scherm: de aanvraag verschijnt in de bestaande beheerdersinterface en wordt daar afgehandeld, en de wachtstand komt via dezelfde weg terug in de API als bij een domeinaanvraag.
+
+Het gedrag per status is expres saai:
+
+| Status | Wat er gebeurt |
+|---|---|
+| geen aanvraag / in behandeling | **niets.** Geen account op de relay, geen netwerkbeleid, geen credentials in de projectsecrets. |
+| afgewezen | hetzelfde: niets. |
+| goedgekeurd | het account wordt aangemaakt, het netwerkbeleid komt erbij, de variabelen komen in de secrets. |
+
+Er is dus geen half werkende tussentoestand, en dat is bewust. Een account dat wel bestaat maar niet mag mailen, of een netwerkbeleid zonder account, is een toestand die niemand kan uitleggen en die bij het opruimen wordt vergeten. Alles of niets.
+
+Twee dingen om bij het bouwen scherp te houden. Het intrekken van een goedkeuring hoort hetzelfde pad te volgen als een projectverwijdering, anders blijft er een weesaccount op de relay achter. En de wachtstand moet zichtbaar zijn in het projectscherm en in de API, want een dienst die aanstaat en niets doet zonder dat iemand het ziet, is precies de klasse fout die we vandaag bij de domeinaanvraag hebben weggehaald.
