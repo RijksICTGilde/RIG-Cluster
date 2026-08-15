@@ -245,6 +245,18 @@ class ConfigureServiceResult(BaseModel):
     service: str | None = None
     target: str | None = None
     removed: bool | None = None
+    generated: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Waarden die het platform invulde omdat u ze leeg liet, per yaml-pad in het projectbestand. "
+            "Leeg wanneer u alles zelf meegaf, wat het normale geval is. Vandaag is er een: een "
+            "uitnodigingssleutel ('services/invite/config/active[0]/key'), de code in de "
+            "uitnodigingslink. Dit is de enige plek waar u een gegenereerde code te zien krijgt op het "
+            "moment dat hij ontstaat; daarna is hij op te vragen met een gewone lezing van de "
+            "invite-config."
+        ),
+        examples=[{"services/invite/config/active[0]/key": "Xk3pQ7rL2mNvB8dTfW1aYz"}],
+    )
     approvals: list[ApprovalNoticeResponse] = Field(default_factory=list, description=APPROVALS_DESCRIPTION)
     processing: ProcessingStatus | None = None
     # Failure fields

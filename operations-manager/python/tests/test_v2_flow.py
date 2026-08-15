@@ -730,8 +730,8 @@ class TestSingularServiceConfigSurface:
 
     A facade, declared by the service itself (`api_singular_lists`), and it may only
     exist while it is true: a file holding more than one entry is refused, never shown
-    as one and never overwritten by one. The invite key is the secret in the link and
-    comes back in no read response, so that overwrite would be unrecoverable.
+    as one and never overwritten by one. The project file is the only place an invitation
+    exists, so that overwrite would be unrecoverable.
     """
 
     _PATH = "/api/v2/projects/test-project/services/invite/config/project"
@@ -844,12 +844,54 @@ class TestSingularServiceConfigSurface:
     def test_delete_still_clears_the_whole_block(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         # Deliberately NOT refused: DELETE says "clear this config" and does exactly that,
         # facade or no facade. Refusing it would leave a project with several invites no
-        # way back at all, since a targeted PATCH-remove needs keys no read gives out.
+        # way back at all.
         mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
         with _stored_invites({"key": "eerste"}, {"key": "tweede"}):
             response = v2_client.delete(self._PATH, headers=HEADERS)
         assert response.status_code == 202
         assert mock_task_service.create_task.call_args[1]["payload"]["operation"] == "clear"
+
+
+class TestDeUitnodigingscodeIsTerugTeLezen:
+    """De code IS de uitnodiging, dus een leesantwoord geeft hem terug.
+
+    Dit was eerder andersom bedoeld, en het is een besluit van de eigenaar dat het nu zo
+    is. Drie argumenten, en ze staan voluit in de moduletoelichting van
+    ``opi/services/catalog/invite``: (1) wie de code niet kan teruglezen kan de
+    uitnodiging niet versturen, alleen vervangen, waarmee een link die al onderweg is
+    ongeldig wordt; (2) hij is niet geheim in de gewone zin, want wie de link heeft kan
+    hem inwisselen; (3) verbergen voor de projecteigenaar beschermt niemand, die heeft de
+    projectsleutel al.
+
+    Deze klasse legt de belofte net zo hard vast als de oude belofte lag, en houdt de
+    enkelvoudige gevel eromheen (``api_singular_lists``) in stand.
+    """
+
+    _READ = "/api/v2/projects/test-project/services/invite/config"
+
+    def test_de_lezing_geeft_de_code_terug(self, v2_client: TestClient) -> None:
+        with _stored_invites({"key": "de-echte-code", "realm-roles": ["viewer"]}):
+            response = v2_client.get(self._READ, headers=HEADERS)
+
+        assert response.status_code == 200
+        config = response.json()["configurations"][0]["config"]
+        # Door de enkelvoudige gevel heen, en met de code erin.
+        assert config["active"]["key"] == "de-echte-code"
+
+    def test_de_spec_zegt_dat_de_code_terugkomt(self, v2_client: TestClient) -> None:
+        """Een belofte die niet in het document staat, bestaat niet voor een client."""
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        key = spec["components"]["schemas"]["InviteEntry"]["properties"]["key"]
+
+        assert "RETURNED by a read" in key["description"]
+
+    def test_het_aanmaken_kan_een_gegenereerde_code_melden(self, v2_client: TestClient) -> None:
+        """De andere helft van het besluit: bij het aanmaken krijg je hem ook."""
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        generated = spec["components"]["schemas"]["ConfigureServiceResult"]["properties"]["generated"]
+
+        assert generated["description"]
+        assert "invite" in generated["description"]
 
     def test_a_list_service_without_the_marker_keeps_its_list(self, v2_client: TestClient) -> None:
         # The facade is a declaration, not a rule about lists: sleep-mode.match and
