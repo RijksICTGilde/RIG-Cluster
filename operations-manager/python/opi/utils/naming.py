@@ -714,16 +714,32 @@ def generate_redis_username(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(username, 63)
 
 
+#: Prefix every project account on the mail relay carries.
+#:
+#: The relay has ONE flat account namespace: the platform account of ZAD itself
+#: (``MAIL_PLATFORM_ACCOUNT``, by default ``zad-platform``) stands next to the project
+#: accounts. Without this prefix a project could simply be CALLED ``zad-platform`` -- it is
+#: a valid project name -- and then take over ZAD's own account: its password, its sender
+#: address, and with a deletion the account of the platform itself. The prefix makes the
+#: two sets disjoint by construction, which the refusal in ``MailManager`` then only has to
+#: guard against a misconfigured platform name.
+MAIL_PROJECT_ACCOUNT_PREFIX = "project-"
+
+
 def generate_mail_account_name(project_name: str) -> str:
     """
     Generate the SMTP account name a project gets on the platform mail relay.
 
-    Format: {project} (lowercase, hyphen separated).
+    Format: project-{project} (lowercase, hyphen separated).
 
     Per PROJECT and not per deployment, unlike the MinIO and Redis names above: the
     account is the unit the daily limit and the bounce address hang on, and splitting it
     per deployment would give one project several budgets and make a complaint about a
     message traceable to a deployment nobody outside the platform knows about.
+
+    The prefix keeps the project accounts out of the platform account's namespace; see
+    ``MAIL_PROJECT_ACCOUNT_PREFIX``. It is injective, so two projects still cannot end up
+    on one account.
 
     Args:
         project_name: Name of the project
@@ -733,9 +749,9 @@ def generate_mail_account_name(project_name: str) -> str:
 
     Example:
         >>> generate_mail_account_name("algor-odc")
-        'algor-odc'
+        'project-algor-odc'
     """
-    return _truncate_if_needed(_sanitize_for_lowercase(project_name), 63)
+    return _truncate_if_needed(f"{MAIL_PROJECT_ACCOUNT_PREFIX}{_sanitize_for_lowercase(project_name)}", 63)
 
 
 def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:

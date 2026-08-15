@@ -389,6 +389,9 @@ class Settings(BaseSettings):
     # kept is ``MAIL_PLATFORM_SECRET_NAME`` below.
     # A stricter limit than a project account gets, because it carries password-reset
     # tokens: a bug in the project side must not be able to eat this account's budget.
+    # It stands in the SAME flat namespace as the project accounts, so it must stay out of
+    # their prefix (``MAIL_PROJECT_ACCOUNT_PREFIX``): a name inside it is reachable from
+    # the project path again, and MailManager refuses that path rather than allow it.
     MAIL_PLATFORM_ACCOUNT: str = "zad-platform"
     MAIL_PLATFORM_FROM_LOCAL_PART: str = "noreply"
     MAIL_PLATFORM_MESSAGES_PER_DAY: int = 2000
