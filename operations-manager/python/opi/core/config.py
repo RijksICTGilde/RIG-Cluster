@@ -372,6 +372,30 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = "changeMe123!"
 
+    # SMTP relay configuration (send-email service).
+    # The relay is the only thing on the platform that talks to the upstream mail
+    # server; everything else gets an account on it. Empty MAIL_RELAY_API_URL means
+    # the relay is not deployed on this cluster and the service refuses to provision
+    # rather than handing out credentials that lead nowhere.
+    MAIL_RELAY_API_URL: str = ""  # Stalwart management API, e.g. http://rig-mail-relay.rig-operations-ron:8080
+    MAIL_RELAY_ADMIN_USERNAME: str = "admin"
+    MAIL_RELAY_ADMIN_PASSWORD: str = ""  # supports age:/base64+age:/plain: prefixes
+    MAIL_RELAY_VERIFY_TLS: bool = True
+
+    # ZAD's own account on the relay. It is not a project, so it has no project file to
+    # hang on; its password comes from the SOPS secret in the relay's namespace and is
+    # read here like any other platform secret (plans/mailrelay.md, aanvulling 4).
+    # A stricter limit than a project account gets, because it carries password-reset
+    # tokens: a bug in the project side must not be able to eat this account's budget.
+    MAIL_PLATFORM_ACCOUNT: str = "zad-platform"
+    MAIL_PLATFORM_PASSWORD: str = ""
+    MAIL_PLATFORM_FROM_LOCAL_PART: str = "noreply"
+    MAIL_PLATFORM_FROM_NAME: str = "ZAD"
+    MAIL_PLATFORM_MESSAGES_PER_DAY: int = 2000
+
+    # Default daily message budget for a project account when it sets none itself.
+    MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY: int = 500
+
     # Metrics backend configuration
     # "prometheus" = direct Prometheus access (local/dev)
     # "grafana" = query via Grafana API (ODCN production)

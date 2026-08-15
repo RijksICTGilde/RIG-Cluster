@@ -304,7 +304,12 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             for service_type, service in SERVICES.items()
             if any(service.platform_managed_fields(layer) for layer in ConfigLayer)
         }
-        assert declared == {"keycloak": ["realms"], "publish-on-web": ["domains"]}
+        assert declared == {
+            "keycloak": ["realms"],
+            "publish-on-web": ["domains"],
+            # RC-114: the SMTP account and its password are written by the mail manager.
+            "send-email": ["accounts"],
+        }
 
         # keycloak answers "realms" at every layer because it serves one model to all of
         # them; only the project layer has a config block, and only it has routes.
@@ -315,7 +320,10 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             for layer in ConfigLayer
             if "put" in spec["paths"].get(f"/api/v2/projects/{{project_name}}/services/{name}/config/{layer.value}", {})
         }
-        assert with_a_put == {("keycloak", "project")}
+        # publish-on-web has no project-level PUT (its config lives per deployment);
+        # keycloak and send-email do, and both carry a platform-managed field in that
+        # very block -- which is exactly the case the refusal has to cover.
+        assert with_a_put == {("keycloak", "project"), ("send-email", "project")}
 
     def test_a_service_without_platform_fields_is_unaffected(
         self, v2_client: TestClient, mock_task_service: AsyncMock
