@@ -28,6 +28,8 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from opi.services.config_managed import PLATFORM_MANAGED
+
 
 class AccountLink(StrEnum):
     """De standen die iets DOEN.
@@ -151,7 +153,14 @@ class KeycloakConfig(BaseModel):
     )
     realms: list[KeycloakRealm] = Field(
         default_factory=list,
-        description="Per-cluster realm admin connections. Written and managed by the platform.",
+        # Platform-written, and the ONLY place the realm-admin password lives. A PUT that
+        # leaves the field out used to wipe it; now the stored value is carried over. See
+        # opi/services/config_managed.py.
+        json_schema_extra={PLATFORM_MANAGED: True},
+        description=(
+            "Per-cluster realm admin connections. Written and managed by the platform: it is carried over "
+            "on a write, so a caller neither has to send it nor can lose it by leaving it out."
+        ),
     )
     variables: dict[str, Any] = Field(
         default_factory=dict, description="Values filled into the realm template's placeholders."
