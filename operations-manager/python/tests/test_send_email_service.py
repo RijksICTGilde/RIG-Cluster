@@ -18,8 +18,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import aiohttp
 import pytest
-from opi.connectors.mail import MailConnector, MailRelayNotConfiguredError, create_mail_connector
+from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
 from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_namespace, get_mail_relay_port
 from opi.manager.mail_manager import MailManager
 from opi.services.catalog.approval import ApproverScope
@@ -114,13 +115,34 @@ class TestTheAccountBlockIsPlatformData:
     def test_the_platform_written_fields_are_declared(self) -> None:
         """``approval`` too, and that one is not a nicety: a project that could set its own
         status to approved would make the approval no approval at all."""
-        assert SERVICE.platform_managed_fields(ConfigLayer.PROJECT) == frozenset({"accounts", "approval"})
+        assert SERVICE.platform_managed_fields(ConfigLayer.PROJECT) == frozenset(
+            {"accounts", "approval", "from-domain"}
+        )
 
     def test_the_user_fields_are_not(self) -> None:
         managed = SERVICE.platform_managed_fields(ConfigLayer.PROJECT)
         assert "from-name" not in managed
         assert "from-local-part" not in managed
         assert "messages-per-day" not in managed
+
+    def test_a_write_carrying_the_domain_is_refused(self) -> None:
+        """Identity rule 2 of the plan: a project picks its display name, not its domain.
+
+        Without the marking the field simply rode along in the generated PUT -- having no
+        editable protects nothing, the API is the other door. And the approval does not
+        cover it either: ``ensure_approval_requests`` stops as soon as an approval block
+        exists, so after one verdict the domain could be changed without a second one.
+        """
+        from fastapi import HTTPException
+        from opi.api.v2.router import _refuse_platform_managed
+
+        managed = SERVICE.platform_managed_fields(ConfigLayer.PROJECT)
+        with pytest.raises(HTTPException) as refused:
+            _refuse_platform_managed(ServiceType.SEND_EMAIL.value, {"from-domain": "eigen.example"}, managed)
+        assert refused.value.status_code == 422
+
+        # ... while the display name a project DOES choose goes straight through.
+        _refuse_platform_managed(ServiceType.SEND_EMAIL.value, {"from-name": "Algoritmeregister"}, managed)
 
 
 class TestTheServiceDeclaration:
@@ -263,12 +285,53 @@ class TestTheAddresses:
         assert bounce == f"bounce+myproject@{get_mail_domain('sandboxed-local')}"
 
     def test_an_own_domain_moves_the_sender_but_not_the_bounce(self) -> None:
-        """SPF is checked against the ENVELOPE domain. Keeping the envelope on our own
+        """A domain gets there through the platform, never through the API (see
+        ``TestTheAccountBlockIsPlatformData``); this is what the platform writing one does.
+
+        SPF is checked against the ENVELOPE domain. Keeping the envelope on our own
         domain is exactly why a project domain costs one DKIM record instead of a full
         DNS set -- move the bounce along and that saving is gone."""
         sender, bounce = self._manager()._addresses("sandboxed-local", "myproject", {"from-domain": "eigen.example"})
         assert sender == "noreply@eigen.example"
         assert bounce == f"bounce+myproject@{get_mail_domain('sandboxed-local')}"
+
+
+class TestHetOpgeschrevenAccountVeroudertNiet:
+    """Het accountblok is het antwoord op "als wie verstuurt dit project".
+
+    Het account wordt bij een tweede run bijgewerkt op de relay (``ensure_account`` is
+    replay-veilig), dus als het projectbestand alleen bij de EERSTE run wordt geschreven,
+    staat er daarna een afzenderadres in dat de relay niet meer afdwingt.
+    """
+
+    def _account(self, from_address: str = "noreply@mail.example") -> MailAccount:
+        return MailAccount(
+            username="myproject",
+            from_address=from_address,
+            bounce_address="bounce+myproject@mail.example",
+            messages_per_day=500,
+        )
+
+    def test_an_unchanged_entry_makes_no_commit(self) -> None:
+        entry = {
+            "cluster": "sandboxed-local",
+            "username": "myproject",
+            "password": "AGE-VERSLEUTELD",
+            "from-address": "noreply@mail.example",
+            "bounce-address": "bounce+myproject@mail.example",
+        }
+        assert MailManager._entry_is_stale(entry, self._account()) is False
+
+    def test_a_changed_sender_address_is_written_back(self) -> None:
+        """Wat een project wel zelf kiest: het stuk voor de @."""
+        entry = {
+            "cluster": "sandboxed-local",
+            "username": "myproject",
+            "password": "AGE-VERSLEUTELD",
+            "from-address": "noreply@mail.example",
+            "bounce-address": "bounce+myproject@mail.example",
+        }
+        assert MailManager._entry_is_stale(entry, self._account("support@mail.example")) is True
 
 
 class TestTheAccountIsSharedByTheProject:
@@ -314,6 +377,52 @@ class TestNoRelayConfigured:
         monkeypatch.setattr(settings, "MAIL_RELAY_API_URL", "http://relay")
         monkeypatch.setattr(settings, "MAIL_PLATFORM_PASSWORD", "")
         assert await MailManager.ensure_platform_account() is None
+
+
+class TestDeStartuptaakTrektDeBootNietOm:
+    """Fase 3b is non-critical, en dat moet HIER waargemaakt worden.
+
+    ``server.py`` doet ``await run_startup_tasks(app)`` zonder ``try``, dus een uitzondering
+    die uit deze taak ontsnapt haalt fase 4 (Keycloak) en 5 (OAuth) onderuit. Een ingestelde
+    maar onbereikbare relay geeft geen ``MailRelayError`` maar de transportfout van aiohttp,
+    en die is er eerder dan er een HTTP-antwoord is om er een van te maken.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_relay_is_logged_and_not_raised(self, monkeypatch) -> None:
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise aiohttp.ClientConnectorError(
+                connection_key=SimpleNamespace(ssl=None, host="relay", port=443, is_ssl=True),  # type: ignore[arg-type]
+                os_error=OSError("Network is unreachable"),
+            )
+
+        monkeypatch.setattr(MailManager, "ensure_platform_account", _boom)
+        assert await startup.ensure_platform_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_a_relay_that_refuses_the_call_is_logged_and_not_raised(self, monkeypatch) -> None:
+        from opi.connectors.mail import MailRelayError
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise MailRelayError("POST /api/principal gaf 500")
+
+        monkeypatch.setattr(MailManager, "ensure_platform_account", _boom)
+        assert await startup.ensure_platform_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_a_dns_failure_is_logged_and_not_raised(self, monkeypatch) -> None:
+        """``socket.gaierror`` is an ``OSError``, and it is what an unknown relay hostname
+        gives before aiohttp has anything of its own to raise."""
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise OSError("Name or service not known")
+
+        monkeypatch.setattr(MailManager, "ensure_platform_account", _boom)
+        assert await startup.ensure_platform_mail_account() is False
 
 
 class TestTheClusterConfig:
