@@ -24,8 +24,8 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
-        "mail_relay_namespace": "rig-operations-ron",
-        "mail_relay_host": "rig-mail-relay.rig-operations-ron.svc.cluster.local",
+        "mail_relay_namespace": "rig-ron",
+        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
         "mail_relay_port": 587,
         "mail_domain": "mail.kind",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
@@ -88,8 +88,8 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
-        "mail_relay_namespace": "rig-operations-ron",
-        "mail_relay_host": "rig-mail-relay.rig-operations-ron.svc.cluster.local",
+        "mail_relay_namespace": "rig-ron",
+        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
         "mail_relay_port": 587,
         "mail_domain": "mail.sandbox.rijksapp.dev",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
@@ -146,8 +146,11 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
-        "mail_relay_namespace": "rig-operations-ron",
-        "mail_relay_host": "rig-mail-relay.rig-operations-ron.svc.cluster.local",
+        # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus daar
+        # heet hij rig-prd-ron; op local en sandbox rig-ron. Zelfde vorm als
+        # backup_namespace hierboven.
+        "mail_relay_namespace": "rig-prd-ron",
+        "mail_relay_host": "rig-mail-relay.rig-prd-ron.svc.cluster.local",
         "mail_relay_port": 587,
         "mail_domain": "mail.rijksapp.nl",
         # Namespace of the CloudNativePG operator (see the note in the other clusters).

@@ -10,6 +10,38 @@ Alleen uitgaand. Er is geen postbus en er komt niets binnen.
 Het ontwerp en de afwegingen staan in `plans/mailrelay.md`; dit document beschrijft wat er
 staat en hoe je het gebruikt.
 
+## Eerst goedkeuring, dan alles tegelijk
+
+Het aanzetten van de dienst is een **aanvraag**. Die loopt via de generieke goedkeuringsweg
+die er al was, dezelfde die `publish-on-web` voor domeinen gebruikt: de dienst declareert
+een `ApprovalSpec` in `config_approvals(ConfigLayer.PROJECT)` en beantwoordt
+`ensure_approval_requests()`. Geen eigen scherm en geen tweede mechanisme — de aanvraag komt
+in de bestaande beheerdersinterface (`/admin/approvals`) te staan, naast de domeinaanvragen.
+
+Het gedrag per status is expres saai:
+
+| Status | Wat er gebeurt |
+|---|---|
+| geen aanvraag / in behandeling | **niets.** Geen account op de relay, geen netwerkbeleid, geen credentials in de projectsecrets. |
+| afgewezen | hetzelfde: niets. |
+| goedgekeurd | account, netwerkbeleid en variabelen komen er in één keer bij. |
+
+Er is dus geen half werkende tussentoestand. Dat is de reden dat er precies één poort is
+(`is_approved` in het servicepakket) waar alle vier de dingen aan hangen: een account zonder
+netwerkbeleid, of andersom, is een toestand die niemand kan uitleggen en die bij het
+opruimen overblijft.
+
+**Een ingetrokken goedkeuring ruimt op.** Wordt de status van goedgekeurd afgehaald, dan
+loopt de volgende verwerking van het project hetzelfde opruimpad als een projectverwijdering
+(`MailManager._delete_account`, de enige verwijdering die er is): het account gaat van de
+relay af en de vermelding uit het projectbestand. Zonder dat blijft er een weesaccount staan
+waar niets meer naar wijst.
+
+**De wachtstand is zichtbaar.** De dienst levert per deployment een notice
+(`notices_for`), zodat de stand op de projectpagina staat en via dezelfde weg in de API
+terugkomt als bij een domeinaanvraag. Een dienst die aanstaat en stil niets doet is precies
+de fout die bij de domeinaanvraag is weggehaald.
+
 ## Wat een project krijgt
 
 Een component dat de dienst aanvinkt krijgt vijf variabelen uit de projectsecrets:
@@ -60,10 +92,12 @@ services:
 
 ## Wat het platform beheert
 
-`accounts` is platformdata: OPI maakt het account aan op de relay en schrijft neer wat het
-gemaakt heeft (per cluster: gebruikersnaam, AGE-versleuteld wachtwoord, afzenderadres en
-bounce-adres). Het veld draagt `platform_managed_fields`, dus de API kan het niet wissen en
-niet overschrijven — een PUT die het veld weglaat verliest het niet.
+`approval` en `accounts` zijn platformdata: een beheerder beslist, en OPI maakt het account
+aan op de relay en schrijft neer wat het gemaakt heeft (per cluster: gebruikersnaam, AGE-versleuteld wachtwoord, afzenderadres en
+bounce-adres). Beide velden dragen `platform_managed_fields`, dus de API kan ze niet wissen
+en niet overschrijven — een PUT die ze weglaat verliest ze niet. Bij `approval` is dat niet
+alleen netjes maar de kern: een project dat zijn eigen status op `approved` kan zetten heeft
+geen goedkeuring.
 
 Het wachtwoord wordt één keer gegenereerd en meteen weggeschreven, om dezelfde reden als bij
 het Keycloak-realm: het bestaat nergens anders, en een latere fout in dezelfde run zou een
@@ -81,7 +115,8 @@ account opheffen.
 
 ## Het netwerkbeleid komt uit de dienst
 
-De relay draait in een eigen namespace (`rig-operations-ron`) en niet in de
+De relay draait in een eigen namespace (`rig-prd-ron` op productie, `rig-ron` op local en
+sandbox: ODCN eist dat een namespace daar met de clusterprefix begint) en niet in de
 operations-namespace, want de Calico-annotatie `egress.projectcalico.org/egressGatewayPolicy`
 neemt exact één waarde: RON aanzetten op `rig-prd-operations` kost daar het internet, en
 daarmee ArgoCD, de registry en Keycloak.

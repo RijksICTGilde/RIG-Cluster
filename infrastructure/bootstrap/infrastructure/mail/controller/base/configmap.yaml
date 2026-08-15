@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: rig-mail-relay-config
-  namespace: rig-operations-ron
+  namespace: rig-ron
 data:
   # Stalwart-configuratie voor de mailrelay. Dit bestand legt de identiteitsregels uit
   # plans/mailrelay.md vast; de accounts zelf komen er niet in te staan, die maakt OPI

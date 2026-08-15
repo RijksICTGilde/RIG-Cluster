@@ -193,9 +193,9 @@ Dat patroon (uitgaand vertrekt, niets keert terug, geen ICMP-weigering) wijst op
 
 **Deze stap blijft blokkerend voor alles wat daarna komt.** Zolang die banner er niet is, bouwen we op een aanname.
 
-## 2. De namespace: `rig-operations-ron`, en waarom niet `rig-prd-operations`
+## 2. De namespace: `rig-prd-ron`, en waarom niet `rig-prd-operations`
 
-Het ontwerp noemde `rig-prd-mail` als voorbeeld. Het wordt een namespace voor RON-gebonden diensten in het algemeen, met mail als eerste bewoner en de VLAM-gateway als de volgende die er thuishoort.
+Het ontwerp noemde `rig-prd-mail` als voorbeeld. Het wordt `rig-prd-ron`: een namespace voor RON-gebonden diensten in het algemeen, met mail als eerste bewoner en de VLAM-gateway als de volgende die er thuishoort. De naam volgt de eis van ODCN dat een namespace op dat cluster met `rig-prd` begint; `rig-ron` of `rig-ron` kan daar dus niet.
 
 De reden om het niet in `rig-prd-operations` te zetten is niet behoudendheid maar onmogelijkheid, en dat is nu gemeten: **de annotatie `egressGatewayPolicy` neemt één waarde.** Op `rig-prd-vlam-wt8` staat hij op `rig-ron`, en in de laatst toegepaste configuratie van diezelfde namespace staat nog `internet`. Het is dus een of-of. RON aanzetten op `rig-prd-operations` kost daar het internet, en daarmee ArgoCD, de registry en Keycloak. De eis "internet moet blijven werken" en "RON erbij" kunnen in één namespace niet allebei waar zijn.
 
@@ -231,3 +231,21 @@ Sinds 15 augustus geldt in de API de regel dat configdata die OPI zelf zet niet 
 ## Wat deze aanvulling niet verandert
 
 De identiteitsregels, het afzenderdomein, de limieten, de bouwlijst voor OPI en de gefaseerde uitrol blijven zoals ze hierboven staan. Openstaande beslissing 5 (de servicenaam) blijft open; mijn voorkeur is nog steeds `send-email`.
+
+## 6. Het gebruik van de mailrelay loopt via goedkeuring
+
+Toegevoegd na het shippen, en het is geen detail aan de rand: **een project dat de maildienst aanzet, krijgt pas iets als een beheerder dat heeft goedgekeurd.**
+
+Dat gaat via de generieke goedkeuringsweg die er inmiddels is, dezelfde die publish-on-web voor domeinen en subdomeinen gebruikt: de dienst declareert zijn goedkeuring met een `ApprovalSpec` in `config_approvals(...)`, en beantwoordt `ensure_approval_requests()` zodat het aanzetten van de dienst de aanvraag aanmaakt. Geen tweede mechanisme, geen eigen scherm: de aanvraag verschijnt in de bestaande beheerdersinterface en wordt daar afgehandeld, en de wachtstand komt via dezelfde weg terug in de API als bij een domeinaanvraag.
+
+Het gedrag per status is expres saai:
+
+| Status | Wat er gebeurt |
+|---|---|
+| geen aanvraag / in behandeling | **niets.** Geen account op de relay, geen netwerkbeleid, geen credentials in de projectsecrets. |
+| afgewezen | hetzelfde: niets. |
+| goedgekeurd | het account wordt aangemaakt, het netwerkbeleid komt erbij, de variabelen komen in de secrets. |
+
+Er is dus geen half werkende tussentoestand, en dat is bewust. Een account dat wel bestaat maar niet mag mailen, of een netwerkbeleid zonder account, is een toestand die niemand kan uitleggen en die bij het opruimen wordt vergeten. Alles of niets.
+
+Twee dingen om bij het bouwen scherp te houden. Het intrekken van een goedkeuring hoort hetzelfde pad te volgen als een projectverwijdering, anders blijft er een weesaccount op de relay achter. En de wachtstand moet zichtbaar zijn in het projectscherm en in de API, want een dienst die aanstaat en niets doet zonder dat iemand het ziet, is precies de klasse fout die we vandaag bij de domeinaanvraag hebben weggehaald.

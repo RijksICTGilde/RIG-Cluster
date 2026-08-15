@@ -21,6 +21,7 @@ from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfigur
 from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_port
 from opi.core.config import settings
 from opi.services import ServiceType
+from opi.services.catalog.send_email import is_approved
 from opi.services.project import Project
 from opi.utils.age import decrypt_password_smart_auto, encrypt_age_content, get_project_public_key
 from opi.utils.naming import generate_mail_account_name
@@ -102,12 +103,21 @@ class MailManager:
         address. The password is generated once and kept AGE-encrypted in the project
         file, which is what makes a second run reuse the account instead of resetting a
         password that running pods are still holding.
+
+        Nothing happens without approval (aanvulling 6). And an approval that is WITHDRAWN
+        does not just stop creating: it takes the same cleanup path as a project deletion,
+        because otherwise the account keeps standing on the relay with nobody's name on it
+        and nothing left in the project file pointing at it.
         """
         deployment_name = deployment["name"]
         cluster = deployment.get("cluster") or settings.CLUSTER_MANAGER
 
         if not self._deployment_uses_send_email(project_data, deployment_name):
             logger.debug(f"Deployment {deployment_name} gebruikt send-email niet, overslaan")
+            return
+
+        if not is_approved(project_data):
+            await self._revoke(project_data, cluster)
             return
 
         project_name = await self.project_manager.get_name()
@@ -232,12 +242,12 @@ class MailManager:
 
         project_name = await self.project_manager.get_name()
         username = generate_mail_account_name(project_name)
-        try:
-            connector = await create_mail_connector()
-            removed = await connector.delete_principal(username)
-        except MailRelayNotConfiguredError as error:
+        removed = await self._delete_account(username)
+        if removed is None:
             # No relay on this cluster: nothing was ever created, so nothing leaks.
-            results["operations"].append({"type": "send_email_cleanup", "status": "skipped", "reason": str(error)})
+            results["operations"].append(
+                {"type": "send_email_cleanup", "status": "skipped", "reason": "geen mailrelay op dit cluster"}
+            )
             return results
 
         results["operations"].append(
@@ -248,6 +258,46 @@ class MailManager:
             }
         )
         return results
+
+    async def _delete_account(self, username: str) -> bool | None:
+        """Remove the account from the relay. ``None`` when there is no relay configured.
+
+        The ONE removal, so a withdrawn approval and a deleted project take the same path.
+        Two removals would differ the moment one of them learns something the other does
+        not, and the withdrawal path is the one nobody exercises.
+        """
+        try:
+            connector = await create_mail_connector()
+        except MailRelayNotConfiguredError:
+            return None
+        return await connector.delete_principal(username)
+
+    async def _revoke(self, project_data: dict[str, Any], cluster: str) -> None:
+        """An approval that is absent, pending, denied or withdrawn: leave nothing behind.
+
+        The status has no memory of what it was, so this runs on every unapproved process
+        and is a no-op when there is nothing recorded -- which is what makes "withdrawn"
+        need no separate trigger and no event to miss.
+        """
+        view = Project(project_data)
+        accounts = view.get(f"{_CONFIG_BASE}/accounts") or []
+        entry = next((item for item in accounts if item.get("cluster") == cluster), None)
+        if entry is None:
+            return
+
+        project_name = await self.project_manager.get_name()
+        username = entry.get("username") or generate_mail_account_name(project_name)
+        await self._delete_account(username)
+
+        # The entry goes too: leaving it would show a project an account it does not have,
+        # and the next approval would reuse a password the relay no longer knows.
+        view.set(f"{_CONFIG_BASE}/accounts", [item for item in accounts if item.get("cluster") != cluster])
+        await self.project_manager.save_and_commit_project(
+            project_data,
+            f"Remove SMTP account for {project_name} ({cluster}): geen goedkeuring",
+            enforce_validation=False,
+        )
+        logger.info(f"Mailaccount {username} ingetrokken: het project heeft geen goedkeuring (meer)")
 
     # --- internals --------------------------------------------------------------
 
