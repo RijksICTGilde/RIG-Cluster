@@ -370,13 +370,94 @@ class TestNoRelayConfigured:
             await create_mail_connector()
 
     @pytest.mark.asyncio
-    async def test_the_platform_account_is_skipped_without_a_password(self, monkeypatch) -> None:
+    async def test_the_platform_account_is_skipped_without_a_relay(self, monkeypatch) -> None:
         """No relay yet simply means no platform mail yet; it must not stop the boot."""
         from opi.core.config import settings
 
-        monkeypatch.setattr(settings, "MAIL_RELAY_API_URL", "http://relay")
-        monkeypatch.setattr(settings, "MAIL_PLATFORM_PASSWORD", "")
+        monkeypatch.setattr(settings, "MAIL_RELAY_API_URL", "")
         assert await MailManager.ensure_platform_account() is None
+
+
+class TestHetPlatformaccountIsEenGewoonAccount:
+    """Aanvulling 4b: geen tweede soort account, en geen wachtwoord uit de bootstrap.
+
+    Het wachtwoord bestaat pas nadat de relay draait, dus OPI maakt het zelf en bewaart het
+    in een Secret in zijn EIGEN namespace. Wat hier vastligt:
+
+    - een eerste opstart genereert, schrijft de Secret VOOR de relay-aanroep en maakt het
+      account via dezelfde weg als een projectaccount;
+    - een tweede opstart hergebruikt het bewaarde wachtwoord en vervangt niets stilzwijgend.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _relay(self, monkeypatch):
+        from opi.core.config import settings
+
+        monkeypatch.setattr(settings, "MAIL_RELAY_API_URL", "http://relay")
+        monkeypatch.setattr(settings, "MAIL_RELAY_ADMIN_PASSWORD", "plain:adminpw")
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+
+    def _record_relay(self, monkeypatch) -> AsyncMock:
+        """De ene weg waarlangs een account ontstaat, opgevangen zoals hij wordt gebruikt."""
+        ensured = AsyncMock(
+            return_value=MailAccount(
+                username="zad-platform",
+                from_address="noreply@mail.sandbox.rijksapp.dev",
+                bounce_address="bounce+zad-platform@mail.sandbox.rijksapp.dev",
+                messages_per_day=2000,
+            )
+        )
+        monkeypatch.setattr(MailManager, "ensure_account", ensured)
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=object()))
+        return ensured
+
+    @pytest.mark.asyncio
+    async def test_a_first_boot_generates_and_stores_before_it_calls_the_relay(self, monkeypatch) -> None:
+        """De volgorde is de veiligheid: een wachtwoord dat alleen op de relay staat sluit
+        ZAD buiten zijn eigen account, een dat alleen in de Secret staat repareert de
+        volgende opstart zelf."""
+        order: list[str] = []
+        written: dict[str, str] = {}
+
+        async def _read() -> dict[str, str] | None:
+            return None
+
+        async def _write(username: str, password: str, from_address: str) -> None:
+            order.append("secret")
+            written.update({"username": username, "password": password, "from-address": from_address})
+
+        monkeypatch.setattr(MailManager, "_read_platform_secret", _read)
+        monkeypatch.setattr(MailManager, "_write_platform_secret", _write)
+        ensured = self._record_relay(monkeypatch)
+        ensured.side_effect = lambda **kwargs: order.append("relay")
+
+        await MailManager.ensure_platform_account()
+
+        assert order == ["secret", "relay"]
+        assert written["password"], "er moet een wachtwoord gegenereerd zijn"
+        assert ensured.await_args.kwargs["password"] == written["password"]
+
+    @pytest.mark.asyncio
+    async def test_a_second_boot_reuses_the_stored_password_and_writes_nothing(self, monkeypatch) -> None:
+        """Idempotent: geen tweede account, en geen nieuw wachtwoord dat nergens landt."""
+        stored = {
+            "username": "zad-platform",
+            "password": "bewaard-wachtwoord",
+            "from-address": "noreply@mail.sandbox.rijksapp.dev",
+        }
+
+        async def _read() -> dict[str, str] | None:
+            return stored
+
+        write = AsyncMock()
+        monkeypatch.setattr(MailManager, "_read_platform_secret", _read)
+        monkeypatch.setattr(MailManager, "_write_platform_secret", write)
+        ensured = self._record_relay(monkeypatch)
+
+        await MailManager.ensure_platform_account()
+
+        write.assert_not_awaited()
+        assert ensured.await_args.kwargs["password"] == "bewaard-wachtwoord"
 
 
 class TestDeStartuptaakTrektDeBootNietOm:
