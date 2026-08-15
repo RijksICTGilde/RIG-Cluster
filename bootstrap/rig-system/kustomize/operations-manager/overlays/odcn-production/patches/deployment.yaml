@@ -56,6 +56,31 @@ spec:
             secretKeyRef:
               name: prometheus-metrics-auth
               key: token
+        # De mailrelay (RC-114). OPI praat met het BEHEERDERSACCOUNT van de relay en maakt
+        # daarmee alle accounts aan: die van een project en dat van ZAD zelf. Het geheim is
+        # dezelfde gegenereerde bron als die de relay in zijn eigen namespace krijgt, hier
+        # gerenderd in de namespace van OPI - zoals bij Keycloak en PostgreSQL.
+        # optional: true, want de relay staat nog niet aan; zonder het geheim boot OPI
+        # gewoon door en blijft de dienst send-email zeggen dat er geen relay is.
+        #
+        # MAIL_RELAY_API_URL is de SCHAKELAAR: leeg betekent "geen relay op dit cluster" en
+        # de dienst weigert dan een account aan te maken in plaats van onbruikbare
+        # inloggegevens uit te delen. Zet hem pas aan samen met de mail-component in
+        # infrastructure/bootstrap/clusters/<cluster>/kustomization.yaml.
+        # - name: MAIL_RELAY_API_URL
+        #   value: "http://rig-mail-relay.rig-prd-ron.svc.cluster.local:8080"
+        - name: MAIL_RELAY_ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mail-relay-credentials
+              key: MAIL_RELAY_ADMIN_USERNAME
+              optional: true
+        - name: MAIL_RELAY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mail-relay-credentials
+              key: MAIL_RELAY_ADMIN_PASSWORD
+              optional: true
         - name: LOG_ERRORS_TO_FILE
           value: "true"
         - name: LOG_ERRORS_FILE_PATH

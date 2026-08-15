@@ -128,8 +128,15 @@ spec:
         - name: config
           configMap:
             name: rig-mail-relay-config
+        # De DKIM-sleutel zit in hetzelfde geheim als de rest: de gedeelde
+        # secret-generatie levert per bestand EEN document (zie de toelichting in
+        # infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml).
+        # Alleen deze sleutel wordt aangekoppeld, de rest komt als omgevingsvariabele.
         - name: dkim
           secret:
-            secretName: mail-relay-dkim
+            secretName: mail-relay-credentials
+            items:
+              - key: dkim.key
+                path: dkim.key
         - name: tmp
           emptyDir: {}
