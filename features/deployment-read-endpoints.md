@@ -41,6 +41,7 @@ Each deployment includes:
 | `sync_revision` | Git revision (full SHA) the cluster last reconciled — `null` if never reconciled |
 | `last_synced_at` | ISO timestamp of the last reconciliation **attempt**, regardless of outcome. Combine with `status` to know whether that attempt succeeded — for a `Degraded` deployment this can be the time of a failed sync. `null` if never synced |
 | `errors` | List of cluster-side error entries — empty when `status` is `Healthy`, `Pending`, `Unavailable`, or `Unknown` |
+| `approvals` | Goedkeuringen die deze deployment nog niet heeft — leeg wanneer alles is goedgekeurd. Zie hieronder |
 
 `status` values:
 
@@ -66,6 +67,24 @@ Each `errors` entry has:
 | `category` | Programmatic category for filtering / grouping / colorizing. One of: `ImagePull`, `CrashLoop`, `OutOfMemory`, `HealthCheck`, `SyncFailed`, `ComparisonError`, `Unknown` |
 | `explanation` | Human-friendly description of the category and what to do next; `null` for `Unknown` |
 | `timestamp` | ISO timestamp if known |
+
+Each `approvals` entry has:
+
+| Field | Description |
+|---|---|
+| `service` | De dienst die de goedkeuring bezit, zoals in de servicecatalogus (vandaag altijd `publish-on-web`) |
+| `type` | Wat er goedgekeurd moet worden binnen die dienst: `domain` of `subdomain` |
+| `label` | Hoe de portal dit soort goedkeuring noemt (`Domein`, `Subdomein`) |
+| `subject` | Wat er is aangevraagd, bijvoorbeeld `mijn-app.nl` |
+| `status` | `requested` (wacht op een beheerder), `denied` (afgewezen) of `none` (nog niets aangevraagd). `approved` komt hier niet voor — wat is goedgekeurd staat niet in deze lijst |
+| `text` | Wat dit betekent voor deze deployment, inclusief het gevolg, in gewone taal |
+| `by` / `date` / `message` | Wie het laatste oordeel gaf, wanneer, en met welke toelichting |
+
+Dit veld staat er om dezelfde reden als `pending_rollout`: het antwoord beschrijft anders
+een deployment alsof die op het gevraagde adres draait. Een niet-goedgekeurd domein
+blokkeert de uitrol niet — de deployment publiceert dan op het standaard clusteradres, en
+dat adres staat dus ook gewoon in `urls`. Zonder `approvals` is er niets dat zegt waarom
+daar een ander adres staat dan gevraagd. Zie `features/domain-configuration.md`.
 
 For component logs, use the existing `GET /api/logs/{project_name}` (HTTP) or `WS /api/logs/stream/{project_name}` (WebSocket) endpoints. Logs are intentionally not embedded in this response: they don't belong to "status" semantically, and the existing log endpoints already serve that need.
 

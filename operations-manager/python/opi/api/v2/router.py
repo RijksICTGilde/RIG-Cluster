@@ -45,6 +45,7 @@ from opi.api.task_models import (
 )
 from opi.api.user_token_auth import validate_user_token
 from opi.api.v2.models import (
+    ApprovalNoticeResponse,
     AsyncTaskAcceptedResponse,
     ClusterDomainOption,
     ClusterInfo,
@@ -90,6 +91,7 @@ from opi.handlers.project_file_handler import (
     ProjectFileHandler,
     component_usage_sites,
 )
+from opi.services.approvals import collect_deployment_approval_notices
 from opi.services.catalog.actions import (
     ActionContext,
     ActionField,
@@ -418,6 +420,13 @@ def _build_deployment_detail(
         sync_revision=live.revision,
         last_synced_at=live.last_synced_at,
         errors=live.errors,
+        # Hier en niet alleen in het antwoord op de schrijfactie: een aanvraag loopt
+        # dagen, het antwoord op de PUT is weg zodra de client hem heeft gelezen. Dit is
+        # de ene deploymentlezer, dus lijst, detail en projectoverzicht melden hetzelfde.
+        approvals=[
+            ApprovalNoticeResponse.model_validate(notice)
+            for notice in collect_deployment_approval_notices(project_data, deployment)
+        ],
     )
 
 

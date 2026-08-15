@@ -501,6 +501,10 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "created": result.get("created", False),
             },
             "urls": urls,
+            # Een deployment met een niet-goedgekeurd domein draait wel, maar op het
+            # standaard clusteradres. Dat staat dus ook in "urls" -- en zonder dit veld
+            # is er niets dat zegt waarom daar een ander adres staat dan gevraagd.
+            "approvals": result.get("approvals", []),
             "processing": processing,
         }
         if result.get("warnings"):
