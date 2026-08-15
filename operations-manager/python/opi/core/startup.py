@@ -420,14 +420,28 @@ async def ensure_platform_mail_account() -> bool:
     ``check_minio_availability`` right below catches too: the transport errors as well, and
     the kubectl failure from writing the account's Secret (a cluster where that is refused
     must still boot).
+
+    That last one has two shapes, and both are normal on a fresh cluster: kubectl raises
+    ``KubectlConnectionError`` -- NOT a subclass of ``KubectlExecutionError`` -- when the
+    API server is unreachable, which is exactly the state its own retry loop exists for.
+    And ``create_mail_connector`` decrypts ``MAIL_RELAY_ADMIN_PASSWORD``, so an admin
+    password that is not (yet) decryptable arrives here as a plain ``ValueError``; the
+    first boot after someone sets ``MAIL_RELAY_API_URL`` is the likely moment for it.
     """
-    from opi.connectors.kubectl import KubectlExecutionError
+    from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
     from opi.connectors.mail import MailRelayError
     from opi.manager.mail_manager import MailManager
 
     try:
         account = await MailManager.ensure_platform_account()
-    except (MailRelayError, KubectlExecutionError, aiohttp.ClientError, OSError) as error:
+    except (
+        MailRelayError,
+        KubectlExecutionError,
+        KubectlConnectionError,
+        ValueError,
+        aiohttp.ClientError,
+        OSError,
+    ) as error:
         logger.error(f"Platform-mailaccount kon niet worden ingericht: {error}")
         return False
     if account is None:
