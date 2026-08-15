@@ -30,9 +30,11 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from opi.services.config_managed import PLATFORM_MANAGED
 
-#: Upper bound on a project's daily budget. Not a technical limit but the agreement with
-#: the mail team: the sum of the accounts must stay under the volume that was agreed, and
-#: a single project asking for a number with an extra zero is exactly how that is broken.
+#: Upper bound on a project's daily budget, and the number the relay really enforces: it
+#: is the per-account rate in ``queue.limiter.inbound.account`` in the relay's configmap.
+#: Change one and the other moves with it. It is also the agreement with the mail team --
+#: the sum of the accounts must stay under the volume that was agreed, and a single project
+#: asking for a number with an extra zero is exactly how that is broken.
 MAX_MESSAGES_PER_DAY = 5000
 
 #: The local part of an address, as the relay will enforce it. Expressed in the ANNOTATION
@@ -98,7 +100,12 @@ class SendEmailConfig(BaseModel):
     from_local_part: MailLocalPart | None = Field(
         default=None,
         alias="from-local-part",
-        description="Local part of the sender address (the bit before the @), e.g. 'noreply'. Defaults to 'noreply'.",
+        description=(
+            "First half of the local part of the sender address, e.g. 'noreply'. Defaults to 'noreply'. "
+            "The project name is appended to it, so the address becomes noreply.<project>@<maildomein>: "
+            "the relay pins the From: header to an address carrying the account name, and an address may "
+            "only exist once on the whole relay."
+        ),
     )
     from_domain: str | None = Field(
         default=None,
@@ -106,8 +113,9 @@ class SendEmailConfig(BaseModel):
         json_schema_extra={PLATFORM_MANAGED: True},
         description=(
             "Sender domain, when the project has one of its own. Left out for the platform mail domain. "
-            "Written by the platform: a domain of your own needs a DKIM record in its zone first, and that "
-            "path is set up by hand until a project asks for it, so this is not self-service."
+            "Written by the platform: a domain of your own needs a DKIM record in its zone first AND a rule "
+            "for that domain in the relay's identity script (which today only allows the platform mail "
+            "domain), and that path is set up by hand until a project asks for it, so this is not self-service."
         ),
     )
     messages_per_day: Annotated[int, Field(ge=1, le=MAX_MESSAGES_PER_DAY)] | None = Field(
@@ -115,7 +123,9 @@ class SendEmailConfig(BaseModel):
         alias="messages-per-day",
         description=(
             f"Messages this project may send per day, at most {MAX_MESSAGES_PER_DAY}. "
-            "Leave it out for the platform default."
+            "Leave it out for the platform default. This is the agreed budget, recorded on the account: "
+            f"the relay itself enforces one ceiling of {MAX_MESSAGES_PER_DAY} per account per day, because "
+            "an account on the relay carries no limit of its own."
         ),
     )
     approval: SendEmailApproval | None = Field(

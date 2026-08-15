@@ -256,7 +256,10 @@ class TestTheOneAccountPath:
         )
         connector.create_principal.assert_not_awaited()
         connector.update_principal.assert_awaited_once()
-        assert connector.update_principal.await_args.kwargs["messages_per_day"] == 800
+        # Beide adressen gaan mee: de relay herschrijft de envelope naar het bounce-adres
+        # en toetst daarna pas of de afzender bij het account hoort, dus een account dat
+        # zijn eigen bounce-adres niet bezit krijgt geen enkel bericht binnen.
+        assert connector.update_principal.await_args.kwargs["bounce_address"] == "bounce+myproject@mail.example"
 
     def test_the_platform_caller_needs_no_project(self) -> None:
         """A staticmethod, so ZAD's account goes through the very same code without a
@@ -272,12 +275,22 @@ class TestTheAddresses:
         return MailManager(project_manager=SimpleNamespace())  # type: ignore[arg-type]
 
     def test_the_default_local_part_is_noreply(self) -> None:
+        """En het adres draagt de accountnaam: de relay pint de From: op
+        <iets>.<account>@<domein>, en een adres bestaat maar een keer op de hele relay."""
         sender, _ = self._manager()._addresses("sandboxed-local", "myproject", {})
-        assert sender == f"noreply@{get_mail_domain('sandboxed-local')}"
+        assert sender == f"noreply.myproject@{get_mail_domain('sandboxed-local')}"
 
     def test_the_project_chooses_the_local_part(self) -> None:
         sender, _ = self._manager()._addresses("sandboxed-local", "myproject", {"from-local-part": "support"})
-        assert sender == f"support@{get_mail_domain('sandboxed-local')}"
+        assert sender == f"support.myproject@{get_mail_domain('sandboxed-local')}"
+
+    def test_two_projects_never_claim_the_same_address(self) -> None:
+        """De relay weigert een tweede account met een adres dat al bestaat
+        (fieldAlreadyExists, gemeten). Zonder de accountnaam erin zou elk project dat
+        'noreply' kiest het tweede project onprovisioneerbaar maken."""
+        een, _ = self._manager()._addresses("sandboxed-local", "project-een", {"from-local-part": "noreply"})
+        twee, _ = self._manager()._addresses("sandboxed-local", "project-twee", {"from-local-part": "noreply"})
+        assert een != twee
 
     def test_the_bounce_address_carries_the_account_name(self) -> None:
         """So a returned message is traceable to one project without asking the relay."""
@@ -292,7 +305,7 @@ class TestTheAddresses:
         domain is exactly why a project domain costs one DKIM record instead of a full
         DNS set -- move the bounce along and that saving is gone."""
         sender, bounce = self._manager()._addresses("sandboxed-local", "myproject", {"from-domain": "eigen.example"})
-        assert sender == "noreply@eigen.example"
+        assert sender == "noreply.myproject@eigen.example"
         assert bounce == f"bounce+myproject@{get_mail_domain('sandboxed-local')}"
 
 
@@ -443,7 +456,7 @@ class TestHetPlatformaccountIsEenGewoonAccount:
         stored = {
             "username": "zad-platform",
             "password": "bewaard-wachtwoord",
-            "from-address": "noreply@mail.sandbox.rijksapp.dev",
+            "from-address": "noreply.zad-platform@mail.sandbox.rijksapp.dev",
         }
 
         async def _read() -> dict[str, str] | None:
@@ -912,3 +925,93 @@ class TestDeAanvraagStaatGoedInDeBestaandeInterface:
             _approval_items=[item],
         )
         assert "E-mail versturen" in html
+
+
+class TestDeRelayAntwoordtGeen404:
+    """Gemeten tegen Stalwart v0.11.8, en het is precies de valkuil van deze connector.
+
+    Een onbekend account is bij de management-API GEEN 404: het antwoord is ``200`` met
+    ``{"error": "notFound", "item": "<naam>"}`` in het lichaam. Wie alleen naar de
+    statuscode kijkt, leest dat als "het account bestaat" en gaat bijwerken in plaats van
+    aanmaken - dan wordt het account nooit gemaakt en authenticeert de applicatie nergens.
+    Deze suite draait daarom tegen een echte HTTP-server die die antwoorden nabootst; een
+    mock op ``_request`` zou juist de laag overslaan waar de fout zat.
+    """
+
+    def _app(self, aangemaakt: list[dict]) -> web.Application:
+        from aiohttp import web
+
+        async def get_principal(request: web.Request) -> web.Response:
+            naam = request.match_info["naam"]
+            if naam == "bestaat":
+                return web.json_response({"data": {"id": 1, "name": naam, "type": "individual"}})
+            return web.json_response({"error": "notFound", "item": naam})
+
+        async def post_principal(request: web.Request) -> web.Response:
+            aangemaakt.append(await request.json())
+            return web.json_response({"data": 42})
+
+        async def delete_principal(request: web.Request) -> web.Response:
+            naam = request.match_info["naam"]
+            if naam == "bestaat":
+                return web.json_response({"data": None})
+            return web.json_response({"error": "notFound", "item": naam})
+
+        app = web.Application()
+        app.router.add_get("/api/principal/{naam}", get_principal)
+        app.router.add_post("/api/principal", post_principal)
+        app.router.add_delete("/api/principal/{naam}", delete_principal)
+        return app
+
+    async def _connector(self, aangemaakt: list[dict]):
+        from aiohttp.test_utils import TestServer
+
+        server = TestServer(self._app(aangemaakt))
+        await server.start_server()
+        return MailConnector(str(server.make_url("")).rstrip("/"), "admin", "geheim", verify_tls=False), server
+
+    @pytest.mark.asyncio
+    async def test_een_onbekend_account_leest_als_afwezig(self) -> None:
+        connector, server = await self._connector([])
+        try:
+            assert await connector.get_principal("kent-hij-niet") is None
+            assert await connector.get_principal("bestaat") is not None
+        finally:
+            await server.close()
+
+    @pytest.mark.asyncio
+    async def test_een_al_verwijderd_account_meldt_geen_succes(self) -> None:
+        connector, server = await self._connector([])
+        try:
+            assert await connector.delete_principal("kent-hij-niet") is False
+            assert await connector.delete_principal("bestaat") is True
+        finally:
+            await server.close()
+
+    @pytest.mark.asyncio
+    async def test_het_aangemaakte_account_kan_ook_echt_versturen(self) -> None:
+        """Drie dingen die de relay eist, alle drie nagespeeld:
+
+        zonder een ROL wordt het account na een geslaagde authenticatie alsnog geweigerd
+        ("550 5.7.1 Your account is not authorized to use this service"); zonder het
+        BOUNCE-adres op het account faalt elke MAIL FROM, want de envelope wordt daarheen
+        herschreven voordat de afzenderpolicy hem toetst; en een ``limits``-veld bestaat
+        niet op een principal, dus de hele aanroep zou stranden op "JSON deserialization
+        failed".
+        """
+        aangemaakt: list[dict] = []
+        connector, server = await self._connector(aangemaakt)
+        try:
+            await connector.create_principal(
+                name="myproject",
+                password="geheim",
+                from_address="noreply.myproject@mail.example",
+                bounce_address="bounce+myproject@mail.example",
+            )
+        finally:
+            await server.close()
+
+        payload = aangemaakt[0]
+        assert payload["roles"] == ["user"]
+        assert payload["emails"] == ["noreply.myproject@mail.example", "bounce+myproject@mail.example"]
+        assert "limits" not in payload

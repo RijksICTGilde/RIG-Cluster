@@ -73,7 +73,9 @@ class MailManager:
             password: Plaintext password to set on the account.
             from_address: Address the relay pins the sender to.
             bounce_address: Address bounces come back to.
-            messages_per_day: Daily budget for this account.
+            messages_per_day: Daily budget recorded for this account. Not handed to the
+                relay: Stalwart v0.11 has no per-account limit, so the relay enforces one
+                ceiling for every account from its own configuration.
 
         Returns:
             The account as it now stands on the relay.
@@ -84,14 +86,14 @@ class MailManager:
                 name=username,
                 password=password,
                 from_address=from_address,
-                messages_per_day=messages_per_day,
+                bounce_address=bounce_address,
             )
         else:
             await connector.update_principal(
                 name=username,
                 password=password,
                 from_address=from_address,
-                messages_per_day=messages_per_day,
+                bounce_address=bounce_address,
             )
         return MailAccount(
             username=username,
@@ -201,7 +203,10 @@ class MailManager:
         cluster = settings.CLUSTER_MANAGER
         domain = get_mail_domain(cluster)
         username = settings.MAIL_PLATFORM_ACCOUNT
-        from_address = f"{settings.MAIL_PLATFORM_FROM_LOCAL_PART}@{domain}"
+        # Same shape as a project's address (<lokaal deel>.<account>@<domein>) and for the
+        # same reason: the relay pins the From: header to an address carrying the account
+        # name, so a bare "noreply@" is refused at DATA. See ``_addresses``.
+        from_address = f"{settings.MAIL_PLATFORM_FROM_LOCAL_PART}.{username}@{domain}"
 
         stored = await MailManager._read_platform_secret()
         password = (stored or {}).get("password") or ""
@@ -390,6 +395,14 @@ class MailManager:
     def _addresses(self, cluster: str, username: str, config: dict[str, Any]) -> tuple[str, str]:
         """The sender and bounce address for this account.
 
+        The account name is part of the address, and that is load-bearing twice over. The
+        relay pins the ``From:`` header to ``<iets>.<account>@<domein>`` (identity rule 2,
+        in the sieve script in the relay's configmap), so an address that does not carry
+        the account name is refused at DATA. And an address is unique across the whole
+        relay -- a second account claiming an address another one already holds is refused
+        with ``fieldAlreadyExists`` -- so a bare ``noreply@`` would work for exactly one
+        project and break the next one. Both measured against Stalwart v0.11.8.
+
         The bounce address is always in the PLATFORM domain, even when the project picked
         a domain of its own: SPF is checked against the envelope domain, so keeping the
         envelope on our own domain is what makes a project domain cost one DKIM record
@@ -398,7 +411,7 @@ class MailManager:
         platform_domain = get_mail_domain(cluster)
         local_part = config.get("from-local-part") or "noreply"
         domain = config.get("from-domain") or platform_domain
-        return f"{local_part}@{domain}", f"bounce+{username}@{platform_domain}"
+        return f"{local_part}.{username}@{domain}", f"bounce+{username}@{platform_domain}"
 
     async def _existing_account_entry(self, view: Project, cluster: str) -> tuple[dict[str, Any] | None, str | None]:
         """The stored account for this cluster and its decrypted password, if any."""
