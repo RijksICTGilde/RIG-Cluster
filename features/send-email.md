@@ -141,17 +141,82 @@ ZAD moet ook kunnen mailen — wachtwoord instellen en resetten voor lokale acco
 herstel bij verlies van een OTP-toestel staan er al maanden op te wachten. Maar ZAD is geen
 project: er is geen projectbestand om een account aan op te hangen.
 
-Daarom staat het platformaccount in de configuratie van de relay (`mail-relay-credentials`
-in de namespace van de relay), niet in een projectbestand. OPI leest het als instelling en
-richt het bij het opstarten in (`ensure_platform_mail_account` in `opi/core/startup.py`).
-Een projectbestand `zad.yaml` verzinnen zou een tweede soort project opleveren dat in de
-portal verschijnt, in lijsten staat en verwijderd kan worden.
+Het is daarom **geen tweede soort account.** Het is een gewoon account op de relay, langs
+dezelfde weg gemaakt als dat van een project: OPI logt in op het BEHEERDERSACCOUNT van de
+relay en maakt het aan via de connector, precies zoals het bij Keycloak een realm en bij
+PostgreSQL een database maakt. Het verschil zit in de aanroeper — de opstart van het platform
+in plaats van een projectverwerking — en in het budget, in niets anders. Een projectbestand
+`zad.yaml` verzinnen zou een tweede soort project opleveren dat in de portal verschijnt, in
+lijsten staat en verwijderd kan worden.
 
-Er zijn dus twee wegen naar een account, en die prijs is alleen te betalen op één
-voorwaarde: **één stuk code dat accounts aanmaakt.** Dat is `MailManager.ensure_account`,
-een staticmethod juist zodat de platformkant hem zonder project kan aanroepen. Maak je er
-een instantiemethode van, dan heeft de platformkant een eigen implementatie nodig, en dan is
-het platformaccount het account waar niemand naar kijkt.
+Er zijn dus twee AANROEPERS, en die prijs is alleen te betalen op één voorwaarde: **één stuk
+code dat accounts aanmaakt.** Dat is `MailManager.ensure_account`, een staticmethod juist
+zodat de platformkant hem zonder project kan aanroepen. Maak je er een instantiemethode van,
+dan heeft de platformkant een eigen implementatie nodig, en dan is het platformaccount het
+account waar niemand naar kijkt.
+
+### Twee geheimen, twee momenten
+
+Ze ontstaan niet tegelijk, en dat bepaalt waar ze staan.
+
+| | Wanneer | Waar |
+|---|---|---|
+| Het beheerderswachtwoord van de relay | bij het opzetten van de infrastructuur | gegenereerd in de gedeelde secret-generatie (`@secret-gen:random:24`), SOPS-versleuteld, gerenderd in **twee** namespaces |
+| Het wachtwoord van het ZAD-account | pas nadat de relay draait, want OPI maakt het aan | door OPI gegenereerd en weggeschreven in een Secret in zijn **eigen** namespace (`zad-platform-mail-account`) |
+
+Het tweede kan niet uit de bootstrap komen: op dat moment bestaat het nog niet. En het kan
+geen omgevingsvariabele zijn: een pod leest zijn omgeving één keer bij het starten, dus een
+waarde die OPI zelf later aanmaakt zou er alleen met een herstart in komen — een
+opstartvolgorde die niemand meer kan volgen. Daarom een Secret, met deze eigenschappen:
+
+- **Wie beheert hem**: OPI, en niemand anders. Er rendert niets in de bootstrap dat hem
+  aanmaakt of overschrijft.
+- **Als hij er nog niet is**: dat is de normale toestand van een cluster dat nog nooit een
+  draaiende relay heeft gezien. OPI genereert dan een wachtwoord, schrijft de Secret
+  **vóór** het de relay belt, en maakt daarna pas het account aan. Die volgorde is de
+  veiligheid: een wachtwoord dat alleen op de relay staat sluit ZAD buiten zijn eigen
+  account, terwijl een wachtwoord dat alleen in de Secret staat door de volgende opstart
+  vanzelf wordt rechtgezet.
+- **Bij een tweede opstart**: het bewaarde wachtwoord wordt teruggelezen en ongewijzigd aan
+  de relay gegeven. Er komt dus geen tweede account, en het bestaande wachtwoord wordt niet
+  stilzwijgend vervangen door een nieuw dat nergens landt.
+- **Na een rotatie**: verwijder de Secret en herstart OPI; de volgende opstart genereert een
+  nieuw wachtwoord en zet dat op het bestaande account. Er is één plek, dus er kan geen oude
+  kopie achterblijven.
+
+### Het beheerdersgeheim staat in twee namespaces, uit één bron
+
+De relay draait in een eigen namespace (`rig-ron`, op ODCN `rig-prd-ron` — die namespace
+draagt de RON-annotatie), en OPI draait in `rig-system` / `rig-prd-operations`. Secrets
+steken geen namespacegrens over, dus die twee moeten allebei het beheerdersgeheim hebben.
+
+Dat gebeurt met **één bron en twee renderingen**: het geheim wordt één keer gegenereerd in
+`infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` en
+SOPS-versleuteld weggeschreven in de namespace van OPI; de overlay van de mailcomponent
+rendert exact datzelfde versleutelde bestand nog een keer, met de namespace van de relay
+eroverheen (`decrypt-sops.yaml` in
+`infrastructure/bootstrap/infrastructure/mail/controller/overlays/*/`).
+
+Bewust géén leesrechten voor OPI op de secrets van de relay-namespace: rechten over een
+namespacegrens zijn moeilijker terug te draaien dan een tweede rendering van hetzelfde
+bestand. En omdat het één bestand is, kan een geroteerd beheerderswachtwoord niet in de ene
+namespace landen en in de andere niet — dat zou een storing zijn die pas bij de volgende
+accountaanmaak zichtbaar wordt. Wat bij een rotatie wél nodig is: **beide** pods opnieuw
+starten, want allebei lezen ze de waarde uit hun omgeving.
+
+Roteren raakt geen enkel projectaccount. De accounts staan als principals in de database van
+de relay; het beheerderswachtwoord is alleen waarmee OPI zich meldt om ze te beheren.
+
+### Als de relay er bij het opstarten nog niet is
+
+De taak is non-critical en vangt ook de transportfouten (een onbereikbare relay geeft geen
+HTTP-antwoord om een `MailRelayError` van te maken, maar de fout van aiohttp) en een
+mislukte kubectl-schrijfactie. OPI boot dus door; er is alleen nog geen platformmail.
+
+Er is met opzet geen achtergrondlus die erop blijft wachten: het account wordt bij elke
+opstart opnieuw ingericht en is idempotent, en de relay aanzetten vraagt sowieso een
+herstart van OPI (het krijgt dan pas `MAIL_RELAY_API_URL` en het beheerdersgeheim in zijn
+omgeving). Dat herstartmoment is precies wanneer het account ontstaat.
 
 ## Instellingen
 
@@ -159,7 +224,8 @@ het platformaccount het account waar niemand naar kijkt.
 |---|---|
 | `MAIL_RELAY_API_URL` | de management-API van de relay; leeg betekent "geen relay op dit cluster" |
 | `MAIL_RELAY_ADMIN_USERNAME` / `MAIL_RELAY_ADMIN_PASSWORD` | waarmee OPI accounts aanmaakt |
-| `MAIL_PLATFORM_ACCOUNT` / `MAIL_PLATFORM_PASSWORD` | het account van ZAD zelf |
+| `MAIL_PLATFORM_ACCOUNT` | de naam van het account van ZAD zelf (het wachtwoord is géén instelling, zie hierboven) |
+| `MAIL_PLATFORM_SECRET_NAME` | de Secret in de eigen namespace waarin OPI dat wachtwoord bewaart |
 | `MAIL_PLATFORM_FROM_LOCAL_PART` / `MAIL_PLATFORM_MESSAGES_PER_DAY` | afzender en budget van dat account |
 | `MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY` | het budget van een project dat er zelf geen kiest |
 
@@ -187,27 +253,25 @@ een relay draaien die niets kan bezorgen.
 
 ### Wat er bij het aanzetten werkelijk moet gebeuren
 
-Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi te zeggen. De
-relay-geheimen staan in de namespace van de relay, en een Secret steekt geen
-namespace-grens over: OPI leest ze pas als ze óók in de operations-namespace staan.
+Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi te zeggen.
 
-1. **Overlay aanzetten**: de regel `- ../../infrastructure/mail/controller/overlays/<type>`
-   in `infrastructure/bootstrap/clusters/<type>/kustomization.yaml` uit het commentaar
-   halen.
-2. **De relay-geheimen vullen**:
+1. **De geheimen vullen en genereren**:
    `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` — de
-   upstream-gegevens van het mailteam, de DKIM-sleutel, en de `changeMe`-waarden laten
-   genereren zoals de andere geheimen.
-3. **OPI de instellingen geven.** Dit is de stap die je vergeet en die zich uit als "de
-   dienst doet niets": `MAIL_RELAY_API_URL`, `MAIL_RELAY_ADMIN_USERNAME`,
-   `MAIL_RELAY_ADMIN_PASSWORD` en `MAIL_PLATFORM_PASSWORD` horen in
-   `operations-manager-env-secrets` in de OPI-namespace
-   (`bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/operations-manager-env-secrets.yaml`,
-   SOPS-versleuteld), met dezelfde waarden als in het geheim van de relay. De deployment
-   leest dat geheim al met `envFrom`, dus er hoeft niets aan het manifest te veranderen.
+   upstream-gegevens van het mailteam en de DKIM-sleutel er met de hand in (die zijn niet te
+   genereren), daarna `task generate-secrets-for-cluster <cluster>` voor de rest.
+2. **Overlay aanzetten**: de regel `- ../../infrastructure/mail/controller/overlays/<type>`
+   in `infrastructure/bootstrap/clusters/<type>/kustomization.yaml` uit het commentaar
+   halen. Daarmee komt het gegenereerde geheim ook in de namespace van de relay te staan
+   (de tweede rendering hierboven).
+3. **OPI de schakelaar geven.** Dit is de stap die je vergeet en die zich uit als "de dienst
+   doet niets": `MAIL_RELAY_API_URL` staat uitgecommentarieerd in
+   `bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/patches/deployment.yaml`
+   en moet aan. Het beheerdersgeheim staat er al bij (`optional: true` uit
+   `mail-relay-credentials`), dus daar hoeft niets meer te gebeuren zodra stap 1 gedraaid is.
 4. **Herstarten en de log lezen.** `ensure_platform_mail_account` draait bij het opstarten
-   en zegt of het platformaccount klaarstaat. Blijft `MAIL_RELAY_API_URL` leeg, dan slaat
-   het die stap stil over — geen fout, maar ook geen mail.
+   en zegt of het platformaccount klaarstaat; het maakt dan ook de Secret met zijn
+   wachtwoord aan. Blijft `MAIL_RELAY_API_URL` leeg, dan slaat het die stap stil over —
+   geen fout, maar ook geen mail.
 5. **DNS**: SPF op ons maildomein dat de uitgaande IP's van de upstream autoriseert, en de
    publieke helft van de DKIM-sleutel als TXT op `zad._domainkey.<maildomein>`. Zonder deze
    twee vertrekt de post wel en komt hij niet aan.

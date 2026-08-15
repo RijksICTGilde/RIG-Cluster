@@ -3,6 +3,9 @@ kind: Kustomization
 
 namespace: rig-ron
 
+generators:
+  - decrypt-sops.yaml
+
 resources:
   - ../../base
   - network-policies/mail-relay-networkpolicy.yaml

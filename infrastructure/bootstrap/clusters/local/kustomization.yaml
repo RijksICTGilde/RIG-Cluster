@@ -20,7 +20,9 @@ resources:
   # enkele poort een banner terug, en zolang dat niet rond is draait hier een relay die
   # niets kan bezorgen. De manifesten zijn klaar; deze regel is de eerste van de
   # stappen in features/send-email.md ("Wat er bij het aanzetten werkelijk moet gebeuren") -
-  # OPI heeft daarnaast de relay-instellingen in zijn EIGEN namespace nodig.
+  # de clustergeheimen moeten eerst gegenereerd zijn (deze overlay rendert er een van een
+  # tweede keer, in de namespace van de relay), en OPI heeft daarnaast MAIL_RELAY_API_URL
+  # in zijn deployment nodig.
 #  - ../../infrastructure/mail/controller/overlays/local
 #  - ../../infrastructure/pgadmin/controller/overlays/local
 #  - ../../infrastructure/pgadmin/config/overlays/local
