@@ -113,6 +113,7 @@ from opi.services.component_values import validate_key as validate_values_key
 from opi.services.component_values import validate_value as validate_values_value
 from opi.services.component_values import validate_value_for_storage as validate_values_value_for_storage
 from opi.services.config_lists import PatchableList, patchable_lists
+from opi.services.config_singular import overflowing_list, singular_config_model, to_singular, to_stored
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.help_text import service_help_markdown
 from opi.services.postgres_scope import get_postgres_schemas
@@ -2215,19 +2216,24 @@ async def get_service_config_v2(
     sending back, and read-modify-write is how this endpoint is normally used. What is
     not here is not missing: it is not yours to set.
 
+    **A list a service presents as one entry is returned as that entry** (today only
+    `invite.active`, see `Service.api_singular_lists`). If the file holds more than one,
+    this is a 409 rather than the first entry with the rest quietly missing.
+
     Headers:
         X-API-Key: The API key for the project (required)
     """
-    _service_or_404(service_name)
+    service = _service_or_404(service_name)
     project = get_project_store().get(project_name)
     if not project or not project.data:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-    return JSONResponse(
-        {
-            "service": service_name,
-            "configurations": _collect_service_config(project.data, service_name, None),
-        }
-    )
+    configurations = _collect_service_config(project.data, service_name, None)
+    singular = service.api_singular_lists
+    if singular:
+        for found in configurations:
+            _refuse_singular_overflow(service_name, found["target"], found.get("config"), singular)
+        configurations = [{**found, "config": to_singular(found.get("config"), singular)} for found in configurations]
+    return JSONResponse({"service": service_name, "configurations": configurations})
 
 
 #: OpenAPI responses shared by every config write route.
@@ -2355,8 +2361,62 @@ def _refuse_platform_managed(service_name: str, config: dict[str, Any], managed:
     )
 
 
+def _refuse_singular_overflow(service_name: str, target: str, stored: Any, singular: frozenset[str]) -> None:
+    """409 when the file holds more entries than the singular surface can honestly show.
+
+    The service says its list is one thing to the outside world (``api_singular_lists``),
+    which is true for as long as there is one entry. It is a facade, not a fact, so the
+    moment the file disagrees this layer stops pretending: showing the first entry would
+    hide the rest and writing one would replace them, and for an invite that loss cannot
+    be undone -- the key is the secret in the link and no read gives it back.
+
+    The way out is the PATCH on the list itself, which addresses entries one at a time and
+    has no singular surface to trip over. Naming it here matters: a refusal that does not
+    say what does work is just a wall.
+    """
+    overflow = overflowing_list(stored, singular)
+    if overflow is None:
+        return
+    list_name, count = overflow
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"'{list_name}' of service '{service_name}' holds {count} entries at target '{target}', but this API "
+            f"presents it as a single entry. Showing one would hide the others and writing one would replace them. "
+            f"Use PATCH /api/v2/projects/{{project_name}}/services/{service_name}/config/{target}/{list_name} with "
+            f"{{'add': [...]}} / {{'remove': [...]}} to change entries one at a time, or drop '{list_name}' from "
+            f"the service's 'api_singular_lists' to get the list surface back."
+        ),
+    )
+
+
+def _stored_config_at(
+    project_name: str, service_name: str, target: str, component: str | None, deployment: str | None
+) -> Any:
+    """This service's config as it stands in the project file, or None.
+
+    Only read for the singular facade's honesty check, so only a service that declares one
+    pays for it. A project that does not exist yet has nothing to lose, hence None.
+    """
+    project = get_project_store().get(project_name)
+    if not project or not project.data:
+        return None
+    for found in _collect_service_config(project.data, service_name, target):
+        if component is not None and found.get("component") != component:
+            continue
+        if deployment is not None and found.get("deployment") != deployment:
+            continue
+        return found.get("config")
+    return None
+
+
 def _make_upsert_endpoint(
-    service_name: str, target: str, name_param: str | None, config_model: type, managed: frozenset[str]
+    service_name: str,
+    target: str,
+    name_param: str | None,
+    config_model: type,
+    managed: frozenset[str],
+    singular: frozenset[str],
 ):
     """Build a typed PUT endpoint whose body is the service's config model."""
 
@@ -2365,6 +2425,23 @@ def _make_upsert_endpoint(
         # fields leave no key rather than freezing a model default (checklist item 4).
         config = kwargs["body"].model_dump(by_alias=True, exclude_unset=True)
         _refuse_platform_managed(service_name, config, managed)
+        if singular:
+            # Refuse BEFORE looking at the body, and regardless of whether the caller even
+            # mentioned the list: a PUT replaces the whole block, so a body without the
+            # list wipes it just as thoroughly as one with a single entry in it.
+            _refuse_singular_overflow(
+                service_name,
+                target,
+                _stored_config_at(
+                    kwargs["project_name"],
+                    service_name,
+                    target,
+                    kwargs.get("component_name"),
+                    kwargs.get("deployment_name"),
+                ),
+                singular,
+            )
+            config = to_stored(config, singular)
         return await _enqueue_config_write(
             kwargs["request"],
             kwargs["project_name"],
@@ -2453,7 +2530,9 @@ def _make_patch_body_model(config_model: type, spec: PatchableList) -> type[Base
     )
 
 
-def _config_patch_description(service_name: str, layer: ConfigLayer, spec: PatchableList) -> str:
+def _config_patch_description(
+    service_name: str, layer: ConfigLayer, spec: PatchableList, singular: frozenset[str] = frozenset()
+) -> str:
     place = _CONFIG_WRITE_PLACE[layer]
     what = f"the `{spec.name}` list of the `{service_name}` config" if spec.name else f"the `{service_name}` config"
     if spec.item_key is None:
@@ -2475,6 +2554,12 @@ def _config_patch_description(service_name: str, layer: ConfigLayer, spec: Patch
                 f"\n\nEverything else in the `{service_name}` config is left exactly as it stands -- only this "
                 "list is touched."
             )
+    if spec.name in singular:
+        rules += (
+            f"\n\nThis route is also the way past the single-entry surface: the PUT presents `{spec.name}` as one "
+            "entry because there is only ever one, and refuses a file that holds more. Here the list is a list, "
+            "so this is where a second entry is added and where entries are removed one at a time."
+        )
     return (
         f"Add, update or remove individual entries in {what} in {place} "
         "-- without resending the entries you are not touching (the PUT replaces the whole block).\n\n"
@@ -2524,7 +2609,9 @@ _CONFIG_WRITE_PLACE = {
 }
 
 
-def _config_write_description(service_name: str, layer: ConfigLayer, *, clearing: bool) -> str:
+def _config_write_description(
+    service_name: str, layer: ConfigLayer, *, clearing: bool, singular: frozenset[str] = frozenset()
+) -> str:
     """What a config write does, beyond what its summary already says.
 
     A summary says which service and which layer. What a caller cannot guess is where the
@@ -2537,6 +2624,21 @@ def _config_write_description(service_name: str, layer: ConfigLayer, *, clearing
         f"{'from' if clearing else 'in'} {place}, in the project's YAML file in `zad-projects`.",
         "",
     ]
+    for list_name in sorted(singular):
+        if clearing:
+            lines += [
+                f"`{list_name}` is a list in the project file and every entry of it goes, not only the one "
+                "this surface shows you. Clearing says what it does; it does not pretend there is one.",
+                "",
+            ]
+        else:
+            lines += [
+                f"`{list_name}` is a list in the project file but ONE entry here: there is only ever one of "
+                "them today, and a list of one makes every client carry a bracket it never fills. Send the "
+                f"entry itself. A file that already holds more than one `{list_name}` is refused with a 409 "
+                "instead of being replaced -- patch that list entry by entry instead.",
+                "",
+            ]
     if clearing:
         lines += [
             f"The service stays selected; only its config goes, so `{service_name}` falls back to its "
@@ -2580,14 +2682,21 @@ def _register_service_config_routes(router: APIRouter) -> None:
             path = f"/projects/{{project_name}}/services/{service_name}{suffix}"
             target = layer.value
             managed = service.platform_managed_fields(layer)
+            # A service may declare that a list of its config is one thing to the outside
+            # world; then the body is the facade model and not the stored shape. Generic:
+            # the declaration lives on the service, this reads it like any other hook.
+            singular = service.api_singular_lists
+            body_model = singular_config_model(model, singular) if singular else model
             router.add_api_route(
                 path,
-                validate_api_token(_make_upsert_endpoint(service_name, target, name_param, model, managed)),
+                validate_api_token(
+                    _make_upsert_endpoint(service_name, target, name_param, body_model, managed, singular)
+                ),
                 methods=["PUT"],
                 tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
                 summary=f"Upsert {service_name} config ({target})",
-                description=_config_write_description(service_name, layer, clearing=False),
+                description=_config_write_description(service_name, layer, clearing=False, singular=singular),
             )
             router.add_api_route(
                 path,
@@ -2596,7 +2705,7 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
                 summary=f"Clear {service_name} config ({target})",
-                description=_config_write_description(service_name, layer, clearing=True),
+                description=_config_write_description(service_name, layer, clearing=True, singular=singular),
             )
             # One PATCH per patchable list. A config that IS a list keeps its address
             # (storage, attachments); a config that CONTAINS lists gets one route per
@@ -2616,7 +2725,7 @@ def _register_service_config_routes(router: APIRouter) -> None:
                     tags=[service_name],
                     responses=_CONFIG_WRITE_RESPONSES,
                     summary=f"Patch {what} ({target})",
-                    description=_config_patch_description(service_name, layer, spec),
+                    description=_config_patch_description(service_name, layer, spec, singular),
                 )
 
 

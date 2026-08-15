@@ -985,3 +985,113 @@ class TestApiConfigCoverage:
                 f"'{service_type.value}': routes {sorted(routed[service_type.value])} do not match the "
                 f"advertised targets {sorted(advertised)}"
             )
+
+
+#: One invitation, in the shape the file stores it.
+_ONE_INVITE = {"key": "eerste-geheim", "realm-roles": ["viewer"], "contact-email": "a@b.nl"}
+
+
+class TestSingularConfigFacade:
+    """A config list a service presents to the API as ONE entry.
+
+    ``invite.active`` is the only one today. The switch sits on the service
+    (``api_singular_lists``) and the whole implementation sits in
+    ``opi/services/config_singular.py``; these tests hold the three things that make it a
+    facade rather than a redesign: the storage stays a list in both directions, more than
+    one entry is detected instead of hidden, and switching the marker off gives the list
+    surface straight back without a schema taking part in it.
+    """
+
+    def test_the_body_model_takes_one_entry_and_the_file_keeps_a_list(self) -> None:
+        from opi.services.catalog.invite.config_model import InviteConfig
+        from opi.services.config_singular import singular_config_model, to_stored
+
+        names = frozenset({"active"})
+        body = singular_config_model(InviteConfig, names)(**{"default-language": "en", "active": _ONE_INVITE})
+        config = to_stored(body.model_dump(by_alias=True, exclude_unset=True), names)
+        assert config == {"default-language": "en", "active": [_ONE_INVITE]}
+
+        # And that is a config the save chokepoint accepts, in the shape it always had.
+        data = _project()
+        data["services"].append("keycloak")
+        ServiceAdapter.set_service_config(data, ServiceType.INVITE.value, ConfigLayer.PROJECT, config)
+        validate_service_configs(data)
+        stored = service_entry_config(next(e for e in data["services"] if service_entry_name(e) == "invite"))
+        assert stored["active"] == [_ONE_INVITE]
+
+    def test_the_facade_model_is_a_subclass_so_nothing_else_can_drift(self) -> None:
+        from opi.services.catalog.invite.config_model import InviteConfig
+        from opi.services.config_singular import singular_config_model
+
+        model = singular_config_model(InviteConfig, frozenset({"active"}))
+        assert issubclass(model, InviteConfig)
+        assert model.model_fields["default_language"].alias == "default-language"
+        # Built once, so two routes of one service share one schema in the document.
+        assert model is singular_config_model(InviteConfig, frozenset({"active"}))
+
+    def test_a_read_shows_the_one_entry_and_an_empty_list_shows_nothing(self) -> None:
+        from opi.services.config_singular import to_singular
+
+        names = frozenset({"active"})
+        assert to_singular({"default-language": "nl", "active": [_ONE_INVITE]}, names) == {
+            "default-language": "nl",
+            "active": _ONE_INVITE,
+        }
+        assert to_singular({"active": []}, names)["active"] is None
+
+    def test_more_than_one_entry_is_detected_and_not_hidden(self) -> None:
+        from opi.services.config_singular import overflowing_list
+
+        names = frozenset({"active"})
+        assert overflowing_list({"active": [_ONE_INVITE]}, names) is None
+        assert overflowing_list({"active": []}, names) is None
+        assert overflowing_list({"active": [_ONE_INVITE, {"key": "tweede"}]}, names) == ("active", 2)
+
+    def test_a_name_that_is_not_a_list_field_is_refused(self) -> None:
+        from opi.services.catalog.invite.config_model import InviteConfig
+        from opi.services.config_singular import singular_config_model
+
+        # Same argument as ITEM_KEYS: a typo must fail, not silently leave the list
+        # surface in place while everyone believes the facade is on.
+        with pytest.raises(ValueError, match="has no field 'actief'"):
+            singular_config_model(InviteConfig, frozenset({"actief"}))
+        with pytest.raises(ValueError, match="not a list"):
+            singular_config_model(InviteConfig, frozenset({"default-language"}))
+
+    def test_switching_the_marker_off_gives_the_list_surface_back(self) -> None:
+        # Reversibility, measured on the generated route rather than assumed: with the
+        # marker the PUT body is the facade model, without it the config model itself.
+        # Nothing on disk and nothing in the project schema takes part in either answer.
+        from fastapi import APIRouter
+        from opi.api.v2.router import _register_service_config_routes
+        from opi.services.catalog.invite import InviteService
+        from opi.services.catalog.invite.config_model import InviteConfig
+
+        def invite_body_model() -> type:
+            router = APIRouter()
+            _register_service_config_routes(router)
+            route = next(
+                r
+                for r in router.routes
+                if getattr(r, "path", "") == "/projects/{project_name}/services/invite/config/project"
+                and "PUT" in getattr(r, "methods", set())
+            )
+            return route.endpoint.__signature__.parameters["body"].annotation
+
+        assert invite_body_model().__name__ == "InviteConfigSingular"
+
+        original = InviteService.api_singular_lists
+        try:
+            InviteService.api_singular_lists = frozenset()
+            assert invite_body_model() is InviteConfig
+        finally:
+            InviteService.api_singular_lists = original
+        assert invite_body_model().__name__ == "InviteConfigSingular"
+
+    def test_the_marker_is_the_only_declaration_of_the_facade(self) -> None:
+        # No ``if service == "invite"`` anywhere: exactly one service declares it, and
+        # the generic layer reads that declaration like every other catalog hook.
+        from opi.services.registry import SERVICES
+
+        declaring = {st.value for st, svc in SERVICES.items() if svc.api_singular_lists}
+        assert declaring == {"invite"}

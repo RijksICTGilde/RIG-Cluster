@@ -91,6 +91,95 @@ kan hem weghalen; een invite die iemand anders (of de portal) aanmaakte is via d
 niet te verwijderen zonder die sleutel. Toevoegen -- het punt waar het misging -- kan nu
 wel zonder.
 
+## Een lijst die er altijd een is: het enkelvoudige oppervlak
+
+**Dit is een tijdelijke gevel, geen ontwerpbesluit.** Lees eerst waarom hij er staat, want
+de dag dat een tweede invite-soort zich aandient gaat hij er weer af.
+
+`invite.active` is in het projectbestand een lijst, maar er staat er altijd precies een in.
+Het formulier pinde dat al af (`INVITE_ACTIVE_EDITABLE`: min == max == 1, geen toevoeg- of
+verwijderknop) en de API deed het niet: wie via de CLI of een agent een uitnodiging zette,
+schreef `{"active": [{...}]}` met een haakjespaar dat nooit een tweede element kreeg, en dook
+bij het lezen op index 0 voor het enige dat er was.
+
+Dus liegt de API netjes: hij toont het enkelvoud.
+
+```bash
+# de uitnodiging zelf, geen lijst van een
+curl -X PUT https://.../api/v2/projects/algor-odc/services/invite/config/project \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"default-language": "nl", "active": {"realm-roles": ["editor"], "contact-email": "beheer@x.nl"}}'
+```
+
+De OPSLAG verandert hier niet van mee. Het projectbestand houdt de lijst, `InviteConfig.active`
+blijft `list[InviteEntry]`, `project_v2.json` en het vastgelegde fragment `invite.v1.0.json`
+zijn ongewijzigd. Er is geen migratie, geen tweede vorm en geen schemawijziging, juist omdat
+we niet weten of er nog entries bij komen.
+
+### Een schakelaar, op de dienst, en verder nergens
+
+De dienst declareert het zelf, zoals elke andere haak in de catalogus:
+
+```python
+class InviteService(Service):
+    api_singular_lists = frozenset({"active"})
+```
+
+Meer is het niet. De generieke laag leest die verzameling en bouwt er het gevelmodel mee
+(`InviteConfigSingular`, een subklasse van `InviteConfig` waarin alleen dat ene veld
+enkelvoudig is), zet de conversie op de PUT en op de GET, en zet `x-api-singular: true` bij
+het veld in `/openapi.json` zodat een client de afwijking in het document ziet in plaats van
+hem te ontdekken. Er staat nergens een `if service == "invite"`. Alles wat de gevel doet zit
+in `opi/services/config_singular.py`, en `Service.api_singular_lists` is de plek waar staat
+waarom.
+
+**Terugdraaien is de naam weghalen.** Dan is het lijstoppervlak terug, precies zoals het was,
+en er verandert niets aan wat er op schijf staat. `tests/test_service_config_api.py::TestSingularConfigFacade`
+meet beide kanten, zodat "we zetten hem weer uit" geen sprong in het diepe is.
+
+### De grens: meerdere entries worden nooit verzwegen
+
+Een gevel mag alleen bestaan zolang hij waar is. Staan er twee of meer invites in het bestand
+(met de hand toegevoegd, of via de PATCH hieronder), dan toont deze laag NIET de eerste en
+overschrijft hij niet de rest. Dat verschil is bij een invite onherstelbaar: de sleutel is het
+geheim in de link en komt bewust in geen enkel leesantwoord terug.
+
+| Werkwoord | Bij meerdere entries |
+|---|---|
+| `GET .../services/invite/config` | **409**, met het aantal erbij. Liever geen antwoord dan een antwoord dat de rest verzwijgt |
+| `PUT .../config/project` | **409**, vóór er iets in de wachtrij komt. Ook als de body `active` helemaal niet noemt: een PUT vervangt het hele blok, dus een body zonder de lijst wist hem net zo grondig |
+| `PATCH .../config/project/active` | Gewoon uitgevoerd. Dit is de uitweg, zie hieronder |
+| `DELETE .../config/project` | Gewoon uitgevoerd. Bewust niet geweigerd |
+
+De 409 noemt de PATCH-route, want een weigering die niet vertelt wat wel werkt is een muur.
+
+`DELETE` valt er met opzet buiten. Die zegt "wis dit configblok" en doet dat ook, met of zonder
+gevel; hij houdt zich niet voor dat er een entry is. Hem ook weigeren zou een project met
+meerdere invites zonder enige weg naar een schone lei zetten, want een gerichte PATCH-remove
+vraagt de sleutels die niet terug te lezen zijn.
+
+### De lijst-PATCH blijft staan, als expliciete uitweg
+
+De PATCH op `invite.active` uit de vorige paragraaf verdwijnt niet. Die is nu twee dingen: de
+manier om een entry te wijzigen zonder de rest over te typen, en de gedocumenteerde uitweg uit
+het enkelvoud. Daar is de lijst gewoon een lijst, dus een tweede uitnodiging gaat hierlangs:
+
+```bash
+curl -X PATCH https://.../api/v2/projects/algor-odc/services/invite/config/project/active \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"add": [{"key": "tweede-geheim", "realm-roles": ["editor"]}]}'
+```
+
+Vanaf dat moment weigeren de PUT en de GET, tot er weer een over is. Dat is de bedoeling: de
+gevel meldt zichzelf af zodra hij niet meer klopt.
+
+### Twee plekken die hetzelfde vinden, bewust niet aan elkaar geknoopt
+
+Het formulier pint `active` ook af op precies een. Dat is dezelfde aanleiding, maar een andere
+vraag (een widget versus een request body), dus de twee zijn niet aan elkaar geknoopt. Ze
+verwijzen wel naar elkaar: `INVITE_ACTIVE_EDITABLE` noemt `api_singular_lists` en andersom, zodat
+wie de een omzet ook naar de ander kijkt.
+
 ## Velden die het platform schrijft
 
 **De regel: de API kan configdata die OPI zelf zet nooit wissen en nooit aanpassen.**
@@ -273,8 +362,12 @@ are out of scope.
 ## Tests
 
 - `tests/test_service_config_api.py` -- the pure core, the round-trip through the
-  validation chokepoint, the endpoint helpers, and a measured API-config coverage
-  guard over every service.
+  validation chokepoint, the endpoint helpers, a measured API-config coverage
+  guard over every service, and (`TestSingularConfigFacade`) the single-entry surface
+  in both directions plus its typo guard.
+- `tests/test_v2_flow.py::TestSingularServiceConfigSurface` -- de HTTP-kant van het
+  enkelvoud: het OpenAPI-schema zonder array, de PUT die een lijst van een wegschrijft,
+  de 409 bij meerdere entries op zowel lezen als schrijven, en de PATCH die er wel bij kan.
 - `tests/test_v2_flow.py::TestConfigureServiceFlow` -- the HTTP surface: the catalog
   list, the typed-body upsert/clear task payloads, the OpenAPI per-service schema,
   auth, and the 404/422 gates.

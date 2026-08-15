@@ -518,6 +518,12 @@ model + the layer hooks); the router owns the uniform *exposure*.
 - Configuring on a component/deployment implicitly selects the service at the project
   level (a bare entry in the root `services` list), so a component-only write does not
   require the caller to add it there first.
+- A service may declare `api_singular_lists`: config keys that are a list in the file but
+  ONE entry over the API. A **temporary facade** for a list that is always exactly one
+  (`invite.active`) and never a redesign -- the storage, the model and the schema keep the
+  list, emptying the set gives the list surface back, and a file that holds more than one is
+  refused with a 409 on read and write rather than shown as one or replaced by one. The
+  PATCH on that list is the documented way past it.
 
 Full reference: `features/service-config-api.md`. So a new service needs to do
 nothing beyond declaring its `config_model` (and layer hooks) to be API-configurable.
@@ -632,6 +638,7 @@ Every hook a service may implement, so a new service knows what it can own:
 | `config_form_section(layer)` | project-level wizard/edit config step |
 | `config_component_layout()` / `config_component_visualizers()` | per-component form fields |
 | `web_routers()` | the endpoints those blocks need (fragments, modals) |
+| `api_singular_lists` | config lists this service shows the API as ONE entry (a temporary facade; today only `invite.active`, see `features/service-config-api.md`) |
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `allows_implicit_project_selection` / `implicit_project_config()` | whether binding the service to a component/deployment may also select it at project level, and with what project-level config (RC-84, `features/impliciete-dienstselectie.md`) |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
