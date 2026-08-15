@@ -650,10 +650,10 @@ class Service(ABC):
     #:
     #: De gevel mag alleen bestaan zolang hij waar is: staan er meer entries in het bestand,
     #: dan weigeren de lees- en schrijfroute met een 409 in plaats van de eerste te tonen en
-    #: de rest te overschrijven -- bij een invite is dat verlies onherstelbaar, want de
-    #: sleutel is het geheim in de link en komt in geen enkel leesantwoord terug. De PATCH
-    #: op de lijst blijft bestaan en is de uitweg. Alles daarvan zit op één plek,
-    #: ``opi/services/config_singular.py``.
+    #: de rest te overschrijven -- bij een invite is dat verlies onherstelbaar, want het
+    #: projectbestand is de enige plek waar die uitnodiging staat en een overschreven link
+    #: is per direct ongeldig voor wie hem al had. De PATCH op de lijst blijft bestaan en is
+    #: de uitweg. Alles daarvan zit op één plek, ``opi/services/config_singular.py``.
     api_singular_lists: ClassVar[frozenset[str]] = frozenset()
 
     #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
@@ -1138,6 +1138,25 @@ class Service(ABC):
         of which is user territory) overrides this.
         """
         return platform_managed_keys(self.config_model_for(layer))
+
+    def generate_missing_values(self, project_data: dict[str, Any]) -> dict[str, str]:
+        """Fill in the values this service generates when the writer left them empty.
+
+        The wizard has always done this for the one case there is -- an invite key left
+        blank becomes a generated 128-bit key -- through the form's ``post_merge``. The
+        API write path never ran that, so a caller who left the key empty (the portal
+        invites you to) got an invitation whose link was literally ``/invite/``. Nothing
+        was masked and nothing was cleared: no key was ever made.
+
+        Mutates ``project_data`` in place and returns ``{yaml path: generated value}``.
+        The return value is not bookkeeping: it is the ONLY place a caller learns a value
+        the platform invented for it, so the write route can hand it back. Default ``{}``
+        -- a service that generates nothing declares nothing.
+
+        Idempotent by contract, like every other pass over a project file: a value that is
+        already there is left alone and reported by nobody.
+        """
+        return {}
 
     # --- approval ownership (RC-5 "service owns what needs approving") -----------
     # A service declares, as data, which of the values it manages need approval before

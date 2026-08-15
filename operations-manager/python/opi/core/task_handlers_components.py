@@ -662,6 +662,10 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             "service": service_name,
             "target": target,
             **counts,
+            # Wat het platform invulde omdat de aanroeper het leeg liet. Dit is de enige
+            # plek waar hij een uitnodigingssleutel te zien krijgt die hij niet zelf koos,
+            # en zonder die sleutel is de uitnodiging niet te versturen.
+            "generated": result.get("generated", {}),
             # Wat er nog op een beheerder wacht. Zonder dit merkt een client pas dat zijn
             # domein niet is goedgekeurd doordat er geen ingress op dat adres verschijnt.
             "approvals": result.get("approvals", []),
