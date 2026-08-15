@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 from pydantic import ValidationError
 
 from opi.services.catalog.events import collect_event_handlers
+from opi.services.config_managed import platform_managed_keys
 from opi.services.services import ServiceDefinition
 
 if TYPE_CHECKING:
@@ -1063,6 +1064,24 @@ class Service(ABC):
         if self.config_model is None:
             return []
         return [field.alias or name for name, field in self.config_model.model_fields.items()]
+
+    def platform_managed_fields(self, layer: ConfigLayer) -> frozenset[str]:
+        """The config keys at ``layer`` that OPI writes and the API may never touch.
+
+        The rule is absolute and generic: **the API can never clear and never change
+        config data OPI sets itself.** For keycloak that is the realm, its credentials
+        and the OTP seed; a service that declares nothing gets an empty set and behaves
+        exactly as before. The boundary is the API, not the code -- OPI's own writers
+        (``keycloak_manager``, the approval flow) go a different way and keep writing
+        these fields, otherwise no rollout could create a realm.
+
+        Derived from the model rather than declared twice: a field marks itself with
+        ``json_schema_extra={PLATFORM_MANAGED: True}``, so the marking cannot drift from
+        the field it protects and reaches the schema fragment and ``/openapi.json``. A
+        service whose answer differs per layer (the same model serving two layers, one
+        of which is user territory) overrides this.
+        """
+        return platform_managed_keys(self.config_model_for(layer))
 
     # --- approval ownership (RC-5 "service owns what needs approving") -----------
     # A service declares, as data, which of the values it manages need approval before
