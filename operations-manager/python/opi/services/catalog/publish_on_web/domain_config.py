@@ -256,3 +256,38 @@ def domain_setting_path(setting: DomainSetting, deployment_index: int | None = N
     if deployment_index is not None:
         path = path.replace("deployments[*]", f"deployments[{deployment_index}]")
     return path
+
+
+def custom_domain_certificate_note(cluster: str, base_domain: str | None) -> str | None:
+    """What a caller has to be told when ``cluster`` cannot certify ``base_domain``.
+
+    One sentence, or None when there is nothing to say -- which is the normal case: a
+    supported domain is covered by the platform certificate, and a cluster that can issue
+    for a domain of the user's own has no news either.
+
+    It exists because the situation it describes is invisible in every other way. The
+    ingress is created, the Issuer is created, ArgoCD reports Synced, the deployment
+    reports Healthy, and the browser is served the wrong certificate; nothing in the
+    portal, in the API or in the cluster says why (zad-cli, bevinding 22). The fact is
+    knowable from the cluster configuration alone at the moment the domain is set, so that
+    is where it is said -- and it names the way out, because "this will not work" without
+    one is half an answer.
+
+    The sentence lives with publish-on-web because publish-on-web owns both halves of it:
+    the ``base-domain`` that causes it and the ``tls`` mode that resolves it.
+    """
+    from opi.connectors.subdomain import get_supported_base_domains
+    from opi.core.cluster_config import supports_custom_domain_certificates
+
+    if not base_domain:
+        return None
+    if base_domain.lower() in get_supported_base_domains(cluster):
+        return None
+    if supports_custom_domain_certificates(cluster):
+        return None
+    return (
+        f"Het cluster '{cluster}' kan geen certificaat aanvragen voor een eigen domein, dus voor "
+        f"'{base_domain}' komt er geen geldig certificaat en krijgen bezoekers een certificaatfout. "
+        f"Lever een eigen certificaat mee (tls: provided, met het certificaat als attachment) of "
+        f"kies een domein dat dit cluster wel aanbiedt."
+    )

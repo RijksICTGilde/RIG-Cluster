@@ -439,6 +439,19 @@ class ClusterInfo(BaseModel):
         alias="base-domains",
         description="De waarden die base-domain op een deployment van dit cluster accepteert.",
     )
+    custom_domain_certificates: bool = Field(
+        default=True,
+        alias="custom-domain-certificates",
+        description=(
+            "Of dit cluster een certificaat kan aanvragen voor een eigen domein, dus voor een "
+            "base-domain dat niet in 'base-domains' staat. Is dit false, dan wordt de deployment "
+            "gewoon aangemaakt en bereikbaar, maar krijgt hij geen geldig certificaat en ziet een "
+            "bezoeker een certificaatfout: lever dan een eigen certificaat mee (tls: provided met "
+            "het certificaat als attachment) of kies een domein uit 'base-domains'. Dit zegt niets "
+            "over DNS of eigendom, alleen over wat het platform hier kan uitgeven."
+        ),
+        examples=[True],
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 

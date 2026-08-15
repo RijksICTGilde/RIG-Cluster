@@ -123,6 +123,32 @@ def config_path(layer: ConfigLayer, service: ServiceType, *segments: str) -> str
     return "/".join([prefix, *segments]) if segments else prefix
 
 
+#: The REST counterpart of ``_LAYER_PATH_PREFIX``: the path suffix of the generated
+#: config-write route, per layer. It sits here and not in the v2 router because two very
+#: different callers need the same string -- the router, which registers the route, and an
+#: error message that has to tell a caller which request to make instead. An endpoint typed
+#: out by hand in an error message is one that goes stale without anyone noticing.
+#: ``DEPLOYMENT_COMPONENT`` is absent on purpose: no write route is generated for it.
+_LAYER_ENDPOINT_SUFFIX: dict[ConfigLayer, str] = {
+    ConfigLayer.PROJECT: "/config/project",
+    ConfigLayer.COMPONENT: "/config/component/{component_name}",
+    ConfigLayer.DEPLOYMENT: "/config/deployment/{deployment_name}",
+}
+
+
+def config_endpoint_path(layer: ConfigLayer, service_name: str, project_name: str = "{project_name}") -> str:
+    """The API path that writes a service's config at ``layer``.
+
+    ``config_endpoint_path(ConfigLayer.PROJECT, "authorization-wall", "mijn-project")``
+    -> ``"/api/v2/projects/mijn-project/services/authorization-wall/config/project"``.
+
+    Takes the service as a plain name rather than a ``ServiceType``, because a caller
+    that only holds the name out of a project file should not have to rebuild the enum
+    to name the endpoint. Raises ``KeyError`` for a layer that has no write route.
+    """
+    return f"/api/v2/projects/{project_name}/services/{service_name}{_LAYER_ENDPOINT_SUFFIX[layer]}"
+
+
 #: A service's raw config as it appears in the project file: a dict for most
 #: services, or a list for sequence configs (e.g. storage mounts).
 ServiceConfigData = dict[str, Any] | list[Any]
