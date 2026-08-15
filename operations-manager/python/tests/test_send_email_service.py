@@ -460,6 +460,70 @@ class TestHetPlatformaccountIsEenGewoonAccount:
         assert ensured.await_args.kwargs["password"] == "bewaard-wachtwoord"
 
 
+class TestEenOnleesbareSecretRoteertNiets:
+    """Rework r3: "niet gevonden" en "niet kunnen kijken" zijn niet hetzelfde.
+
+    ``get_secret`` antwoordt ``None`` op een ontbrekende Secret ÉN op elke mislukte
+    kubectl-aanroep (geen rechten, API-server weg, timeout). De opstartweg maakt van een
+    ``None`` een NIEUW wachtwoord, dus één onleesbaar moment zou de Secret overschrijven en
+    ZAD uit zijn eigen mailaccount roteren. Daarom bevestigt de lezer de afwezigheid.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _relay(self, monkeypatch):
+        from opi.core.config import settings
+
+        monkeypatch.setattr(settings, "MAIL_RELAY_API_URL", "http://relay")
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_secret_refuses_instead_of_generating(self, monkeypatch) -> None:
+        from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
+
+        monkeypatch.setattr(KubectlConnector, "get_secret", AsyncMock(return_value=None))
+        # Bestaan onbekend: kubectl gaf een fout die geen NotFound is.
+        monkeypatch.setattr(KubectlConnector, "secret_exists", AsyncMock(return_value=None))
+        write = AsyncMock()
+        monkeypatch.setattr(MailManager, "_write_platform_secret", write)
+        ensured = AsyncMock()
+        monkeypatch.setattr(MailManager, "ensure_account", ensured)
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=object()))
+
+        with pytest.raises(KubectlExecutionError):
+            await MailManager.ensure_platform_account()
+
+        write.assert_not_awaited()
+        ensured.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_the_startup_task_survives_that_refusal(self, monkeypatch) -> None:
+        """En het blijft non-critical: de taak vangt ``KubectlExecutionError`` al, dus de
+        boot gaat door en de volgende opstart leest de Secret gewoon terug."""
+        from opi.connectors.kubectl import KubectlConnector
+        from opi.core import startup
+
+        monkeypatch.setattr(KubectlConnector, "get_secret", AsyncMock(return_value=None))
+        monkeypatch.setattr(KubectlConnector, "secret_exists", AsyncMock(return_value=None))
+
+        assert await startup.ensure_platform_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_a_confirmed_absence_still_generates(self, monkeypatch) -> None:
+        """De eerste opstart moet gewoon blijven werken: NotFound is een echt antwoord."""
+        from opi.connectors.kubectl import KubectlConnector
+
+        monkeypatch.setattr(KubectlConnector, "get_secret", AsyncMock(return_value=None))
+        monkeypatch.setattr(KubectlConnector, "secret_exists", AsyncMock(return_value=False))
+        write = AsyncMock()
+        monkeypatch.setattr(MailManager, "_write_platform_secret", write)
+        monkeypatch.setattr(MailManager, "ensure_account", AsyncMock(return_value=None))
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=object()))
+
+        await MailManager.ensure_platform_account()
+
+        write.assert_awaited_once()
+
+
 class TestDeStartuptaakTrektDeBootNietOm:
     """Fase 3b is non-critical, en dat moet HIER waargemaakt worden.
 

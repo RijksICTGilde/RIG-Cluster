@@ -177,6 +177,14 @@ opstartvolgorde die niemand meer kan volgen. Daarom een Secret, met deze eigensc
   veiligheid: een wachtwoord dat alleen op de relay staat sluit ZAD buiten zijn eigen
   account, terwijl een wachtwoord dat alleen in de Secret staat door de volgende opstart
   vanzelf wordt rechtgezet.
+- **Als hij niet te lézen is**: dat is iets anders dan "hij is er niet", en het verschil is
+  hier het hele punt. `get_secret` antwoordt `None` op een ontbrekende Secret én op elke
+  mislukte kubectl-aanroep (geen rechten, API-server weg, timeout), en van een `None` maakt
+  deze weg een nieuw wachtwoord. Eén onleesbaar moment zou dus de Secret overschrijven en
+  ZAD uit zijn eigen account roteren. Daarom wordt de afwezigheid bevestigd
+  (`KubectlConnector.secret_exists`, dat `NotFound` van een fout onderscheidt) en weigert
+  OPI bij twijfel: de opstarttaak faalt dan zichtbaar en de volgende opstart leest de Secret
+  gewoon terug.
 - **Bij een tweede opstart**: het bewaarde wachtwoord wordt teruggelezen en ongewijzigd aan
   de relay gegeven. Er komt dus geen tweede account, en het bestaande wachtwoord wordt niet
   stilzwijgend vervangen door een nieuw dat nergens landt.
@@ -259,6 +267,27 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
    `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` — de
    upstream-gegevens van het mailteam en de DKIM-sleutel er met de hand in (die zijn niet te
    genereren), daarna `task generate-secrets-for-cluster <cluster>` voor de rest.
+
+   Twee dingen die je hier op je neus laten vallen:
+
+   - **Twee waarden in dat sjabloon zijn per cluster, en het sjabloon is er één voor alle
+     clusters.** `MAIL_DOMAIN` staat op de productiewaarde `mail.rijksapp.nl` en
+     `MAIL_DB_HOST` op `rig-db-rw.rig-prd-operations`. Op `local` en `sandboxed-local` klopt
+     geen van beide: `get_mail_domain` in `opi/core/cluster_config.py` zegt daar `mail.kind`
+     respectievelijk `mail.sandbox.rijksapp.dev`, en de database draait in `rig-system`. Pas
+     ze aan vóór het genereren — anders ondertekent de relay met een DKIM-sleutel voor het
+     ene domein wat OPI als het andere aankondigt, en start hij sowieso niet op zonder
+     database.
+   - **`generate-secrets-for-cluster` doet niets als er al geheimen liggen.** De taak stopt
+     met `exit 0` zodra er één `*.sops.yaml` in de clustermap staat ("To regenerate, delete
+     the *.sops.yaml files in that directory first"). Op `odcn` staan die er allemaal al,
+     dus deze stap levert daar géén `mail-relay-secret.sops.yaml` op en de fout uit zich pas
+     bij stap 4 als een relay zonder inloggegevens. Genereer het bestand daar apart: vul het
+     sjabloon, versleutel het met `sops --encrypt` naar
+     `infrastructure/bootstrap/infrastructure/secrets/config/overlays/<cluster>/mail-relay-secret.sops.yaml`
+     en zet het in de `kustomization.yaml` van die map. De bestaande geheimen van dat
+     cluster weggooien om te kunnen hergenereren is géén optie: dan roteren Keycloak,
+     PostgreSQL en MinIO mee.
 2. **Overlay aanzetten**: de regel `- ../../infrastructure/mail/controller/overlays/<type>`
    in `infrastructure/bootstrap/clusters/<type>/kustomization.yaml` uit het commentaar
    halen. Daarmee komt het gegenereerde geheim ook in de namespace van de relay te staan
