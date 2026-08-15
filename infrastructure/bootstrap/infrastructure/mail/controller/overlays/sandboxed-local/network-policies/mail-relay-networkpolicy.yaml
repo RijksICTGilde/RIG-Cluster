@@ -1,0 +1,68 @@
+# podSelector + policyTypes maakt de relay-pods deny-by-default; alleen wat hieronder
+# expliciet wordt toegestaan komt erdoor.
+#
+# De INGANG staat hier, de UITGANG bij het project: de dienst send-email draagt per
+# component een egress-beleid bij in de projectnamespace, want alleen de dienst weet
+# wanneer hij aanstaat en voor welk component. Handmatig beheerde regels aan die kant zijn
+# precies hoe de storing van 10 juni ontstond.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mail-relay-access
+  namespace: rig-operations-ron
+spec:
+  podSelector:
+    matchLabels:
+      app: rig-mail-relay
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Tenant-namespaces bieden post aan op submission. De grens tussen projecten ligt
+    # hier niet: die ligt bij de SMTP-authenticatie en bij de limiet per account. Een
+    # namespace die geen egress-beleid heeft komt hier sowieso niet aan.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
+      ports:
+        - protocol: TCP
+          port: 587
+    # OPI zelf: post versturen namens het platform (587) en accounts aanmaken op de
+    # management-API (8080).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-system
+      ports:
+        - protocol: TCP
+          port: 587
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # De gedeelde PostgreSQL: de relay bewaart zijn accounts en zijn wachtrij daar en
+    # niet op een PVC.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-system
+      ports:
+        - protocol: TCP
+          port: 5432
+    # De upstream mailserver, via de egressgateway. Alleen submission; verder heeft de
+    # relay buiten het cluster niets te zoeken.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 587
