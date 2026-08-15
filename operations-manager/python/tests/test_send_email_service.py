@@ -569,6 +569,33 @@ class TestDeStartuptaakTrektDeBootNietOm:
         monkeypatch.setattr(MailManager, "ensure_platform_account", _boom)
         assert await startup.ensure_platform_mail_account() is False
 
+    @pytest.mark.asyncio
+    async def test_an_unreachable_api_server_is_logged_and_not_raised(self, monkeypatch) -> None:
+        """``KubectlConnectionError`` is GEEN subklasse van ``KubectlExecutionError``, en het
+        is juist de toestand waar de kubectl-connector zijn eigen herhaallus voor heeft: de
+        API-server is (nog) niet bereikbaar terwijl OPI opstart."""
+        from opi.connectors.kubectl import KubectlConnectionError
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise KubectlConnectionError("kubectl connection is not available")
+
+        monkeypatch.setattr(MailManager, "ensure_platform_account", _boom)
+        assert await startup.ensure_platform_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_an_undecryptable_admin_password_is_logged_and_not_raised(self, monkeypatch) -> None:
+        """``create_mail_connector`` ontsleutelt ``MAIL_RELAY_ADMIN_PASSWORD``; een waarde die
+        nog niet te ontsleutelen is geeft een kale ``ValueError``. Dat is de waarschijnlijke
+        eerste toestand na het aanzetten van ``MAIL_RELAY_API_URL``, geen randgeval."""
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise ValueError("Failed to decrypt password: no matching AGE key")
+
+        monkeypatch.setattr(MailManager, "ensure_platform_account", _boom)
+        assert await startup.ensure_platform_mail_account() is False
+
 
 class TestTheClusterConfig:
     """The relay is addressed per cluster, like every other shared service."""
