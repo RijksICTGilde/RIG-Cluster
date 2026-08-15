@@ -14,7 +14,6 @@ from pydantic import ValidationError
 
 from opi.core.buttons import check_button_variant
 from opi.services.config_lists import find_patchable_list
-from opi.services.config_managed import platform_managed_keys
 from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
 
 if TYPE_CHECKING:
@@ -988,8 +987,7 @@ class ServiceAdapter:
             service = get_service(ServiceType(service_name))
         except ValueError:
             return {}
-        keys = platform_managed_keys(service.config_model_for(layer))
-        return {key: config[key] for key in keys if key in config}
+        return {key: config[key] for key in service.platform_managed_fields(layer) if key in config}
 
     @classmethod
     def _keep_platform_fields(
@@ -997,13 +995,15 @@ class ServiceAdapter:
     ) -> dict[str, Any] | list[Any]:
         """Carry the platform-written fields of the stored config into its replacement.
 
-        The generic PUT sends only what the caller set, and this method replaces the whole
-        block, so a field the caller never mentioned would simply disappear. For a user
-        setting that is the intended "reset to default"; for ``keycloak.realms`` it
-        destroyed the only copy of the realm-admin password. The stored value therefore
-        wins over anything the caller sent for these fields -- there is no request that
-        may replace them, and refusing outright would break a replay that harmlessly
-        resends what is already there.
+        This method replaces the whole block, so a field the caller never mentioned would
+        simply disappear. For a user setting that is the intended "reset to default"; for
+        ``keycloak.realms`` it destroyed the only copy of the realm-admin password.
+
+        The API refuses a write that CARRIES such a field (422, in the route), so this is
+        the guarantee for the other half: a write that leaves it out cannot lose it. The
+        stored value is passed through untouched -- not re-validated and not re-dumped --
+        so it keeps exactly the bytes it had, and it stays the safety net for any future
+        write path that does not go through a route.
         """
         kept = cls._platform_fields_of(service_name, layer, stored)
         if not kept or not isinstance(config, dict):

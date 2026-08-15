@@ -2075,7 +2075,22 @@ async def describe_service_v2(service_name: str) -> ServiceDescription:
 
 
 def _collect_service_config(project_data: dict[str, Any], service_name: str, target_filter: str | None) -> list[dict]:
-    """Gather a service's config across every layer it is set on in the project."""
+    """Gather a service's config across every layer it is set on in the project.
+
+    Fields OPI owns are left out. They are not the caller's to set (a write carrying one
+    is a 422), and handing them out would hand a caller the very value it is refused for
+    sending back -- read-modify-write is the normal way to use this endpoint. It also
+    keeps the AGE-encrypted realm-admin password out of an API response, which it had no
+    business being in.
+    """
+
+    service = _service_or_404(service_name)
+
+    def visible(config: Any, layer: ConfigLayer) -> Any:
+        owned = service.platform_managed_fields(layer)
+        if not owned or not isinstance(config, dict):
+            return config
+        return {key: value for key, value in config.items() if key not in owned}
 
     def find(services: list, target: str, **ids: str | None) -> list[dict]:
         for entry in services or []:
@@ -2086,7 +2101,7 @@ def _collect_service_config(project_data: dict[str, Any], service_name: str, tar
                 # component/deployment. Only report entries that carry config.
                 if config is None:
                     return []
-                return [{"target": target, **ids, "config": config}]
+                return [{"target": target, **ids, "config": visible(config, ConfigLayer(target))}]
         return []
 
     found: list[dict] = []
@@ -2128,6 +2143,13 @@ async def get_service_config_v2(
     component). A client that assumes one shape crashes on the first project that has
     both, which is every project that ever used an attachment. Read ``target`` first, or
     check the type before you index into it.
+
+    **Fields the platform owns are left out.** `keycloak.realms` (the realm, its admin
+    credentials and the OTP seed) and `publish-on-web.domains` (the approval verdicts)
+    are written by ZAD, and the API can neither change nor clear them -- a write that
+    carries one is a 422. Returning them would hand you the one thing you are refused for
+    sending back, and read-modify-write is how this endpoint is normally used. What is
+    not here is not missing: it is not yours to set.
 
     Headers:
         X-API-Key: The API key for the project (required)
@@ -2244,13 +2266,41 @@ def _config_write_signature(name_param: str | None, body_model: type | None) -> 
     return Signature(params, return_annotation=JSONResponse)
 
 
-def _make_upsert_endpoint(service_name: str, target: str, name_param: str | None, config_model: type):
+def _refuse_platform_managed(service_name: str, config: dict[str, Any], managed: frozenset[str]) -> None:
+    """422 when a write carries a field OPI owns. The API can never change these.
+
+    Refusing rather than dropping the field silently: a caller that sent it believes it
+    set it, and a write that reports success while ignoring part of the body lies about
+    what it did. It cannot punish a read-modify-write either -- ``get_service_config``
+    leaves these fields out of its answer, so a caller never has one to send back.
+
+    ``exclude_unset`` on the body means a key is here only when the caller really sent
+    it, so an unset optional field never trips this.
+    """
+    offending = sorted(managed & config.keys())
+    if not offending:
+        return
+    fields = ", ".join(f"'{name}'" for name in offending)
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"{fields} of service '{service_name}' is written and owned by the platform and cannot be set or "
+            "cleared through the API. Leave it out of the body: it is kept as it stands, and it is also left "
+            "out of the read response for that reason."
+        ),
+    )
+
+
+def _make_upsert_endpoint(
+    service_name: str, target: str, name_param: str | None, config_model: type, managed: frozenset[str]
+):
     """Build a typed PUT endpoint whose body is the service's config model."""
 
     async def endpoint(**kwargs: Any) -> JSONResponse:
         # exclude_unset: only write what the caller actually sent, so unset optional
         # fields leave no key rather than freezing a model default (checklist item 4).
         config = kwargs["body"].model_dump(by_alias=True, exclude_unset=True)
+        _refuse_platform_managed(service_name, config, managed)
         return await _enqueue_config_write(
             kwargs["request"],
             kwargs["project_name"],
@@ -2465,9 +2515,10 @@ def _register_service_config_routes(router: APIRouter) -> None:
             suffix, name_param = _config_write_route(layer)
             path = f"/projects/{{project_name}}/services/{service_name}{suffix}"
             target = layer.value
+            managed = service.platform_managed_fields(layer)
             router.add_api_route(
                 path,
-                validate_api_token(_make_upsert_endpoint(service_name, target, name_param, model)),
+                validate_api_token(_make_upsert_endpoint(service_name, target, name_param, model, managed)),
                 methods=["PUT"],
                 tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
@@ -2486,8 +2537,12 @@ def _register_service_config_routes(router: APIRouter) -> None:
             # One PATCH per patchable list. A config that IS a list keeps its address
             # (storage, attachments); a config that CONTAINS lists gets one route per
             # list, because the two lists of cross-domain-access hold different entries
-            # and a single body could not be typed for both.
+            # and a single body could not be typed for both. A list the platform owns
+            # gets none: add/remove is a change like any other, and the API changes
+            # nothing OPI wrote.
             for spec in patchable_lists(model):
+                if spec.name in managed:
+                    continue
                 patch_body = _make_patch_body_model(model, spec)
                 what = f"{service_name} {spec.name}" if spec.name else f"{service_name} config"
                 router.add_api_route(

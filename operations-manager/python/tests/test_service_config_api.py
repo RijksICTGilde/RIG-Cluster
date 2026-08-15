@@ -480,11 +480,25 @@ class TestPlatformManagedFieldsSurviveAWrite:
     def _keycloak_config(self, data: dict) -> dict:
         return service_entry_config(next(e for e in data["services"] if service_entry_name(e) == "keycloak"))
 
-    def test_the_declaration_names_exactly_the_platform_written_field(self) -> None:
-        from opi.services.catalog.keycloak.config_model import KeycloakConfig
-        from opi.services.config_managed import platform_managed_keys
+    def test_the_service_declares_which_fields_are_the_platform_s(self) -> None:
+        """The rule is generic: every service answers for itself, through the same kind of
+        hook as its other declarations. Keycloak is only where it hurt."""
+        from opi.services.registry import get_service
 
-        assert platform_managed_keys(KeycloakConfig) == frozenset({"realms"})
+        keycloak = get_service(ServiceType.KEYCLOAK)
+        assert keycloak.platform_managed_fields(ConfigLayer.PROJECT) == frozenset({"realms"})
+        # realm, credentials and OTP all sit inside that one list, so one marking covers them
+        from opi.services.catalog.keycloak.config_model import KeycloakRealm
+
+        assert {"host", "realm", "username", "password", "totp_secret"} <= set(KeycloakRealm.model_fields)
+
+    def test_a_service_that_declares_nothing_keeps_working_as_before(self) -> None:
+        from opi.services.registry import get_service
+
+        for service_type in (ServiceType.HEALTH_CHECK, ServiceType.SLEEP_MODE, ServiceType.INVITE):
+            service = get_service(service_type)
+            for layer in ConfigLayer:
+                assert service.platform_managed_fields(layer) == frozenset()
 
     def test_a_write_without_realms_keeps_the_realm_admin(self) -> None:
         """What the generic PUT actually sends for a body of {"template": "sso-only"}."""
@@ -509,9 +523,26 @@ class TestPlatformManagedFieldsSurviveAWrite:
         ]
         validate_service_configs(data)
 
-    def test_a_caller_cannot_replace_the_platform_field_either(self) -> None:
-        """Stored wins. Refusing outright would break a replay that resends what is
-        already there, and there is no request that may replace this."""
+    def test_the_stored_value_is_passed_through_untouched(self) -> None:
+        """Not re-validated and not re-dumped: the block keeps exactly the bytes it had,
+        so no default is expanded into it and no key is renamed to its alias."""
+        data = self._keycloak_project()
+        before = self._keycloak_config(data)["realms"]
+        stored_identity = [dict(realm) for realm in before]
+
+        ServiceAdapter.set_service_config(
+            data, ServiceType.KEYCLOAK.value, ConfigLayer.PROJECT, {"template": "sso-only"}
+        )
+
+        after = self._keycloak_config(data)["realms"]
+        assert after == stored_identity
+        assert after[0] is before[0]  # the same object, not a rebuilt copy
+        assert "totp_secret" not in after[0]  # an absent optional stayed absent
+
+    def test_the_mutator_is_the_net_under_the_route_s_refusal(self) -> None:
+        """The API refuses a body carrying the field (see the router tests). Should any
+        other write path ever reach here with one, the stored value still wins -- losing
+        the realm admin must not depend on which door the write came through."""
         data = self._keycloak_project()
         ServiceAdapter.set_service_config(
             data,
@@ -519,7 +550,7 @@ class TestPlatformManagedFieldsSurviveAWrite:
             ConfigLayer.PROJECT,
             {
                 "template": "sso-only",
-                "realms": [{"host": "http://evil", "realm": "x", "username": "u", "password": "p"}],
+                "realms": [{"host": "http://elders", "realm": "x", "username": "u", "password": "p"}],
             },
         )
         assert self._keycloak_config(data)["realms"][0]["password"] == "AGE-VERSLEUTELD"
