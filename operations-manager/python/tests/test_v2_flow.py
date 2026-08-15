@@ -715,6 +715,153 @@ class TestConfigureServiceFlow:
         assert payload["target"] == "project"
 
 
+def _stored_invites(*active: dict[str, Any]) -> Any:
+    """Patch the project store so `invite.active` holds exactly these entries."""
+    from types import SimpleNamespace
+
+    data = {"services": [{"name": "invite", "config": {"default-language": "nl", "active": list(active)}}]}
+    store = MagicMock()
+    store.get.return_value = SimpleNamespace(data=data)
+    return patch("opi.api.v2.router.get_project_store", return_value=store)
+
+
+class TestSingularServiceConfigSurface:
+    """`invite.active` is a list in the file and ONE entry over the API.
+
+    A facade, declared by the service itself (`api_singular_lists`), and it may only
+    exist while it is true: a file holding more than one entry is refused, never shown
+    as one and never overwritten by one. The invite key is the secret in the link and
+    comes back in no read response, so that overwrite would be unrecoverable.
+    """
+
+    _PATH = "/api/v2/projects/test-project/services/invite/config/project"
+
+    def test_openapi_takes_one_invite_and_no_array(self, v2_client: TestClient) -> None:
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        put = spec["paths"][self._PATH.replace("test-project", "{project_name}")]["put"]
+        ref = put["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        assert ref.endswith("InviteConfigSingular")
+        active = spec["components"]["schemas"][ref.split("/")[-1]]["properties"]["active"]
+        # No array anywhere in the field: an entry, or null. This is the whole point.
+        branches = [active, *active.get("anyOf", [])]
+        assert not any(branch.get("type") == "array" for branch in branches)
+        assert any(branch.get("$ref", "").endswith("InviteEntry") for branch in branches)
+        assert active["x-api-singular"] is True
+
+    def test_openapi_keeps_the_list_on_the_patch_route(self, v2_client: TestClient) -> None:
+        # The way out of the facade stays list-shaped, and stays documented as such.
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        path = self._PATH.replace("test-project", "{project_name}") + "/active"
+        patch_op = spec["paths"][path]["patch"]
+        ref = patch_op["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        add = spec["components"]["schemas"][ref.split("/")[-1]]["properties"]["add"]
+        assert any(branch.get("type") == "array" for branch in [add, *add.get("anyOf", [])])
+        assert "single-entry surface" in patch_op["description"]
+
+    def test_put_takes_one_invite_and_stores_a_list(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        with _stored_invites():
+            response = v2_client.put(
+                self._PATH,
+                headers=HEADERS,
+                json={"default-language": "en", "active": {"key": "geheim", "realm-roles": ["editor"]}},
+            )
+        assert response.status_code == 202
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        # The storage shape is untouched: what leaves for the task is the list it always was.
+        assert payload["config"] == {
+            "default-language": "en",
+            "active": [{"key": "geheim", "realm-roles": ["editor"]}],
+        }
+
+    def test_put_without_the_list_writes_no_list(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        with _stored_invites({"key": "eerste"}):
+            response = v2_client.put(self._PATH, headers=HEADERS, json={"default-language": "en"})
+        assert response.status_code == 202
+        assert mock_task_service.create_task.call_args[1]["payload"]["config"] == {"default-language": "en"}
+
+    def test_put_null_clears_the_list(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        with _stored_invites({"key": "eerste"}):
+            response = v2_client.put(self._PATH, headers=HEADERS, json={"active": None})
+        assert response.status_code == 202
+        assert mock_task_service.create_task.call_args[1]["payload"]["config"] == {"active": []}
+
+    def test_put_is_refused_when_the_file_holds_two(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        with _stored_invites({"key": "eerste"}, {"key": "tweede"}):
+            response = v2_client.put(
+                self._PATH, headers=HEADERS, json={"active": {"key": "derde", "realm-roles": ["editor"]}}
+            )
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert "2 entries" in detail
+        assert "PATCH /api/v2/projects/{project_name}/services/invite/config/project/active" in detail
+        mock_task_service.create_task.assert_not_called()
+
+    def test_a_put_that_ignores_the_list_is_refused_too(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        # The dangerous case: the PUT replaces the whole block, so a body that never
+        # mentions `active` deletes both invites just as thoroughly.
+        with _stored_invites({"key": "eerste"}, {"key": "tweede"}):
+            response = v2_client.put(self._PATH, headers=HEADERS, json={"default-language": "en"})
+        assert response.status_code == 409
+        mock_task_service.create_task.assert_not_called()
+
+    def test_read_returns_the_one_invite_as_an_object(self, v2_client: TestClient) -> None:
+        with _stored_invites({"key": "eerste", "realm-roles": ["viewer"]}):
+            response = v2_client.get("/api/v2/projects/test-project/services/invite/config", headers=HEADERS)
+        assert response.status_code == 200
+        config = response.json()["configurations"][0]["config"]
+        assert config["active"] == {"key": "eerste", "realm-roles": ["viewer"]}
+
+    def test_read_of_an_empty_list_is_no_invite(self, v2_client: TestClient) -> None:
+        with _stored_invites():
+            response = v2_client.get("/api/v2/projects/test-project/services/invite/config", headers=HEADERS)
+        assert response.status_code == 200
+        assert response.json()["configurations"][0]["config"]["active"] is None
+
+    def test_read_is_refused_when_the_file_holds_two(self, v2_client: TestClient) -> None:
+        with _stored_invites({"key": "eerste"}, {"key": "tweede"}):
+            response = v2_client.get("/api/v2/projects/test-project/services/invite/config", headers=HEADERS)
+        assert response.status_code == 409
+        assert "hide the others" in response.json()["detail"]
+
+    def test_patch_is_the_way_to_a_second_invite(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        response = v2_client.patch(
+            self._PATH + "/active",
+            headers=HEADERS,
+            json={"add": [{"key": "tweede", "realm-roles": ["editor"]}]},
+        )
+        assert response.status_code == 202
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["operation"] == "patch"
+        assert payload["list_field"] == "active"
+        assert payload["add"] == [{"key": "tweede", "realm-roles": ["editor"]}]
+
+    def test_delete_still_clears_the_whole_block(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        # Deliberately NOT refused: DELETE says "clear this config" and does exactly that,
+        # facade or no facade. Refusing it would leave a project with several invites no
+        # way back at all, since a targeted PATCH-remove needs keys no read gives out.
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        with _stored_invites({"key": "eerste"}, {"key": "tweede"}):
+            response = v2_client.delete(self._PATH, headers=HEADERS)
+        assert response.status_code == 202
+        assert mock_task_service.create_task.call_args[1]["payload"]["operation"] == "clear"
+
+    def test_a_list_service_without_the_marker_keeps_its_list(self, v2_client: TestClient) -> None:
+        # The facade is a declaration, not a rule about lists: sleep-mode.match and
+        # cross-domain-access declare nothing, so their bodies stay list-shaped.
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        put = spec["paths"]["/api/v2/projects/{project_name}/services/sleep-mode/config/project"]["put"]
+        ref = put["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        assert ref.endswith("SleepModeConfig")
+        match = spec["components"]["schemas"][ref.split("/")[-1]]["properties"]["match"]
+        assert any(branch.get("type") == "array" for branch in [match, *match.get("anyOf", [])])
+
+
 # ---------------------------------------------------------------------------
 # Federation routing - task_service vs federation_service
 # ---------------------------------------------------------------------------

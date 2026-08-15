@@ -83,6 +83,13 @@ class InviteService(Service):
     config_section_id = "invite-config"
     modal_flow_id = "modal-edit-invite-config"
 
+    # Tijdelijke gevel: naar buiten toe is een uitnodiging er ÉÉN, geen lijst van één. Het
+    # bestand houdt de lijst (zie ``InviteConfig.active`` en het schemafragment), het
+    # formulier pint hem al af op precies een (``INVITE_ACTIVE_EDITABLE``, min == max == 1),
+    # en deze regel doet hetzelfde voor de API. Waarom het een hack is, wat er bij meerdere
+    # entries gebeurt en hoe je hem terugdraait: ``Service.api_singular_lists``.
+    api_singular_lists = frozenset({"active"})
+
     # --- helpers ----------------------------------------------------------------
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
