@@ -805,7 +805,7 @@ effect (`opi/services/catalog/approval.py`). Today only publish-on-web uses it, 
 and subdomains, but the mechanism is generic and the approver UI needs no change to pick up
 a new one.
 
-`ApprovalSpec` has four callbacks:
+`ApprovalSpec` has these callbacks:
 
 | Callback | Question | Consumed by |
 |---|---|---|
@@ -819,6 +819,24 @@ last status wins and the file is the audit trail. The *consequence* of a verdict
 knowledge: publish-on-web writes the sentence itself, because only it knows that an
 unapproved domain does not block the deployment but moves it to the cluster address
 (`apply_domain_approval_fallback` in `opi/utils/naming.py`).
+
+Alongside the spec, the service itself answers one more question:
+
+| Method | Question | Consumed by |
+|---|---|---|
+| `ensure_approval_requests(project_data)` | What does this project ask for that nobody has judged yet? | `opi/services/approvals.ensure_approval_requests`, called after a write that can introduce such a value |
+
+It sits on the service and not on the spec because one pass over the project can produce
+several kinds of request at once (publish-on-web reads a deployment's domain and its
+subdomain together). Write it **state-shaped, not event-shaped**: read the project as it
+stands and add the entries that are missing. Then it is idempotent, and every writer can
+call it without knowing which fields it touched. This is what makes asking through the API
+land on the same request the portal's checkbox creates, instead of a second mechanism.
+
+Report the pending state back where a caller can see it: `collect_deployment_approval_notices`
+already turns it into the `approvals` field on the deployment read endpoints and on the
+task result of a config write (`features/domain-configuration.md`). A value that quietly
+does not take effect is worse than one that is refused.
 
 Note the split between blocking and enforcing: a user picking a rejected domain is stopped
 at the form field, but the save gate accepts the state, otherwise an approver could not

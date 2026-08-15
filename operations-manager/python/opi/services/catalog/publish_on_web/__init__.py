@@ -421,6 +421,21 @@ class PublishOnWebService(Service):
             ),
         ]
 
+    def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
+        """Record a request for every domain / subdomain a deployment claims but does not have.
+
+        The declaration above says these values need approval; this is what happens when
+        one is asked for that nobody has decided on yet. The work itself is the existing
+        ``ensure_domain_requests`` -- the same function the portal's "Domein aanvragen"
+        checkbox reaches through ``DomainRequestHook`` -- so a request made through the
+        API is the same entry, in the same block, in the same approver interface, and not
+        a second way of asking.
+        """
+        from opi.connectors.subdomain import ensure_domain_requests
+        from opi.core.config import settings
+
+        ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
+
     def config_component_layout(self):
         from opi.forms.layout import Fieldset
 

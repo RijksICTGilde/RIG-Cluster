@@ -299,3 +299,74 @@ On submit, the wizard:
 - Assembles the deployment with `cluster`, `namespace`, `domain-mode`, `subdomain`, `base-domain`
 - Maps `root-component` to `root: true` on the matching deployment component
 - Auto-sets `issuer: letsencrypt` for `nice-url` with a base domain
+
+## Domeinen en subdomeinen zijn op aanvraag
+
+Een domein dat het cluster niet zelf aanbiedt, en een subdomein onder een domein met
+`restricted-subdomains`, mogen pas gebruikt worden als een platformbeheerder ze heeft
+goedgekeurd. De status staat op PROJECTniveau, onder
+`services/[publish-on-web]/config/domains`, met per domein of subdomein een `status`
+(`requested` / `approved` / `denied`) en de volledige verdicthistorie.
+
+Die status is van het platform. Een API-client kan hem niet zetten en niet wissen: het veld
+is als platform-eigendom gedeclareerd, de GET van het configblok laat het weg en een PUT
+die het meestuurt krijgt 422. Zie `features/service-config-api.md`.
+
+### De aanvraag ontstaat vanzelf
+
+Een aanvraag is een gevolg van een deployment-schrijfactie, niet iets dat een client zelf
+opschrijft. Zowel de portal als de API komen daarvoor uit bij dezelfde functie,
+`connectors/subdomain.ensure_domain_requests`, zodat het om één soort aanvraag gaat, in
+één blok, in één beheerdersinterface (`/admin/approvals`):
+
+| Weg | Wat hem in gang zet |
+|---|---|
+| Portal (wizard en "Webadres bewerken") | Het verplichte vinkje "Domein aanvragen" / "Subdomein aanvragen", via `DomainRequestHook` |
+| `PUT /api/v2/projects/{p}/services/publish-on-web/config/deployment/{d}` | De schrijfactie zelf, via `Service.ensure_approval_requests` |
+| `POST` / `PUT /api/v2/projects/{p}/deployments[/{d}]` | De schrijfactie zelf, via `ensure_domain_requests` |
+
+Een domein dat al is goedgekeurd levert geen nieuwe aanvraag op, en tweemaal schrijven
+levert één aanvraag op: de functie leest de stand zoals die is en vult aan wat ontbreekt.
+
+Wat de catalogus hiervoor kent, naast de bestaande `ApprovalSpec` (declareren, toetsen,
+opsommen, oordeel vastleggen, melden), is `Service.ensure_approval_requests(project_data)`:
+de vraag "wat vraagt dit project dat nog niemand heeft beoordeeld?". `publish-on-web` is
+vandaag de enige dienst die hem beantwoordt; een dienst die niets declareert doet niets.
+
+### Een niet-goedgekeurd domein blokkeert de deployment niet
+
+De deployment rolt gewoon uit, maar op het standaard clusteradres
+(`apply_domain_approval_fallback`). Dat is het lastige geval: er gaat niets stuk, er
+verschijnt alleen geen ingress op het gevraagde adres. Daarom meldt de API de wachtstand
+expliciet, in het veld `approvals`:
+
+```json
+{
+  "approvals": [
+    {
+      "service": "publish-on-web",
+      "type": "domain",
+      "label": "Domein",
+      "subject": "mijn-app.nl",
+      "status": "requested",
+      "text": "Het domein mijn-app.nl is aangevraagd en wacht op goedkeuring. Deze deployment is daarom bereikbaar op het standaard clusteradres.",
+      "by": null,
+      "date": "2026-08-15T09:14:31+00:00",
+      "message": null
+    }
+  ]
+}
+```
+
+De zin in `text` komt van de dienst zelf, want alleen die kent het gevolg. Het veld staat
+op twee plaatsen, om dezelfde reden als `pending_rollout`:
+
+- **in het antwoord op de schrijfactie** -- het taakresultaat van `configure_service` en
+  van `upsert_deployment`, zodat een client meteen weet dat hij wacht;
+- **op de leesendpoints** -- `GET .../deployments` en `GET .../deployments/{d}`, zodat hij
+  het ook morgen nog kan opvragen. Een aanvraag loopt dagen; het antwoord op de PUT is weg
+  zodra de client hem gelezen heeft.
+
+De lijst is leeg wanneer alles wat de deployment vraagt is goedgekeurd. Een afgewezen
+aanvraag komt terug met `status: "denied"` plus de `by`, `date` en `message` van het
+oordeel, zodat "je wacht nog" en "je krijgt het niet" niet op hetzelfde uitkomen.

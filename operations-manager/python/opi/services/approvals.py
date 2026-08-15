@@ -66,6 +66,22 @@ def collect_approval_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
     return items
 
 
+def ensure_approval_requests(project_data: dict[str, Any]) -> None:
+    """Make sure everything ``project_data`` asks for and has not been granted is REQUESTED.
+
+    The write-side counterpart of :func:`collect_approval_items`: same catalog walk, but
+    asking each service to record the requests its own state is missing. Mutates
+    ``project_data`` in place and is idempotent -- an already approved or already
+    requested value produces nothing.
+
+    Called after a write that can introduce such a value, so that asking for a domain
+    through the API creates the same request the portal's "Domein aanvragen" checkbox
+    creates, landing in the same place and surfacing in the same approver interface.
+    """
+    for service in approval_services():
+        service.ensure_approval_requests(project_data)
+
+
 def collect_deployment_approval_notices(
     project_data: dict[str, Any],
     deployment: dict[str, Any],
