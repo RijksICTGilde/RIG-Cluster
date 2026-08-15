@@ -12,6 +12,14 @@ project may send at all. Both are marked ``PLATFORM_MANAGED`` so the API can nei
 nor rewrite them -- the same protection the Keycloak realm block got, declared here from the
 start instead of repaired afterwards (aanvulling 5 in the plan). ``approval`` in particular:
 a project that could set its own status to ``approved`` would be no approval at all.
+
+``from-domain`` carries the same marking for a different reason: it is identity rule 2 of
+the plan ("a project may pick its display name, not its domain"). The field exists so the
+later own-domain flow does not need a schema change, but a domain only works once a DKIM
+record sits in its zone, and that ronde is arranged by hand. Self-service on the field
+would let a project point ``From:`` and ``MAIL FROM`` at any domain -- and because
+``ensure_approval_requests`` stops as soon as an approval block exists, it could do so
+after the fact without a second verdict.
 """
 
 from __future__ import annotations
@@ -95,9 +103,11 @@ class SendEmailConfig(BaseModel):
     from_domain: str | None = Field(
         default=None,
         alias="from-domain",
+        json_schema_extra={PLATFORM_MANAGED: True},
         description=(
-            "Sender domain, when the project has one of its own. Leave it out for the platform mail domain. "
-            "A domain of your own needs a DKIM record in its zone first, so it is not yet self-service."
+            "Sender domain, when the project has one of its own. Left out for the platform mail domain. "
+            "Written by the platform: a domain of your own needs a DKIM record in its zone first, and that "
+            "path is set up by hand until a project asks for it, so this is not self-service."
         ),
     )
     messages_per_day: Annotated[int, Field(ge=1, le=MAX_MESSAGES_PER_DAY)] | None = Field(
