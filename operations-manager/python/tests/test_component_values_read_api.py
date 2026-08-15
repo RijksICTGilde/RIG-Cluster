@@ -13,13 +13,12 @@ The read has to answer two different questions with one mechanism:
   and the whole reason to ask -- masking it (which is what happened, since aliases are
   AGE-encrypted per value like everything else) answers nothing.
 
-Which one applies is the owning service's call, asked per value -- with one addition
-(punt 5). ``user-env-vars`` cannot answer it from the value: ``APP_MODE=production`` and a
-database password are the same kind of string, so masking everything meant a caller could
-not check a variable they had just written, while the near-identical alias feature handed
-its values back in full. The writer therefore marks the values that are not secret, and
-those names are kept in a plain ``user-env-vars-public`` list next to the block. Absent
-means secret, so a project file written before that list existed reads exactly as it did.
+Which one applies is the owning service's call, asked per value, and the REQUEST never
+gets a say in it. A read path was asked for on the env-var side too -- a caller cannot
+check a variable they just wrote -- and it was refused: those values can hold secrets, and
+handing them back is exactly as easy for an automated client that was talked into asking
+as it is for the project's owner. So there is no flag, no option and no per-value
+exception, and the last test in this file is the one that says so.
 """
 
 from __future__ import annotations
@@ -52,8 +51,6 @@ def _project_data() -> dict:
                     "LEGACY_LITERAL": "een-letterlijke-waarde",
                 },
                 "user-env-vars": "API_TOKEN=s3cr3t\nDEBUG=on",
-                # No `user-env-vars-public`: the shape of every project file written
-                # before punt 5, and every value in it stays masked.
             },
             {"name": "frontend", "type": "frontend"},
         ],
@@ -142,63 +139,42 @@ class TestReadingEnvVars:
         assert payload["deployment"] == "deployment-1"
 
 
-class TestTheNonSecretMarking:
-    """punt 5: a value the writer marked as not secret comes back in full.
+class TestThereIsNoWayToGetAnEnvVarValueBack:
+    """The masking is absolute, and this is where an attempt to soften it lands.
 
-    The marking is a plain list of NAMES next to the block. What it does not do is as
-    important as what it does: the values themselves are all still inside the same
-    encrypted block, marked or not, so nothing about the project file becomes readable
-    to someone who can read the repository.
+    A per-value "this one is not a secret" marking was built and then withdrawn by the
+    owner: an env-var value can hold a secret, and a read path is exactly as easy to
+    reach for an automated client that was talked into asking as for the project's owner.
+    So the answer does not depend on the request, on a field in the body of an earlier
+    write, or on anything stored next to the block. Set and change: yes. Read back: no.
     """
 
-    def test_a_marked_value_comes_back_in_full(self, client, store) -> None:
+    def test_no_query_parameter_unmasks_a_value(self, client) -> None:
+        for params in ({"public": "true"}, {"reveal": "DEBUG"}, {"secret": "false"}):
+            payload = client.get(ENV_COMPONENT, headers=HEADERS, params=params).json()
+            assert payload["values"] == {"API_TOKEN": "***", "DEBUG": "***"}, params
+
+    def test_a_marking_written_next_to_the_block_does_nothing(self, client, store) -> None:
+        # The shape the withdrawn mechanism used. A file that still carries one -- or one
+        # somebody hand-edits in the hope it helps -- must not open the values up.
         store.get.return_value.data["components"][0]["user-env-vars-public"] = ["DEBUG"]
 
-        payload = client.get(ENV_COMPONENT, headers=HEADERS).json()
-
-        assert payload["values"]["DEBUG"] == "on"
-        assert payload["public"] == ["DEBUG"]
-
-    def test_an_unmarked_value_next_to_it_stays_masked(self, client, store) -> None:
-        store.get.return_value.data["components"][0]["user-env-vars-public"] = ["DEBUG"]
-
-        payload = client.get(ENV_COMPONENT, headers=HEADERS).json()
-
-        assert payload["values"]["API_TOKEN"] == "***"
-
-    def test_no_marking_means_every_value_stays_masked(self, client) -> None:
-        # The whole point of the fail-safe default: an existing project file carries no
-        # list, and nothing about it may start being handed out.
         payload = client.get(ENV_COMPONENT, headers=HEADERS).json()
 
         assert payload["values"] == {"API_TOKEN": "***", "DEBUG": "***"}
-        assert payload["public"] == []
 
-    def test_a_marking_that_is_not_a_list_of_names_hides_rather_than_shows(self, client, store) -> None:
-        # "I cannot read this list" and "it is a secret" are deliberately one answer.
-        store.get.return_value.data["components"][0]["user-env-vars-public"] = "DEBUG"
-
+    def test_the_answer_carries_no_field_that_could_hold_a_value(self, client) -> None:
         payload = client.get(ENV_COMPONENT, headers=HEADERS).json()
 
-        assert payload["values"]["DEBUG"] == "***"
+        assert set(payload) == {"service", "target", "component", "deployment", "values"}
 
-    def test_a_marking_for_a_value_that_is_gone_is_not_reported(self, client, store) -> None:
-        store.get.return_value.data["components"][0]["user-env-vars-public"] = ["DEBUG", "WEG"]
+    def test_writing_a_marking_field_is_not_honoured(self, client) -> None:
+        # Ignored by the payload model rather than accepted: nothing reads it, and no
+        # later read may behave differently because it was sent.
+        response = client.post(ENV_COMPONENT, headers=HEADERS, json={"values": {"A": "1"}, "public": ["A"]})
 
-        payload = client.get(ENV_COMPONENT, headers=HEADERS).json()
-
-        assert payload["public"] == ["DEBUG"]
-        assert "WEG" not in payload["values"]
-
-    def test_aliases_ignore_the_marking_entirely(self, client, store) -> None:
-        # aliases answers from the value itself, so it does not take the flag at all; a
-        # list next to it must not turn into a way to unmask a stored literal.
-        store.get.return_value.data["components"][0]["aliases-public"] = ["LEGACY_LITERAL"]
-
-        payload = client.get(ALIAS_COMPONENT, headers=HEADERS).json()
-
-        assert payload["values"]["LEGACY_LITERAL"] == "***"
-        assert payload["public"] == []
+        assert response.status_code == 202
+        assert "public" not in response.text
 
 
 class TestGuards:
