@@ -82,6 +82,7 @@ from opi.manager.project_validation import validate_component_references, valida
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
+from opi.services.approvals import collect_deployment_approval_notices, ensure_approval_requests
 from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
@@ -6787,9 +6788,14 @@ class ProjectManager:
         requires a domain that supports dots (a dash-only ODCN domain with a
         dot format produces an unreachable multi-label hostname).
 
-        API callers cannot tick a "request domain" checkbox, so an unapproved
-        custom domain (a non-blocking warning in the wizard) is treated as a
-        hard rejection here.
+        A ``FieldWarning`` is NOT a violation, here no more than in the wizard. The
+        enforcer raises one for exactly one thing: a domain or subdomain that is on
+        request. This used to be a hard rejection, on the grounds that an API caller
+        cannot tick the wizard's "Domein aanvragen" checkbox -- but the consequence was
+        that the one path that would have created the request (``ensure_approval_requests``,
+        a few lines further on in every caller) was never reached, so asking for a domain
+        through the API could only fail. It is now the request itself that carries the
+        answer, and the caller reads back where it stands under ``approvals``.
 
         Returns an error message on violation, or None when the config is valid.
         """
@@ -6804,9 +6810,35 @@ class ProjectManager:
             await DomainConfigEnforcer(deployment_index=index).enforce(
                 project_data, {"project_name": await self.get_name()}
             )
-        except (ValueError, FieldWarning) as e:  # FieldError is a ValueError subclass
+        except FieldWarning as e:
+            logger.info("Domain on request for deployment '%s': %s", deployment_name, e)
+        except ValueError as e:  # FieldError is a ValueError subclass
             return str(e)
         return None
+
+    @staticmethod
+    def _approval_notices(project_data: dict[str, Any], deployment_name: str | None) -> list[dict[str, Any]]:
+        """What the owner of ``deployment_name`` must be told about ungranted approvals.
+
+        Empty when the write named no deployment: the values that need approving are
+        deployment-level, so there is nothing to report about a project- or
+        component-level write. The sentences come from the services themselves
+        (``collect_deployment_approval_notices``), so the API says the same thing the
+        portal says about the same state.
+        """
+        if not deployment_name:
+            return []
+        deployment = next(
+            (
+                d
+                for d in project_data.get("deployments", [])
+                if isinstance(d, dict) and d.get("name") == deployment_name
+            ),
+            None,
+        )
+        if deployment is None:
+            return []
+        return list(collect_deployment_approval_notices(project_data, deployment))
 
     async def upsert_deployment(
         self,
@@ -7028,7 +7060,13 @@ class ProjectManager:
                 await self.save_and_commit_project(project_data, commit_message)
 
                 logger.info(f"Successfully updated deployment '{deployment_name}' in project '{project_name}'")
-                result: dict[str, Any] = {"success": True, "created": False, "error": None, "error_type": None}
+                result: dict[str, Any] = {
+                    "success": True,
+                    "created": False,
+                    "error": None,
+                    "error_type": None,
+                    "approvals": self._approval_notices(project_data, deployment_name),
+                }
                 if normalized_warnings:
                     result["warnings"] = normalized_warnings
                 if state_notices:
@@ -7199,7 +7237,13 @@ class ProjectManager:
                 await self.save_and_commit_project(project_data, commit_message)
 
                 logger.info(f"Successfully created deployment '{deployment_name}' in project '{project_name}'")
-                result_create: dict[str, Any] = {"success": True, "created": True, "error": None, "error_type": None}
+                result_create: dict[str, Any] = {
+                    "success": True,
+                    "created": True,
+                    "error": None,
+                    "error_type": None,
+                    "approvals": self._approval_notices(project_data, deployment_name),
+                }
                 if normalized_warnings_create:
                     result_create["warnings"] = normalized_warnings_create
                 return result_create
@@ -7959,6 +8003,12 @@ class ProjectManager:
             except ServiceValidationError as e:
                 return {"success": False, "error": str(e), "error_type": "invalid_target"}
 
+            # Domeinen en subdomeinen zijn op aanvraag, en deze weg kon er een claimen
+            # zonder de aanvraag te doen: de config werd geschreven, er kwam geen ingress
+            # op het gevraagde adres en niets vertelde de client waarom. Dit is dezelfde
+            # aanvraag die de portal maakt, in hetzelfde blok, voor dezelfde beheerder.
+            ensure_approval_requests(project_data)
+
             commit_message = f"Configure service '{service_name}' at {target} target in project '{project_name}'"
             try:
                 await self.save_and_commit_project(project_data, commit_message)
@@ -7966,7 +8016,12 @@ class ProjectManager:
                 return {"success": False, "error": str(e), "error_type": "validation_error"}
 
             logger.info(f"Configured service '{service_name}' at {target} target in project '{project_name}'")
-            return {"success": True, "service": service_name, "target": target}
+            return {
+                "success": True,
+                "service": service_name,
+                "target": target,
+                "approvals": self._approval_notices(project_data, deployment_name),
+            }
 
         except Exception as e:
             error_msg = f"Error configuring service '{service_name}': {e}"

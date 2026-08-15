@@ -250,6 +250,57 @@ class PendingRolloutResponse(BaseModel):
     )
 
 
+class ApprovalNoticeResponse(BaseModel):
+    """Een goedkeuring die deze deployment nodig heeft en (nog) niet heeft.
+
+    Het tegenhangertje van ``pending_rollout``: dat zegt dat een opgeslagen wijziging nog
+    niet op de cluster staat, dit zegt dat een deployment op een oordeel van een beheerder
+    wacht. Domeinen en subdomeinen zijn op aanvraag, dus een schrijfactie die er een claimt
+    maakt de aanvraag aan en meldt hem hier terug -- anders is "er verschijnt geen ingress"
+    het eerste dat een client ervan merkt.
+
+    De lijst is leeg wanneer alles wat de deployment vraagt is goedgekeurd.
+    """
+
+    service: str = Field(
+        ...,
+        description="De dienst die deze goedkeuring bezit, zoals in de servicecatalogus.",
+        examples=["publish-on-web"],
+    )
+    type: str = Field(..., description="Wat er goedgekeurd moet worden binnen die dienst.", examples=["domain"])
+    label: str = Field(..., description="Hoe de portal dit soort goedkeuring noemt.", examples=["Domein"])
+    subject: str = Field(..., description="Wat er is aangevraagd.", examples=["mijn-app.nl"])
+    status: str = Field(
+        ...,
+        description=(
+            "De stand van de aanvraag: 'requested' (aangevraagd, wacht op een beheerder), "
+            "'denied' (afgewezen) of 'none' (nog niets aangevraagd). 'approved' komt hier "
+            "niet voor: wat is goedgekeurd staat niet in deze lijst."
+        ),
+        examples=["requested"],
+    )
+    text: str = Field(
+        ...,
+        description="Wat dit betekent voor deze deployment, inclusief het gevolg, in gewone taal.",
+        examples=[
+            "Het domein mijn-app.nl is aangevraagd en wacht op goedkeuring. Deze deployment is daarom bereikbaar op het standaard clusteradres."
+        ],
+    )
+    by: str | None = Field(default=None, description="Wie het laatste oordeel gaf; leeg zolang er geen oordeel is.")
+    date: str | None = Field(default=None, description="Wanneer dat oordeel viel, ISO 8601.")
+    message: str | None = Field(default=None, description="De toelichting die bij dat oordeel is gegeven.")
+
+
+#: Gedeelde beschrijving, zodat het veld op de leesantwoorden en op de taakantwoorden
+#: hetzelfde belooft.
+APPROVALS_DESCRIPTION = (
+    "Goedkeuringen die deze deployment nog niet heeft. Leeg wanneer alles is goedgekeurd. "
+    "Een niet-goedgekeurd domein of subdomein blokkeert de deployment niet: die publiceert "
+    "dan op het standaard clusteradres, dus dit veld is de enige plek waar je ziet dat het "
+    "gevraagde adres nog niet in gebruik is."
+)
+
+
 class DeploymentDetail(BaseModel):
     """Full deployment state as returned by the GET endpoints."""
 
@@ -298,6 +349,10 @@ class DeploymentDetail(BaseModel):
             "meteen een URL, terwijl er nog niets draait dat hem bedient. Kijk naar "
             "'pending_rollout' om te zien of de twee uit elkaar lopen."
         ),
+    )
+    approvals: list[ApprovalNoticeResponse] = Field(
+        default_factory=list,
+        description=APPROVALS_DESCRIPTION,
     )
     pending_rollout: PendingRolloutResponse | None = Field(
         default=None,
