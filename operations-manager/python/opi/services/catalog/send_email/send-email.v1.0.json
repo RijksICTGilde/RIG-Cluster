@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "SendEmailAccount": {
+      "additionalProperties": true,
+      "description": "One SMTP account on the relay, as OPI created it (one per cluster).\n\nShaped like ``KeycloakRealm``: matched on ``cluster``, written by the platform, and\nthe only place this account's password lives. ``extra=\"allow\"`` so a field added later\ndoes not make existing project files unreadable.",
+      "properties": {
+        "bounce-address": {
+          "description": "Address bounces for this account return to; carries the project name so a bounce is traceable.",
+          "title": "Bounce-Address",
+          "type": "string"
+        },
+        "cluster": {
+          "description": "Cluster this account was created for. Written by the platform.",
+          "title": "Cluster",
+          "type": "string"
+        },
+        "from-address": {
+          "description": "Address the relay pins the envelope sender and the From: header to for this account.",
+          "title": "From-Address",
+          "type": "string"
+        },
+        "password": {
+          "description": "That account's password, AGE-encrypted or 'plain:'-prefixed.",
+          "title": "Password",
+          "type": "string"
+        },
+        "username": {
+          "description": "SASL username the application authenticates to the relay with.",
+          "title": "Username",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cluster",
+        "username",
+        "password",
+        "from-address",
+        "bounce-address"
+      ],
+      "title": "SendEmailAccount",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What a project may decide about its outgoing mail.",
+  "properties": {
+    "accounts": {
+      "description": "Per-cluster SMTP accounts on the relay. Written and managed by the platform: carried over on a write, so a caller neither has to send it nor can lose it by leaving it out.",
+      "items": {
+        "$ref": "#/$defs/SendEmailAccount"
+      },
+      "title": "Accounts",
+      "type": "array",
+      "x-platform-managed": true
+    },
+    "from-domain": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Sender domain, when the project has one of its own. Leave it out for the platform mail domain. A domain of your own needs a DKIM record in its zone first, so it is not yet self-service.",
+      "title": "From-Domain"
+    },
+    "from-local-part": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Local part of the sender address (the bit before the @), e.g. 'noreply'. Defaults to 'noreply'.",
+      "title": "From-Local-Part"
+    },
+    "from-name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Display name shown to the recipient, e.g. 'Algoritmeregister'. The address itself is fixed.",
+      "title": "From-Name"
+    },
+    "messages-per-day": {
+      "anyOf": [
+        {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Messages this project may send per day, at most 5000. Leave it out for the platform default.",
+      "title": "Messages-Per-Day"
+    }
+  },
+  "title": "SendEmailConfig",
+  "type": "object"
+}

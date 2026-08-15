@@ -91,6 +91,16 @@
       "section_id": "redis-config",
       "title": "Redis configuratie"
     },
+    "send-email-config": {
+      "editables": [
+        "services/send-email/config/from-name",
+        "services/send-email/config/from-local-part",
+        "services/send-email/config/messages-per-day"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "send-email-config",
+      "title": "E-mail versturen"
+    },
     "services-edit": {
       "editables": [
         "services"
@@ -143,6 +153,7 @@
         "cross-domain-access-config",
         "redis-config",
         "minio-config",
+        "send-email-config",
         "deployment",
         "domains"
       ]
@@ -164,6 +175,7 @@
         "cross-domain-access-config",
         "redis-config",
         "minio-config",
+        "send-email-config",
         "deployments",
         "config"
       ]
@@ -252,6 +264,13 @@
         "redis-config"
       ]
     },
+    "modal-edit-send-email-config": {
+      "flow_id": "modal-edit-send-email-config",
+      "mode": "wizard",
+      "sections": [
+        "send-email-config"
+      ]
+    },
     "modal-edit-services": {
       "flow_id": "modal-edit-services",
       "mode": "wizard",
@@ -266,6 +285,7 @@
         "cross-domain-access-config",
         "redis-config",
         "minio-config",
+        "send-email-config",
         "attachments"
       ]
     },
@@ -293,6 +313,7 @@
     "namespace-postgresql-database": "modal-edit-postgresql-config",
     "postgresql-database": "modal-edit-postgresql-schemas",
     "redis": "modal-edit-redis-config",
+    "send-email": "modal-edit-send-email-config",
     "sleep-mode": "modal-edit-sleep-mode-config"
   },
   "service_config_sections": {
@@ -369,6 +390,16 @@
       "post_save_action": "process_project",
       "section_id": "redis-config",
       "title": "Redis configuratie"
+    },
+    "send-email": {
+      "editables": [
+        "services/send-email/config/from-name",
+        "services/send-email/config/from-local-part",
+        "services/send-email/config/messages-per-day"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "send-email-config",
+      "title": "E-mail versturen"
     },
     "sleep-mode": {
       "editables": [
