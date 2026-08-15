@@ -24,14 +24,17 @@ een tweede mechanisme.
 
 from __future__ import annotations
 
+import copy
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from opi.api.v2.models import ApprovalNoticeResponse, ApprovalNoticeStatus
 from opi.connectors.subdomain import get_domains_config
-from opi.services.approvals import collect_approval_items
+from opi.services.approvals import collect_approval_items, collect_deployment_approval_notices
+from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.base import ConfigLayer
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
@@ -466,6 +469,57 @@ class TestDeStandIsLaterOpTeVragen:
         notice = schemas["ApprovalNoticeResponse"]["properties"]
         assert set(notice) >= {"service", "type", "label", "subject", "status", "text"}
         assert notice["status"]["description"]
+
+
+class TestDeStatusIsEenEnum:
+    """``status`` moet een enum zijn, anders kan een client er niet op vertakken.
+
+    Het doel is een pijplijn die faalt op een AFGEWEZEN aanvraag en zwijgt over een
+    LOPENDE. Zolang het schema alleen ``string`` zegt, is dat onderscheid maken gokken op
+    drie woorden die de spec niet belooft -- en stil kapotgaan zodra er een vierde bijkomt.
+    """
+
+    def test_de_spec_noemt_de_waarden(self, client: TestClient) -> None:
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+        assert schemas["ApprovalNoticeStatus"]["enum"] == ["none", "requested", "denied"]
+        # En het veld verwijst ernaar, met zijn eigen toelichting ernaast.
+        status = schemas["ApprovalNoticeResponse"]["properties"]["status"]
+        assert status.get("$ref", "").endswith("ApprovalNoticeStatus") or any(
+            branch.get("$ref", "").endswith("ApprovalNoticeStatus") for branch in status.get("allOf", [])
+        )
+        assert status["description"]
+
+    def test_de_enum_is_de_levenscyclus_zonder_approved(self) -> None:
+        """Afgeleid en niet overgetypt, zodat de spelling niet los kan raken van het bestand."""
+        assert {member.value for member in ApprovalNoticeStatus} == {member.value for member in ApprovalStatus} - {
+            ApprovalStatus.APPROVED.value
+        }
+
+    @pytest.mark.parametrize(
+        ("opgeslagen", "verwacht"),
+        [("requested", "requested"), ("denied", "denied")],
+    )
+    def test_een_afgewezen_aanvraag_is_te_onderscheiden_van_een_lopende(
+        self, mock_settings: Any, opgeslagen: str, verwacht: str
+    ) -> None:
+        """Het punt van de hele wijziging: deze twee moeten uit elkaar te houden zijn."""
+        project_data = copy.deepcopy(PROJECT_MET_AANVRAAG)
+        domein = project_data["services"][0]["config"]["domains"]["allowed-domains"][0]
+        domein["status"] = opgeslagen
+        domein["history"] = [{"date": "2026-08-01T00:00:00+00:00", "status": opgeslagen, "by": "beheerder"}]
+
+        notices = collect_deployment_approval_notices(project_data, project_data["deployments"][0])
+
+        statussen = [ApprovalNoticeResponse.model_validate(notice).status for notice in notices]
+        assert statussen == [ApprovalNoticeStatus(verwacht)]
+
+    def test_een_goedgekeurde_aanvraag_haalt_de_lijst_niet(self, mock_settings: Any) -> None:
+        """De reden dat ``approved`` niet in de enum staat, gemeten in plaats van aangenomen."""
+        project_data = copy.deepcopy(PROJECT_MET_AANVRAAG)
+        project_data["services"][0]["config"]["domains"]["allowed-domains"][0]["status"] = "approved"
+
+        assert collect_deployment_approval_notices(project_data, project_data["deployments"][0]) == []
 
 
 # ---------------------------------------------------------------------------

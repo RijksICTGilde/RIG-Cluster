@@ -628,8 +628,10 @@ class TestPatchListInsideAnObjectConfig:
         return service_entry_config(entry)
 
     def test_a_second_invite_leaves_the_first_and_its_key_alone(self) -> None:
-        """Vraag 3: the invite key is deliberately absent from every read response, so a
-        PUT-only world could not resend the first invite and a second one cost it."""
+        """Vraag 3: a PUT rewrites the whole list, so in a PUT-only world adding a second
+        invite meant resending the first -- and whoever did not know that lost it. The key
+        is readable (a deliberate decision, see the invite service's module docstring), so
+        resending is possible in principle; the PATCH is what makes it unnecessary."""
         data = _project()
         data["services"].append(
             {
