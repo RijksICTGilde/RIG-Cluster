@@ -224,6 +224,22 @@ De prijs is dat er twee wegen naar een account zijn. Die prijs is te betalen op 
 
 **Bij het ontwerp van dat platformaccount hoort ook een strengere eis dan bij een projectaccount**, want het verstuurt wachtwoordreset-tokens. Wie die mail kan versturen of onderscheppen, kan een account overnemen. Dat vraagt in elk geval een eigen limiet en een eigen afzenderadres, zodat een fout in de projectkant niet aan deze mail komt, en het is de moeite waard te bepalen of dit account een aparte upstream-identiteit hoort te hebben.
 
+## 4b. Het platformaccount volgt het bestaande patroon: beheerdersgeheim uit de infra
+
+Herziening van het voorstel hierboven, en het is eenvoudiger. Ik schreef "een platformaccount dat in de configuratie van de relay zelf staat", maar daarmee bedacht ik een tweede soort account terwijl er al een patroon is voor precies dit.
+
+Zo werken Keycloak, PostgreSQL en MinIO nu, en de relay hoort daarbij aan te sluiten:
+
+1. **De infrastructuur zet de dienst klaar met een beheerdersaccount.** Het wachtwoord is een gegenereerd geheim uit de gedeelde secret-generatie (`@secret-gen:random:XX`), SOPS-versleuteld in de bootstrap van de component. Niemand typt het, niemand kent het, en het staat niet in een projectbestand.
+2. **OPI praat met dat beheerdersaccount via een connector.** `opi/connectors/mail.py` doet voor de relay wat `connectors/keycloak.py` voor Keycloak doet: accounts aanmaken, wachtwoorden roteren, limieten zetten, opruimen.
+3. **Elk account komt via die ene weg tot stand**, of het nu voor een project is of voor ZAD zelf.
+
+Daarmee vervalt de vraag "waar hangt het ZAD-account aan" grotendeels: het is een gewoon account op de relay, aangemaakt door dezelfde manager, alleen aangevraagd door de opstart van het platform in plaats van door een projectverwerking. Het onderscheid zit in de AANROEPER, niet in het soort account, en dat was ook al de voorwaarde die ik eraan verbond.
+
+Wat blijft staan uit punt 4: het ZAD-account verstuurt wachtwoordreset-tokens en verdient daarom een eigen limiet en een eigen afzenderadres, zodat een fout aan de projectkant er niet aan komt. En het geheim van dat account is platformdata (punt 5), net als het beheerdersgeheim zelf.
+
+Twee dingen om bij het bouwen te controleren, want hier zit de valkuil van dit patroon: het beheerdersgeheim moet te roteren zijn zonder dat elk projectaccount opnieuw moet worden aangemaakt, en OPI moet zich gedragen als de relay er nog niet is bij het opstarten. Dat laatste is bij Keycloak een bekende bron van opstartvolgorde-ellende.
+
 ## 5. De accountgegevens zijn platformdata
 
 Sinds 15 augustus geldt in de API de regel dat configdata die OPI zelf zet niet via de API te wissen of te wijzigen is; een dienst declareert dat met `platform_managed_fields`. Het SMTP-wachtwoord en de accountnaam vallen daaronder: die worden door de mailmanager geschreven, niet door een gebruiker. Neem die declaratie mee in het configmodel, dan is het meteen goed in plaats van een reparatie achteraf zoals bij het realm-wachtwoord van Keycloak.
