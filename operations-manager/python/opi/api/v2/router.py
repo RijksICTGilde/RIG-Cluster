@@ -82,7 +82,7 @@ from opi.api.validation import (
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
 from opi.core.auth_decorators import get_current_user
-from opi.core.cluster_config import get_selectable_clusters
+from opi.core.cluster_config import get_selectable_clusters, supports_custom_domain_certificates
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
@@ -100,7 +100,7 @@ from opi.services.catalog.actions import (
     ServiceAction,
     UploadedFile,
 )
-from opi.services.catalog.base import ConfigLayer, ConfigRole, config_path
+from opi.services.catalog.base import ConfigLayer, ConfigRole, config_endpoint_path, config_path
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.postgresql_database.config_model import schema_description_field, schema_postfix_field
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
@@ -498,6 +498,10 @@ async def list_clusters_v2(
                     ClusterDomainOption(value=str(option["value"]), label=str(option["label"]))
                     for option in ClusterBaseDomainOptionsProvider(cluster=cluster).get_options()
                 ],
+                # Wat een domein BUITEN die lijst hier oplevert. Zonder dit leest de
+                # __custom__-optie als een gelijkwaardige keuze, terwijl ze op een cluster
+                # zonder uitgifte een deployment zonder geldig certificaat oplevert.
+                "custom-domain-certificates": supports_custom_domain_certificates(cluster),
             }
         )
         for cluster in get_selectable_clusters()
@@ -2061,8 +2065,7 @@ def _layer_info(service: Any, service_type: ServiceType, layer: ConfigLayer) -> 
     """One layer of a service, out of what the service declares about that layer."""
     endpoint = None
     if _accepts_config_at(service, layer) and layer in _CONFIG_WRITE_LAYERS:
-        suffix, _ = _config_write_route(layer)
-        endpoint = f"PUT /api/v2/projects/{{project_name}}/services/{service_type.value}{suffix}"
+        endpoint = f"PUT {config_endpoint_path(layer, service_type.value)}"
     exempt_reason = service.form_exempt_layers.get(layer)
     return ServiceLayerInfo(
         target=layer,
@@ -2311,14 +2314,19 @@ async def _enqueue_config_write(
 
 
 def _config_write_route(layer: ConfigLayer) -> tuple[str, str | None]:
-    """The path suffix and the extra path-param name for a target layer."""
-    if layer is ConfigLayer.PROJECT:
-        return "/config/project", None
-    if layer is ConfigLayer.COMPONENT:
-        return "/config/component/{component_name}", "component_name"
-    if layer is ConfigLayer.DEPLOYMENT:
-        return "/config/deployment/{deployment_name}", "deployment_name"
-    raise ValueError(f"No config write route for layer {layer!r}")
+    """The path suffix and the extra path-param name for a target layer.
+
+    The suffix comes from ``config_endpoint_path`` in the catalog, so the route this
+    registers and the route an error message points a caller at are the same string.
+    """
+    name_params = {
+        ConfigLayer.PROJECT: None,
+        ConfigLayer.COMPONENT: "component_name",
+        ConfigLayer.DEPLOYMENT: "deployment_name",
+    }
+    if layer not in name_params:
+        raise ValueError(f"No config write route for layer {layer!r}")
+    return config_endpoint_path(layer, "{svc}").split("{svc}", 1)[1], name_params[layer]
 
 
 def _config_write_signature(name_param: str | None, body_model: type | None) -> Signature:

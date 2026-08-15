@@ -53,6 +53,10 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": False,
+        # Geen supports_custom_domain_certificates hier: dit cluster draait een eigen CA
+        # (cluster_issuer kind-ca-issuer) en of die ook een eigen domein tekent is niet
+        # nagemeten. Afwezig betekent zwijgen, en dat is het eerlijke antwoord bij een
+        # cluster waarvan we het niet weten.
         "ca_certificate": {
             "enabled": True,
             "node_path": "/etc/ssl/certs/kind-local-ca.crt",
@@ -112,6 +116,10 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": False,
+        # The sandbox serves *.sandbox.rijksapp.dev from a pre-installed wildcard
+        # certificate and runs a fake cert-manager CRD with no controller, so nothing is
+        # ever issued here. See supports_custom_domain_certificates().
+        "supports_custom_domain_certificates": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
@@ -167,6 +175,9 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": True,
+        # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
+        # challenge for a domain of the user's own can complete here.
+        "supports_custom_domain_certificates": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
@@ -789,6 +800,29 @@ def supports_vpa(cluster_name: str) -> bool:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("supports_vpa", False)
+
+
+def supports_custom_domain_certificates(cluster_name: str) -> bool:
+    """Whether this cluster can obtain a certificate for a domain of the user's own.
+
+    A domain outside the cluster's ``nice_url.supported_domains`` gets no certificate for
+    free: the platform certificate covers the supported domains only, so cert-manager has
+    to issue one, over an ACME HTTP-01 challenge that the outside world must be able to
+    reach. On production that works. On the two Kind clusters it cannot: they are not
+    reachable from the internet, and ``task sandbox:setup`` even installs a FAKE
+    cert-manager CRD (``bootstrap/crd/cert-manager/fake-cert-manager.yaml``) with no
+    controller behind it, so the Issuer applies, reports Ready, and nothing is ever
+    issued. Everything stays green and the site serves the wrong certificate -- which is
+    exactly how this was discovered (zad-cli, bevinding 22).
+
+    So this is a capability of the cluster and not a property of the domain, and it says
+    only what the platform will do, never whether the DNS or the ownership is in order.
+
+    Absent means True: silence is the right answer for a cluster that has not declared
+    this, since a warning nobody configured would be a guess about someone else's cluster.
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("supports_custom_domain_certificates", True)
 
 
 def get_min_cpu_m(cluster_name: str) -> int:

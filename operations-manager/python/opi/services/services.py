@@ -6,7 +6,7 @@ the entire application, from form submission to project processing.
 """
 
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -189,6 +189,40 @@ def service_entry_data(entry: Any) -> Any:
     if isinstance(body, dict):
         return body.get("data")
     return None
+
+
+def unmet_service_requirements(project_data: dict[str, Any], requires: Iterable[str]) -> list[str]:
+    """The entries of a ``ServiceDefinition.requires`` this project does not satisfy yet.
+
+    ``requires`` is a list of yaml paths into the project-level ``services`` block, one
+    level (``services/keycloak``, the service must be selected) or deeper
+    (``services/keycloak/config/restrict-access``, that config key must be set). The
+    wizard resolves the one-level form by auto-selecting the dependency; nothing checked
+    the deeper form, and nothing reported either of them to an API caller, so an unmet
+    requirement surfaced as a later failure rather than as part of the refusal.
+
+    Identity comes from ``service_entry_name``, so a dependency that carries config is
+    found as readily as a bare one. Paths outside ``services/`` are skipped rather than
+    guessed at: this function reads that one block and says so instead of reporting a
+    requirement it never looked for as unmet.
+    """
+    entries = project_data.get("services") or []
+    by_name = {service_entry_name(entry): entry for entry in entries}
+    unmet: list[str] = []
+    for requirement in requires:
+        if not requirement.startswith("services/"):
+            continue
+        name, _, rest = requirement.removeprefix("services/").partition("/")
+        node: Any = by_name.get(name)
+        if node is None:
+            unmet.append(requirement)
+            continue
+        for segment in rest.split("/") if rest else []:
+            if not isinstance(node, dict) or segment not in node:
+                unmet.append(requirement)
+                break
+            node = node[segment]
+    return unmet
 
 
 @dataclass
@@ -903,7 +937,8 @@ class ServiceAdapter:
         name is allowed, so a rejected list leaves the project file as it was.
 
         Raises ``ServiceValidationError`` for an unknown service name, or when a service
-        may not enrol itself.
+        may not enrol itself. That refusal names the request that lifts it -- see
+        ``_refusal_message``.
         """
         cls.parse_services_from_strings(list(service_names))  # rejects an unknown service name
 
@@ -925,11 +960,77 @@ class ServiceAdapter:
                 new_entries.append(entry)
 
         if refused:
-            raise ServiceValidationError(
-                f"Services that must be enabled at project level first: {refused}. They need project-level "
-                f"configuration that cannot be assumed, so they are not added automatically."
-            )
+            raise ServiceValidationError(cls._refusal_message(project_data, refused))
         services.extend(new_entries)
+
+    @classmethod
+    def _refusal_message(cls, project_data: dict[str, Any], refused: list[str]) -> str:
+        """Why these services were not enrolled, and what to send instead.
+
+        The refusal used to say only that the services "need project-level configuration
+        that cannot be assumed". That is the reason, not the way out: a client that hangs
+        an authorization-wall on a component learned that something was missing but not
+        which request supplies it, and the service's own ``requires`` -- publish-on-web,
+        keycloak, and keycloak's ``restrict-access`` -- surfaced only afterwards, one
+        failed call at a time (zad-cli, bevinding 21).
+
+        So the message carries three things per service: the endpoint that makes the
+        project-level decision (built with ``config_endpoint_path``, so it cannot drift
+        from the route that is actually registered), where to read what belongs in that
+        body, and the requirements this project does not satisfy yet. Only the unmet ones:
+        a list that repeats what is already there reads as a wall rather than a next step.
+
+        The endpoint is named only when it EXISTS. The generic config route is generated
+        for a layer that has a config model, and a service can carry a project layer
+        without one -- attachments defines a catalog under ``data`` and has no
+        project-level config block at all, so its route was never generated. Naming it
+        anyway would swap one dead end for a worse one: a 404 on a request the message
+        itself recommended. Those services get pointed at their own description instead,
+        which is where the actions they DO declare are listed.
+        """
+
+        project_name = project_data.get("name") or "{project_name}"
+        parts: list[str] = []
+        for service_name in refused:
+            service_type = ServiceType(service_name)
+            definition = cls.SERVICE_DEFINITIONS.get(service_type)
+            sentence = (
+                f"Service '{service_name}' needs a project-level decision that cannot be assumed, so it is "
+                f"not selected automatically. {cls._project_selection_hint(service_type, project_name)}"
+            )
+            unmet = unmet_service_requirements(project_data, definition.requires if definition else [])
+            if unmet:
+                sentence += f" It also requires, and this project does not have yet: {', '.join(unmet)}."
+            parts.append(sentence)
+        return " ".join(parts)
+
+    @classmethod
+    def _project_selection_hint(cls, service_type: ServiceType, project_name: str) -> str:
+        """The one request that selects ``service_type`` at project level.
+
+        Answered from what the service declares, with the same two conditions the v2
+        router uses to decide whether to generate the route at all: the service has to
+        carry the project layer AND have a model to validate a write against. Reading the
+        service rather than assuming the pattern is what keeps the message from pointing
+        at a 404.
+        """
+        from opi.services.catalog.base import ConfigLayer as Layer
+        from opi.services.catalog.base import config_endpoint_path
+        from opi.services.registry import get_service
+
+        service = get_service(service_type)
+        name = service_type.value
+        has_route = Layer.PROJECT in service.config_layers() and service.config_model_for(Layer.PROJECT) is not None
+        if has_route:
+            endpoint = config_endpoint_path(Layer.PROJECT, name, project_name)
+            return (
+                f"Select it first with PUT {endpoint} (the body is this service's project config; "
+                f"GET /api/v2/services/{name} describes it)."
+            )
+        return (
+            f"Its project layer takes no config block, so there is no config route for it; "
+            f"GET /api/v2/services/{name} lists the actions that put something there."
+        )
 
     @classmethod
     def remove_service_config(

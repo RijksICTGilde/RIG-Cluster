@@ -93,6 +93,7 @@ from opi.services.catalog.base import (
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
     clear_domain_settings,
+    custom_domain_certificate_note,
     get_domain_setting,
     set_domain_setting,
 )
@@ -6845,6 +6846,34 @@ class ProjectManager:
             return []
         return list(collect_deployment_approval_notices(project_data, deployment))
 
+    @staticmethod
+    def _certificate_warnings(project_data: dict[str, Any], deployment_name: str) -> list[str]:
+        """What this write means for the deployment's certificate, if anything.
+
+        A warning and not an approval: ``approvals`` reports what is waiting for an
+        administrator, and this waits for nobody. It is also the state that BEGINS where
+        the approval notice ends -- a domain of the user's own on a cluster that cannot
+        issue for it stops being reported the moment an approver grants it, and that is
+        exactly when the certificate never appears (zad-cli, bevinding 22).
+
+        The sentence comes from publish-on-web, so the API says what the wizard's field
+        warning says about the same value.
+        """
+        deployment = next(
+            (
+                d
+                for d in project_data.get("deployments", [])
+                if isinstance(d, dict) and d.get("name") == deployment_name
+            ),
+            None,
+        )
+        if deployment is None:
+            return []
+        note = custom_domain_certificate_note(
+            settings.CLUSTER_MANAGER, get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+        )
+        return [note] if note else []
+
     async def upsert_deployment(
         self,
         deployment_name: str,
@@ -7026,6 +7055,7 @@ class ProjectManager:
                             "error": domain_error,
                             "error_type": "domain_validation",
                         }
+                    normalized_warnings.extend(self._certificate_warnings(project_data, deployment_name))
 
                 # An upsert rolls new content onto this deployment exactly as an image
                 # update does, so the services clear what they recorded about the old
@@ -7230,6 +7260,7 @@ class ProjectManager:
                             "error": domain_error,
                             "error_type": "domain_validation",
                         }
+                    normalized_warnings_create.extend(self._certificate_warnings(project_data, deployment_name))
 
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
