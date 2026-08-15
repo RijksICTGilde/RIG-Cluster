@@ -1148,6 +1148,22 @@ class Service(ABC):
                 return spec
         return None
 
+    def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
+        """REQUEST: turn what this project asks for into pending requests (default none).
+
+        The fifth verb of the approval capability, next to declare / check / list /
+        record / notice: the specs say whether a value IS approved, this says what
+        happens when it is not even asked for yet. Idempotent and state-shaped rather
+        than event-shaped -- it reads the project as it now stands and adds the entries
+        that are missing -- so every writer can call it after its write without knowing
+        which fields it touched, and calling it twice creates one request.
+
+        It lives on the service and not on the spec because one pass over the project
+        can produce several kinds of request at once (publish-on-web reads a deployment's
+        domain and its subdomain together, and the second only matters given the first).
+        """
+        return None
+
     async def provision(self, ctx: ProvisionContext) -> None:
         """Provision this service's deployment-level resources (RC-5 Phase 4).
 

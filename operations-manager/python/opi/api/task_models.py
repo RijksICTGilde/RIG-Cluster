@@ -9,6 +9,7 @@ Provides:
 
 from typing import Any
 
+from opi.api.v2.models import APPROVALS_DESCRIPTION, ApprovalNoticeResponse
 from opi.core.async_task_service import TaskType
 from pydantic import BaseModel, Field
 
@@ -96,6 +97,7 @@ class UpsertDeploymentResult(BaseModel):
     message: str = ""
     deployment: DeploymentInfo | None = None
     urls: dict[str, DeploymentUrls] = Field(default_factory=dict)
+    approvals: list[ApprovalNoticeResponse] = Field(default_factory=list, description=APPROVALS_DESCRIPTION)
     processing: ProcessingStatus | None = None
     warnings: list[str] | None = None
     # Failure fields
@@ -243,6 +245,7 @@ class ConfigureServiceResult(BaseModel):
     service: str | None = None
     target: str | None = None
     removed: bool | None = None
+    approvals: list[ApprovalNoticeResponse] = Field(default_factory=list, description=APPROVALS_DESCRIPTION)
     processing: ProcessingStatus | None = None
     # Failure fields
     error: str | None = None

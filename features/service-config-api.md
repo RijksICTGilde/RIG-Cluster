@@ -162,7 +162,11 @@ Twee kanttekeningen bij de huidige inventaris:
   enkele generieke schrijfactie kan er nu bij. De markering is vooruitlopend: het model
   voor die laag bestaat, de richtlijn is dat een laag met een model een endpoint hoort te
   krijgen, en op de dag dat iemand dat doet mag het auditspoor niet in de vuurlinie
-  liggen.
+  liggen. Het blok wordt wél door het platform geschreven als GEVOLG van een
+  deployment-schrijfactie: een `PUT .../config/deployment/{d}` met een nog niet
+  goedgekeurd domein maakt de aanvraag aan en meldt hem terug in `approvals`. Dat is de
+  keerzijde van dezelfde regel -- de client vraagt aan, het platform beslist en schrijft
+  op. Zie `features/domain-configuration.md`.
 - **Bewust niet gemarkeerd**: de clone state (`generation`/`revisions`) van
   `postgresql-database` en `minio-storage` op deploymentniveau, en van de opslagdiensten
   op deployment-componentniveau. Die blokken bevatten uitsluitend platformdata, dus de

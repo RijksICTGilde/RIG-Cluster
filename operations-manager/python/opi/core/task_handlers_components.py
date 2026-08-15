@@ -662,6 +662,9 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             "service": service_name,
             "target": target,
             **counts,
+            # Wat er nog op een beheerder wacht. Zonder dit merkt een client pas dat zijn
+            # domein niet is goedgekeurd doordat er geen ingress op dat adres verschijnt.
+            "approvals": result.get("approvals", []),
             "processing": {
                 **processing,
                 **(
