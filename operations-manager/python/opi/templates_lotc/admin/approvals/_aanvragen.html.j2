@@ -45,11 +45,11 @@
                attribuut (ComponentError). De dubbele punt geeft een EXPRESSIE mee. #}
             <c-table-row :selected="item.current_status == 'requested'">
                 <c-td>
-                    {% if item.type == 'subdomain' %}
-                        <c-tag type="info" label="Subdomein"/>
-                    {% else %}
-                        <c-tag type="success" label="Domein"/>
-                    {% endif %}
+                    {# Het opschrift komt van de spec zelf, zodat een derde soort aanvraag
+                       hier niet als "Domein" verschijnt. De kleur onderscheidt alleen nog
+                       domein van subdomein; de terugval dekt een item van voor dit veld. #}
+                    {% set soort = 'info' if item.type == 'subdomain' else 'success' %}
+                    <c-tag type="{{ soort }}" :label="item.label | default('Domein', true)"/>
                 </c-td>
                 <c-td>{{ item.domain }}</c-td>
                 <c-td><strong>{{ item.name }}</strong></c-td>
@@ -79,5 +79,5 @@
     </c-card>
     {% endfor %}
 {% else %}
-    <c-alert type="info" heading="Geen domein- of subdomeinaanvragen gevonden."/>
+    <c-alert type="info" heading="Geen openstaande aanvragen gevonden."/>
 {% endif %}

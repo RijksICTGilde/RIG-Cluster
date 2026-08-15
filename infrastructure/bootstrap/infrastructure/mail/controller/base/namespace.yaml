@@ -10,7 +10,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: rig-operations-ron
+  name: rig-ron
   labels:
     app.kubernetes.io/name: operations-ron
     app.kubernetes.io/component: mail

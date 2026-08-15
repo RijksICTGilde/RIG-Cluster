@@ -62,6 +62,12 @@ def collect_approval_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
             for item in spec.list_items(project_data):
                 item.setdefault("service", service.service_type.value)
                 item.setdefault("type", spec.key)
+                # The spec's own label, so the approver UI can name what it is showing
+                # instead of switching on the two types it happened to know. The notice
+                # side already did this; the item side hardcoded "Domein" for anything
+                # that was not a subdomain, which is wrong the moment a third approvable
+                # arrives (RC-114).
+                item.setdefault("label", spec.label)
                 items.append(item)
     return items
 

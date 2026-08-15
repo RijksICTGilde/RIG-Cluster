@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: rig-mail-relay
-  namespace: rig-operations-ron
+  namespace: rig-ron
 spec:
   replicas: 1
   selector:
@@ -41,8 +41,10 @@ spec:
               drop:
                 - ALL
           env:
+            # Bewust zonder namespace erin: de namespace heet op ODCN rig-prd-ron en
+            # elders rig-ron, en deze naam gaat als EHLO-naam de deur uit.
             - name: MAIL_RELAY_HOSTNAME
-              value: rig-mail-relay.rig-operations-ron.svc.cluster.local
+              value: rig-mail-relay
             - name: MAIL_DOMAIN
               valueFrom:
                 secretKeyRef:
