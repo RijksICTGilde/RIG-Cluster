@@ -91,6 +91,86 @@ kan hem weghalen; een invite die iemand anders (of de portal) aanmaakte is via d
 niet te verwijderen zonder die sleutel. Toevoegen -- het punt waar het misging -- kan nu
 wel zonder.
 
+## Velden die het platform schrijft
+
+**De regel: de API kan configdata die OPI zelf zet nooit wissen en nooit aanpassen.**
+
+Dezelfde klasse fout als hierboven, met een scherpere rand. Een configblok mengt twee
+soorten veld: instellingen die een gebruiker kiest, en velden die OPI zelf schrijft. De
+PUT dumpt met `exclude_unset=True` en vervangt het HELE blok, dus een veld dat de afzender
+niet noemde verdween. Bij een instelling is dat "terug naar de standaard"; bij
+platformdata was het onherstelbaar.
+
+`keycloak.realms` is waar het pijn deed. Het bevat de realm, de inloggegevens van de
+realm-admin en de OTP-seed, AGE-versleuteld en verder nergens opgeslagen. Een
+`PUT /api/v2/projects/{p}/services/keycloak/config/project` met alleen
+`{"template": "sso-only"}` liet letterlijk dat over. Daarna liep het project vast op de
+duplicate-admin-klep in `keycloak_manager`, en de enige uitwegen waren de git-historie van
+het projectbestand of een beheerder op de master-realm.
+
+De regel is generiek en niet keycloak-specifiek: elke dienst zegt zelf welke velden van
+OPI zijn, via `Service.platform_managed_fields(layer)` -- dezelfde soort haak als de
+andere declaraties in de catalogus. Een dienst die niets declareert krijgt een lege
+verzameling en werkt precies zoals eerst. De standaardimplementatie leest de markering van
+het veld zelf, naast zijn eigen beschrijving:
+
+```python
+realms: list[KeycloakRealm] = Field(
+    default_factory=list,
+    json_schema_extra={PLATFORM_MANAGED: True},
+    description="Per-cluster realm admin connections. Written and managed by the platform...",
+)
+```
+
+Op het veld en niet in een lijst met sleutelnamen elders, om twee redenen. Het kan niet
+uit de pas lopen met het veld dat het beschermt -- een hernoemd veld neemt zijn markering
+mee, waar een aparte lijst stil een sleutel zou beschermen die niet meer bestaat. En het
+komt in het schemafragment en in `/openapi.json` terecht (`x-platform-managed: true`), dus
+een client ziet dat het veld niet van hem is in plaats van dat te ontdekken door het kwijt
+te raken. Een dienst waarbij het antwoord per laag verschilt overschrijft de haak.
+
+Wat er gebeurt, op alle drie de werkwoorden:
+
+- **PUT met het veld erin: 422**, met een melding die het veld noemt, vóór er iets in de
+  wachtrij komt. Niet stilzwijgend negeren-en-doorgaan: wie het veld meestuurde denkt dat
+  hij het zette, en een schrijfactie die succes meldt terwijl ze een deel van de body
+  weggooit liegt over wat ze deed.
+- **PUT zonder het veld: gewoon uitgevoerd**, en de opgeslagen waarde wordt letterlijk
+  meegenomen -- niet opnieuw gevalideerd en niet opnieuw gedumpt, dus geen normalisatie en
+  geen default-expansie erop.
+- **DELETE**: het blok houdt precies deze velden over en laat de rest vallen. "Reset mijn
+  instellingen" mag niet "gooi het realm-adminwachtwoord weg" betekenen.
+- **PATCH**: een lijst die het platform bezit krijgt geen route; toevoegen of weghalen is
+  een wijziging als elke andere.
+
+**De GET laat deze velden weg.** Dat hoort bij de weigering: read-modify-write is de
+normale manier om dit endpoint te gebruiken, dus een client de waarde teruggeven waarvoor
+hij vervolgens een 422 krijgt zou de weigering tot een valstrik maken. Meteen ook het
+AGE-versleutelde realm-adminwachtwoord uit een API-antwoord, waar het niets te zoeken had.
+
+De grens loopt bij de API, niet bij de code: `keycloak_manager` en de goedkeuringsflow
+schrijven deze velden via hun eigen weg (`view.set(...)`) en blijven dat gewoon doen --
+anders zou geen enkele uitrol nog een realm kunnen aanmaken. Het behoud zit daarnaast op
+`ServiceAdapter.set_service_config` en zijn DELETE-broer, het ene pure mutatiepunt, zodat
+een toekomstige schrijfweg die niet via een route loopt de bescherming erft in plaats van
+hem te moeten onthouden.
+
+Twee kanttekeningen bij de huidige inventaris:
+
+- **`publish-on-web.domains`** (de domeingoedkeuringen met hun verdicthistorie) is
+  gemarkeerd, maar er is vandaag geen projectniveau-configroute voor die dienst, dus geen
+  enkele generieke schrijfactie kan er nu bij. De markering is vooruitlopend: het model
+  voor die laag bestaat, de richtlijn is dat een laag met een model een endpoint hoort te
+  krijgen, en op de dag dat iemand dat doet mag het auditspoor niet in de vuurlinie
+  liggen.
+- **Bewust niet gemarkeerd**: de clone state (`generation`/`revisions`) van
+  `postgresql-database` en `minio-storage` op deploymentniveau, en van de opslagdiensten
+  op deployment-componentniveau. Die blokken bevatten uitsluitend platformdata, dus de
+  fout "ik wilde mijn instelling wijzigen en raakte platformdata kwijt" kan er niet
+  optreden -- en markeren zou de generieke PUT daar stil krachteloos maken.
+  `invite.active[].key` is platform-gegenereerd maar zit IN een lijstitem; een
+  veldmarkering reikt daar niet, de PATCH hierboven is die bescherming.
+
 ### Example
 
 ```bash
