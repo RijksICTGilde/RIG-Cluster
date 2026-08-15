@@ -172,3 +172,62 @@ Je onderliggende punt klopt wel: `smtp-mail` zet een protocolnaam in iets dat ge
 5. **De servicenaam** (zie hierboven).
 
 Beslist in dit ontwerp, niet meer open: het lokale deel is per project instelbaar, het afzenderdomein is voorlopig één platformdomein met een optioneel veld in het configmodel, en de maillog in ZAD komt uit MTA Hooks.
+
+---
+
+# Aanvulling, 15 augustus 2026
+
+Vier dingen die na het oorspronkelijke ontwerp zijn gemeten of besloten. De rest van het plan hierboven blijft staan; waar deze aanvulling een openstaande beslissing invult, staat dat erbij.
+
+## 1. Bereikbaarheid: gedeeltelijk bewezen, nog niet rond
+
+Stap 2 van de uitrol is uitgevoerd vanuit `rig-prd-vlam-wt8` op productie, de namespace die `egress.projectcalico.org/egressGatewayPolicy: rig-ron` draagt. Gemeten met `nc` in de bestaande `productie-vlam-proxy`-pod, dus zonder iets uit te rollen:
+
+- **DNS klopt.** `rmrmail.rijksweb.nl` resolvet naar `145.21.161.201`, precies het adres dat we hebben gekregen.
+- **De route bestaat.** De oude `Network is unreachable` is weg. Dat is nieuw en het sluit de bevinding in `docs/ron-koppeling.md` gedeeltelijk af.
+- **Er komt niets terug.** Poort 25, 587 en 465 lopen alle drie in een timeout zonder banner en zonder weigering. Het adres van de egressgateway zelf gedraagt zich hetzelfde.
+
+Dat patroon (uitgaand vertrekt, niets keert terug, geen ICMP-weigering) wijst op een firewall die stil laat vallen of op retourverkeer dat de weg terug niet vindt. Dat het op drie poorten identiek is, pleit tegen "poort 25 staat dicht".
+
+**Wat er nog moet gebeuren, en het is geen bouwwerk maar een vraag:** welk bronadres uit `145.21.227.140/30` ziet de tegenpartij werkelijk, staat dat adres in hun toelating naar `145.21.161.201`, en is het retourpad ingericht. `docs/ron-koppeling.md` waarschuwt al dat welk adres uit de pool het SNAT-proces pakt niet bij ons vastligt, en houdt datzelfde punt als openstaand. Wij kunnen het zelf niet zien: de namespace `quattro-egress-gateway` is van ODCN en niet leesbaar met onze rechten.
+
+**Deze stap blijft blokkerend voor alles wat daarna komt.** Zolang die banner er niet is, bouwen we op een aanname.
+
+## 2. De namespace: `rig-operations-ron`, en waarom niet `rig-prd-operations`
+
+Het ontwerp noemde `rig-prd-mail` als voorbeeld. Het wordt een namespace voor RON-gebonden diensten in het algemeen, met mail als eerste bewoner en de VLAM-gateway als de volgende die er thuishoort.
+
+De reden om het niet in `rig-prd-operations` te zetten is niet behoudendheid maar onmogelijkheid, en dat is nu gemeten: **de annotatie `egressGatewayPolicy` neemt één waarde.** Op `rig-prd-vlam-wt8` staat hij op `rig-ron`, en in de laatst toegepaste configuratie van diezelfde namespace staat nog `internet`. Het is dus een of-of. RON aanzetten op `rig-prd-operations` kost daar het internet, en daarmee ArgoCD, de registry en Keycloak. De eis "internet moet blijven werken" en "RON erbij" kunnen in één namespace niet allebei waar zijn.
+
+Gevolg voor het netwerkbeleid, en dat is de prijs: verkeer tussen projectnamespaces en deze namespace moet expliciet worden toegestaan, per project. Dat hoort via het dienstensysteem te gaan en niet met de hand.
+
+## 3. Het netwerkbeleid komt uit de dienst zelf
+
+Het plan zegt wat het beleid moet toestaan (projectnamespaces naar de relay, verder niets) maar niet waar het vandaan komt. Het hoort bij de dienst: die weet wanneer hij aanstaat en voor welk component.
+
+**Eerst uitzoeken, dan bouwen:** kan een dienst vandaag een NetworkPolicy bijdragen, of dragen de manifesthaken alleen containers, secrets en poorten bij? De auth wall voegt een sidecar toe via `contribute_manifest_context`, dus er is een weg voor extra manifestinhoud, maar een NetworkPolicy is een eigen resource en geen stukje van de deployment. Kan het niet, dan is dát het eerste dat gebouwd wordt, want de handmatige variant is precies hoe de storing van 10 juni ontstond (`project_incident_20260610_netpol`: één apply die het allow-all-masker liet vallen).
+
+## 4. Accounts die niet aan een projectbestand hangen
+
+Nieuwe eis, en het is er geen die je later kunt aanbouwen: **ZAD zelf moet kunnen mailen.** Dat is geen bijkomstigheid maar de reden dat twee trajecten stilstaan:
+
+- `features/futures/keycloak-sso-bypass-voorkomen.md` fase 2: wachtwoord instellen en resetten voor lokale accounts, buiten Keycloak om, met een gemailde token. Dat document legt ook uit waarom een mailserver aan Keycloak knopen dit niet oplost.
+- `plans/otp-en-verhoogde-rechten.md`: herstel bij verlies van het toestel via een gemailde link. Nu vervangen door handwerk met database- en AGE-toegang.
+
+Het probleem is het datamodel. Elk account in het ontwerp hangt aan een project, en ZAD is geen project: er is geen projectbestand, dus geen plek om de configuratie te zetten en geen levenscyclus die het account opruimt.
+
+**Voorstel: een platformaccount dat in de configuratie van de relay zelf staat**, niet in een projectbestand. Aangemaakt bij het opzetten van de relay, met zijn wachtwoord als SOPS-secret in de namespace van de relay, en gelezen door OPI zoals het zijn andere platformgeheimen leest.
+
+Waarom niet een projectbestand `zad.yaml` verzinnen: dan bestaat er een project dat in de portal verschijnt, dat gebruikers in lijsten zien, waar de reconciliatie iets van vindt en dat iemand kan verwijderen. Een datamodel oprekken om één account kwijt te kunnen, levert een tweede soort project op die overal een uitzondering nodig heeft.
+
+De prijs is dat er twee wegen naar een account zijn. Die prijs is te betalen op één voorwaarde: **één stuk code dat accounts aanmaakt, met twee aanroepers.** De manager kent alleen "maak een account met deze naam, dit afzenderadres en deze limiet"; wie dat vraagt (een projectverwerking of het opzetten van de relay) is zijn zaak niet. Wordt dat twee implementaties, dan lopen ze uit elkaar en is het platformaccount het account waar niemand naar kijkt.
+
+**Bij het ontwerp van dat platformaccount hoort ook een strengere eis dan bij een projectaccount**, want het verstuurt wachtwoordreset-tokens. Wie die mail kan versturen of onderscheppen, kan een account overnemen. Dat vraagt in elk geval een eigen limiet en een eigen afzenderadres, zodat een fout in de projectkant niet aan deze mail komt, en het is de moeite waard te bepalen of dit account een aparte upstream-identiteit hoort te hebben.
+
+## 5. De accountgegevens zijn platformdata
+
+Sinds 15 augustus geldt in de API de regel dat configdata die OPI zelf zet niet via de API te wissen of te wijzigen is; een dienst declareert dat met `platform_managed_fields`. Het SMTP-wachtwoord en de accountnaam vallen daaronder: die worden door de mailmanager geschreven, niet door een gebruiker. Neem die declaratie mee in het configmodel, dan is het meteen goed in plaats van een reparatie achteraf zoals bij het realm-wachtwoord van Keycloak.
+
+## Wat deze aanvulling niet verandert
+
+De identiteitsregels, het afzenderdomein, de limieten, de bouwlijst voor OPI en de gefaseerde uitrol blijven zoals ze hierboven staan. Openstaande beslissing 5 (de servicenaam) blijft open; mijn voorkeur is nog steeds `send-email`.
