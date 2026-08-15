@@ -57,13 +57,10 @@ class UserEnvVarsService(Service):
     # One AGE block for the whole set: the plaintext is the KEY=value text the form
     # posts and the deploy path parses, so it can only be encrypted as a whole.
     owned_values_map = True
-    # The writer may mark a value as not a secret, and only the writer can: APP_MODE and
-    # a database password are the same kind of string, so unlike aliases this service
-    # cannot answer it from the value. Without the flag every value read back as ``***``,
-    # including one just written, so a typo in a non-secret variable could only be found
-    # by asking the running workload. The flag changes nothing about storage -- the whole
-    # set stays one AGE block -- only whether a read may show it.
-    owned_values_secret_flag = True
+    # Never a way to read one of these values back. The service inherits the default
+    # ``owned_value_is_secret`` (see there for why that is a decision and not a gap):
+    # these values can hold secrets, they are settable and changeable through the API,
+    # and they leave it again only in the workload's environment.
     # Sits at the top of the per-component service fieldsets, where the hand-authored
     # "Variabelen" fieldset used to be, so the form order is unchanged.
     config_component_order = 6

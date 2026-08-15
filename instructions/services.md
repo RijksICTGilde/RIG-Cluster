@@ -305,14 +305,18 @@ is gone, because a second shape only meant every reader needed a decrypt step of
 forget. See `features/component-values-api.md`.
 
 Whether such a value comes back out of a read is the service's own call
-(`owned_value_is_secret`), default yes. A service that cannot answer it from the value
-adds `owned_values_secret_flag = True`, and then the *writer* marks per value which ones
-are not secret (`public` on the write, a plain `<owned_property>-public` name list next to
-the block). That changes nothing about storage -- everything stays in the one AGE block --
-only whether a read may show it, and an absent or unreadable marking means secret.
-`user-env-vars` needs it (`APP_MODE` and a password are the same kind of string);
-`aliases` deliberately does not, because a second overridable answer could unmask a stored
-literal.
+(`owned_value_is_secret`), default yes, and **the request never gets a say in it**. There
+is no flag, no query parameter and no per-value marking that lifts the mask on a
+`user-env-vars` value: those values can hold secrets, and a read path is exactly as easy
+to reach for an automated client that was talked into asking as it is for the project's
+owner. Set and change, yes; read back, no. A per-value marking was built for this and
+withdrawn by the owner, so if the idea comes up again, that is the answer and the reason.
+
+`aliases` is the exception and stays it, because its values are not secrets: an alias
+value is a reference to a platform variable, the reference IS the coupling, and masking it
+hides the only thing the reader asked about. Do not "make the two consistent" by opening
+up the env-var side. The reasoning lives at `Service.owned_value_is_secret` and at
+`_make_values_read_endpoint`, the two places someone would go to undo it.
 
 ### Project-level config: what "declarative" does and does not cover
 

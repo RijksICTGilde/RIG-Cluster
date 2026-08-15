@@ -635,30 +635,6 @@ class Service(ABC):
     #: yes/no. ``opi/services/component_values.py`` is the one implementation of it.
     owned_values_map: ClassVar[bool] = False
 
-    #: Whether the writer of one of those values may say per value that it is NOT a
-    #: secret, so a read gives it back in full instead of ``***``.
-    #:
-    #: Only for a service that cannot answer the question from the value itself.
-    #: ``user-env-vars`` cannot: ``production`` and a database password are the same
-    #: kind of string, so only the person writing it knows which it is, and without the
-    #: flag every value came back masked -- including one the caller had just written,
-    #: which made a typo in a non-secret variable invisible. ``aliases`` deliberately
-    #: leaves this off: it answers from the value (a ``$PLATFORM_VAR`` reference is not
-    #: a secret, see ``owned_value_is_secret``), so a flag there would be a second,
-    #: overridable answer to a question that already has one.
-    #:
-    #: The flag never changes what is STORED: the whole set stays one AGE block, so a
-    #: value marked non-secret is encrypted in ``zad-projects`` exactly like the rest.
-    #: What it changes is only whether a read may show it. That is the conservative
-    #: direction on purpose -- re-marking a value as secret later then costs nothing,
-    #: where storing it in plain text would have put it in git history for good.
-    #:
-    #: Absent means secret. The names of the non-secret values are stored in a plain
-    #: sibling property (``<owned_property>-public``), so a project file written before
-    #: this existed has no list, and every one of its values stays masked.
-    #: ``opi/services/component_values.py`` implements it.
-    owned_values_secret_flag: ClassVar[bool] = False
-
     #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
     #: meaningful for providers that override ``provision``. The defaults on the four
     #: provisioning providers reproduce today's fixed db -> minio -> keycloak -> redis
@@ -907,6 +883,24 @@ class Service(ABC):
         form in which the question can be answered -- everything in the file is
         encrypted, which is why one shared storage-shape rule could not tell a secret
         from a pointer.
+
+        **This default is a decision, not a gap, and it is the place someone will want
+        to undo.** The values of ``user-env-vars`` are never handed back, and there is
+        deliberately no flag, no opt-in and no per-value exception to that. A read path
+        was asked for -- a caller cannot check a value they just wrote, so a typo in a
+        variable that holds nothing secret is only findable by asking the running
+        workload -- and it was weighed and refused: those values CAN hold secrets, and a
+        way to read them back is exactly as easy for an automated client that has been
+        talked into asking as it is for the person who owns the project. The convenience
+        of reading one back does not buy off that risk. You can set and change these
+        values; you cannot get them out again.
+
+        ``aliases`` is the one exception and stays it, because its values are not
+        secrets: an alias value is a reference to a platform variable
+        (``$DATABASE_SERVER_HOST``), the reference IS the coupling, and masking it hides
+        the only thing a reader was asking about. That difference between the two
+        near-identical features is intentional; do not "make them consistent" by opening
+        up the env-var side.
         """
         return True
 
