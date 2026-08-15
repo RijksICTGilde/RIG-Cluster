@@ -24,6 +24,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        "mail_relay_namespace": "rig-operations-ron",
+        "mail_relay_host": "rig-mail-relay.rig-operations-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_domain": "mail.kind",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
@@ -84,6 +88,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        "mail_relay_namespace": "rig-operations-ron",
+        "mail_relay_host": "rig-mail-relay.rig-operations-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_domain": "mail.sandbox.rijksapp.dev",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
@@ -138,6 +146,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
+        "mail_relay_namespace": "rig-operations-ron",
+        "mail_relay_host": "rig-mail-relay.rig-operations-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_domain": "mail.rijksapp.nl",
         # Namespace of the CloudNativePG operator (see the note in the other clusters).
         "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
@@ -647,6 +659,84 @@ def get_redis_server(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["redis_server"]
+
+
+def get_mail_relay_namespace(cluster_name: str) -> str:
+    """
+    Get the namespace the SMTP relay runs in.
+
+    Its own namespace and not the operations namespace: the Calico annotation
+    ``egress.projectcalico.org/egressGatewayPolicy`` takes exactly ONE value, so a
+    namespace can have RON egress or internet egress, never both. The operations
+    namespace needs internet (ArgoCD, the registry, Keycloak), so the relay lives
+    apart. See ``plans/mailrelay.md``.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Namespace name the relay and its Service live in
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_relay_namespace"]
+
+
+def get_mail_relay_host(cluster_name: str) -> str:
+    """
+    Get the in-cluster hostname of the SMTP relay.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Relay hostname for internal pod use
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_relay_host"]
+
+
+def get_mail_relay_port(cluster_name: str) -> int:
+    """
+    Get the submission port of the SMTP relay.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Submission port (587) for internal pod use
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_relay_port"]
+
+
+def get_mail_domain(cluster_name: str) -> str:
+    """
+    Get the platform mail domain outgoing mail is sent from.
+
+    The domain the envelope sender and the ``From:`` header are pinned to, so the
+    upstream always sees one domain for one authenticated account and DKIM alignment
+    holds regardless of what the upstream does with the envelope.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Mail domain (e.g. ``mail.rijksapp.nl``)
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_domain"]
 
 
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
