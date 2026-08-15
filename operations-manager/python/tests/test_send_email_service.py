@@ -24,6 +24,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
 from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_namespace, get_mail_relay_port
+from opi.core.config import settings
 from opi.manager.mail_manager import MailManager
 from opi.services.catalog.approval import ApproverScope
 from opi.services.catalog.base import ConfigLayer, DeploymentManifestContext
@@ -227,6 +228,7 @@ class TestTheOneAccountPath:
         connector.get_principal = AsyncMock(return_value=existing)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
+        connector.ensure_domain = AsyncMock()  # type: ignore[method-assign]
         return connector
 
     @pytest.mark.asyncio
@@ -268,6 +270,119 @@ class TestTheOneAccountPath:
         project file. Make it an instance method again and the platform side needs a
         second implementation -- which is the failure mode the plan names."""
         assert isinstance(MailManager.__dict__["ensure_account"], staticmethod)
+
+    @pytest.mark.asyncio
+    async def test_the_domain_of_both_addresses_is_made_first(self) -> None:
+        """Gemeten tegen v0.11.8: een account met een adres in een domein dat de relay niet
+        kent wordt geweigerd met 200 + {"error":"notFound","item":"<domein>"}. Zonder deze
+        stap mislukt het allereerste projectaccount, met een fout die het domein noemt en
+        het account niet."""
+        connector = self._connector(existing=None)
+        await MailManager.ensure_account(
+            connector=connector,
+            username="project-myproject",
+            password="geheim",
+            from_address="noreply.project-myproject@eigen.example",
+            bounce_address="bounce+project-myproject@mail.example",
+            messages_per_day=500,
+        )
+        gemaakt = [call.args[0] for call in connector.ensure_domain.await_args_list]
+        assert gemaakt == ["eigen.example", "mail.example"]
+
+
+class TestHetPlatformaccountIsGeenProjectaccount:
+    """Securityreview r8: de relay heeft EEN platte accountnaamruimte.
+
+    Het platformaccount van ZAD (``MAIL_PLATFORM_ACCOUNT``) staat naast de projectaccounts.
+    Zou een project dezelfde naam kunnen krijgen, dan kan het met goedkeuring het
+    wachtwoord en het afzenderadres van ZAD overnemen (``ensure_account`` werkt een
+    bestaand principal BIJ) en zonder goedkeuring het account van het platform verwijderen
+    (``_delete_account``). Twee dingen houden dat tegen, en beide worden hier vastgelegd.
+    """
+
+    def _connector(self) -> MailConnector:
+        connector = MailConnector("http://relay", "admin", "geheim")
+        connector.get_principal = AsyncMock(return_value={"name": "zad-platform"})  # type: ignore[method-assign]
+        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
+        connector.update_principal = AsyncMock()  # type: ignore[method-assign]
+        connector.delete_principal = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.ensure_domain = AsyncMock()  # type: ignore[method-assign]
+        return connector
+
+    def test_a_project_account_never_carries_the_platform_name(self) -> None:
+        """De namen zijn disjunct door de constructie: elk projectaccount draagt het
+        voorvoegsel, dus zelfs een project dat 'zad-platform' HEET krijgt een eigen
+        account."""
+        from opi.utils.naming import MAIL_PROJECT_ACCOUNT_PREFIX, generate_mail_account_name
+
+        assert generate_mail_account_name("zad-platform") == f"{MAIL_PROJECT_ACCOUNT_PREFIX}zad-platform"
+        assert generate_mail_account_name("zad-platform") != settings.MAIL_PLATFORM_ACCOUNT
+        # En injectief: twee projecten komen nooit op een account uit.
+        assert generate_mail_account_name("demo") != generate_mail_account_name("demo-twee")
+
+    @pytest.mark.asyncio
+    async def test_the_project_path_refuses_the_platform_name(self) -> None:
+        """Het voorvoegsel alleen is niet genoeg: de naam komt op de projectweg ook uit het
+        PROJECTBESTAND (``_revoke``), en dat is de plek waar hij niet berekend wordt."""
+        from opi.manager.mail_manager import MailAccountNameError
+
+        with pytest.raises(MailAccountNameError):
+            await MailManager.ensure_account(
+                connector=self._connector(),
+                username=settings.MAIL_PLATFORM_ACCOUNT,
+                password="overgenomen",
+                from_address=f"noreply.{settings.MAIL_PLATFORM_ACCOUNT}@mail.example",
+                bounce_address=f"bounce+{settings.MAIL_PLATFORM_ACCOUNT}@mail.example",
+                messages_per_day=500,
+            )
+
+    @pytest.mark.asyncio
+    async def test_the_platform_caller_itself_is_allowed(self) -> None:
+        """De weigering mag ZAD's eigen weg niet dichtzetten: alleen die zegt het zelf."""
+        connector = self._connector()
+        account = await MailManager.ensure_account(
+            connector=connector,
+            username=settings.MAIL_PLATFORM_ACCOUNT,
+            password="geheim",
+            from_address=f"noreply.{settings.MAIL_PLATFORM_ACCOUNT}@mail.example",
+            bounce_address=f"bounce+{settings.MAIL_PLATFORM_ACCOUNT}@mail.example",
+            messages_per_day=2000,
+            is_platform_account=True,
+        )
+        assert account.username == settings.MAIL_PLATFORM_ACCOUNT
+
+    @pytest.mark.asyncio
+    async def test_the_removal_never_takes_the_platform_account(self, monkeypatch) -> None:
+        """Verwijderen is altijd een PROJECTverwijdering: het platformaccount heeft geen
+        levenscyclus die eindigt. Dus geen uitzondering, voor niemand."""
+        from opi.manager.mail_manager import MailAccountNameError
+
+        connector = self._connector()
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        manager = MailManager(project_manager=SimpleNamespace())  # type: ignore[arg-type]
+
+        with pytest.raises(MailAccountNameError):
+            await manager._delete_account(settings.MAIL_PLATFORM_ACCOUNT)
+
+        connector.delete_principal.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_platform_name_inside_the_project_prefix_is_refused(self, monkeypatch) -> None:
+        """De andere kant van dezelfde botsing: wie ``MAIL_PLATFORM_ACCOUNT`` IN de
+        projectnaamruimte zet, maakt hem weer bereikbaar voor een project. Dan gaat de
+        projectweg dicht, niet het platformaccount open."""
+        from opi.manager.mail_manager import MailAccountNameError
+
+        monkeypatch.setattr(settings, "MAIL_PLATFORM_ACCOUNT", "project-zad")
+        with pytest.raises(MailAccountNameError):
+            await MailManager.ensure_account(
+                connector=self._connector(),
+                username="project-demo",
+                password="geheim",
+                from_address="noreply.project-demo@mail.example",
+                bounce_address="bounce+project-demo@mail.example",
+                messages_per_day=500,
+            )
 
 
 class TestTheAddresses:

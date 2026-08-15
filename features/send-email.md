@@ -63,7 +63,7 @@ Op projectniveau, in de wizard of via de API:
 | Veld | Betekenis |
 |---|---|
 | `from-name` | de naam die de ontvanger boven het bericht ziet |
-| `from-local-part` | het eerste deel voor de @; standaard `noreply`. De projectnaam komt eraan vast: het adres wordt `noreply.<project>@<maildomein>` |
+| `from-local-part` | het eerste deel voor de @; standaard `noreply`. De accountnaam komt eraan vast: het adres wordt `noreply.project-<project>@<maildomein>` |
 | `messages-per-day` | het dagbudget van dit project, maximaal 5000. Zie de kanttekening hieronder: de relay dwingt vandaag één plafond af voor elk account |
 
 De projectnaam zit in het adres omdat de relay hem daar nodig heeft: de From:-header wordt
@@ -92,7 +92,7 @@ services:
   - name: send-email
     config:
       from-name: Algoritmeregister
-      from-local-part: noreply   # levert noreply.algor-odc@mail.rijksapp.nl op
+      from-local-part: noreply   # levert noreply.project-algor-odc@mail.rijksapp.nl op
       messages-per-day: 750
       # accounts: door het platform geschreven, zie hieronder
 ```
@@ -119,6 +119,18 @@ een klacht herleidbaar maken naar een deployment die niemand buiten het platform
 Gevolg voor het opruimen: de dienst uit één deployment halen verwijdert het account niet
 zolang een andere deployment van hetzelfde project hem nog gebruikt. Pas de laatste laat het
 account opheffen.
+
+### En het heet `project-<project>`, niet `<project>`
+
+De relay heeft één platte naamruimte voor accounts: het account van ZAD zelf
+(`MAIL_PLATFORM_ACCOUNT`, standaard `zad-platform`) staat ernaast. Zonder voorvoegsel is
+`zad-platform` gewoon een geldige projectnaam, en dan kan dat project met goedkeuring het
+wachtwoord en het afzenderadres van ZAD overnemen (een bestaand account wordt bijgewerkt,
+niet geweigerd) en zonder goedkeuring het platformaccount laten verwijderen. Het
+voorvoegsel maakt de twee verzamelingen disjunct, en de projectweg (`ensure_account`,
+`_delete_account`) weigert de platformnaam daarnaast nog expliciet — ook als die naam uit
+het projectbestand komt, en ook als iemand `MAIL_PLATFORM_ACCOUNT` juist ín de
+projectnaamruimte zet.
 
 ## Het netwerkbeleid komt uit de dienst
 
@@ -309,6 +321,22 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
 5. **DNS**: SPF op ons maildomein dat de uitgaande IP's van de upstream autoriseert, en de
    publieke helft van de DKIM-sleutel als TXT op `zad._domainkey.<maildomein>`. Zonder deze
    twee vertrekt de post wel en komt hij niet aan.
+
+Twee dingen die bij het naspelen tegen een echte Stalwart v0.11.8 stuk bleken en nu goed
+staan — ze horen hier omdat ze allebei pas bij het aanzetten zichtbaar zouden worden:
+
+- **Het image negeert `args`.** `/usr/local/bin/entrypoint.sh` draait `--init` als
+  `/opt/stalwart-mail/etc/config.toml` ontbreekt en start daarna altijd met dát bestand,
+  wat je ook meegeeft. Met alleen `args: ["--config", "/etc/mail/config.toml"]` draaide de
+  relay dus op een zelf gegenereerde standaardconfiguratie: geen identiteitsregels, geen
+  upstream, geen limieten. Het deployment zet daarom `command:
+  ["/usr/local/bin/stalwart-mail"]`.
+- **De relay moet het maildomein kennen vóór het eerste account.** Een principal met een
+  adres in een onbekend domein wordt geweigerd met status 200 en
+  `{"error":"notFound","item":"<domein>"}` — dus het allereerste projectaccount mislukte,
+  met een fout die het domein noemt en het account niet. `MailConnector.ensure_domain`
+  maakt het domein aan (idempotent) en `ensure_account` roept het aan voor het afzender- en
+  het bounce-adres.
 
 En drie dingen die de relay vandaag niet dichtzet, met de reden erbij:
 

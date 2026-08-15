@@ -326,9 +326,18 @@ Wat er nu echt staat, en hoe het is aangetoond:
    (`noreply.<project>@<maildomein>`) - de relay kent zijn accounts, dus de regel moet uit
    de accountnaam af te leiden zijn. Een adres bestaat trouwens maar EEN keer op de hele
    relay, dus een gedeelde `noreply@` was sowieso niet houdbaar.
+2a. **Precies EEN From-adres** (toegevoegd na de securityreview van 15 augustus, r8).
+   `address :all` is waar zodra EEN adres in de header matcht, dus
+   `From: <invoice@evil.example>, noreply.project-demo@<maildomein>` haalde regel 2 en
+   vertrok met onze DKIM-handtekening op naam van het slachtoffer. Het script eist nu
+   `address :count "eq" ... "1"`. Gemeten: twee mailboxen -> 550, een mailbox -> afgeleverd.
 3. **DKIM** - de afgeleverde post draagt `DKIM-Signature: ... s=zad; d=<maildomein>` met
    From in de `h=`-lijst.
-5. **Received** - geen keten in de afgeleverde post.
+5. **Received** - geen keten in de afgeleverde post. RFC 5293 raadt implementaties aan
+   `deleteheader "Received"` te weigeren, dus deze regel had stil niets kunnen doen; de
+   tegenproef (dezelfde relay zonder de vijf `deleteheader`-regels) levert Received,
+   X-Originating-IP, X-Mailer, X-Originating-Client en X-Authenticated-Sender wel bij de
+   upstream af. Stalwart v0.11.8 weigert het dus niet.
 6. **Message-ID** - `<12345@app-pod-7f9c.rig-prd-demo.svc.cluster.local>` komt aan als
    `<12345@mail.rijksapp.nl>`. Het unieke deel blijft, het interne domein gaat eraf.
    Weggooien alleen kan niet: `add-headers` draait VOOR het script, dus dan vertrekt het
@@ -349,6 +358,21 @@ reparatie onbruikbaar maakten: een onbekend account geeft **200 met
 `{"error":"notFound"}`** en geen 404 (dus las de connector "bestaat" en werkte bij in
 plaats van aanmaken), en een account zonder **rol** wordt na een geslaagde authenticatie
 alsnog geweigerd met `550 5.7.1 Your account is not authorized to use this service`.
+
+### Drie dingen die de proef er nog uit haalde (r8)
+
+- **Een platte accountnaamruimte.** Het platformaccount `zad-platform` was een geldige
+  PROJECTnaam, en de accountnaam was de projectnaam kaal. Een project met die naam kon het
+  account van ZAD overnemen (bijwerken van een bestaand principal) of het laten verwijderen.
+  Projectaccounts heten nu `project-<project>`, en de projectweg weigert de platformnaam
+  expliciet.
+- **Het image negeert `args`.** Het entrypoint start altijd met
+  `/opt/stalwart-mail/etc/config.toml` en genereert dat bestand als het ontbreekt: met
+  alleen `args` zou de relay op een standaardconfiguratie draaien. Het deployment zet nu
+  `command`.
+- **Het maildomein moet als principal bestaan** voordat er een account met een adres erin
+  kan worden gemaakt (200 + `{"error":"notFound","item":"<domein>"}`). De connector maakt
+  het domein nu aan.
 
 ### Wat hiermee NIET is afgedekt
 
