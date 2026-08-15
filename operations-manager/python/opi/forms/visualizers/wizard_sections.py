@@ -363,6 +363,9 @@ REDIS_CONFIG_SECTION = _with_service_help(
 MINIO_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.MINIO_STORAGE).config_form_section(ConfigLayer.PROJECT), ServiceType.MINIO_STORAGE
 )
+SEND_EMAIL_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.SEND_EMAIL).config_form_section(ConfigLayer.PROJECT), ServiceType.SEND_EMAIL
+)
 
 # ---------------------------------------------------------------------------
 # Lookup for conditional sections keyed by service name
@@ -384,6 +387,7 @@ _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
         CROSS_DOMAIN_CONFIG_SECTION,
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
+        SEND_EMAIL_CONFIG_SECTION,
     )
 }
 

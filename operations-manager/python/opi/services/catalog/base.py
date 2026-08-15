@@ -146,6 +146,7 @@ class ProvisionContext:
     minio_manager: Any
     keycloak_manager: Any
     redis_manager: Any
+    mail_manager: Any
 
 
 @dataclass

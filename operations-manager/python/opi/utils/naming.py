@@ -714,6 +714,30 @@ def generate_redis_username(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(username, 63)
 
 
+def generate_mail_account_name(project_name: str) -> str:
+    """
+    Generate the SMTP account name a project gets on the platform mail relay.
+
+    Format: {project} (lowercase, hyphen separated).
+
+    Per PROJECT and not per deployment, unlike the MinIO and Redis names above: the
+    account is the unit the daily limit and the bounce address hang on, and splitting it
+    per deployment would give one project several budgets and make a complaint about a
+    message traceable to a deployment nobody outside the platform knows about.
+
+    Args:
+        project_name: Name of the project
+
+    Returns:
+        SMTP account name
+
+    Example:
+        >>> generate_mail_account_name("algor-odc")
+        'algor-odc'
+    """
+    return _truncate_if_needed(_sanitize_for_lowercase(project_name), 63)
+
+
 def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:
     """
     Generate a consistent Redis key prefix (bare namespace token).
