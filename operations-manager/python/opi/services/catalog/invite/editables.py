@@ -215,6 +215,12 @@ INVITE_ITEM_CHILD_EDITABLES = [
 # So it stays a list on disk (no migration, existing multi-entry files keep working and keep
 # being served) while the form pins it to exactly one: min == max == 1 and no add/remove.
 # Raise these two numbers to hand the list back to the user; nothing else has to change.
+#
+# De API doet sinds kort hetzelfde, met een eigen schakelaar: ``InviteService`` zet
+# ``api_singular_lists = {"active"}``, waardoor de PUT en de GET één uitnodiging tonen in
+# plaats van een lijst van een. Twee lagen, twee knoppen, dezelfde aanleiding -- ze zijn
+# bewust niet aan elkaar geknoopt (het formulier gaat over een widget, de gevel over een
+# body), dus wie de een omzet, kijkt ook even naar de ander.
 INVITE_ACTIVE_EDITABLE = Editable(
     yaml_path=_cp("active"),
     min_items=1,

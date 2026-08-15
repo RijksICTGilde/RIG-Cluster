@@ -636,6 +636,26 @@ class Service(ABC):
     #: yes/no. ``opi/services/component_values.py`` is the one implementation of it.
     owned_values_map: ClassVar[bool] = False
 
+    #: TIJDELIJKE GEVEL, en met opzet één zichtbare schakelaar. De configsleutels waarvan
+    #: dit een lijst IS in het projectbestand, maar die de API als ÉÉN object toont: de
+    #: PUT-body neemt de entry zelf, de GET geeft de entry zelf terug.
+    #:
+    #: Er staat er vandaag altijd precies één (``invite.active``: het formulier pint hem al
+    #: af op min == max == 1), en een lijst van één maakt elk CLI- en agentgebruik lelijker
+    #: dan nodig. Het is nadrukkelijk GEEN ontwerpbesluit dat de eindvorm voorstelt: we
+    #: weten niet of er nog entries bij komen, dus het schema blijft ONGEWIJZIGD -- de
+    #: opslag, ``config_model`` en het vastgelegde schemafragment zijn en blijven een lijst.
+    #: Haal de naam hier weg en het lijstoppervlak is terug, zonder migratie en zonder dat
+    #: er iets op schijf verandert.
+    #:
+    #: De gevel mag alleen bestaan zolang hij waar is: staan er meer entries in het bestand,
+    #: dan weigeren de lees- en schrijfroute met een 409 in plaats van de eerste te tonen en
+    #: de rest te overschrijven -- bij een invite is dat verlies onherstelbaar, want de
+    #: sleutel is het geheim in de link en komt in geen enkel leesantwoord terug. De PATCH
+    #: op de lijst blijft bestaan en is de uitweg. Alles daarvan zit op één plek,
+    #: ``opi/services/config_singular.py``.
+    api_singular_lists: ClassVar[frozenset[str]] = frozenset()
+
     #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
     #: meaningful for providers that override ``provision``. The defaults on the four
     #: provisioning providers reproduce today's fixed db -> minio -> keycloak -> redis

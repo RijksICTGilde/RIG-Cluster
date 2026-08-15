@@ -58,7 +58,7 @@ class PatchableList:
         return f"/{self.name}" if self.name else ""
 
 
-def _item_type(annotation: Any) -> Any:
+def list_item_type(annotation: Any) -> Any:
     """The entry type of a ``list[...]`` annotation, or ``None`` for anything else."""
     if get_origin(annotation) is not list:
         return None
@@ -71,7 +71,7 @@ def _root_list(config_model: type[BaseModel]) -> list[PatchableList]:
     item_key = getattr(config_model, "ITEM_KEY", None)
     if not isinstance(item_key, str):
         return []
-    item_type = _item_type(config_model.model_fields["root"].annotation)
+    item_type = list_item_type(config_model.model_fields["root"].annotation)
     if not (isinstance(item_type, type) and issubclass(item_type, BaseModel)):
         return []
     return [PatchableList(name=None, item_key=item_key, item_type=item_type)]
@@ -100,7 +100,7 @@ def patchable_lists(config_model: type | None) -> list[PatchableList]:
         field = fields_by_name.get(name)
         if field is None:
             raise ValueError(f"{config_model.__name__}.ITEM_KEYS names '{name}', which is not a field of the model")
-        item_type = _item_type(field.annotation)
+        item_type = list_item_type(field.annotation)
         if item_type is None:
             raise ValueError(f"{config_model.__name__}.{name} is not a list, so it cannot be patched entry by entry")
         is_model = isinstance(item_type, type) and issubclass(item_type, BaseModel)
