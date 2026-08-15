@@ -1,0 +1,17 @@
+# Eigen namespace voor de diensten die bij de RON-koppeling horen, met de mailrelay als
+# eerste bewoner en de VLAM-gateway als de volgende die hier thuishoort.
+#
+# Waarom niet in rig-prd-operations: de annotatie egress.projectcalico.org/egressGatewayPolicy
+# neemt exact EEN waarde. Op rig-prd-operations staat die op "internet", en dat moet zo
+# blijven - ArgoCD, de registry en Keycloak hangen eraan. RON erbij zetten kan dus niet;
+# het is een of-of. Zie plans/mailrelay.md, aanvulling 2.
+#
+# De annotatie zelf staat in de odcn-overlay: alleen op productie bestaat de RON-koppeling.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rig-operations-ron
+  labels:
+    app.kubernetes.io/name: operations-ron
+    app.kubernetes.io/component: mail
+    app.kubernetes.io/part-of: rig-platform

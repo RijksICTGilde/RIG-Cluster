@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rig-mail-relay
+  namespace: rig-operations-ron
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rig-mail-relay
+  template:
+    metadata:
+      labels:
+        # Het NetworkPolicy-label waar de dienst send-email naar verwijst
+        # (RELAY_POD_LABELS in opi/services/catalog/send_email/__init__.py). Verander je
+        # dit label, verander het daar dan mee, anders opent het beleid van elk project
+        # niets meer.
+        app: rig-mail-relay
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: stalwart
+          image: stalwartlabs/mail-server:v0.11.5
+          args: ["--config", "/etc/mail/config.toml"]
+          ports:
+            - containerPort: 587
+              name: submission
+            - containerPort: 8080
+              name: management
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: MAIL_RELAY_HOSTNAME
+              value: rig-mail-relay.rig-operations-ron.svc.cluster.local
+            - name: MAIL_DOMAIN
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DOMAIN
+            - name: MAIL_UPSTREAM_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_UPSTREAM_HOST
+            - name: MAIL_UPSTREAM_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_UPSTREAM_USERNAME
+            - name: MAIL_UPSTREAM_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_UPSTREAM_PASSWORD
+            - name: MAIL_RELAY_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_RELAY_ADMIN_USERNAME
+            - name: MAIL_RELAY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_RELAY_ADMIN_PASSWORD
+            - name: MAIL_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DB_HOST
+            - name: MAIL_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DB_NAME
+            - name: MAIL_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DB_USER
+            - name: MAIL_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DB_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+              ephemeral-storage: "256Mi"
+            limits:
+              cpu: 500m
+              memory: 512Mi
+              ephemeral-storage: "512Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mail/config.toml
+              subPath: config.toml
+              readOnly: true
+            - name: dkim
+              mountPath: /etc/mail/dkim
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            tcpSocket:
+              port: 587
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 587
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: rig-mail-relay-config
+        - name: dkim
+          secret:
+            secretName: mail-relay-dkim
+        - name: tmp
+          emptyDir: {}

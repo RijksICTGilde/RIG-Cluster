@@ -1,0 +1,19 @@
+# Geen ingress, alleen ClusterIP: de relay is uitsluitend binnen het cluster bereikbaar.
+# Wie erbij mag komen staat in het NetworkPolicy hiernaast en in het beleid dat de dienst
+# send-email per project bijdraagt.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rig-mail-relay
+  namespace: rig-operations-ron
+spec:
+  selector:
+    app: rig-mail-relay
+  ports:
+    - name: submission
+      port: 587
+      targetPort: 587
+    - name: management
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

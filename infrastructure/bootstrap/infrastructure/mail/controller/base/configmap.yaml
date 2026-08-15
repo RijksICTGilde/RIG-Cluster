@@ -1,0 +1,166 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rig-mail-relay-config
+  namespace: rig-operations-ron
+data:
+  # Stalwart-configuratie voor de mailrelay. Dit bestand legt de identiteitsregels uit
+  # plans/mailrelay.md vast; de accounts zelf komen er niet in te staan, die maakt OPI
+  # via de management-API aan.
+  #
+  # LET OP: deze configuratie is nog NIET tegen een echte upstream gemeten. Stap 2 van de
+  # uitrol (bereikbaarheid bewijzen) is nog open: de route naar rmrmail.rijksweb.nl bestaat,
+  # maar er komt op geen enkele poort een banner terug. Zolang dat niet rond is, is dit de
+  # configuratie die we WILLEN draaien, niet de configuratie waarvan bewezen is dat ze werkt.
+  config.toml: |
+    [server]
+    hostname = "%{env:MAIL_RELAY_HOSTNAME}%"
+
+    # Submission: hier bieden de applicaties hun post aan. Authenticatie is verplicht,
+    # dus het pad waarop een server "relaying denied" zegt (ongeauthenticeerd aanbieden
+    # voor een vreemd domein) doet zich hier niet voor.
+    [server.listener.submission]
+    bind = ["[::]:587"]
+    protocol = "smtp"
+
+    # De management-API. Alleen bereikbaar binnen het cluster; OPI maakt hierlangs de
+    # accounts aan. Geen ingress: van buiten is hier niets te halen.
+    [server.listener.management]
+    bind = ["[::]:8080"]
+    protocol = "http"
+
+    [session.auth]
+    require = [{if = "listener", eq = "submission", then = true}, {else = false}]
+    mechanisms = ["PLAIN", "LOGIN"]
+    directory = "internal"
+
+    # --- Identiteitsregels (plans/mailrelay.md, punt 1 t/m 7) --------------------
+    #
+    # 1. De envelope-afzender wordt herschreven naar een adres in ons eigen domein, per
+    #    account herkenbaar. De upstream ziet daardoor altijd hetzelfde domein bij
+    #    hetzelfde account, en een bounce komt bij ons terug en is herleidbaar.
+    [session.mail]
+    rewrite = [
+      {if = "authenticated_as", ne = "", then = "'bounce+' + authenticated_as + '@%{env:MAIL_DOMAIN}%'"},
+      {else = false},
+    ]
+
+    # 2. De From:-header wordt vastgezet op het adres van het account. Een project kiest
+    #    zijn weergavenaam, niet zijn domein: een From: in een vreemd domein haalt DMARC
+    #    nooit, dus die post komt toch niet aan.
+    [session.data.add-headers]
+    received = false
+    received-spf = false
+    auth-results = false
+    message-id = true
+    date = true
+
+    # 5, 6 en 7. Wat er van binnen het cluster in de kopregels staat, gaat er weer uit:
+    # de Received-keten (pod-IP's en namespace-namen), een Message-ID met een interne
+    # hostnaam erin, en de verklikkers die applicaties meesturen. Dit is een
+    # privacymaatregel, geen verhullingstruc - het is standaardgedrag van elke
+    # submission-server.
+    [session.data.remove-headers]
+    headers = [
+      "Received",
+      "X-Originating-IP",
+      "X-Authenticated-Sender",
+      "X-Mailer",
+      "X-Originating-Client",
+    ]
+
+    # 3. DKIM-ondertekening met onze eigen sleutel. De handtekening overleeft de hop naar
+    #    de upstream, dus DMARC slaagt op DKIM-alignment ongeacht wat de upstream met de
+    #    envelope doet.
+    [auth.dkim]
+    sign = [{if = "is_local_domain", eq = true, then = "['rsa']"}, {else = false}]
+    verify = "relaxed"
+
+    [signature.rsa]
+    private-key = "%{file:/etc/mail/dkim/dkim.key}%"
+    domain = "%{env:MAIL_DOMAIN}%"
+    selector = "zad"
+    headers = ["From", "To", "Date", "Subject", "Message-ID"]
+    algorithm = "rsa-sha256"
+    canonicalization = "relaxed/relaxed"
+
+    # 4. SPF is een DNS-actie bij het mailteam en staat hier bewust NIET: wij praten nooit
+    #    rechtstreeks met het internet, dus ons maildomein moet de uitgaande IP's van de
+    #    UPSTREAM autoriseren, niet die van ons. Makkelijk over het hoofd te zien.
+
+    # --- Alles gaat naar een upstream ------------------------------------------
+    [queue.outbound]
+    next-hop = "upstream"
+
+    [remote.upstream]
+    address = "%{env:MAIL_UPSTREAM_HOST}%"
+    port = 587
+    protocol = "smtp"
+
+    [remote.upstream.auth]
+    username = "%{env:MAIL_UPSTREAM_USERNAME}%"
+    secret = "%{env:MAIL_UPSTREAM_PASSWORD}%"
+
+    [remote.upstream.tls]
+    implicit = false
+    allow-invalid-certs = false
+
+    # --- Limieten (plans/mailrelay.md, "Limieten en uitgaande controle") --------
+    #
+    # Per account, gekeyd op het geauthenticeerde account, dus precies op het project.
+    # Het echte werk doen deze limieten, niet het spamfilter: ze vangen de retry-loop die
+    # tienduizend berichten stuurt voordat iemand het merkt.
+    [session.throttle]
+    [[session.throttle.inbound]]
+    key = ["authenticated_as"]
+    rate = "500/1d"
+
+    [[session.throttle.inbound]]
+    key = ["authenticated_as"]
+    concurrency = 4
+
+    # Globaal plafond bovenop de som van de projecten, zodat een fout in de provisioning
+    # nooit de afspraak met het mailteam kan overschrijden.
+    [[session.throttle.inbound]]
+    rate = "20000/1d"
+
+    [session.rcpt]
+    max-recipients = 25
+
+    [session.data.limits]
+    # Lager dan wat de upstream accepteert, zodat een te groot bericht bij ONS wordt
+    # geweigerd en zichtbaar is, niet bij hen.
+    size = 15728640
+    messages = 10
+
+    # --- Opslag -----------------------------------------------------------------
+    #
+    # PostgreSQL en geen PVC: dat scheelt de RWO-problematiek (strategy: Recreate), maakt
+    # meerdere replicas mogelijk en past bij wat we al draaien.
+    [store.db]
+    type = "postgresql"
+    host = "%{env:MAIL_DB_HOST}%"
+    port = 5432
+    database = "%{env:MAIL_DB_NAME}%"
+    user = "%{env:MAIL_DB_USER}%"
+    password = "%{env:MAIL_DB_PASSWORD}%"
+
+    [storage]
+    data = "db"
+    blob = "db"
+    lookup = "db"
+    directory = "internal"
+
+    [directory.internal]
+    type = "internal"
+    store = "db"
+
+    [authentication.fallback-admin]
+    user = "%{env:MAIL_RELAY_ADMIN_USERNAME}%"
+    secret = "%{env:MAIL_RELAY_ADMIN_PASSWORD}%"
+
+    [tracer.stdout]
+    type = "stdout"
+    level = "info"
+    ansi = false
+    enable = true

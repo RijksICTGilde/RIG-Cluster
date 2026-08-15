@@ -14,4 +14,9 @@ resources:
   - ../../infrastructure/minio/config/overlays/odcn
   - ../../infrastructure/prometheus/controller/overlays/odcn
   - ../../infrastructure/redis/controller/overlays/odcn
+  # De mailrelay in zijn eigen RON-namespace (RC-114). Bewust nog niet aangezet: stap 2
+  # van de uitrol is nog open - de route naar de upstream bestaat, maar er komt op geen
+  # enkele poort een banner terug, en zolang dat niet rond is draait hier een relay die
+  # niets kan bezorgen. De manifesten zijn klaar; aanzetten is deze regel.
+#  - ../../infrastructure/mail/controller/overlays/odcn
   - ../../infrastructure/external-dns/controller/overlays/odcn
