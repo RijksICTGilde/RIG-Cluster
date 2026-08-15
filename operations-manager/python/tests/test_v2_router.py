@@ -222,6 +222,158 @@ class TestServiceConfigPatch:
         mock_task_service.create_task.assert_not_called()
 
 
+class TestPlatformOwnedFieldsAreNotTheApiS:
+    """The API can never clear and never change config data OPI sets itself.
+
+    Regression cover for the incident: a `PUT .../services/keycloak/config/project` with
+    only `{"template": "sso-only"}` replaced the whole block and took `realms` with it --
+    the realm, the admin credentials and the OTP seed, AGE-encrypted and stored nowhere
+    else. The project then wedged on the duplicate-admin guard in `keycloak_manager`, with
+    only the git history of the project file or an administrator on the master realm left
+    as a way back.
+
+    Two halves, and both are needed. A body that LEAVES the field out must not lose it
+    (proved on the mutator in tests/test_service_config_api.py). A body that CARRIES it is
+    refused here rather than silently ignored -- a write that reports success while
+    dropping part of the body lies about what it did.
+    """
+
+    _KEYCLOAK = "/api/v2/projects/test-project/services/keycloak/config/project"
+
+    def test_the_incident_body_is_accepted_and_forwards_no_realms(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """THE regression test: the exact request that destroyed a project file.
+
+        It stays a normal, successful write -- the caller wanted to set `template` and
+        that is what happens. What must never again be in the payload is `realms`, and
+        `set_service_config` carries the stored one over untouched.
+        """
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.put(self._KEYCLOAK, headers={"X-API-Key": API_KEY}, json={"template": "sso-only"})
+
+        _assert_accepted(response, "configure_service")
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["config"] == {"template": "sso-only"}
+        assert "realms" not in payload["config"]
+
+    def test_a_body_carrying_realms_is_refused_and_nothing_is_enqueued(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        response = v2_client.put(
+            self._KEYCLOAK,
+            headers={"X-API-Key": API_KEY},
+            json={
+                "template": "sso-only",
+                "realms": [{"host": "http://elders", "realm": "x", "username": "u", "password": "p"}],
+            },
+        )
+
+        assert response.status_code == 422
+        assert "realms" in response.json()["detail"]
+        mock_task_service.create_task.assert_not_called()
+
+    def test_an_empty_realms_list_is_refused_too(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        """Clearing is the same forbidden act as changing, and the emptiest possible body
+        is how a client would clear it."""
+        response = v2_client.put(
+            self._KEYCLOAK, headers={"X-API-Key": API_KEY}, json={"template": "sso-only", "realms": []}
+        )
+
+        assert response.status_code == 422
+        mock_task_service.create_task.assert_not_called()
+
+    def test_the_refusal_is_derived_from_the_registry_not_from_a_service_name(self, v2_client: TestClient) -> None:
+        """The inventory of what the platform owns, so a new declaration is not a silent
+        one and a disappearing one is not either.
+
+        `publish-on-web.domains` is in here without a route to refuse it on: that service
+        has no project-level config endpoint today, so the approval verdicts are not
+        reachable by any generic write. The declaration is deliberate anyway -- the model
+        for that layer exists, the guidance is to give a layer with a model an endpoint,
+        and the day someone does, the verdict history must not be in the blast radius.
+        """
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.registry import SERVICES
+
+        declared = {
+            service_type.value: sorted(
+                {field for layer in ConfigLayer for field in service.platform_managed_fields(layer)}
+            )
+            for service_type, service in SERVICES.items()
+            if any(service.platform_managed_fields(layer) for layer in ConfigLayer)
+        }
+        assert declared == {"keycloak": ["realms"], "publish-on-web": ["domains"]}
+
+        # keycloak answers "realms" at every layer because it serves one model to all of
+        # them; only the project layer has a config block, and only it has routes.
+        spec = v2_client.get("/openapi.json").json()
+        with_a_put = {
+            (name, layer.value)
+            for name in declared
+            for layer in ConfigLayer
+            if "put" in spec["paths"].get(f"/api/v2/projects/{{project_name}}/services/{name}/config/{layer.value}", {})
+        }
+        assert with_a_put == {("keycloak", "project")}
+
+    def test_a_service_without_platform_fields_is_unaffected(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/sleep-mode/config/project",
+            headers={"X-API-Key": API_KEY},
+            json={"enabled": True, "match": ["acc-*"]},
+        )
+
+        _assert_accepted(response, "configure_service")
+
+    def test_the_read_leaves_the_platform_fields_out(self, v2_client: TestClient) -> None:
+        """So refusing can never punish a read-modify-write client: it is never handed
+        the value it would be refused for sending back."""
+        from unittest.mock import MagicMock, patch
+
+        project = MagicMock()
+        project.data = {
+            "name": "test-project",
+            "services": [
+                {
+                    "name": "keycloak",
+                    "config": {
+                        "template": "sso-only",
+                        "realms": [{"host": "h", "realm": "r", "username": "u", "password": "AGE-VERSLEUTELD"}],
+                    },
+                }
+            ],
+            "components": [],
+            "deployments": [],
+        }
+        store = MagicMock()
+        store.get.return_value = project
+
+        with patch("opi.api.v2.router.get_project_store", return_value=store):
+            response = v2_client.get(
+                "/api/v2/projects/test-project/services/keycloak/config", headers={"X-API-Key": API_KEY}
+            )
+
+        assert response.status_code == 200
+        config = response.json()["configurations"][0]["config"]
+        assert config == {"template": "sso-only"}
+        assert "realms" not in config
+
+    def test_no_patch_route_is_generated_for_a_platform_owned_list(self, v2_client: TestClient) -> None:
+        """add/remove is a change like any other, so a list OPI owns gets no PATCH."""
+        spec = v2_client.get("/openapi.json").json()
+        assert "/api/v2/projects/{project_name}/services/keycloak/config/project/realms" not in spec["paths"]
+
+    def test_the_spec_marks_the_field_so_a_client_can_see_it(self, v2_client: TestClient) -> None:
+        spec = v2_client.get("/openapi.json").json()
+        realms = spec["components"]["schemas"]["KeycloakConfig"]["properties"]["realms"]
+        assert realms["x-platform-managed"] is True
+
+
 class TestListInsideObjectConfigPatch:
     """The same PATCH on a list that sits inside an object-shaped config.
 
