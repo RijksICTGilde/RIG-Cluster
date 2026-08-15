@@ -31,6 +31,16 @@ spec:
           # v0.11.6); dat is een ImagePullBackOff bij de eerste uitrol. Deze versie is de
           # versie waartegen de identiteitsregels in de configmap zijn gemeten.
           image: stalwartlabs/mail-server:v0.11.8
+          # De binary rechtstreeks, NIET het entrypoint van het image. Dat entrypoint
+          # (/usr/local/bin/entrypoint.sh) negeert zijn argumenten volledig: het draait
+          # --init als /opt/stalwart-mail/etc/config.toml ontbreekt en start daarna altijd
+          # met DAT bestand. Met alleen args hierboven zou de relay dus met een zelf
+          # gegenereerde standaardconfiguratie draaien - geen identiteitsregels, geen
+          # upstream, geen limieten - of vastlopen op de read-only rootfs bij de --init.
+          # Gemeten tegen v0.11.8: met alleen args schrijft hij "Configuration file
+          # written to /opt/stalwart-mail/etc/config.toml"; met dit command laadt hij
+          # /etc/mail/config.toml.
+          command: ["/usr/local/bin/stalwart-mail"]
           args: ["--config", "/etc/mail/config.toml"]
           ports:
             - containerPort: 587

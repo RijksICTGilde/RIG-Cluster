@@ -72,10 +72,22 @@ data:
 
     [sieve.trusted.scripts.identiteitsregels]
     contents = '''
-    require ["editheader", "variables", "reject"];
+    require ["editheader", "variables", "reject", "relational", "comparator-i;ascii-numeric"];
 
     set "domein" "%{env:MAIL_DOMAIN}%";
     set "account" "${env.authenticated_as}";
+
+    # 2a. Precies EEN afzenderadres in de From:. Dit staat VOOR regel 2 en is er de
+    #    voorwaarde van: 'address :all' is waar zodra EEN adres in de header matcht, dus
+    #    "From: <invoice@evil.example>, noreply.demo@${domein}" haalde regel 2 en vertrok
+    #    met onze DKIM-handtekening op naam van het slachtoffer. RFC 5322 laat meerdere
+    #    mailboxen in From: toe (met een Sender: erbij); wij niet - een account stuurt als
+    #    zichzelf of niet.
+    #    Gemeten tegen Stalwart v0.11.8: From met twee mailboxen -> 550, From met een
+    #    mailbox -> afgeleverd.
+    if not address :count "eq" :comparator "i;ascii-numeric" "From" "1" {
+        reject "550 5.7.1 De From:-header moet precies een adres bevatten.";
+    }
 
     # 2. De From:-header moet het adres van DIT account zijn. Een project kiest zijn
     #    weergavenaam, niet zijn adres en niet zijn domein: een From: in een vreemd domein
@@ -107,6 +119,12 @@ data:
     #    Received-keten (pod-IP's en namespace-namen) en de verklikkers die applicaties
     #    meesturen. Dit is een privacymaatregel, geen verhullingstruc - het is
     #    standaardgedrag van elke submission-server.
+    #    RFC 5293 raadt implementaties aan het verwijderen van Received te WEIGEREN, dus
+    #    dit is precies een regel die stil niets had kunnen doen. Gemeten tegen v0.11.8:
+    #    een bericht met Received, X-Originating-IP, X-Mailer, X-Originating-Client en
+    #    X-Authenticated-Sender komt bij de upstream aan zonder al die vijf. Tegenproef
+    #    met dezelfde relay zonder deze vijf regels: alle vijf komen wel aan. Stalwart
+    #    weigert deleteheader "Received" dus niet.
     deleteheader "Received";
     deleteheader "X-Originating-IP";
     deleteheader "X-Authenticated-Sender";

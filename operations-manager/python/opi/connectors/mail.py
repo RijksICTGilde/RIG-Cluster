@@ -112,6 +112,27 @@ class MailConnector:
         data = result.get("data") if isinstance(result, dict) else None
         return data if isinstance(data, dict) else result
 
+    async def ensure_domain(self, domain: str) -> None:
+        """Make sure the relay knows this mail domain.
+
+        Not cosmetic and not optional: an account is created with its addresses, and the
+        relay refuses an address in a domain it does not hold. It does so with a 200 and
+        ``{"error":"notFound","item":"<domein>"}`` -- so without this call the very first
+        account of the very first project fails, and the failure names the domain and not
+        the account (measured against v0.11.8).
+
+        A domain is a principal like any other, so an existing one is left alone and this
+        is replay-safe.
+        """
+        if await self.get_principal(domain) is not None:
+            return
+        await self._request(
+            "POST",
+            "/api/principal",
+            payload={"type": "domain", "name": domain, "description": "ZAD send-email"},
+        )
+        logger.info(f"Maildomein {domain} aangemaakt op de relay")
+
     async def create_principal(
         self,
         name: str,
