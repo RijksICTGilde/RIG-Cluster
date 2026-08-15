@@ -193,9 +193,9 @@ Dat patroon (uitgaand vertrekt, niets keert terug, geen ICMP-weigering) wijst op
 
 **Deze stap blijft blokkerend voor alles wat daarna komt.** Zolang die banner er niet is, bouwen we op een aanname.
 
-## 2. De namespace: `rig-operations-ron`, en waarom niet `rig-prd-operations`
+## 2. De namespace: `rig-prd-ron`, en waarom niet `rig-prd-operations`
 
-Het ontwerp noemde `rig-prd-mail` als voorbeeld. Het wordt een namespace voor RON-gebonden diensten in het algemeen, met mail als eerste bewoner en de VLAM-gateway als de volgende die er thuishoort.
+Het ontwerp noemde `rig-prd-mail` als voorbeeld. Het wordt `rig-prd-ron`: een namespace voor RON-gebonden diensten in het algemeen, met mail als eerste bewoner en de VLAM-gateway als de volgende die er thuishoort. De naam volgt de eis van ODCN dat een namespace op dat cluster met `rig-prd` begint; `rig-operations-ron` of `rig-ron` kan daar dus niet.
 
 De reden om het niet in `rig-prd-operations` te zetten is niet behoudendheid maar onmogelijkheid, en dat is nu gemeten: **de annotatie `egressGatewayPolicy` neemt één waarde.** Op `rig-prd-vlam-wt8` staat hij op `rig-ron`, en in de laatst toegepaste configuratie van diezelfde namespace staat nog `internet`. Het is dus een of-of. RON aanzetten op `rig-prd-operations` kost daar het internet, en daarmee ArgoCD, de registry en Keycloak. De eis "internet moet blijven werken" en "RON erbij" kunnen in één namespace niet allebei waar zijn.
 
