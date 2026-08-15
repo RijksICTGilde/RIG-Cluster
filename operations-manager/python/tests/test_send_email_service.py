@@ -22,22 +22,41 @@ import pytest
 from opi.connectors.mail import MailConnector, MailRelayNotConfiguredError, create_mail_connector
 from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_namespace, get_mail_relay_port
 from opi.manager.mail_manager import MailManager
+from opi.services.catalog.approval import ApproverScope
 from opi.services.catalog.base import ConfigLayer, DeploymentManifestContext
 from opi.services.catalog.send_email import RELAY_POD_LABELS, SendEmailService
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
+from opi.utils.secrets import SendEmailSecret
 from pydantic import ValidationError
 from ruamel.yaml import YAML
 
 SERVICE = get_service(ServiceType.SEND_EMAIL)
 
 
-def _project(*, component_services: list[str] | None = None, config: dict | None = None) -> dict:
-    """A project with one deployment of one component, optionally using send-email."""
+def _approval(project: dict) -> dict:
+    """Het opgeslagen goedkeuringsblok, uit het projectbestand zelf gelezen."""
+    return project["services"][0]["config"]["approval"]
+
+
+def _project(
+    *,
+    component_services: list[str] | None = None,
+    config: dict | None = None,
+    approval: str | None = "approved",
+) -> dict:
+    """A project with one deployment of one component, optionally using send-email.
+
+    ``approval`` defaults to approved because that is the state in which the service does
+    anything at all; the tests that care about the gate say so explicitly.
+    """
+    config = dict(config or {})
+    if approval is not None:
+        config["approval"] = {"status": approval, "history": []}
     return {
         "name": "myproject",
-        "services": [{"name": ServiceType.SEND_EMAIL.value, "config": config or {}}],
+        "services": [{"name": ServiceType.SEND_EMAIL.value, "config": config}],
         "components": [{"name": "web", "services": component_services or []}],
         "deployments": [
             {
@@ -92,8 +111,10 @@ class TestTheConfigModel:
 class TestTheAccountBlockIsPlatformData:
     """Aanvulling 5: declared from the start instead of repaired afterwards."""
 
-    def test_the_accounts_field_is_platform_managed(self) -> None:
-        assert SERVICE.platform_managed_fields(ConfigLayer.PROJECT) == frozenset({"accounts"})
+    def test_the_platform_written_fields_are_declared(self) -> None:
+        """``approval`` too, and that one is not a nicety: a project that could set its own
+        status to approved would make the approval no approval at all."""
+        assert SERVICE.platform_managed_fields(ConfigLayer.PROJECT) == frozenset({"accounts", "approval"})
 
     def test_the_user_fields_are_not(self) -> None:
         managed = SERVICE.platform_managed_fields(ConfigLayer.PROJECT)
@@ -170,7 +191,7 @@ class TestTheNetworkPolicy:
         assert rendered["spec"]["podSelector"]["matchLabels"] == {"app": "prod-web"}
         assert rendered["spec"]["policyTypes"] == ["Egress"]
         peer = rendered["spec"]["egress"][0]["to"][0]
-        assert peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] == "rig-operations-ron"
+        assert peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] == "rig-ron"
         assert peer["podSelector"]["matchLabels"] == {"app": "rig-mail-relay"}
 
 
@@ -298,11 +319,17 @@ class TestNoRelayConfigured:
 class TestTheClusterConfig:
     """The relay is addressed per cluster, like every other shared service."""
 
-    @pytest.mark.parametrize("cluster", ["local", "sandboxed-local", "odcn-production"])
-    def test_every_cluster_knows_where_the_relay_is(self, cluster: str) -> None:
-        assert get_mail_relay_host(cluster).endswith("svc.cluster.local")
+    @pytest.mark.parametrize(
+        ("cluster", "namespace"),
+        [("local", "rig-ron"), ("sandboxed-local", "rig-ron"), ("odcn-production", "rig-prd-ron")],
+    )
+    def test_every_cluster_knows_where_the_relay_is(self, cluster: str, namespace: str) -> None:
+        """ODCN eist de clusterprefix op een namespace, dus daar heet hij rig-prd-ron.
+        Dezelfde vorm als backup_namespace, en de host moet de namespace volgen -- een
+        hostnaam die naar de andere namespace wijst resolvet niet."""
+        assert get_mail_relay_namespace(cluster) == namespace
+        assert get_mail_relay_host(cluster) == f"rig-mail-relay.{namespace}.svc.cluster.local"
         assert get_mail_relay_port(cluster) == 587
-        assert get_mail_relay_namespace(cluster) == "rig-operations-ron"
         assert "@" not in get_mail_domain(cluster)
 
     def test_production_sends_from_the_platform_domain(self) -> None:
@@ -321,13 +348,13 @@ class TestTheSecretHandedToTheApplication:
         from opi.utils.secrets import SendEmailSecret
 
         data = SendEmailSecret(
-            host="rig-mail-relay.rig-operations-ron.svc.cluster.local",
+            host="rig-mail-relay.rig-ron.svc.cluster.local",
             port=587,
             username="myproject",
             password="geheim",
             from_address="noreply@mail.example",
         ).to_k8s_secret_data()
-        assert data["SMTP_HOST"] == "rig-mail-relay.rig-operations-ron.svc.cluster.local"
+        assert data["SMTP_HOST"] == "rig-mail-relay.rig-ron.svc.cluster.local"
         assert data["SMTP_PORT"] == "587"
         assert data["SMTP_FROM"] == "noreply@mail.example"
 
@@ -348,3 +375,259 @@ class TestTheServiceOnlySeesItsOwnComponents:
         )
         specs = SendEmailService().contribute_deployment_manifests(ctx)
         assert [spec.filename for spec in specs] == [f"prod-{ServiceType.SEND_EMAIL.value}-web-network-policy"]
+
+
+class TestNothingHappensWithoutApproval:
+    """Aanvulling 6: geen aanvraag, in behandeling en afgewezen leveren alle drie NIETS op.
+
+    Elk van de vier dingen wordt apart getoetst, want de hele reden dat er een enkele poort
+    is, is dat ze niet uit elkaar kunnen lopen: een account zonder netwerkbeleid of
+    andersom is de halve toestand die niemand kan uitleggen.
+    """
+
+    def _ctx(self, project: dict) -> DeploymentManifestContext:
+        return DeploymentManifestContext(
+            project_name="myproject",
+            project_data=project,
+            deployment=project["deployments"][0],
+            cluster="sandboxed-local",
+            namespace="rig-myproject",
+        )
+
+    @pytest.mark.parametrize("status", [None, "requested", "denied"])
+    def test_geen_netwerkbeleid(self, status: str | None) -> None:
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value], approval=status)
+        assert SERVICE.contribute_deployment_manifests(self._ctx(project)) == []
+
+    @pytest.mark.parametrize("status", [None, "requested", "denied"])
+    def test_geen_envfrom_en_geen_geheim(self, status: str | None) -> None:
+        """Ook op de manifestweg, en niet alleen in de manager: die weg draait ook als het
+        inrichten niets deed, dus zonder deze poort verwijst een deployment naar een geheim
+        dat nooit geschreven is."""
+        from opi.services.catalog.base import ManifestContext
+
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value], approval=status)
+        ctx = ManifestContext(
+            deployment_name="prod",
+            project_data=project,
+            unique_name="prod-web",
+            cluster="sandboxed-local",
+            get_secret=lambda *a, **k: SendEmailSecret(
+                host="h", port=587, username="u", password="p", from_address="a@b"
+            ),
+            component_def=None,
+        )
+        contribution = SERVICE.contribute_manifest_context(ctx)
+        assert contribution.env_from_secrets == []
+        assert contribution.secret_files == []
+
+    def test_goedgekeurd_zet_alles_wel_aan(self) -> None:
+        """De tegenproef, zodat de drie tests hierboven niet groen zijn omdat de dienst
+        uberhaupt niets doet."""
+        from opi.services.catalog.base import ManifestContext
+
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value], approval="approved")
+        assert SERVICE.contribute_deployment_manifests(self._ctx(project)) != []
+        ctx = ManifestContext(
+            deployment_name="prod",
+            project_data=project,
+            unique_name="prod-web",
+            cluster="sandboxed-local",
+            get_secret=lambda *a, **k: SendEmailSecret(
+                host="h", port=587, username="u", password="p", from_address="a@b"
+            ),
+            component_def=None,
+        )
+        contribution = SERVICE.contribute_manifest_context(ctx)
+        assert contribution.env_from_secrets == ["prod-send-email"]
+        assert len(contribution.secret_files) == 1
+
+
+class TestDeAanvraagLooptViaDeBestaandeWeg:
+    """Geen eigen scherm en geen tweede mechanisme: dezelfde spec-weg als publish-on-web."""
+
+    def test_de_dienst_declareert_een_goedkeuring_op_projectniveau(self) -> None:
+        specs = SERVICE.config_approvals(ConfigLayer.PROJECT)
+        assert [spec.key for spec in specs] == ["send-email"]
+        assert specs[0].approver is ApproverScope.PLATFORM_ADMIN
+
+    def test_de_dienst_staat_in_de_generieke_lijst_van_goedkeurders(self) -> None:
+        """De poort op "geen tweede mechanisme": de beheerdersinterface loopt hierlangs."""
+        from opi.services.registry import approval_services
+
+        assert SERVICE in approval_services()
+
+    def test_aanzetten_maakt_de_aanvraag(self) -> None:
+        project = _project(approval=None)
+        SERVICE.ensure_approval_requests(project)
+        assert _approval(project) == {"status": "requested", "history": []}
+
+    def test_nog_eens_aanzetten_verandert_niets(self) -> None:
+        """Toestandsvormig en niet gebeurtenisvormig, dus elke schrijver mag hem aanroepen."""
+        project = _project(approval="approved")
+        SERVICE.ensure_approval_requests(project)
+        assert _approval(project)["status"] == "approved"
+
+    def test_zonder_de_dienst_geen_aanvraag(self) -> None:
+        project = {"name": "myproject", "services": []}
+        SERVICE.ensure_approval_requests(project)
+        assert project["services"] == []
+
+    def test_de_aanvraag_komt_in_de_generieke_lijst(self) -> None:
+        from opi.services.approvals import collect_approval_items
+
+        project = _project(approval="requested")
+        items = [item for item in collect_approval_items(project) if item["type"] == "send-email"]
+        assert len(items) == 1
+        assert items[0]["name"] == "myproject"
+        assert items[0]["current_status"] == "requested"
+
+    def test_een_oordeel_landt_in_het_projectbestand(self) -> None:
+        """Via apply_approval_verdicts, dus dezelfde weg die de beheerdersinterface loopt."""
+        from opi.services.approvals import apply_approval_verdicts, collect_approval_items
+
+        project = _project(approval="requested")
+        items = collect_approval_items(project)
+        for item in items:
+            if item["type"] == "send-email":
+                item["status"] = "approved"
+        apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
+
+        approval = _approval(project)
+        assert approval["status"] == "approved"
+        assert approval["history"][-1]["by"] == "beheerder@example.nl"
+
+
+class TestDeWachtstandIsZichtbaar:
+    """Een dienst die aanstaat en stil niets doet is de fout die bij de domeinaanvraag is
+    weggehaald; hij mag hier niet terugkomen."""
+
+    def _notices(self, project: dict):
+        from opi.services.approvals import collect_deployment_approval_notices
+
+        return [
+            notice
+            for notice in collect_deployment_approval_notices(project, project["deployments"][0])
+            if notice["type"] == "send-email"
+        ]
+
+    @pytest.mark.parametrize(
+        ("status", "kern"),
+        [(None, "nog niet aangevraagd"), ("requested", "wacht op goedkeuring"), ("denied", "afgewezen")],
+    )
+    def test_elke_ongoedgekeurde_stand_meldt_zichzelf(self, status: str | None, kern: str) -> None:
+        notices = self._notices(_project(component_services=[ServiceType.SEND_EMAIL.value], approval=status))
+        assert len(notices) == 1
+        assert kern in notices[0]["text"]
+
+    def test_de_melding_zegt_ook_wat_het_betekent(self) -> None:
+        """Alleen de status is geen melding: de gebruiker moet lezen dat er geen account,
+        geen netwerktoegang en geen variabelen zijn."""
+        notices = self._notices(_project(component_services=[ServiceType.SEND_EMAIL.value], approval="requested"))
+        assert "geen SMTP-account" in notices[0]["text"]
+        assert "SMTP_-variabelen" in notices[0]["text"]
+
+    def test_goedgekeurd_meldt_niets(self) -> None:
+        assert self._notices(_project(component_services=[ServiceType.SEND_EMAIL.value], approval="approved")) == []
+
+    def test_zonder_de_dienst_meldt_niets(self) -> None:
+        project = _project(component_services=[], approval=None)
+        project["services"] = []
+        assert self._notices(project) == []
+
+
+class TestIntrekkenRuimtOp:
+    """Het intrekken van een goedkeuring volgt hetzelfde opruimpad als een
+    projectverwijdering, anders blijft er een weesaccount op de relay staan."""
+
+    def _manager(self, saved: list) -> MailManager:
+        from opi.handlers.project_file_handler import ProjectFileHandler
+
+        async def get_name() -> str:
+            return "myproject"
+
+        async def save_and_commit_project(project_data, message, enforce_validation=True) -> None:
+            saved.append(message)
+
+        return MailManager(
+            project_manager=SimpleNamespace(  # type: ignore[arg-type]
+                _project_file_handler=ProjectFileHandler(),
+                get_name=get_name,
+                save_and_commit_project=save_and_commit_project,
+                _add_secret_to_create=lambda *a, **k: None,
+            )
+        )
+
+    @pytest.mark.asyncio
+    async def test_een_ingetrokken_goedkeuring_verwijdert_het_account(self, monkeypatch) -> None:
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value], approval="denied")
+        project["services"][0]["config"]["accounts"] = [
+            {
+                "cluster": "sandboxed-local",
+                "username": "myproject",
+                "password": "plain:geheim",
+                "from-address": "noreply@mail.example",
+                "bounce-address": "bounce+myproject@mail.example",
+            }
+        ]
+        verwijderd: list[str] = []
+
+        connector = MailConnector("http://relay", "admin", "geheim")
+        connector.delete_principal = AsyncMock(side_effect=lambda naam: verwijderd.append(naam) or True)  # type: ignore[method-assign]
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+
+        saved: list[str] = []
+        await self._manager(saved).create_resources_for_deployment(project, project["deployments"][0])
+
+        assert verwijderd == ["myproject"]
+        # En de vermelding gaat mee: laten staan toont een project een account dat het niet
+        # heeft, en de volgende goedkeuring zou een wachtwoord hergebruiken dat de relay
+        # niet meer kent.
+        assert project["services"][0]["config"]["accounts"] == []
+        assert saved, "het opruimen hoort te worden vastgelegd"
+
+    @pytest.mark.asyncio
+    async def test_zonder_account_valt_er_niets_op_te_ruimen(self, monkeypatch) -> None:
+        """De status heeft geen geheugen van wat hij was, dus dit draait bij elke
+        onverwerkte verwerking en moet dan niets doen."""
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value], approval="requested")
+        connector_gemaakt = AsyncMock()
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", connector_gemaakt)
+
+        saved: list[str] = []
+        await self._manager(saved).create_resources_for_deployment(project, project["deployments"][0])
+
+        connector_gemaakt.assert_not_awaited()
+        assert saved == []
+
+
+class TestDeAanvraagStaatGoedInDeBestaandeInterface:
+    """Geen eigen scherm betekent dat het bestaande scherm hem moet KUNNEN tonen.
+
+    Dat was niet vanzelf zo: beide goedkeuringssjablonen kozen hun opschrift met een
+    ``if type == 'subdomain' else 'Domein'``, dus een derde soort aanvraag werd als
+    "Domein" aangekondigd. Het opschrift komt nu van de spec (``label``).
+    """
+
+    def _item(self) -> dict:
+        from opi.services.approvals import collect_approval_items
+
+        project = _project(approval="requested")
+        return next(item for item in collect_approval_items(project) if item["type"] == "send-email")
+
+    def test_het_item_draagt_het_opschrift_van_de_spec(self) -> None:
+        assert self._item()["label"] == "E-mail versturen"
+
+    @pytest.mark.parametrize(
+        "sjabloon",
+        ["admin/approvals/_aanvragen.html.j2", "wizard/partials/approval_items.html.j2"],
+    )
+    def test_beide_schermen_noemen_de_aanvraag_bij_naam(self, sjabloon: str) -> None:
+        from opi.core.templates_lotc import templates_lotc
+
+        item = self._item()
+        html = templates_lotc.env.get_template(sjabloon).render(
+            projects_data=[{"project_name": "myproject", "approval_items": [item]}],
+            _approval_items=[item],
+        )
+        assert "E-mail versturen" in html

@@ -307,8 +307,10 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
         assert declared == {
             "keycloak": ["realms"],
             "publish-on-web": ["domains"],
-            # RC-114: the SMTP account and its password are written by the mail manager.
-            "send-email": ["accounts"],
+            # RC-114: the SMTP account and its password are written by the mail manager,
+            # and the approval by the approver flow -- a project that could set its own
+            # status to approved would make the approval no approval at all.
+            "send-email": ["accounts", "approval"],
         }
 
         # keycloak answers "realms" at every layer because it serves one model to all of

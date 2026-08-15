@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: rig-operations-ron
+namespace: rig-prd-ron
 
 resources:
   - ../../base
@@ -13,8 +13,13 @@ patches:
   # namespace staan. Zie plans/mailrelay.md, aanvulling 2, en docs/ron-koppeling.md.
   - target:
       kind: Namespace
-      name: rig-operations-ron
+      name: rig-ron
     patch: |-
+      # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus
+      # rig-ron kan daar niet bestaan. De onderbouwing verandert niet, alleen de naam.
+      - op: replace
+        path: /metadata/name
+        value: rig-prd-ron
       - op: add
         path: /metadata/annotations
         value:
