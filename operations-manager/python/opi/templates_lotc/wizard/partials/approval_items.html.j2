@@ -3,7 +3,7 @@
 
   Expected context (via yaml_data / wizard state):
     - _approval_items: list of dicts with keys:
-        type, domain, name, current_status, status, history
+        type, label, domain, name, current_status, status, history
 #}
 {% set items = _approval_items | default([]) %}
 
@@ -15,11 +15,11 @@
             {# Summary row #}
             <div class="approval-item-summary">
                 <div class="approval-item-info">
-                    {% if item.type == 'subdomain' %}
-                        <span class="approval-type-badge approval-type-subdomain">Subdomein</span>
-                    {% else %}
-                        <span class="approval-type-badge approval-type-domain">Domein</span>
-                    {% endif %}
+                    {# Het opschrift komt van de spec zelf (item.label), zodat een derde
+                       soort aanvraag niet als "Domein" wordt aangekondigd. De terugval is
+                       er voor een lopende modalsessie van voor dat veld bestond. #}
+                    {% set soort_klasse = 'approval-type-subdomain' if item.type == 'subdomain' else 'approval-type-domain' %}
+                    <span class="approval-type-badge {{ soort_klasse }}">{{ item.label | default('Domein', true) }}</span>
                     <strong>{{ item.name }}</strong>
                     {% if item.type == 'subdomain' %}
                         <span class="rvo-text--subtle">.{{ item.domain }}</span>
@@ -66,6 +66,7 @@
                 {# Hidden context fields #}
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][service]" value="{{ item.service }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][type]" value="{{ item.type }}" />
+                <input type="hidden" name="_approval_items[{{ loop.index0 }}][label]" value="{{ item.label }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][domain]" value="{{ item.domain }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][name]" value="{{ item.name }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][current_status]" value="{{ item.current_status }}" />
@@ -98,5 +99,5 @@
 </c-layout-flow>
 
 {% else %}
-<p class="rvo-text--subtle">Geen domein- of subdomeinaanvragen voor dit project.</p>
+<p class="rvo-text--subtle">Geen openstaande aanvragen voor dit project.</p>
 {% endif %}

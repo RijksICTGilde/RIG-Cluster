@@ -264,7 +264,12 @@ def _manifest_ctx(
 
 
 def test_manifest_secret_providers_order_and_names():
-    ctx = _manifest_ctx()
+    # send-email contributes nothing without an approval (RC-114), so the project handed
+    # to the context carries one; without it this test would assert the frozen order of a
+    # list that is one shorter and say nothing about the gate.
+    ctx = _manifest_ctx(
+        project_data={"services": [{"name": "send-email", "config": {"approval": {"status": "approved"}}}]}
+    )
     actual = [
         (p.service_type.value, p.contribute_manifest_context(ctx).env_from_secrets[0])
         for p in manifest_secret_services()

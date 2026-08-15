@@ -377,7 +377,7 @@ class Settings(BaseSettings):
     # server; everything else gets an account on it. Empty MAIL_RELAY_API_URL means
     # the relay is not deployed on this cluster and the service refuses to provision
     # rather than handing out credentials that lead nowhere.
-    MAIL_RELAY_API_URL: str = ""  # Stalwart management API, e.g. http://rig-mail-relay.rig-operations-ron:8080
+    MAIL_RELAY_API_URL: str = ""  # Stalwart management API, e.g. http://rig-mail-relay.rig-prd-ron:8080
     MAIL_RELAY_ADMIN_USERNAME: str = "admin"
     MAIL_RELAY_ADMIN_PASSWORD: str = ""  # supports age:/base64+age:/plain: prefixes
     MAIL_RELAY_VERIFY_TLS: bool = True

@@ -6,15 +6,17 @@ account. What a user decides is small on purpose -- the identity rules that make
 arrive (envelope rewriting, the pinned ``From:`` domain, DKIM) are enforced on the relay
 and are deliberately not negotiable per project (``plans/mailrelay.md``).
 
-``accounts`` is the platform's side of the block: OPI creates the account on the relay and
-writes down what it created. It is marked ``PLATFORM_MANAGED`` so the API can neither clear
-nor rewrite it -- the same protection the Keycloak realm block got, declared here from the
-start instead of repaired afterwards (aanvulling 5 in the plan).
+``accounts`` and ``approval`` are the platform's side of the block: OPI creates the account
+on the relay and writes down what it created, and an administrator decides whether the
+project may send at all. Both are marked ``PLATFORM_MANAGED`` so the API can neither clear
+nor rewrite them -- the same protection the Keycloak realm block got, declared here from the
+start instead of repaired afterwards (aanvulling 5 in the plan). ``approval`` in particular:
+a project that could set its own status to ``approved`` would be no approval at all.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -58,6 +60,23 @@ class SendEmailAccount(BaseModel):
     )
 
 
+class SendEmailApproval(BaseModel):
+    """Whether an administrator has allowed this project to send mail (aanvulling 6).
+
+    Shaped like the domain/subdomain entries publish-on-web stores: a status plus the
+    verdict history, so the file is the audit trail. Written only through the generic
+    approval flow (``opi/services/approvals.py``).
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    status: str = Field(description="requested, approved or denied. Written by the platform's approval flow.")
+    history: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Verdict history: one {date, status, by, message} entry per decision.",
+    )
+
+
 class SendEmailConfig(BaseModel):
     """What a project may decide about its outgoing mail."""
 
@@ -87,6 +106,15 @@ class SendEmailConfig(BaseModel):
         description=(
             f"Messages this project may send per day, at most {MAX_MESSAGES_PER_DAY}. "
             "Leave it out for the platform default."
+        ),
+    )
+    approval: SendEmailApproval | None = Field(
+        default=None,
+        json_schema_extra={PLATFORM_MANAGED: True},
+        description=(
+            "Whether an administrator has allowed this project to send mail. Written by the platform: "
+            "until it says approved, no account is created, no network policy is written and no SMTP "
+            "credentials reach the deployment."
         ),
     )
     accounts: list[SendEmailAccount] = Field(
