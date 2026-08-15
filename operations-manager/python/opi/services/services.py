@@ -854,6 +854,10 @@ class ServiceAdapter:
         replaced in place; a ``schema-version``/``type`` sibling is preserved. The
         record key is ``name`` at the project layer and ``reference`` elsewhere,
         matching the shape the wizard writes.
+
+        Fields the platform writes into the same block (``keycloak.realms``) are carried
+        over from the existing config instead of being replaced -- see
+        ``_keep_platform_fields``.
         """
         cls.parse_services_from_strings([service_name])  # rejects an unknown service name
         target_list = cls._resolve_target_services_list(
@@ -871,6 +875,7 @@ class ServiceAdapter:
 
         for index, entry in enumerate(target_list):
             if service_entry_name(entry) == service_name:
+                config = cls._keep_platform_fields(service_name, layer, config, service_entry_config(entry))
                 record: dict[str, Any] = {key: service_name, "config": config}
                 schema_version = service_entry_schema_version(entry)
                 if schema_version is not None:
@@ -943,6 +948,10 @@ class ServiceAdapter:
         Demotion (rather than deleting the entry) is the least-surprising CRUD
         semantics for a config resource: DELETE clears the config, not the fact that
         the component/project uses the service.
+
+        Fields the platform writes are not the caller's to clear either, so a block that
+        holds them keeps exactly those and loses the rest -- "reset my settings" must not
+        mean "throw away the realm-admin password". See ``_keep_platform_fields``.
         """
         target_list = cls._resolve_target_services_list(
             project_data, layer, component_name=component_name, deployment_name=deployment_name, create=False
@@ -951,9 +960,64 @@ class ServiceAdapter:
             if service_entry_name(entry) == service_name:
                 if isinstance(entry, str):
                     return False  # already bare -- no config to remove
+                kept = cls._platform_fields_of(service_name, layer, service_entry_config(entry))
+                if kept:
+                    cls.set_service_config(
+                        project_data,
+                        service_name,
+                        layer,
+                        kept,
+                        component_name=component_name,
+                        deployment_name=deployment_name,
+                    )
+                    return True
                 target_list[index] = service_name
                 return True
         return False
+
+    @classmethod
+    def _platform_fields_of(cls, service_name: str, layer: ConfigLayer, config: Any) -> dict[str, Any]:
+        """The platform-written fields present in ``config``, or an empty dict."""
+        if not isinstance(config, dict):
+            return {}
+        # Lazy: the registry imports this module, so it cannot be imported at load time.
+        from opi.services.registry import get_service
+
+        try:
+            service = get_service(ServiceType(service_name))
+        except ValueError:
+            return {}
+        return {key: config[key] for key in service.platform_managed_fields(layer) if key in config}
+
+    @classmethod
+    def _keep_platform_fields(
+        cls, service_name: str, layer: ConfigLayer, config: dict[str, Any] | list[Any], stored: Any
+    ) -> dict[str, Any] | list[Any]:
+        """Carry the platform-written fields of the stored config into its replacement.
+
+        This method replaces the whole block, so a field the caller never mentioned would
+        simply disappear. For a user setting that is the intended "reset to default"; for
+        ``keycloak.realms`` it destroyed the only copy of the realm-admin password.
+
+        The API refuses a write that CARRIES such a field (422, in the route), so this is
+        the guarantee for the other half: a write that leaves it out cannot lose it. The
+        stored value is passed through untouched -- not re-validated and not re-dumped --
+        so it keeps exactly the bytes it had, and it stays the safety net for any future
+        write path that does not go through a route.
+        """
+        kept = cls._platform_fields_of(service_name, layer, stored)
+        if not kept or not isinstance(config, dict):
+            return config
+        overwritten = sorted(key for key, value in kept.items() if key in config and config[key] != value)
+        if overwritten:
+            logger.warning(
+                "Ignored a write to platform-managed field(s) %s of service '%s' at the %s layer; "
+                "the stored value is kept",
+                ", ".join(overwritten),
+                service_name,
+                layer.value,
+            )
+        return {**config, **kept}
 
     @classmethod
     def patch_service_config_list(
