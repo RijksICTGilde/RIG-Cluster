@@ -3,11 +3,17 @@
 There is exactly ONE piece of code that brings an account into existence
 (``ensure_account``) and two callers of it: a project being processed, and the platform
 setting up its own account for ZAD. That split is deliberate and load-bearing --
-``plans/mailrelay.md`` (aanvulling 4) argues it at length: ZAD is not a project, it has no
-project file to hang an account on, and inventing a fake project for it would create a
-second kind of project that needs an exception everywhere. The price of two paths to an
-account is only payable if there is one implementation behind them; two would drift, and
-the platform account is the one nobody looks at.
+``plans/mailrelay.md`` (aanvulling 4 en 4b) argues it at length: ZAD is not a project, it
+has no project file to hang an account on, and inventing a fake project for it would create
+a second kind of project that needs an exception everywhere. The price of two CALLERS is
+only payable if there is one implementation behind them; two would drift, and the platform
+account is the one nobody looks at.
+
+What is deliberately NOT different between the two: the kind of account. Both are ordinary
+principals on the relay, made by the same connector through the relay's ADMIN account --
+the one credential the infrastructure hands over, generated in the shared secret generation
+like the Keycloak, PostgreSQL and MinIO admin passwords. The two accounts differ in who
+asks for them and in their budget, in nothing else.
 """
 
 from __future__ import annotations
@@ -17,8 +23,9 @@ from typing import TYPE_CHECKING, Any
 
 from ruamel.yaml.scalarstring import LiteralScalarString
 
+from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
-from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_port
+from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_port, get_namespace
 from opi.core.config import settings
 from opi.services import ServiceType
 from opi.services.catalog.send_email import is_approved
@@ -169,24 +176,48 @@ class MailManager:
     async def ensure_platform_account() -> MailAccount | None:
         """Ensure ZAD's own account on the relay, outside any project.
 
-        Its password is NOT generated here: it comes from the SOPS secret in the relay's
-        namespace and is handed to OPI as a setting, so the account can be recreated from
-        the cluster's own state and there is no project file that would have to hold a
-        platform credential.
+        This is an ORDINARY account: the same ``ensure_account`` a project goes through,
+        with a password OPI generates itself. There is no second kind of account and no
+        second credential in the relay's own configuration -- the only thing the
+        infrastructure hands over is the ADMIN credential this connector authenticates
+        with, exactly as with Keycloak, PostgreSQL and MinIO.
 
-        Returns ``None`` when no relay or no platform password is configured -- the
-        platform account is what unblocks password reset and invite mail, and a cluster
-        without a relay simply has neither yet.
+        That is also why the password cannot come from the bootstrap: it does not exist
+        when the bootstrap runs. It is generated the first time OPI meets a running relay,
+        and kept in a Secret in OPI's own namespace (see ``_read_platform_secret``).
+
+        Idempotent by construction. A second boot reads the stored password back and hands
+        the relay the SAME one, so it makes no second account and silently replaces
+        nothing. A password is generated ONLY when the Secret is absent.
+
+        Returns ``None`` when no relay is configured -- the platform account is what
+        unblocks password reset and invite mail, and a cluster without a relay simply has
+        neither yet.
         """
-        if not settings.MAIL_RELAY_API_URL or not settings.MAIL_PLATFORM_PASSWORD:
-            logger.info("Geen mailrelay of geen platformwachtwoord ingesteld: ZAD krijgt geen eigen mailaccount")
+        if not settings.MAIL_RELAY_API_URL:
+            logger.info("Geen mailrelay ingesteld op dit cluster: ZAD krijgt geen eigen mailaccount")
             return None
 
         cluster = settings.CLUSTER_MANAGER
         domain = get_mail_domain(cluster)
         username = settings.MAIL_PLATFORM_ACCOUNT
+        from_address = f"{settings.MAIL_PLATFORM_FROM_LOCAL_PART}@{domain}"
 
-        password = await decrypt_password_smart_auto(settings.MAIL_PLATFORM_PASSWORD)
+        stored = await MailManager._read_platform_secret()
+        password = (stored or {}).get("password") or ""
+        if not password:
+            # The Secret goes down BEFORE the relay call, and that order is the whole
+            # safety of this path. A password on the relay that no Secret holds locks ZAD
+            # out of its own account until someone notices; a password in the Secret that
+            # the relay does not have yet is repaired by the very next boot, which reads
+            # it back and sets it.
+            password = generate_secure_password()
+            await MailManager._write_platform_secret(username, password, from_address)
+        elif (stored or {}).get("username") != username or (stored or {}).get("from-address") != from_address:
+            # Name or sender changed by configuration: the Secret must not keep answering
+            # the old thing to whoever reads it back.
+            await MailManager._write_platform_secret(username, password, from_address)
+
         connector = await create_mail_connector()
         # The same ``ensure_account`` the project path uses -- it is a staticmethod
         # precisely so this caller needs no project and no manager instance.
@@ -194,12 +225,45 @@ class MailManager:
             connector=connector,
             username=username,
             password=password,
-            from_address=f"{settings.MAIL_PLATFORM_FROM_LOCAL_PART}@{domain}",
+            from_address=from_address,
             bounce_address=f"bounce+{username}@{domain}",
             messages_per_day=settings.MAIL_PLATFORM_MESSAGES_PER_DAY,
         )
         logger.info(f"Platform-mailaccount {username} staat klaar op de relay")
         return account
+
+    @staticmethod
+    async def _read_platform_secret() -> dict[str, str] | None:
+        """The stored platform-account credentials from OPI's own namespace.
+
+        ``None`` when the Secret is not there yet, which is the normal state of a cluster
+        that has never met a running relay.
+        """
+        namespace = get_namespace(settings.CLUSTER_MANAGER)
+        return await KubectlConnector().get_secret(settings.MAIL_PLATFORM_SECRET_NAME, namespace)
+
+    @staticmethod
+    async def _write_platform_secret(username: str, password: str, from_address: str) -> None:
+        """Store the platform-account credentials in OPI's own namespace.
+
+        OPI writes and owns this Secret; nothing in the bootstrap renders it, because its
+        contents do not exist until OPI has generated them. It is written with the same
+        generic secret template every other OPI-written secret uses, so an ``apply``
+        replaces the whole thing and a rotation leaves nothing stale behind.
+        """
+        namespace = get_namespace(settings.CLUSTER_MANAGER)
+        await KubectlConnector().apply_manifest(
+            "manifests/generic-secret.yaml.to-sops.jinja",
+            {
+                "name": settings.MAIL_PLATFORM_SECRET_NAME,
+                "namespace": namespace,
+                "secret_type": "mail",
+                "secret_k8s_type": "Opaque",
+                "secret_pairs": {"username": username, "password": password, "from-address": from_address},
+            },
+            namespace,
+        )
+        logger.info(f"Platform-mailaccount {username} bewaard in secret {settings.MAIL_PLATFORM_SECRET_NAME}")
 
     # --- cleanup ----------------------------------------------------------------
 

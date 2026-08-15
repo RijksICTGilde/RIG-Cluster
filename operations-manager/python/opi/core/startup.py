@@ -417,14 +417,17 @@ async def ensure_platform_mail_account() -> bool:
     boot down and phases 4 and 5 (Keycloak, OAuth) never run. A relay that is configured but
     unreachable does not raise ``MailRelayError`` -- aiohttp raises its own
     ``ClientConnectorError`` before there is any HTTP answer to turn into one. So catch what
-    ``check_minio_availability`` right below catches too: the transport errors as well.
+    ``check_minio_availability`` right below catches too: the transport errors as well, and
+    the kubectl failure from writing the account's Secret (a cluster where that is refused
+    must still boot).
     """
+    from opi.connectors.kubectl import KubectlExecutionError
     from opi.connectors.mail import MailRelayError
     from opi.manager.mail_manager import MailManager
 
     try:
         account = await MailManager.ensure_platform_account()
-    except (MailRelayError, aiohttp.ClientError, OSError) as error:
+    except (MailRelayError, KubectlExecutionError, aiohttp.ClientError, OSError) as error:
         logger.error(f"Platform-mailaccount kon niet worden ingericht: {error}")
         return False
     if account is None:
