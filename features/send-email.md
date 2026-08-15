@@ -64,7 +64,6 @@ Op projectniveau, in de wizard of via de API:
 |---|---|
 | `from-name` | de naam die de ontvanger boven het bericht ziet |
 | `from-local-part` | het deel voor de @; standaard `noreply` |
-| `from-domain` | een eigen afzenderdomein; leeg laten geeft het platformdomein |
 | `messages-per-day` | het dagbudget van dit project, maximaal 5000 |
 
 En wat je niet instelt: het domein achter de @ ligt vast op het maildomein van het platform
@@ -72,11 +71,14 @@ En wat je niet instelt: het domein achter de @ ligt vast op het maildomein van h
 ODC-Noord zelf). Dat is geen betutteling maar techniek: een `From:` in een vreemd domein
 haalt DMARC nooit, dus die post komt toch niet aan.
 
-`from-domain` bestaat wel in het model en in de API, maar heeft bewust geen formulierveld:
-een eigen domein kost eerst één DKIM-record in de zone van dat domein. Het is een aanvraag,
-geen invulveld. Wat het goedkoop maakt is dat de envelope altijd op óns domein blijft —
-SPF geldt voor het envelope-domein, dus een projectdomein kost één record in plaats van een
-volledige set.
+`from-domain` bestaat wel in het model, maar is **geen zelfbediening**: het veld draagt
+`platform_managed_fields`, dus een PUT die het meestuurt is een 422 en een formulierveld is
+er niet. Een eigen domein kost eerst één DKIM-record in de zone van dat domein, en die ronde
+loopt met de hand tot een project erom vraagt. Zonder die grens zou een project na één
+goedkeuring zijn afzenderdomein alsnog kunnen verzetten: de goedkeuring wordt één keer
+gevraagd, niet opnieuw bij elke wijziging. Wat een projectdomein later goedkoop maakt is dat
+de envelope altijd op óns domein blijft — SPF geldt voor het envelope-domein, dus een
+projectdomein kost één record in plaats van een volledige set.
 
 ### Voorbeeld
 
@@ -92,9 +94,9 @@ services:
 
 ## Wat het platform beheert
 
-`approval` en `accounts` zijn platformdata: een beheerder beslist, en OPI maakt het account
+`approval`, `accounts` en `from-domain` zijn platformdata: een beheerder beslist, en OPI maakt het account
 aan op de relay en schrijft neer wat het gemaakt heeft (per cluster: gebruikersnaam, AGE-versleuteld wachtwoord, afzenderadres en
-bounce-adres). Beide velden dragen `platform_managed_fields`, dus de API kan ze niet wissen
+bounce-adres). Alle drie dragen `platform_managed_fields`, dus de API kan ze niet wissen
 en niet overschrijven — een PUT die ze weglaat verliest ze niet. Bij `approval` is dat niet
 alleen netjes maar de kern: een project dat zijn eigen status op `approved` kan zetten heeft
 geen goedkeuring.
@@ -180,8 +182,35 @@ toelating staat, en of het retourpad is ingericht — kunnen wij zelf niet beant
 namespace `quattro-egress-gateway` is van ODCN.
 
 Daarom staat de overlay in `infrastructure/bootstrap/clusters/*/kustomization.yaml` nog
-uitgecommentarieerd. De manifesten zijn er, ze bouwen, en aanzetten is één regel. Zolang die
-banner er niet is, zou een relay draaien die niets kan bezorgen.
+uitgecommentarieerd. De manifesten zijn er en ze bouwen. Zolang die banner er niet is, zou
+een relay draaien die niets kan bezorgen.
+
+### Wat er bij het aanzetten werkelijk moet gebeuren
+
+Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi te zeggen. De
+relay-geheimen staan in de namespace van de relay, en een Secret steekt geen
+namespace-grens over: OPI leest ze pas als ze óók in de operations-namespace staan.
+
+1. **Overlay aanzetten**: de regel `- ../../infrastructure/mail/controller/overlays/<type>`
+   in `infrastructure/bootstrap/clusters/<type>/kustomization.yaml` uit het commentaar
+   halen.
+2. **De relay-geheimen vullen**:
+   `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` — de
+   upstream-gegevens van het mailteam, de DKIM-sleutel, en de `changeMe`-waarden laten
+   genereren zoals de andere geheimen.
+3. **OPI de instellingen geven.** Dit is de stap die je vergeet en die zich uit als "de
+   dienst doet niets": `MAIL_RELAY_API_URL`, `MAIL_RELAY_ADMIN_USERNAME`,
+   `MAIL_RELAY_ADMIN_PASSWORD` en `MAIL_PLATFORM_PASSWORD` horen in
+   `operations-manager-env-secrets` in de OPI-namespace
+   (`bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/operations-manager-env-secrets.yaml`,
+   SOPS-versleuteld), met dezelfde waarden als in het geheim van de relay. De deployment
+   leest dat geheim al met `envFrom`, dus er hoeft niets aan het manifest te veranderen.
+4. **Herstarten en de log lezen.** `ensure_platform_mail_account` draait bij het opstarten
+   en zegt of het platformaccount klaarstaat. Blijft `MAIL_RELAY_API_URL` leeg, dan slaat
+   het die stap stil over — geen fout, maar ook geen mail.
+5. **DNS**: SPF op ons maildomein dat de uitgaande IP's van de upstream autoriseert, en de
+   publieke helft van de DKIM-sleutel als TXT op `zad._domainkey.<maildomein>`. Zonder deze
+   twee vertrekt de post wel en komt hij niet aan.
 
 Verder nog niet gebouwd, en bewust:
 
