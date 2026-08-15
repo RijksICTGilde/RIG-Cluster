@@ -271,12 +271,20 @@ def _key(segment: str) -> str:
 
 
 def _descend_lists(node: dict[str, Any] | None, segment: str, schemas: dict[str, Any]) -> dict[str, Any] | None:
-    """Per ``[*]`` in het segment één keer in de items van de lijst zakken."""
+    """Per ``[*]`` in het segment één keer in de items van de lijst zakken.
+
+    Staat er in het document geen lijst, dan blijven we staan. Een dienst mag zijn lijst
+    naar buiten toe als één entry tonen (``Service.api_singular_lists``); het pad van de
+    editable wijst dan al op het element zelf. Doorlopen naar ``None`` zou de keuzelijst
+    van elk veld binnen zo'n entry stil uit het document laten vallen.
+    """
     for _ in range(segment.count("[*]")):
         if node is None:
             return None
         branch = _branch_with(node, "items", schemas)
-        node = _resolve(branch["items"], schemas) if branch else None
+        if branch is None:
+            return _resolve(node, schemas)
+        node = _resolve(branch["items"], schemas)
     return node
 
 
