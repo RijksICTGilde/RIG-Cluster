@@ -23,8 +23,9 @@ De grens die deze gevel eerlijk houdt
 Een gevel mag alleen bestaan zolang hij waar is. Staan er twee of meer entries in het
 bestand -- met de hand toegevoegd, of via de PATCH-route -- dan mag deze laag NIET de
 eerste tonen en de rest overschrijven. Dat is het verschil tussen een nette gevel en stil
-dataverlies, en bij een invite is dat verlies onherstelbaar: de sleutel is het geheim in
-de link en komt bewust in geen enkel leesantwoord terug.
+dataverlies, en bij een invite is dat verlies onherstelbaar: het projectbestand is de enige
+plek waar die uitnodiging staat, en een overschreven uitnodigingslink is per direct
+ongeldig voor iedereen die hem al had.
 
 ``overflowing_list`` is die detectie. De aanroepers (de leesroute en de PUT in
 ``opi/api/v2/router.py``) weigeren erop met een 409 die vertelt wat er aan de hand is en
@@ -33,8 +34,7 @@ verwijdert en van dit enkelvoud geen last heeft.
 
 De DELETE valt hier bewust buiten. Die zegt "wis dit configblok" en doet dat ook, met of
 zonder gevel; hij houdt zich niet voor dat er één entry is. Hem óók weigeren zou een
-project met meerdere invites zonder enige weg naar een schone lei zetten, want een gerichte
-PATCH-remove vraagt de sleutels die niet terug te lezen zijn.
+project met meerdere invites zonder enige weg naar een schone lei zetten.
 """
 
 from __future__ import annotations

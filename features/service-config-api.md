@@ -43,9 +43,9 @@ endpoint's actions, which is an operation, not config).
 
 Een PUT schrijft het hele blok. Bij een lijst betekent dat: één regel erbij zetten is
 alle andere regels opnieuw meesturen, en wie dat niet weet wist ze. Dat is echt gebeurd
--- een project raakte zijn invites kwijt, en omdat de invitesleutel bewust in geen enkel
-leesantwoord staat (het is het geheim in de link) was de eerste invite daarna niet eens
-meer te reconstrueren. Een tweede invite kostte dus de eerste.
+-- een project raakte zijn invites kwijt, en het projectbestand is de enige plek waar zo'n
+uitnodiging staat, dus de eerste invite was daarna niet meer te reconstrueren. Een tweede
+invite kostte dus de eerste.
 
 Daarom heeft elke lijst een PATCH met `{add, remove}`, in twee smaken die dezelfde body
 hebben:
@@ -85,11 +85,10 @@ curl -X PATCH https://.../api/v2/projects/algor-odc/services/sleep-mode/config/p
   -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"add": ["test-*"]}'
 ```
 
-Wat dit NIET oplost: verwijderen gaat op de sleutel, en bij `invite.active` is die
-sleutel het geheim dat niet terug te lezen is. Wie een invite zelf aanmaakte kent hem en
-kan hem weghalen; een invite die iemand anders (of de portal) aanmaakte is via de API
-niet te verwijderen zonder die sleutel. Toevoegen -- het punt waar het misging -- kan nu
-wel zonder.
+Verwijderen gaat op de sleutel, en die is op te vragen met een gewone lezing van de
+invite-config -- ook van een invite die iemand anders of de portal aanmaakte. Waarom de
+uitnodigingscode uit een leesantwoord komt en waarom dat een besluit is en geen
+vergissing, staat in de moduletoelichting van `opi/services/catalog/invite`.
 
 ## Een lijst die er altijd een is: het enkelvoudige oppervlak
 
@@ -141,8 +140,9 @@ meet beide kanten, zodat "we zetten hem weer uit" geen sprong in het diepe is.
 
 Een gevel mag alleen bestaan zolang hij waar is. Staan er twee of meer invites in het bestand
 (met de hand toegevoegd, of via de PATCH hieronder), dan toont deze laag NIET de eerste en
-overschrijft hij niet de rest. Dat verschil is bij een invite onherstelbaar: de sleutel is het
-geheim in de link en komt bewust in geen enkel leesantwoord terug.
+overschrijft hij niet de rest. Dat verschil is bij een invite onherstelbaar: het projectbestand
+is de enige plek waar die uitnodiging staat, en een overschreven link is per direct ongeldig
+voor iedereen die hem al had.
 
 | Werkwoord | Bij meerdere entries |
 |---|---|
@@ -155,8 +155,7 @@ De 409 noemt de PATCH-route, want een weigering die niet vertelt wat wel werkt i
 
 `DELETE` valt er met opzet buiten. Die zegt "wis dit configblok" en doet dat ook, met of zonder
 gevel; hij houdt zich niet voor dat er een entry is. Hem ook weigeren zou een project met
-meerdere invites zonder enige weg naar een schone lei zetten, want een gerichte PATCH-remove
-vraagt de sleutels die niet terug te lezen zijn.
+meerdere invites zonder enige weg naar een schone lei zetten.
 
 ### De lijst-PATCH blijft staan, als expliciete uitweg
 
@@ -179,6 +178,53 @@ Het formulier pint `active` ook af op precies een. Dat is dezelfde aanleiding, m
 vraag (een widget versus een request body), dus de twee zijn niet aan elkaar geknoopt. Ze
 verwijzen wel naar elkaar: `INVITE_ACTIVE_EDITABLE` noemt `api_singular_lists` en andersom, zodat
 wie de een omzet ook naar de ander kijkt.
+
+## De uitnodigingscode komt terug
+
+**Besluit, geen vergissing.** Een read van `invite.config` geeft `active.key` gewoon terug,
+en een write die er een genereerde meldt hem in `generated`. Wie hier over een half jaar
+langsloopt en denkt "een sleutel in een leesantwoord, dat kan niet kloppen": dat is
+afgewogen en zo bedoeld.
+
+Drie argumenten:
+
+1. **De code IS de uitnodiging.** Je nodigt iemand uit door hem die link te sturen. Wie de
+   code niet kan teruglezen kan de uitnodiging niet versturen, alleen vervangen -- en dat
+   maakt een uitnodiging die al onderweg is ongeldig.
+2. **Hij is niet geheim in de gewone zin.** Wie de link heeft kan hem inwisselen, dus hij is
+   precies zo geheim als het kanaal waarover je hem stuurt.
+3. **Verbergen voor de projecteigenaar beschermt niemand.** Die heeft de projectsleutel al,
+   waarmee hij de invite kan overschrijven, de rollen kan veranderen en de dienst kan
+   uitzetten.
+
+Dit gold eerder andersom, en het is teruggedraaid. De code deed het masker overigens nooit:
+de leesroute gaf de sleutel al terug terwijl de toelichtingen eromheen beloofden dat hij dat
+niet deed. Wat er wél misging was iets anders: een lege sleutel werd nergens ingevuld.
+
+### Een lege sleutel wordt gegenereerd, en die krijg je te horen
+
+De portal vult een leeggelaten sleutel al sinds RC-13 met een willekeurige 128-bits waarde
+(`post_merge`). De API-schrijfweg deed dat niet, dus wie `key: ""` stuurde -- wat het
+hulpteksten-verhaal van het formulier uitnodigt -- kreeg een uitnodiging met de link
+`/invite/`. Beide wegen lopen nu door dezelfde `Service.generate_missing_values`, en het
+taakresultaat draagt wat er ingevuld is:
+
+```json
+{
+  "status": "success",
+  "service": "invite",
+  "target": "project",
+  "generated": {"services/invite/config/active[0]/key": "Xk3pQ7rL2mNvB8dTfW1aYz"}
+}
+```
+
+Het veld is generiek (`{yaml-pad: waarde}`) en leeg zodra de aanroeper alles zelf meegaf,
+wat het normale geval is. Vandaag is de uitnodigingssleutel de enige inwoner.
+
+**Wat hier NIET onder valt:** de waarden van `user-env-vars`. Die kunnen langlevende
+geheimen bevatten die met het versturen van een link niets te maken hebben, en ze blijven
+ontoegankelijk via de API (`Service.owned_value_is_secret`). De twee gevallen consistent
+maken is precies de fout die hier niet gemaakt moet worden.
 
 ## Velden die het platform schrijft
 

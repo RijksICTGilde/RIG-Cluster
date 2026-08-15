@@ -182,6 +182,21 @@ def approval_services() -> list[Service]:
     return [s for s in SERVICES.values() if s.approval_specs()]
 
 
+def generate_missing_values(project_data: dict[str, Any]) -> dict[str, str]:
+    """Let every service fill in the values it generates, and report what it made.
+
+    The catalog walk behind ``Service.generate_missing_values``, called by the API write
+    paths right after the config is written -- the same moment the wizard runs its
+    ``post_merge``. Mutates ``project_data`` in place and returns ``{yaml path: value}``
+    merged across the catalog, so the write route can tell the caller which value it did
+    not choose itself. Empty when nothing was generated, which is the normal case.
+    """
+    generated: dict[str, str] = {}
+    for service in SERVICES.values():
+        generated.update(service.generate_missing_values(project_data))
+    return generated
+
+
 def manifest_services() -> list[Service]:
     """All services that contribute to a component's manifests, in ``manifest_order``
     (RC-5 Phase 6). Superset of ``manifest_secret_services()`` -- also includes

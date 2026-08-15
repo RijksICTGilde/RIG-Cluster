@@ -96,7 +96,7 @@
           "type": "array"
         },
         "key": {
-          "description": "The secret in the invitation link; whoever holds it can redeem the invite.",
+          "description": "The secret in the invitation link; whoever holds it can redeem the invite. Send an empty string to have a random one generated -- the write reports it back under 'generated', which is the only place you learn a key you did not choose. It is RETURNED by a read of this config, deliberately: the code is the invitation, so whoever cannot read it back cannot send it on.",
           "title": "Key",
           "type": "string"
         },
