@@ -58,8 +58,10 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # De upstream mailserver, via de egressgateway. Alleen submission; verder heeft de
-    # relay buiten het cluster niets te zoeken.
+    # De upstream mailserver. Alleen submission; verder heeft de relay buiten het cluster
+    # niets te zoeken. Anders dan op ODCN staat hier wel 0.0.0.0/0: welke testupstream een
+    # ontwikkelaar gebruikt ligt niet vast, en er hangt hier geen RON-koppeling aan. Op
+    # ODCN is het adres wel bekend en staat het er als /32 in.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

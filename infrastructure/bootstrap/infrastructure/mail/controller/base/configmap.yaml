@@ -8,10 +8,15 @@ data:
   # plans/mailrelay.md vast; de accounts zelf komen er niet in te staan, die maakt OPI
   # via de management-API aan.
   #
-  # LET OP: deze configuratie is nog NIET tegen een echte upstream gemeten. Stap 2 van de
-  # uitrol (bereikbaarheid bewijzen) is nog open: de route naar rmrmail.rijksweb.nl bestaat,
-  # maar er komt op geen enkele poort een banner terug. Zolang dat niet rond is, is dit de
-  # configuratie die we WILLEN draaien, niet de configuratie waarvan bewezen is dat ze werkt.
+  # GEMETEN, niet bedacht: deze configuratie is stap 4 van de uitrol ("identiteitsregels
+  # aanzetten", verifieerbaar met een testbericht) uitgevoerd tegen een echte Stalwart
+  # v0.11.8 met een nep-upstream. Elke regel hieronder is nagespeeld; de uitslagen staan
+  # bij de regel. Wat er NIET mee bewezen is: de weg naar rmrmail.rijksweb.nl. Stap 2
+  # (bereikbaarheid) blijft open, zie de aanvulling in plans/mailrelay.md.
+  #
+  # De sleutelnamen zijn versiegebonden. Een sleutel die Stalwart niet kent, wordt STIL
+  # genegeerd - er komt geen foutmelding en de regel doet niets. Verander je de versie in
+  # deployment.yaml, draai dan de proef opnieuw.
   config.toml: |
     [server]
     hostname = "%{env:MAIL_RELAY_HOSTNAME}%"
@@ -24,30 +29,93 @@ data:
     protocol = "smtp"
 
     # De management-API. Alleen bereikbaar binnen het cluster; OPI maakt hierlangs de
-    # accounts aan. Geen ingress: van buiten is hier niets te halen.
+    # accounts aan. Geen ingress: van buiten is hier niets te halen. Het NetworkPolicy
+    # naast dit bestand laat alleen de OPI-namespace op deze poort toe.
     [server.listener.management]
     bind = ["[::]:8080"]
     protocol = "http"
 
+    # Let op: de waarden hier zijn EXPRESSIES, geen TOML-waarden. Een lijst hoort in een
+    # string ("[plain, login]") en een letterlijke naam tussen enkele quotes ("'internal'").
+    # Schrijf je ["PLAIN", "LOGIN"], dan weigert Stalwart de instelling bij het opstarten
+    # ("Invalid property ... found in 'if' block") en valt hij terug op zijn standaard.
     [session.auth]
     require = [{if = "listener", eq = "submission", then = true}, {else = false}]
-    mechanisms = ["PLAIN", "LOGIN"]
-    directory = "internal"
+    mechanisms = "[plain, login]"
+    directory = "'internal'"
+    # De envelope-afzender moet bij het geauthenticeerde account horen. Gemeten: deze
+    # controle draait NA de herschrijving hieronder, dus hij toetst 'bounce+<account>@'.
+    # Daarom staat dat adres ook op het account (MailConnector zet beide adressen op de
+    # principal). Het is hier de vangnetregel, niet de regel die het werk doet: het werk
+    # doet de herschrijving, die de MAIL FROM van de applicatie sowieso weggooit.
+    must-match-sender = true
 
     # --- Identiteitsregels (plans/mailrelay.md, punt 1 t/m 7) --------------------
     #
     # 1. De envelope-afzender wordt herschreven naar een adres in ons eigen domein, per
     #    account herkenbaar. De upstream ziet daardoor altijd hetzelfde domein bij
     #    hetzelfde account, en een bounce komt bij ons terug en is herleidbaar.
+    #    Gemeten: een applicatie die MAIL FROM:<noreply.ander@...> aanbiedt, levert bij de
+    #    upstream MAIL FROM:<bounce+demo@mail.rijksapp.nl> af.
     [session.mail]
     rewrite = [
       {if = "authenticated_as", ne = "", then = "'bounce+' + authenticated_as + '@%{env:MAIL_DOMAIN}%'"},
       {else = false},
     ]
 
-    # 2. De From:-header wordt vastgezet op het adres van het account. Een project kiest
-    #    zijn weergavenaam, niet zijn domein: een From: in een vreemd domein haalt DMARC
-    #    nooit, dus die post komt toch niet aan.
+    # 2, 5, 6 en 7 gebeuren in dit script. Stalwart v0.11 kent GEEN sleutel om kopregels
+    # te verwijderen of om de From: vast te zetten - [session.data.add-headers] gaat alleen
+    # over headers die Stalwart zelf TOEVOEGT. Een sieve-script op de DATA-fase is de enige
+    # plek waar dit echt kan, en daarmee is het ook echt een regel en geen belofte.
+    [session.data]
+    script = "'identiteitsregels'"
+
+    [sieve.trusted.scripts.identiteitsregels]
+    contents = '''
+    require ["editheader", "variables", "reject"];
+
+    set "domein" "%{env:MAIL_DOMAIN}%";
+    set "account" "${env.authenticated_as}";
+
+    # 2. De From:-header moet het adres van DIT account zijn. Een project kiest zijn
+    #    weergavenaam, niet zijn adres en niet zijn domein: een From: in een vreemd domein
+    #    haalt DMARC nooit, en een From: van een ander project is het misbruik waar deze
+    #    relay met een gedeeld upstream-account nu juist voor moet passen.
+    #    Het adres dat OPI uitgeeft is <lokaal-deel>.<account>@<domein>; de eerste vorm
+    #    hieronder laat ook <account>@<domein> toe, zodat een account zonder eigen lokaal
+    #    deel blijft werken.
+    #    Gemeten: From: attacker@vreemd-domein.nl -> 550, From: van een ander project ->
+    #    550, eigen adres met eigen weergavenaam -> afgeleverd.
+    if not anyof(
+        address :all :is "From" "${account}@${domein}",
+        address :all :matches "From" "*.${account}@${domein}"
+    ) {
+        reject "550 5.7.1 De From:-header moet het adres van dit account zijn (op ${domein}).";
+    }
+
+    # 6. Het Message-ID houdt zijn unieke deel maar krijgt ONS domein. Een applicatie zet
+    #    daar de naam van zijn pod in (<...@app-pod-7f9c.rig-prd-demo.svc.cluster.local>)
+    #    en dat is precies de interne topologie die niet naar buiten hoort. Alleen
+    #    weggooien kan niet: [session.data.add-headers] draait VOOR dit script, dus er komt
+    #    dan geen nieuwe voor terug en het bericht vertrekt zonder Message-ID.
+    if header :matches "Message-ID" "<*@*>" {
+        deleteheader "Message-ID";
+        addheader :last "Message-ID" "<${1}@${domein}>";
+    }
+
+    # 5 en 7. Wat er van binnen het cluster in de kopregels staat, gaat er weer uit: de
+    #    Received-keten (pod-IP's en namespace-namen) en de verklikkers die applicaties
+    #    meesturen. Dit is een privacymaatregel, geen verhullingstruc - het is
+    #    standaardgedrag van elke submission-server.
+    deleteheader "Received";
+    deleteheader "X-Originating-IP";
+    deleteheader "X-Authenticated-Sender";
+    deleteheader "X-Mailer";
+    deleteheader "X-Originating-Client";
+    '''
+
+    # Wat Stalwart zelf toevoegt. Received en de authenticatieresultaten blijven eraf: die
+    # zouden het pod-IP en het SASL-account naar buiten dragen.
     [session.data.add-headers]
     received = false
     received-spf = false
@@ -55,25 +123,12 @@ data:
     message-id = true
     date = true
 
-    # 5, 6 en 7. Wat er van binnen het cluster in de kopregels staat, gaat er weer uit:
-    # de Received-keten (pod-IP's en namespace-namen), een Message-ID met een interne
-    # hostnaam erin, en de verklikkers die applicaties meesturen. Dit is een
-    # privacymaatregel, geen verhullingstruc - het is standaardgedrag van elke
-    # submission-server.
-    [session.data.remove-headers]
-    headers = [
-      "Received",
-      "X-Originating-IP",
-      "X-Authenticated-Sender",
-      "X-Mailer",
-      "X-Originating-Client",
-    ]
-
     # 3. DKIM-ondertekening met onze eigen sleutel. De handtekening overleeft de hop naar
     #    de upstream, dus DMARC slaagt op DKIM-alignment ongeacht wat de upstream met de
-    #    envelope doet.
+    #    envelope doet. Gemeten: de afgeleverde post draagt
+    #    "DKIM-Signature: ... s=zad; d=<maildomein>" met From in de h=-lijst.
     [auth.dkim]
-    sign = [{if = "is_local_domain", eq = true, then = "['rsa']"}, {else = false}]
+    sign = "['rsa']"
     verify = "relaxed"
 
     [signature.rsa]
@@ -89,8 +144,11 @@ data:
     #    UPSTREAM autoriseren, niet die van ons. Makkelijk over het hoofd te zien.
 
     # --- Alles gaat naar een upstream ------------------------------------------
+    #
+    # Ook next-hop is een expressie: zonder de enkele quotes leest Stalwart 'upstream' als
+    # een variabele en weigert hij de instelling ("Invalid variable or constant").
     [queue.outbound]
-    next-hop = "upstream"
+    next-hop = "'upstream'"
 
     [remote.upstream]
     address = "%{env:MAIL_UPSTREAM_HOST}%"
@@ -107,21 +165,27 @@ data:
 
     # --- Limieten (plans/mailrelay.md, "Limieten en uitgaande controle") --------
     #
-    # Per account, gekeyd op het geauthenticeerde account, dus precies op het project.
-    # Het echte werk doen deze limieten, niet het spamfilter: ze vangen de retry-loop die
-    # tienduizend berichten stuurt voordat iemand het merkt.
-    [session.throttle]
-    [[session.throttle.inbound]]
+    # Gekeyd op het geauthenticeerde account, dus precies op het project. Het echte werk
+    # doen deze limieten, niet het spamfilter: ze vangen de retry-loop die tienduizend
+    # berichten stuurt voordat iemand het merkt.
+    #
+    # LET OP, dit is een BOVENgrens per account en niet het getal dat het project zelf
+    # invult. Stalwart v0.11 kent geen limiet op de principal (de management-API weigert
+    # een 'limits'-veld), dus het per-projectgetal uit send-email is de afgesproken
+    # begroting die OPI vastlegt en toont; de relay dwingt het plafond hieronder af, dat
+    # gelijk is aan MAX_MESSAGES_PER_DAY in de dienst. Gemeten met rate = "3/1d": het
+    # vierde bericht van hetzelfde account krijgt "452 4.4.5 Rate limit exceeded", een
+    # ander account merkt daar niets van.
+    [queue.limiter.inbound.account]
+    enable = true
     key = ["authenticated_as"]
-    rate = "500/1d"
-
-    [[session.throttle.inbound]]
-    key = ["authenticated_as"]
-    concurrency = 4
+    rate = "5000/1d"
 
     # Globaal plafond bovenop de som van de projecten, zodat een fout in de provisioning
     # nooit de afspraak met het mailteam kan overschrijden.
-    [[session.throttle.inbound]]
+    [queue.limiter.inbound.platform]
+    enable = true
+    key = ["listener"]
     rate = "20000/1d"
 
     [session.rcpt]
@@ -148,6 +212,7 @@ data:
     [storage]
     data = "db"
     blob = "db"
+    fts = "db"
     lookup = "db"
     directory = "internal"
 

@@ -249,3 +249,76 @@ Het gedrag per status is expres saai:
 Er is dus geen half werkende tussentoestand, en dat is bewust. Een account dat wel bestaat maar niet mag mailen, of een netwerkbeleid zonder account, is een toestand die niemand kan uitleggen en die bij het opruimen wordt vergeten. Alles of niets.
 
 Twee dingen om bij het bouwen scherp te houden. Het intrekken van een goedkeuring hoort hetzelfde pad te volgen als een projectverwijdering, anders blijft er een weesaccount op de relay achter. En de wachtstand moet zichtbaar zijn in het projectscherm en in de API, want een dienst die aanstaat en niets doet zonder dat iemand het ziet, is precies de klasse fout die we vandaag bij de domeinaanvraag hebben weggehaald.
+
+## 7. De identiteitsregels zijn gemeten, en drie ervan stonden er niet in
+
+Toegevoegd 15 augustus 2026, na de securityreview op PR #113. Stap 4 van de uitrol
+("identiteitsregels aanzetten, verifieerbaar met een testbericht") is uitgevoerd - niet
+tegen RON, want stap 2 staat nog open, maar tegen een echte Stalwart v0.11.8 met een
+nep-upstream die de afgeleverde post bewaart. Dat had eerder gemoeten: de configuratie die
+er lag, **laadde niet eens**.
+
+Wat de proef aan het licht bracht:
+
+| Wat het bestand zei | Wat Stalwart deed |
+|---|---|
+| `[session.data.remove-headers]` verwijdert Received, X-Mailer, X-Originating-IP | die sleutel bestaat niet; de verklikkers gingen ongemoeid naar buiten |
+| regel 2 (From vastzetten) in een comment boven `[session.data.add-headers]` | geen enkele controle op de From:; `From: attacker@vreemd-domein.nl` vertrok, ondertekend met onze DKIM-sleutel |
+| `message-id = true` dekt regel 6 af | die voegt er alleen een toe als hij ONTBREEKT; het Message-ID met de podnaam erin bleef staan |
+| `[session.throttle]` regelt de limieten | die sleutel bestaat niet in v0.11; er was geen enkele limiet |
+| `mechanisms = ["PLAIN","LOGIN"]`, `directory = "internal"`, `next-hop = "upstream"` | drie parse-fouten bij het opstarten: het zijn EXPRESSIES, dus `"[plain, login]"` en `"'internal'"` |
+| `sign = [{if = "is_local_domain", ...}]` | parse-fout; er werd niets ondertekend |
+| `image: stalwartlabs/mail-server:v0.11.5` | die tag bestaat niet (v0.11.4 -> v0.11.6): ImagePullBackOff |
+
+De les die de tak zelf al opschreef maar niet toepaste: **een sleutel die Stalwart niet
+kent wordt stil genegeerd.** Er komt geen fout, de regel doet niets, en het bestand leest
+alsof alles geregeld is. Vandaar dat elke regel in de configmap nu de gemeten uitkomst bij
+zich draagt.
+
+Wat er nu echt staat, en hoe het is aangetoond:
+
+1. **Envelope** - een applicatie die `MAIL FROM:<noreply.ander@...>` aanbiedt, levert bij
+   de upstream `MAIL FROM:<bounce+demo@mail.rijksapp.nl>` af. De MAIL FROM van de
+   applicatie wordt weggegooid, niet getoetst; dat is meteen de sterkste vorm.
+2. **From** - een sieve-script op de DATA-fase (de enige plek waar v0.11 kopregels kan
+   aanraken) eist dat het adres in de From: het adres van dit account is. Vreemd domein:
+   `550`. Adres van een ander project: `550`. Eigen adres met eigen weergavenaam: komt
+   aan. Daarvoor draagt het afzenderadres nu de accountnaam
+   (`noreply.<project>@<maildomein>`) - de relay kent zijn accounts, dus de regel moet uit
+   de accountnaam af te leiden zijn. Een adres bestaat trouwens maar EEN keer op de hele
+   relay, dus een gedeelde `noreply@` was sowieso niet houdbaar.
+3. **DKIM** - de afgeleverde post draagt `DKIM-Signature: ... s=zad; d=<maildomein>` met
+   From in de `h=`-lijst.
+5. **Received** - geen keten in de afgeleverde post.
+6. **Message-ID** - `<12345@app-pod-7f9c.rig-prd-demo.svc.cluster.local>` komt aan als
+   `<12345@mail.rijksapp.nl>`. Het unieke deel blijft, het interne domein gaat eraf.
+   Weggooien alleen kan niet: `add-headers` draait VOOR het script, dus dan vertrekt het
+   bericht zonder Message-ID.
+7. **Verklikkers** - `X-Mailer` en `X-Originating-IP` zijn weg bij de ontvanger.
+
+**Een limiet per account bestaat niet in v0.11.** De management-API weigert een
+`limits`-veld op een principal ("JSON deserialization failed"), dus het per-projectgetal
+is de vastgelegde begroting en de relay dwingt een plafond af dat voor elk account gelijk
+is (`queue.limiter.inbound.account`, gelijk aan `MAX_MESSAGES_PER_DAY`). Gemeten met
+`3/1d`: het vierde bericht krijgt `452 4.4.5 Rate limit exceeded`, een ander account merkt
+er niets van. Wil een project echt zijn eigen getal afgedwongen zien, dan is dat een
+nieuwe stap (een eigen limiter per account bij het aanmaken wegschrijven, of wachten op
+een Stalwart-versie die het op de principal kent) en geen regel die je in een comment zet.
+
+Twee dingen die de API ook anders doet dan de connector aannam, en die de dienst zonder
+reparatie onbruikbaar maakten: een onbekend account geeft **200 met
+`{"error":"notFound"}`** en geen 404 (dus las de connector "bestaat" en werkte bij in
+plaats van aanmaken), en een account zonder **rol** wordt na een geslaagde authenticatie
+alsnog geweigerd met `550 5.7.1 Your account is not authorized to use this service`.
+
+### Wat hiermee NIET is afgedekt
+
+- De weg naar `rmrmail.rijksweb.nl` (stap 2). Ongewijzigd blokkerend.
+- De management-API loopt binnen het cluster over **plain HTTP met Basic auth**. Het
+  beheerderswachtwoord gaat dus base64 over het podnetwerk. Wat het vandaag inperkt is het
+  NetworkPolicy: alleen de OPI-namespace mag poort 8080 aan. Wil je het echt dicht, dan
+  hoort daar een certificaat op de listener, en dat is een eigen stap.
+- **Submission heeft geen TLS** terwijl er PLAIN/LOGIN overheen gaat. Zelfde inperking,
+  zelfde antwoord: hetzelfde certificaat lost beide op.
+- Een **eigen afzenderdomein** werkt nog niet: het sieve-script kent alleen het
+  platformmaildomein. Bij het bouwen van die flow hoort daar een regel bij.

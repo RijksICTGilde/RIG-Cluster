@@ -48,7 +48,9 @@ class MailAccount:
     #: Where bounces for this account come back to; carries the account name so a
     #: returned message is traceable to one project.
     bounce_address: str
-    #: Messages this account may submit per day.
+    #: Daily budget agreed for this account. Recorded here and in the project file; the
+    #: relay enforces one ceiling for every account (see the limiter in its configmap),
+    #: because a principal in Stalwart v0.11 carries no limit of its own.
     messages_per_day: int
 
 
@@ -86,7 +88,20 @@ class MailConnector:
                 raise MailRelayError(f"{method} {path} gaf {response.status}: {detail}")
             if not body:
                 return {}
-            return await response.json(content_type=None)
+            result = await response.json(content_type=None)
+            if not isinstance(result, dict):
+                return result
+            # Een onbekend account is bij Stalwart GEEN 404: het antwoord is 200 met
+            # {"error": "notFound", "item": "<naam>"} in het lichaam (gemeten tegen
+            # v0.11.8). Wie alleen op de statuscode kijkt, leest dat als een bestaand
+            # account en gaat bijwerken in plaats van aanmaken -- dan wordt het account
+            # nooit gemaakt en authenticeert de applicatie nergens.
+            error = result.get("error")
+            if error is None:
+                return result
+            if error == "notFound" and allow_missing:
+                return None
+            raise MailRelayError(f"{method} {path} gaf fout {error}: {str(result.get('details') or result)[:200]}")
 
     async def get_principal(self, name: str) -> dict[str, Any] | None:
         """The account as the relay holds it, or ``None`` if it does not exist."""
@@ -102,9 +117,19 @@ class MailConnector:
         name: str,
         password: str,
         from_address: str,
-        messages_per_day: int,
+        bounce_address: str,
     ) -> None:
-        """Create the account. The relay refuses a duplicate; the manager checks first."""
+        """Create the account. The relay refuses a duplicate; the manager checks first.
+
+        Both addresses go on the account, and that is not cosmetic. The relay rewrites the
+        envelope to the bounce address and only THEN checks ``must-match-sender``, so an
+        account that does not own its own bounce address cannot hand in a single message
+        ("501 5.5.4 You are not allowed to send from this address", measured).
+
+        There is deliberately no daily limit here: a principal in Stalwart v0.11 has no
+        such field (the API answers "JSON deserialization failed" on one), so the limit
+        lives in the relay's own configuration, keyed on the authenticated account.
+        """
         await self._request(
             "POST",
             "/api/principal",
@@ -112,12 +137,15 @@ class MailConnector:
                 "type": "individual",
                 "name": name,
                 "secrets": [password],
-                "emails": [from_address],
+                "emails": [from_address, bounce_address],
+                # Without a role the account authenticates and is then refused with "550
+                # 5.7.1 Your account is not authorized to use this service" (measured):
+                # enabledPermissions alone grants nothing to build on.
+                "roles": ["user"],
                 # Submission only: this account may hand mail in, never read a mailbox.
                 "enabledPermissions": ["email-send"],
                 "description": f"ZAD send-email account voor {name}",
                 "quota": 0,
-                "limits": {"messages-per-day": messages_per_day},
             },
         )
         logger.info(f"Mailaccount {name} aangemaakt op de relay")
@@ -127,16 +155,14 @@ class MailConnector:
         name: str,
         password: str | None = None,
         from_address: str | None = None,
-        messages_per_day: int | None = None,
+        bounce_address: str | None = None,
     ) -> None:
         """Bring an existing account in line with what the project asks for."""
         changes: list[dict[str, Any]] = []
         if password is not None:
             changes.append({"action": "set", "field": "secrets", "value": [password]})
-        if from_address is not None:
-            changes.append({"action": "set", "field": "emails", "value": [from_address]})
-        if messages_per_day is not None:
-            changes.append({"action": "set", "field": "limits", "value": {"messages-per-day": messages_per_day}})
+        if from_address is not None and bounce_address is not None:
+            changes.append({"action": "set", "field": "emails", "value": [from_address, bounce_address]})
         if not changes:
             return
         await self._request("PATCH", f"/api/principal/{name}", payload=changes)
