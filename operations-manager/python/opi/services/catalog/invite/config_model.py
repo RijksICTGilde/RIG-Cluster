@@ -50,7 +50,15 @@ class InviteEntry(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    key: str = Field(description="The secret in the invitation link; whoever holds it can redeem the invite.")
+    key: str = Field(
+        description=(
+            "The secret in the invitation link; whoever holds it can redeem the invite. Send an empty "
+            "string to have a random one generated -- the write reports it back under 'generated', "
+            "which is the only place you learn a key you did not choose. It is RETURNED by a read of "
+            "this config, deliberately: the code is the invitation, so whoever cannot read it back "
+            "cannot send it on."
+        )
+    )
     roles: list[str] = Field(
         default_factory=list,
         description="Deprecated spelling of 'realm-roles', kept so existing files validate. Use realm-roles.",
@@ -102,9 +110,11 @@ class InviteConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     #: ``active`` is patchable entry by entry, keyed on the invite's own ``key``. Without
-    #: it only the PUT existed, and the PUT wants every invite resent -- including the
-    #: keys, which no read response gives back (they are the secret in the link). A
-    #: second invite therefore cost the first one. See ``opi/services/config_lists.py``.
+    #: it only the PUT existed, and the PUT wants every invite resent, so a second invite
+    #: cost the first one. The keys ARE readable (see the module docstring of
+    #: ``opi/services/catalog/invite``), so resending is possible in principle -- but a
+    #: read-modify-write over a whole list is still how entries get lost, and that is what
+    #: the PATCH is for. See ``opi/services/config_lists.py``.
     ITEM_KEYS: ClassVar[dict[str, str | None]] = {"active": "key"}
 
     default_language: str = Field(
