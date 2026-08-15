@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
 from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_port, get_namespace
 from opi.core.config import settings
@@ -238,9 +238,27 @@ class MailManager:
 
         ``None`` when the Secret is not there yet, which is the normal state of a cluster
         that has never met a running relay.
+
+        Raises ``KubectlExecutionError`` when the Secret's existence cannot be determined.
+        That is not pedantry: ``get_secret`` answers ``None`` for a missing Secret AND for
+        any kubectl failure (no rights, API server away, timeout), and the caller turns a
+        ``None`` into a NEW password. So one unreadable moment would silently rotate ZAD out
+        of its own mail account -- the Secret overwritten, the relay reset, and nothing in
+        the way of it. Refusing here makes that moment a failed non-critical startup task
+        instead, which the next boot repairs by simply reading the Secret back.
         """
         namespace = get_namespace(settings.CLUSTER_MANAGER)
-        return await KubectlConnector().get_secret(settings.MAIL_PLATFORM_SECRET_NAME, namespace)
+        kubectl = KubectlConnector()
+        stored = await kubectl.get_secret(settings.MAIL_PLATFORM_SECRET_NAME, namespace)
+        if stored is not None:
+            return stored
+
+        if await kubectl.secret_exists(settings.MAIL_PLATFORM_SECRET_NAME, namespace) is not False:
+            raise KubectlExecutionError(
+                f"Kan niet vaststellen of secret {settings.MAIL_PLATFORM_SECRET_NAME} in {namespace} bestaat; "
+                "geen nieuw wachtwoord gegenereerd om het platform-mailaccount niet te resetten"
+            )
+        return None
 
     @staticmethod
     async def _write_platform_secret(username: str, password: str, from_address: str) -> None:
