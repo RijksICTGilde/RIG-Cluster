@@ -102,9 +102,9 @@ class SendEmailConfig(BaseModel):
         alias="from-local-part",
         description=(
             "First half of the local part of the sender address, e.g. 'noreply'. Defaults to 'noreply'. "
-            "The project name is appended to it, so the address becomes noreply.<project>@<maildomein>: "
-            "the relay pins the From: header to an address carrying the account name, and an address may "
-            "only exist once on the whole relay."
+            "The account name is appended to it, so the address becomes "
+            "noreply.project-<project>@<maildomein>: the relay pins the From: header to an address "
+            "carrying the account name, and an address may only exist once on the whole relay."
         ),
     )
     from_domain: str | None = Field(
