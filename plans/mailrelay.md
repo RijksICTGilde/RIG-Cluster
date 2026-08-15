@@ -323,7 +323,7 @@ Wat er nu echt staat, en hoe het is aangetoond:
    aanraken) eist dat het adres in de From: het adres van dit account is. Vreemd domein:
    `550`. Adres van een ander project: `550`. Eigen adres met eigen weergavenaam: komt
    aan. Daarvoor draagt het afzenderadres nu de accountnaam
-   (`noreply.<project>@<maildomein>`) - de relay kent zijn accounts, dus de regel moet uit
+   (`noreply.project-<project>@<maildomein>`) - de relay kent zijn accounts, dus de regel moet uit
    de accountnaam af te leiden zijn. Een adres bestaat trouwens maar EEN keer op de hele
    relay, dus een gedeelde `noreply@` was sowieso niet houdbaar.
 2a. **Precies EEN From-adres** (toegevoegd na de securityreview van 15 augustus, r8).
