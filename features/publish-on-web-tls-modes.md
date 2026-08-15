@@ -145,6 +145,63 @@ Two things to know before measuring it again:
   handshake on 443 shows the platform certificate for every host, including one that
   demonstrably serves its own.
 
+## Wanneer `standard` niets oplevert: een eigen domein op een cluster zonder uitgifte
+
+`standard` betekent "het platform regelt het certificaat", en dat lukt niet overal. Voor de
+domeinen die het cluster zelf aanbiedt (`nice_url.supported_domains`) is er een
+platformcertificaat en is er niets te regelen. Voor een **eigen domein** moet cert-manager
+er een halen, via een ACME HTTP-01-uitdaging die van buiten bereikbaar moet zijn -- en dat
+kan niet op elk cluster.
+
+In de sandbox kan het niet, en het is er ook niet aan te zien. `task sandbox:setup` zet een
+**nep** cert-manager-CRD neer (`bootstrap/crd/cert-manager/fake-cert-manager.yaml`) zonder
+controller erachter, zodat de Issuer-manifesten gewoon toegepast kunnen worden. Gevolg: de
+Issuer wordt aangemaakt, meldt `Ready` (de nep-CRD zet die conditie als default), ArgoCD
+meldt Synced, de deployment meldt Healthy -- en er wordt nooit een certificaat uitgegeven.
+Er blijft ook geen Certificate hangen om naar te kijken, want die CRD bestaat er niet eens.
+De bezoeker krijgt het fallback-certificaat van de ingress en dus een certificaatfout.
+
+Dat valt bovendien precies samen met het moment dat de goedkeuringsmelding verdwijnt:
+zolang het domein niet is goedgekeurd publiceert de deployment op het clusteradres
+(`apply_domain_approval_fallback`) en is er niets mis. Het gaat pas mis nadat een beheerder
+het domein heeft goedgekeurd, en dan staat het niet meer in `approvals`.
+
+### Hoe het cluster dit zegt
+
+Een cluster verklaart het met `supports_custom_domain_certificates` in `CLUSTER_CONFIG`:
+
+| Cluster | Waarde | Waarom |
+|---|---|---|
+| `odcn-production` | `True` | Bereikbaar vanaf internet, echte cert-manager |
+| `sandboxed-local` | `False` | Kind, niet bereikbaar, nep cert-manager-CRD zonder controller |
+| `local` | *afwezig* | Draait een eigen CA (`kind-ca-issuer`); of die ook een eigen domein tekent is niet nagemeten |
+
+Afwezig betekent `True`, dus zwijgen. Een waarschuwing over een cluster waarvan het
+platform het niet weet, is een gok over andermans cluster.
+
+### Waar je het te horen krijgt
+
+De zin staat één keer, bij de dienst die zowel het `base-domain` als de `tls`-modus bezit
+(`custom_domain_certificate_note` in `catalog/publish_on_web/domain_config.py`), en komt op
+vier plekken terug:
+
+1. **Bij het zetten in het formulier** -- `DomainConfigEnforcer` geeft een veldwaarschuwing
+   op het domeinveld. Staat het domein óók nog op goedkeuring, dan zitten beide hindernissen
+   in één melding: er kan maar één waarschuwing uit de enforcer komen, en de tweede horen
+   nadat de eerste is opgelost is precies het probleem.
+2. **Bij het zetten via de API** -- `warnings` op het antwoord van de deployment-schrijfactie.
+   Bewust niet onder `approvals`: dat veld is voor wat op een beheerder wacht, en dit wacht
+   op niemand.
+3. **Vóór het zetten** -- `custom-domain-certificates` op `GET /api/v2/projects/{p}/clusters`,
+   naast de `base-domains` die het cluster wél aanbiedt.
+4. **In het OpenAPI-document** -- de beschrijving van `base-domain` (met een verwijzing naar
+   dat endpoint) en van `tls` (dat `provided` daar de weg is).
+
+### De uitweg
+
+`tls: provided` met een eigen certificaat als attachment. Dan wordt er niets uitgegeven en
+termineert de ingress op het meegeleverde certificaat, wat op elk cluster werkt.
+
 ## Status
 
 - **Done**: `passthrough` at the component level + cert suppression + the inline
