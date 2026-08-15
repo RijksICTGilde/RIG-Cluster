@@ -101,7 +101,7 @@
         }
       ],
       "default": null,
-      "description": "Sender domain, when the project has one of its own. Left out for the platform mail domain. Written by the platform: a domain of your own needs a DKIM record in its zone first, and that path is set up by hand until a project asks for it, so this is not self-service.",
+      "description": "Sender domain, when the project has one of its own. Left out for the platform mail domain. Written by the platform: a domain of your own needs a DKIM record in its zone first AND a rule for that domain in the relay's identity script (which today only allows the platform mail domain), and that path is set up by hand until a project asks for it, so this is not self-service.",
       "title": "From-Domain",
       "x-platform-managed": true
     },
@@ -116,7 +116,7 @@
         }
       ],
       "default": null,
-      "description": "Local part of the sender address (the bit before the @), e.g. 'noreply'. Defaults to 'noreply'.",
+      "description": "First half of the local part of the sender address, e.g. 'noreply'. Defaults to 'noreply'. The project name is appended to it, so the address becomes noreply.<project>@<maildomein>: the relay pins the From: header to an address carrying the account name, and an address may only exist once on the whole relay.",
       "title": "From-Local-Part"
     },
     "from-name": {
@@ -144,7 +144,7 @@
         }
       ],
       "default": null,
-      "description": "Messages this project may send per day, at most 5000. Leave it out for the platform default.",
+      "description": "Messages this project may send per day, at most 5000. Leave it out for the platform default. This is the agreed budget, recorded on the account: the relay itself enforces one ceiling of 5000 per account per day, because an account on the relay carries no limit of its own.",
       "title": "Messages-Per-Day"
     }
   },

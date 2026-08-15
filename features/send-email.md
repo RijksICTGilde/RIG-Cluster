@@ -63,8 +63,13 @@ Op projectniveau, in de wizard of via de API:
 | Veld | Betekenis |
 |---|---|
 | `from-name` | de naam die de ontvanger boven het bericht ziet |
-| `from-local-part` | het deel voor de @; standaard `noreply` |
-| `messages-per-day` | het dagbudget van dit project, maximaal 5000 |
+| `from-local-part` | het eerste deel voor de @; standaard `noreply`. De projectnaam komt eraan vast: het adres wordt `noreply.<project>@<maildomein>` |
+| `messages-per-day` | het dagbudget van dit project, maximaal 5000. Zie de kanttekening hieronder: de relay dwingt vandaag één plafond af voor elk account |
+
+De projectnaam zit in het adres omdat de relay hem daar nodig heeft: de From:-header wordt
+op de relay getoetst tegen de naam van het account dat inlogt, en een adres mag maar één keer
+op de hele relay bestaan — een gedeelde `noreply@` zou voor het tweede project niet aan te
+maken zijn.
 
 En wat je niet instelt: het domein achter de @ ligt vast op het maildomein van het platform
 (`mail.rijksapp.nl` op productie — let op het enkelvoud, `rijksapps.nl` is de zone van
@@ -87,7 +92,7 @@ services:
   - name: send-email
     config:
       from-name: Algoritmeregister
-      from-local-part: noreply
+      from-local-part: noreply   # levert noreply.algor-odc@mail.rijksapp.nl op
       messages-per-day: 750
       # accounts: door het platform geschreven, zie hieronder
 ```
@@ -304,6 +309,19 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
 5. **DNS**: SPF op ons maildomein dat de uitgaande IP's van de upstream autoriseert, en de
    publieke helft van de DKIM-sleutel als TXT op `zad._domainkey.<maildomein>`. Zonder deze
    twee vertrekt de post wel en komt hij niet aan.
+
+En drie dingen die de relay vandaag niet dichtzet, met de reden erbij:
+
+- **De management-API loopt over plain HTTP met Basic auth** binnen het cluster, dus het
+  beheerderswachtwoord gaat base64 over het podnetwerk. Wat het inperkt is het
+  NetworkPolicy: alleen de OPI-namespace mag poort 8080 aan. Echt dicht vraagt een
+  certificaat op de listener.
+- **Submission heeft geen TLS** terwijl er PLAIN/LOGIN overheen gaat. Zelfde inperking en
+  hetzelfde certificaat lost beide op.
+- **Een limiet per account bestaat niet in Stalwart v0.11**: de management-API weigert een
+  `limits`-veld op een principal. `messages-per-day` is dus de vastgelegde begroting, en de
+  relay dwingt een plafond af dat voor elk account gelijk is (5000/dag). Dat staat ook bij
+  het veld in de API-beschrijving.
 
 Verder nog niet gebouwd, en bewust:
 
