@@ -446,6 +446,171 @@ class TestPatchServiceConfigList:
             )
 
 
+class TestPlatformManagedFieldsSurviveAWrite:
+    """A user's write may not destroy what the platform wrote into the same block.
+
+    ``keycloak.realms`` holds the host, the realm and the AGE-encrypted password of the
+    realm-admin account, and nothing else holds that password. The generic PUT dumps with
+    ``exclude_unset=True`` and ``set_service_config`` replaces the whole block, so a
+    ``PUT {"template": "sso-only"}`` used to leave exactly that and take the realm admin
+    with it -- after which the project wedges on the duplicate-admin guard and the only
+    ways back are the git history or an administrator on the master realm.
+    """
+
+    def _keycloak_project(self) -> dict:
+        data = _project()
+        data["services"].append(
+            {
+                "name": "keycloak",
+                "config": {
+                    "template": "algoritmeregister",
+                    "realms": [
+                        {
+                            "host": "https://keycloak.example",
+                            "realm": "demo-odcn",
+                            "username": "realm-admin",
+                            "password": "AGE-VERSLEUTELD",
+                        }
+                    ],
+                },
+            }
+        )
+        return data
+
+    def _keycloak_config(self, data: dict) -> dict:
+        return service_entry_config(next(e for e in data["services"] if service_entry_name(e) == "keycloak"))
+
+    def test_the_service_declares_which_fields_are_the_platform_s(self) -> None:
+        """The rule is generic: every service answers for itself, through the same kind of
+        hook as its other declarations. Keycloak is only where it hurt."""
+        from opi.services.registry import get_service
+
+        keycloak = get_service(ServiceType.KEYCLOAK)
+        assert keycloak.platform_managed_fields(ConfigLayer.PROJECT) == frozenset({"realms"})
+        # realm, credentials and OTP all sit inside that one list, so one marking covers them
+        from opi.services.catalog.keycloak.config_model import KeycloakRealm
+
+        assert {"host", "realm", "username", "password", "totp_secret"} <= set(KeycloakRealm.model_fields)
+
+    def test_a_service_that_declares_nothing_keeps_working_as_before(self) -> None:
+        from opi.services.registry import get_service
+
+        for service_type in (ServiceType.HEALTH_CHECK, ServiceType.SLEEP_MODE, ServiceType.INVITE):
+            service = get_service(service_type)
+            for layer in ConfigLayer:
+                assert service.platform_managed_fields(layer) == frozenset()
+
+    def test_a_write_without_realms_keeps_the_realm_admin(self) -> None:
+        """What the generic PUT actually sends for a body of {"template": "sso-only"}."""
+        from opi.services.catalog.keycloak.config_model import KeycloakConfig
+
+        data = self._keycloak_project()
+        body = KeycloakConfig.model_validate({"template": "sso-only"})
+        sent = body.model_dump(by_alias=True, exclude_unset=True)
+        assert sent == {"template": "sso-only"}  # the caller never mentions realms
+
+        ServiceAdapter.set_service_config(data, ServiceType.KEYCLOAK.value, ConfigLayer.PROJECT, sent)
+
+        config = self._keycloak_config(data)
+        assert config["template"] == "sso-only"  # the setting the caller did send lands
+        assert config["realms"] == [
+            {
+                "host": "https://keycloak.example",
+                "realm": "demo-odcn",
+                "username": "realm-admin",
+                "password": "AGE-VERSLEUTELD",
+            }
+        ]
+        validate_service_configs(data)
+
+    def test_the_stored_value_is_passed_through_untouched(self) -> None:
+        """Not re-validated and not re-dumped: the block keeps exactly the bytes it had,
+        so no default is expanded into it and no key is renamed to its alias."""
+        data = self._keycloak_project()
+        before = self._keycloak_config(data)["realms"]
+        stored_identity = [dict(realm) for realm in before]
+
+        ServiceAdapter.set_service_config(
+            data, ServiceType.KEYCLOAK.value, ConfigLayer.PROJECT, {"template": "sso-only"}
+        )
+
+        after = self._keycloak_config(data)["realms"]
+        assert after == stored_identity
+        assert after[0] is before[0]  # the same object, not a rebuilt copy
+        assert "totp_secret" not in after[0]  # an absent optional stayed absent
+
+    def test_the_mutator_is_the_net_under_the_route_s_refusal(self) -> None:
+        """The API refuses a body carrying the field (see the router tests). Should any
+        other write path ever reach here with one, the stored value still wins -- losing
+        the realm admin must not depend on which door the write came through."""
+        data = self._keycloak_project()
+        ServiceAdapter.set_service_config(
+            data,
+            ServiceType.KEYCLOAK.value,
+            ConfigLayer.PROJECT,
+            {
+                "template": "sso-only",
+                "realms": [{"host": "http://elders", "realm": "x", "username": "u", "password": "p"}],
+            },
+        )
+        assert self._keycloak_config(data)["realms"][0]["password"] == "AGE-VERSLEUTELD"
+
+    def test_clearing_the_config_keeps_the_platform_field_and_drops_the_rest(self) -> None:
+        """DELETE means 'reset my settings', not 'throw away the realm-admin password'."""
+        data = self._keycloak_project()
+        changed = ServiceAdapter.remove_service_config(data, ServiceType.KEYCLOAK.value, ConfigLayer.PROJECT)
+
+        assert changed is True
+        config = self._keycloak_config(data)
+        assert "template" not in config
+        assert config["realms"][0]["password"] == "AGE-VERSLEUTELD"
+        validate_service_configs(data)
+
+    def test_a_service_without_platform_fields_still_clears_completely(self) -> None:
+        data = _project()
+        ServiceAdapter.set_service_config(
+            data, ServiceType.AUTHORIZATION_WALL.value, ConfigLayer.PROJECT, {"banner": "Toegang beperkt"}
+        )
+        assert ServiceAdapter.remove_service_config(data, ServiceType.AUTHORIZATION_WALL.value, ConfigLayer.PROJECT)
+        assert "authorization-wall" in [service_entry_name(e) for e in data["services"]]
+        assert (
+            service_entry_config(next(e for e in data["services"] if service_entry_name(e) == "authorization-wall"))
+            is None
+        )
+
+    def test_a_first_write_on_a_project_without_the_service_is_unaffected(self) -> None:
+        data = _project()
+        ServiceAdapter.set_service_config(
+            data, ServiceType.KEYCLOAK.value, ConfigLayer.PROJECT, {"template": "sso-only"}
+        )
+        assert self._keycloak_config(data) == {"template": "sso-only"}
+
+    def test_a_tls_write_keeps_the_domain_approvals_and_their_history(self) -> None:
+        """publish-on-web is the second block of this shape: the approval verdicts sit
+        next to the inherited user settings tls/attachment. An approval is an approver's
+        decision plus an audit trail, so a caller setting tls may not clear it."""
+        domains = {
+            "allowed-domains": [
+                {
+                    "domain": "voorbeeld.nl",
+                    "status": "approved",
+                    "history": [{"date": "2026-08-01", "status": "approved", "by": "beheerder", "message": "akkoord"}],
+                }
+            ]
+        }
+        data = _project()
+        data["services"] = [{"name": "publish-on-web", "config": {"tls": "cluster", "domains": domains}}]
+
+        ServiceAdapter.set_service_config(
+            data, ServiceType.PUBLISH_ON_WEB.value, ConfigLayer.PROJECT, {"tls": "provided", "attachment": "cert"}
+        )
+
+        config = service_entry_config(next(e for e in data["services"] if service_entry_name(e) == "publish-on-web"))
+        assert config["tls"] == "provided"
+        assert config["domains"] == domains
+        validate_service_configs(data)
+
+
 class TestPatchListInsideAnObjectConfig:
     """The same add/remove patch on a list that sits INSIDE a config object.
 
