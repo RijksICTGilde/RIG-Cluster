@@ -82,9 +82,11 @@ def _iconen_in_koppen(bron: str) -> list[int]:
         if ICOON.search(zonder_commentaar[opening.end() : einde]):
             regels.append(zonder_commentaar[: opening.start()].count("\n") + 1)
 
-    for kale in KALE_KOP.finditer(zonder_commentaar):
-        if ICOON.search(kale.group(2)):
-            regels.append(zonder_commentaar[: kale.start()].count("\n") + 1)
+    regels.extend(
+        zonder_commentaar[: kale.start()].count("\n") + 1
+        for kale in KALE_KOP.finditer(zonder_commentaar)
+        if ICOON.search(kale.group(2))
+    )
 
     return sorted(regels)
 
@@ -104,6 +106,5 @@ def test_geen_icoon_binnen_een_kop() -> None:
         '        <c-icon icon="..." size="lg" />\n'
         '        <c-heading type="h2" size="4" label="..." />\n'
         "    </c-cluster>\n"
-        "Laat een id, aria-attribuut of <span> waar JavaScript aan hangt op de KOP staan.\n  "
-        + "\n  ".join(gevonden)
+        "Laat een id, aria-attribuut of <span> waar JavaScript aan hangt op de KOP staan.\n  " + "\n  ".join(gevonden)
     )
