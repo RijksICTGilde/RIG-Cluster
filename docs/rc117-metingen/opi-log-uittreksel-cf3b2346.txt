@@ -1,0 +1,157 @@
+2026-08-16 20:25:44,592 - opi.connectors.git - DEBUG - [-] Cloning repository to /data/zad-projects-warm
+2026-08-16 20:25:44,625 - opi.connectors.git - INFO - [-] Cloning repo 'projects' as full history (--filter=blob:none)
+2026-08-16 20:26:46,204 - opi.core.task_worker - INFO - [task-62960365-3f29fa84] Executing task 62960365-bd35-48b4-bdee-f7ba02ba40de (type=create_project, project=e2e47-kyj, flow=task-62960365-3f29fa84)
+2026-08-16 20:26:46,584 - opi.services.project_store - DEBUG - [task-62960365-3f29fa84] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:26:48,434 - opi.services.project_store - INFO - [task-62960365-3f29fa84] store-push ['projects/e2e47-kyj.yaml']: push took 1.69s
+2026-08-16 20:26:48,448 - opi.services.project_store - INFO - [task-62960365-3f29fa84] store-persist projects/e2e47-kyj.yaml: committed d5a9345a in 1.85s (actor=operations-manager) -- Create project e2e47-kyj
+2026-08-16 20:26:48,482 - opi.services.project_store - INFO - [task-62960365-3f29fa84] store-lock save 'e2e47-kyj': held 1.90s (waited 0.00s)
+2026-08-16 20:26:49,638 - opi.connectors.git - DEBUG - [task-62960365-3f29fa84] Cloning repository to /data/git-repo-p4g_strz
+2026-08-16 20:26:49,779 - opi.connectors.git - INFO - [task-62960365-3f29fa84] Cloning repo 'main-repo' as shallow (--depth 1)
+2026-08-16 20:26:51,600 - opi.services.project_store - DEBUG - [task-62960365-3f29fa84] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:26:51,766 - opi.services.project_store - INFO - [task-62960365-3f29fa84] store-persist projects/e2e47-kyj.yaml: no change in 0.11s (actor=operations-manager) -- Process project e2e47-kyj
+2026-08-16 20:26:51,799 - opi.services.project_store - INFO - [task-62960365-3f29fa84] store-lock save 'e2e47-kyj': held 0.20s (waited 0.00s)
+2026-08-16 20:26:51,807 - opi.connectors.git - DEBUG - [task-62960365-3f29fa84] Cloning repository to /data/git-repo-5mobxn7k
+2026-08-16 20:26:51,839 - opi.connectors.git - INFO - [task-62960365-3f29fa84] Cloning repo 'argo' as shallow (--depth 1)
+2026-08-16 20:26:53,486 - opi.core.persistent_task_progress - INFO - [task-62960365-3f29fa84] Task 62960365-bd35-48b4-bdee-f7ba02ba40de: Added task: Wachten tot ArgoCD gesynchroniseerd is (2897af51-2668-46d8-82b0-1f7f729b575d)
+2026-08-16 20:26:54,397 - opi.core.async_task_service - DEBUG - [task-62960365-3f29fa84] Updated progress for task 62960365-bd35-48b4-bdee-f7ba02ba40de: step=Wachten tot ArgoCD gesynchroniseerd is percent=80
+2026-08-16 20:27:05,266 - opi.manager.argo_manager - INFO - [task-62960365-3f29fa84] Waiting for ArgoCD application 'e2e47-kyj-productie' to be synced and healthy (timeout: 300s, poll: 2s, refreshed_after=2026-08-16T18:27:04Z)
+2026-08-16 20:27:19,103 - opi.manager.argo_manager - INFO - [task-62960365-3f29fa84] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:27:19,103 - opi.manager.project_manager - INFO - [task-62960365-3f29fa84] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:27:19,103 - opi.manager.project_manager - INFO - [task-62960365-3f29fa84] All ArgoCD applications are synced and healthy
+2026-08-16 20:27:19,177 - opi.core.task_worker - INFO - [task-62960365-3f29fa84] Task 62960365-bd35-48b4-bdee-f7ba02ba40de completed successfully in 33.0s
+2026-08-16 20:27:24,557 - opi.core.task_worker - INFO - [task-d57433e0-fce8cd0d] Executing task d57433e0-ae04-4f76-8f25-e9b980657692 (type=add_component, project=e2e47-kyj, flow=task-d57433e0-fce8cd0d)
+2026-08-16 20:27:24,569 - opi.services.project_store - DEBUG - [task-d57433e0-fce8cd0d] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:27:26,064 - opi.services.project_store - INFO - [task-d57433e0-fce8cd0d] store-push ['projects/e2e47-kyj.yaml']: push took 1.31s
+2026-08-16 20:27:26,082 - opi.services.project_store - INFO - [task-d57433e0-fce8cd0d] store-persist projects/e2e47-kyj.yaml: committed 54a6367d in 1.46s (actor=operations-manager) -- Add component 'uitgesteld0' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:27:26,122 - opi.services.project_store - INFO - [task-d57433e0-fce8cd0d] store-lock save 'e2e47-kyj': held 1.55s (waited 0.00s)
+2026-08-16 20:27:26,186 - opi.core.task_worker - INFO - [task-d57433e0-fce8cd0d] Task d57433e0-ae04-4f76-8f25-e9b980657692 completed successfully in 1.6s
+2026-08-16 20:27:26,589 - opi.core.task_worker - INFO - [task-2501311c-eedf8575] Executing task 2501311c-68fe-4ae3-b5ae-6170d5cd75ef (type=add_component, project=e2e47-kyj, flow=task-2501311c-eedf8575)
+2026-08-16 20:27:26,606 - opi.services.project_store - DEBUG - [task-2501311c-eedf8575] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:27:28,179 - opi.services.project_store - INFO - [task-2501311c-eedf8575] store-push ['projects/e2e47-kyj.yaml']: push took 1.36s
+2026-08-16 20:27:28,193 - opi.services.project_store - INFO - [task-2501311c-eedf8575] store-persist projects/e2e47-kyj.yaml: committed 1111cc06 in 1.53s (actor=operations-manager) -- Add component 'uitgesteld1' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:27:28,232 - opi.services.project_store - INFO - [task-2501311c-eedf8575] store-lock save 'e2e47-kyj': held 1.63s (waited 0.00s)
+2026-08-16 20:27:28,246 - opi.core.task_worker - INFO - [task-2501311c-eedf8575] Task 2501311c-68fe-4ae3-b5ae-6170d5cd75ef completed successfully in 1.7s
+2026-08-16 20:27:30,620 - opi.core.task_worker - INFO - [task-777e85f9-e34d65f7] Executing task 777e85f9-36a4-4f05-b36b-d1f685adcad4 (type=add_component, project=e2e47-kyj, flow=task-777e85f9-e34d65f7)
+2026-08-16 20:27:30,634 - opi.services.project_store - DEBUG - [task-777e85f9-e34d65f7] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:27:32,090 - opi.services.project_store - INFO - [task-777e85f9-e34d65f7] store-push ['projects/e2e47-kyj.yaml']: push took 1.26s
+2026-08-16 20:27:32,104 - opi.services.project_store - INFO - [task-777e85f9-e34d65f7] store-persist projects/e2e47-kyj.yaml: committed 2aa293de in 1.41s (actor=operations-manager) -- Add component 'uitgesteld2' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:27:32,142 - opi.services.project_store - INFO - [task-777e85f9-e34d65f7] store-lock save 'e2e47-kyj': held 1.51s (waited 0.00s)
+2026-08-16 20:27:32,156 - opi.core.task_worker - INFO - [task-777e85f9-e34d65f7] Task 777e85f9-36a4-4f05-b36b-d1f685adcad4 completed successfully in 1.5s
+2026-08-16 20:27:32,642 - opi.core.task_worker - INFO - [task-c034814c-ae4b1a26] Executing task c034814c-dc3a-47d0-826a-3dababbf3885 (type=add_component, project=e2e47-kyj, flow=task-c034814c-ae4b1a26)
+2026-08-16 20:27:32,659 - opi.services.project_store - DEBUG - [task-c034814c-ae4b1a26] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:27:34,139 - opi.services.project_store - INFO - [task-c034814c-ae4b1a26] store-push ['projects/e2e47-kyj.yaml']: push took 1.27s
+2026-08-16 20:27:34,153 - opi.services.project_store - INFO - [task-c034814c-ae4b1a26] store-persist projects/e2e47-kyj.yaml: committed 6f8da62c in 1.43s (actor=operations-manager) -- Add component 'uitgesteld3' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:27:34,198 - opi.services.project_store - INFO - [task-c034814c-ae4b1a26] store-lock save 'e2e47-kyj': held 1.54s (waited 0.00s)
+2026-08-16 20:27:34,213 - opi.core.task_worker - INFO - [task-c034814c-ae4b1a26] Task c034814c-dc3a-47d0-826a-3dababbf3885 completed successfully in 1.6s
+2026-08-16 20:27:36,674 - opi.core.task_worker - INFO - [task-8dd44e6a-377a2e2e] Executing task 8dd44e6a-577c-4c36-be21-9fc410a23551 (type=add_component, project=e2e47-kyj, flow=task-8dd44e6a-377a2e2e)
+2026-08-16 20:27:36,692 - opi.services.project_store - DEBUG - [task-8dd44e6a-377a2e2e] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:27:38,158 - opi.services.project_store - INFO - [task-8dd44e6a-377a2e2e] store-push ['projects/e2e47-kyj.yaml']: push took 1.25s
+2026-08-16 20:27:38,173 - opi.services.project_store - INFO - [task-8dd44e6a-377a2e2e] store-persist projects/e2e47-kyj.yaml: committed 968f2a71 in 1.41s (actor=operations-manager) -- Add component 'uitgesteld4' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:27:38,219 - opi.services.project_store - INFO - [task-8dd44e6a-377a2e2e] store-lock save 'e2e47-kyj': held 1.53s (waited 0.00s)
+2026-08-16 20:27:38,234 - opi.core.task_worker - INFO - [task-8dd44e6a-377a2e2e] Task 8dd44e6a-577c-4c36-be21-9fc410a23551 completed successfully in 1.6s
+2026-08-16 20:27:38,697 - opi.core.task_worker - INFO - [task-08bcdb8b-693fbd8a] Executing task 08bcdb8b-1158-4669-8e72-f222d5647017 (type=add_component, project=e2e47-kyj, flow=task-08bcdb8b-693fbd8a)
+2026-08-16 20:27:38,717 - opi.services.project_store - DEBUG - [task-08bcdb8b-693fbd8a] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:27:40,198 - opi.services.project_store - INFO - [task-08bcdb8b-693fbd8a] store-push ['projects/e2e47-kyj.yaml']: push took 1.27s
+2026-08-16 20:27:40,213 - opi.services.project_store - INFO - [task-08bcdb8b-693fbd8a] store-persist projects/e2e47-kyj.yaml: committed a189c674 in 1.42s (actor=operations-manager) -- Add component 'uitgesteld5' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:27:40,261 - opi.services.project_store - INFO - [task-08bcdb8b-693fbd8a] store-lock save 'e2e47-kyj': held 1.54s (waited 0.00s)
+2026-08-16 20:27:40,275 - opi.core.task_worker - INFO - [task-08bcdb8b-693fbd8a] Task 08bcdb8b-1158-4669-8e72-f222d5647017 completed successfully in 1.6s
+2026-08-16 20:27:42,727 - opi.core.task_worker - INFO - [task-28988a47-6f248dd8] Executing task 28988a47-c15f-464f-bc25-1a78c2c75cc9 (type=add_component, project=e2e47-kyj, flow=task-28988a47-6f248dd8)
+2026-08-16 20:27:42,746 - opi.services.project_store - DEBUG - [task-28988a47-6f248dd8] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:27:44,236 - opi.services.project_store - INFO - [task-28988a47-6f248dd8] store-push ['projects/e2e47-kyj.yaml']: push took 1.26s
+2026-08-16 20:27:44,250 - opi.services.project_store - INFO - [task-28988a47-6f248dd8] store-persist projects/e2e47-kyj.yaml: committed a5ab7d2d in 1.43s (actor=operations-manager) -- Add component 'uitgesteld6' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:27:44,300 - opi.services.project_store - INFO - [task-28988a47-6f248dd8] store-lock save 'e2e47-kyj': held 1.55s (waited 0.00s)
+2026-08-16 20:27:44,363 - opi.core.task_worker - INFO - [task-28988a47-6f248dd8] Task 28988a47-c15f-464f-bc25-1a78c2c75cc9 completed successfully in 1.6s
+2026-08-16 20:27:46,766 - opi.core.task_worker - INFO - [task-9922d953-1def8791] Executing task 9922d953-1500-4099-a48d-f96b60efa906 (type=add_component, project=e2e47-kyj, flow=task-9922d953-1def8791)
+2026-08-16 20:27:46,785 - opi.services.project_store - DEBUG - [task-9922d953-1def8791] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:27:48,284 - opi.services.project_store - INFO - [task-9922d953-1def8791] store-push ['projects/e2e47-kyj.yaml']: push took 1.27s
+2026-08-16 20:27:48,301 - opi.services.project_store - INFO - [task-9922d953-1def8791] store-persist projects/e2e47-kyj.yaml: committed aa0f1c55 in 1.43s (actor=operations-manager) -- Add component 'uitgesteld7' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:27:48,354 - opi.services.project_store - INFO - [task-9922d953-1def8791] store-lock save 'e2e47-kyj': held 1.57s (waited 0.00s)
+2026-08-16 20:27:48,417 - opi.core.task_worker - INFO - [task-9922d953-1def8791] Task 9922d953-1500-4099-a48d-f96b60efa906 completed successfully in 1.7s
+2026-08-16 20:27:52,813 - opi.core.task_worker - INFO - [task-d1a77783-064eef5e] Executing task d1a77783-6498-4b8d-88ee-13d2df0d154c (type=add_component, project=e2e47-kyj, flow=task-d1a77783-064eef5e)
+2026-08-16 20:27:52,843 - opi.services.project_store - DEBUG - [task-d1a77783-064eef5e] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:27:54,336 - opi.services.project_store - INFO - [task-d1a77783-064eef5e] store-push ['projects/e2e47-kyj.yaml']: push took 1.25s
+2026-08-16 20:27:54,351 - opi.services.project_store - INFO - [task-d1a77783-064eef5e] store-persist projects/e2e47-kyj.yaml: committed 786265b1 in 1.42s (actor=operations-manager) -- Add component 'uitgesteld8' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:27:54,406 - opi.services.project_store - INFO - [task-d1a77783-064eef5e] store-lock save 'e2e47-kyj': held 1.56s (waited 0.00s)
+2026-08-16 20:27:54,471 - opi.core.task_worker - INFO - [task-d1a77783-064eef5e] Task d1a77783-6498-4b8d-88ee-13d2df0d154c completed successfully in 1.7s
+2026-08-16 20:27:58,862 - opi.core.task_worker - INFO - [task-7aaf1966-b9fccf98] Executing task 7aaf1966-9040-4d46-842b-f1dbaffd7317 (type=add_component, project=e2e47-kyj, flow=task-7aaf1966-b9fccf98)
+2026-08-16 20:27:58,884 - opi.services.project_store - DEBUG - [task-7aaf1966-b9fccf98] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:28:00,417 - opi.services.project_store - INFO - [task-7aaf1966-b9fccf98] store-push ['projects/e2e47-kyj.yaml']: push took 1.30s
+2026-08-16 20:28:00,437 - opi.services.project_store - INFO - [task-7aaf1966-b9fccf98] store-persist projects/e2e47-kyj.yaml: committed 74cb0b0e in 1.46s (actor=operations-manager) -- Add component 'uitgesteld9' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:28:00,502 - opi.services.project_store - INFO - [task-7aaf1966-b9fccf98] store-lock save 'e2e47-kyj': held 1.62s (waited 0.00s)
+2026-08-16 20:28:00,518 - opi.core.task_worker - INFO - [task-7aaf1966-b9fccf98] Task 7aaf1966-9040-4d46-842b-f1dbaffd7317 completed successfully in 1.7s
+2026-08-16 20:28:04,903 - opi.core.task_worker - INFO - [task-5dde23c1-7900e010] Executing task 5dde23c1-7307-4706-9e2f-a5390364f4a4 (type=refresh_project, project=e2e47-kyj, flow=task-5dde23c1-7900e010)
+2026-08-16 20:28:06,799 - opi.connectors.git - DEBUG - [task-5dde23c1-7900e010] Cloning repository to /data/git-repo-jnkbfxk1
+2026-08-16 20:28:06,893 - opi.connectors.git - INFO - [task-5dde23c1-7900e010] Cloning repo 'main-repo' as shallow (--depth 1)
+2026-08-16 20:28:11,574 - opi.services.project_store - DEBUG - [task-5dde23c1-7900e010] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:28:11,802 - opi.services.project_store - INFO - [task-5dde23c1-7900e010] store-persist projects/e2e47-kyj.yaml: no change in 0.13s (actor=operations-manager) -- Process project e2e47-kyj
+2026-08-16 20:28:11,858 - opi.services.project_store - INFO - [task-5dde23c1-7900e010] store-lock save 'e2e47-kyj': held 0.28s (waited 0.00s)
+2026-08-16 20:28:11,892 - opi.connectors.git - DEBUG - [task-5dde23c1-7900e010] Cloning repository to /data/git-repo-636amsrl
+2026-08-16 20:28:11,926 - opi.connectors.git - INFO - [task-5dde23c1-7900e010] Cloning repo 'argo' as shallow (--depth 1)
+2026-08-16 20:28:12,622 - opi.core.persistent_task_progress - INFO - [task-5dde23c1-7900e010] Task 5dde23c1-7307-4706-9e2f-a5390364f4a4: Added task: Wachten tot ArgoCD gesynchroniseerd is (903a772d-3daf-4e2e-8730-2eb8f3caed1e)
+2026-08-16 20:28:12,703 - opi.core.async_task_service - DEBUG - [task-5dde23c1-7900e010] Updated progress for task 5dde23c1-7307-4706-9e2f-a5390364f4a4: step=Wachten tot ArgoCD gesynchroniseerd is percent=71
+2026-08-16 20:28:13,784 - opi.manager.argo_manager - INFO - [task-5dde23c1-7900e010] Waiting for ArgoCD application 'e2e47-kyj-productie' to be synced and healthy (timeout: 300s, poll: 2s, refreshed_after=2026-08-16T18:28:12Z)
+2026-08-16 20:28:30,171 - opi.manager.argo_manager - INFO - [task-5dde23c1-7900e010] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:28:30,172 - opi.manager.project_manager - INFO - [task-5dde23c1-7900e010] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:28:30,172 - opi.manager.project_manager - INFO - [task-5dde23c1-7900e010] All ArgoCD applications are synced and healthy
+2026-08-16 20:28:30,220 - opi.core.task_worker - INFO - [task-5dde23c1-7900e010] Task 5dde23c1-7307-4706-9e2f-a5390364f4a4 completed successfully in 25.3s
+2026-08-16 20:28:33,277 - opi.core.task_worker - INFO - [task-208a9bc9-2804e35e] Executing task 208a9bc9-5966-4148-b1fc-6e5101a7f881 (type=add_component, project=e2e47-kyj, flow=task-208a9bc9-2804e35e)
+2026-08-16 20:28:33,302 - opi.services.project_store - DEBUG - [task-208a9bc9-2804e35e] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:28:34,803 - opi.services.project_store - INFO - [task-208a9bc9-2804e35e] store-push ['projects/e2e47-kyj.yaml']: push took 1.25s
+2026-08-16 20:28:34,819 - opi.services.project_store - INFO - [task-208a9bc9-2804e35e] store-persist projects/e2e47-kyj.yaml: committed ed4667ed in 1.42s (actor=operations-manager) -- Add component 'uitgerold0' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:28:34,878 - opi.services.project_store - INFO - [task-208a9bc9-2804e35e] store-lock save 'e2e47-kyj': held 1.58s (waited 0.00s)
+2026-08-16 20:28:36,618 - opi.connectors.git - DEBUG - [task-208a9bc9-2804e35e] Cloning repository to /data/git-repo-4nhte5t4
+2026-08-16 20:28:36,718 - opi.connectors.git - INFO - [task-208a9bc9-2804e35e] Cloning repo 'main-repo' as shallow (--depth 1)
+2026-08-16 20:28:41,457 - opi.services.project_store - DEBUG - [task-208a9bc9-2804e35e] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:28:41,690 - opi.services.project_store - INFO - [task-208a9bc9-2804e35e] store-persist projects/e2e47-kyj.yaml: no change in 0.13s (actor=operations-manager) -- Process project e2e47-kyj
+2026-08-16 20:28:41,750 - opi.services.project_store - INFO - [task-208a9bc9-2804e35e] store-lock save 'e2e47-kyj': held 0.29s (waited 0.00s)
+2026-08-16 20:28:41,788 - opi.connectors.git - DEBUG - [task-208a9bc9-2804e35e] Cloning repository to /data/git-repo-k3pma8o3
+2026-08-16 20:28:41,821 - opi.connectors.git - INFO - [task-208a9bc9-2804e35e] Cloning repo 'argo' as shallow (--depth 1)
+2026-08-16 20:28:42,499 - opi.core.persistent_task_progress - INFO - [task-208a9bc9-2804e35e] Task 208a9bc9-5966-4148-b1fc-6e5101a7f881: Added task: Wachten tot ArgoCD gesynchroniseerd is (1e68e5d6-f90f-413e-8b13-4489704792cb)
+2026-08-16 20:28:43,742 - opi.manager.argo_manager - INFO - [task-208a9bc9-2804e35e] Waiting for ArgoCD application 'e2e47-kyj-productie' to be synced and healthy (timeout: 300s, poll: 2s, refreshed_after=2026-08-16T18:28:42Z)
+2026-08-16 20:28:57,061 - opi.manager.argo_manager - INFO - [task-208a9bc9-2804e35e] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:28:57,062 - opi.manager.project_manager - INFO - [task-208a9bc9-2804e35e] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:28:57,062 - opi.manager.project_manager - INFO - [task-208a9bc9-2804e35e] All ArgoCD applications are synced and healthy
+2026-08-16 20:28:57,110 - opi.core.task_worker - INFO - [task-208a9bc9-2804e35e] Task 208a9bc9-5966-4148-b1fc-6e5101a7f881 completed successfully in 23.8s
+2026-08-16 20:29:00,436 - opi.core.task_worker - INFO - [task-41f20ca9-5743c92a] Executing task 41f20ca9-0900-40eb-af82-f3ee54685b5b (type=add_component, project=e2e47-kyj, flow=task-41f20ca9-5743c92a)
+2026-08-16 20:29:00,463 - opi.services.project_store - DEBUG - [task-41f20ca9-5743c92a] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:29:01,993 - opi.services.project_store - INFO - [task-41f20ca9-5743c92a] store-push ['projects/e2e47-kyj.yaml']: push took 1.26s
+2026-08-16 20:29:02,008 - opi.services.project_store - INFO - [task-41f20ca9-5743c92a] store-persist projects/e2e47-kyj.yaml: committed bc6a7347 in 1.44s (actor=operations-manager) -- Add component 'uitgerold1' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:29:02,068 - opi.services.project_store - INFO - [task-41f20ca9-5743c92a] store-lock save 'e2e47-kyj': held 1.61s (waited 0.00s)
+2026-08-16 20:29:04,011 - opi.connectors.git - DEBUG - [task-41f20ca9-5743c92a] Cloning repository to /data/git-repo-mnenzvu5
+2026-08-16 20:29:04,104 - opi.connectors.git - INFO - [task-41f20ca9-5743c92a] Cloning repo 'main-repo' as shallow (--depth 1)
+2026-08-16 20:29:09,075 - opi.services.project_store - DEBUG - [task-41f20ca9-5743c92a] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:29:09,322 - opi.services.project_store - INFO - [task-41f20ca9-5743c92a] store-persist projects/e2e47-kyj.yaml: no change in 0.13s (actor=operations-manager) -- Process project e2e47-kyj
+2026-08-16 20:29:09,383 - opi.services.project_store - INFO - [task-41f20ca9-5743c92a] store-lock save 'e2e47-kyj': held 0.31s (waited 0.00s)
+2026-08-16 20:29:09,425 - opi.connectors.git - DEBUG - [task-41f20ca9-5743c92a] Cloning repository to /data/git-repo-ycfklz89
+2026-08-16 20:29:09,459 - opi.connectors.git - INFO - [task-41f20ca9-5743c92a] Cloning repo 'argo' as shallow (--depth 1)
+2026-08-16 20:29:10,154 - opi.core.persistent_task_progress - INFO - [task-41f20ca9-5743c92a] Task 41f20ca9-0900-40eb-af82-f3ee54685b5b: Added task: Wachten tot ArgoCD gesynchroniseerd is (f4ffc656-d0ab-42cd-a250-061b7e0bcf94)
+2026-08-16 20:29:11,433 - opi.manager.argo_manager - INFO - [task-41f20ca9-5743c92a] Waiting for ArgoCD application 'e2e47-kyj-productie' to be synced and healthy (timeout: 300s, poll: 2s, refreshed_after=2026-08-16T18:29:10Z)
+2026-08-16 20:30:38,144 - opi.manager.argo_manager - INFO - [task-41f20ca9-5743c92a] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:30:38,144 - opi.manager.project_manager - INFO - [task-41f20ca9-5743c92a] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:30:38,145 - opi.manager.project_manager - INFO - [task-41f20ca9-5743c92a] All ArgoCD applications are synced and healthy
+2026-08-16 20:30:38,373 - opi.core.task_worker - INFO - [task-41f20ca9-5743c92a] Task 41f20ca9-0900-40eb-af82-f3ee54685b5b completed successfully in 97.9s
+2026-08-16 20:30:43,185 - opi.core.task_worker - INFO - [task-a94d670e-2ea8afbc] Executing task a94d670e-3ccb-4fd6-9663-90fafc60e678 (type=add_component, project=e2e47-kyj, flow=task-a94d670e-2ea8afbc)
+2026-08-16 20:30:43,248 - opi.services.project_store - DEBUG - [task-a94d670e-2ea8afbc] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:30:44,954 - opi.services.project_store - INFO - [task-a94d670e-2ea8afbc] store-push ['projects/e2e47-kyj.yaml']: push took 1.41s
+2026-08-16 20:30:44,970 - opi.services.project_store - INFO - [task-a94d670e-2ea8afbc] store-persist projects/e2e47-kyj.yaml: committed f8c2eb0a in 1.61s (actor=operations-manager) -- Add component 'uitgerold2' to project 'e2e47-kyj' (deployments: productie)
+2026-08-16 20:30:45,035 - opi.services.project_store - INFO - [task-a94d670e-2ea8afbc] store-lock save 'e2e47-kyj': held 1.79s (waited 0.00s)
+2026-08-16 20:30:47,089 - opi.connectors.git - DEBUG - [task-a94d670e-2ea8afbc] Cloning repository to /data/git-repo-u7ysszg5
+2026-08-16 20:30:47,183 - opi.connectors.git - INFO - [task-a94d670e-2ea8afbc] Cloning repo 'main-repo' as shallow (--depth 1)
+2026-08-16 20:30:53,176 - opi.services.project_store - DEBUG - [task-a94d670e-2ea8afbc] store-lock save 'e2e47-kyj': waited 0.00s for the lock
+2026-08-16 20:30:53,440 - opi.services.project_store - INFO - [task-a94d670e-2ea8afbc] store-persist projects/e2e47-kyj.yaml: no change in 0.14s (actor=operations-manager) -- Process project e2e47-kyj
+2026-08-16 20:30:53,506 - opi.services.project_store - INFO - [task-a94d670e-2ea8afbc] store-lock save 'e2e47-kyj': held 0.33s (waited 0.00s)
+2026-08-16 20:30:53,550 - opi.connectors.git - DEBUG - [task-a94d670e-2ea8afbc] Cloning repository to /data/git-repo-hdkzhu28
+2026-08-16 20:30:53,585 - opi.connectors.git - INFO - [task-a94d670e-2ea8afbc] Cloning repo 'argo' as shallow (--depth 1)
+2026-08-16 20:30:54,557 - opi.core.persistent_task_progress - INFO - [task-a94d670e-2ea8afbc] Task a94d670e-3ccb-4fd6-9663-90fafc60e678: Added task: Wachten tot ArgoCD gesynchroniseerd is (7d162b8e-a7a4-49f4-8542-6a9e4a29d427)
+2026-08-16 20:30:56,756 - opi.manager.argo_manager - INFO - [task-a94d670e-2ea8afbc] Waiting for ArgoCD application 'e2e47-kyj-productie' to be synced and healthy (timeout: 300s, poll: 2s, refreshed_after=2026-08-16T18:30:54Z)
+2026-08-16 20:32:09,295 - opi.manager.argo_manager - INFO - [task-a94d670e-2ea8afbc] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:32:09,295 - opi.manager.project_manager - INFO - [task-a94d670e-2ea8afbc] Application 'e2e47-kyj-productie' is synced and healthy
+2026-08-16 20:32:09,295 - opi.manager.project_manager - INFO - [task-a94d670e-2ea8afbc] All ArgoCD applications are synced and healthy
+2026-08-16 20:32:09,341 - opi.core.task_worker - INFO - [task-a94d670e-2ea8afbc] Task a94d670e-3ccb-4fd6-9663-90fafc60e678 completed successfully in 86.2s
+2026-08-16 20:32:11,999 - opi.connectors.git - DEBUG - [req-ddb20ec3] Cloning repository to /data/git-repo-m894pbu6
+2026-08-16 20:32:12,033 - opi.connectors.git - INFO - [req-ddb20ec3] Cloning repo 'argo' as shallow (--depth 1)
+2026-08-16 20:32:40,138 - opi.connectors.git - DEBUG - [req-ddb20ec3] Cloning repository to /data/git-repo-tnaqqks2
+2026-08-16 20:32:40,235 - opi.connectors.git - INFO - [req-ddb20ec3] Cloning repo 'main-repo' as shallow (--depth 1)
+2026-08-16 20:32:43,238 - opi.services.project_store - INFO - [req-ddb20ec3] store-push ['projects/e2e47-kyj.yaml']: push took 1.27s
+2026-08-16 20:32:43,253 - opi.services.project_store - INFO - [req-ddb20ec3] store-persist projects/e2e47-kyj.yaml: committed 3a032dc3 in 1.43s (actor=operations-manager) -- Delete deployment 'productie' from project e2e47-kyj
+2026-08-16 20:32:47,072 - opi.services.project_store - INFO - [req-ddb20ec3] store-push ['projects/e2e47-kyj.yaml']: push took 1.24s
