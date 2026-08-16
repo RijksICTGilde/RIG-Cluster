@@ -8,6 +8,12 @@ dat verslag terug te voeren is op een run en niet op een herinnering aan een run
 | `sandbox-cf3b2346.json` | De uitvoer van `tests/e2e/test_sandbox_veel_acties.py` op commit `cf3b2346`: per actie de client-tijd, plus de samenvatting. |
 | `opi-log-uittreksel-cf3b2346.txt` | De regels uit de OPI-log naast diezelfde run waar de opsplitsing per stap uit komt: `store-persist`, `store-push`, `store-lock`, de klonen, de ArgoCD-wachttijd en de totale taakduur. |
 
+Let op bij de kloonregels: het filter hield per kloon de twee regels over die het *begin*
+omsluiten (het aanmaken van de map en de keuze voor `--depth 1`), niet de afrondende
+`Repository cloned successfully`. Het verschil tussen die twee regels is dus niet de
+kloonduur; het verslag houdt het daarom bij de orde van grootte (~0,1s) die uit de
+taakduur zelf volgt.
+
 Het uittreksel is gefilterd, niet bewerkt: de tijdstempels zijn die van het cluster. Er
 staan geen geheimen in - de git-URL's met wachtwoord staan op DEBUG-niveau in andere
 regels en zijn niet meegenomen.

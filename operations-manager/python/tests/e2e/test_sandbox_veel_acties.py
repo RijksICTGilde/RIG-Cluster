@@ -28,7 +28,10 @@ Run with:
 
     E2E_BASE_URL=https://zad.sandbox.rijksapp.dev \
     E2E_SECRET_KEY=<the cluster's SECRET_KEY> \
-    uv run pytest tests/e2e/test_sandbox_veel_acties.py -m "e2e and sandbox" -v --timeout=3600
+    uv run pytest tests/e2e/test_sandbox_veel_acties.py -m "e2e and sandbox" -v
+
+The per-test timeout is on the test itself, so a suite-wide ``--timeout`` (the
+sandbox task passes 300s) does not cut this measurement short.
 """
 
 from __future__ import annotations
@@ -159,6 +162,9 @@ def meting_project(
             sandbox_api.delete_project_via_api(sandbox_url, created.name, created.api_key, verify_ssl=_VERIFY_SSL)
 
 
+# Thirteen API actions plus one refresh, each with its own cluster wait: the observed
+# run took 366s. Generous headroom, because this runs on the shared Kind sandbox.
+@pytest.mark.timeout(900)
 def test_veel_acties_op_een_project(
     meting_project: CreatedProject,
     sandbox_url: str,

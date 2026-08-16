@@ -46,6 +46,35 @@ die wachttijd — dat is het cluster dat containers moet starten, niet iets van 
 Binnen die 1,6s is de push wél het meeste: `store-persist` 1,42s, waarvan `store-push`
 1,26s. Maar dat is 1,26 seconde in een handeling van anderhalve minuut.
 
+### En als je de uitrol overslaat?
+
+Dan blijft alleen het schrijfpad over, en verandert het antwoord van vorm. Dit is de
+opsplitsing van de tien acties met `rollout=false` uit dezelfde run (n=10, uit de log):
+
+| Per actie zonder uitrol | Gemiddeld | Aandeel van de actie |
+|---|---|---|
+| Taak totaal (server) | 1,63s | 100% |
+| `store-persist` (lezen, valideren, committen, pushen) | 1,44s | 88% |
+| waarvan `store-push` | **1,28s** | **78%** |
+| wachten op het slot van de store | 0,00s | 0% |
+| klonen van `zad-deployments` / `zad-argo-user-applications` | 0 stuks | — |
+
+**Bij een uitrollende actie is de push 1,6%; zodra de uitrol eraf is, is de push 78% van
+wat er overblijft.** Beide zijn waar, en het verschil bepaalt in welke volgorde je iets
+doet:
+
+* Tien uitgestelde acties zijn 16,3s serverwerk, waarvan 12,8s puur pushen. Tien pushes
+  samenvoegen tot één zou daar hooguit ~11,5s van halen. Reëel, maar het is elf seconden
+  naast de ~668 seconden die `rollout=false` zelf al wegneemt.
+* Aan de clientkant is die winst vandaag niet eens zichtbaar: dezelfde tien acties kostten
+  daar 39,5s, en het verschil met de 16,3s serverwerk is de pollinterval van 3s waarmee de
+  client de taak opvraagt. Korter pollen levert hier meer op dan minder pushen.
+* De contentie ontbreekt nog steeds: 0,00s wachttijd op het slot in alle tien. Er is geen
+  samenloop om weg te debouncen, ook niet in deze snellere modus.
+
+Met andere woorden: pushes samenvoegen is pas een zinnig gesprek nádat `rollout=false` in
+gebruik is, en dan nog als tweede orde achter de pollinterval.
+
 ## Vraag 2: zet elke actie een eigen werkboom op?
 
 Deels — en het is goedkoop.
@@ -56,8 +85,8 @@ Deels — en het is goedkoop.
 * **`zad-deployments` en `zad-argo-user-applications`**: ja, elke uitrollende actie
   kloont beide opnieuw (`ProjectManager.close()` ruimt ze weer op).
 
-Maar die klonen zijn `--depth 1` en staan in het cluster: gemeten **123ms en 56ms**. Samen
-0,2% van de actie. Het vermoeden dat elke actie een werkboom opzet klopt dus, maar de
+Maar die klonen zijn `--depth 1` en staan in het cluster: samen in de orde van **~0,1s**,
+zo'n 0,2% van de actie. Het vermoeden dat elke actie een werkboom opzet klopt dus, maar de
 kostenpost die erachter werd vermoed is er niet.
 
 Wat de manifestfase van 8s wél vult is het renderen van de manifesten, per component.
@@ -125,9 +154,10 @@ Hetzelfde werk, op hetzelfde project, op hetzelfde cluster:
 | 10× `add_component` (standaard, `rollout=true`) | 735s (geprojecteerd uit n=3) | ~693s |
 | 10× `add_component?rollout=false` + 1× `:refresh` | **67,4s** | ~41,3s |
 
-Elf keer sneller. De uitgestelde acties kostten 3,05s elk aan de clientkant tegenover
-1,6s serverwerk; het verschil is de pollinterval van 3s waarmee de client de taak
-opvraagt, niet werk. Wie sneller polt, ziet die 1,6s.
+Elf keer sneller. Zeven van de tien uitgestelde acties kostten 3,05s aan de clientkant, de
+andere drie 6,06-6,08s (één poll extra), tegenover 1,6s serverwerk; het verschil is de
+pollinterval van 3s waarmee de client de taak opvraagt, niet werk. Wie sneller polt, ziet
+die 1,6s.
 
 De `:refresh` verwerkte alle tien wijzigingen in één taak van 25,3s, met twee klonen in
 plaats van twintig.
@@ -183,6 +213,9 @@ is idempotent: hem opnieuw aanroepen verwerkt gewoon wat er in het bestand staat
    die schaalt met het aantal componenten. Warme werkkopieën voor `zad-deployments` en
    `zad-argo-user-applications`, zoals de `ProjectStore` er al één heeft, besparen daar
    hoogstens de 0,2s kloontijd — de rest is het renderen zelf.
+   Draait een client eenmaal volledig op `rollout=false`, dan is de volgorde daarbinnen:
+   eerst de pollinterval van 3s (die kost daar meer dan het werk zelf), pas daarna het
+   samenvoegen van pushes (~11,5s op tien acties). Zie "En als je de uitrol overslaat?".
 4. **Verandert er iets aan het gedrag voor een client?** Alleen dit: wie `rollout=false`
    meegeeft krijgt een taak die klaar is als het bestand in git staat, met
    `processing.status = "skipped"` en een `pending_rollout`-teller die zegt hoeveel er
@@ -203,7 +236,7 @@ E2E_BASE_URL=https://zad.sandbox.rijksapp.dev \
 E2E_SECRET_KEY=<de SECRET_KEY van het cluster> \
 FORGEJO_URL=https://forgejo.sandbox.rijksapp.dev \
 FORGEJO_USER=rig-admin FORGEJO_PASSWORD=admin1234 FORGEJO_VERIFY_SSL=false \
-uv run pytest tests/e2e/test_sandbox_veel_acties.py -m "e2e and sandbox" -o addopts="" --timeout=3600
+uv run pytest tests/e2e/test_sandbox_veel_acties.py -m "e2e and sandbox" -o addopts=""
 ```
 
 De opsplitsing per stap komt uit de OPI-log naast die run:
