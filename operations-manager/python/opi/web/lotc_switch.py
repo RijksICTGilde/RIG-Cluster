@@ -109,6 +109,61 @@ def build_lotc_services(
     }
 
 
+def build_lotc_introductie(user: dict[str, Any] | None) -> dict[str, Any]:
+    """De introductiepagina: de diensten die ZAD levert, RECHTSTREEKS uit de catalogus.
+
+    Deze pagina is het eerste dat iemand van ZAD ziet, en dus precies het soort pagina dat
+    zichzelf volschrijft met beloftes. De enige verdediging daartegen is de lijst niet
+    OVERTYPEN: hij komt uit ``SERVICE_DEFINITIONS``, dezelfde bron waar de wizard en het
+    dienstenoverzicht uit putten. Een dienst die erbij komt staat er vanzelf op, een die
+    verdwijnt is meteen weg, en er kan geen dienst op staan die niet bestaat.
+
+    De catalogus wordt in TWEE lijsten gesplitst, want dat is precies het verschil dat de
+    pagina vertelt:
+
+    - ``diensten_zelf`` - wat je bij je project kunt AANZETTEN.
+    - ``diensten_achtergrond`` - de systeemdiensten (``kind=SYSTEM``): die draaien altijd
+      en zijn niet kiesbaar. Dit is de harde onderbouwing van "het platform kijkt met je
+      mee": resource-tuning hoogt geheugen op na een OOM, deployment-health beoordeelt wat
+      de waargenomen toestand van een deployment betekent.
+
+    Diensten met ``hidden=True`` blijven eraf. Anders dan op het dienstenoverzicht - dat
+    toont ze bewust, want ze leveren omgevingsvariabelen die je moet kunnen opzoeken - valt
+    hier niets op te zoeken: het zijn varianten die OPI zelf toekent, en op een pagina die
+    uitlegt wat je kunt kiezen is een dienst die je niet kunt kiezen ruis.
+
+    De omschrijving wordt LETTERLIJK overgenomen. Hem hier mooier maken zou betekenen dat
+    de pagina iets anders belooft dan de dienst zelf zegt, en dat is precies de fout die
+    deze functie moet voorkomen.
+    """
+    from opi.services.registry import SERVICE_DEFINITIONS
+    from opi.services.services_enums import ServiceKind
+    from opi.web.navigation_lotc import get_navigation, to_nldd_icon
+
+    zelf: list[dict[str, str]] = []
+    achtergrond: list[dict[str, str]] = []
+    for service_type, definition in SERVICE_DEFINITIONS.items():
+        if definition.hidden:
+            continue
+        kaart = {
+            "name": service_type.value,
+            "label": definition.name,
+            "summary": definition.description,
+            "icon": to_nldd_icon(definition.icon),
+            "color": definition.color,
+        }
+        if definition.kind is ServiceKind.SYSTEM:
+            achtergrond.append(kaart)
+        else:
+            zelf.append(kaart)
+
+    return {
+        "navigation": get_navigation(user, current_path="/introductie"),
+        "diensten_zelf": zelf,
+        "diensten_achtergrond": achtergrond,
+    }
+
+
 def build_lotc_dashboard(*, user: dict[str, Any] | None, **_ongebruikt: Any) -> dict[str, Any]:
     """Wat het dashboard extra nodig heeft: alleen de navigatie.
 

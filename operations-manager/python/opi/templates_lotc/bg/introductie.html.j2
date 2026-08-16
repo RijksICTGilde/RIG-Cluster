@@ -1,0 +1,180 @@
+{#
+  De introductiepagina: wat ZAD is, voor wie hier voor het eerst komt.
+
+  DE PLEK VAN DEZE PAGINA
+
+  Dit is het eerste dat iemand van ZAD ziet. ``/`` stuurt een bezoeker ZONDER sessie
+  hierheen; met sessie ga je naar het dashboard. De pagina zelf vraagt geen rechten, want
+  hij is er juist voor wie ze nog niet heeft.
+
+  Hij vult het gat dat viel toen de architectuurpagina wegging. Wat daarvan is OVERGENOMEN
+  is de afbeelding in de kop en de puzzelgedachte ("Pieces of the Puzzle"), omdat de
+  eigenaar die zelf ook gebruikt: de architectuurpuzzel is al opgelost, de stukjes liggen
+  op hun plek. De rest niet. Die pagina was 1999 regels Engels, met rvo-klassen waar in
+  deze schil geen regel bij hoort (base.css komt niet mee), inline stijlen, en een
+  mermaid-script van een CDN. Dat is niet "een lange pagina" maar een pagina uit een ander
+  systeem; er valt niets aan te knippen.
+
+  DE HARDE REGEL HIER: ALLEEN WAT WAAR IS
+
+  Zo'n pagina schrijft zichzelf vol met beloftes, en een belofte die niet klopt is erger
+  dan geen pagina. Daarom staat de DIENSTENLIJST hier niet als tekst maar komt hij uit de
+  catalogus (``build_lotc_introductie`` in opi/web/lotc_switch.py, dat
+  ``SERVICE_DEFINITIONS`` uitleest). Naam, omschrijving en icoon zijn die van de dienst
+  zelf, letterlijk. Een dienst die erbij komt staat er vanzelf op; een die verdwijnt is
+  meteen weg. Overtypen zou betekenen dat deze pagina stil veroudert, en dat merkt
+  niemand, want niemand die hier komt weet wat er zou moeten staan.
+
+  ``tests/test_introductiepagina.py`` sluit dat af: het aantal kaarten en elk label moeten
+  gelijk zijn aan wat de catalogus levert.
+
+  WAT ER BEWUST NIET STAAT
+
+  - De promotievideo (static/promo.mp4) van de oude pagina. Het bestand staat er nog, maar
+    niemand kan zeggen welke versie van het platform erin te zien is, en een verouderde
+    video is precies dezelfde fout als een verouderde dienstenlijst.
+  - Links naar /cli en /actions. Die twee pagina's dragen wel ``@requires_sso``, dus vanaf
+    hier zouden ze op het inlogscherm uitkomen. De verwijzingen gaan daarom naar de
+    repositories, en dat is bovendien waar de actuele documentatie staat - dezelfde
+    afweging die bg/cli.html.j2 zelf maakt.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Introductie - Zelfservice Applicatie Deployment{% endblock %}
+
+{% block content %}
+
+    <c-hero
+        size="lg"
+        title="Jij bouwt de applicatie. Wij de rest."
+        subtitle="Zelfservice Applicatie Deployment (ZAD)"
+        image="{{ static_url('cloud.jpg') }}"
+        image-alt="Wolken boven een landschap">
+        <c-paragraph size="lg">
+            Van een eenvoudige statische website tot een applicatie met een database,
+            objectopslag en authenticatie. Je zet neer wat je nodig hebt, en het platform
+            richt het in, houdt het draaiend en laat je zien hoe het ervoor staat.
+        </c-paragraph>
+    </c-hero>
+
+    {% call panel("Wat ZAD is", "info") %}
+        <c-paragraph>
+            ZAD is een deploymentplatform voor RIG-projecten binnen ODC-Noord. Het is
+            zelfservice: je beschrijft je project, en je krijgt er een draaiende omgeving
+            voor terug. Er zit geen aanvraagtraject tussen en je hoeft niemand te vragen
+            of er een database voor je aangemaakt kan worden.
+        </c-paragraph>
+        <c-paragraph>
+            De opzet is dat je in alle scenario's terechtkunt. Een statische site is een
+            component met een webadres eromheen. Een zwaardere integratie is datzelfde
+            component plus een database, een cache, opslag en een inlogvoorziening. Het
+            verschil tussen die twee is welke diensten je aanzet, niet welk platform je
+            nodig hebt.
+        </c-paragraph>
+
+        <c-cluster gap="lg" align="center">
+            <c-metric icon="cylinder-split" value="{{ diensten_zelf | length }}" label="Diensten om te kiezen" />
+            <c-metric icon="gear" value="{{ diensten_achtergrond | length }}" label="Draaien altijd mee" />
+        </c-cluster>
+    {% endcall %}
+
+    {% call panel("De puzzel is al gelegd", "puzzle-piece") %}
+        <c-paragraph>
+            De losse stukken zijn er meestal wel: ergens is een cluster, ergens een
+            registry, ergens een database. Wat ontbreekt is dat ze in elkaar passen. Dat
+            gat vullen kost per project opnieuw dezelfde puzzel: netwerk, secrets,
+            certificaten, rechten, back-ups, monitoring.
+        </c-paragraph>
+        <c-paragraph>
+            Die puzzel is hier al gelegd. Elk stukje ligt op zijn plaats, en wat jij
+            toevoegt is je applicatie. Zeg je dat je een database wilt, dan wordt die
+            aangemaakt, staat het wachtwoord versleuteld klaar en staan de gegevens als
+            omgevingsvariabelen in je component - zonder dat je ze ergens overtypt.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("Diensten die je zelf aanzet", "rectangle-stack",
+                  info_text="Dit is de volledige lijst zoals het platform hem kent. Elke dienst brengt zijn eigen omgevingsvariabelen mee, die je component automatisch krijgt.") %}
+        <c-columns columns="1" lg="2" gap="md">
+            {% for dienst in diensten_zelf %}
+                <c-catalog-card
+                    icon="{{ dienst.icon | nldd_icon }}"
+                    title="{{ dienst.label }}"
+                    subtitle="{{ dienst.name }}">
+                    <c-paragraph size="sm">{{ dienst.summary }}</c-paragraph>
+                </c-catalog-card>
+            {% endfor %}
+        </c-columns>
+    {% endcall %}
+
+    {% call panel("Wat er op de achtergrond gebeurt", "eye",
+                  info_text="Deze diensten kies je niet: ze draaien altijd, voor elk project.") %}
+        <c-paragraph>
+            Een platform dat alleen uitrolt en daarna wegkijkt, laat het echte werk alsnog
+            bij jou liggen. Deze diensten kijken mee zodra je applicatie draait.
+        </c-paragraph>
+
+        <c-columns columns="1" lg="2" gap="md">
+            {% for dienst in diensten_achtergrond %}
+                <c-catalog-card
+                    icon="{{ dienst.icon | nldd_icon }}"
+                    title="{{ dienst.label }}"
+                    subtitle="{{ dienst.name }}">
+                    <c-paragraph size="sm">{{ dienst.summary }}</c-paragraph>
+                </c-catalog-card>
+            {% endfor %}
+        </c-columns>
+
+        <c-paragraph>
+            Daarbovenop draait er 's nachts een ronde over de hele vloot die het geheugen
+            en de CPU van elk component bijstelt op wat het echt gebruikt, en maakt het
+            platform back-ups van schijven, databases en buckets naar opslag buiten het
+            cluster - versleuteld met een sleutel per project, en in te plannen per
+            deployment.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("En op de voorgrond: zien wat er gebeurt", "chart-x-y-axis-line") %}
+        <c-paragraph>
+            Alles wat het platform weet over je project staat op een plek bij elkaar. Je
+            ziet per deployment de toestand, het geheugen- en CPU-gebruik over de tijd, de
+            logs van je pods, de lopende taken en de gemaakte back-ups. Wat misgaat wordt
+            in gewone taal gemeld, niet als een statuscode die je zelf moet opzoeken.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("Ook zonder deze interface", "terminal") %}
+        <c-paragraph>
+            Wat je hier aanklikt, kun je ook geautomatiseerd doen. Beide gaan langs
+            dezelfde API als deze interface.
+        </c-paragraph>
+
+        <c-columns columns="1" md="2" gap="md">
+            <c-shortcut
+                icon="terminal"
+                title="zadctl"
+                desc="De opdrachtregel: projecten opvragen en aanmaken, images bijwerken, deployments verversen."
+                cta="Naar zad-cli"
+                href="https://github.com/RijksICTGilde/zad-cli" />
+            <c-shortcut
+                icon="chevron-left-forward-slash-chevron-right"
+                title="ZAD Actions"
+                desc="GitHub Actions die je image bijwerken vanuit je eigen pijplijn, en PR-omgevingen weer opruimen."
+                cta="Naar zad-actions"
+                href="https://github.com/RijksICTGilde/zad-actions" />
+        </c-columns>
+    {% endcall %}
+
+    {% call panel("Aan de slag", "arrow-right") %}
+        <c-paragraph>
+            Inloggen gaat met je organisatieaccount. Heb je nog geen toegang tot een
+            project, dan kan iemand uit dat project je een uitnodiging sturen.
+        </c-paragraph>
+        <c-action-group align="start">
+            <c-button type="primary" label="Inloggen" icon="chevron-right" show-icon="after" href="/auth/login" />
+            <c-button type="secondary" label="Over het platform" href="/about" />
+        </c-action-group>
+    {% endcall %}
+
+{% endblock %}
