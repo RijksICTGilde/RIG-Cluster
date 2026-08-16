@@ -104,6 +104,21 @@ Gemeten in `tests/test_refresh_merge_window.py`, dat ook vastlegt dat een tweede
 tijdens een lopende dezelfde taak teruggeeft (ontdubbeling op identiek lichaam) en dat
 er in die lopende taak niets opnieuw wordt gelezen.
 
+## Wat het oplevert
+
+Gemeten bij RC-117 op een sandboxcluster, tien keer `add_component` op hetzelfde project:
+
+| | Tijd |
+|---|---|
+| tien keer met uitrol (de standaard) | ~735s |
+| tien keer `rollout=false` plus een `:refresh` | **67s** |
+
+Elf keer sneller, en het is te verklaren: van een uitrollende actie gaat 90% naar het
+wachten op ArgoCD en 8% naar het genereren van de manifesten. Het committen en pushen
+van het projectbestand - het deel dat je per handeling betaalt en dat blijft staan - is
+1,6%. Daarom is dit de vlag om te gebruiken bij een reeks handelingen, en niet iets aan
+git. De hele meting staat in `docs/rc117-veel-acties-meting.md`.
+
 ## Voor ontwikkelaars
 
 De vlag reist mee in de taak-payload (`payload["rollout"]`) en wordt op één plek gelezen:
