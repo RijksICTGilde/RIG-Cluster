@@ -92,6 +92,37 @@
 
 
 {#
+  Goedkeuringen die een deployment nog NIET heeft, zoals de eigenaardienst ze meldt
+  (``collect_deployment_approval_notices``, hetzelfde blok dat de API als ``approvals``
+  teruggeeft). De tekst komt van de dienst, want alleen die weet wat het gevolg is; hier
+  staat alleen hoe het eruitziet.
+
+  Dit is een macro en geen stuk sjabloon omdat het op twee plekken hoort te staan: bij de
+  deployment, en bij de PUBLIEKE LINKS. Een niet-goedgekeurd domein verandert namelijk het
+  adres dat je te zien krijgt -- de deployment publiceert dan op het clusteradres -- en dat
+  is precies waar iemand naar kijkt als hij zich afvraagt waarom zijn eigen domein er niet
+  staat. Zonder deze regel is er geen enkel spoor van de aanvraag naast de link.
+
+  ``denied`` krijgt de rode vorm en de rest de gele: op een afgewezen aanvraag ga je niet
+  zitten wachten, op een lopende wel.
+#}
+{% macro approval_alerts(notices) %}
+{% for notice in notices %}
+    <c-alert type="{{ 'error' if notice.status == 'denied' else 'warning' }}" heading="{{ notice.text }}">
+        <c-stack gap="xs">
+            {% if notice.by %}
+                <c-paragraph size="sm">Besluit door {{ notice.by }}{% if notice.date %} op {{ notice.date | dutch_date(include_time=False) }}{% endif %}.</c-paragraph>
+            {% endif %}
+            {% if notice.message %}
+                <c-paragraph size="sm">Toelichting: {{ notice.message }}</c-paragraph>
+            {% endif %}
+        </c-stack>
+    </c-alert>
+{% endfor %}
+{% endmacro %}
+
+
+{#
   Een kaart voor een dienst, in de vorm die bg.rijks.app gebruikt op het artefactregister.
 
   DE OPBOUW, en waarom die vaststaat
