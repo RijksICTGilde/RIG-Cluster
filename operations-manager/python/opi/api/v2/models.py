@@ -435,6 +435,19 @@ class ClusterInfo(BaseModel):
 
     name: str = Field(description="Naam van het cluster, zoals in deployments[].cluster.", examples=["odcn-production"])
     manager: bool = Field(description="Of deze OPI-instantie dit cluster beheert.", examples=[True])
+    default_domain: str = Field(
+        default="",
+        alias="default-domain",
+        description=(
+            "Het eigen domein van dit cluster. Dit is het ENIGE domein dat zonder goedkeuring "
+            "in gebruik gaat: een deployment met base-domain leeg of met precies deze waarde "
+            "krijgt meteen het adres dat hij vraagt. Elke andere waarde in base-domain -- ook "
+            "een domein dat gewoon in 'base-domains' staat -- levert een goedkeuringsaanvraag "
+            "op, en tot iemand die toekent draait de deployment op dit domein. De twee gevallen "
+            "zien er in 'base-domains' identiek uit, dus dit veld is waarop je ze uit elkaar houdt."
+        ),
+        examples=["apps.odcn-production.nl"],
+    )
     base_domains: list[ClusterDomainOption] = Field(
         default_factory=list,
         alias="base-domains",
