@@ -13,7 +13,13 @@ groen, en alleen de browsertests zagen het. Deze doorloop herstelt dat vertrouwe
 
 ## Oordeel
 
-**Deze tak kan naar main.**
+**Deze tak kan NIET naar main.**
+
+Niet vanwege de vier fouten die hieronder staan -- die zijn gerepareerd, elk met een test die
+omvalt als je de fix terugdraait. Wel vanwege een vijfde die open staat en die de eigenaar
+binnen minuten zelf tegenkwam: de domeinwizard geeft een permanent vals conflict. En omdat de
+metingen die het oordeel moeten dragen niet af zijn: de sandboxsuite is afgebroken op 36/68,
+`-m reallife` en `-m punt14` zijn niet gedraaid, en taak 2 kwam tot 1 van de 47 projecten.
 
 Alle geautomatiseerde suites zijn groen, en elk van de tien punten uit taak 3 is apart
 aangetoond in plaats van aangenomen — de goedkeuringsdialoog inclusief goedkeuren én afwijzen
@@ -32,6 +38,50 @@ Twee voorbehouden, allebei uitgeschreven:
 
 ---
 
+## De openstaande bevinding: een vals conflict in de domeinwizard
+
+**Blokkerend, en niet opgelost.**
+
+Bij het opslaan in de meerstaps domeinwizard: *"Project 'X' is gewijzigd sinds je begon met
+bewerken, en die wijziging raakt hetzelfde onderdeel als dat van jou."* Opnieuw openen helpt
+niet.
+
+| meting | uitkomst |
+|---|---|
+| domeinwizard, project ZONDER versleuteld veld | slaat gewoon op |
+| hetzelfde project, na EEN `user-env-vars` | conflict, elke keer |
+| gewone projectgegevens-bewerking op dat versleutelde project | slaat gewoon op |
+| bestand 45s stil, HEAD voor en na identiek | conflict toch |
+
+Uitgesloten met metingen: er is geen concurrent schrijver; `read_version(version_of(pad))` en
+`_read_committed()` geven in rust hetzelfde; de transient-strip werkt aantoonbaar (alle drie de
+paden gezien en verwijderd); `base-domain:custom` staat in geen enkele commit; en een unittest
+die twee saves uit een ProjectManager naspeelt geeft ook op de ongefixte code geen conflict.
+
+Wat een tijdelijke diagnoseregel in `_reconcile_with_concurrent_write` wel opleverde:
+
+```
+base->current: type_changes root: dict -> ruamel.yaml.comments.CommentedMap
+base->ours   : type_changes root['deployments'][0]: CommentedMap -> dict
+  old_value bevat 'base-domain:custom'
+```
+
+De node diff't als TYPEWISSEL, dus als vervanging-in-zijn-geheel, en zo'n delta kan de
+driewegmerge niet toepassen. Daarnaast draagt `base` een transient veld dat git nooit heeft
+gezien.
+
+**Waar dit opgelost moet worden: in de `ProjectStore`.** Die is de enige waarheid; de
+ProjectManager leest alleen. Onderweg is een ciphertext-uitlijning in die laag geprobeerd,
+gecommit en uitgerold -- en weer teruggedraaid, omdat het model de waarneming van de eigenaar
+tegensprak dat dit op productie niet optreedt. Zonder reproducerende test hoort daar niet in
+gesneden te worden.
+
+Mogelijk verschil met productie: `sandboxed-local` draagt
+`supports_custom_domain_certificates: False`, `odcn-production` `True`. De keten waarschuwing
+-> certificaatstap bestaat op productie dus niet.
+
+---
+
 ## Taak 1 — de geautomatiseerde suites
 
 | suite | uitslag | duur |
@@ -39,8 +89,12 @@ Twee voorbehouden, allebei uitgeschreven:
 | `uv run pytest tests/ -q` | **9007 passed, 7 skipped, 0 failed** | 7m27s |
 | `uv run pytest -m e2e -q` (1e) | **436 passed, 67 skipped, 1 xpassed, 0 failed** | 11m56s |
 | `uv run pytest -m e2e -q` (2e) | **436 passed, 67 skipped, 1 xpassed, 0 failed** | 12m06s |
-| `uv run pytest -m sandbox -q` | (zie hieronder) | |
-| `uv run pytest -m reallife -q` + `-m punt14` | (zie hieronder) | |
+| `uv run pytest -m sandbox -q` | **afgebroken op 36/68**, 1 rood (zie hieronder) | |
+| `uv run pytest -m reallife -q` + `-m punt14` | **niet gedraaid** | |
+
+De sandboxsuite is door mij afgebroken op een verkeerde lezing van een instructie, niet door
+een fout in de suite. De ene rode die hij tot dat punt gaf is bevinding 3 hieronder, en die is
+gerepareerd; de suite moet vers over op een image met die fix erin.
 
 De unitsuite is gedraaid met de eigen standaardaanroep, zonder eigen `-m`.
 
@@ -51,6 +105,28 @@ exact dezelfde aantallen en dezelfde ene `xpassed`. Geen wisselvalligheid gevond
 **Over de "bekende rode".** Het plan meldt vier rode in `tests/test_taken_voortgang_link.py`
 als onafgemaakt werk van een andere sessie. Dat bestand staat niet op deze tak; het wordt niet
 gecollect en er is dus ook geen rood om te melden. De 9007 groene tests zijn de hele suite.
+
+---
+
+## Taak 2 — de voorbeeldprojecten
+
+De set staat in `rig-cluster-projects-sandbox` (47 bestanden), niet in deze repo. Statisch
+nagelopen: alle 47 lezen schoon, alle 47 dragen `clusters: [sandboxed-local]` en een `api-key`,
+samen 90 componenten en **137 deployments** over 11 diensten. Schema-versies: 42x `2.2` en 5x
+`2` -- geen enkele op de huidige `2.7`, dus de uitrol is meteen een upgrade-veiligheidsmeting.
+
+De keten is bewezen op een van de 47 (`cot-zaq`, schema 2.2): bestand geplaatst,
+`:reconcile`, `:refresh`, ArgoCD Synced+Healthy, pod Running, URL 200 -- in 9 tot 58 seconden.
+Daarna is de doorloop gestrand op 1 van de 47 doordat het cluster nodig was voor het
+conflictonderzoek.
+
+Opruimen tussen de projecten is geen keuze maar een grens: de node heeft een pod-cap van 110
+en 137 deployments passen daar nooit tegelijk in.
+
+Een waarneming voor wie dit afmaakt: `algor-1ha` werd Healthy met een kloppende repo, maar de
+drie URL's gaven 404. Dat is geen platformfout -- dit zijn echte productieprojecten met echte
+images, en die serveren lang niet allemaal iets op `/`. Rapporteer dus ArgoCD-status en
+HTTP-code apart, en tel een 404 niet als mislukking van de keten.
 
 ---
 
