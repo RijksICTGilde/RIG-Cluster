@@ -189,6 +189,18 @@ def page_data(slug: str) -> dict[str, Any]:
             }
         }
 
+    if slug == "introductie":
+        # GEEN voorbeelddiensten. De introductiepagina toont de ECHTE catalogus, en dat is
+        # precies wat er aan die pagina te beoordelen valt: een verzonnen lijst zou de
+        # proefopstelling laten kloppen terwijl de pagina scheef staat. De catalogus heeft
+        # bovendien geen cluster nodig - hij komt uit de code.
+        # Zonder de ``navigation`` die daar ook uit komt: _context() in lotc_router zet die
+        # zelf, met de voorbeeldgebruiker, en ``**extra`` zou hem daar overheen schrijven.
+        from opi.web.lotc_switch import build_lotc_introductie
+
+        catalogus = build_lotc_introductie(None)
+        return {sleutel: waarde for sleutel, waarde in catalogus.items() if sleutel != "navigation"}
+
     if slug == "dashboard":
         return {
             "tiles": [
