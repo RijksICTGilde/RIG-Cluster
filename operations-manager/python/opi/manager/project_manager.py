@@ -163,6 +163,7 @@ from opi.utils.project_utils import (
     validate_component_paths,
     validate_root_component,
 )
+from opi.utils.secret_hash import SECRET_HASH_ANNOTATION, component_secret_hash
 from opi.utils.secrets import (
     BaseSecret,
     DatabaseSecret,
@@ -5734,6 +5735,18 @@ class ProjectManager:
             # Generate timestamp for pod annotation to force restart when secrets change
             generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+            # A hash of the secret CONTENT this component reads, so replacing a value
+            # changes the pod spec and the pod actually rolls. Both secrets involved have
+            # a fixed name, so without this nothing in the spec moves and the container
+            # keeps the values it started with -- and a subPath-mounted attachment is
+            # never refreshed by Kubernetes at all. Scoped to this component: a project
+            # has many attachments and many components, and only the ones that read this
+            # content have a reason to restart. Platform secrets are deliberately not in
+            # here; they are built further down, after this manifest is rendered.
+            secret_hash = component_secret_hash(
+                UserSecret.get_secret_name(unique_name), user_env_vars, attachment_file_secrets
+            )
+
             variables = {
                 "name": unique_name,
                 "deployment_name": deployment_name,
@@ -5768,6 +5781,10 @@ class ProjectManager:
                 "imagePullSecretsMap": image_pull_secrets_map,  # Map of image URLs to registry secret names
                 # Timestamp to force pod restart when secrets are regenerated
                 "generated_at": generated_at,
+                # Content hash of the user secret and the file-mode attachment secrets,
+                # rendered as a pod-template annotation (empty -> no annotation).
+                "secret_hash": secret_hash,
+                "secret_hash_key": SECRET_HASH_ANNOTATION,
                 # CA certificate configuration for SSL/TLS
                 "ca_config": get_ca_certificate_config(cluster),
                 # Prometheus metrics configuration. Base is None; the metrics-scraper
