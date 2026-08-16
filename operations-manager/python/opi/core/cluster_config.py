@@ -199,13 +199,20 @@ CLUSTER_CONFIG = {
             "support_http": False,
         },
         # Geen LimitRange of ResourceQuota op dit cluster, dus dit zijn onze eigen grenzen.
+        # Ruimer dan de andere clusters: de node heeft 32 cores en 122 GiB allocatable.
+        # Deze waarden begrenzen zowel wat een project mag vragen als het plafond van de
+        # resource-tuner (resource_analyzer kapt aanbevelingen hierop af), en die tuner
+        # draait hier echt omdat supports_vpa aanstaat.
+        # Bewust niet tot aan de nodegrootte: het is een enkele node, dus een component
+        # dat alles opeist verhongert de rest inclusief OPI zelf. Met deze maxima passen
+        # er nog ruim tien zware componenten naast elkaar.
         "min_memory_limit_mi": 25,
-        "max_memory_limit_mi": 4096,
-        "max_memory_request_mi": 1024,
+        "max_memory_limit_mi": 16384,
+        "max_memory_request_mi": 8192,
         "uses_capsule": False,
         "min_cpu_m": 25,
-        "max_cpu_request_m": 250,
-        "max_cpu_limit_m": 4000,
+        "max_cpu_request_m": 2000,
+        "max_cpu_limit_m": 8000,
         # VPA draait hier wel en levert aanbevelingen, anders dan op de andere niet-ODCN clusters.
         "supports_vpa": True,
         # Geen SCC en geen Pod Security Admission: niemand wijst een UID toe, dus wij pinnen er een.
