@@ -21,6 +21,16 @@ Dat werd opgeslagen. Twee gaten tegelijk, en ze zaten aan weerskanten:
   string en stond er in ``/openapi.json`` geen enum, dus kon een client niet lezen dat
   ``onzin`` ongeldig is zonder het te proberen.
 
+Wat zo'n waarde oplevert, gemeten: ``get_deployment_hostnames`` valt er niet over, maar zet
+het domein zonder scheidingsteken achter de naam en levert ``app-prod-demokind`` op. Dus geen
+crash die opvalt, maar een adres dat nergens heen gaat -- precies het soort fout dat pas in
+productie zichtbaar wordt.
+
+Een bestaand bestand met zo'n waarde raakt hierdoor niet op slot: lezen verandert niet, de
+melding valt in het formulier op het veld zelf en noemt de geldige waarden, en na één keuze
+uit de select gaat de opslag gewoon door. Op de 48 productieprojecten staat trouwens geen
+enkele ongeldige waarde.
+
 Waarom niet ``values_must_exist``: zie ``TestWaaromGeenValuesMustExist``. Gemeten, niet
 aangenomen, en het antwoord was het tegenovergestelde van het vermoeden.
 """
