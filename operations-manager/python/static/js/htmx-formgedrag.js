@@ -124,6 +124,35 @@
         cursor = null;
     });
 
+    /* 4. EEN THEMACOMPONENT MET width= HOUDT ZIJN BREEDTE NA EEN SWAP.
+     *
+     * Gemeten op /projects, met exact dezelfde markup voor en na:
+     *
+     *     eerste keer laden : huls 416px, inline stijl "--_width: 26rem;"
+     *     na de htmx-swap   : huls 321px, inline stijl WEG, width="26rem" nog aanwezig
+     *
+     * De nldd-componenten zijn Lit-elementen die hun width-ATTRIBUUT in `updated()`
+     * vertalen naar de CSS-variabele --_width. Na een swap blijft het attribuut staan maar
+     * gebeurt die vertaling niet opnieuw, en dan valt het element terug op de breedte van
+     * zijn inhoud. Zichtbaar als: het zoekveld wordt smaller zodra je zoekt of sorteert.
+     *
+     * Wat hier gebeurt is NIET de variabele van het component van buitenaf zetten - die
+     * begint met een underscore, dat is zijn eigen keuken, en zoiets is precies het soort
+     * CSS-omweg dat we niet willen. Het element wordt gevraagd zijn eigen afleiding
+     * opnieuw te doen, via requestUpdate(), de publieke Lit-API daarvoor. Zonder tweede
+     * argument ziet Lit geen wijziging, dus de oude waarde gaat expliciet mee.
+     *
+     * Dit hoort in het component thuis en is als zodanig gemeld; zie
+     * request_for_components.md. Zolang dat niet rond is, staat het hier. */
+    document.addEventListener("htmx:afterSettle", function (e) {
+        var gebied = e && e.target && e.target.querySelectorAll ? e.target : document;
+        gebied.querySelectorAll("[width]").forEach(function (el) {
+            if (el.tagName.lastIndexOf("NLDD-", 0) !== 0) return;
+            if (typeof el.requestUpdate !== "function") return;
+            el.requestUpdate("width", undefined);
+        });
+    });
+
     document.addEventListener("htmx:beforeRequest", function (e) {
         var f = formulierVan(e.target);
         if (f) f.classList.add("is-bezig");
