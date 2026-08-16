@@ -119,6 +119,12 @@ def _render_modal_step(
         "step_target": "#edit-section-inner",
         "step_push_url": False,
         "step_query_params": "",
+        # Deze dialoog draagt zijn eigen titel ("Domeingoedkeuring - <project>", gezet door
+        # openApprovalModal in bg/admin-approvals.html.j2), en die zegt hetzelfde als de
+        # kop van de sectie plus de projectnaam. Met allebei stonden er twee koppen boven
+        # elkaar. De flow heeft hier maar EEN stap, dus de sectiekop vertelt ook niet waar
+        # je bent. Alleen hier uit; de bewerkdialogen van een project houden hem.
+        "show_section_head": False,
         # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-sjablonen hebben de
         # NLDD-woordenschat nodig.
         "nldd_icon": to_nldd_icon,
