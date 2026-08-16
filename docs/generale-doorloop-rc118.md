@@ -21,20 +21,15 @@ binnen minuten zelf tegenkwam: de domeinwizard geeft een permanent vals conflict
 metingen die het oordeel moeten dragen niet af zijn: de sandboxsuite is afgebroken op 36/68,
 `-m reallife` en `-m punt14` zijn niet gedraaid, en taak 2 kwam tot 1 van de 47 projecten.
 
-Alle geautomatiseerde suites zijn groen, en elk van de tien punten uit taak 3 is apart
-aangetoond in plaats van aangenomen — de goedkeuringsdialoog inclusief goedkeuren én afwijzen
-door de hele keten heen, tot aan de ingress die van adres wisselt. Er zijn twee dingen kapot
-gevonden die niet in het plan stonden; allebei gerepareerd, en allebei staan ze hieronder met
-zoveel woorden.
+Wat er WEL staat: de unitsuite en beide browsersuites zijn groen, en elk van de tien punten
+uit taak 3 is apart aangetoond in plaats van aangenomen — de goedkeuringsdialoog inclusief
+goedkeuren én afwijzen door de hele keten heen, tot aan de ingress die van adres wisselt. Vier
+fouten die niet in het plan stonden zijn gevonden en gerepareerd; ze staan hieronder met zoveel
+woorden, elk met een test die omvalt als je de fix terugdraait.
 
-Twee voorbehouden, allebei uitgeschreven:
-
-1. De vier "bekende rode" die het plan noemt bestaan niet op deze tak. `tests/test_taken_voortgang_link.py`
-   staat er niet en wordt niet gecollect. Er is dus niets gemeld als bekend rood — de unitsuite
-   is werkelijk helemaal groen.
-2. Taak 2 is gemeten met opruimen tussen de projecten door. Dat is geen keuze maar een grens:
-   de 47 bestanden dragen samen 137 deployments en de sandbox is één node met een pod-cap van
-   110. Ze passen er nooit tegelijk in.
+Een noot bij het plan: de vier "bekende rode" die het noemt bestaan niet op deze tak.
+`tests/test_taken_voortgang_link.py` staat er niet en wordt niet gecollect. Er is dus niets
+gemeld als bekend rood — de 9007 groene tests zijn de hele unitsuite.
 
 ---
 
