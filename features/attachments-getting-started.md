@@ -57,6 +57,38 @@ curl -X PUT -H "X-API-Key: <key>" \
 
 `PUT` eist dat de bijlage bestaat en weigert een id die er niet is (404) -- een vervanging van iets wat er niet is, is een vergissing en geen aanmaak. Wil je "aanmaken of overschrijven, wat er ook staat", gebruik dan `?upsert=true`.
 
+## De pod krijgt de nieuwe inhoud ook echt
+
+Een vervangen bijlage moest tot RC-119 wachten tot er toevallig iets anders met je project
+gebeurde: de wijziging werd opgeslagen in git en verder gebeurde er niets. En zelfs als er
+wel een manifest werd gegenereerd, bleef een draaiende pod het oude bestand houden: een
+bijlage wordt met een `subPath` gemount en zo'n bestand werkt Kubernetes principieel nooit
+bij. Hetzelfde gold voor je eigen env-vars, die via een secret met een vaste naam
+binnenkomen.
+
+Twee dingen lossen dat samen op, en je merkt er verder niets van:
+
+* de pod-template draagt een **hash van de inhoud** van de geheimen die dit component
+  leest (je bijlagen en je env-vars). Verandert de inhoud, dan verandert de pod-spec en
+  start de pod opnieuw met het nieuwe bestand. Verandert er niets, dan verandert de hash
+  niet en herstart er niets. In de annotatie staat alleen de hash, nooit de inhoud;
+* de API-routes voor bijlagen **rollen zelf uit**. Ze antwoorden daarom `202` met een
+  `task_id` in plaats van `200`/`201`, en er zit een `Location`-header bij waarmee je de
+  uitrol kunt volgen. Een weigering (409, 422, 404) krijg je nog steeds meteen.
+
+Wil je meerdere wijzigingen verzamelen en in één keer uitrollen, stuur dan `?rollout=false`
+mee — dezelfde betekenis als bij de andere endpoints. Je rolt daarna uit met
+`POST /api/v2/projects/{project}/:refresh`.
+
+```bash
+curl -X PUT -H "X-API-Key: <key>" \
+  -F file=@nieuw-certificaat.pem \
+  'https://<host>/api/v2/projects/<project>/services/attachments/attachment/server-cert?rollout=false'
+```
+
+Alleen de componenten die deze bijlage of deze env-vars gebruiken herstarten. Een project
+met vijf componenten waarvan er één het certificaat leest, herstart die ene.
+
 ## Een bijlage verwijderen
 
 Klik in de sectie **Bijlagen** op **Verwijderen**. Wordt de bijlage nog gebruikt door een component of als webcertificaat, dan kan dat niet en zie je waar 'ie in gebruik is. Verwijder eerst die koppeling(en).
@@ -69,6 +101,9 @@ Verwijderen kan ook rechtstreeks, op dezelfde plek waar je 'm bijwerkt:
 curl -X DELETE -H 'X-API-Key: <key>' \
   https://<host>/api/v2/projects/<project>/services/attachments/attachment/<id>
 ```
+
+Ook hier is het antwoord een `202` met een `task_id`: de bijlage is uit het projectbestand
+weg zodra je die krijgt, en de taak haalt het secret en de mount van het cluster.
 
 Wordt de bijlage nergens gebruikt, dan is 'ie meteen weg. Wordt 'ie wél gebruikt, dan krijg je een **409** met daarin `used_by`: per plek de componentnaam, de deployment (als de koppeling daar zit) en of het om een koppeling of om een certificaat gaat. Zo weet je wat je op het spel zet voordat je doorzet.
 
