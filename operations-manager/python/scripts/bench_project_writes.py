@@ -36,11 +36,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from opi.connectors.git import GitConnector  # noqa: E402
-from opi.services.project_service import get_project_service  # noqa: E402
-from opi.services.project_store import GitProjectStore  # noqa: E402
-from opi.utils.yaml_util import dump_yaml_to_string  # noqa: E402
-from scripts.bench_support import PhaseTimer, format_table  # noqa: E402
+from opi.connectors.git import GitConnector
+from opi.services.project_service import get_project_service
+from opi.services.project_store import GitProjectStore
+from opi.utils.yaml_util import dump_yaml_to_string
+from scripts.bench_support import PhaseTimer, format_table
 
 # Some containers export an empty GIT_AUTHOR_NAME, which takes precedence over git
 # config and makes `git commit` fail with "empty ident name". Pin a full identity so
@@ -55,12 +55,18 @@ _GIT_ENV = {
 
 PROJECT_NAME = "bench"
 
+# Resolved once, from PATH, so every call below runs an absolute executable rather than
+# leaving the lookup to the shell environment of whoever starts the benchmark.
+GIT = shutil.which("git") or "/usr/bin/git"
+
+
+def _run_git(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run one git command. Every argument is a literal built in this file."""
+    return subprocess.run([GIT, *args], check=True, capture_output=True, text=True, env=_GIT_ENV)  # noqa: S603
+
 
 def _git(repo: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=_GIT_ENV
-    )
-    return result.stdout.strip()
+    return _run_git("-C", str(repo), *args).stdout.strip()
 
 
 def project_data(name: str, components: int = 0, marker: int = 0) -> dict[str, Any]:
@@ -117,9 +123,7 @@ def seed_remote(root: Path, *, projects: int, history: int) -> Path:
         _git(seed, "commit", "-qm", f"history {i}")
 
     bare = root / "remote.git"
-    subprocess.run(
-        ["git", "clone", "--bare", "-q", str(seed), str(bare)], check=True, capture_output=True, env=_GIT_ENV
-    )
+    _run_git("clone", "--bare", "-q", str(seed), str(bare))
     return bare
 
 
@@ -130,16 +134,18 @@ class TimingConnector:
     the code that runs in production, not a copy of it with timers in it.
     """
 
-    _TIMED = {
-        "count_unpushed_commits",
-        "build_commit",
-        "set_branch_ref",
-        "push_changes",
-        "sync_worktree_to_head",
-        "get_local_commit_hash",
-        "get_previous_file_content",
-        "show_file_at",
-    }
+    _TIMED = frozenset(
+        {
+            "count_unpushed_commits",
+            "build_commit",
+            "set_branch_ref",
+            "push_changes",
+            "sync_worktree_to_head",
+            "get_local_commit_hash",
+            "get_previous_file_content",
+            "show_file_at",
+        }
+    )
 
     def __init__(self, inner: GitConnector, timer: PhaseTimer) -> None:
         self._inner = inner
@@ -172,12 +178,7 @@ async def run(actions: int, projects: int, history: int) -> int:
         # (--filter=blob:none, full history) and the connector is pointed at the result.
         # Everything after this point -- commit, push, log, show -- is the real code path.
         with timer.measure("clone (once per process)"):
-            subprocess.run(
-                ["git", "clone", "-q", "--filter=blob:none", "-b", "main", str(bare), working_dir],
-                check=True,
-                capture_output=True,
-                env=_GIT_ENV,
-            )
+            _run_git("clone", "-q", "--filter=blob:none", "-b", "main", str(bare), working_dir)
         connector = GitConnector(
             repo_url="https://example.invalid/zad-projects.git",
             working_dir=working_dir,
