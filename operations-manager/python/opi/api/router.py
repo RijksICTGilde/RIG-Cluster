@@ -1848,8 +1848,11 @@ async def add_service(
     project level.  If ``components`` is provided, the service is appended to those
     components' ``services`` lists; entries already there keep their config.
 
-    The request always succeeds - if the service already exists it is
-    reported in ``services_skipped`` / ``warnings``.
+    The request always succeeds - if the service already exists at project level it is
+    reported in ``services_skipped`` / ``warnings``, and the components in ``components``
+    are still bound to it. ``components_updated`` lists only the components whose
+    ``services`` list actually changed, so a component that already had the service is
+    absent from it.
 
     Headers:
         X-API-Key: The API key for the project (required)
@@ -1931,9 +1934,10 @@ async def add_service(
         )
 
         if result["success"]:
-            # Process deployments only when new services were actually added
+            # Process deployments when anything changed: a service selected at project
+            # level, or an already-selected one bound to a component.
             processing_status = "skipped"
-            if result.get("services_added"):
+            if result.get("services_added") or result.get("components_updated"):
                 processing_success = await project_manager.process_project_from_git(
                     f"projects/{project_name}.yaml",
                 )
