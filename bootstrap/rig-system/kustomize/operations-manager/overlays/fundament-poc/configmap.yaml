@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: operations-manager-config
+  namespace: rig-system
+data:
+  .env: |
+    CLUSTER_MANAGER=fundament-poc
+
+    # Git-backend: de gedeelde GitHub, zoals odcn. De sandbox draait een eigen Forgejo in
+    # het cluster; dat is de andere opzet en die staat hier bewust niet.
+    #
+    # De drie wachtwoorden hieronder zijn nog niet ingevuld. Zet ze met
+    # `task encrypt-value-age-base64` (die versleutelt met de sleutel van het
+    # geselecteerde cluster) en plak de base64+age:-waarde erin. Bewust een eigen token
+    # voor dit cluster en niet die van odcn: dit is een PoC, en dan raakt een
+    # compromittering hier de productierepo's niet.
+    ENABLE_GIT_MONITOR=false
+    GIT_PROJECTS_SERVER_URL=https://github.com/RijksICTGilde/rig-cluster-projects.git
+    GIT_PROJECTS_SERVER_USERNAME=git
+    GIT_PROJECTS_SERVER_PASSWORD=TODO-encrypt-with-task-encrypt-value-age-base64
+    GIT_PROJECTS_SERVER_REPO_PATH=/
+    GIT_PROJECTS_SERVER_FILE_PATH=projects/simple-example.yaml
+    GIT_PROJECTS_SERVER_BRANCH=main
+    GIT_PROJECTS_SERVER_POLL_INTERVAL=120
+
+    GIT_ARGO_APPLICATIONS_URL=https://github.com/RijksICTGilde/argo-applications.git
+    GIT_ARGO_APPLICATIONS_USERNAME=git
+    GIT_ARGO_APPLICATIONS_PASSWORD=TODO-encrypt-with-task-encrypt-value-age-base64
+    GIT_ARGO_APPLICATIONS_BRANCH=main
+
+    PROJECT_REPO_URL=https://github.com/RijksICTGilde/zad-deployments.git
+    PROJECT_REPO_USERNAME=git
+    PROJECT_REPO_PASSWORD=TODO-encrypt-with-task-encrypt-value-age-base64
+    PROJECT_REPO_BRANCH=main
+
+    # Platformdiensten in dit cluster. Namen volgen cluster_config; wijzig ze daar.
+    DATABASE_HOST=rig-db-rw
+    MINIO_HOST=minio:9000
+    ARGOCD_HOST=argocd-server
+    ARGOCD_MANAGER=rig-system
+
+    KEYCLOAK_URL=https://keycloak.fundament-poc.rijksapp.dev
+    OIDC_DISCOVERY_URL=https://keycloak.fundament-poc.rijksapp.dev/realms/rig-platform/.well-known/openid-configuration
+
+    OWN_DOMAIN=zad.fundament-poc.rijksapp.dev
+
+    # Geen registry-mirror: egress staat open naar 0.0.0.0/0 op 443, dus ghcr.io en
+    # docker.io zijn direct bereikbaar. Zie extensions: [] in cluster_config.
+
+    PROMETHEUS_EXTERNAL_URL=https://prometheus.fundament-poc.rijksapp.dev
+
+    LOG_TO_FILE=false
+
+    # Sleep-mode gebruikt de gepubliceerde waker, zelfde tag als productie.
+    SLEEP_MODE_SCHEDULER_ENABLED=true
+    SLEEP_MODE_WAKER_IMAGE=ghcr.io/minbzk/base-images/zad-waker:latest
