@@ -370,3 +370,23 @@ op twee plaatsen, om dezelfde reden als `pending_rollout`:
 De lijst is leeg wanneer alles wat de deployment vraagt is goedgekeurd. Een afgewezen
 aanvraag komt terug met `status: "denied"` plus de `by`, `date` en `message` van het
 oordeel, zodat "je wacht nog" en "je krijgt het niet" niet op hetzelfde uitkomen.
+
+### De poort geldt voor elke vorm, niet alleen voor een domain-format
+
+`apply_domain_approval_fallback` stond tot augustus 2026 BINNEN de tak van `get_component_ingress_map` die alleen gelopen wordt wanneer een deployment een `domain-format` noemt. Een deployment zonder dat veld -- een bestand van voor `domain-format` op `domain-mode: nice-url`, of een schrijfactie die alleen `base-domain` en `subdomain` zet -- viel in de oude dispatch daaronder en zette het gevraagde domein zonder enige controle in de hostnaam. Die deployments kregen dus een echte ingress op een domein dat niemand had goedgekeurd. De poort draait nu voor de vormkeuze; een goedgekeurd domein gaat ongewijzigd door.
+
+Twee adressen die de poort ZELF samenstellen kwamen er langs, en zijn apart gesloten: de root-ingress van nice-url (`subdomain.base-domain`, inclusief certificaataanvraag) en dezelfde hostnaam in de lijst die naar de Keycloak-redirects gaat.
+
+### Het getoonde adres is het bediende adres
+
+`get_component_ingress_map` levert zowel de hostnaam van de ingress als het adres dat de portal (`publish_on_web/urls.py`) en de API (`urls` op de deployment-endpoints) tonen. Er is dus EEN antwoord op "waar draait dit"; een tweede afleiding ernaast is precies hoe de portal een adres kon tonen dat niets bediende.
+
+In de portal staat de melding uit `approvals` naast de publieke links, op het tabblad Componenten en op Deployments (`approval_alerts` in `bg/_patterns.html.j2`). De tekst komt van de dienst, dus UI en API zeggen hetzelfde, met hetzelfde onderscheid tussen `none`, `requested` en `denied`.
+
+### Nog open: adressen die buiten deze afleiding om worden samengesteld
+
+Deze drie stellen een deploymentbrede hostnaam zelf samen uit `subdomain` + `base-domain`, zonder de goedkeuringspoort en zonder `domain-format`:
+
+- `ProjectManager._get_deployment_alias_context` (`project_manager.py`) vult `PUBLIC_HOST`, `PUBLIC_HOSTNAME`, `HOSTNAME` en `BASE_DOMAIN` voor de aliassen, dus een applicatie krijgt het niet-goedgekeurde adres als omgevingsvariabele terwijl haar ingress op het clusteradres staat;
+- `BootstrapManager` bouwt `public_host` voor de bootstrapacties op dezelfde manier;
+- `KeycloakManager` voegt voor helm- en helmfile-deployments een `subdomain.base-domain`-hostnaam aan de redirect-URI's toe.

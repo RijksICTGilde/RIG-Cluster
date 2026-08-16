@@ -33,6 +33,7 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.subdomain import (
     ensure_domain_requests,
     get_supported_base_domains,
+    is_deployment_domain_approved,
     validate_bare_domain_allowed,
 )
 from opi.core.cluster_config import (
@@ -6063,6 +6064,11 @@ class ProjectManager:
                     # Create root ingress for nice-url mode if this is the root component.
                     # When domain-format is set, skip root ingress if the template does not
                     # include {component} (all components already share the same hostname).
+                    # The root ingress composes ``subdomain.base-domain`` itself instead of
+                    # asking get_component_ingress_map, so the approval fallback that moves
+                    # the components to the cluster address does not reach it. Without this
+                    # check an unapproved domain still got an apex-style ingress plus a
+                    # certificate request for a domain nobody granted this project.
                     is_root_component = component_name == root_component_name
                     template_has_component = (
                         "{component}" in DOMAIN_FORMAT_TEMPLATES.get(domain_format, "") if domain_format else True
@@ -6073,6 +6079,7 @@ class ProjectManager:
                         and base_domain
                         and is_root_component
                         and template_has_component
+                        and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
                     ):
                         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
                         root_ingress_name = f"{deployment_name}-root"
