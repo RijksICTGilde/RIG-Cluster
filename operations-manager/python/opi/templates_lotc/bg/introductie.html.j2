@@ -1,0 +1,85 @@
+{#
+  De introductiepagina: wat ZAD is, voor wie hier voor het eerst komt.
+
+  DE PLEK VAN DEZE PAGINA
+
+  Dit is het eerste dat iemand van ZAD ziet. ``/`` stuurt een bezoeker ZONDER sessie
+  hierheen; met sessie ga je naar het dashboard. De pagina zelf vraagt geen rechten, want
+  hij is er juist voor wie ze nog niet heeft.
+
+  Hij vult het gat dat viel toen de architectuurpagina wegging. Wat daarvan is OVERGENOMEN
+  is de afbeelding in de kop en de puzzelgedachte ("Pieces of the Puzzle"), omdat de
+  eigenaar die zelf ook gebruikt: de architectuurpuzzel is al opgelost, de stukjes liggen
+  op hun plek. De rest niet. Die pagina was 1999 regels Engels, met rvo-klassen waar in
+  deze schil geen regel bij hoort (base.css komt niet mee), tientallen inline stijlen, en
+  een mermaid-script van een CDN. Dat is niet "een lange pagina" maar een pagina uit een
+  ander systeem; er valt niets aan te knippen.
+
+  DE HARDE REGEL HIER: ALLEEN WAT WAAR IS
+
+  Zo'n pagina schrijft zichzelf vol met beloftes, en een belofte die niet klopt is erger
+  dan geen pagina. Daarom staat de DIENSTENLIJST hier niet als tekst maar komt hij uit de
+  catalogus (``build_lotc_introductie`` in opi/web/lotc_switch.py, dat
+  ``SERVICE_DEFINITIONS`` uitleest). Naam, omschrijving en icoon zijn die van de dienst
+  zelf, letterlijk. Een dienst die erbij komt staat er vanzelf op; een die verdwijnt is
+  meteen weg. Overtypen zou betekenen dat deze pagina stil veroudert, en dat merkt
+  niemand: wie hier komt weet niet wat er zou moeten staan.
+
+  ``tests/test_introductiepagina.py`` sluit dat af - elk label en elke omschrijving moet
+  gelijk zijn aan wat de catalogus levert - en bewaakt dat de route publiek blijft.
+
+  WAT ER BEWUST NIET STAAT
+
+  - De promotievideo (static/promo.mp4) van de oude pagina. Het bestand staat er nog, maar
+    niemand kan zeggen welke versie van het platform erin te zien is, en een verouderde
+    video is precies dezelfde fout als een verouderde dienstenlijst.
+  - Een opsomming van wat er op het scherm staat zodra je binnen bent. Wie hier is heeft
+    die schermen nog niet gezien, en zo'n lijst is het eerste dat achterloopt.
+
+  DE INDELING STAAT HIER, DE TEKST NIET
+
+  Hieronder zie je waar de pagina uit bestaat: de titels en de iconen. Wat er in elk paneel
+  komt staat in bg/_introductie-blokken.html.j2. Zo is de volgorde van de pagina in een
+  oogopslag te lezen en te verschuiven, zonder door de alinea's heen te scrollen.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel %}
+{% from "bg/_introductie-blokken.html.j2" import
+    kop, wat_het_is, de_puzzel, dienstenraster, op_de_achtergrond,
+    op_de_voorgrond, gereedschap, aan_de_slag %}
+
+{% block page_title %}Introductie - Zelfservice Applicatie Deployment{% endblock %}
+
+{% block content %}
+    {{ kop() }}
+
+    {% call panel("Wat ZAD is", "info") %}
+        {{ wat_het_is(diensten_zelf | length, diensten_achtergrond | length) }}
+    {% endcall %}
+
+    {% call panel("De puzzel is al gelegd", "puzzle-piece") %}
+        {{ de_puzzel() }}
+    {% endcall %}
+
+    {% call panel("Diensten die je zelf aanzet", "rectangle-stack",
+                  info_text="Dit is de volledige lijst zoals het platform hem kent. Elke dienst brengt zijn eigen omgevingsvariabelen mee, die je component automatisch krijgt.") %}
+        {{ dienstenraster(diensten_zelf) }}
+    {% endcall %}
+
+    {% call panel("Wat er op de achtergrond gebeurt", "eye",
+                  info_text="Deze diensten kies je niet: ze draaien altijd, voor elk project.") %}
+        {{ op_de_achtergrond(diensten_achtergrond) }}
+    {% endcall %}
+
+    {% call panel("En op de voorgrond: zien wat er gebeurt", "chart-x-y-axis-line") %}
+        {{ op_de_voorgrond() }}
+    {% endcall %}
+
+    {% call panel("Ook zonder deze interface", "terminal") %}
+        {{ gereedschap() }}
+    {% endcall %}
+
+    {% call panel("Aan de slag", "arrow-right") %}
+        {{ aan_de_slag() }}
+    {% endcall %}
+{% endblock %}
