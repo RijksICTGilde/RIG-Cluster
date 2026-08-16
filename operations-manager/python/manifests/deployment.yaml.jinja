@@ -31,12 +31,24 @@ spec:
 {% endfor %}
   template:
     metadata:
-{% if metrics_config %}
+{% if metrics_config or secret_hash %}
       annotations:
+{% if secret_hash %}
+        # Content hash of the secrets this component reads: its user env-vars
+        # ({prefix}-user, via envFrom) and its file-mode attachments (mounted with a
+        # subPath). Those secret names never change, so without this annotation a
+        # replaced value leaves the pod spec byte-identical: Kubernetes rolls nothing
+        # and the container keeps what it was started with. A subPath mount is a
+        # one-time copy and is never refreshed at all. The hash puts the content in
+        # the spec without putting the content in the repository.
+        {{ secret_hash_key }}: "{{ secret_hash }}"
+{% endif %}
+{% if metrics_config %}
         # Prometheus scraping annotations (metrics-scraper service enabled)
         prometheus.io/scrape: "true"
         prometheus.io/port: "{{ metrics_config.port if metrics_config.port else application_port }}"
         prometheus.io/path: "{{ metrics_config.path if metrics_config.path else '/metrics' }}"
+{% endif %}
 {% endif %}
       labels:
         app: "{{ name }}"
