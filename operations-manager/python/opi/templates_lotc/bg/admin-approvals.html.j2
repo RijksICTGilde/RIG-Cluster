@@ -50,7 +50,14 @@
 
     {% if projects_data %}
         {% for project in projects_data %}
-            {% set beheren %}<c-button type="primary" size="sm" label="Beheren" icon="pencil-on-square" show-icon="before" @click="openApprovalModal('{{ project.project_name }}')" />{% endset %}
+            {# De projectnaam gaat via een data-attribuut naar de knop, en de klikafhandeling
+               leest hem daar uit. NIET via Jinja BINNEN de @click-waarde: die waarde wordt
+               letterlijk in het onclick-attribuut gezet zonder ooit langs Jinja te komen, dus
+               daar bleef `{{ project.project_name }}` als tekst staan - en dan haalde de
+               dialoog /admin/approvals/%7B%7B%20project.project_name%20%7D%7D/... op. Gewone
+               attributen (label, data-*) worden WEL gerenderd; alleen de @-afhandelaars niet.
+               Bewaakt door tests/test_lotc_klikattributen.py. #}
+            {% set beheren %}<c-button type="primary" size="sm" label="Beheren" icon="pencil-on-square" show-icon="before" data-project="{{ project.project_name }}" @click="openApprovalModal(this.dataset.project)" />{% endset %}
             {% call panel(project.project_name, "rectangle-stack", aside=beheren) %}
 {# c-table-head IS de kopregel; daar hoort geen c-table-row in. En zonder
                    columns stapelen de cellen, want NLDD maakt er een CSS-grid van. #}
@@ -80,14 +87,24 @@
                                     label="{{ status_labels.get(item.current_status, item.current_status) }}" />
                             </c-td>
                             <c-td>
+                                {# GEEN <c-stack> hieromheen. Een cel is zelf al een kolom-flexbox, dus
+                                   de twee regels stapelen vanzelf - en met een stack ertussen viel deze
+                                   kolom in FIREFOX om: <nldd-cell> legt zijn kinderen neer met
+                                   `align-items: flex-start`, en Firefox rekent de intrinsieke breedte van
+                                   `div.lotc-stack` (flex) met een `nldd-rich-text` (grid) erin uit als 0.
+                                   De cel bleef 212px, de inhoud kromp tot niets en "16 augustus 2026" viel
+                                   over veertien regels uiteen, een teken per regel. Chromium en WebKit
+                                   toonden dezelfde HTML goed, dus dit is alleen in Firefox te zien.
+                                   Zonder de stack meten alle drie de motoren hetzelfde: 212px, een regel.
+                                   Wat er in LOTC zou moeten veranderen staat als punt 14 in
+                                   request_for_components.md; zolang dat er niet is, is dit de vorm.
+                                   Gemeten door tests/e2e/test_lotc_domeinbeheer.py. #}
                                 {% if item.history %}
                                     {% set last = item.history[-1] %}
-                                    <c-stack gap="xs">
-                                        <c-paragraph size="sm" no-spacing>{{ last.date | dutch_date(include_time=False) }}</c-paragraph>
-                                        {% if last.by %}
-                                            <c-paragraph size="sm" no-spacing>door {{ last.by }}</c-paragraph>
-                                        {% endif %}
-                                    </c-stack>
+                                    <c-paragraph size="sm" no-spacing>{{ last.date | dutch_date(include_time=False) }}</c-paragraph>
+                                    {% if last.by %}
+                                        <c-paragraph size="sm" no-spacing>door {{ last.by }}</c-paragraph>
+                                    {% endif %}
                                 {% else %}
                                     -
                                 {% endif %}

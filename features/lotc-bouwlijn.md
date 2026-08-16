@@ -157,6 +157,9 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | test | bewaakt |
 |---|---|
 | `tests/test_lotc_component_names.py` | dat er nergens nog een `<c-p>` staat; die naam bestaat niet |
+| `tests/test_lotc_klikattributen.py` | dat er geen Jinja in de waarde van een `@`-afhandelaar staat - die waarde wordt niet gerenderd |
+| `tests/test_lotc_stapel_in_tabelcel.py` | dat er geen `<c-stack>` rechtstreeks in een `<c-td>` staat; die krimpt in Firefox tot 0 breed |
+| `tests/e2e/test_lotc_domeinbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, en dat de datumkolom in FIREFOX zijn breedte houdt |
 | `tests/test_lotc_icon_mapping.py` | dat elke iconnaam een icoon OPLEVERT, gemeten tegen de geleverde NLDD-bundel |
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
 | `tests/test_lotc_layout_rules.py` | dat kaarten via `panel()` gebouwd worden en gaps uit de schaal komen |
@@ -221,6 +224,21 @@ soort fout is erger dan geen meting - je leert hem negeren.
 `@click="f()"` werd half gelezen: de attribuutregex zag alleen `click="f()"`, kende dat
 attribuut niet op het component, en liet het vallen. Wat overbleef was een kale `@` in de
 tag. **58 keer, in 35 bestanden** - knoppen die keurig renderen en zwijgen.
+
+**En let op wat er WEL doorkomt.** De waarde van een `@`-afhandelaar wordt letterlijk uit
+de bron overgenomen en in het `onclick`-attribuut gezet; hij komt nooit langs Jinja. Staat
+er `@click="f('{{ naam }}')"`, dan krijgt de browser die accolades ook echt - en dat ziet
+er in het sjabloon volkomen normaal uit, want gewone attributen (`label`, `data-*`) worden
+wel gerenderd. Dat kostte op `/admin/approvals` de hele beoordelingsdialoog: de kop las
+"Domeingoedkeuring - {{ project.project_name }}" en het formulier werd opgehaald bij een
+pad met `%7B%7B` erin. De weg die niet omvalt is een gewoon attribuut plus een
+afhandelaar zonder Jinja erin:
+
+```html
+<c-button data-project="{{ project.project_name }}" @click="openApprovalModal(this.dataset.project)" />
+```
+
+`tests/test_lotc_klikattributen.py` bewaakt dat er nergens meer Jinja in zo'n waarde staat.
 
 De omzetter maakt er nu een echte `onclick` van via LOTC's `:attrs`-spread, met de aanroep
 in een `{% set %}`-blok vlak voor de tag. Dat is meteen het antwoord op "hier hoort een
