@@ -547,6 +547,44 @@ than moving the warning to a field it is not about.
 `tests/test_config_advice.py` covers both directions, including the one that matters most:
 without `restrict-access`, a roleless invite produces no warning at all.
 
+### A value that must exist: `values_must_exist`
+
+`config_advice` asks whether a field is *filled* and warns. Whether the value that IS
+there exists is a different question with a different verdict: a realm role no keycloak
+config defines is not a choice with a downside, it is a typo. Keycloak skips it on
+redemption (`assign_realm_roles_to_user` reports it under `not_found` and moves on), so
+the invited user arrives without the role -- and under `restrict-access`, without access.
+
+That is `Editable.values_must_exist`, set on the field next to its `values_provider`:
+
+```python
+INVITE_REALM_ROLE_ITEM_EDITABLE = Editable(
+    yaml_path=_cp("active[*]", "realm-roles[*]"),
+    values_provider="InviteRealmRoleOptionsProvider",
+    values_must_exist=True,
+    ...
+)
+```
+
+- **The valid set is never restated.** It comes from the field's own provider -- the same
+  one that fills the form's select and the same one `x-choices-source` publishes in the
+  OpenAPI document, so a caller is judged against exactly the list they were told to read.
+  The provider is instantiated **without** `current_value`: with one it deliberately keeps
+  an unknown stored value as an option flagged "(bestaat niet meer)", which is right for a
+  widget and would make every value valid here.
+- **Opt-in, and it stays opt-in.** An options list is usually a MENU rather than a closed
+  set (`sleep-after-deploy` offers 4h..168h and accepts `90m`), so turning this into a
+  default would reject values the API legitimately takes. Set it only where the value is a
+  *reference into this project*, i.e. on a provider that declares an `OptionsSource`.
+- **Enforced at the save chokepoint**, `validate_declared_choices` in
+  `opi/manager/project_validation.py`, as a `ProjectIntegrityError`. Not in the widget: a
+  select can only show what it offers, while the API and hand-written YAML never pass one.
+- **An empty source is skipped**, on purpose. It means the project's values come from
+  somewhere the provider cannot see (the four pre-service invite files name roles of a
+  realm nobody configured through ZAD), and refusing there would block the next edit of a
+  project over a value this release did not introduce. The case that matters is never
+  empty: with `restrict-access` on there is always at least the wall role.
+
 ## API (configuring via REST)
 
 A service that owns a `config_model` is configurable through the REST API for free --
