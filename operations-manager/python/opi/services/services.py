@@ -285,28 +285,6 @@ def _is_blank(value: Any) -> bool:
     return isinstance(value, str | list | dict | tuple) and len(value) == 0
 
 
-def _unfilled_paths(project_data: dict[str, Any], path: str) -> list[str]:
-    """The concrete paths under *path* that hold no value, with ``[*]`` expanded.
-
-    Recursive rather than single-pass because ``resolve_path`` replaces the FIRST
-    wildcard only; a path with two list levels would otherwise be read verbatim and
-    silently match nothing.
-    """
-    from opi.forms.editables.path import resolve_path
-    from opi.forms.editables.service_path import smart_get_value
-
-    if "[*]" not in path:
-        return [path] if _is_blank(smart_get_value(project_data, path)) else []
-
-    items = smart_get_value(project_data, path.split("[*]", 1)[0])
-    if not isinstance(items, list):
-        return []
-    found: list[str] = []
-    for index in range(len(items)):
-        found.extend(_unfilled_paths(project_data, resolve_path(path, index)))
-    return found
-
-
 def collect_config_advice(project_data: dict[str, Any]) -> list[ConfigAdviceNotice]:
     """Every ``ConfigAdvice`` in the catalog whose condition holds and whose field is empty.
 
@@ -318,16 +296,17 @@ def collect_config_advice(project_data: dict[str, Any]) -> list[ConfigAdviceNoti
     A service that is not selected needs no special case: its ``expects`` path resolves
     to nothing, so it yields nothing.
     """
+    from opi.forms.editables.service_path import expand_wildcard_path, smart_get_value
+
     notices: list[ConfigAdviceNotice] = []
     for definition in ServiceAdapter.SERVICE_DEFINITIONS.values():
         for advice in definition.config_advice:
-            from opi.forms.editables.service_path import smart_get_value
-
             if not smart_get_value(project_data, advice.when):
                 continue
             notices.extend(
                 ConfigAdviceNotice(field_path, advice.message)
-                for field_path in _unfilled_paths(project_data, advice.expects)
+                for field_path, value in expand_wildcard_path(project_data, advice.expects)
+                if _is_blank(value)
             )
     return notices
 
