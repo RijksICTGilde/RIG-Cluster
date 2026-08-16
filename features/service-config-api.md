@@ -277,6 +277,12 @@ Wat er gebeurt, op alle drie de werkwoorden:
   instellingen" mag niet "gooi het realm-adminwachtwoord weg" betekenen.
 - **PATCH**: een lijst die het platform bezit krijgt geen route; toevoegen of weghalen is
   een wijziging als elke andere.
+- **Een config die zelf een LIJST is, valt buiten deze regel.** `persistent-storage`,
+  `temp-storage` en `attachments` hebben geen benoemde velden op het hoogste niveau, dus
+  het platform kan er geen van bezitten en er is niets te weigeren. Dat is geen detail
+  van de implementatie: de controle liep hier een tijd op een 500 omdat ze op een lijst
+  naar sleutels greep, en de PUT op die drie diensten was daardoor onbruikbaar terwijl de
+  PATCH ernaast bleef werken.
 
 **De GET laat deze velden weg.** Dat hoort bij de weigering: read-modify-write is de
 normale manier om dit endpoint te gebruiken, dus een client de waarde teruggeven waarvoor
