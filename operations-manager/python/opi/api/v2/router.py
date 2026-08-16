@@ -22,9 +22,12 @@ from opi.api.router import (
     AddServiceRequest,
     CloneBucketFromExternalRequest,
     CloneDatabaseFromExternalRequest,
+    IPRateLimiter,
     UpdateComponentRequest,
     UpdateImageRequest,
     UpsertDeploymentRequest,
+    sanitize_for_log,
+    subdomain_check_rate_limiter,
 )
 from opi.api.task_models import (
     AddComponentResult,
@@ -60,6 +63,7 @@ from opi.api.v2.models import (
     ProjectListItem,
     ProjectListResponse,
     StatusError,
+    SubdomainCheckResponse,
 )
 from opi.api.v2.project_read import (
     REDACTED as REDACTED_VALUE,
@@ -81,6 +85,7 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
+from opi.connectors.subdomain import validate_base_domain, validate_subdomain
 from opi.core.auth_decorators import get_current_user
 from opi.core.cluster_config import get_selectable_clusters, supports_custom_domain_certificates
 from opi.core.config import settings
@@ -116,6 +121,7 @@ from opi.services.config_lists import PatchableList, patchable_lists
 from opi.services.config_singular import overflowing_list, singular_config_model, to_singular, to_stored
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.help_text import service_help_markdown
+from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
 from opi.services.project_authorization import (
@@ -507,6 +513,93 @@ async def list_clusters_v2(
         for cluster in get_selectable_clusters()
     ]
     return JSONResponse(content=ClusterListResponse(project=project_name, clusters=clusters).model_dump(by_alias=True))
+
+
+@v2_router.get(
+    "/projects/{project_name}/subdomains/check/{subdomain}",
+    tags=["deployments"],
+    response_model=SubdomainCheckResponse,
+    responses={
+        200: {"description": "Subdomain availability check result"},
+        429: {"description": "Too many checks; wait before asking again"},
+    },
+)
+@validate_api_token
+async def check_subdomain_availability_v2(
+    request: Request,
+    project_name: ProjectNamePath,
+    subdomain: str,
+    base_domain: str,
+) -> SubdomainCheckResponse:
+    """Of *subdomain* nog vrij is onder *base_domain*, over alle projecten heen.
+
+    De projectnaam staat in het pad omdat de vraag bij een project hoort: je vraagt dit
+    omdat je het subdomein voor een deployment van dit project wilt claimen, en de
+    reservering wordt per project en deployment vastgelegd.
+
+    Hij stond er eerder niet in, en dat maakte het endpoint onbereikbaar:
+    ``validate_api_token`` legitimeert de sleutel tegen een project en las die naam uit de
+    routeparameters, dus zonder ``project_name`` was elk antwoord een 401. Zie
+    ``opi/api/endpoint_util.py``. De afscherming zelf is geen formaliteit -- zonder sleutel
+    is dit een middel om subdomeinen af te tasten.
+
+    Beperkt tot 30 aanvragen per minuut per client.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+
+    Example:
+    ```bash
+    curl "http://localhost:9595/api/v2/projects/mijn-project/subdomains/check/mijnapp?base_domain=rijksapp.nl" \\
+      -H "X-API-Key: your-api-key"
+    ```
+    """
+    client_id = IPRateLimiter.get_client_identifier(request)
+    if not subdomain_check_rate_limiter.is_allowed(client_id):
+        raise HTTPException(status_code=429, detail="Too many requests. Please wait before checking again.")
+
+    safe_subdomain = sanitize_for_log(subdomain)
+    safe_base_domain = sanitize_for_log(base_domain)
+    client_ip = sanitize_for_log(IPRateLimiter.get_client_ip(request))
+    logger.info(
+        "AUDIT: Subdomain check - project=%s, subdomain=%s, base_domain=%s, ip=%s",
+        sanitize_for_log(project_name),
+        safe_subdomain,
+        safe_base_domain,
+        client_ip,
+    )
+
+    _project_data_or_404(project_name)
+
+    is_valid, validation_error = validate_subdomain(subdomain)
+    if not is_valid:
+        return SubdomainCheckResponse(
+            subdomain=subdomain.lower(),
+            base_domain=base_domain.lower(),
+            available=False,
+            validation_error=validation_error,
+        )
+
+    # Het basisdomein moet er een zijn die het platform kent: anders is dit een manier om
+    # willekeurige domeinen af te tasten in plaats van de eigen uitgifte te bevragen.
+    is_valid_domain, domain_error = validate_base_domain(base_domain)
+    if not is_valid_domain:
+        return SubdomainCheckResponse(
+            subdomain=subdomain.lower(),
+            base_domain=base_domain.lower(),
+            available=False,
+            validation_error=domain_error,
+        )
+
+    connector = create_subdomain_connector()
+    is_available = await connector.check_availability(subdomain, base_domain)
+
+    return SubdomainCheckResponse(
+        subdomain=subdomain.lower(),
+        base_domain=base_domain.lower(),
+        available=is_available,
+        validation_error=None,
+    )
 
 
 @v2_router.get(
