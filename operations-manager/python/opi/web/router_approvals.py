@@ -120,7 +120,7 @@ def _render_modal_step(
         "step_push_url": False,
         "step_query_params": "",
         # Deze dialoog draagt zijn eigen titel ("Domeingoedkeuring - <project>", gezet door
-        # openApprovalModal in bg/admin-approvals.html.j2), en die zegt hetzelfde als de
+        # openApprovalDialog in bg/admin-approvals.html.j2), en die zegt hetzelfde als de
         # kop van de sectie plus de projectnaam. Met allebei stonden er twee koppen boven
         # elkaar. De flow heeft hier maar EEN stap, dus de sectiekop vertelt ook niet waar
         # je bent. Alleen hier uit; de bewerkdialogen van een project houden hem.
@@ -133,6 +133,25 @@ def _render_modal_step(
         request,
         template="bg/_modal-wizard-step.html.j2",
         context=context,
+    )
+
+
+def _modal_error(request: Request, melding: str, status_code: int) -> HTMLResponse:
+    """Een weigering van de dialoog als leesbaar fragment, met de echte statuscode.
+
+    De dialoog wordt door htmx gevuld, dus wat de route antwoordt is wat de gebruiker
+    ziet. Een ``HTTPException`` levert hier JSON op en htmx wisselt bij een foutcode
+    standaard niets in: samen is dat een venster dat opengaat en leeg blijft. Vandaar een
+    fragment. De statuscode blijft staan - dat htmx hem toch toont, staat als
+    ``htmx:beforeSwap``-haak in bg/admin-approvals.html.j2.
+    """
+    return HTMLResponse(
+        content=render_fragment(
+            request,
+            template="bg/_modal-fout.html.j2",
+            context={"request": request, "melding": melding},
+        ),
+        status_code=status_code,
     )
 
 
@@ -197,17 +216,20 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     """Initialize the domain approval modal wizard for a project."""
     user = require_platform_admin(request)
 
+    # Deze drie weigeringen komen IN de dialoog terecht, dus ze gaan als fragment terug en
+    # niet als HTTPException: de gebruiker heeft net op "Beheren" geklikt en het venster
+    # staat al open.
     if flow_id != FLOW_ID:
-        raise HTTPException(status_code=404, detail="Onbekende flow")
+        return _modal_error(request, f"Onbekende flow '{flow_id}'.", 404)
 
     project = get_project_store().get(project_name)
     if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
+        return _modal_error(request, f"Project '{project_name}' is niet gevonden.", 404)
 
     project_data = project.data or {}
     approval_items = collect_approval_items(project_data)
     if not approval_items:
-        raise HTTPException(status_code=400, detail="Geen domein- of subdomeinaanvragen voor dit project")
+        return _modal_error(request, "Er zijn geen domein- of subdomeinaanvragen voor dit project.", 400)
 
     flow = get_flow(flow_id)
     first_section = flow.sections[0]

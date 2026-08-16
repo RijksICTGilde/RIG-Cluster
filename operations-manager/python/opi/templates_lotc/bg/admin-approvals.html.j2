@@ -50,14 +50,18 @@
 
     {% if projects_data %}
         {% for project in projects_data %}
-            {# De projectnaam gaat via een data-attribuut naar de knop, en de klikafhandeling
-               leest hem daar uit. NIET via Jinja BINNEN de @click-waarde: die waarde wordt
-               letterlijk in het onclick-attribuut gezet zonder ooit langs Jinja te komen, dus
-               daar bleef `{{ project.project_name }}` als tekst staan - en dan haalde de
-               dialoog /admin/approvals/%7B%7B%20project.project_name%20%7D%7D/... op. Gewone
-               attributen (label, data-*) worden WEL gerenderd; alleen de @-afhandelaars niet.
-               Bewaakt door tests/test_lotc_klikattributen.py. #}
-            {% set beheren %}<c-button type="primary" size="sm" label="Beheren" icon="pencil-on-square" show-icon="before" data-project="{{ project.project_name }}" @click="openApprovalModal(this.dataset.project)" />{% endset %}
+            {# De knop haalt het formulier zelf op, met htmx. De URL staat in een GEWOON
+               attribuut (hx-get) en wordt dus door Jinja gerenderd; dat is de reden dat het
+               zo moet. In de @-afhandelaar zou `{{ project.project_name }}` letterlijk in het
+               onclick-attribuut belanden zonder ooit langs Jinja te komen, en dan vroeg de
+               dialoog /admin/approvals/%7B%7B%20project.project_name%20%7D%7D/... op.
+               Bewaakt door tests/test_lotc_klikattributen.py; gemeten in
+               tests/e2e/test_lotc_domeinbeheer.py.
+
+               Wat de @-afhandelaar nog wel doet, is het venster openen: htmx haalt inhoud op
+               maar maakt geen schil zichtbaar. Er staat daarom geen Jinja in - alleen de
+               projectnaam uit het data-attribuut. #}
+            {% set beheren %}<c-button type="primary" size="sm" label="Beheren" icon="pencil-on-square" show-icon="before" data-project="{{ project.project_name }}" hx-get="/admin/approvals/{{ project.project_name | urlencode }}/modal-wizard/admin-approval" hx-target="#edit-section-inner" hx-swap="innerHTML" hx-indicator="#approval-loading" @click="openApprovalDialog(this.dataset.project)" />{% endset %}
             {% call panel(project.project_name, "rectangle-stack", aside=beheren) %}
 {# c-table-head IS de kopregel; daar hoort geen c-table-row in. En zonder
                    columns stapelen de cellen, want NLDD maakt er een CSS-grid van. #}
@@ -137,12 +141,12 @@
             <c-button type="tertiary" size="sm" label="Sluiten" icon="dismiss" show-icon="before" class="edit-modal-close-btn"
                       @click="closeApprovalModal()" />
         </c-cluster>
-        <div id="approval-error" class="edit-section-error is-hidden"></div>
-        <div id="edit-section-inner">
-            <div class="edit-section-content">
-                <div class="edit-section-loading"><c-paragraph>Laden...</c-paragraph></div>
-            </div>
-        </div>
+        {# De laadtoestand is van htmx: hx-indicator zet .htmx-request op dit element voor de
+           duur van het verzoek, en css/modal.css zet hem daarmee aan en de oude inhoud uit.
+           Er staat GEEN lege foutbak meer boven de dialoog: een fout komt terug als fragment
+           en landt hieronder, in #edit-section-inner. #}
+        <div id="approval-loading" class="edit-section-loading"><c-paragraph>Laden...</c-paragraph></div>
+        <div id="edit-section-inner"></div>
     </div>
 {% endblock %}
 
@@ -159,38 +163,33 @@
     <script src="{{ static_url('js/json-enc.js') }}"></script>
     <script src="{{ static_url('js/edit_modal.js') }}"></script>
     <script>
-        function openApprovalModal(projectName) {
-            document.getElementById('approval-title-text').textContent = 'Domeingoedkeuring - ' + projectName;
-
-            var errorEl = document.getElementById('approval-error');
-            errorEl.classList.add('is-hidden');
-
-            var innerEl = document.getElementById('edit-section-inner');
-            innerEl.innerHTML =
-                '<div class="edit-section-content">' +
-                    '<div class="edit-section-loading"><p>Laden...</p></div>' +
-                '</div>';
-
+        // Het OPENEN van het venster, en verder niets. Het ophalen, de laadtoestand en het
+        // plaatsen van het antwoord doet htmx via hx-get/hx-target/hx-indicator op de knop;
+        // dat stond hier eerder met de hand (fetch + innerHTML + een eigen foutbak), en
+        // alle drie de fouten van 15 en 16 augustus kwamen daaruit voort.
+        //
+        // Wat htmx niet kan is een schil zichtbaar maken. Dat is dit: de twee klassen waar
+        // edit_modal.js op selecteert, plus de titel die het project noemt.
+        function openApprovalDialog(projectNaam) {
+            document.getElementById('approval-title-text').textContent = 'Domeingoedkeuring - ' + projectNaam;
             document.getElementById('approval-backdrop').classList.add('is-open');
             document.getElementById('approval-modal').classList.add('is-open');
             document.body.style.overflow = 'hidden';
-
-            fetch('/admin/approvals/' + projectName + '/modal-wizard/admin-approval', {
-                credentials: 'same-origin',
-            })
-            .then(function(response) {
-                if (!response.ok) throw new Error('Fout bij het laden van het formulier');
-                return response.text();
-            })
-            .then(function(html) {
-                innerEl.innerHTML = html;
-                htmx.process(innerEl);
-            })
-            .catch(function(err) {
-                errorEl.textContent = err.message;
-                errorEl.classList.remove('is-hidden');
-            });
         }
+
+        // htmx wisselt standaard NIETS in bij een 4xx of 5xx. Voor deze dialoog is dat het
+        // slechtste gedrag dat er is: je klikt op Beheren, het venster gaat open en blijft
+        // leeg, zonder dat iemand je vertelt waarom. De route beantwoordt haar eigen
+        // weigeringen met een leesbaar fragment (zie opi/web/router_approvals.py); dit is de
+        // htmx-kant die het ook echt laat zien, en meteen ook voor een storing die de route
+        // nooit bereikt. Dit is htmx' eigen haak hiervoor, geen nagebouwde afhandeling.
+        document.body.addEventListener('htmx:beforeSwap', function (evt) {
+            var doel = evt.detail.target;
+            if (doel && doel.id === 'edit-section-inner' && evt.detail.xhr && evt.detail.xhr.status >= 400) {
+                evt.detail.shouldSwap = true;
+                evt.detail.isError = false;
+            }
+        });
 
         // closeEditModal / closeEditModalAndReload komen uit edit_modal.js hierboven. Deze
         // dialoog doet aan dat systeem mee doordat hij de klassen .edit-section-modal en
