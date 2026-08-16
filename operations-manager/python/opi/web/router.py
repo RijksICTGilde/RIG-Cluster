@@ -3143,6 +3143,7 @@ async def projects_overview(request: Request):
         # volledig. Dezelfde vorm als de andere aanroepers van get_current_user.
         user = get_current_user(request) or {}
         user_projects = _projects_for_user(user)
+        laatst_gewijzigd = await get_project_store().last_modified_all()
 
         return render(
             request,
@@ -3152,7 +3153,7 @@ async def projects_overview(request: Request):
                 "menu_items": get_menu_items(user),
                 "projects": user_projects,
                 "user": user,
-                **build_lotc_projects(request, user=user, projects=user_projects),
+                **build_lotc_projects(request, user=user, projects=user_projects, laatst_gewijzigd=laatst_gewijzigd),
             },
         )
 

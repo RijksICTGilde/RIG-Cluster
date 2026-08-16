@@ -12,12 +12,16 @@ het saaie deel dat altijd al nuttig was - de gegevens van een route in de vorm z
 de hertekende pagina leest - plus de weergavekeuze licht/donker onderaan.
 """
 
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
 
 if TYPE_CHECKING:
     from fastapi import Request
     from starlette.responses import Response
+
+logger = logging.getLogger(__name__)
 
 
 def render(request: Request, *, template: str, context: dict[str, Any]) -> Response:
@@ -194,13 +198,104 @@ def build_lotc_admin(*, user: dict[str, Any] | None, current_path: str) -> dict[
     return {"navigation": get_navigation(user, current_path=current_path)}
 
 
+#: Het begin der tijden, als sorteerwaarde voor een project waarvan we niet weten
+#: wanneer het bewerkt is. Zo'n project telt dus als het oudste: het zakt naar het eind
+#: van 'nieuwste eerst' en voert 'oudste eerst' aan.
+#:
+#: Dat is geen ongelukkige keuze maar een onbereikbaar geval: elk projectbestand heeft
+#: minstens de commit waarmee het is aangemaakt. Ontbreekt de datum toch, dan is git
+#: helemaal niet te lezen en ontbreekt hij bij ALLE projecten, en dan doet de onderlinge
+#: volgorde er niet toe. Geen aparte behandeling dus.
+_ONBEKEND_BEWERKT = datetime.min.replace(tzinfo=UTC)
+
+
+def _op_bewerkt(project: dict[str, Any]) -> datetime:
+    return project.get("last_modified_at") or _ONBEKEND_BEWERKT
+
+
 #: Waarop de projectenlijst gesorteerd kan worden. De sleutel staat in de URL
-#: (``?sort=naam-af``), het label in het menu, en de derde waarde is de sorteersleutel.
-#: Als lijst en niet als dict, omdat de VOLGORDE de volgorde in het menu is.
-PROJECT_SORTERINGEN: list[tuple[str, str, Any]] = [
-    ("naam", "Naam (A-Z)", lambda p: (p["display_name"] or p["name"]).lower()),
-    ("naam-af", "Naam (Z-A)", lambda p: (p["display_name"] or p["name"]).lower()),
+#: (``?sort=naam-af``), het label in het menu, de derde waarde is de sorteersleutel en
+#: de vierde of hij omgekeerd wordt. Als lijst en niet als dict, omdat de VOLGORDE de
+#: volgorde in het menu is.
+#:
+#: De richting hoort HIER en niet in filter_lotc_projects: daar stond een losse
+#: ``if gekozen == "naam-af"``, en die had bij elke nieuwe aflopende sortering opnieuw
+#: uitgebreid moeten worden.
+PROJECT_SORTERINGEN: list[tuple[str, str, Any, bool]] = [
+    ("naam", "Naam (A-Z)", lambda p: (p["display_name"] or p["name"]).lower(), False),
+    ("naam-af", "Naam (Z-A)", lambda p: (p["display_name"] or p["name"]).lower(), True),
+    ("bewerkt", "Laatst bewerkt (nieuwste eerst)", _op_bewerkt, True),
+    ("bewerkt-op", "Laatst bewerkt (oudste eerst)", _op_bewerkt, False),
 ]
+
+#: Nederlandse maandafkortingen, met index 0 ongebruikt zodat maandnummer 1 op 'jan' valt.
+_MAANDEN = ("", "jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec")
+
+#: Vanaf hier zegt "hoe lang geleden" niets meer dat de datum niet al zegt.
+_RELATIEF_TOT_DAGEN = 30
+
+
+def relatieve_tijd(sinds: timedelta) -> str:
+    """Een tijdsduur als 'zojuist', '5 minuten geleden', '4 uur geleden', '3 dagen geleden'.
+
+    Afronden naar BENEDEN, want dat is wat een lezer verwacht: iets van 119 minuten oud
+    is 'een uur geleden' en niet 'twee uur geleden'. Een negatieve duur (een tijdstempel
+    uit de toekomst; klokverschil tussen de committer en ons) leest als 'zojuist' in
+    plaats van als een onmogelijk getal.
+    """
+    seconden = int(sinds.total_seconds())
+    if seconden < 60:
+        return "zojuist"
+    minuten = seconden // 60
+    if minuten < 60:
+        return f"{minuten} minuut geleden" if minuten == 1 else f"{minuten} minuten geleden"
+    uren = minuten // 60
+    if uren < 24:
+        return f"{uren} uur geleden"
+    dagen = uren // 24
+    return "gisteren" if dagen == 1 else f"{dagen} dagen geleden"
+
+
+def lees_tijdstempel(tijdstempel: str | None) -> datetime | None:
+    """Een ISO 8601-tijdstempel uit git als datetime, of None als hij onbruikbaar is.
+
+    Altijd met tijdzone, zodat er nooit een naive met een aware vergeleken wordt - dat
+    is een TypeError en die zou de hele pagina neerhalen voor een kleinigheid onderaan
+    een rij.
+    """
+    if not tijdstempel:
+        return None
+    try:
+        gewijzigd = datetime.fromisoformat(tijdstempel)
+    except ValueError:
+        logger.debug("Onleesbaar tijdstempel voor laatst-bewerkt: %r", tijdstempel)
+        return None
+    return gewijzigd if gewijzigd.tzinfo else gewijzigd.replace(tzinfo=UTC)
+
+
+def laatst_bewerkt(tijdstempel: str | None, *, nu: datetime | None = None) -> dict[str, str] | None:
+    """De 'laatst bewerkt' van een project, klaar om te tonen.
+
+    Geeft ``label`` (wat er staat) en ``titel`` (het precieze tijdstip, voor de
+    tooltip), of None als er geen bruikbaar tijdstempel is - dan toont de lijst er
+    niets, in plaats van een streepje dat om uitleg vraagt.
+
+    Het label draagt de datum EN hoe lang geleden dat was, want die twee beantwoorden
+    verschillende vragen: de datum is precies, het relatieve deel is te begrijpen zonder
+    rekenen. Voorbij een maand verdwijnt het relatieve deel: "412 dagen geleden" zegt
+    niets meer dat "1 jul 2025" niet beter zegt.
+    """
+    gewijzigd = lees_tijdstempel(tijdstempel)
+    if gewijzigd is None:
+        return None
+
+    nu = nu or datetime.now(UTC)
+    sinds = nu - gewijzigd
+    lokaal = gewijzigd.astimezone()
+    datum = f"{lokaal.day} {_MAANDEN[lokaal.month]} {lokaal.year}"
+
+    label = datum if sinds > timedelta(days=_RELATIEF_TOT_DAGEN) else f"{datum}, {relatieve_tijd(sinds)}"
+    return {"label": label, "titel": lokaal.strftime("%d-%m-%Y %H:%M")}
 
 
 def build_lotc_projects(
@@ -208,6 +303,7 @@ def build_lotc_projects(
     *,
     user: dict[str, Any] | None,
     projects: list[dict[str, Any]],
+    laatst_gewijzigd: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """De ECHTE projectenlijst, in de vorm die de hertekende pagina leest.
 
@@ -225,17 +321,24 @@ def build_lotc_projects(
 
     return {
         "navigation": get_navigation(user, current_path="/projects"),
-        **filter_lotc_projects(request, lotc_project_rows(projects)),
+        **filter_lotc_projects(request, lotc_project_rows(projects, laatst_gewijzigd)),
     }
 
 
-def lotc_project_rows(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def lotc_project_rows(
+    projects: list[dict[str, Any]],
+    laatst_gewijzigd: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """De projectgegevens in de vorm die de tabel leest.
 
     Tellen op de LIJSTEN die de route levert, niet op een ``deployment_count``-sleutel.
     Die bestaat wel op het dashboard maar niet hier, en het gevolg was een overzicht
     waarin alles nul was terwijl er projecten met deployments stonden.
+
+    ``laatst_gewijzigd`` komt uit de ProjectStore (git-historie) en is optioneel: kan de
+    route het niet ophalen, dan blijft ``last_modified`` None en toont de lijst er niets.
     """
+    gewijzigd = laatst_gewijzigd or {}
     return [
         {
             "name": project["name"],
@@ -245,6 +348,10 @@ def lotc_project_rows(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "services": project.get("services") or [],
             "clusters": project.get("clusters") or [],
             "deployment_count": len(project.get("deployments") or []),
+            "last_modified": laatst_bewerkt(gewijzigd.get(project["name"])),
+            # De ruwe datum ernaast, want sorteren op de tekst "3 dagen geleden" doet
+            # niet wat het zegt.
+            "last_modified_at": lees_tijdstempel(gewijzigd.get(project["name"])),
         }
         for project in projects
     ]
@@ -270,10 +377,11 @@ def filter_lotc_projects(request: Request, projects: list[dict[str, Any]]) -> di
         gevonden = list(projects)
 
     gekozen = request.query_params.get("sort") or PROJECT_SORTERINGEN[0][0]
-    sleutel = next((s for k, _, s in PROJECT_SORTERINGEN if k == gekozen), PROJECT_SORTERINGEN[0][2])
-    gevonden.sort(key=sleutel)
-    if gekozen == "naam-af":
-        gevonden.reverse()
+    sleutel, omgekeerd = next(
+        ((s, r) for k, _, s, r in PROJECT_SORTERINGEN if k == gekozen),
+        (PROJECT_SORTERINGEN[0][2], PROJECT_SORTERINGEN[0][3]),
+    )
+    gevonden.sort(key=sleutel, reverse=omgekeerd)
 
     return {
         "projects": gevonden,
@@ -284,7 +392,7 @@ def filter_lotc_projects(request: Request, projects: list[dict[str, Any]]) -> di
         "projects_all": projects,
         "project_query": zoekterm,
         "project_sort": gekozen,
-        "project_sorteringen": [(sleutel, label) for sleutel, label, _ in PROJECT_SORTERINGEN],
+        "project_sorteringen": [(sleutel, label) for sleutel, label, _, _ in PROJECT_SORTERINGEN],
     }
 
 
