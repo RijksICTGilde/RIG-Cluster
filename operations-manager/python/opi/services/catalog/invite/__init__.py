@@ -57,7 +57,7 @@ from typing import Any
 from opi.services.catalog.base import ConfigLayer, DetailPageSection, ProjectPageContext, Service, config_path
 from opi.services.catalog.events import on
 from opi.services.catalog.invite.config_model import InviteConfig
-from opi.services.services import ServiceDefinition, service_entry_name
+from opi.services.services import ConfigAdvice, ServiceDefinition, service_entry_name
 from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,22 @@ class InviteService(Service):
         # at submit that keycloak is present. An invite assigns a realm role, so keycloak
         # must exist. Do NOT build a second dependency mechanism next to this.
         requires=["services/keycloak"],
+        # De voorwaardelijke tegenhanger van ``requires``, en met opzet geen tweede eis:
+        # een uitnodiging zonder rol is volkomen geldig -- ze levert een kaal account op --
+        # totdat keycloak alleen nog rolhouders binnenlaat. Vanaf dat moment geeft dezelfde
+        # link geen toegang meer, en tot vandaag kwam niemand daar achter tot iemand hem
+        # probeerde. De verwachting staat hier, bij de dienst die het VELD bezit, en wijst
+        # met een pad naar de voorwaarde elders; generieke code leest allebei.
+        config_advice=[
+            ConfigAdvice(
+                when=config_path(ConfigLayer.PROJECT, ServiceType.KEYCLOAK, "config", "restrict-access", "enabled"),
+                expects=config_path(ConfigLayer.PROJECT, ServiceType.INVITE, "config", "active[*]", "realm-roles"),
+                message=(
+                    "Keycloak beperkt de toegang tot houders van een rol; een uitnodiging zonder "
+                    "realm-rol geeft dus geen toegang."
+                ),
+            )
+        ],
     )
     config_model = InviteConfig
     config_schema_version = "1.0"

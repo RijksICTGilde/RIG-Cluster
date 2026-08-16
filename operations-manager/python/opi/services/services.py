@@ -225,6 +225,113 @@ def unmet_service_requirements(project_data: dict[str, Any], requires: Iterable[
     return unmet
 
 
+@dataclass(frozen=True)
+class ConfigAdvice:
+    """A field that is only *worth* filling in because of a setting somewhere else.
+
+    ``requires`` is the unconditional, blocking form of a cross-service dependency: the
+    auth wall cannot work without keycloak, so binding it without keycloak is refused.
+    This is the conditional, non-blocking form, and it needs both halves of that
+    sentence to be different. An invite without a realm role is a perfectly valid
+    invitation -- it hands out a bare account -- right up to the moment keycloak's
+    ``restrict-access`` is switched on, because from then on only a role holder gets in.
+    The same file is correct or useless depending on a value in another service's config,
+    and until now nobody found out until someone tried the link.
+
+    So: a warning, never a refusal, and it is declared on the service that owns the
+    FIELD (invite), not on the service that owns the condition. That is what keeps the
+    advice discoverable from the thing you are editing, and it is why the shape is two
+    yaml paths rather than a service name -- generic code evaluates these without
+    knowing which services exist.
+
+    ``when``    a path anywhere in the project; the advice applies while it holds a
+                truthy value. A boolean toggle and a "this key is set" check therefore
+                read the same way, and ``enabled: false`` correctly says nothing.
+    ``expects`` a path this service owns that should then carry a value. One ``[*]``
+                per list level is expanded, so one advice covers every entry of a list
+                and the warning names the entry it is about
+                (``services/invite/config/active[0]/realm-roles``).
+    ``message`` what the user is told, in Dutch, at that field.
+
+    Both paths are read with ``smart_get_value``, so they resolve against the project
+    file and against the wizard's in-progress state alike.
+    """
+
+    when: str
+    expects: str
+    message: str
+
+
+@dataclass(frozen=True)
+class ConfigAdviceNotice:
+    """One piece of advice, against one concrete field.
+
+    ``field_path`` has its ``[*]`` resolved to the index it is about, so it is the key
+    the form's ``field_warnings`` dict uses and the path an API caller can act on.
+    """
+
+    field_path: str
+    message: str
+
+
+def _is_blank(value: Any) -> bool:
+    """Whether *value* counts as "not filled in" for ``ConfigAdvice.expects``.
+
+    ``False`` and ``0`` are answers, not omissions, so only None and the empty
+    string/list/dict qualify.
+    """
+    if value is None:
+        return True
+    return isinstance(value, str | list | dict | tuple) and len(value) == 0
+
+
+def _unfilled_paths(project_data: dict[str, Any], path: str) -> list[str]:
+    """The concrete paths under *path* that hold no value, with ``[*]`` expanded.
+
+    Recursive rather than single-pass because ``resolve_path`` replaces the FIRST
+    wildcard only; a path with two list levels would otherwise be read verbatim and
+    silently match nothing.
+    """
+    from opi.forms.editables.path import resolve_path
+    from opi.forms.editables.service_path import smart_get_value
+
+    if "[*]" not in path:
+        return [path] if _is_blank(smart_get_value(project_data, path)) else []
+
+    items = smart_get_value(project_data, path.split("[*]", 1)[0])
+    if not isinstance(items, list):
+        return []
+    found: list[str] = []
+    for index in range(len(items)):
+        found.extend(_unfilled_paths(project_data, resolve_path(path, index)))
+    return found
+
+
+def collect_config_advice(project_data: dict[str, Any]) -> list[ConfigAdviceNotice]:
+    """Every ``ConfigAdvice`` in the catalog whose condition holds and whose field is empty.
+
+    The one evaluator, so the form and the API say the same thing about the same
+    project -- the shape ``custom_domain_certificate_note`` established for the
+    certificate case, where one sentence feeds both a field warning and the ``warnings``
+    on the write action.
+
+    A service that is not selected needs no special case: its ``expects`` path resolves
+    to nothing, so it yields nothing.
+    """
+    notices: list[ConfigAdviceNotice] = []
+    for definition in ServiceAdapter.SERVICE_DEFINITIONS.values():
+        for advice in definition.config_advice:
+            from opi.forms.editables.service_path import smart_get_value
+
+            if not smart_get_value(project_data, advice.when):
+                continue
+            notices.extend(
+                ConfigAdviceNotice(field_path, advice.message)
+                for field_path in _unfilled_paths(project_data, advice.expects)
+            )
+    return notices
+
+
 @dataclass
 class VariableDefinition:
     """
@@ -284,6 +391,13 @@ class ServiceDefinition:
 
     Used for both UI behavior (auto-select, lock) and submit-time
     validation.
+    """
+    config_advice: list[ConfigAdvice] = field(default_factory=list)
+    """Fields of this service that only become necessary because of a setting elsewhere.
+
+    The conditional sibling of ``requires``: ``requires`` blocks unconditionally, this
+    warns while a condition holds. See ``ConfigAdvice`` for the shape and the reasoning,
+    and ``collect_config_advice`` for the single evaluator both the form and the API use.
     """
     cleanup_strategy: CleanupStrategy = CleanupStrategy.NONE
     """How server-side resources are cleaned up when the service is removed.
