@@ -8008,15 +8008,26 @@ class ProjectManager:
                 error_type = "invalid_components" if "Components not found" in str(e) else "invalid_service"
                 return {"success": False, "error": str(e), "error_type": error_type}
 
-            # Persist changes only when something was actually added
-            if result["services_added"]:
-                added = ", ".join(result["services_added"])
-                commit_message = f"Add service(s) {added} to project '{project_name}'"
+            # Persist changes when something was actually added -- at the project level OR
+            # on a component. Deze poort keek alleen naar ``services_added``, en dat is niet
+            # hetzelfde: staat de dienst al op projectniveau maar nog niet op het gevraagde
+            # component, dan is ``services_added`` leeg terwijl de component-lijst wel
+            # gemuteerd is. Die mutatie werd dan weggegooid zonder commit, terwijl het
+            # antwoord hem als ``components_updated`` meldde -- de API zei dus dat ze
+            # bijgewerkt waren en er veranderde niets.
+            if result["services_added"] or result["components_updated"]:
+                parts = []
+                if result["services_added"]:
+                    parts.append(f"Add service(s) {', '.join(result['services_added'])}")
+                if result["components_updated"]:
+                    parts.append(f"attach '{service_name}' to component(s) {', '.join(result['components_updated'])}")
+                commit_message = f"{' and '.join(parts)} in project '{project_name}'"
                 await self.save_and_commit_project(project_data, commit_message)
 
             logger.info(
                 f"Add service '{service_name}' to project '{project_name}': "
-                f"added={result['services_added']}, skipped={result['services_skipped']}"
+                f"added={result['services_added']}, skipped={result['services_skipped']}, "
+                f"components_updated={result['components_updated']}"
             )
 
             return {"success": True, **result}
