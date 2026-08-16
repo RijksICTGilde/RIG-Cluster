@@ -53,6 +53,7 @@ class TaskType(StrEnum):
     DELETE_PROJECT = "delete_project"
     DELETE_COMPONENT = "delete_component"
     DELETE_ATTACHMENT = "delete_attachment"
+    CONFIGURE_ATTACHMENT = "configure_attachment"
     CLONE_DATABASE = "clone_database"
     CLONE_BUCKET = "clone_bucket"
     REFRESH_DEPLOYMENT = "refresh_deployment"
