@@ -267,7 +267,11 @@ def test_configure_via_api_writes_invite(
     # no manifest change). So we start the task and poll the project file for the key.
     api_key = read_api_key_with_retry(sandbox_page, sandbox_url, invite_project)
     api_invite_key = f"probe-invite-api-{_RUN}"
-    body = {"default-language": "nl", "active": [{"key": api_invite_key, "contact-email": _CONTACT}]}
+    # ``active`` gaat er als EEN entry in, niet als lijst van een: de invite-dienst zet
+    # ``api_singular_lists = {"active"}`` (4323ebae), dus de API toont en accepteert het
+    # enkelvoud. De OPSLAG blijft een lijst -- vandaar dat ``_invite_keys`` hieronder
+    # gewoon over het projectbestand loopt. Wie hier een lijst stuurt krijgt 422.
+    body = {"default-language": "nl", "active": {"key": api_invite_key, "contact-email": _CONTACT}}
     sandbox_api.start_task(
         sandbox_url,
         "PUT",
