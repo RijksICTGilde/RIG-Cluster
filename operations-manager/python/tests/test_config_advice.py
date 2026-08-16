@@ -25,10 +25,13 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.manager.project_manager import ProjectManager
+from opi.manager.project_validation import validate_declared_choices, validate_project_structure
 from opi.services.catalog.base import ConfigLayer
-from opi.services.registry import get_service
+from opi.services.catalog.invite.editables import INVITE_REALM_ROLE_ITEM_EDITABLE
+from opi.services.registry import SERVICES, get_service
 from opi.services.services import ConfigAdvice, ServiceAdapter, collect_config_advice
 from opi.services.services_enums import ServiceType
 
@@ -237,3 +240,119 @@ def test_the_advice_paths_are_real_editable_paths(layer: ConfigLayer) -> None:
     paths = {editable.yaml_path for editable in invite.config_editables(layer)}
 
     assert invite.definition.config_advice[0].expects in paths
+
+
+# --------------------------------------------------------------------------------------
+# Tweede laag: de rol moet ook BESTAAN
+# --------------------------------------------------------------------------------------
+#
+# ``ConfigAdvice`` vraagt of een veld GEVULD is en waarschuwt. Dit vraagt of de waarde die
+# er staat bestaat, en dat is een andere uitspraak met een ander oordeel: een realm-rol die
+# geen enkele keycloak-config definieert is geen keuze met een nadeel maar een typefout.
+# Keycloak kent hem bij het inwisselen niet (``assign_realm_roles_to_user`` zet hem onder
+# ``not_found`` en gaat door), dus de uitgenodigde gebruiker komt zonder rol binnen -- en
+# met restrict-access aan komt hij helemaal niet binnen.
+#
+# De geldige verzameling wordt nergens herhaald: hij komt uit dezelfde provider die de
+# keuzelijst van het formulier vult en die de API als ``x-choices-source`` publiceert.
+
+
+def _role_project(assigned: list[str], *, defined: list[str], wall: str | None = "allowed-user") -> dict[str, Any]:
+    keycloak: dict[str, Any] = {"realm-roles": [{"name": name} for name in defined]}
+    if wall:
+        keycloak["restrict-access"] = {"enabled": True, "realm-role": wall}
+    return {
+        "name": "vr3ed-r0l",
+        "services": [
+            {"name": "keycloak", "config": keycloak},
+            {"name": "invite", "config": {"active": [{"key": "k", "realm-roles": assigned}]}},
+        ],
+        "components": [{"name": "web", "image": "nginx:latest"}],
+        "deployments": [{"name": "productie", "components": [{"reference": "web"}]}],
+    }
+
+
+class TestTheValueMustExist:
+    def test_a_misspelled_role_is_an_error(self) -> None:
+        errors = validate_declared_choices(_role_project(["allowd-user"], defined=["beheerder"]))
+
+        assert len(errors) == 1
+        assert "'allowd-user'" in errors[0]
+        assert "services/invite/config/active[0]/realm-roles[0]" in errors[0]
+        assert "allowed-user, beheerder" in errors[0]
+
+    def test_a_role_from_the_keycloak_config_is_accepted(self) -> None:
+        assert validate_declared_choices(_role_project(["beheerder"], defined=["beheerder"])) == []
+
+    def test_the_authorization_wall_role_is_accepted(self) -> None:
+        """``allowed-user`` staat in geen enkel project onder ``realm-roles`` en bestaat
+        toch: de wall maakt hem aan. De provider weet dat, en dat is precies waarom de
+        provider de bron is en niet de configlijst."""
+        assert validate_declared_choices(_role_project(["allowed-user"], defined=["beheerder"])) == []
+
+    def test_an_empty_role_list_is_no_error(self) -> None:
+        """Geen rol toekennen is een keuze; daar gaat de waarschuwing van laag 1 over."""
+        assert validate_declared_choices(_role_project([], defined=["beheerder"])) == []
+
+    def test_a_project_without_any_known_role_is_left_alone(self) -> None:
+        """De vier bestanden van voor de invite-dienst noemen rollen van een realm die
+        nooit via ZAD is ingericht (zie ``tests/fixtures/upgrade_safety/invites-legacy.yaml``).
+        De bron is dan leeg, en dat is geen 'alles is fout' maar 'hier valt niets tegen af
+        te meten' -- anders zou de eerstvolgende bewerking van zo'n project stranden op een
+        waarde die deze release niet heeft ingevoerd. Het geval dat ertoe doet is nooit
+        leeg: met restrict-access aan is er altijd de rol van de wall."""
+        assert validate_declared_choices(_role_project(["developer"], defined=[], wall=None)) == []
+
+    def test_every_bad_entry_is_named(self) -> None:
+        project = _role_project(["beheerder", "typo-een", "typo-twee"], defined=["beheerder"])
+
+        paths = [error.split(" op ")[1].split(" ")[0] for error in validate_declared_choices(project)]
+        assert paths == [
+            "services/invite/config/active[0]/realm-roles[1]",
+            "services/invite/config/active[0]/realm-roles[2]",
+        ]
+
+
+class TestTheDeclarationDrivesTheValueCheck:
+    def test_the_role_field_declares_it(self) -> None:
+        assert INVITE_REALM_ROLE_ITEM_EDITABLE.values_must_exist
+        assert INVITE_REALM_ROLE_ITEM_EDITABLE.values_provider == "InviteRealmRoleOptionsProvider"
+
+    def test_removing_the_declaration_removes_the_check(self) -> None:
+        """Het omkeerbewijs: zonder ``values_must_exist`` kijkt generieke code niet naar
+        dit veld, precies zoals ze naar geen enkel ander keuzeveld kijkt."""
+        with patch.object(INVITE_REALM_ROLE_ITEM_EDITABLE, "values_must_exist", False):
+            assert validate_declared_choices(_role_project(["allowd-user"], defined=["beheerder"])) == []
+
+    def test_a_menu_is_not_turned_into_validation(self) -> None:
+        """Uit tegen de rest van de catalogus. Een keuzelijst is meestal een MENU en geen
+        gesloten verzameling (``sleep-after-deploy`` biedt 4h..168h en accepteert 90m), dus
+        deze vlag aanzetten is een uitspraak per veld en geen nieuwe standaard."""
+
+        def flatten(editables: list[Any]) -> list[Any]:
+            found: list[Any] = []
+            for editable in editables:
+                found.append(editable)
+                found.extend(flatten(editable.children or []))
+            return found
+
+        declaring = {
+            editable.yaml_path
+            for service in SERVICES.values()
+            for layer in service.config_layers()
+            for editable in flatten(service.config_editables(layer))
+            if editable.values_must_exist
+        }
+        assert declaring == {"services/invite/config/active[*]/realm-roles[*]"}
+
+
+class TestTheSaveGateRefuses:
+    """De weg waar het toe doet: de API en handgeschreven YAML komen nooit langs een
+    select, dus de controle hoort op het schrijfslot en niet in de widget."""
+
+    async def test_an_unknown_role_blocks_the_save(self) -> None:
+        with pytest.raises(ProjectIntegrityError, match="allowd-user"):
+            await validate_project_structure(_role_project(["allowd-user"], defined=["beheerder"]))
+
+    async def test_a_known_role_passes_the_save(self) -> None:
+        await validate_project_structure(_role_project(["beheerder"], defined=["beheerder"]))

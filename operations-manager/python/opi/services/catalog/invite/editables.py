@@ -61,9 +61,17 @@ INVITE_KEY_EDITABLE = Editable(
     virtualize=SERVICE_VIRTUALIZE,
 )
 
+# ``values_must_exist``: de rol moet ook BESTAAN. ``RealmRoleValidator`` keurt alleen de
+# tekenset, dus 'allowd-user' kwam er ongehinderd doorheen -- en keycloak kent die rol niet,
+# dus bij het inwisselen wordt hij overgeslagen (``assign_realm_roles_to_user`` zet hem
+# onder ``not_found``) en komt de uitgenodigde gebruiker zonder rol binnen. Staat
+# ``restrict-access`` aan, dan komt hij helemaal niet binnen. De geldige verzameling wordt
+# hier niet herhaald: ze komt uit dezelfde provider die de keuzelijst vult en die de API als
+# ``x-choices-source`` publiceert.
 INVITE_REALM_ROLE_ITEM_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "realm-roles[*]"),
     values_provider="InviteRealmRoleOptionsProvider",
+    values_must_exist=True,
     validator=RealmRoleValidator(),
     virtualize=SERVICE_VIRTUALIZE,
 )
