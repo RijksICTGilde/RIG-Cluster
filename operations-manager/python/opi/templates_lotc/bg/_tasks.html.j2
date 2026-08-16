@@ -30,16 +30,19 @@
                         <c-td>{{ item.soort }}</c-td>
                         <c-td>{{ item.deployment or "-" }}</c-td>
                         <c-td>
-                            <c-stack gap="xs">
-                                <c-tag
-                                    label="{{ item.status }}"
-                                    type="{{ 'success' if item.status in ('Succeeded', 'completed') else 'error' if item.status in ('Failed', 'failed') else 'warning' if item.status in ('Running', 'running') else 'default' }}" />
-                                {# Bij een lopende taak toont de bestaande pagina de stap en
-                                   het percentage eronder. Dat blijft. #}
-                                {% if item.active and item.step %}
-                                    <c-paragraph size="sm">{{ item.step }}{% if item.progress %} ({{ item.progress }}%){% endif %}</c-paragraph>
-                                {% endif %}
-                            </c-stack>
+                            {# GEEN <c-stack> hieromheen: een cel is zelf al een kolom-flexbox, en met
+                               een stack ertussen krimpt de inhoud in FIREFOX tot 0 breed. Zelfde
+                               oorzaak als in bg/admin-approvals.html.j2; de uitleg staat daar en als
+                               punt 14 in request_for_components.md. Bewaakt door
+                               tests/test_lotc_stapel_in_tabelcel.py. #}
+                            <c-tag
+                                label="{{ item.status }}"
+                                type="{{ 'success' if item.status in ('Succeeded', 'completed') else 'error' if item.status in ('Failed', 'failed') else 'warning' if item.status in ('Running', 'running') else 'default' }}" />
+                            {# Bij een lopende taak toont de bestaande pagina de stap en
+                               het percentage eronder. Dat blijft. #}
+                            {% if item.active and item.step %}
+                                <c-paragraph size="sm">{{ item.step }}{% if item.progress %} ({{ item.progress }}%){% endif %}</c-paragraph>
+                            {% endif %}
                         </c-td>
                         <c-td>{{ item.door or "-" }}</c-td>
                         {# Dezelfde inkorting als de bestaande pagina: de eerste zestien
