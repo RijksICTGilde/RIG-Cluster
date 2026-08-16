@@ -92,7 +92,7 @@ een paar tests, en is NIET wat een gebruiker ziet.
 
 ### Wat er anders is aan LOTC
 
-Bij het omzetten komen steeds dezelfde vier dingen terug:
+Bij het omzetten komen steeds dezelfde vijf dingen terug:
 
 1. **Attributen zijn kebab-case** (`body-class`, `max-width`), niet camelCase.
 2. **Samenstellingen krijgen kinderen, geen data-props.** `<c-menu>` met `<c-menu-item>`
@@ -102,6 +102,15 @@ Bij het omzetten komen steeds dezelfde vier dingen terug:
    `none` betekent weglaten - en `:attrs="<dict>"` voor een hele bundel.
 4. **`<c-page>` bedraadt de `<head>` zelf**, inclusief de CSS en JS van elk actief design
    system onder `/static/lotc/`.
+5. **`static/css/base.css` komt NIET mee.** Dat stylesheet hoort bij de oude schil;
+   `base_lotc.html.j2` laadt alleen `css/lotc-app.css`. Een sjabloon dat uit de oude boom
+   is overgenomen kan dus klassen dragen waar hier geen regel bij hoort, en zoiets valt
+   niet op in de markup - hij staat er, hij doet alleen niets. Zo werd `.is-hidden`
+   (verbergen, gezet en gehaald door onze JavaScript) een lege rode balk boven in elke
+   dialoog: `.edit-section-error` uit `css/modal.css` brengt rand, achtergrond en padding
+   mee en die worden ook zonder tekst getekend. `.is-hidden` staat sinds die reparatie in
+   `lotc-app.css`. Meet zo'n klasse in de BROWSER op hoogte; het class-attribuut lezen
+   levert een groene test op een zichtbaar vak.
 
 ### De volgorde van de design systems ligt vast
 
@@ -159,7 +168,7 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | `tests/test_lotc_component_names.py` | dat er nergens nog een `<c-p>` staat; die naam bestaat niet |
 | `tests/test_lotc_klikattributen.py` | dat er geen Jinja in de waarde van een `@`-afhandelaar staat - die waarde wordt niet gerenderd |
 | `tests/test_lotc_stapel_in_tabelcel.py` | dat er geen `<c-stack>` rechtstreeks in een `<c-td>` staat; die krimpt in Firefox tot 0 breed |
-| `tests/e2e/test_lotc_domeinbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, en dat de datumkolom in FIREFOX zijn breedte houdt |
+| `tests/e2e/test_lotc_domeinbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, dat de datumkolom in FIREFOX zijn breedte houdt, dat de dialoog EEN kop heeft en dat zijn foutbalk zonder melding geen hoogte inneemt |
 | `tests/test_lotc_icon_mapping.py` | dat elke iconnaam een icoon OPLEVERT, gemeten tegen de geleverde NLDD-bundel |
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
 | `tests/test_lotc_layout_rules.py` | dat kaarten via `panel()` gebouwd worden en gaps uit de schaal komen |
