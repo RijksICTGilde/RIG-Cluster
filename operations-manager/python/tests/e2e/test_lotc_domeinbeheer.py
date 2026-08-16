@@ -1,4 +1,4 @@
-"""Vier fouten op /admin/approvals, allemaal alleen in een BROWSER te zien.
+"""Vijf fouten op /admin/approvals, allemaal alleen in een BROWSER te zien.
 
 1. De knop "Beheren" stuurde de projectnaam niet mee.
 
@@ -45,6 +45,19 @@
    het feedbackvenster, de bewerkdialoog van een project en het filterblok van de
    metrics-explorer. De reparatie staat daarom in ``static/css/lotc-app.css``, het
    stylesheet dat ELKE pagina van deze bouwlijn laadt.
+
+5. Het vinkje stond niet op een lijn met de titel.
+
+   Het icoon stond BINNEN de ``<h2>``, en daar is het een inline element met een vaste
+   maat: het lijnt uit op de tekstbasislijn, dus zijn onderkant zit op de plek waar de
+   letters op staan en zijn midden komt hoger uit dan het midden van de tekst. Gemeten:
+   7,5 pixels verschil tussen de twee middens, met een icoon van 32 bij een titel van 31
+   hoog - de ruimte onder de basislijn, waar de staarten van de letters hangen. Een kop
+   legt zijn kinderen niet naast elkaar en heeft geen knop om ze te centreren, dus de
+   reparatie is niet een eigen CSS-regel maar de constructie ernaast: icoon en kop als
+   broers in een ``<c-cluster align="center">``. De statische poort eronder staat in
+   ``tests/test_lotc_icoon_in_kop.py``; deze test meet de verticale MIDDENS in de browser,
+   want in de markup zag het er allebei even goed uit.
 """
 
 from __future__ import annotations
@@ -329,6 +342,54 @@ def test_de_foutbalk_verschijnt_wel_bij_een_echte_melding(
 
     assert balk["display"] != "none", f"de melding blijft onzichtbaar: {balk}"
     assert balk["hoogte"] > 0, f"de melding heeft geen hoogte: {balk}"
+
+
+# ---------------------------------------------------------------------------
+# Fout 5: het icoon en de titel op een lijn
+# ---------------------------------------------------------------------------
+
+#: De dozen van het vinkje en van de titeltekst in de kop van de dialoog. Het vinkje is het
+#: EERSTE icoon in de kopbalk; het tweede is het kruisje van de sluitknop. De tekst wordt
+#: met een Range opgemeten en niet via de ``<span>``: een span-doos draagt de regelhoogte
+#: mee, en dan meet je de leiding van de regel in plaats van waar de letters staan.
+DE_KOP_VAN_DE_DIALOOG = """() => {
+    const kop = document.querySelector('#approval-modal .edit-section-header');
+    const icoon = kop.querySelector('nldd-icon');
+    const tekst = document.getElementById('approval-title-text').firstChild;
+    const bereik = document.createRange();
+    bereik.selectNodeContents(tekst);
+    const i = icoon.getBoundingClientRect();
+    const t = bereik.getBoundingClientRect();
+    return {
+        icoon: { top: i.top, hoogte: i.height, midden: i.top + i.height / 2 },
+        titel: { top: t.top, hoogte: t.height, midden: t.top + t.height / 2 },
+        verschil: Math.abs((i.top + i.height / 2) - (t.top + t.height / 2)),
+    };
+}"""
+
+
+def test_het_icoon_staat_op_een_lijn_met_de_titel(app_server: str, auth_page: Page, project_met_aanvragen: str) -> None:
+    """Het vinkje en "Domeingoedkeuring - <project>" delen hun verticale midden.
+
+    Dit is de meting die de gemelde fout vangt, en hij kan alleen in een browser: de markup
+    zag er in beide vormen normaal uit. Met het icoon BINNEN de kop stond zijn midden ruim
+    boven dat van de tekst, omdat een inline element op de basislijn uitlijnt en de
+    basislijn onder de kapitaalhoogte ligt.
+
+    De drempel is 2 pixels en niet 0: de dozen van een icoon en van een stuk tekst zijn
+    verschillend hoog, dus hun middens vallen door afronding zelden exact samen.
+    """
+    _open_de_dialoog(auth_page, app_server)
+
+    kop = auth_page.evaluate(DE_KOP_VAN_DE_DIALOOG)
+
+    assert kop["icoon"]["hoogte"] > 0, f"het icoon wordt niet getekend: {kop}"
+    assert kop["titel"]["hoogte"] > 0, f"de titel wordt niet getekend: {kop}"
+    assert kop["verschil"] <= 2, (
+        f"het icoon staat {kop['verschil']:.1f}px van de titel af gemeten over hun middens. "
+        f"Staat het icoon binnen de <c-heading>? Zet het ernaast, in een cluster dat "
+        f"centreert - zie tests/test_lotc_icoon_in_kop.py. Meting: {kop}"
+    )
 
 
 # ---------------------------------------------------------------------------
