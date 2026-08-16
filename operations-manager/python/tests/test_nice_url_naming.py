@@ -24,6 +24,18 @@ from opi.utils.naming import (
 _CLUSTER = "local"
 
 
+def _approved(*domains: str) -> dict:
+    """Een project dat deze domeinen goedgekeurd heeft.
+
+    Sinds de goedkeuringspoort voor ELKE vorm geldt (en niet alleen voor een
+    deployment die een ``domain-format`` noemt) levert een leeg project hier het
+    veilige clusteradres. Deze tests gaan over het samenstellen van de nette URL, dus
+    hoort het domein goedgekeurd te zijn; de terugval zelf staat in
+    ``tests/test_domain_approval.py``.
+    """
+    return {"domains": {"allowed-domains": [{"domain": d, "status": "approved"} for d in domains]}}
+
+
 class TestGenerateNiceUrlHostname:
     """Tests for generate_nice_url_hostname function."""
 
@@ -98,7 +110,7 @@ class TestGetComponentIngressMapNiceUrl:
             subdomain="mydomain",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
-            project_data={},
+            project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
         assert "prod-frontend" in result
@@ -114,7 +126,7 @@ class TestGetComponentIngressMapNiceUrl:
             subdomain="testapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
-            project_data={},
+            project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
         assert "staging-backend" in result
@@ -143,7 +155,7 @@ class TestGetComponentIngressMapNiceUrl:
             ingress_postfix=".cluster.example.com",
             subdomain="myapp",
             base_domain="custom.nl",
-            project_data={},
+            project_data=_approved("custom.nl"),
             cluster=_CLUSTER,
         )
         assert "prod-frontend" in result
@@ -163,7 +175,7 @@ class TestGetDeploymentHostnamesNiceUrl:
             subdomain="mydomain",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
-            project_data={},
+            project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
         # Should have 4 hostnames: 3 components + 1 root
@@ -183,7 +195,7 @@ class TestGetDeploymentHostnamesNiceUrl:
             subdomain="testapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
-            project_data={},
+            project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
         assert len(result) == 2
