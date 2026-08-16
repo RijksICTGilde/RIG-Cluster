@@ -1,0 +1,19 @@
+# Let's Encrypt via HTTP-01. Werkt zodra het A-record router.fundament-poc.rijksapp.dev
+# naar het adres van de ingresscontroller wijst; tot dan faalt de challenge en komt er
+# geen certificaat. Geen haproxy-annotatie zoals op odcn: hier draait nginx.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-operations-manager
+  namespace: rig-system
+spec:
+  acme:
+    email: rig-platform@rijksoverheid.nl
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-operations-manager-key
+    solvers:
+      - http01:
+          ingress:
+            serviceType: ClusterIP
+            ingressClassName: nginx

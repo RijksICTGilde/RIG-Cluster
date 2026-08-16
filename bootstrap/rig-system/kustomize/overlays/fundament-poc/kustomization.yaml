@@ -1,5 +1,70 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Geen `namespace:` hier: dat breekt de nginx-deploy, zelfde reden als in de
+# sandboxed-local overlay. De losse resources zetten hun namespace zelf.
+
 generators:
 - decrypt-sops.yaml
+
+resources:
+- namespace.yaml
+- argocd-deployment.yaml
+- argocd-application-infrastructure.yaml
+- argocd-application-user-applications.yaml
+- ../../operations-manager/overlays/fundament-poc
+
+# Niet meegenomen, met reden:
+# - csi-snapshot/base: de VolumeSnapshot-CRD's staan al op het cluster (Gardener zet ze
+#   neer). En local-path kan geen snapshots, dus er valt niets te maken.
+# - backup-destination/base: gaat op odcn ook buiten ArgoCD om, via
+#   `task bootstrap-backup-destination`. Let op punt 2.2o: die overlay selecteert
+#   tenant-namespaces op het Capsule-tenantlabel en Capsule draait hier niet.
+
+components:
+- ../../components/sops-plugin
+
+patches:
+  # De sops-plugin component doet `op: replace` op /spec/repo, dus alles wat echt moet
+  # landen staat hier, na de component. Zie de waarschuwing in argocd-deployment.yaml.
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/image
+        value: quay.io/argoproj/argocd
+      - op: add
+        path: /spec/repo/version
+        value: v3.3.10
+
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/env
+        value:
+        - name: ARGOCD_EXEC_TIMEOUT
+          value: "180"
+        - name: ARGOCD_GIT_ATTEMPTS_COUNT
+          value: "3"
+        - name: ARGOCD_HELM_ALLOW_CONCURRENCY
+          value: "true"
+        # Stream alleen de manifest-generate-paths map van de app naar de CMP in plaats
+        # van de hele monorepo per render (op odcn gemeten: ~27s van een 28.5s render was
+        # repo streaming, de kustomize+sops render zelf ~1s). Zie issue #130.
+        - name: ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS
+          value: "true"
+
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/sidecarContainers/0/env
+        value:
+        - name: ARGOCD_EXEC_TIMEOUT
+          value: "180"
+        - name: KUSTOMIZE_PLUGIN_HOME
+          value: /etc/kustomize/plugin

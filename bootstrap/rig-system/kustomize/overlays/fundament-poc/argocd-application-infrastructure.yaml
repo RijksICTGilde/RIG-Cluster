@@ -1,0 +1,38 @@
+# Wijst naar de infrastructuur-clusterlijst van dit cluster in de gedeelde GitHub-repo.
+# De git-backend is een keuze per cluster: dit is de GitHub-opzet zoals odcn die heeft,
+# niet de in-cluster Forgejo van de sandbox.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fundament-poc-infrastructure
+  namespace: rig-system
+spec:
+  project: default
+  source:
+    # De gebruikersnaam in de URL maakt hem uniek voor ArgoCD; dat is vereist.
+    repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
+    path: infrastructure/bootstrap/clusters/fundament-poc
+    targetRevision: main
+    plugin:
+      name: kustomize-sops-v1.0
+      env:
+        - name: SOPS_KEY_SECRET
+          value: "sops-age-key"
+        - name: KUSTOMIZE_FOLDERS
+          value: "current"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rig-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - SyncTimeout=60s
+    retry:
+      limit: 2
+      backoff:
+        duration: "30s"
+        factor: 1
+        maxDuration: "30s"

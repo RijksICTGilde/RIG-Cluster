@@ -1,0 +1,87 @@
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: argocd
+  namespace: rig-system
+spec:
+  # Zelfde RIG-image als de andere clusters: upstream plus de namespace-sync en
+  # health-fixes uit images/argocd-rig. Repo-server blijft op upstream, zie spec.repo.
+  image: ghcr.io/minbzk/base-images/argocd-rig
+  version: v3.5.1-rig1
+  extraConfig:
+    resource.customizations.health.cert-manager.io_Issuer: |
+      hs = {}
+      hs.status = "Healthy"
+      hs.message = "Fake CRD - no controller"
+      return hs
+    timeout.reconciliation: "6m"
+    timeout.hard.reconciliation: "0s"
+    server.repo.server.timeout.seconds: "180"
+    controller.status.processors: "60"
+    controller.operation.processors: "30"
+    controller.repo.server.timeout.seconds: "180"
+    controller.kubectl.parallelism.limit: "20"
+    controller.sharding.algorithm: "round-robin"
+    reposerver.parallelism.limit: "20"
+  server:
+    logLevel: info
+    # nginx termineert TLS, dus ArgoCD zelf draait onversleuteld achter de ingress.
+    insecure: true
+    host: argo.fundament-poc.rijksapp.dev
+    ingress:
+      enabled: true
+      path: /
+      ingressClassName: nginx
+      annotations:
+        # Let's Encrypt via cert-manager. Werkt pas zodra het A-record
+        # router.fundament-poc.rijksapp.dev bestaat en naar het ingress-adres wijst;
+        # tot dan blijft de ACME-challenge falen en is er geen certificaat.
+        cert-manager.io/issuer: letsencrypt-operations-manager
+        cert-manager.io/private-key-algorithm: ECDSA
+        cert-manager.io/private-key-size: "384"
+        cert-manager.io/private-key-rotation-policy: Always
+      tls:
+        - hosts:
+            - argo.fundament-poc.rijksapp.dev
+          secretName: argocd-fundament-poc-tls
+  prometheus:
+    enabled: false
+    ingress:
+      enabled: false
+    route:
+      enabled: false
+  controller:
+    env:
+      - name: ARGOCD_K8S_CLIENT_QPS
+        value: "150"
+      - name: ARGOCD_K8S_CLIENT_BURST
+        value: "300"
+    # Anders dan de sandbox knijpen we hier niet: die draait op een dev-server met vier
+    # cores, dit cluster heeft er 32. Wel een geheugenlimiet, want geheugen is
+    # incompressible en zonder limiet krijg je OOM-kills in plaats van vertraging.
+    resources:
+      limits:
+        memory: 4Gi
+      requests:
+        cpu: 250m
+        memory: 1Gi
+  applicationSet:
+    resources:
+      limits:
+        memory: 512Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi
+  # Let op: de sops-plugin component uit kustomization.yaml doet `op: replace` op
+  # /spec/repo, dus alles wat hier onder repo staat wordt bij het renderen weggegooid.
+  # Wat echt moet landen hoort als patch in kustomization.yaml, na de component.
+  # Verifieer met: kustomize build <overlay> | grep -A20 '^  repo:'
+  repo:
+    resources:
+      limits:
+        cpu: 4
+        memory: 2Gi
+      requests:
+        cpu: 500m
+        memory: 256Mi
+    serviceaccount: argocd-argocd-server

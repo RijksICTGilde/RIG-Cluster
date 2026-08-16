@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - cluster-role.yaml
+  - cluster-binding.yaml
+  - configmap.yaml
+  - ingress.yaml
+  - issuer-letsencrypt.yaml
+  - pvc.yaml
+
+# Nog niet aanwezig: de generators-regel voor operations-manager-env-secrets. Die secret
+# komt uit `task generate-env-secrets-for-operations-manager`, die een
+# .env.fundament-poc.secrets bestand verwacht. Zolang die er niet is zou een
+# decrypt-sops.yaml naar een niet-bestaand bestand wijzen en de build breken.
