@@ -687,7 +687,7 @@ class TestGetComponentIngressMap:
             subdomain="myapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
-            project_data={},
+            project_data=_approved("rijks.app"),
             cluster="local",
         )
         assert result == {"prod-frontend": "frontend.myapp.rijks.app"}
@@ -701,7 +701,7 @@ class TestGetComponentIngressMap:
             ".kind",
             subdomain="myapp",
             base_domain="custom.nl",
-            project_data={},
+            project_data=_approved("custom.nl"),
             cluster="local",
         )
         assert result == {"prod-frontend": "myapp.custom.nl"}
@@ -732,7 +732,7 @@ class TestGetDeploymentHostnames:
             subdomain="myapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
-            project_data={},
+            project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
         assert "frontend.myapp.rijks.app" in result
