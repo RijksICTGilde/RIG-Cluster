@@ -6874,6 +6874,28 @@ class ProjectManager:
         )
         return [note] if note else []
 
+    @staticmethod
+    def _config_advice_warnings(project_data: dict[str, Any]) -> list[str]:
+        """What this project now expects but does not have, after this write.
+
+        Same channel and same reasoning as ``_certificate_warnings``: nobody is waiting
+        on an administrator, so this is not an approval, and the project file is valid,
+        so it is not an error. It is a field that has become necessary because of a
+        setting somewhere else, and the sentence comes from the service that owns the
+        field, so the API says what the wizard's field warning says.
+
+        The whole project is judged, not only the block that was just written. The two
+        halves of an advice sit in two services, and either write can be the one that
+        makes it true -- switching keycloak's ``restrict-access`` on is as much the
+        moment as saving a roleless invite is.
+
+        Prefixed with the path so a caller knows which entry of a list is meant; the
+        message alone would name the same thing for every invite.
+        """
+        from opi.services.services import collect_config_advice
+
+        return [f"{notice.field_path}: {notice.message}" for notice in collect_config_advice(project_data)]
+
     async def upsert_deployment(
         self,
         deployment_name: str,
@@ -8064,6 +8086,7 @@ class ProjectManager:
                 "target": target,
                 "generated": generated,
                 "approvals": self._approval_notices(project_data, deployment_name),
+                "warnings": self._config_advice_warnings(project_data),
             }
 
         except Exception as e:
@@ -8178,7 +8201,14 @@ class ProjectManager:
                 return {"success": False, "error": str(e), "error_type": "validation_error"}
 
             logger.info(f"Patched service '{service_name}' config at {target} target in project '{project_name}'")
-            return {"success": True, "service": service_name, "target": target, "generated": generated, **counts}
+            return {
+                "success": True,
+                "service": service_name,
+                "target": target,
+                "generated": generated,
+                "warnings": self._config_advice_warnings(project_data),
+                **counts,
+            }
 
         except Exception as e:
             error_msg = f"Error patching service '{service_name}' config: {e}"

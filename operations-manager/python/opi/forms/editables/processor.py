@@ -496,7 +496,29 @@ class EditableFormProcessor:
         if strip_transients:
             self.strip_transients_from(result, editables)
 
+        self._add_config_advice(result)
+
         return result, errors
+
+    def _add_config_advice(self, yaml_data: dict[str, Any]) -> None:
+        """Merge the catalog's ``ConfigAdvice`` for *yaml_data* into ``field_warnings``.
+
+        Here rather than in ``enforce_sections`` for two reasons. The advice is about the
+        project as a whole, not about one section, so it does not belong to a section's
+        enforcer -- and ``enforce_sections`` is only called for a section that HAS one, so
+        a service without an enforcer (invite) would never be asked. This runs on every
+        submission and every re-render, so the warning appears while the user is still on
+        the step instead of only when they press Next.
+
+        Keyed by the same field path the bridge looks warnings up with, so it lands at the
+        field it is about; a path that this step does not render simply goes unused.
+        """
+        from opi.services.services import collect_config_advice
+
+        for notice in collect_config_advice(yaml_data):
+            messages = self.field_warnings.setdefault(notice.field_path, [])
+            if notice.message not in messages:
+                messages.append(notice.message)
 
     async def _process_group_json(
         self,

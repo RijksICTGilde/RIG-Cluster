@@ -483,6 +483,70 @@ Existing building blocks, so nobody writes a fifth name validator:
 model, a validator or a closed select with `AllowedValues`/`Literal`, a visualizer with a
 label and help text, and a line in the section layout.
 
+### A field that another service's setting makes necessary
+
+`ServiceDefinition.requires` is the unconditional dependency: the auth wall cannot work
+without keycloak, so binding it without keycloak is refused. Some dependencies are
+*conditional*, and for those a refusal is wrong. An invite without a `realm-roles` entry is
+a perfectly good invitation -- it hands out a bare account -- right up to the moment
+keycloak's `restrict-access` is switched on, because from then on only a role holder gets
+in. The same file is correct or useless depending on a value in another service's config,
+and nobody found out until someone tried the link.
+
+`ServiceDefinition.config_advice` declares that, as a **warning, never a refusal**:
+
+```python
+config_advice=[
+    ConfigAdvice(
+        when=config_path(ConfigLayer.PROJECT, ServiceType.KEYCLOAK, "config", "restrict-access", "enabled"),
+        expects=config_path(ConfigLayer.PROJECT, ServiceType.INVITE, "config", "active[*]", "realm-roles"),
+        message="Keycloak beperkt de toegang tot houders van een rol; een uitnodiging "
+                "zonder realm-rol geeft dus geen toegang.",
+    )
+]
+```
+
+Three properties hold it together, and none of them is optional:
+
+- **It lives on the service that owns the FIELD**, not on the one that owns the condition.
+  That is what makes the advice discoverable from the thing you are editing, and it keeps
+  keycloak from having to know that invites exist.
+- **Both halves are yaml paths**, built with `config_path` exactly as `requires` and every
+  editable are. `when` applies while the path holds a *truthy* value, so `enabled: false`
+  correctly says nothing; `expects` is the field that should then carry a value, and one
+  `[*]` per list level is expanded so the warning names the entry it is about
+  (`services/invite/config/active[0]/realm-roles`). Both are read with `smart_get_value`,
+  so they resolve against the project file and against the wizard's virtual
+  `_services-config` root alike.
+- **Generic code knows no service names.** `collect_config_advice(project_data)`
+  (`opi/services/services.py`) walks the catalog and evaluates what is declared. A service
+  the project has not selected needs no special case: its `expects` path resolves to
+  nothing.
+
+One evaluator, two existing exits -- do **not** add a third:
+
+| Exit | Where | What it looks like |
+|---|---|---|
+| Field warning | `EditableFormProcessor._add_config_advice` merges into `field_warnings` | the same dict a `FieldWarning` from an enforcer lands in, keyed by field path |
+| `warnings` on the write | `ProjectManager._config_advice_warnings`, on `configure_service` and `patch_service_config_list` | `ConfigureServiceResult.warnings`, each line prefixed with the yaml path |
+
+It sits in `process_json_submission` rather than in `enforce_sections` on purpose: the
+advice is about the whole project, not about one section, and `enforce_sections` only runs
+for a section that *has* an enforcer -- so a service without one (invite) would never be
+asked. Running it on every submission and re-render also means the warning appears while
+the user is still on the step.
+
+The API judges the whole project, not only the block just written: the two halves sit in
+two services, and either write can be the one that makes the advice true. Switching
+`restrict-access` on is as much the moment as saving a roleless invite is.
+
+Warnings are only drawn by the widgets that call `render_warnings` (`text`, `sequence`).
+If your advice names a field rendered by another widget, add the macro there too rather
+than moving the warning to a field it is not about.
+
+`tests/test_config_advice.py` covers both directions, including the one that matters most:
+without `restrict-access`, a roleless invite produces no warning at all.
+
 ## API (configuring via REST)
 
 A service that owns a `config_model` is configurable through the REST API for free --

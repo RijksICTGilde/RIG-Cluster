@@ -669,6 +669,10 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             # Wat er nog op een beheerder wacht. Zonder dit merkt een client pas dat zijn
             # domein niet is goedgekeurd doordat er geen ingress op dat adres verschijnt.
             "approvals": result.get("approvals", []),
+            # Wat op niemand wacht en toch niet werkt: een veld dat door een instelling
+            # elders nodig is geworden en leeg is gebleven. Zonder dit komt een client daar
+            # pas achter als iemand de uitnodiging probeert te gebruiken.
+            "warnings": result.get("warnings") or None,
             "processing": {
                 **processing,
                 **(
