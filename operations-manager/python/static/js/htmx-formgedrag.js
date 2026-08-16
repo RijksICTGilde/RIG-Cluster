@@ -75,15 +75,33 @@
 
     function actiefVeld() {
         var el = document.activeElement;
-        /* Staat de focus in een schaduwboom, dan is activeElement de HOST; daar zoeken we
-           naar door tot we bij het element met een id zijn. */
+        /* Staat de focus in een schaduwboom, dan is activeElement de HOST; daar dalen we
+           doorheen tot bij het invoerveld dat de focus echt heeft. Dat veld is waar de
+           CURSOR staat - het id komt ergens anders vandaan, zie hieronder. */
         while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
         return el;
     }
 
     document.addEventListener("htmx:beforeSwap", function () {
+        /* Het id zoeken we vanaf `document.activeElement` en NIET vanaf het veld uit
+           actiefVeld(). Dat is het hele verschil tussen wel en niet werken, en het is in de
+           browser gemeten op /projects:
+
+               document.activeElement  -> NLDD-SEARCH-FIELD#projects-zoekveld
+               actiefVeld()            -> INPUT (in de schaduwboom, zonder id)
+               INPUT.closest("[id]")   -> null
+
+           `closest()` klimt namelijk NIET over de rand van een schaduwboom heen. Zocht je
+           dus vanaf het echte invoerveld, dan vond je nooit een id - precies bij de velden
+           waarvoor dit herstel geschreven is. focusId bleef null en afterSettle stapte er
+           meteen weer uit; de focus viel op <body> en je kon niet verder typen.
+
+           `document.activeElement` staat altijd in de LICHTE boom (bij focus in een
+           schaduw is dat de host), dus daar werkt closest() gewoon. Voor een kaal
+           <input id="..."> verandert er niets: dat IS activeElement. */
+        var host = document.activeElement;
+        var drager = host && host.closest ? host.closest("[id]") : null;
         var el = actiefVeld();
-        var drager = el && el.closest ? el.closest("[id]") : null;
         focusId = drager ? drager.id : null;
         cursor = el && typeof el.selectionStart === "number" ? el.selectionStart : null;
     });
