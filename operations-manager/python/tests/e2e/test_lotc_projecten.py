@@ -138,15 +138,21 @@ def test_de_korte_projectnaam_staat_naast_de_weergavenaam(client: httpx.Client) 
     De weergavenaam is niet uniek en is niet wat je in de CLI of de API intypt. Zonder de
     korte naam kun je hier dus wel een project herkennen maar er niet mee verder.
 
-    De vorm wordt meegetoetst en niet alleen de aanwezigheid: hij hoort in de
-    count-plek van de kaart (klein en gedempt naast de titel), niet in de titel zelf en
-    ook niet in de omschrijvingsregel. Zou iemand hem in de titel zetten, dan is het geen
+    Hij heeft in de count-plek van de kaart gestaan. Dat is de plek voor een TELLING
+    ("123 apps", zo staat het in de registry van het component) en een projectcode is dat
+    niet; hij kwam daar terecht omdat het toevallig kleine tekst naast de titel is. Nu
+    staat hij in de chipsleuf, waar ook de bewerkdatum staat.
+
+    De vorm wordt meegetoetst en niet alleen de aanwezigheid: niet in de titel en niet in
+    de omschrijvingsregel. Zou iemand hem in de titel zetten, dan is het geen
     identificatie meer maar een tweede naam.
     """
     antwoord = client.get("/projects").text
 
-    assert '<span class="lotc-layer-count">test-project-detail</span>' in antwoord, (
-        "de korte naam staat niet klein naast de weergavenaam"
+    kaart = antwoord.split('href="/projects/test-project-detail/details"', 1)[1].split("</a>", 1)[0]
+    assert 'class="lotc-layer-chips"' in kaart, "de kaart heeft geen chipsleuf"
+    assert "test-project-detail" in kaart.split('class="lotc-layer-chips"', 1)[1], (
+        "de korte naam staat niet als chip op de kaart"
     )
 
     # De titel blijft de WEERGAVEnaam.
@@ -165,7 +171,7 @@ def test_een_project_zonder_weergavenaam_toont_zijn_naam_niet_twee_keer(client: 
 
     # test-project heeft geen display-name in zijn fixture.
     assert '<span class="lotc-layer-title">test-project</span>' in antwoord, "de fixture is veranderd"
-    assert '<span class="lotc-layer-count">test-project</span>' not in antwoord, (
+    assert "<code>\n    test-project\n</code>" not in antwoord, (
         "de korte naam staat er dubbel op een project zonder weergavenaam"
     )
 
