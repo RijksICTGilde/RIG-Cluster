@@ -87,7 +87,7 @@ from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
 from opi.connectors.subdomain import validate_base_domain, validate_subdomain
 from opi.core.auth_decorators import get_current_user
-from opi.core.cluster_config import get_selectable_clusters, supports_custom_domain_certificates
+from opi.core.cluster_config import get_ingress_postfix, get_selectable_clusters, supports_custom_domain_certificates
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
@@ -491,6 +491,11 @@ async def list_clusters_v2(
     schrijfactie. Zie ``CUSTOM_DOMAIN_SENTINEL``; een eigen domein zet je door de domeinnaam
     zelf in ``base-domain`` te schrijven.
 
+    ``default-domain`` staat erbij omdat de lijst zelf niet verraadt welke keuze meteen in
+    gebruik gaat: alleen het domein van het cluster zelf (en een leeg ``base-domain``) gaat
+    zonder goedkeuring, en dat domein kan gewoon als gewone entry in ``base-domains`` staan.
+    Zonder dit veld moest een client het uit het label van de lege optie parsen.
+
     Headers:
         X-API-Key: The API key for the project (required)
     """
@@ -505,6 +510,11 @@ async def list_clusters_v2(
             {
                 "name": cluster,
                 "manager": cluster == settings.CLUSTER_MANAGER,
+                # Het domein van het cluster zelf, want dat is de enige waarde die
+                # zonder goedkeuring in gebruik gaat (is_deployment_domain_approved).
+                # Hij stond alleen als vrije tekst in het label van de lege optie, dus
+                # een client kon de twee gevallen niet uit elkaar houden zonder te parsen.
+                "default-domain": get_ingress_postfix(cluster).lstrip("."),
                 "base-domains": [
                     ClusterDomainOption(value=str(option["value"]), label=str(option["label"]))
                     for option in ClusterBaseDomainOptionsProvider(cluster=cluster).get_options()
