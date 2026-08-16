@@ -1,0 +1,70 @@
+{
+  "project": "e2e47-kyj",
+  "deferred": [
+    {
+      "component": "uitgesteld0",
+      "seconds": 3.054
+    },
+    {
+      "component": "uitgesteld1",
+      "seconds": 3.05
+    },
+    {
+      "component": "uitgesteld2",
+      "seconds": 3.05
+    },
+    {
+      "component": "uitgesteld3",
+      "seconds": 3.046
+    },
+    {
+      "component": "uitgesteld4",
+      "seconds": 3.047
+    },
+    {
+      "component": "uitgesteld5",
+      "seconds": 3.045
+    },
+    {
+      "component": "uitgesteld6",
+      "seconds": 3.047
+    },
+    {
+      "component": "uitgesteld7",
+      "seconds": 6.078
+    },
+    {
+      "component": "uitgesteld8",
+      "seconds": 6.061
+    },
+    {
+      "component": "uitgesteld9",
+      "seconds": 6.064
+    }
+  ],
+  "rolled_out": [
+    {
+      "component": "uitgerold0",
+      "seconds": 27.544
+    },
+    {
+      "component": "uitgerold1",
+      "seconds": 102.269
+    },
+    {
+      "component": "uitgerold2",
+      "seconds": 90.747
+    }
+  ],
+  "refresh": {
+    "seconds": 27.899
+  },
+  "samenvatting": {
+    "deferred_total": 39.542,
+    "deferred_mean": 3.954,
+    "refresh_seconds": 27.899,
+    "batch_total": 67.441,
+    "rolled_out_mean": 73.52,
+    "rolled_out_projected_10": 735.2
+  }
+}
