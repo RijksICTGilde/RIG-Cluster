@@ -366,66 +366,6 @@ class GitProjectStore(ProjectStore):
                 elif isinstance(item, dict | list):
                     await self._decrypt_tree(item, private_key)
 
-    async def _align_ciphertext(self, data: dict[str, Any], reference: dict[str, Any]) -> dict[str, Any]:
-        """Neem de willekeur uit AGE-blokken weg door ze te vergelijken op INHOUD.
-
-        Geeft een kopie van *data* terug waarin elk versleuteld blok dat dezelfde platte
-        tekst draagt als het blok op dezelfde plek in *reference*, de ciphertext van
-        *reference* overneemt. Inhoudelijk verandert er niets; wat verdwijnt is het
-        verschil dat alleen uit de willekeur van het hercoderen komt.
-
-        Dit is dezelfde afweging als ``keep_existing_ciphertext_if_unchanged`` maakt bij
-        het schrijven van één veld, maar dan over de hele boom, zodat een vergelijking van
-        twee complete projectversies niet struikelt over blokken die alleen anders zijn
-        versleuteld. Bij twijfel -- geen sleutel, mislukte ontcijfering -- blijft de waarde
-        uit *data* staan, want dan is "gelijk" niet vast te stellen en is verschil melden
-        het veilige antwoord.
-        """
-        try:
-            private_key = await get_decoded_project_private_key(data)
-        except ValueError, KeyError:
-            return data
-        if not private_key:
-            return data
-
-        aligned = copy.deepcopy(data)
-        await self._align_tree(aligned, reference, private_key)
-        return aligned
-
-    async def _align_tree(self, node: Any, ref: Any, private_key: str) -> None:
-        """Loop beide bomen gelijk op en vervang gelijkwaardige AGE-blokken."""
-        if isinstance(node, dict) and isinstance(ref, dict):
-            for key, value in node.items():
-                if key not in ref:
-                    continue
-                other = ref[key]
-                if isinstance(value, str) and isinstance(other, str):
-                    same = await self._same_plaintext(value, other, private_key)
-                    if same:
-                        node[key] = other
-                elif isinstance(value, dict | list):
-                    await self._align_tree(value, other, private_key)
-        elif isinstance(node, list) and isinstance(ref, list):
-            for index, value in enumerate(node):
-                if index >= len(ref):
-                    break
-                other = ref[index]
-                if isinstance(value, str) and isinstance(other, str):
-                    if await self._same_plaintext(value, other, private_key):
-                        node[index] = other
-                elif isinstance(value, dict | list):
-                    await self._align_tree(value, other, private_key)
-
-    async def _same_plaintext(self, one: str, other: str, private_key: str) -> bool:
-        """True als twee AGE-blokken verschillen maar dezelfde platte tekst dragen."""
-        if one == other:
-            return False
-        if AGE_HEADER not in one or AGE_HEADER not in other:
-            return False
-        first = await self._try_decrypt(one, private_key, "align")
-        second = await self._try_decrypt(other, private_key, "align")
-        return first is not None and first == second
-
     @staticmethod
     async def _try_decrypt(value: str, private_key: str, field: str) -> str | None:
         try:
@@ -698,19 +638,7 @@ class GitProjectStore(ProjectStore):
         Raises ConflictError when the merge conflicts or the merged result does not
         validate, so the caller can surface a retryable error instead of losing data.
         """
-        # AGE-versleutelde waarden hercoderen niet-deterministisch: dezelfde inhoud levert
-        # elke keer andere ciphertext op. Zonder die willekeur weg te nemen vergelijken twee
-        # inhoudelijk IDENTIEKE versies als verschillend, en dan mist de ``current == data``
-        # vangregel hieronder precies het geval waar hij voor bedoeld is -- de modal slaat op
-        # en geeft hetzelfde resultaat door aan de deployment-taak, die het tegen de basis van
-        # vóór die eerste opslag nog eens schrijft. Het gevolg was een PERMANENT conflict op
-        # elk project met een versleuteld veld: de melding zei dat iemand anders het gewijzigd
-        # had, terwijl er niemand anders was en het bestand niet eens bewoog. Gemeten in de
-        # doorloop van RC-118: zonder versleuteld veld sloeg hetzelfde project gewoon op, mét
-        # een enkele ``user-env-vars`` nooit meer.
         current = await self._read_committed(connector, relative_path)
-        if current is not None:
-            data = await self._align_ciphertext(data, current)
         if current is None or current == base:
             logger.info(
                 "reconcile '%s' [%s]: current==base (no concurrent change since read) -> publishing as-is",
