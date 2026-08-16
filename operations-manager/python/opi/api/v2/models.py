@@ -421,8 +421,9 @@ class ClusterDomainOption(BaseModel):
 
     value: str = Field(
         description=(
-            "Wat je in base-domain zet. Leeg betekent het standaarddomein van het cluster, "
-            "__custom__ betekent een eigen domein dat je zelf invult."
+            "Wat je in base-domain zet. Leeg betekent het standaarddomein van het cluster. "
+            "Een eigen domein staat hier niet tussen: dat zet je door de domeinnaam zelf in "
+            "base-domain te schrijven (bijvoorbeeld 'mijn-app.nl')."
         ),
         examples=["rijksapp.nl"],
     )
@@ -437,7 +438,11 @@ class ClusterInfo(BaseModel):
     base_domains: list[ClusterDomainOption] = Field(
         default_factory=list,
         alias="base-domains",
-        description="De waarden die base-domain op een deployment van dit cluster accepteert.",
+        description=(
+            "De domeinen die dit cluster zelf aanbiedt voor base-domain op een deployment. Dit "
+            "is geen gesloten verzameling: een eigen domein schrijf je als domeinnaam in "
+            "base-domain, en 'custom-domain-certificates' zegt wat dat hier oplevert."
+        ),
     )
     custom_domain_certificates: bool = Field(
         default=True,
