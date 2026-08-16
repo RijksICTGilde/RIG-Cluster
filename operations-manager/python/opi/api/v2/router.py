@@ -2350,7 +2350,7 @@ def _config_write_signature(name_param: str | None, body_model: type | None) -> 
     return Signature(params, return_annotation=JSONResponse)
 
 
-def _refuse_platform_managed(service_name: str, config: dict[str, Any], managed: frozenset[str]) -> None:
+def _refuse_platform_managed(service_name: str, config: Any, managed: frozenset[str]) -> None:
     """422 when a write carries a field OPI owns. The API can never change these.
 
     Refusing rather than dropping the field silently: a caller that sent it believes it
@@ -2360,7 +2360,19 @@ def _refuse_platform_managed(service_name: str, config: dict[str, Any], managed:
 
     ``exclude_unset`` on the body means a key is here only when the caller really sent
     it, so an unset optional field never trips this.
+
+    A config that is not an OBJECT has no named fields to own, so there is nothing here
+    to refuse. That is not a rare shape: the config of ``persistent-storage``,
+    ``temp-storage`` and ``attachments`` IS a list (a ``RootModel[list[...]]``), and its
+    body dumps to a ``list``. Without this guard the ``managed & config.keys()`` below
+    raised ``AttributeError`` on every such PUT -- a 500 on a documented endpoint, for a
+    check that had nothing to say about a list in the first place. The read side of the
+    same rule has carried the guard from the start (``_collect_service_config.visible``),
+    as do the mutator (``ServiceAdapter._platform_fields_of``) and the singular facade;
+    this is the write side catching up.
     """
+    if not isinstance(config, dict):
+        return
     offending = sorted(managed & config.keys())
     if not offending:
         return
