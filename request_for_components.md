@@ -274,6 +274,41 @@ encrypt/decrypt. Het logpaneel liep tegen dezelfde grens aan, om een andere rede
 **Voorstel.** De inhoud volgen met een `MutationObserver`, of een publieke
 `setValue()`/`value` op het component.
 
+---
+
+## 14. Een `c-stack` in een `c-td` krimpt in Firefox tot niets
+
+**Wat er gebeurt.** `<nldd-cell>` legt zijn kinderen neer met `display: flex;
+flex-direction: column; align-items: flex-start`, dus ze worden op de dwarsas zo smal als
+hun eigen inhoud. Staat er een `<c-stack>` in de cel met een `<c-paragraph>` erin, dan
+komt de keten uit op `div.lotc-stack` (flex) > `nldd-rich-text` (grid), en Firefox rekent
+de intrinsieke breedte daarvan uit als **0**. Chromium en WebKit komen op de celbreedte
+uit.
+
+**Wat je ziet.** Een kolom van EEN LETTER breed, met de rest van de cel leeg ernaast.
+Gemeten op `/admin/approvals`, Firefox 1440px breed: cel 212px, `div.lotc-stack` 0px, en
+"16 augustus 2026" over veertien regels - een teken per regel. Dezelfde pagina staat in
+Chromium en WebKit goed.
+
+**Waarom dat pijn doet.** Het faalt in EEN motor, dus elke meting in Chromium is groen
+terwijl het scherm stuk is. En "twee dingen onder elkaar in een tabelcel" is precies waar
+je `c-stack` voor pakt: bij ons de datum met "door X" eronder (`bg/admin-approvals`) en
+een statuslabel met de lopende stap eronder (`bg/_tasks`).
+
+**Welke schakel het is.** Gemeten: een `<c-paragraph>` ZONDER stack in dezelfde cel is
+212px en eenregelig, en een `lotc-stack` met kale `<p>`-kinderen ook. Alleen de combinatie
+stack + `nldd-rich-text` valt om.
+
+**Wat wij intussen doen.** De `c-stack` weglaten. Dat kost niets: een cel IS al een
+kolom-flexbox, dus de kinderen stapelen vanzelf. Bewust GEEN eigen CSS-regel die
+`nldd-cell` overschrijft - dat werkt wel (`align-self: stretch` op de stack), maar het is
+een regel die met de componentlaag vecht en die niemand later durft weg te halen.
+`tests/test_lotc_stapel_in_tabelcel.py` houdt het patroon eruit.
+
+**Voorstel.** `nldd-cell` zijn kinderen laten uitrekken (`align-items: stretch`, met de
+uitlijning van de tekst waar hij hoort), of `.lotc-stack` een breedte geven die niet van
+de intrinsieke meting van zijn kinderen afhangt.
+
 ## Een pagina met een leesbare maximumbreedte, en de benoemde `layout-container`
 
 Gemeten in ZAD op 12 augustus 2026, op `/projects/deployments/<naam>`:
