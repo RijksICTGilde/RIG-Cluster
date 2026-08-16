@@ -59,6 +59,18 @@
 
 <div class="wizard-step" id="modal-wizard-step-inner">
     <c-stack gap="lg">
+        {# De sectiekop is er voor een dialoog die MEER stappen heeft dan deze: hij zegt in
+           welke stap je zit, en het vraagteken ernaast opent de uitleg van de dienst. Waar
+           de dialoog zelf al een titel draagt die hetzelfde zegt, staan er twee koppen
+           boven elkaar - op /admin/approvals las de bovenste "Domeingoedkeuring - <project>"
+           en de onderste "Domein- en subdomeingoedkeuring". De titel van de dialoog wint
+           daar, want die noemt het project.
+
+           Vandaar een schakelaar in de CONTEXT en niet een verwijdering: dit fragment
+           bedient ook de bewerkdialogen van een project (opi/web/router_detail_edit.py) en
+           daar draagt de kop wel het icoon, de titel en de uitleg van de stap.
+           Standaard AAN, zodat alleen de aanroeper die hem niet wil er iets voor doet. #}
+        {% if show_section_head | default(true) %}
         <c-stack gap="xs">
             <c-cluster gap="sm" align="center">
                 {% if section.icon %}
@@ -82,6 +94,7 @@
                 <c-paragraph>{{ section.description }}</c-paragraph>
             {% endif %}
         </c-stack>
+        {% endif %}
 
         {% if global_errors %}
             <c-alert type="error" heading="Fouten">

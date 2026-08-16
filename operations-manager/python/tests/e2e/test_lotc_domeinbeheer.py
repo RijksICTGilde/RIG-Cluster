@@ -1,4 +1,4 @@
-"""Twee fouten op /admin/approvals, allebei alleen in een BROWSER te zien.
+"""Vier fouten op /admin/approvals, allemaal alleen in een BROWSER te zien.
 
 1. De knop "Beheren" stuurde de projectnaam niet mee.
 
@@ -22,6 +22,29 @@
 
    Daarom draait die test in FIREFOX. Een meting in Chromium was groen op een pagina die
    stuk was - precies de fout die deze suite hoort te vangen.
+
+3. De dialoog had TWEE koppen boven elkaar.
+
+   "Domeingoedkeuring - <project>" is de titel van de dialoog; daaronder stond nog een
+   "Domein- en subdomeingoedkeuring" met de ondertitel "Keur domein- en subdomeinaanvragen
+   goed of af". Die tweede is de kop van de FORMULIERSECTIE, uit
+   ``bg/_modal-wizard-step.html.j2``, en die sectiekop is elders wel op zijn plek: in de
+   wizard en in de bewerkdialogen van een project draagt hij het icoon, de titel en het
+   hulpvraagteken van de stap. Hier niet, want deze dialoog heeft maar EEN stap en zijn
+   eigen titel is informatiever: die noemt het project. Dus onderdrukt, niet gesloopt.
+
+4. Onder de dialoogtitel stond een lege rode balk.
+
+   ``#approval-error`` draagt van meet af aan ``is-hidden``, en die klasse werkte niet:
+   ``display: none !important`` staat in ``static/css/base.css``, en dat stylesheet hoort
+   bij de OUDE schil. ``base_lotc.html.j2`` laadt het niet. Wat de dialoog wel laadt is
+   ``css/modal.css``, en daar staat ``.edit-section-error`` met rand, achtergrond en
+   padding - dus een leeg vak van 34 pixels hoog, op elke opening van de dialoog.
+
+   Zelfde gat op elk ander LOTC-scherm dat de klasse gebruikt: de bevestigingsdialoog,
+   het feedbackvenster, de bewerkdialoog van een project en het filterblok van de
+   metrics-explorer. De reparatie staat daarom in ``static/css/lotc-app.css``, het
+   stylesheet dat ELKE pagina van deze bouwlijn laadt.
 """
 
 from __future__ import annotations
@@ -197,6 +220,115 @@ def test_het_formulier_laadt_zonder_foutmelding(app_server: str, auth_page: Page
     assert "Fout bij het laden" not in binnenkant, binnenkant
     assert binnenkant, "het formulier is nooit binnengekomen"
     assert binnenkant != "Laden...", "het formulier is nooit binnengekomen"
+
+
+# ---------------------------------------------------------------------------
+# Fout 3: twee koppen boven elkaar
+# ---------------------------------------------------------------------------
+
+#: De koppen IN de dialoog, met de hoogte die ze innemen. Een kop die er staat maar niet
+#: getekend wordt telt niet mee - dat is precies het onderscheid dat een assertie op de
+#: HTML niet kan maken.
+KOPPEN_IN_DE_DIALOOG = """() => {
+    const modal = document.getElementById('approval-modal');
+    return [...modal.querySelectorAll('h1, h2, h3, h4, h5, h6')]
+        .map(k => ({ tekst: (k.textContent || '').trim(), hoogte: Math.round(k.getBoundingClientRect().height) }))
+        .filter(k => k.hoogte > 0);
+}"""
+
+
+def _open_de_dialoog(page: Page, app_server: str) -> None:
+    page.goto(f"{app_server}/admin/approvals")
+    _wacht_op_de_tabel(page)
+    page.locator("nldd-button", has_text="Beheren").first.click()
+    page.locator("#approval-modal.is-open").wait_for(state="visible", timeout=10000)
+    page.wait_for_timeout(1500)
+
+
+def test_de_dialoog_heeft_een_kop_en_niet_twee(app_server: str, auth_page: Page, project_met_aanvragen: str) -> None:
+    """Boven het formulier staat EEN kop, en die noemt het project.
+
+    De sectiekop van de formulierlaag zei hetzelfde als de dialoogtitel, alleen zonder de
+    projectnaam. Twee koppen boven elkaar die hetzelfde zeggen, waarvan de bovenste meer
+    vertelt.
+    """
+    _open_de_dialoog(auth_page, app_server)
+
+    koppen = auth_page.evaluate(KOPPEN_IN_DE_DIALOOG)
+
+    assert [k["tekst"] for k in koppen] == [f"Domeingoedkeuring - {project_met_aanvragen}"], koppen
+
+
+def test_de_ondertitel_van_de_sectie_staat_er_ook_niet_meer(
+    app_server: str, auth_page: Page, project_met_aanvragen: str
+) -> None:
+    """Met de sectiekop gaat ook zijn ondertitel weg.
+
+    Apart gemeten, want een kop weghalen en zijn beschrijving laten staan geeft een losse
+    zin onder de dialoogtitel waar niemand meer bij weet waar hij bij hoort.
+    """
+    _open_de_dialoog(auth_page, app_server)
+
+    tekst = auth_page.locator("#approval-modal").inner_text()
+
+    assert "Keur domein- en subdomeinaanvragen goed of af" not in tekst, tekst
+
+
+# ---------------------------------------------------------------------------
+# Fout 4: de lege rode foutbalk
+# ---------------------------------------------------------------------------
+
+#: Wat ``#approval-error`` op het scherm INNEEMT. `is-hidden` in het class-attribuut zegt
+#: niets: de vorige test op dit element las precies dat, en stond groen terwijl er een
+#: leeg rood vak van volle breedte in beeld was.
+DE_FOUTBALK = """() => {
+    const el = document.getElementById('approval-error');
+    const doos = el.getBoundingClientRect();
+    return {
+        klasse: el.className,
+        display: getComputedStyle(el).display,
+        hoogte: Math.round(doos.height),
+        breedte: Math.round(doos.width),
+        inhoud: (el.textContent || '').trim(),
+    };
+}"""
+
+
+def test_de_foutbalk_neemt_geen_ruimte_in_zonder_fout(
+    app_server: str, auth_page: Page, project_met_aanvragen: str
+) -> None:
+    """Zonder melding is de foutbalk er niet - niet leeg, maar weg."""
+    _open_de_dialoog(auth_page, app_server)
+
+    balk = auth_page.evaluate(DE_FOUTBALK)
+
+    assert balk["inhoud"] == "", f"deze meting gaat over de LEGE balk: {balk}"
+    assert balk["display"] == "none", f"de lege foutbalk wordt getekend: {balk}"
+    assert balk["hoogte"] == 0, f"de lege foutbalk neemt {balk['hoogte']}px in beslag: {balk}"
+
+
+def test_de_foutbalk_verschijnt_wel_bij_een_echte_melding(
+    app_server: str, auth_page: Page, project_met_aanvragen: str
+) -> None:
+    """En hij komt terug zodra er iets te melden valt.
+
+    De helft die je vergeet als je een leeg vak wegwerkt: verbergen is geen reparatie als
+    de melding daarna ook niet meer doorkomt. Dit is dezelfde weg als de ``catch`` in
+    ``openApprovalModal``.
+    """
+    _open_de_dialoog(auth_page, app_server)
+
+    auth_page.evaluate(
+        """() => {
+            const el = document.getElementById('approval-error');
+            el.textContent = 'Fout bij het laden van het formulier';
+            el.classList.remove('is-hidden');
+        }"""
+    )
+    balk = auth_page.evaluate(DE_FOUTBALK)
+
+    assert balk["display"] != "none", f"de melding blijft onzichtbaar: {balk}"
+    assert balk["hoogte"] > 0, f"de melding heeft geen hoogte: {balk}"
 
 
 # ---------------------------------------------------------------------------
