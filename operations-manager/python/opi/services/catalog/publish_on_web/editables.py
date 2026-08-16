@@ -135,6 +135,24 @@ def _path(setting: DomainSetting) -> str:
 #: field: it is form transport, not configuration of the service.
 CUSTOM_BASE_DOMAIN_PATH = "deployments[*]/base-domain:custom"
 
+#: Deliberately WITHOUT ``values_must_exist``, and the reason is measured rather than
+#: assumed. That flag judges a stored value against the field's own provider built with no
+#: project context, and ``DomainFormatOptionsProvider`` filters its list by base-domain:
+#: constructed without one it offers the six dash variants and hides the five dotted ones.
+#: The failure mode is therefore not the usual "an empty source makes the check vacuous" --
+#: the list is never empty here -- but its opposite: the check would refuse five legitimate
+#: ids. Replayed over the production projects that is four deployments in two projects
+#: (pm-5sj, regel-k4c) whose dotted format is valid for their own base-domain, and every one
+#: of them would have become unsaveable on its next edit.
+#:
+#: The question splits in two, so it is answered in two places:
+#:
+#: * does this id EXIST -- a closed set of eleven, so it is a type. ``config_model``'s
+#:   ``domain-format`` is ``DomainFormatId``, which refuses it at the API boundary and,
+#:   through ``validate_service_configs``, at the save chokepoint every road passes;
+#: * may THIS deployment use it -- narrower, base-domain dependent, and only answerable with
+#:   the deployment in hand. That is ``DomainConfigEnforcer``, which has it and consults this
+#:   same provider for the message.
 DOMAIN_FORMAT_EDITABLE = Editable(
     yaml_path=_path(DomainSetting.DOMAIN_FORMAT),
     required=True,
