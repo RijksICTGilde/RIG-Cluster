@@ -130,10 +130,16 @@
        <c-cluster justify="between">. De lijn eronder en de marge blijven in
        modal.css - daar heeft het thema niets voor. #}
     <c-cluster justify="between" align="center" class="edit-section-header">
-            <c-heading type="h2" size="4" id="approval-title">
+            {# Het icoon staat NAAST de kop en niet erin: een kop legt zijn kinderen niet
+               naast elkaar, dus een icoon binnen <c-heading> lijnt op de tekstBASISlijn uit
+               en zakt daarmee uit de lijn. Een cluster centreert wel. De id blijft op de kop
+               staan, en #approval-title-text blijft de span die openApprovalModal beschrijft. #}
+            <c-cluster gap="sm" align="center">
                 <c-icon icon="check-mark-circle" size="lg" />
-                <span id="approval-title-text">Domeingoedkeuring</span>
-            </c-heading>
+                <c-heading type="h2" size="4" id="approval-title">
+                    <span id="approval-title-text">Domeingoedkeuring</span>
+                </c-heading>
+            </c-cluster>
             <c-button type="tertiary" size="sm" label="Sluiten" icon="dismiss" show-icon="before" class="edit-modal-close-btn"
                       @click="closeApprovalModal()" />
         </c-cluster>
