@@ -7,10 +7,15 @@
        <c-cluster justify="between">. De lijn eronder en de marge blijven in
        modal.css - daar heeft het thema niets voor. #}
     <c-cluster justify="between" align="center" class="edit-section-header">
-        <c-heading type="h2">
+        {# Het icoon staat NAAST de kop: binnen <c-heading> lijnt het op de tekstbasislijn
+           uit en zakt het uit de lijn. De span met de id blijft ongemoeid - JavaScript
+           schrijft daarin de projectnaam. #}
+        <c-cluster gap="sm" align="center">
             <c-icon icon="check-mark-circle" size="lg" color="donkerblauw"/>
-            <span id="approval-title-text">Domeingoedkeuring</span>
-        </c-heading>
+            <c-heading type="h2">
+                <span id="approval-title-text">Domeingoedkeuring</span>
+            </c-heading>
+        </c-cluster>
         {% set lotc_onclick_1 %}closeApprovalModal(){% endset %}<c-button size="sm" label="Sluiten" show-icon="before" icon="dismiss" class="edit-modal-close-btn"/>
     </c-cluster>
     <div id="approval-error" class="edit-section-error is-hidden"></div>

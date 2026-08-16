@@ -14,10 +14,10 @@
 
 <div class="wizard-review" id="wizard-step-inner">
     <div class="wizard-step__header">
-        <c-heading type="h2">
+        <c-cluster gap="sm" align="center">
             <c-icon icon="check-mark-circle" size="md"/>
-            Controleer je gegevens
-        </c-heading>
+            <c-heading type="h2" label="Controleer je gegevens"/>
+        </c-cluster>
         <p class="wizard-step__description">
             Controleer de ingevulde gegevens hieronder voordat je het project aanmaakt.
         </p>
@@ -28,10 +28,10 @@
         <c-card outline="true" padding="md">
             <div class="wizard-review__section">
                 <div class="wizard-review__section-header">
-                    <c-heading type="h3">
+                    <c-cluster gap="sm" align="center">
                         {% if section.icon %}<c-icon icon="{{ section.icon | nldd_icon }}" size="lg"/>{% endif %}
-                        {{ section.title }}
-                    </c-heading>
+                        <c-heading type="h3" label="{{ section.title }}"/>
+                    </c-cluster>
                     <c-button size="sm" label="Bewerken" show-icon="before" icon="pencil-on-square"/>
                 </div>
                 <div class="wizard-review__section-content">
