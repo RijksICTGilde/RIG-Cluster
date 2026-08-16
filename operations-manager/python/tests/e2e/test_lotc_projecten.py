@@ -132,6 +132,44 @@ def test_de_pagina_toont_de_kaarten_en_wat_daar_omheen_hoort(client: httpx.Clien
         assert weg not in antwoord, f"{weg} staat er nog; de tabelkolommen zijn niet weg"
 
 
+def test_de_korte_projectnaam_staat_naast_de_weergavenaam(client: httpx.Client) -> None:
+    """De unieke korte naam hoort in het overzicht, klein en naast de weergavenaam.
+
+    De weergavenaam is niet uniek en is niet wat je in de CLI of de API intypt. Zonder de
+    korte naam kun je hier dus wel een project herkennen maar er niet mee verder.
+
+    De vorm wordt meegetoetst en niet alleen de aanwezigheid: hij hoort in de
+    count-plek van de kaart (klein en gedempt naast de titel), niet in de titel zelf en
+    ook niet in de omschrijvingsregel. Zou iemand hem in de titel zetten, dan is het geen
+    identificatie meer maar een tweede naam.
+    """
+    antwoord = client.get("/projects").text
+
+    assert '<span class="lotc-layer-count">test-project-detail</span>' in antwoord, (
+        "de korte naam staat niet klein naast de weergavenaam"
+    )
+
+    # De titel blijft de WEERGAVEnaam.
+    assert '<span class="lotc-layer-title">Detail Test Project</span>' in antwoord, (
+        "de weergavenaam is niet meer de titel van de kaart"
+    )
+
+
+def test_een_project_zonder_weergavenaam_toont_zijn_naam_niet_twee_keer(client: httpx.Client) -> None:
+    """Zonder weergavenaam is de titel al de korte naam; er hoeft er dan niet nog een bij.
+
+    ``lotc_project_rows()`` vult ``display_name`` met de naam zelf als het project er geen
+    heeft, dus zonder deze uitzondering zou dezelfde tekst twee keer op de kaart staan.
+    """
+    antwoord = client.get("/projects?q=test-project&sort=naam").text
+
+    # test-project heeft geen display-name in zijn fixture.
+    assert '<span class="lotc-layer-title">test-project</span>' in antwoord, "de fixture is veranderd"
+    assert '<span class="lotc-layer-count">test-project</span>' not in antwoord, (
+        "de korte naam staat er dubbel op een project zonder weergavenaam"
+    )
+
+
 def test_zoeken_en_sorteren_staan_in_de_toolbar(client: httpx.Client) -> None:
     """De vorm die de gebruiker aanleverde: zoekveld links, sorteerknop met menu rechts.
 
