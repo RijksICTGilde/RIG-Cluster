@@ -1145,6 +1145,23 @@ class TestSingularConfigFacade:
         stored = service_entry_config(next(e for e in data["services"] if service_entry_name(e) == "invite"))
         assert stored["active"] == [_ONE_INVITE]
 
+    def test_the_old_list_shape_is_refused_instead_of_quietly_accepted(self) -> None:
+        """De vorm van VOOR de gevel moet stuklopen, niet half werken.
+
+        Toen ``active`` enkelvoudig werd (4323ebae) bleef de sandboxtest een LIJST sturen
+        en kreeg 422 -- maar die suite draait alleen apart, dus dat bleef weken staan
+        zonder dat iemand het zag. Deze poort kost geen cluster en loopt elke ronde mee:
+        wie de oude vorm terugbrengt, of de gevel per ongeluk weer een lijst laat slikken,
+        merkt het hier.
+        """
+        from opi.services.catalog.invite.config_model import InviteConfig
+        from opi.services.config_singular import singular_config_model
+        from pydantic import ValidationError
+
+        model = singular_config_model(InviteConfig, frozenset({"active"}))
+        with pytest.raises(ValidationError):
+            model(**{"default-language": "en", "active": [_ONE_INVITE]})
+
     def test_the_facade_model_is_a_subclass_so_nothing_else_can_drift(self) -> None:
         from opi.services.catalog.invite.config_model import InviteConfig
         from opi.services.config_singular import singular_config_model
