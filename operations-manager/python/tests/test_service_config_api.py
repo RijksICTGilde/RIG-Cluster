@@ -446,6 +446,130 @@ class TestPatchServiceConfigList:
             )
 
 
+#: The two storage services, which share one config model and therefore one code path.
+#: Both are asserted rather than one, because "temp-storage does the same thing" was a
+#: claim in the report and a claim is not a test.
+STORAGE_SERVICES = [ServiceType.PERSISTENT_STORAGE.value, ServiceType.TEMP_STORAGE.value]
+
+
+class TestListShapedConfigOnBothComponentStates:
+    """The write half of the storing, on the layer that actually touches the project file.
+
+    The route only enqueues a task, so from HTTP a component that already has the service
+    and one that does not are the same request; the difference lands here. Four cases per
+    service, because they share a code path and a single failure in it would show up in
+    only one of them: PUT and PATCH, each on a component that already carries the service
+    and on one that does not.
+
+    The PUT has to keep its promise: replace the whole block with the list it was sent.
+    Not merge it, not append to it -- an entry that was there and is not in the body is
+    gone, which is exactly what makes it a PUT and what makes the PATCH worth having
+    beside it.
+    """
+
+    def _component(self, data: dict, name: str) -> dict:
+        return next(c for c in data["components"] if c["name"] == name)
+
+    def _config_of(self, data: dict, component: str, service_name: str) -> object:
+        entry = next(e for e in self._component(data, component)["services"] if service_entry_name(e) == service_name)
+        return service_entry_config(entry)
+
+    def _with_storage(self, service_name: str) -> dict:
+        """A project where component ``api`` already carries this storage service and
+        component ``worker`` does not."""
+        data = _project()
+        data["components"].append({"name": "worker", "type": "single", "services": []})
+        data["components"].append(
+            {
+                "name": "api",
+                "type": "single",
+                "services": [
+                    {
+                        "reference": service_name,
+                        "config": [
+                            {"name": "oud", "size": "1Gi", "mount-path": "/oud"},
+                            {"name": "ouder", "size": "2Gi", "mount-path": "/ouder"},
+                        ],
+                    }
+                ],
+            }
+        )
+        data["services"].append(service_name)
+        return data
+
+    @pytest.mark.parametrize("service_name", STORAGE_SERVICES)
+    def test_put_replaces_the_whole_block_on_a_component_that_has_it(self, service_name: str) -> None:
+        data = self._with_storage(service_name)
+
+        ServiceAdapter.set_service_config(
+            data,
+            service_name,
+            ConfigLayer.COMPONENT,
+            [{"name": "data", "size": "1Gi", "mount-path": "/data"}],
+            component_name="api",
+        )
+
+        # both previous mounts are gone: a PUT replaces, it does not merge
+        assert self._config_of(data, "api", service_name) == [{"name": "data", "size": "1Gi", "mount-path": "/data"}]
+        validate_service_configs(data)  # the result passes the save chokepoint
+
+    @pytest.mark.parametrize("service_name", STORAGE_SERVICES)
+    def test_put_creates_the_block_on_a_component_that_has_it_not(self, service_name: str) -> None:
+        data = self._with_storage(service_name)
+
+        ServiceAdapter.set_service_config(
+            data,
+            service_name,
+            ConfigLayer.COMPONENT,
+            [{"name": "data", "size": "1Gi", "mount-path": "/data"}],
+            component_name="worker",
+        )
+
+        assert self._config_of(data, "worker", service_name) == [{"name": "data", "size": "1Gi", "mount-path": "/data"}]
+        # and the component that already had it is untouched
+        assert [entry["name"] for entry in self._config_of(data, "api", service_name)] == ["oud", "ouder"]
+        validate_service_configs(data)
+
+    @pytest.mark.parametrize("service_name", STORAGE_SERVICES)
+    def test_patch_adds_one_entry_on_a_component_that_has_it(self, service_name: str) -> None:
+        data = self._with_storage(service_name)
+
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            service_name,
+            ConfigLayer.COMPONENT,
+            add=[{"name": "data", "size": "1Gi", "mount-path": "/data"}],
+            remove=[],
+            component_name="api",
+        )
+
+        assert counts == {"added": 1, "updated": 0, "removed": 0}
+        # the entries that were there keep their values: that is the whole point of PATCH
+        assert [entry["name"] for entry in self._config_of(data, "api", service_name)] == [
+            "oud",
+            "ouder",
+            "data",
+        ]
+        validate_service_configs(data)
+
+    @pytest.mark.parametrize("service_name", STORAGE_SERVICES)
+    def test_patch_creates_the_block_on_a_component_that_has_it_not(self, service_name: str) -> None:
+        data = self._with_storage(service_name)
+
+        counts = ServiceAdapter.patch_service_config_list(
+            data,
+            service_name,
+            ConfigLayer.COMPONENT,
+            add=[{"name": "data", "size": "1Gi", "mount-path": "/data"}],
+            remove=[],
+            component_name="worker",
+        )
+
+        assert counts == {"added": 1, "updated": 0, "removed": 0}
+        assert self._config_of(data, "worker", service_name) == [{"name": "data", "size": "1Gi", "mount-path": "/data"}]
+        validate_service_configs(data)
+
+
 class TestPlatformManagedFieldsSurviveAWrite:
     """A user's write may not destroy what the platform wrote into the same block.
 
