@@ -8,9 +8,9 @@ including deployments, services, PVCs, and other manifest resources.
 import logging
 import re
 from enum import Enum
-from typing import Any, Literal, get_args
+from typing import Any, get_args
 
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
 
 logger = logging.getLogger(__name__)
 
@@ -71,23 +71,11 @@ DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
 # Used when the requested domain+subdomain is not yet approved.
 SAFE_FALLBACK_FORMAT = "component-deployment-project"
 
-# Type alias derived from the template keys so OpenAPI exposes an enum.
-# The Literal must be written explicitly (Python cannot construct Literal from
-# runtime values), but a runtime assertion below guarantees the two stay in sync.
-DomainFormatId = Literal[
-    "component-deployment-project",
-    "deployment-project",
-    "component-deployment-subdomain",
-    "deployment-subdomain",
-    "component-subdomain",
-    "subdomain",
-    "component.deployment.project",
-    "deployment.project",
-    "component.deployment.subdomain",
-    "deployment.subdomain",
-    "component.subdomain",
-]
-
+# The type alias lives in the service package (``publish_on_web/domain_config.py``) because
+# that service's ``config_model`` types its ``domain-format`` field with it, and this module
+# already imports that one -- taking it from here would be an import cycle. It is re-exported
+# here so every existing reader keeps its import, and the assertion that it matches the
+# templates stays where the templates are.
 assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101
     "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
 )
