@@ -30,11 +30,11 @@ def test_percentile_ignores_input_order() -> None:
 
 
 def test_percentile_rejects_empty_and_out_of_range() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="empty sample set"):
         percentile([], 0.5)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="fraction must be in"):
         percentile([1.0], 0.0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="fraction must be in"):
         percentile([1.0], 1.5)
 
 
@@ -63,9 +63,8 @@ def test_measure_records_even_when_the_block_raises() -> None:
     that ended in an error.
     """
     timer = PhaseTimer()
-    with pytest.raises(RuntimeError):
-        with timer.measure("push"):
-            raise RuntimeError("push rejected")
+    with pytest.raises(RuntimeError), timer.measure("push"):
+        raise RuntimeError("push rejected")
 
     assert timer.stats("push").count == 1
 
@@ -99,8 +98,10 @@ def test_format_table_shares_add_up_to_a_hundred() -> None:
 
     table = format_table(timer.all_stats())
     lines = table.splitlines()
-    assert "commit" in lines[2] and "75.0%" in lines[2]
-    assert "push" in lines[3] and "25.0%" in lines[3]
+    assert "commit" in lines[2]
+    assert "75.0%" in lines[2]
+    assert "push" in lines[3]
+    assert "25.0%" in lines[3]
 
 
 def test_format_table_handles_no_samples() -> None:
