@@ -123,8 +123,10 @@ class PublishOnWebDeploymentConfig(BaseModel):
         default=None,
         alias="base-domain",
         description=(
-            "The domain to publish on; the cluster's own domain when absent. A domain of your own "
-            "(one not offered by the cluster) needs an administrator's approval AND a certificate, and "
+            "The domain to publish on; the cluster's own domain when absent. For a domain of your own, "
+            "write the domain name itself here (for example 'mijn-app.nl'); it does not have to be one "
+            "the cluster offers, and there is no separate field or marker for it. A domain of your own "
+            "needs an administrator's approval AND a certificate, and "
             "the two are separate: not every cluster can obtain a certificate for a domain it does not "
             "offer, and on one that cannot, the deployment is created and reachable but serves an "
             "invalid certificate. Read `custom-domain-certificates` from "

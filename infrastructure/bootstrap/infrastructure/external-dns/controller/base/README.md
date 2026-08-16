@@ -89,7 +89,7 @@ When creating a project via the API, include:
 
 Check subdomain availability first:
 ```
-GET /api/subdomains/check/{subdomain}?base_domain=rijks.app
+GET /api/v2/projects/{project_name}/subdomains/check/{subdomain}?base_domain=rijks.app
 ```
 
 ---
