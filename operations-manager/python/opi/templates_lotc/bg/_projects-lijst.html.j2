@@ -25,22 +25,31 @@
   gebruiken, en dan staat er een losse "Openen"-link in de kaart. Een layer is in zijn
   geheel klikbaar en toont dat met een pijl.
 
-  DE KORTE NAAM STAAT ERBIJ
+  DE KORTE NAAM EN DE BEWERKDATUM
 
   Op verzoek van de eigenaar: naast de weergavenaam staat de korte, unieke projectnaam
   (bijvoorbeeld vr3ed-r0l). De weergavenaam is niet uniek en is niet wat je in de CLI of
   de API intypt; zonder de korte naam erbij kun je hier dus wel een project HERKENNEN
   maar er niet mee verder.
 
-  Hij staat in `count` en niet in de titel of de omschrijving. Dat is de plek van dit
-  component voor een kleine, ondergeschikte tekst naast de titel (0.8rem, gedempt, op
-  dezelfde basislijn), en de rest van dit project gebruikt hem al zo - `count` draagt in
-  project-details.html.j2 het componenttype en de rol van een teamlid. Zo blijft het een
-  identificatie in plaats van een tweede titel, en is er geen eigen CSS voor nodig.
+  Hij heeft in `count` gestaan. Dat leest raar: `count` is bedoeld voor een TELLING
+  ("123 apps", zo staat het ook in de registry), en een projectcode is dat niet - hij
+  kwam daar terecht als kleine tekst naast de titel, niet omdat hij daar hoort.
 
-  Hij staat er alleen als hij iets TOEVOEGT: heeft een project geen weergavenaam, dan
-  vult lotc_project_rows() display_name met de naam zelf, en dan zou hij er twee keer
-  staan.
+  Nu staat hij in de kindsleuf van c-layer, die het component zelf `lotc-layer-chips`
+  noemt en waarvoor c-chip bestaat: een inline span, geldig binnen de <a> die een layer
+  is, met de opmaak van het component en dus geen eigen CSS. Daar past de bewerkdatum
+  naast, en dat is meteen de reden dat de chips een betere plek zijn dan `count`: er is
+  ruimte voor meer dan een ding.
+
+  De korte naam staat er alleen als hij iets TOEVOEGT: heeft een project geen
+  weergavenaam, dan vult lotc_project_rows() display_name met de naam zelf, en dan zou
+  hij er twee keer staan.
+
+  De bewerkdatum draagt de datum EN hoe lang geleden dat was; het precieze tijdstip
+  staat in de tooltip. Voorbij een maand valt het relatieve deel weg (zie
+  laatst_bewerkt() in lotc_switch.py). Ontbreekt het tijdstempel, dan staat er niets:
+  een streepje zou om uitleg vragen die we niet hebben.
 #}
 
 <c-paragraph size="sm" color="grijs-500">
@@ -55,9 +64,15 @@
             <c-layer
                 icon="rectangle-stack"
                 title="{{ project.display_name or project.name }}"
-                :count="korte_naam"
                 sub="{{ project.description or 'Geen beschrijving beschikbaar' }}"
-                href="/projects/{{ project.name }}/details" />
+                href="/projects/{{ project.name }}/details">
+                {% if korte_naam %}<c-chip><c-code>{{ korte_naam }}</c-code></c-chip>{% endif %}
+                {% if project.last_modified %}
+                    <c-chip :attrs="{'title': project.last_modified.titel}">
+                        Bewerkt {{ project.last_modified.label }}
+                    </c-chip>
+                {% endif %}
+            </c-layer>
         {% endfor %}
     </c-stack>
 {% else %}
