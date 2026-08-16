@@ -1,5 +1,23 @@
 """Vier fouten op /admin/approvals, allemaal alleen in een BROWSER te zien.
 
+RC-115 HEEFT DE OORZAAK WEGGEHAALD, NIET ALLEEN DE SYMPTOMEN
+
+Fout 1 en fout 4 hieronder kwamen uit dezelfde handbouw: twintig regels JavaScript die met
+``fetch`` + ``innerHTML`` nabouwden wat htmx op elke andere pagina doet, inclusief een
+foutbak die vooraf leeg werd neergezet zodat die JavaScript hem kon vullen. De knop
+"Beheren" is nu een gewone htmx-aanroep (``hx-get`` / ``hx-target`` / ``hx-indicator``),
+en daarmee:
+
+  - staat de projectnaam in een attribuut dat Jinja WEL rendert (fout 1 kan niet meer);
+  - is er geen foutbak meer om leeg te laten staan (fout 4 kan niet meer);
+  - komt een fout terug als FRAGMENT, en dat is het gedrag dat hieronder gemeten wordt -
+    inclusief het geval waarin de route helemaal niet antwoordt.
+
+De tests hieronder zijn daarop bijgewerkt. Ze meten nog steeds wat de gebruiker ziet, niet
+hoe het gebouwd is; alleen het laatste blok (de gedeelde schil) is nieuw, en dat meet dat
+de bewerkdialogen van een project - die dezelfde schil en dezelfde scripts gebruiken -
+onveranderd werken.
+
 1. De knop "Beheren" stuurde de projectnaam niet mee.
 
    Het sjabloon schreef ``@click="openApprovalModal('{{ project.project_name }}')"``. De
@@ -35,7 +53,7 @@
 
 4. Onder de dialoogtitel stond een lege rode balk.
 
-   ``#approval-error`` draagt van meet af aan ``is-hidden``, en die klasse werkte niet:
+   ``#approval-error`` droeg van meet af aan ``is-hidden``, en die klasse werkte niet:
    ``display: none !important`` staat in ``static/css/base.css``, en dat stylesheet hoort
    bij de OUDE schil. ``base_lotc.html.j2`` laadt het niet. Wat de dialoog wel laadt is
    ``css/modal.css``, en daar staat ``.edit-section-error`` met rand, achtergrond en
@@ -43,8 +61,11 @@
 
    Zelfde gat op elk ander LOTC-scherm dat de klasse gebruikt: de bevestigingsdialoog,
    het feedbackvenster, de bewerkdialoog van een project en het filterblok van de
-   metrics-explorer. De reparatie staat daarom in ``static/css/lotc-app.css``, het
+   metrics-explorer. De reparatie daarvan staat in ``static/css/lotc-app.css``, het
    stylesheet dat ELKE pagina van deze bouwlijn laadt.
+
+   Hier is het vak zelf weg. Er is niets meer dat vooruit een bak neerzet om later te
+   vullen: de melding komt met het antwoord mee of er is geen melding.
 """
 
 from __future__ import annotations
@@ -54,6 +75,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.conftest import TEST_USER, _sign_session
+from tests.e2e.helpers.edit_modal import EditModalHelper
+from tests.e2e.helpers.tekst import veld
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -164,8 +187,8 @@ def test_beheren_haalt_het_formulier_op_met_de_echte_projectnaam(
     """Een klik op "Beheren" vraagt de dialoog op voor het project dat ernaast staat.
 
     Dit is de test die de gemelde fout vangt: hij KLIKT. De bestaande tests rond deze
-    dialoog roepen ``openApprovalModal('test-project-detail')`` rechtstreeks aan, en dan
-    komt de knop - en dus de fout - nooit aan bod.
+    dialoog openen de schil rechtstreeks met een aanroep, en dan komt de knop - en dus de
+    fout - nooit aan bod.
     """
     opgevraagd: list[str] = []
     auth_page.on(
@@ -200,7 +223,7 @@ def test_de_kop_van_de_dialoog_noemt_het_project(app_server: str, auth_page: Pag
 
 
 def test_het_formulier_laadt_zonder_foutmelding(app_server: str, auth_page: Page, project_met_aanvragen: str) -> None:
-    """De dialoog toont het formulier en niet "Fout bij het laden van het formulier".
+    """De dialoog toont het formulier en niet "Het formulier kon niet worden geladen".
 
     Die melding was het tweede gezicht van dezelfde fout: het opgevraagde pad bevatte een
     projectnaam die niet bestaat, dus antwoordde de route met een 404.
@@ -210,16 +233,12 @@ def test_het_formulier_laadt_zonder_foutmelding(app_server: str, auth_page: Page
 
     auth_page.locator("nldd-button", has_text="Beheren").first.click()
     auth_page.locator("#approval-modal.is-open").wait_for(state="visible", timeout=10000)
-    auth_page.wait_for_timeout(1500)
+    auth_page.locator("#modal-wizard-form").wait_for(state="visible", timeout=10000)
 
-    fout = auth_page.locator("#approval-error")
-    assert "is-hidden" in (fout.get_attribute("class") or ""), (
-        f"de dialoog meldde een fout: {(fout.text_content() or '').strip()}"
-    )
     binnenkant = (auth_page.locator("#edit-section-inner").text_content() or "").strip()
-    assert "Fout bij het laden" not in binnenkant, binnenkant
+    assert "kon niet worden geladen" not in binnenkant, binnenkant
     assert binnenkant, "het formulier is nooit binnengekomen"
-    assert binnenkant != "Laden...", "het formulier is nooit binnengekomen"
+    assert "Laden..." not in binnenkant, "de laadtekst staat er nog: het formulier is nooit binnengekomen"
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +261,8 @@ def _open_de_dialoog(page: Page, app_server: str) -> None:
     _wacht_op_de_tabel(page)
     page.locator("nldd-button", has_text="Beheren").first.click()
     page.locator("#approval-modal.is-open").wait_for(state="visible", timeout=10000)
-    page.wait_for_timeout(1500)
+    page.locator("#modal-wizard-form").wait_for(state="visible", timeout=10000)
+    page.wait_for_timeout(500)
 
 
 def test_de_dialoog_heeft_een_kop_en_niet_twee(app_server: str, auth_page: Page, project_met_aanvragen: str) -> None:
@@ -278,57 +298,101 @@ def test_de_ondertitel_van_de_sectie_staat_er_ook_niet_meer(
 # Fout 4: de lege rode foutbalk
 # ---------------------------------------------------------------------------
 
-#: Wat ``#approval-error`` op het scherm INNEEMT. `is-hidden` in het class-attribuut zegt
-#: niets: de vorige test op dit element las precies dat, en stond groen terwijl er een
-#: leeg rood vak van volle breedte in beeld was.
-DE_FOUTBALK = """() => {
-    const el = document.getElementById('approval-error');
-    const doos = el.getBoundingClientRect();
-    return {
-        klasse: el.className,
-        display: getComputedStyle(el).display,
-        hoogte: Math.round(doos.height),
-        breedte: Math.round(doos.width),
-        inhoud: (el.textContent || '').trim(),
-    };
+#: Elk LEEG vak dat in de dialoog toch getekend wordt. Een blad-``div`` zonder tekst met
+#: hoogte is per definitie een vooruit neergezette bak - precies wat de rode foutbalk was.
+#: Meten op HOOGTE en niet op het class-attribuut: de vorige poort op dit element las
+#: ``is-hidden`` uit de klasse en stond groen terwijl er een leeg rood vak van volle
+#: breedte in beeld stond.
+LEGE_VAKKEN_IN_DE_DIALOOG = """() => {
+    const modal = document.getElementById('approval-modal');
+    return [...modal.querySelectorAll('div')]
+        .filter(el => el.children.length === 0 && !(el.textContent || '').trim())
+        .map(el => ({
+            id: el.id,
+            klasse: el.className,
+            hoogte: Math.round(el.getBoundingClientRect().height),
+        }))
+        .filter(el => el.hoogte > 0);
 }"""
 
 
-def test_de_foutbalk_neemt_geen_ruimte_in_zonder_fout(
-    app_server: str, auth_page: Page, project_met_aanvragen: str
-) -> None:
-    """Zonder melding is de foutbalk er niet - niet leeg, maar weg."""
-    _open_de_dialoog(auth_page, app_server)
+def test_er_staat_geen_leeg_vak_in_de_dialoog(app_server: str, auth_page: Page, project_met_aanvragen: str) -> None:
+    """De dialoog tekent niets wat leeg is - geen foutbalk, geen laadvak.
 
-    balk = auth_page.evaluate(DE_FOUTBALK)
-
-    assert balk["inhoud"] == "", f"deze meting gaat over de LEGE balk: {balk}"
-    assert balk["display"] == "none", f"de lege foutbalk wordt getekend: {balk}"
-    assert balk["hoogte"] == 0, f"de lege foutbalk neemt {balk['hoogte']}px in beslag: {balk}"
-
-
-def test_de_foutbalk_verschijnt_wel_bij_een_echte_melding(
-    app_server: str, auth_page: Page, project_met_aanvragen: str
-) -> None:
-    """En hij komt terug zodra er iets te melden valt.
-
-    De helft die je vergeet als je een leeg vak wegwerkt: verbergen is geen reparatie als
-    de melding daarna ook niet meer doorkomt. Dit is dezelfde weg als de ``catch`` in
-    ``openApprovalModal``.
+    De foutbak is niet verborgen maar wegGEHAALD. Er is niets meer dat vooruit een vak
+    neerzet zodat JavaScript het later kan vullen; wat er te melden valt komt met het
+    antwoord mee. Dat maakt de klasse waarmee hij verborgen werd hier ook irrelevant, en
+    dat was de derde keer dat diezelfde klasse iets stilletjes niet deed.
     """
     _open_de_dialoog(auth_page, app_server)
 
-    auth_page.evaluate(
-        """() => {
-            const el = document.getElementById('approval-error');
-            el.textContent = 'Fout bij het laden van het formulier';
-            el.classList.remove('is-hidden');
-        }"""
+    assert auth_page.locator("#approval-error").count() == 0, (
+        "de vooruit neergezette foutbak staat er weer; een fout hoort als fragment terug te komen"
     )
-    balk = auth_page.evaluate(DE_FOUTBALK)
+    assert auth_page.evaluate(LEGE_VAKKEN_IN_DE_DIALOOG) == []
 
-    assert balk["display"] != "none", f"de melding blijft onzichtbaar: {balk}"
-    assert balk["hoogte"] > 0, f"de melding heeft geen hoogte: {balk}"
+
+def test_de_laadtekst_is_weg_zodra_het_formulier_er_is(
+    app_server: str, auth_page: Page, project_met_aanvragen: str
+) -> None:
+    """ "Laden..." hoort bij het verzoek, niet bij de dialoog.
+
+    De laadtoestand komt van htmx (``hx-indicator``), dus hij staat er alleen zolang het
+    verzoek loopt. Zonder deze meting is "geen leeg vak" te halen door de laadtekst maar
+    altijd te laten staan.
+    """
+    _open_de_dialoog(auth_page, app_server)
+
+    laden = auth_page.locator("#approval-loading")
+    assert laden.count() == 1, "de laadtoestand van htmx is verdwenen"
+    assert not laden.is_visible(), "'Laden...' staat er nog terwijl het formulier binnen is"
+
+
+def test_een_mislukte_aanroep_toont_een_leesbare_melding(
+    app_server: str, auth_page: Page, project_met_aanvragen: str
+) -> None:
+    """Gaat het ophalen mis, dan staat er iets leesbaars IN de dialoog.
+
+    Dit is het enige gedrag waar de gebruiker iets aan heeft als het misgaat, en het is
+    het gedrag dat htmx uit zichzelf NIET geeft: bij een 4xx of 5xx wisselt hij standaard
+    niets in, en dan gaat het venster open en blijft het leeg. De haak die dat rechtzet
+    staat in bg/admin-approvals.html.j2; deze test is wat hem vasthoudt.
+
+    De storing wordt hier op de LEIDING gezet en niet op de route, want dit moet ook
+    kloppen voor een fout die de route nooit haalt.
+    """
+    auth_page.route(
+        "**/modal-wizard/admin-approval",
+        lambda route: route.fulfill(status=500, content_type="text/html; charset=utf-8", body="Het ging mis"),
+    )
+
+    auth_page.goto(f"{app_server}/admin/approvals")
+    _wacht_op_de_tabel(auth_page)
+    auth_page.locator("nldd-button", has_text="Beheren").first.click()
+    auth_page.locator("#approval-modal.is-open").wait_for(state="visible", timeout=10000)
+
+    binnenkant = auth_page.locator("#edit-section-inner")
+    binnenkant.get_by_text("Het ging mis").wait_for(state="visible", timeout=10000)
+
+    assert (binnenkant.text_content() or "").strip(), "de dialoog ging open en bleef leeg"
+    assert not auth_page.locator("#approval-loading").is_visible(), "de laadtekst blijft hangen na een fout"
+    assert auth_page.locator("#approval-modal.is-open").count() == 1, "de dialoog sloot stilletjes bij een fout"
+
+
+def test_de_route_weigert_met_een_leesbaar_fragment(app_server: str, auth_page: Page) -> None:
+    """En de weigeringen van de route zelf zijn ook leesbaar, geen JSON.
+
+    ``{"detail":"Geen domein- of subdomeinaanvragen voor dit project"}`` in een dialoog is
+    geen melding maar een lek van de API-vorm. Gemeten op het project van de andere
+    e2e-bestanden: dat heeft geen aanvragen, dus de route weigert.
+    """
+    antwoord = auth_page.request.get(f"{app_server}/admin/approvals/test-project-detail/modal-wizard/admin-approval")
+
+    assert antwoord.status == 400, antwoord.status
+    tekst = antwoord.text()
+    assert "{" not in tekst.split("<")[0], f"dit ziet eruit als JSON: {tekst[:200]}"
+    assert "Er zijn geen domein- of subdomeinaanvragen voor dit project." in tekst, tekst[:400]
+    assert "Het formulier kon niet worden geladen" in tekst, tekst[:400]
 
 
 # ---------------------------------------------------------------------------
@@ -373,3 +437,66 @@ def test_de_datumkolom_blijft_leesbaar_in_firefox(
     assert meting["tekstBreedte"] > 0, f"de inhoud van de cel is tot niets gekrompen: {meting}"
     assert meting["tekstBreedte"] == meting["celBreedte"], f"de tekst vult de cel niet: {meting}"
     assert meting["regels"] == 1, f"de datum is over {meting['regels']} regels afgebroken: {meting}"
+
+
+# ---------------------------------------------------------------------------
+# De GEDEELDE schil: de bewerkdialogen van een project
+# ---------------------------------------------------------------------------
+#
+# Dit blok gaat niet over /admin/approvals. Het staat er omdat de schil waarin de
+# goedkeuringsdialoog leeft GEDEELD is: opi/web/router_detail_edit.py rendert er de
+# bewerkdialogen van een project mee, met hetzelfde bg/_modal-wizard-step.html.j2,
+# dezelfde klassen (.edit-section-modal, .edit-section-backdrop, #edit-section-inner) en
+# dezelfde twee scripts (json-enc.js voor het JSON-lichaam dat de route eist, edit_modal.js
+# voor sluiten, Escape en de blokkade tijdens een lopende taak).
+#
+# Een omzetting die alleen naar de goedkeuringspagina kijkt kan die schermen breken zonder
+# dat iemand het merkt. Vandaar: openen, opslaan, en sluiten met Escape - de drie dingen
+# die de scripts dragen en die htmx niet doet.
+
+
+def test_de_bewerkdialoog_van_een_project_opent_nog(app_server: str, auth_page: Page) -> None:
+    """De dialoog gaat open en het formulier staat erin, met zijn bestaande waarden."""
+    modal = EditModalHelper(auth_page, app_server, "test-project-detail")
+    modal.open_detail_page()
+    modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
+
+    assert veld(auth_page, "display-name").input_value(), "het formulier kwam leeg binnen"
+
+
+def test_de_bewerkdialoog_van_een_project_slaat_nog_op(app_server: str, auth_page: Page) -> None:
+    """En opslaan werkt: het JSON-lichaam dat de route eist komt er nog uit.
+
+    Dat lichaam is van json-enc.js, dat deze schil apart laadt. Zonder die extensie POST
+    htmx form-encoded en weigert de route met een 400 - een breuk die je aan het sjabloon
+    niet ziet. De waarde wordt daarna teruggezet: het project is met de andere
+    e2e-bestanden gedeeld en de app draait per sessie.
+    """
+    modal = EditModalHelper(auth_page, app_server, "test-project-detail")
+    modal.open_detail_page()
+    modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
+    origineel = veld(auth_page, "description").input_value()
+
+    try:
+        modal.fill_field("description", "RC-115 toetst de gedeelde schil")
+        modal.submit_step()
+        modal.wait_for_success()
+        assert "Wijzigingen opgeslagen" in modal.get_body_text()
+    finally:
+        modal.open_detail_page()
+        modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
+        modal.fill_field("description", origineel)
+        modal.submit_step()
+        modal.wait_for_success()
+
+
+def test_escape_sluit_de_bewerkdialoog_van_een_project_nog(app_server: str, auth_page: Page) -> None:
+    """Escape sluit de dialoog - de afhandeling uit edit_modal.js, niet uit een pagina."""
+    modal = EditModalHelper(auth_page, app_server, "test-project-detail")
+    modal.open_detail_page()
+    modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
+
+    auth_page.keyboard.press("Escape")
+
+    auth_page.locator("#edit-section-modal.is-open").wait_for(state="detached", timeout=5000)
+    assert auth_page.locator("#edit-section-modal.is-open").count() == 0
