@@ -217,6 +217,10 @@
                1920-grens. Wat hier stond is de INHOUD van onze voettekst; die blijft. #}
                 <c-stack gap="xs">
                     <c-heading type="h2" size="6" label="Platform" />
+                    {# De introductie staat hier ook al is hij de landingspagina van ``/``:
+                       wie ingelogd is komt daar nooit meer langs (``/`` gaat dan naar het
+                       dashboard), en dan is de voettekst de enige weg terug. #}
+                    <c-link href="/introductie" label="Introductie" />
                     <c-link href="/about" label="Over het platform" />
                     {# /docs en niet /api: dat laatste stond hier en levert een 404. De
                        bestaande voettekst (base.html.j2) wijst naar /docs, de door FastAPI
