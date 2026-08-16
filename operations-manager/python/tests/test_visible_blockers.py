@@ -61,22 +61,19 @@ def _project(services: list[Any] | None = None) -> dict[str, Any]:
 
 
 class TestTheRefusalIsActionable:
-    """Wat de aanroeper krijgt als hij de auth wall aan een component hangt."""
+    """Wat de aanroeper krijgt als hij de auth wall aan een component hangt.
 
-    def test_it_names_the_request_that_lifts_the_refusal(self) -> None:
-        """Het endpoint, met de echte projectnaam erin, zodat een client of een agent
-        zichzelf kan redden zonder de catalogus te moeten reverse-engineeren."""
-        data = _project()
-        with pytest.raises(ServiceValidationError) as excinfo:
-            ServiceAdapter.ensure_project_selection(data, ServiceType.AUTHORIZATION_WALL.value)
+    HERZIEN NA DE OORSPRONKELIJKE REPARATIE. Eerst weigerde dit onvoorwaardelijk, met als
+    redenering dat een muur voor je applicatie een projectbesluit is. Dat besluit is
+    teruggedraaid: het projectniveau van deze dienst draagt alleen een OPTIONELE
+    bannertekst, dus er valt niets te kiezen dat wij anders voor de gebruiker invullen, en
+    hem laten struikelen over een tweede aanroep die hij niet kan raden is bevoogdend.
 
-        message = str(excinfo.value)
-        assert "PUT /api/v2/projects/mijn-project/services/authorization-wall/config/project" in message
-        assert "GET /api/v2/services/authorization-wall" in message
+    Wat blijft is de AFHANKELIJKHEID. Zonder publish-on-web en keycloak kan een auth wall
+    niet werken; dat is een feit en geen keuze, en dat hoort de aanroeper meteen te horen.
+    """
 
-    def test_it_names_the_requirements_that_are_not_met_yet(self) -> None:
-        """De drie eisen uit ``requires`` stonden nergens in de melding, dus vielen ze
-        daarna een voor een om."""
+    def test_zonder_de_vereiste_diensten_gaat_het_niet_door(self) -> None:
         data = _project()
         with pytest.raises(ServiceValidationError) as excinfo:
             ServiceAdapter.ensure_project_selection(data, ServiceType.AUTHORIZATION_WALL.value)
@@ -86,25 +83,30 @@ class TestTheRefusalIsActionable:
         assert "services/keycloak" in message
         assert "services/keycloak/config/restrict-access" in message
 
-    def test_a_requirement_that_is_met_is_not_repeated(self) -> None:
-        """Een lijst die opsomt wat er al staat leest als een muur, niet als een
-        volgende stap."""
-        data = _project(["publish-on-web", {"name": "keycloak", "config": {"restrict-access": "iedereen"}}])
+    def test_de_melding_gaat_over_de_eisen_en_niet_over_een_beslissing(self) -> None:
+        """De twee redenen door elkaar halen stuurt de lezer de verkeerde kant op."""
+        data = _project()
         with pytest.raises(ServiceValidationError) as excinfo:
             ServiceAdapter.ensure_project_selection(data, ServiceType.AUTHORIZATION_WALL.value)
 
-        message = str(excinfo.value)
-        assert "requires" not in message
-        assert "PUT /api/v2/projects/mijn-project/services/authorization-wall/config/project" in message
+        assert "needs a project-level decision" not in str(excinfo.value)
 
-    def test_the_project_file_is_still_untouched(self) -> None:
-        """De melding is rijker geworden, de weigering niet zachter."""
+    def test_een_geweigerde_selectie_laat_het_projectbestand_ongemoeid(self) -> None:
         data = _project()
         with pytest.raises(ServiceValidationError):
             ServiceAdapter.ensure_project_selection(data, ServiceType.AUTHORIZATION_WALL.value)
         assert data["services"] == []
 
-    async def test_the_component_api_carries_the_same_message(self) -> None:
+    def test_met_de_vereiste_diensten_schrijft_hij_zichzelf_bij(self) -> None:
+        """Het punt van de melding: geen tweede aanroep die je moet raden."""
+        data = _project(["publish-on-web", {"name": "keycloak", "config": {"restrict-access": "iedereen"}}])
+
+        ServiceAdapter.ensure_project_selection(data, ServiceType.AUTHORIZATION_WALL.value)
+
+        # Een kale selectie, geen leeg configblok: dat zou suggereren dat er iets staat.
+        assert data["services"][-1] == ServiceType.AUTHORIZATION_WALL.value
+
+    async def test_de_component_api_meldt_dezelfde_eisen(self) -> None:
         """De weg waarlangs de zad-cli hier terechtkwam: een component met de dienst erop."""
         data = _project()
         data["components"] = []
@@ -123,7 +125,7 @@ class TestTheRefusalIsActionable:
 
         assert result["success"] is False
         assert result["error_type"] == "invalid_services"
-        assert "PUT /api/v2/projects/mijn-project/services/authorization-wall/config/project" in result["error"]
+        assert "services/keycloak" in result["error"]
         project_manager.save_and_commit_project.assert_not_called()
 
 
