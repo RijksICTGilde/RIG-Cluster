@@ -111,6 +111,23 @@ Bij het omzetten komen steeds dezelfde vijf dingen terug:
    mee en die worden ook zonder tekst getekend. `.is-hidden` staat sinds die reparatie in
    `lotc-app.css`. Meet zo'n klasse in de BROWSER op hoogte; het class-attribuut lezen
    levert een groene test op een zichtbaar vak.
+6. **Een formulierveld in een `<c-cluster>` heeft geen breedte om op te staan.** Een
+   cluster is flexbox zonder basismaat: de breedte van een kind komt uit wat de browser
+   voor die inhoud uitrekent, en een `<nldd-form-field>` levert daar niets voor. Firefox
+   rekent een `div.lotc-stack` met zo'n veld erin uit als 0 - dezelfde misrekening als in
+   een tabelcel, zie punt 14 in `request_for_components.md` - en dan liggen de velden over
+   elkaar heen terwijl Chromium dezelfde pagina goed tekent. `<c-switcher>` is wel de
+   juiste keuze: die geeft zijn kinderen een `flex-basis` uit de breedte van de CONTAINER,
+   dus er valt niets te meten. Gemeten op `/metrics-explorer`.
+7. **`element.textContent = ...` op een component sloopt dat component.** `<c-paragraph>`
+   rendert `<nldd-rich-text><p>...</p></nldd-rich-text>`, en die buitenste laag is een grid
+   waarvan alleen de `main`-kolom breedte heeft; de regel die de `<p>` daarin zet is
+   `nldd-rich-text > :is(p, ...)`. Schrijft JavaScript op de PARAGRAAF, dan is die `<p>`
+   weg en blijft er een kale tekstknoop over - geen element, dus geen enkele regel raakt
+   hem, en hij valt in de eerste kolom, die 0 breed is. Gemeten: een regel omschrijving
+   werd 135px hoog, een woord per regel. Laat het script in een `<span>` BINNEN het
+   component schrijven. Op de oude pagina ging dit vanzelf goed, want daar stond een kale
+   `<span>`; het is dus weer iets wat bij het overzetten niet meeverhuisde.
 
 ### De volgorde van de design systems ligt vast
 
@@ -178,6 +195,7 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | `tests/test_lotc_modal_fragmenten.py` | hetzelfde voor de dialoogfragmenten die zonder takendienst niet via HTTP te bereiken zijn |
 | `tests/test_lotc_foutmelding_veld.py` | dat de veldfout bedraad wordt, en dat onze kopie van `components/_forms.j2` alleen op de bedoelde punten van de geïnstalleerde afwijkt |
 | `tests/e2e/test_lotc_veldfout_zichtbaar.py` | dat die foutmelding in een browser HOOGTE heeft - "staat de tekst er" was jarenlang groen terwijl niemand hem zag |
+| `tests/e2e/test_lotc_metrics_explorer.py` | dat de twee keuzelijsten van `/metrics-explorer` in FIREFOX naast elkaar staan en geen bedieningselement over een ander heen ligt, en dat de tekst die JavaScript eronder zet op EEN regel past |
 | `tests/test_lotc_optioneel_badge.py` / `tests/e2e/test_lotc_optioneel_label.py` | dat "Optioneel" weg is waar het niets betekent, zonder het veld verplicht te noemen |
 
 Compileren is een echte poort en geen telling: LOTC valideert bij het compileren al of
