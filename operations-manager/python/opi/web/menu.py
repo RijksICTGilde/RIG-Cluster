@@ -40,13 +40,13 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "Mijn projecten", "link": "/projects", "icon": "applicatie"},
         {"label": "Nieuw Project", "link": "/forms/wizard/restart", "icon": "plus"},
         {"label": "Services overzicht", "link": "/services", "icon": "server"},
-        {"label": "CLI", "link": "/cli", "icon": "computercode"},
-        {"label": "Actions", "link": "/actions", "icon": "applicatie"},
-        {"label": "API Docs", "link": "/docs", "icon": "computercode"},
         # Ook in het hoofdmenu en niet alleen in de voettekst: wie ingelogd is komt
         # nooit meer langs "/" (dat gaat dan naar het dashboard), en dan was de
         # voettekst de enige weg naar de uitleg over het platform.
         {"label": "Introductie", "link": "/introductie", "icon": "vraagteken"},
+        {"label": "CLI", "link": "/cli", "icon": "computercode"},
+        {"label": "Actions", "link": "/actions", "icon": "applicatie"},
+        {"label": "API Docs", "link": "/docs", "icon": "computercode"},
     ]
 
     # Auto-detect admin status from user email
