@@ -283,7 +283,7 @@ def _ruim_achtergebleven_containers_op() -> None:
         containers = gevonden.stdout.split()
         if containers:
             subprocess.run(["docker", "rm", "-f", *containers], capture_output=True, timeout=60, check=False)
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return
 
 

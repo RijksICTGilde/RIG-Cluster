@@ -961,6 +961,25 @@ class ServiceAdapter:
 
         if refused:
             raise ServiceValidationError(cls._refusal_message(project_data, refused))
+
+        # Zichzelf mogen inschrijven zegt niets over of de dienst kán werken. De auth wall
+        # heeft op projectniveau niets te beslissen (alleen een optionele banner) en schrijft
+        # zich dus bij, maar zonder keycloak en publish-on-web staat er straks een muur voor
+        # een deur die er niet is. Dat is geen keuze die wij voor iemand maken maar een feit,
+        # en dat hoort de aanroeper NU te horen in plaats van het bij de uitrol te ontdekken.
+        # Alleen over wat we NU inschrijven. Een dienst die er al stond is een bestaande
+        # toestand, en die alsnog afkeuren zou betekenen dat een aanroep die er niets aan
+        # toevoegt ineens faalt op iets wat de aanroeper niet vroeg.
+        toegevoegd = {service_entry_name(entry) for entry in new_entries}
+        onvervuld = [
+            name
+            for name in service_names
+            if name in toegevoegd
+            and unmet_service_requirements(project_data, get_service(ServiceType(name)).definition.requires or [])
+        ]
+        if onvervuld:
+            raise ServiceValidationError(cls._refusal_message(project_data, onvervuld))
+
         services.extend(new_entries)
 
     @classmethod
@@ -989,18 +1008,35 @@ class ServiceAdapter:
         which is where the actions they DO declare are listed.
         """
 
+        # Lazy: de registry importeert deze module, dus niet op laadtijd.
+        from opi.services.registry import get_service
+
         project_name = project_data.get("name") or "{project_name}"
         parts: list[str] = []
         for service_name in refused:
             service_type = ServiceType(service_name)
             definition = cls.SERVICE_DEFINITIONS.get(service_type)
-            sentence = (
-                f"Service '{service_name}' needs a project-level decision that cannot be assumed, so it is "
-                f"not selected automatically. {cls._project_selection_hint(service_type, project_name)}"
-            )
             unmet = unmet_service_requirements(project_data, definition.requires if definition else [])
-            if unmet:
-                sentence += f" It also requires, and this project does not have yet: {', '.join(unmet)}."
+
+            # Twee verschillende redenen, en ze door elkaar halen stuurt de lezer de
+            # verkeerde kant op. Mag de dienst zichzelf niet inschrijven, dan moet er een
+            # BESLISSING genomen worden en volgt het endpoint dat die opneemt. Mag hij dat
+            # wel maar ontbreken er diensten waar hij op leunt, dan is er niets te beslissen
+            # en moet er iets anders eerst bestaan -- dan is het endpoint van deze dienst
+            # noemen alleen maar misleidend.
+            if get_service(service_type).implicit_project_entry() is None:
+                sentence = (
+                    f"Service '{service_name}' needs a project-level decision that cannot be assumed, so it is "
+                    f"not selected automatically. {cls._project_selection_hint(service_type, project_name)}"
+                )
+                if unmet:
+                    sentence += f" It also requires, and this project does not have yet: {', '.join(unmet)}."
+            else:
+                sentence = (
+                    f"Service '{service_name}' cannot work in this project yet: it requires "
+                    f"{', '.join(unmet)}, which this project does not have. Add those first; "
+                    f"'{service_name}' itself needs no project-level decision and is selected for you."
+                )
             parts.append(sentence)
         return " ".join(parts)
 
