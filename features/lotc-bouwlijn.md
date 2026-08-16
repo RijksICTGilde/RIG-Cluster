@@ -186,6 +186,7 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | `tests/test_lotc_klikattributen.py` | dat er geen Jinja in de waarde van een `@`-afhandelaar staat - die waarde wordt niet gerenderd |
 | `tests/test_lotc_stapel_in_tabelcel.py` | dat er geen `<c-stack>` rechtstreeks in een `<c-td>` staat; die krimpt in Firefox tot 0 breed |
 | `tests/e2e/test_lotc_domeinbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, dat de datumkolom in FIREFOX zijn breedte houdt, dat de dialoog EEN kop heeft, dat er geen leeg foutvak in staat, dat een mislukte aanroep een leesbare melding geeft, dat het icoon in de kop hetzelfde verticale midden heeft als de titel, en dat de GEDEELDE schil (de bewerkdialogen van een project) nog opent, opslaat en met Escape sluit |
+| `tests/test_goedkeuringsdialoog_htmx.py` | dat de dialoog op `/admin/approvals` zijn formulier met `hx-get` ophaalt en niet met een eigen `fetch`, dat er geen lege foutbak in staat en dat `#approval-loading` aan beide kanten bestaat (sjabloon EN `modal.css`). Zonder browser, dus deze loopt wel mee in de gewone ronde - de e2e-tests hierboven niet |
 | `tests/test_lotc_icoon_in_kop.py` | dat er geen icoon BINNEN een kop staat; daar lijnt het op de tekstbasislijn uit en zakt het uit de lijn. Icoon en kop horen als broers in een `<c-cluster align="center">` |
 | `tests/test_lotc_icon_mapping.py` | dat elke iconnaam een icoon OPLEVERT, gemeten tegen de geleverde NLDD-bundel |
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
