@@ -24,6 +24,23 @@
   c-layer en geen c-catalog-card: die laatste heeft open-label nodig om zijn href te
   gebruiken, en dan staat er een losse "Openen"-link in de kaart. Een layer is in zijn
   geheel klikbaar en toont dat met een pijl.
+
+  DE KORTE NAAM STAAT ERBIJ
+
+  Op verzoek van de eigenaar: naast de weergavenaam staat de korte, unieke projectnaam
+  (bijvoorbeeld vr3ed-r0l). De weergavenaam is niet uniek en is niet wat je in de CLI of
+  de API intypt; zonder de korte naam erbij kun je hier dus wel een project HERKENNEN
+  maar er niet mee verder.
+
+  Hij staat in `count` en niet in de titel of de omschrijving. Dat is de plek van dit
+  component voor een kleine, ondergeschikte tekst naast de titel (0.8rem, gedempt, op
+  dezelfde basislijn), en de rest van dit project gebruikt hem al zo - `count` draagt in
+  project-details.html.j2 het componenttype en de rol van een teamlid. Zo blijft het een
+  identificatie in plaats van een tweede titel, en is er geen eigen CSS voor nodig.
+
+  Hij staat er alleen als hij iets TOEVOEGT: heeft een project geen weergavenaam, dan
+  vult lotc_project_rows() display_name met de naam zelf, en dan zou hij er twee keer
+  staan.
 #}
 
 <c-paragraph size="sm" color="grijs-500">
@@ -34,9 +51,11 @@
 {% if projects %}
     <c-stack gap="sm">
         {% for project in projects %}
+            {% set korte_naam = project.name if project.display_name != project.name else none %}
             <c-layer
                 icon="rectangle-stack"
                 title="{{ project.display_name or project.name }}"
+                :count="korte_naam"
                 sub="{{ project.description or 'Geen beschrijving beschikbaar' }}"
                 href="/projects/{{ project.name }}/details" />
         {% endfor %}
