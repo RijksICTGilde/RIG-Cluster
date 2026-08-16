@@ -1805,7 +1805,9 @@ async def add_service_v2(
 
     Adds a bare selection (no config) at the project level, and appends the service to
     the services list of every component named in ``components`` -- entries already
-    there keep their config. Per-service config is set separately via
+    there keep their config. A service that is already selected at project level is
+    reported in ``services_skipped`` and its components are bound all the same, so
+    configure-then-bind works in either order. Per-service config is set separately via
     ``PUT /api/v2/projects/{project}/services/{service}/config/<target>``. Returns
     immediately with a task ID; poll /api/tasks/{task_id}.
 

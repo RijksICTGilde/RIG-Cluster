@@ -496,13 +496,15 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 3: Process project (only if new services were added)
         # ------------------------------------------------------------------
-        # Nothing added means nothing to reconcile; a deferred rollout says the same for a
-        # different reason, and the reason travels with the status.
+        # Nothing added AND nothing bound means nothing to reconcile; a newly bound
+        # component needs its manifests just as much as a newly selected service does.
+        # A deferred rollout says "skipped" for a different reason, and the reason
+        # travels with the status.
         processing: dict[str, Any] = {"status": "skipped"}
         if not rollout_requested(payload):
             note_rollout_skipped(progress)
             processing = skipped_processing()
-        elif result.get("services_added"):
+        elif result.get("services_added") or result.get("components_updated"):
             deploy_task = progress.add_task("Project verwerken")
             progress.update_current_step("Project verwerken om de diensten klaar te zetten")
 
