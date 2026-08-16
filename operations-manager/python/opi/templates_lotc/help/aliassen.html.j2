@@ -13,10 +13,10 @@
    De iconen zijn onze eigen namen uit de dienstdefinities, dus door nldd_icon. #}
 {% from "components/_forms.j2" import copy_value_box %}
 
-<c-heading type="h2">
+<c-cluster gap="sm" align="center">
     <c-icon icon="link" size="xl" color="hemelblauw"/>
-    Aliassen
-</c-heading>
+    <c-heading type="h2" label="Aliassen"/>
+</c-cluster>
 
 <c-paragraph>
     Een alias geeft een platform-variabele een andere naam, zodat je applicatie de naam
@@ -47,10 +47,10 @@
 </c-paragraph>
 
 {% for dienst in alias_variabelen() %}
-    <c-heading type="h4">
+    <c-cluster gap="sm" align="center">
         <c-icon icon="{{ dienst.icoon | nldd_icon }}" size="lg" color="hemelblauw"/>
-        {{ dienst.label }}
-    </c-heading>
+        <c-heading type="h4" label="{{ dienst.label }}"/>
+    </c-cluster>
     <c-stack gap="sm">
         {% for variabele in dienst.variabelen %}
             {{ copy_value_box("$" ~ variabele.naam) }}

@@ -50,10 +50,10 @@
 
                 <c-card padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="database" size="lg" color="oranje"/>
-                            The Configuration Gap
-                        </c-heading>
+                            <c-heading type="h3" label="The Configuration Gap"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             We can request access to a database, have accounts created for a queue system,
                             but we still need to configure everything. We may need to create the setup fully,
@@ -69,10 +69,10 @@
 
                 <c-card padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="cylinder-split" size="lg" color="hemelblauw"/>
-                            The Missing Piece
-                        </c-heading>
+                            <c-heading type="h3" label="The Missing Piece"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             A solution, that if we have built an application, we can just click what
                             we need, a database, SSO Rijk, and we want to deploy it to the internet...
@@ -135,10 +135,10 @@
 
             <c-card padding="lg" :outline="true">
                 <c-layout-flow gap="md">
-                    <c-heading type="h3">
+                    <c-cluster gap="sm" align="center">
                         <c-icon icon="exclamation-triangle" size="lg" color="oranje"/>
-                        Out of Scope
-                    </c-heading>
+                        <c-heading type="h3" label="Out of Scope"/>
+                    </c-cluster>
                     <p class="rvo-text--md">
                         <strong>Out of scope here is the version control and image registry</strong> - we used GitHub
                         for our projects, though anything should work.
@@ -156,10 +156,10 @@
 
             <c-card padding="lg" :outline="true">
                 <c-layout-flow gap="md">
-                    <c-heading type="h3">
+                    <c-cluster gap="sm" align="center">
                         <c-icon icon="check-mark-circle" size="lg" color="groen"/>
-                        A Pragmatic Approach
-                    </c-heading>
+                        <c-heading type="h3" label="A Pragmatic Approach"/>
+                    </c-cluster>
                     <p class="rvo-text--md">
                         <strong>Maybe this is not the solution for everything.</strong> Maybe it already exists somewhere.
                         But maybe, just maybe, we can tailor a solution to what we really need.
@@ -199,10 +199,10 @@
 
                 <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="cylinder-split" size="xl" color="donkerblauw"/>
-                            Existing Platform
-                        </c-heading>
+                            <c-heading type="h3" label="Existing Platform"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             <strong>Haven Implementation</strong> or <strong>ODC Noord OpenShift</strong> provides
                             the foundational Kubernetes cluster with basic networking, storage, and compute resources.
@@ -218,10 +218,10 @@
 
                 <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="rectangle-stack" size="xl" color="groen"/>
-                            ArgoCD
-                        </c-heading>
+                            <c-heading type="h3" label="ArgoCD"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             <strong>GitOps Engine</strong> - Continuously monitors Git repositories and automatically
                             deploys changes to the Kubernetes cluster.
@@ -237,10 +237,10 @@
 
                 <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="lock-closed" size="xl" color="oranje"/>
-                            Keycloak
-                        </c-heading>
+                            <c-heading type="h3" label="Keycloak"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             <strong>Identity & Access Management</strong> - Provides SSO integration with
                             Rijksoverheid and manages authentication for all applications.
@@ -256,10 +256,10 @@
 
                 <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="database" size="xl" color="hemelblauw"/>
-                            Shared Database
-                        </c-heading>
+                            <c-heading type="h3" label="Shared Database"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             <strong>PostgreSQL Cluster</strong> - High-availability database service where
                             each project gets its own schema and dedicated user.
@@ -275,10 +275,10 @@
 
                 <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="folder" size="xl" color="donkerblauw"/>
-                            Shared MinIO
-                        </c-heading>
+                            <c-heading type="h3" label="Shared MinIO"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             <strong>S3-Compatible Storage</strong> - Object storage service providing
                             isolated buckets and access credentials for each project.
@@ -294,10 +294,10 @@
 
                 <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="lock-closed" size="xl" color="donkerblauw"/>
-                            Backup and Restore
-                        </c-heading>
+                            <c-heading type="h3" label="Backup and Restore"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             <strong>Data Protection</strong> - Automated backup and restore capabilities for
                             databases and persistent storage when deployments require it.
@@ -320,10 +320,10 @@
 
                 <c-card class="bootstrap-card featured" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="globe" size="xl" color="rood"/>
-                            Operations Manager
-                        </c-heading>
+                            <c-heading type="h3" label="Operations Manager"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             <strong>The Orchestrator</strong> - FastAPI service that connects to all platform
                             components and provides the self-service portal for project creation.
@@ -376,10 +376,10 @@
 
                 <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="database" size="xl" color="groen"/>
-                            Shared by Default
-                        </c-heading>
+                            <c-heading type="h3" label="Shared by Default"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             <strong>One PostgreSQL cluster</strong> serves all projects with isolated schemas.
                             <strong>One MinIO instance</strong> provides buckets for everyone.
@@ -396,10 +396,10 @@
 
                 <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="globe" size="xl" color="hemelblauw"/>
-                            Per-Project When Needed
-                        </c-heading>
+                            <c-heading type="h3" label="Per-Project When Needed"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             Some projects have special requirements: <strong>dedicated databases</strong> for performance,
                             <strong>isolated storage</strong> for compliance, or <strong>custom authentication</strong> for integration needs.
@@ -415,10 +415,10 @@
 
                 <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
-                        <c-heading type="h3">
+                        <c-cluster gap="sm" align="center">
                             <c-icon icon="rectangle-stack" size="xl" color="oranje"/>
-                            Per-Deployment Flexibility
-                        </c-heading>
+                            <c-heading type="h3" label="Per-Deployment Flexibility"/>
+                        </c-cluster>
                         <p class="rvo-text--sm">
                             Maximum flexibility: <strong>development environments</strong> can share everything,
                             <strong>production environments</strong> get dedicated resources,

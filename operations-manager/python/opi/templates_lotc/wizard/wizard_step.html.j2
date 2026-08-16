@@ -20,10 +20,10 @@
 {# Step content #}
 <div class="wizard-step" id="wizard-step-inner">
     <div class="wizard-step__header">
-        <c-heading type="h2">
+        <c-cluster gap="sm" align="center">
             {% if section.icon %}<c-icon icon="{{ section.icon | nldd_icon }}" size="xl"/>{% endif %}
-            {{ section.title }}
-        </c-heading>
+            <c-heading type="h2" label="{{ section.title }}"/>
+        </c-cluster>
         {% if section.description %}
         <p class="wizard-step__description">{{ section.description }}</p>
         {% endif %}
