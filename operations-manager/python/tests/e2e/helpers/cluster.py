@@ -238,3 +238,24 @@ def http_get_via_port_forward(
         proc.terminate()
         with contextlib.suppress(subprocess.SubprocessError):
             proc.wait(timeout=5)
+
+
+def read_file_in_pod(namespace: str, pod: str, path: str, *, container: str = "app") -> str | None:
+    """Read one file out of a running container, or None when that is not possible.
+
+    Used to prove that a replaced attachment reached the pod. Reading the Secret would
+    only prove the cluster has the new content; a ``subPath`` mount is a one-time copy at
+    container start, so the only place the answer lives is inside the container.
+    """
+    result = _run(["exec", "-n", namespace, pod, "-c", container, "--", "cat", path], timeout=60.0)
+    return result.stdout if result.returncode == 0 else None
+
+
+def env_in_pod(namespace: str, pod: str, name: str, *, container: str = "app") -> str | None:
+    """Read one environment variable out of a running container.
+
+    ``envFrom`` is injected once, at container start, so this reads what the process
+    actually got rather than what the Secret currently holds.
+    """
+    result = _run(["exec", "-n", namespace, pod, "-c", container, "--", "printenv", name], timeout=60.0)
+    return result.stdout.strip() if result.returncode == 0 else None
