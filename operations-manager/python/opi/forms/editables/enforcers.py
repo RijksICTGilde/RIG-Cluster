@@ -284,7 +284,36 @@ class DomainConfigEnforcer:
         if base_domain == "__custom__" and not custom_domain:
             raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
 
-        template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
+        # An id that is no template at all used to fall through here as ``""``, which made
+        # every check below vacuous: 'onzin' passed the entire enforcer untouched while the
+        # perfectly valid 'subdomain' was stopped for missing its subdomain. The typo was
+        # the one thing that got through, and it reached a project file.
+        #
+        # The valid set is not restated here. It comes from the field's own values provider
+        # -- the same one that fills the form's select and that the API publishes as
+        # ``x-choices-source`` -- given this deployment's base-domain, so the message names
+        # what this deployment can actually pick rather than all eleven ids. That context is
+        # exactly what the generic ``validate_declared_choices`` gate cannot supply, which is
+        # why this check lives in the enforcer (see DOMAIN_FORMAT_EDITABLE).
+        template = DOMAIN_FORMAT_TEMPLATES.get(domain_format)
+        if template is None:
+            # Imported here rather than at module scope, for the same reason
+            # ``project_validation.validate_declared_choices`` does it: this module is
+            # reached from connectors and managers, and pulling the whole visualizer
+            # package in at import time drags the form stack along with it. Measured, not
+            # assumed -- as a top-level import it turned 33 database-backed tests into
+            # errors in the full-suite run while every one of them passed in isolation.
+            from opi.forms.visualizers.providers import DomainFormatOptionsProvider
+
+            offered = [
+                str(option["value"])
+                for option in DomainFormatOptionsProvider(base_domain=base_domain, cluster=cluster).get_options()
+            ]
+            raise FieldError(
+                domain_setting_path(DomainSetting.DOMAIN_FORMAT, self.deployment_index),
+                f"'{domain_format}' is geen bestaand URL-formaat. Kies uit: {', '.join(offered)}.",
+            )
+
         if "{subdomain}" in template and not subdomain:
             # Field-level required validation only fires when the field is
             # rendered. If the user changed domain-format to one that needs a

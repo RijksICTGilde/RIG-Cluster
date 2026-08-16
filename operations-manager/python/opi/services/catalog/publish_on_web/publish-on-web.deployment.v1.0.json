@@ -18,6 +18,19 @@
     "domain-format": {
       "anyOf": [
         {
+          "enum": [
+            "component-deployment-project",
+            "deployment-project",
+            "component-deployment-subdomain",
+            "deployment-subdomain",
+            "component-subdomain",
+            "subdomain",
+            "component.deployment.project",
+            "deployment.project",
+            "component.deployment.subdomain",
+            "deployment.subdomain",
+            "component.subdomain"
+          ],
           "type": "string"
         },
         {
@@ -25,7 +38,7 @@
         }
       ],
       "default": null,
-      "description": "Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES).",
+      "description": "Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES). The id set is closed, so this field carries an enum; which of those ids you can actually use here is narrower and depends on base-domain, because the dotted variants need a domain that supports dot-separated hostnames. Read x-choices-source on this field for the list that fits.",
       "title": "Domain-Format"
     },
     "domain-mode": {
