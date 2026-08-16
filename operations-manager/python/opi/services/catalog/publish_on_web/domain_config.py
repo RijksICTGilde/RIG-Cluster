@@ -33,11 +33,37 @@ remove the root copy, so the state cannot split.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services import service_entry_body, service_entry_name
 from opi.services.services_enums import ServiceType
+
+#: The closed set of hostname-template ids ``domain-format`` accepts.
+#:
+#: It lives here rather than beside ``DOMAIN_FORMAT_TEMPLATES`` in ``opi/utils/naming.py``
+#: for one reason: ``config_model.py`` needs it to type its field, and ``naming`` already
+#: imports this module, so taking it from there is an import cycle (measured: "cannot
+#: import name 'DomainFormatId' from partially initialized module"). The templates keep the
+#: assertion that the two stay in sync, so there is still exactly one authority.
+#:
+#: WHICH of these ids fits a given deployment is a second, narrower question, answered by
+#: ``DomainFormatOptionsProvider`` against the deployment's base-domain: the dotted variants
+#: need a domain that supports dot-separated hostnames. That is why the field carries this
+#: ``enum`` (what exists) AND an ``x-choices-source`` (what fits here) in the API document.
+DomainFormatId = Literal[
+    "component-deployment-project",
+    "deployment-project",
+    "component-deployment-subdomain",
+    "deployment-subdomain",
+    "component-subdomain",
+    "subdomain",
+    "component.deployment.project",
+    "deployment.project",
+    "component.deployment.subdomain",
+    "deployment.subdomain",
+    "component.subdomain",
+]
 
 
 class DomainSetting(StrEnum):
