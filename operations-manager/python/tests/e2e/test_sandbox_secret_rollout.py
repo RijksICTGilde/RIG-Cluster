@@ -86,17 +86,30 @@ def namespace(project: CreatedProject) -> str:
     return namespaces[0]
 
 
-def _pod(namespace: str, project: CreatedProject) -> str:
-    """De naam van de draaiende applicatiepod. Faalt als er geen (of geen enkele) is."""
+def _pods(namespace: str, project: CreatedProject) -> list[str]:
+    return cluster.running_pod_names(namespace, project.deployment_name)
 
-    def _one() -> bool:
-        return len(cluster.running_pod_names(namespace, project.deployment_name)) == 1
 
-    assert cluster.wait_for(_one, timeout=300, interval=5), (
-        f"Geen enkele draaiende pod in {namespace} met prefix '{project.deployment_name}': "
-        f"{cluster.running_pod_names(namespace, project.deployment_name)}"
+def _pod_where(namespace: str, project: CreatedProject, predicate, what: str, *, timeout: float = 420.0) -> str:
+    """Wacht tot een DRAAIENDE pod aan *predicate* voldoet en geef zijn naam.
+
+    Bewust niet "de ene pod": tijdens een rollout draaien de oude en de nieuwe even samen,
+    en de oude houdt per definitie de oude inhoud. Wie de eerste de beste pod pakt, meet
+    dan de pod die juist niet herstart is.
+    """
+    found: list[str] = []
+
+    def _check() -> bool:
+        for pod in _pods(namespace, project):
+            if predicate(pod):
+                found.append(pod)
+                return True
+        return False
+
+    assert cluster.wait_for(_check, timeout=timeout, interval=5), (
+        f"Geen draaiende pod in {namespace} waarvoor geldt: {what}. Pods nu: {_pods(namespace, project)}"
     )
-    return cluster.running_pod_names(namespace, project.deployment_name)[0]
+    return found[-1]
 
 
 def _hash(namespace: str) -> str | None:
@@ -152,14 +165,15 @@ def test_een_vervangen_bijlage_bereikt_de_draaiende_pod(
 
     _wait(project, sandbox_url, _upload(project, sandbox_url, b"eerste-inhoud\n", couple=True))
 
-    pod_before = _pod(namespace, project)
-    assert cluster.wait_for(
-        lambda: "eerste-inhoud" in (cluster.read_file_in_pod(namespace, pod_before, _MOUNT_PATH) or ""),
-        timeout=180,
-        interval=5,
-    ), f"Bijlage niet gemount in {pod_before}:{_MOUNT_PATH}"
+    pod_before = _pod_where(
+        namespace,
+        project,
+        lambda pod: "eerste-inhoud" in (cluster.read_file_in_pod(namespace, pod, _MOUNT_PATH) or ""),
+        f"{_MOUNT_PATH} bevat 'eerste-inhoud'",
+    )
     hash_before = _hash(namespace)
     assert hash_before, f"Geen {SECRET_HASH_ANNOTATION} op de pod-template in {namespace}"
+    logger.info("RC-119 bijlage gekoppeld: pod=%s hash=%s", pod_before, hash_before)
 
     _wait(project, sandbox_url, _upload(project, sandbox_url, b"tweede-inhoud\n", couple=False))
 
@@ -167,22 +181,16 @@ def test_een_vervangen_bijlage_bereikt_de_draaiende_pod(
     assert hash_after != hash_before, (
         f"De inhoud-hash veranderde niet ({hash_before}); de pod-spec is dan identiek gebleven en Kubernetes rolt niets"
     )
-    assert cluster.wait_for(
-        lambda: cluster.running_pod_names(namespace, project.deployment_name) not in ([], [pod_before]),
-        timeout=300,
-        interval=5,
-    ), f"Pod {pod_before} is niet vervangen; hash ging van {hash_before} naar {hash_after}"
-
-    pod_after = _pod(namespace, project)
-    assert pod_after != pod_before
-    # Dit is de kern: een subPath-mount wordt nooit ververst, dus dit kan alleen kloppen als
-    # de container opnieuw is gestart.
-    assert cluster.wait_for(
-        lambda: "tweede-inhoud" in (cluster.read_file_in_pod(namespace, pod_after, _MOUNT_PATH) or ""),
-        timeout=180,
-        interval=5,
-    ), f"De pod draait met de oude inhoud: {cluster.read_file_in_pod(namespace, pod_after, _MOUNT_PATH)!r}"
-    logger.info("RC-119 meting bijlage: %s -> %s, hash %s -> %s", pod_before, pod_after, hash_before, hash_after)
+    # Dit is de kern: een subPath-mount wordt nooit ververst, dus een pod met de nieuwe
+    # inhoud kan alleen een NIEUWE pod zijn.
+    pod_after = _pod_where(
+        namespace,
+        project,
+        lambda pod: "tweede-inhoud" in (cluster.read_file_in_pod(namespace, pod, _MOUNT_PATH) or ""),
+        f"{_MOUNT_PATH} bevat 'tweede-inhoud'",
+    )
+    assert pod_after != pod_before, "Dezelfde pod met nieuwe inhoud kan niet: subPath wordt nooit ververst"
+    logger.info("RC-119 bijlage vervangen: %s -> %s, hash %s -> %s", pod_before, pod_after, hash_before, hash_after)
 
 
 def test_een_gewijzigde_env_var_bereikt_de_draaiende_pod(
@@ -191,34 +199,36 @@ def test_een_gewijzigde_env_var_bereikt_de_draaiende_pod(
     if not cluster.kubectl_available():
         pytest.skip("kubectl niet beschikbaar")
     path = f"/api/v2/projects/{project.name}/services/user-env-vars/values/component/{_COMPONENT}"
-    _wait(
-        project,
-        sandbox_url,
-        sandbox_api.start_task(
-            sandbox_url, "POST", path, project.api_key, {"values": {_ENV_NAME: "eerste"}}, verify_ssl=_VERIFY_SSL
-        ),
-    )
-    pod_before = _pod(namespace, project)
-    assert cluster.wait_for(
-        lambda: cluster.env_in_pod(namespace, pod_before, _ENV_NAME) == "eerste", timeout=180, interval=5
-    ), f"{_ENV_NAME} staat niet in {pod_before}"
-    hash_before = _hash(namespace)
 
-    _wait(
+    def _set(value: str) -> None:
+        _wait(
+            project,
+            sandbox_url,
+            sandbox_api.start_task(
+                sandbox_url, "POST", path, project.api_key, {"values": {_ENV_NAME: value}}, verify_ssl=_VERIFY_SSL
+            ),
+        )
+
+    _set("eerste")
+    pod_before = _pod_where(
+        namespace,
         project,
-        sandbox_url,
-        sandbox_api.start_task(
-            sandbox_url, "POST", path, project.api_key, {"values": {_ENV_NAME: "tweede"}}, verify_ssl=_VERIFY_SSL
-        ),
+        lambda pod: cluster.env_in_pod(namespace, pod, _ENV_NAME) == "eerste",
+        f"{_ENV_NAME}=eerste",
     )
+    hash_before = _hash(namespace)
+    assert hash_before, f"Geen {SECRET_HASH_ANNOTATION} op de pod-template in {namespace}"
+
+    _set("tweede")
 
     assert _hash(namespace) != hash_before, "De inhoud-hash veranderde niet bij een gewijzigde env-var"
-    assert cluster.wait_for(
-        lambda: cluster.running_pod_names(namespace, project.deployment_name) not in ([], [pod_before]),
-        timeout=300,
-        interval=5,
-    ), f"Pod {pod_before} is niet vervangen na een gewijzigde env-var"
-    pod_after = _pod(namespace, project)
-    assert cluster.wait_for(
-        lambda: cluster.env_in_pod(namespace, pod_after, _ENV_NAME) == "tweede", timeout=180, interval=5
-    ), f"De pod draait met de oude waarde: {cluster.env_in_pod(namespace, pod_after, _ENV_NAME)!r}"
+    # envFrom wordt alleen bij containerstart geinjecteerd, dus de nieuwe waarde IN het
+    # proces bewijst een herstart.
+    pod_after = _pod_where(
+        namespace,
+        project,
+        lambda pod: cluster.env_in_pod(namespace, pod, _ENV_NAME) == "tweede",
+        f"{_ENV_NAME}=tweede",
+    )
+    assert pod_after != pod_before, "Dezelfde pod met een nieuwe env-var kan niet: envFrom wordt niet herladen"
+    logger.info("RC-119 env-var: %s -> %s, hash %s -> %s", pod_before, pod_after, hash_before, _hash(namespace))
