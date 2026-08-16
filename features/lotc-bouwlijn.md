@@ -168,7 +168,8 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | `tests/test_lotc_component_names.py` | dat er nergens nog een `<c-p>` staat; die naam bestaat niet |
 | `tests/test_lotc_klikattributen.py` | dat er geen Jinja in de waarde van een `@`-afhandelaar staat - die waarde wordt niet gerenderd |
 | `tests/test_lotc_stapel_in_tabelcel.py` | dat er geen `<c-stack>` rechtstreeks in een `<c-td>` staat; die krimpt in Firefox tot 0 breed |
-| `tests/e2e/test_lotc_domeinbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, dat de datumkolom in FIREFOX zijn breedte houdt, dat de dialoog EEN kop heeft en dat zijn foutbalk zonder melding geen hoogte inneemt |
+| `tests/e2e/test_lotc_domeinbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, dat de datumkolom in FIREFOX zijn breedte houdt, dat de dialoog EEN kop heeft, dat zijn foutbalk zonder melding geen hoogte inneemt en dat het icoon in de kop hetzelfde verticale midden heeft als de titel |
+| `tests/test_lotc_icoon_in_kop.py` | dat er geen icoon BINNEN een kop staat; daar lijnt het op de tekstbasislijn uit en zakt het uit de lijn. Icoon en kop horen als broers in een `<c-cluster align="center">` |
 | `tests/test_lotc_icon_mapping.py` | dat elke iconnaam een icoon OPLEVERT, gemeten tegen de geleverde NLDD-bundel |
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
 | `tests/test_lotc_layout_rules.py` | dat kaarten via `panel()` gebouwd worden en gaps uit de schaal komen |
