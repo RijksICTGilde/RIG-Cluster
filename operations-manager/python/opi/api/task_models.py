@@ -258,6 +258,24 @@ class ConfigureServiceResult(BaseModel):
         examples=[{"services/invite/config/active[0]/key": "Xk3pQ7rL2mNvB8dTfW1aYz"}],
     )
     approvals: list[ApprovalNoticeResponse] = Field(default_factory=list, description=APPROVALS_DESCRIPTION)
+    warnings: list[str] | None = Field(
+        default=None,
+        description=(
+            "Wat dit project nu verwacht maar niet heeft. Anders dan 'approvals' wacht dit op "
+            "niemand, en anders dan een fout is de configuratie geldig: een veld is door een "
+            "instelling elders nodig geworden en is leeg gebleven. Elke regel begint met het "
+            "yaml-pad van het veld, zodat duidelijk is om welke entry het gaat. Vandaag is er "
+            "een: staat 'restrict-access' van keycloak aan, dan laat het realm alleen rolhouders "
+            "binnen en geeft een uitnodiging zonder realm-rol dus geen toegang. Het hele project "
+            "wordt beoordeeld, niet alleen het blok dat u zojuist schreef."
+        ),
+        examples=[
+            [
+                "services/invite/config/active[0]/realm-roles: Keycloak beperkt de toegang tot "
+                "houders van een rol; een uitnodiging zonder realm-rol geeft dus geen toegang."
+            ]
+        ],
+    )
     processing: ProcessingStatus | None = None
     # Failure fields
     error: str | None = None
