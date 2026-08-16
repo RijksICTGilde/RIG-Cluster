@@ -456,6 +456,19 @@ class ClusterInfo(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class SubdomainCheckResponse(BaseModel):
+    """Response for GET /projects/{project_name}/subdomains/check/{subdomain}."""
+
+    subdomain: str = Field(description="The subdomain that was checked", examples=["myapp"])
+    base_domain: str = Field(description="The base domain it was checked under", examples=["rijksapp.nl"])
+    available: bool = Field(description="Whether the subdomain is free to claim", examples=[True])
+    validation_error: str | None = Field(
+        default=None,
+        description="Why the answer is 'not available' when it is the value itself that is wrong.",
+        examples=[None],
+    )
+
+
 class ClusterListResponse(BaseModel):
     """Response for GET /projects/{project_name}/clusters.
 
