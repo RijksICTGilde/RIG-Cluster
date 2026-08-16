@@ -485,11 +485,16 @@ async def list_clusters_v2(
 
     De domeinen komen uit dezelfde provider die het formulier zijn keuzelijst geeft
     (``ClusterBaseDomainOptionsProvider``), zodat portal en API niet uit elkaar kunnen lopen.
+    Op één punt wijken ze af, en met opzet: de optie ``__custom__`` is een SCHAKELAAR in het
+    formulier ("ik vul zelf een domein in") en geen waarde die je kunt opslaan, dus hier
+    hoort ze niet thuis. Ze stond er wel, en een client die haar overnam liep vast op de
+    schrijfactie. Zie ``CUSTOM_DOMAIN_SENTINEL``; een eigen domein zet je door de domeinnaam
+    zelf in ``base-domain`` te schrijven.
 
     Headers:
         X-API-Key: The API key for the project (required)
     """
-    from opi.forms.visualizers.providers import ClusterBaseDomainOptionsProvider
+    from opi.forms.visualizers.providers import CUSTOM_DOMAIN_SENTINEL, ClusterBaseDomainOptionsProvider
 
     _project_data_or_404(project_name)
 
@@ -503,6 +508,7 @@ async def list_clusters_v2(
                 "base-domains": [
                     ClusterDomainOption(value=str(option["value"]), label=str(option["label"]))
                     for option in ClusterBaseDomainOptionsProvider(cluster=cluster).get_options()
+                    if option["value"] != CUSTOM_DOMAIN_SENTINEL
                 ],
                 # Wat een domein BUITEN die lijst hier oplevert. Zonder dit leest de
                 # __custom__-optie als een gelijkwaardige keuze, terwijl ze op een cluster
