@@ -273,8 +273,16 @@ def _ruim_achtergebleven_containers_op() -> None:
     import subprocess
 
     try:
+        # ALLEEN gestopte containers. Een draaiende is van een run die NU bezig is: op deze
+        # machine draaien meerdere suites tegelijk (agents in eigen worktrees), en die met
+        # hetzelfde etiket weghalen trekt een collega zijn database onder de voeten weg.
+        # Dat gebeurde ook echt: veertig fouten in een run die verder niets mankeerde.
+        #
+        # Een achtergebleven container is na afloop altijd gestopt (de context manager stopt
+        # hem, of het proces sterft en Docker laat hem in 'exited' achter), dus dit filter
+        # kost geen enkele opruiming die we wel willen.
         gevonden = subprocess.run(
-            ["docker", "ps", "-aq", "--filter", f"label={ORM_CONTAINER_LABEL}"],
+            ["docker", "ps", "-aq", "--filter", f"label={ORM_CONTAINER_LABEL}", "--filter", "status=exited"],
             capture_output=True,
             text=True,
             timeout=20,
