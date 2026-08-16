@@ -227,9 +227,18 @@ class AddServiceResult(BaseModel):
 
     status: str
     message: str = ""
-    services_added: list[str] = Field(default_factory=list)
-    services_skipped: list[str] = Field(default_factory=list)
-    components_updated: list[str] = Field(default_factory=list)
+    services_added: list[str] = Field(
+        default_factory=list,
+        description="Services newly selected at project level. Empty when the service was already selected.",
+    )
+    services_skipped: list[str] = Field(
+        default_factory=list,
+        description="Services that were already selected at project level. The components in the request are bound to them anyway.",
+    )
+    components_updated: list[str] = Field(
+        default_factory=list,
+        description="Components whose services list actually changed. A component that already had the service is absent, so this is never an echo of the request.",
+    )
     processing: ProcessingStatus | None = None
     warnings: list[str] | None = None
     # Failure fields
