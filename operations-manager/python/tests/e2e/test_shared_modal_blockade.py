@@ -43,14 +43,15 @@ PROGRESS_DONE = (
 def _open_shared_modal(page: Page, app_server: str) -> None:
     """Open the approvals page's modal through the page's own opener.
 
-    The body it fetches is irrelevant here (this fixture project has no domain requests,
-    so the server answers 400 and the modal shows its error) -- the modal itself opens,
-    and that is the shell the blockade guards.
+    ``openApprovalDialog`` only makes the shell visible; the body comes from htmx on the
+    "Beheren" button, and this page's fixture projects have no domain requests so there is
+    no such button. That is fine here: what the blockade guards is the shell, and the
+    tests below put their own fragments into it.
     """
     page.goto(f"{app_server}{APPROVALS_URL}")
     page.wait_for_load_state("networkidle")
 
-    page.evaluate("openApprovalModal('test-project-detail')")
+    page.evaluate("openApprovalDialog('test-project-detail')")
     page.locator("#approval-modal.is-open").wait_for(state="visible", timeout=10000)
 
 
