@@ -168,7 +168,7 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | `tests/test_lotc_component_names.py` | dat er nergens nog een `<c-p>` staat; die naam bestaat niet |
 | `tests/test_lotc_klikattributen.py` | dat er geen Jinja in de waarde van een `@`-afhandelaar staat - die waarde wordt niet gerenderd |
 | `tests/test_lotc_stapel_in_tabelcel.py` | dat er geen `<c-stack>` rechtstreeks in een `<c-td>` staat; die krimpt in Firefox tot 0 breed |
-| `tests/e2e/test_lotc_domeinbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, dat de datumkolom in FIREFOX zijn breedte houdt, dat de dialoog EEN kop heeft en dat zijn foutbalk zonder melding geen hoogte inneemt |
+| `tests/e2e/test_lotc_domeinbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, dat de datumkolom in FIREFOX zijn breedte houdt, dat de dialoog EEN kop heeft, dat er geen leeg vak in staat, dat een mislukte aanroep een leesbare melding geeft, en dat de GEDEELDE schil (de bewerkdialogen van een project) nog opent, opslaat en met Escape sluit |
 | `tests/test_lotc_icon_mapping.py` | dat elke iconnaam een icoon OPLEVERT, gemeten tegen de geleverde NLDD-bundel |
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
 | `tests/test_lotc_layout_rules.py` | dat kaarten via `panel()` gebouwd worden en gaps uit de schaal komen |
@@ -244,10 +244,28 @@ pad met `%7B%7B` erin. De weg die niet omvalt is een gewoon attribuut plus een
 afhandelaar zonder Jinja erin:
 
 ```html
-<c-button data-project="{{ project.project_name }}" @click="openApprovalModal(this.dataset.project)" />
+<c-button data-project="{{ project.project_name }}" @click="doeIets(this.dataset.project)" />
 ```
 
 `tests/test_lotc_klikattributen.py` bewaakt dat er nergens meer Jinja in zo'n waarde staat.
+
+**En als het om een URL gaat: laat htmx het ophalen.** Het bovenstaande is de reparatie
+van een symptoom; de oorzaak was dat een fragment-URL met de hand in JavaScript werd
+samengesteld. Die hoort in een `hx-get`, want dat is een gewoon attribuut en wordt dus
+door Jinja gerenderd - de fout kan er niet in zitten. `/admin/approvals` doet het sinds
+RC-115 zo, en daarmee verdwenen ook de `fetch`, de `innerHTML` en de vooraf neergezette
+lege foutbak:
+
+```html
+<c-button hx-get="/admin/approvals/{{ project.project_name | urlencode }}/modal-wizard/admin-approval"
+          hx-target="#edit-section-inner" hx-swap="innerHTML" hx-indicator="#approval-loading" />
+```
+
+Twee dingen die daarbij horen. htmx wisselt bij een **4xx of 5xx** standaard niets in, dus
+een venster dat een fragment inlaadt heeft de `htmx:beforeSwap`-haak nodig die dat wel
+doet - anders gaat het open en blijft het leeg. En de laadtoestand van htmx werkt met
+`opacity`, wat ruimte blijft innemen; wil je hem echt weg hebben, gebruik dan `display`
+(zie `#approval-loading` in `static/css/modal.css`).
 
 De omzetter maakt er nu een echte `onclick` van via LOTC's `:attrs`-spread, met de aanroep
 in een `{% set %}`-blok vlak voor de tag. Dat is meteen het antwoord op "hier hoort een
