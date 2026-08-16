@@ -32,6 +32,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opi.services.catalog.publish_on_web.domain_config import DomainFormatId
 from opi.services.config_managed import PLATFORM_MANAGED
 
 #: ``standard`` = platform certificate (Let's Encrypt); ``passthrough`` = the pod presents
@@ -140,10 +141,15 @@ class PublishOnWebDeploymentConfig(BaseModel):
         alias="domain-mode",
         description="LEGACY hostname strategy, superseded by domain-format. Only read for files that predate it.",
     )
-    domain_format: str | None = Field(
+    domain_format: DomainFormatId | None = Field(
         default=None,
         alias="domain-format",
-        description="Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES).",
+        description=(
+            "Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES). The id set is "
+            "closed, so this field carries an enum; which of those ids you can actually use here is "
+            "narrower and depends on base-domain, because the dotted variants need a domain that supports "
+            "dot-separated hostnames. Read x-choices-source on this field for the list that fits."
+        ),
     )
     issuer: str | None = Field(
         default=None,
