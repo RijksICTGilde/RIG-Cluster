@@ -525,16 +525,18 @@ def test_de_voettekst_heeft_zijn_kop_links_en_versieregel(app_server: str, auth_
     # tekstselectors kijken er wel doorheen - precies het verschil dat elders in dit
     # project al twee keer een meting waardeloos maakte.
     assert voet.get_by_text("Platform", exact=True).count() >= 1, "de kop 'Platform' boven de links ontbreekt"
-    for bestemming in ("Over het platform", "API Referentie"):
+    for bestemming in ("Introductie", "Over het platform", "API Referentie"):
         assert voet.get_by_text(bestemming, exact=True).count() >= 1, (
             f"de link '{bestemming}' staat niet in de voettekst"
         )
     assert voet.get_by_text("ZAD ").count() >= 1, "de versievermelding staat niet in de voettekst"
 
-    # En hij werkt: de eerste link brengt je naar /about.
+    # En hij werkt: de eerste link brengt je naar /introductie. Die staat sinds de
+    # introductiepagina bovenaan, en juist voor wie ingelogd is is dit de enige weg
+    # ernaartoe - "/" gaat dan naar het dashboard.
     auth_page.locator("nldd-page-footer a").first.click()
     auth_page.wait_for_load_state("networkidle")
-    assert auth_page.url.endswith("/about"), f"de eerste footerlink navigeert niet: {auth_page.url}"
+    assert auth_page.url.endswith("/introductie"), f"de eerste footerlink navigeert niet: {auth_page.url}"
 
 
 def test_het_gebruikersmenu_bevat_alles_en_zet_de_weergave_echt_om(app_server: str, auth_page: Page) -> None:
