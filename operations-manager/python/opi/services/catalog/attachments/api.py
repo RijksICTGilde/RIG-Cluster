@@ -30,6 +30,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from opi.core.async_task_service import TaskType
 from opi.services.catalog.actions import (
     ActionContext,
     ActionField,
@@ -360,6 +361,7 @@ PROJECT_ATTACHMENT_ACTION = ServiceAction(
     verbs=(*_VERBS, ActionVerb.DELETE),
     flags=(_CONFIRM_IN_USE_FLAG,),
     handler=_define_attachment,
+    rollout_task_type=TaskType.CONFIGURE_ATTACHMENT,
     example=(
         "curl -X POST -H 'X-API-Key: <key>' "
         "-F attachment_id=server-cert -F file=@server.pem "
@@ -417,6 +419,7 @@ COMPONENT_ATTACHMENT_ACTION = ServiceAction(
         ),
     ),
     handler=_define_and_bind_attachment,
+    rollout_task_type=TaskType.CONFIGURE_ATTACHMENT,
     example=(
         "curl -X POST -H 'X-API-Key: <key>' "
         "-F attachment_id=server-cert -F file=@server.pem "
