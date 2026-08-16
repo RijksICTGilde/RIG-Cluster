@@ -13,13 +13,14 @@ groen, en alleen de browsertests zagen het. Deze doorloop herstelt dat vertrouwe
 
 ## Oordeel
 
-**Deze tak kan NIET naar main.**
+**Deze tak kan nog NIET naar main -- maar alleen nog omdat de metingen niet af zijn.**
 
-Niet vanwege de vier fouten die hieronder staan -- die zijn gerepareerd, elk met een test die
-omvalt als je de fix terugdraait. Wel vanwege een vijfde die open staat en die de eigenaar
-binnen minuten zelf tegenkwam: de domeinwizard geeft een permanent vals conflict. En omdat de
-metingen die het oordeel moeten dragen niet af zijn: de sandboxsuite is afgebroken op 36/68,
-`-m reallife` en `-m punt14` zijn niet gedraaid, en taak 2 kwam tot 1 van de 47 projecten.
+Alle vijf gevonden fouten zijn gerepareerd, elk met een test die omvalt als je de fix
+terugdraait -- inclusief het valse conflict in de domeinwizard, dat op het draaiende cluster
+is nagemeten op precies het project waar de eigenaar in vastliep. Wat rest is meetwerk: de
+sandboxsuite moet vers over op de eindimage (hij is afgebroken op 36/68), `-m reallife` en
+`-m punt14` zijn niet gedraaid, en taak 2 kwam tot 1 van de 47 projecten. Wie die metingen
+draait en groen ziet, kan het oordeel omzetten.
 
 Wat er WEL staat: de unitsuite en beide browsersuites zijn groen, en elk van de tien punten
 uit taak 3 is apart aangetoond in plaats van aangenomen — de goedkeuringsdialoog inclusief
@@ -33,9 +34,9 @@ gemeld als bekend rood — de 9007 groene tests zijn de hele unitsuite.
 
 ---
 
-## De openstaande bevinding: een vals conflict in de domeinwizard
+## Bevinding vijf: een vals conflict in de domeinwizard
 
-**Blokkerend, en niet opgelost.**
+**Opgelost in `4f483796`, en nagemeten op het draaiende cluster.**
 
 Bij het opslaan in de meerstaps domeinwizard: *"Project 'X' is gewijzigd sinds je begon met
 bewerken, en die wijziging raakt hetzelfde onderdeel als dat van jou."* Opnieuw openen helpt
@@ -65,15 +66,43 @@ De node diff't als TYPEWISSEL, dus als vervanging-in-zijn-geheel, en zo'n delta 
 driewegmerge niet toepassen. Daarnaast draagt `base` een transient veld dat git nooit heeft
 gezien.
 
-**Waar dit opgelost moet worden: in de `ProjectStore`.** Die is de enige waarheid; de
-ProjectManager leest alleen. Onderweg is een ciphertext-uitlijning in die laag geprobeerd,
-gecommit en uitgerold -- en weer teruggedraaid, omdat het model de waarneming van de eigenaar
-tegensprak dat dit op productie niet optreedt. Zonder reproducerende test hoort daar niet in
-gesneden te worden.
+**De oorzaak, uiteindelijk gevonden door de gemeten vorm exact na te bouwen.** ``theirs``
+komt uit ``_read_committed`` en is een ruamel ``CommentedMap``; ``base`` kan dat ook zijn (de
+cache na een YAML-herlaad) en droeg bovendien het transiente veld; ``ours`` is de
+wizard-uitvoer, een platte ``dict``. Voor ``==`` maakt dat niets uit (``CommentedMap`` is een
+dict-subklasse), maar **DeepDiff ziet het als ``type_changes`` op de root en stopt met
+afdalen**: de hele wijziging wordt een vervanging-in-zijn-geheel, en zo'n delta verifieert
+zijn oude waarde tegen ``theirs`` -- elk verschil laat hem weigeren. ``DeltaError`` -> ``None``
+-> ConflictError, permanent, want de vormen veranderen nooit. Het versleutelde veld was de
+trigger (dat dwingt de YAML-herlaadde cachevorm af), niet de oorzaak. Twee eerdere losse
+repro's misten allebei de combinatie; met base als CommentedMap-met-transient en ours als
+platte dict reproduceert het deterministisch, zonder cluster.
 
-Mogelijk verschil met productie: `sandboxed-local` draagt
-`supports_custom_domain_certificates: False`, `odcn-production` `True`. De keten waarschuwing
--> certificaatstap bestaat op productie dus niet.
+De reproductie liet ook zien dat het breder was dan de wizard: een NIET-overlappende
+gelijktijdige wijziging (de ander een namespace, wij een domein) werd door de vergroving ook
+een conflict -- precies het geval waarvoor deze structurele merge boven een git-merge is
+verkozen.
+
+**De fix** (`4f483796`, in de `ProjectStore` -- de enige waarheid; de manager leest alleen):
+``_as_plain`` normaliseert de diff-invoer naar kale containers (dict-subklassen -> dict,
+ruamel-scalars -> str/int/float), zodat de diff granulair blijft. Alleen de vorm wordt
+gelijkgetrokken, geen enkele waarde: een echte botsing op hetzelfde veld blijft een conflict,
+en `tests/test_store_merge_containervormen.py` staat vooral op die grenzen. Met de fix
+teruggedraaid vallen precies de drie tests om die deze weg dekken; de 373 bestaande store-,
+conflict- en mergetests blijven groen.
+
+**Nagemeten op het cluster** (`4f483796`), op het zwaarst toegetakelde project en op het
+project met versleutelde env-vars:
+
+```
+e2e71-jqm:  conflict=False | commit 2f0e0a9c->cb156198 | domein in bestand | transient niet gelekt
+rc118-tls:  conflict=False | commit e9a74bbc->21387c13 | domein in bestand | transient niet gelekt
+```
+
+Onderweg is een andere fix in deze laag geprobeerd (ciphertext-uitlijning), gecommit,
+uitgerold en weer teruggedraaid omdat het model de waarneming van de eigenaar tegensprak dat
+dit op productie niet optreedt. De les staat er hier bij omdat hij de goede was: in een
+chokepoint snijd je niet zonder reproducerende test.
 
 ---
 
