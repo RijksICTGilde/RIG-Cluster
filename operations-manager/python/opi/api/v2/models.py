@@ -421,8 +421,9 @@ class ClusterDomainOption(BaseModel):
 
     value: str = Field(
         description=(
-            "Wat je in base-domain zet. Leeg betekent het standaarddomein van het cluster, "
-            "__custom__ betekent een eigen domein dat je zelf invult."
+            "Wat je in base-domain zet. Leeg betekent het standaarddomein van het cluster. "
+            "Een eigen domein staat hier niet tussen: dat zet je door de domeinnaam zelf in "
+            "base-domain te schrijven (bijvoorbeeld 'mijn-app.nl')."
         ),
         examples=["rijksapp.nl"],
     )
@@ -437,7 +438,11 @@ class ClusterInfo(BaseModel):
     base_domains: list[ClusterDomainOption] = Field(
         default_factory=list,
         alias="base-domains",
-        description="De waarden die base-domain op een deployment van dit cluster accepteert.",
+        description=(
+            "De domeinen die dit cluster zelf aanbiedt voor base-domain op een deployment. Dit "
+            "is geen gesloten verzameling: een eigen domein schrijf je als domeinnaam in "
+            "base-domain, en 'custom-domain-certificates' zegt wat dat hier oplevert."
+        ),
     )
     custom_domain_certificates: bool = Field(
         default=True,
@@ -454,6 +459,19 @@ class ClusterInfo(BaseModel):
     )
 
     model_config = ConfigDict(populate_by_name=True)
+
+
+class SubdomainCheckResponse(BaseModel):
+    """Response for GET /projects/{project_name}/subdomains/check/{subdomain}."""
+
+    subdomain: str = Field(description="The subdomain that was checked", examples=["myapp"])
+    base_domain: str = Field(description="The base domain it was checked under", examples=["rijksapp.nl"])
+    available: bool = Field(description="Whether the subdomain is free to claim", examples=[True])
+    validation_error: str | None = Field(
+        default=None,
+        description="Why the answer is 'not available' when it is the value itself that is wrong.",
+        examples=[None],
+    )
 
 
 class ClusterListResponse(BaseModel):

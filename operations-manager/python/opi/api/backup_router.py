@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token
+from opi.api.endpoint_util import validate_api_token, validate_master_api_key
 from opi.api.enums import OperationStatus
 from opi.api.params import DeploymentNamePath, ProjectNamePath
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
@@ -300,7 +300,7 @@ def _bucket_result_to_model(result: BucketBackupResult) -> BucketBackupResultMod
 
 
 @backup_router.get("/status", response_model=BackupStatusResponse)
-@validate_api_token
+@validate_master_api_key
 async def get_backup_status(request: Request) -> BackupStatusResponse:
     """
     Get current backup status.
@@ -308,10 +308,15 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
     Returns information about whether a backup is currently running,
     which namespace/PVC is being backed up, and lock details.
 
+    The lock is one per cluster, not one per project, so there is no project to check a
+    project key against -- and ``validate_api_token`` needs one, which is why this endpoint
+    answered 401 to every caller. It takes the master key, like the other operations
+    without a project context.
+
     Example:
     ```bash
     curl -X GET "http://localhost:9595/api/v1/backup/status" \\
-      -H "X-API-Key: your-api-key"
+      -H "X-API-Key: your-master-api-key"
     ```
     """
     try:
