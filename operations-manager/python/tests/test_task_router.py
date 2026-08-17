@@ -163,6 +163,61 @@ class TestGetTask:
         assert data["result"]["deployment_name"] == "my-app"
         assert data["completed_at"] == "2026-03-01T10:05:00+00:00"
 
+    def test_een_afgeronde_taak_zegt_hoeveel_er_nog_wacht(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """zad-cli, punt 24: twee gelijktijdige schrijfacties meldden 5 en 4 wachtende
+        wijzigingen. Allebei waar op hun eigen moment, want elke client las de teller in een
+        eigen aanroep erna. Nu staat hij in het antwoord dat zegt dat de taak klaar is: één
+        moment, de eigen wijziging meegeteld, geen tweede ronde die ernaast kan zitten."""
+        mock_task_service.get_task.return_value = _make_task(status="completed")
+        mock_task_service.get_deferred_rollouts.return_value = {
+            "count": 5,
+            "since": "2026-03-01T09:00:00+00:00",
+            "task_types": ["configure_service"],
+            "rollout_in_progress": False,
+        }
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        assert response.status_code == 200
+        assert response.json()["pending_rollout"]["count"] == 5
+
+    def test_een_lopende_taak_telt_nog_niets(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """Halverwege is er niets te melden: de schrijfactie is nog niet gebeurd, dus een
+        getal zou juist het misverstand voeden dat dit punt oploste."""
+        mock_task_service.get_task.return_value = _make_task(status="running")
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        assert response.status_code == 202
+        assert response.json()["pending_rollout"] is None
+        mock_task_service.get_deferred_rollouts.assert_not_called()
+
+    def test_een_telling_die_niet_lukt_bederft_het_antwoord_niet(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """Het is een etiket bij de uitkomst van de taak, geen deel van die uitkomst."""
+        mock_task_service.get_task.return_value = _make_task(status="completed")
+        mock_task_service.get_deferred_rollouts.side_effect = RuntimeError("database weg")
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "completed"
+        assert response.json()["pending_rollout"] is None
+
     def test_get_task_failed_returns_200(
         self,
         test_client_with_task_service: TestClient,

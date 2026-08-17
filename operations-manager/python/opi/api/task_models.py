@@ -9,7 +9,13 @@ Provides:
 
 from typing import Any
 
-from opi.api.v2.models import APPROVALS_DESCRIPTION, ApprovalNoticeResponse, ErrorCategory, error_category_for
+from opi.api.v2.models import (
+    APPROVALS_DESCRIPTION,
+    ApprovalNoticeResponse,
+    ErrorCategory,
+    PendingRolloutResponse,
+    error_category_for,
+)
 from opi.core.async_task_service import TaskType
 from pydantic import BaseModel, Field
 
@@ -435,6 +441,16 @@ class TaskResponse[TResult: BaseModel](BaseModel):
         description="Task result, populated when the task finished, on 'completed' and on 'failed'",
     )
     error_message: str | None = Field(default=None, description="Error details when status is 'failed'")
+    pending_rollout: PendingRolloutResponse | None = Field(
+        default=None,
+        description=(
+            "Saved changes that are not on the cluster yet, counted at the moment this task "
+            "reached its end state. Only on a finished task, and it includes this task's own "
+            "change. Reading it here rather than in a call of your own is what makes the number "
+            "reproducible: two writes that finish at the same time each report the count as it "
+            "was when they finished, instead of whenever the client got around to asking."
+        ),
+    )
     created_at: str = Field(..., description="ISO 8601 timestamp when the task was created")
     started_at: str | None = Field(default=None, description="ISO 8601 timestamp when execution started")
     completed_at: str | None = Field(default=None, description="ISO 8601 timestamp when execution finished")
@@ -473,6 +489,10 @@ def task_response_from_dict(task: dict) -> dict:
         "subtasks": task.get("subtasks"),
         "result": _with_error_category(task.get("result")),
         "error_message": task.get("error_message"),
+        # Altijd aanwezig, ook als er niets te tellen valt: een sleutel die soms ontbreekt
+        # dwingt elke lezer tot een extra controle, en null zegt hetzelfde. Gevuld door de
+        # taakroute zodra de taak klaar is (zad-cli, punt 24).
+        "pending_rollout": task.get("pending_rollout"),
         "created_at": _safe_datetime_str(task.get("created_at")) or "",
         "started_at": _safe_datetime_str(task.get("started_at")),
         "completed_at": _safe_datetime_str(task.get("completed_at")),
