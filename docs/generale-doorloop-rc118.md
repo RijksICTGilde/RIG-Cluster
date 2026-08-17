@@ -13,16 +13,22 @@ groen, en alleen de browsertests zagen het. Deze doorloop herstelt dat vertrouwe
 
 ## Oordeel
 
-**Deze tak kan naar main, op een voorbehoud dat geen fout is.**
+**Deze tak vraagt eerst een review, en daarna een verse testronde door iemand anders.**
 
-Alle zes gevonden fouten zijn gerepareerd, elk met een test die omvalt als je de fix
+Er zijn zeven fouten gevonden en gerepareerd, waarvan vijf in de code. Dat is te veel
+verandering om deze doorloop zelf als eindkeuring te laten gelden: de suites die hier groen
+staan zijn gedraaid op tussenliggende versies, niet allemaal op de eindtip. De weg vooruit is
+dus review -> merge-beslissing -> een nieuwe doorloop door een andere sessie, op een tak die
+niet meer beweegt.
+
+Alle zeven gevonden fouten zijn gerepareerd, elk met een test die omvalt als je de fix
 terugdraait, en **elke geautomatiseerde suite is groen gemeten op de eindcode** -- inclusief
 de sandboxsuite, en inclusief `-m reallife` en `-m punt14` gelijktijdig zoals het plan vroeg.
 
-Het voorbehoud is taak 2: van de 47 voorbeeldprojecten is de keten op twee bewezen en op de
-rest niet gemeten, omdat de gedeelde sandbox naar een andere PR ging. Er is bij die twee
-geen platformfout gevonden; wel een grens van de omgeving die hieronder staat. Wie taak 2
-afmaakt en niets nieuws vindt, kan dit voorbehoud schrappen.
+Taak 2 is deels gemeten: van de 47 voorbeeldprojecten zijn er **11 geldig gemeten** (4 healthy,
+1 omgevingsgrens, 6 getroffen door een infrastructuurstoring). De metingen daarna zijn
+weggegooid omdat een andere PR de sandbox overnam en er een andere image ging draaien -- zie
+"Wat deze doorloop over zichzelf leerde".
 
 Wat er WEL staat: de unitsuite en beide browsersuites zijn groen, en elk van de tien punten
 uit taak 3 is apart aangetoond in plaats van aangenomen — de goedkeuringsdialoog inclusief
@@ -427,3 +433,51 @@ om `tls: provided` met een certificaat als bijlage. Op `odcn-production` staat d
 - **De mailrelay**: geparkeerd, zie `TODO_NEXT_RELEASE.md`. De bereikbaarheid naar de upstream
   is niet bewezen (poort 25, 587 en 465 lopen alle drie in een timeout).
 - **Productie**: niets aangeraakt.
+
+
+---
+
+## Bevinding 7: een project zonder verbruik verdween van het dashboard
+
+Gemeld door de eigenaar tijdens de doorloop: het dashboard toonde twee projecten terwijl
+`/projects` er elf toonde, en dat zijn allebei lijsten die alles horen te tonen.
+
+Het was niet de autorisatie -- de log liet zien dat hetzelfde dashboardverzoek **alle twaalf**
+projecten autoriseerde. Het zat in `_dashboard-usage.html.j2`, in een guard
+`{% if mem_mb or cpu %}`: een project zonder meetbaar verbruik kwam de lus niet door en
+verdween stil. Niets vertelde dat er negen ontbraken.
+
+Gerepareerd in `72d955c1`: elk project krijgt een regel, zonder verbruik staat er `0 MiB` en
+`0m cores`. Twee bestaande tests pinden het oude gedrag vast en zijn meegekeerd.
+
+**De kostenvraag die hierbij hoorde is gemeten, niet geschat.** De zorg was dat alle metrics
+ophalen duur is. Dat is het niet: de cijfers per project komen uit **vier**
+`by (namespace)`-queries over alle namespaces tegelijk, plus zeven aggregaten voor de totalen
+(`collect_dashboard_metrics`). Dat aantal verandert niet met het aantal projecten -- de guard
+gooide alleen weg wat al opgehaald was. De traagheid van de pagina zit dus elders en verdient
+een eigen meting: welke van die queries traag is, en of ArgoCD meedoet.
+
+---
+
+## Wat deze doorloop over zichzelf leerde
+
+Drie dingen die de volgende doorloop tijd besparen, en die geen van drieën over het product
+gaan.
+
+**1. Elke fix legde de volgende bloot.** Fix 2 maakte het aanvraagvakje werkend, waardoor de
+geblokkeerde wizardstap zichtbaar werd; fix 4 opende die stap, waardoor de tweede opslag werd
+bereikt en het valse conflict verscheen; de gelijktijdige reallife/punt14-run bracht de trage
+statuspoll aan het licht. Vier van de zeven waren onvindbaar zonder de vorige. Dat is het
+argument voor een doorloop met echte handelingen boven lezen.
+
+**2. De versie moet TIJDENS een lange meting bevestigd blijven.** Het plan zegt dit
+("controleer dit ook halverwege opnieuw") en het is hier misgegaan: taak 2 draaide na 06:12:49
+tegen de image van een andere PR, en dat is pas opgemerkt doordat de eigenaar het zei. Vijf
+gemeten projecten zijn daarom weggegooid. Het slot beschermde dat niet -- een andere PR kon de
+claim overnemen terwijl er nog een lease liep.
+
+**3. Meet op het signaal, niet op de klok.** De eerste opzet van taak 2 wachtte op een
+synchrone `:refresh` en kostte 20 minuten per project met een onbereikbare image. Wachten op
+wat het cluster zelf zegt -- ArgoCD-health en podstatus -- bracht dat terug naar 24 tot 85
+seconden. Dezelfde les gold voor de deploys: `/version` loog twee keer, en de betrouwbare
+controle was de pod zelf vragen of de code erin zit.
