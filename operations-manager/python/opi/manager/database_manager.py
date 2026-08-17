@@ -1057,19 +1057,18 @@ class DatabaseManager:
             "errors": [],
         }
 
-        # Check if this deployment uses PostgreSQL service
-        if not await self._deployment_uses_postgresql(project_data, deployment_name):
-            deletion_results["operations"].append(
-                {
-                    "type": "database_cleanup",
-                    "status": "skipped",
-                    "reason": "Deployment does not use PostgreSQL service",
-                }
-            )
-            logger.debug(f"Deployment {deployment_name} does not use PostgreSQL service, skipping database cleanup")
-            return deletion_results
-
-        logger.info(f"Deleting database resources for project: {project_name}, deployment: {deployment_name}")
+        # Deliberately NOT gated on "does this deployment use PostgreSQL": that asks the
+        # CURRENT project file, while the database was created under an EARLIER version of
+        # it. Rewiring a deployment to components that no longer declare the service made
+        # this check return False, the cleanup reported "skipped" as success, and the
+        # database outlived the project (mpfoa-e01, mpfoa-e2w on odcn-production, 2026).
+        # Existence is the evidence: delete_database is idempotent and returns not_found
+        # for a name that was never provisioned, so probing costs nothing.
+        declared = await self._deployment_uses_postgresql(project_data, deployment_name)
+        logger.info(
+            f"Deleting database resources for project: {project_name}, deployment: {deployment_name} "
+            f"(declared in project file: {declared})"
+        )
 
         try:
             # Ensure we have a PostgreSQL connector for this deployment
