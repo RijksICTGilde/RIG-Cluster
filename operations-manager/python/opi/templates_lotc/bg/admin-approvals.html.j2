@@ -48,6 +48,48 @@
         <c-alert type="success" heading="{{ success_message }}" />
     {% endif %}
 
+    {# ---- Filteren op status --------------------------------------------------
+       SERVER-SIDE, net als het zoeken en sorteren op /projects, en om dezelfde drie
+       redenen: het werkt zonder JavaScript, een gefilterde lijst is deelbaar als URL, en
+       de gekozen waarde staat na een swap nog steeds in de lijst omdat de server hem
+       meerendert (`selected` hieronder) in plaats van dat de browser hem onthoudt.
+
+       Een echte <c-select> en niet <c-filter-select>: die laatste rendert een <div> met
+       een pijltje - een WEERGAVE van een filter, waar je niets in kunt kiezen.
+
+       Het filter staat BINNEN het geswapte gebied. Stond het erbuiten, dan hertekende de
+       lijst wel en de keuzelijst niet, en dan raakt de getoonde waarde uit de pas met wat
+       je ziet. Dezelfde les als bij de werkbalk van /projects.
+
+       Geen knop: hx-trigger="change" stuurt bij het kiezen. De <form method="get"> eromheen
+       is wat het zonder JavaScript laat werken (dan is er een verzendknop nodig, en die
+       hoort er dus te staan voor wie geen JS heeft - vandaar de noscript-knop). #}
+    <c-stack id="approvals-gebied" gap="lg">
+    <form method="get" action="/admin/approvals"
+          hx-get="/admin/approvals"
+          hx-select="#approvals-gebied"
+          hx-target="#approvals-gebied"
+          hx-swap="outerHTML"
+          hx-trigger="change"
+          hx-push-url="true">
+        <c-cluster gap="sm" align="center">
+            <c-select name="status" :attrs="{'aria-label': 'Filter op status'}">
+                {# :selected= en niet {% if %} tussen de attributen: de componentparser leest
+                   de attributenlijst zelf en struikelt over Jinja daarbinnen
+                   ("Unknown attribute '{%' on component 'c-option'"). De dubbelepunt bindt
+                   een gewone Python-uitdrukking. #}
+                {% for sleutel, label in approval_statussen %}
+                    <c-option value="{{ sleutel }}" :selected="sleutel == approval_status">{{ label }}</c-option>
+                {% endfor %}
+            </c-select>
+            <noscript><c-button type="secondary" label="Filter" /></noscript>
+            <c-paragraph size="sm" color="grijs-500" no-spacing>
+                {{ approvals_getoond }} van {{ approvals_totaal }}
+                aanvra{{ 'gen' if approvals_totaal != 1 else 'ag' }}
+            </c-paragraph>
+        </c-cluster>
+    </form>
+
     {% if projects_data %}
         {% for project in projects_data %}
             {# De knop haalt het formulier zelf op, met htmx. De URL staat in een GEWOON
@@ -120,9 +162,16 @@
         {% endfor %}
     {% else %}
         {% call panel("") %}
-            <c-paragraph>Geen domein- of subdomeinaanvragen gevonden.</c-paragraph>
+            {# Twee verschillende dingen, en het verschil is het enige dat een gefilterde
+               lege pagina bruikbaar maakt: er is niets, of er is niets MET DEZE STATUS. #}
+            {% if approvals_totaal %}
+                <c-paragraph>Geen aanvragen met deze status. Er zijn er {{ approvals_totaal }} met een andere.</c-paragraph>
+            {% else %}
+                <c-paragraph>Geen domein- of subdomeinaanvragen gevonden.</c-paragraph>
+            {% endif %}
         {% endcall %}
     {% endif %}
+    </c-stack>
 
     {# Het venster waarin een aanvraag wordt beoordeeld. Dezelfde markup als de bestaande
        pagina, inclusief de klassen waar edit_modal.js op selecteert. De achtergrond gaat

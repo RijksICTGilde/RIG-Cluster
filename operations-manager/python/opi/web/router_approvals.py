@@ -179,6 +179,44 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+#: De statussen waarop gefilterd kan worden. De sleutel staat in de URL (``?status=``), het
+#: label in de keuzelijst. Als lijst en niet als dict, omdat de VOLGORDE de volgorde in de
+#: lijst is; ``""`` is alles en staat daarom vooraan.
+#:
+#: De sleutels zijn dezelfde als die in het projectbestand staan (``current_status``), en de
+#: labels dezelfde als de badges in de tabel (``status_labels`` in het sjabloon). Twee lijsten
+#: die hetzelfde zeggen zouden uit elkaar lopen; dat is hier nog niet opgelost, maar
+#: tests/test_approvals_statusfilter.py legt vast dat ze gelijk blijven.
+APPROVAL_STATUSSEN: list[tuple[str, str]] = [
+    ("", "Alle statussen"),
+    ("requested", "Aangevraagd"),
+    ("approved", "Goedgekeurd"),
+    ("denied", "Afgewezen"),
+]
+
+
+def filter_op_status(projects_data: list[dict[str, Any]], status: str) -> list[dict[str, Any]]:
+    """Houd alleen de aanvragen met deze status over, en de projecten die er nog hebben.
+
+    Een project waarvan geen enkele aanvraag overblijft valt weg: een projectpaneel met een
+    lege tabel eronder leest als "dit project heeft niets", terwijl het er wel iets heeft dat
+    je nu even niet ziet.
+
+    Een lege of onbekende status filtert niet. Onbekend is bewust hetzelfde als leeg en niet
+    "niets gevonden": ``?status=onzin`` in een gedeelde link hoort de lijst te tonen, niet een
+    lege pagina die als een storing leest.
+    """
+    if not status or status not in {sleutel for sleutel, _ in APPROVAL_STATUSSEN if sleutel}:
+        return projects_data
+
+    gefilterd: list[dict[str, Any]] = []
+    for project in projects_data:
+        items = [item for item in project["approval_items"] if item.get("current_status") == status]
+        if items:
+            gefilterd.append({**project, "approval_items": items})
+    return gefilterd
+
+
 @approvals_router.get("", response_class=HTMLResponse)
 @requires_sso
 async def list_subdomains(request: Request) -> Response:
@@ -190,7 +228,14 @@ async def list_subdomains(request: Request) -> Response:
     # (manual yaml edit + push, or a request created elsewhere) shows up
     # on the admin overview instead of returning a stale in-memory cache.
 
-    projects_data = _collect_all_projects_approval_data()
+    alle_projecten = _collect_all_projects_approval_data()
+
+    # Filteren gebeurt HIER en niet in de browser: dan werkt het ook zonder JavaScript, is
+    # een gefilterde lijst deelbaar als URL, en staat de gekozen waarde na een swap nog
+    # steeds in de keuzelijst omdat de server hem meerendert. Zelfde opzet als het zoeken
+    # en sorteren op /projects (opi/web/lotc_switch.py).
+    status = (request.query_params.get("status") or "").strip()
+    projects_data = filter_op_status(alle_projecten, status)
 
     # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py. Alleen de LIJST gaat
     # mee: het beoordelingsvenster erin haalt zijn inhoud op bij de modal-wizard hieronder,
@@ -204,6 +249,13 @@ async def list_subdomains(request: Request) -> Response:
             "request": request,
             "menu_items": get_menu_items(user),
             "projects_data": projects_data,
+            # De ONGEFILTERDE telling gaat mee, zodat de lege lijst kan zeggen of er niets
+            # is of alleen niets met deze status. Dat verschil is het enige dat een
+            # gefilterde lege pagina bruikbaar maakt.
+            "approvals_totaal": sum(len(p["approval_items"]) for p in alle_projecten),
+            "approvals_getoond": sum(len(p["approval_items"]) for p in projects_data),
+            "approval_status": status,
+            "approval_statussen": APPROVAL_STATUSSEN,
             "success_message": request.query_params.get("success"),
             **build_lotc_admin(user=user, current_path="/admin/approvals"),
         },
