@@ -484,13 +484,9 @@ async def list_clusters_v2(
     heeft een keuzelijst die per cluster verschilt, dus het OpenAPI-document kan die niet
     opsommen. Het verwees daarom naar een endpoint, en dat endpoint was er niet.
 
-    De domeinen komen uit dezelfde provider die het formulier zijn keuzelijst geeft
-    (``ClusterBaseDomainOptionsProvider``), zodat portal en API niet uit elkaar kunnen lopen.
-    Op één punt wijken ze af, en met opzet: de optie ``__custom__`` is een SCHAKELAAR in het
-    formulier ("ik vul zelf een domein in") en geen waarde die je kunt opslaan, dus hier
-    hoort ze niet thuis. Ze stond er wel, en een client die haar overnam liep vast op de
-    schrijfactie. Zie ``CUSTOM_DOMAIN_SENTINEL``; een eigen domein zet je door de domeinnaam
-    zelf in ``base-domain`` te schrijven.
+    ``base-domains`` is geen gesloten verzameling: een eigen domein zet je door de domeinnaam
+    zelf in ``base-domain`` te schrijven, en ``custom-domain-certificates`` zegt wat dat op
+    dit cluster oplevert.
 
     ``default-domain`` staat erbij omdat de lijst zelf niet verraadt welke keuze meteen in
     gebruik gaat: alleen het domein van het cluster zelf (en een leeg ``base-domain``) gaat
@@ -516,6 +512,14 @@ async def list_clusters_v2(
                 # Hij stond alleen als vrije tekst in het label van de lege optie, dus
                 # een client kon de twee gevallen niet uit elkaar houden zonder te parsen.
                 "default-domain": get_ingress_postfix(cluster).lstrip("."),
+                # De keuzelijst komt uit dezelfde provider als die van het formulier, zodat
+                # portal en API niet uit elkaar lopen. Op één punt wijken ze af: de sentinel
+                # is een SCHAKELAAR in het formulier ("ik vul zelf een domein in") en geen
+                # waarde die je kunt opslaan. Hij hoort dus niet in een API-antwoord, en de
+                # reden waarom staat hier en niet in de beschrijving: een client kan met een
+                # formulierdetail niets, en een sentinel bij naam noemen nodigt uit om hem
+                # alsnog te sturen. Wat hij WEL moet weten (schrijf de domeinnaam zelf) staat
+                # in de beschrijving van base-domain.
                 "base-domains": [
                     ClusterDomainOption(value=str(option["value"]), label=str(option["label"]))
                     for option in ClusterBaseDomainOptionsProvider(cluster=cluster).get_options()
