@@ -124,6 +124,14 @@ mee. De kloonweg (`clone_schema`) kopieert elk extra schema via dezelfde single-
 pijplijn als het standaardschema. Backups dumpen de hele database, dus extra schema's
 zaten daar al in.
 
+Bij een **restore naar een nieuwe generatie** moet daarom precies één schema worden
+hernoemd: het standaardschema, want dat draagt de generatie in zijn naam. De extra
+schema's dragen die niet en houden hun naam. Welk schema dat is, zegt het platform
+(`generate_database_name`), niet de dump: `pg_restore --list` sorteert schema's
+ALFABETISCH, en het eerste pakken hernoemde het extra schema zodra dat alfabetisch
+vooraan stond (`rapportage` < `v2`). Zie "Welk schema een database-restore hernoemt" in
+`features/backup-system.md`.
+
 ## Waar het zit
 
 | Onderdeel | Bestand |

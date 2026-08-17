@@ -116,6 +116,9 @@ _DATABASE_CTX: dict[str, Any] = {
     "snapshot_id": "",
     "timeout_seconds": 3600,
     "target_unusable_exit_code": RESTORE_TARGET_UNUSABLE_EXIT_CODE,
+    # The default schema of the database the dump came from (RC-121); see
+    # tests/test_restore_schema_rename.py for what the pod does with it.
+    "source_schema": "restore_test_main",
 }
 
 _BUCKET_CTX: dict[str, Any] = {
