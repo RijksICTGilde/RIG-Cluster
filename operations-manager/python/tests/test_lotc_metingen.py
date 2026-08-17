@@ -429,13 +429,15 @@ def test_een_project_zonder_meting_laat_de_kaart_niet_omvallen() -> None:
     """De omgeving staat op StrictUndefined: een sleutel die ontbreekt is geen lege waarde.
 
     ``selectattr('memory_mb', 'defined')`` en ``sort(attribute='memory_mb')`` vallen daar
-    al op om bij het LEZEN. Project C draagt geen enkele meetsleutel en hoort simpelweg
-    niet in de lijst te staan.
+    al op om bij het LEZEN. Daarom wordt elke regel met ``.get`` opgebouwd. Project C
+    draagt geen enkele meetsleutel en moet dus zonder omvallen als NUL verschijnen -- eerst
+    verdween het hier, en dat las op de sandbox als "mijn projecten zijn weg".
     """
     tekst = _tekst(_dashboard())
 
     assert "Project A" in tekst
-    assert "Project C" not in tekst, tekst
+    assert "Project C" in tekst, tekst
+    assert "0 MiB" in tekst, tekst
 
 
 def test_zonder_metingen_staat_de_kaart_er_met_een_melding() -> None:
@@ -449,8 +451,10 @@ def test_zonder_metingen_staat_de_kaart_er_met_een_melding() -> None:
     tekst = _tekst(_dashboard(projects=[{"name": "c", "display_name": "Project C"}], total_cpu_usage=0.0))
 
     assert "Gebruik per project" in tekst, tekst
-    assert "Nog geen metingen per project" in tekst, tekst
-    assert "Project C" not in tekst, tekst
+    # Het project staat er nu MET nul in plaats van te verdwijnen, dus de kaart heeft
+    # inhoud en de "nog geen metingen"-melding is er niet meer voor nodig.
+    assert "Project C" in tekst, tekst
+    assert "0 MiB" in tekst, tekst
 
 
 def test_zonder_limiet_geen_percentage_en_geen_balk_per_project() -> None:
@@ -542,6 +546,30 @@ def test_de_projectnaam_op_het_dashboard_is_een_link() -> None:
 
     assert 'href="/projects/a/details"' in html
     assert 'href="/projects/b/details"' in html
-    # Project C heeft geen meting en staat dus niet op de kaart; dan hoort er ook geen
-    # link naar te staan.
-    assert 'href="/projects/c/details"' not in html
+
+
+def test_een_project_zonder_verbruik_staat_er_ook_op() -> None:
+    """Nul is een meting, verdwijnen is dat niet.
+
+    Hier stond een guard op ``mem_mb or cpu``, en die liet een project dat niets
+    gebruikt stil weg. Op de sandbox toonde de kaart daardoor twee van de elf projecten
+    en vertelde niets over de negen die ontbraken -- de eigenaar las dat als "mijn
+    projecten zijn weg". Project C draagt de meetsleutels niet eens, en juist dat geval
+    moet zichtbaar blijven.
+
+    Het tonen kost ook niets: de cijfers komen uit vier ``by (namespace)``-queries over
+    alle namespaces tegelijk (``collect_dashboard_metrics``), dus het aantal projecten
+    verandert het aantal queries niet. De guard gooide alleen weg wat al opgehaald was.
+    """
+    html = _dashboard()
+
+    assert 'href="/projects/c/details"' in html, "een project zonder verbruik hoort er ook op te staan"
+    assert "Project C" in html
+
+
+def test_alle_projecten_krijgen_een_regel() -> None:
+    """Het aantal regels volgt het aantal projecten, niet het aantal metingen."""
+    html = _dashboard()
+
+    for pad in ("a", "b", "c"):
+        assert f'href="/projects/{pad}/details"' in html, f"project {pad} ontbreekt op de kaart"
