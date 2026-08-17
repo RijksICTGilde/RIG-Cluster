@@ -459,6 +459,43 @@ een eigen meting: welke van die queries traag is, en of ArgoCD meedoet.
 
 ---
 
+## Bevinding 8: een waarschuwing op de LAATSTE wizardstap verdween
+
+Gevonden bij de review van deze tak, en het is de rest van bevinding 4. Daar is de
+waarschuwing uit de blokkeerpoort gehaald en laten meereizen naar de volgende stap. Maar
+de laatste stap heeft geen volgende stap: die tak gaat naar `_render_modal_review`, en
+daar viel de waarschuwing op de grond -- op precies het scherm waar de gebruiker besluit
+te bevestigen.
+
+Gerepareerd in `eac1fc1c`. De reviewpagina had al een `warnings`-kanaal (verwijderde
+services, het overschrijven bij een restore), dus er komt geen mechanisme bij: de
+waarschuwingen van de laatste stap gaan daar bij in. De tak zonder review
+(`_modal_do_submit`) blijft ongemoeid -- die slaat direct op en rendert voortgang of
+succes, dus de waarschuwing is daar achterhaald op het moment dat hij zou verschijnen.
+
+---
+
+## De basistak loste bevinding 1 zelf ook op
+
+Deze tak liep lang genoeg door dat `release-augustus-2026` in de tussentijd dezelfde fout
+repareerde: `e86037a3`, met dezelfde diagnose en dezelfde poort
+(`services_added or components_updated`), maar in een andere vorm -- een
+`_add_service_commit_message`-helper plus `tests/test_add_service_binds_existing.py`, en
+met de uitrolpoort in `task_handlers_components` erbij.
+
+Dat maakte de tak onmergebaar (twee conflicten in `project_manager.py`). Opgelost in
+`2f9ed46f` door de vorm van de basistak te houden -- hij staat er al en de omliggende
+wijzigingen horen erbij -- en uit deze tak alleen te bewaren wat de andere test niet dekt:
+de commitboodschap, `component_names=None` op een dienst die al staat, en de gewone
+toevoeging van een NIEUWE dienst.
+
+**De les zit niet in de fix maar in de timing.** Twee sessies vonden onafhankelijk
+dezelfde fout omdat het dezelfde week was. Bij een doorloop van meerdere dagen is
+`git merge-tree` tegen `origin/<basis>` geen eindcontrole maar een dagelijkse: hoe later
+je hem draait, hoe meer werk er dubbel blijkt.
+
+---
+
 ## Wat deze doorloop over zichzelf leerde
 
 Drie dingen die de volgende doorloop tijd besparen, en die geen van drieën over het product
