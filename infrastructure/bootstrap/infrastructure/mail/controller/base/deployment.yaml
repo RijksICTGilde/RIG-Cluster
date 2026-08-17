@@ -68,16 +68,6 @@ spec:
                 secretKeyRef:
                   name: mail-relay-credentials
                   key: MAIL_UPSTREAM_HOST
-            - name: MAIL_UPSTREAM_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: mail-relay-credentials
-                  key: MAIL_UPSTREAM_USERNAME
-            - name: MAIL_UPSTREAM_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: mail-relay-credentials
-                  key: MAIL_UPSTREAM_PASSWORD
             - name: MAIL_RELAY_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
