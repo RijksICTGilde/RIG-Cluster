@@ -210,6 +210,24 @@ async def test_attachment_delete_completes() -> None:
     pm.close.assert_awaited_once()
     assert result["status"] == "completed"
     assert result["changed"] is True
+    # Committing the removal is half the job (RC-119): without processing the project the
+    # secret and the mount stay on the cluster and the pod keeps the file it started with.
+    pm.process_project_from_git.assert_awaited_once()
+    assert pm.process_project_from_git.await_args.args[0] == "projects/demo.yaml"
+
+
+async def test_an_attachment_that_was_not_there_processes_nothing() -> None:
+    """Nothing changed in the catalog, so there is nothing to reconcile."""
+    from opi.services.catalog.attachments.task import handle_delete_attachment
+
+    progress = _progress()
+    pm = AsyncMock()
+    pm.remove_attachment = AsyncMock(return_value={"success": True, "changed": False})
+
+    with patch(PM_PATH, return_value=pm):
+        await handle_delete_attachment({"project_name": "demo", "attachment_id": "keystore"}, progress)
+
+    pm.process_project_from_git.assert_not_awaited()
 
 
 async def test_an_attachment_still_in_use_fails_the_task() -> None:

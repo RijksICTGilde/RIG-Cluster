@@ -34,6 +34,7 @@ _TASK_LABELS = {
     "delete_project": "Project verwijderen",
     "delete_component": "Component verwijderen",
     "delete_attachment": "Bijlage verwijderen",
+    "configure_attachment": "Bijlage uitrollen",
     "clone_database": "Database klonen",
     "clone_bucket": "Bucket klonen",
     "add_component": "Component toevoegen",
