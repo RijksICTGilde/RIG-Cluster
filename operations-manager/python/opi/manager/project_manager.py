@@ -56,6 +56,7 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.core.task_errors import TaskInputError
 from opi.extensions import load_extensions
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import (
@@ -8725,7 +8726,14 @@ class ProjectManager:
             None,
         )
         if not deployment:
-            raise ValueError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+            # TaskInputError en geen ValueError: dit is geen storing maar een verzoek dat
+            # niet kan, en de worker maakt er daardoor een blijvende mislukking van MET een
+            # reden die de aanroeper kan lezen. Hetzelfde woord dat de andere paden hier al
+            # gebruiken (add_component_to_deployment geeft 'deployment_not_found' terug).
+            raise TaskInputError(
+                f"Deployment '{deployment_name}' not found in project '{project_name}'",
+                error_type="deployment_not_found",
+            )
 
         # 3. Find component in deployment
         component_found = False
@@ -8741,8 +8749,9 @@ class ProjectManager:
                 break
 
         if not component_found:
-            raise ValueError(
-                f"Component '{component_name}' not found in deployment '{deployment_name}' of project '{project_name}'"
+            raise TaskInputError(
+                f"Component '{component_name}' not found in deployment '{deployment_name}' of project '{project_name}'",
+                error_type="component_not_found",
             )
 
         logger.info(f"Updated image: {old_image} -> {new_image_url}")

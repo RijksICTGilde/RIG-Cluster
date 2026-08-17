@@ -70,10 +70,13 @@ class ErrorCategory(StrEnum):
 #: closed set a client can switch on. Everything not in here stays ``Unknown``: a category
 #: is a promise about attribution, and guessing one is worse than admitting we do not know.
 #: Deliberately absent: ``conflict`` (two writers raced, which is nobody's mistake and may
-#: well succeed on a retry) and ``internal_error`` (ours, but there is no member that says
-#: so yet).
+#: well succeed on a retry), ``internal_error`` (ours, but there is no member that says so
+#: yet) and ``processing_failed`` (the rollout itself did not come up healthy, which can be
+#: the user's image or the cluster; ``component_failures`` carries which one, so a category
+#: here would be a guess).
 _CALLER_ERROR_TYPES: frozenset[str] = frozenset(
     {
+        "already_exists",
         "ambiguous_cluster",
         "ambiguous_repository",
         "component_not_found",
