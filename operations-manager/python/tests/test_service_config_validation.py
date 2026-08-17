@@ -214,9 +214,9 @@ def test_entry_schema_version_is_threaded_to_validate_config(monkeypatch):
     keycloak = get_service(ServiceType.KEYCLOAK)
     original = keycloak.validate_config
 
-    def spy(raw_config=None, from_version=None):
+    def spy(raw_config=None, from_version=None, context=None):
         captured.append(from_version)
-        return original(raw_config, from_version=from_version)
+        return original(raw_config, from_version=from_version, context=context)
 
     monkeypatch.setattr(keycloak, "validate_config", spy)
 

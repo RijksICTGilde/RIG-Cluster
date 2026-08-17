@@ -381,11 +381,11 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
 LIST_SHAPED_CONFIGS: dict[str, dict[str, Any]] = {
     "persistent-storage": {
         "put": [{"name": "data", "size": "1Gi", "mount-path": "/data"}],
-        "add": [{"name": "extra", "size": "2Gi", "mount-path": "/extra"}],
+        "add": [{"name": "extra", "size": "500Mi", "mount-path": "/extra"}],
     },
     "temp-storage": {
         "put": [{"name": "scratch", "size": "1Gi", "mount-path": "/scratch"}],
-        "add": [{"name": "cache", "size": "2Gi", "mount-path": "/cache"}],
+        "add": [{"name": "cache", "size": "500Mi", "mount-path": "/cache"}],
     },
     "attachments": {
         "put": [{"reference": "cert", "provide-as": "file", "path": "/etc/ssl/cert.pem"}],
