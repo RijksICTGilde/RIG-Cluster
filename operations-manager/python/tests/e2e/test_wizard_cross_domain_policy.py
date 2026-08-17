@@ -30,6 +30,8 @@ import yaml
 from opi.services.catalog.base import DeploymentManifestContext
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from tests.e2e.helpers.htmx import wait_for_htmx_quiet
 from tests.e2e.helpers.tekst import veld
 from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
@@ -52,6 +54,14 @@ OWN_COMPONENT = "web"
 OWN_PORT = "8080"
 
 _MAX_WIZARD_STEPS = 15
+
+#: Vangnet voor het wachten op een cascadeveld, geen wachtmechanisme: elke wachtregel
+#: hieronder keert terug zodra de voorwaarde waar is. Elke pick is een VOLLEDIGE
+#: heen-en-weer met de server (de stap wordt server-side opnieuw gerenderd), en op een
+#: bezette machine duurt die ronde seconden in plaats van milliseconden. Op tien seconden
+#: liep dat vangnet af terwijl er niets stuk was -- dat is precies het rood dat deze suite
+#: wisselvallig maakte. Dertig seconden kost niets zolang het groen is.
+_SELECT_TIMEOUT_MS = 30_000
 
 
 @pytest.fixture
@@ -93,12 +103,31 @@ def _walk(wizard: WizardHelper, page: Page, until: str | None) -> None:
     raise AssertionError(f"{until or 'review'} not reached within {_MAX_WIZARD_STEPS} steps; stuck at {page.url}")
 
 
+def _inbound_field_names(page: Page) -> list[str]:
+    """Every form control on the page that belongs to an inbound rule of this step."""
+    return page.evaluate(
+        "() => [...document.querySelectorAll('[name]')]"
+        ".map(e => e.getAttribute('name'))"
+        ".filter(n => n && n.includes('/config/inbound['))"
+    )
+
+
 def _fill_inbound_rule(page: Page, name: str) -> None:
     """Add one inbound rule and fill every field of it, cascading select by select."""
+    # De isolatiepoort. Deze test schrijft alles onder ``inbound[0]``, dus als een vorige
+    # test hier een regel had achtergelaten, zou "Item toevoegen" ``inbound[1]`` opleveren
+    # en zouden alle asserties hieronder op de VERKEERDE regel kijken. Dat was de gestelde
+    # (en niet gemeten) oorzaak van de xfail die hier stond. Nu zegt het rood het zelf, in
+    # plaats van als een raadselachtige waardefout te verschijnen.
+    achtergebleven = _inbound_field_names(page)
+    assert not achtergebleven, (
+        f"de stap begint niet leeg -- er staat al een regel van een vorige wizardgang: {achtergebleven}"
+    )
+
     page.locator("button:has-text('Item toevoegen')").first.click()
     # Wait for the row that the click adds, not for a fixed 800 ms: filling a field that
     # is not there yet is the failure this used to produce on a busy machine.
-    veld(page, f"{FIELD}/name").wait_for(state="visible", timeout=10000)
+    veld(page, f"{FIELD}/name").wait_for(state="visible", timeout=_SELECT_TIMEOUT_MS)
 
     veld(page, f"{FIELD}/name").fill(name)
     # Choosing the peer project is what makes the next two lists exist at all. Every one of
@@ -118,7 +147,34 @@ def _fill_inbound_rule(page: Page, name: str) -> None:
     assert all(filled.values()), f"the rule is not completely filled in: {filled}"
 
 
-def _select_when_offered(page: Page, field: str, value: str, timeout: int = 10000) -> None:
+def _wacht(page: Page, expressie: str, field: str, value: str, waarop: str) -> None:
+    """``wait_for_function`` met een melding die zegt WAAR op gewacht werd.
+
+    Een verlopen ``wait_for_function`` levert kaal "Timeout 30000ms exceeded" met de
+    JS-bron eronder: geen veld, geen waarde, geen richting. Precies die melding stond
+    onder de wisselvallige runs van deze suite, en daardoor was er niet uit af te lezen
+    of de lijst leeg bleef of de waarde weer verdween.
+
+    Alleen de TIME-OUT wordt hier vertaald. Een andere ``PlaywrightError`` -- een echte
+    JS-fout in de expressie, een gesloten pagina, een navigatie eronder -- gaat ongemoeid
+    door: die als "niet gebeurd binnen 30000 ms" melden verstopt de oorzaak achter een
+    wachtverhaal, en dan zoek je in de verkeerde hoek.
+    """
+    try:
+        page.wait_for_function(expressie, arg=[field, value], timeout=_SELECT_TIMEOUT_MS)
+    except PlaywrightTimeoutError as exc:
+        opties = page.evaluate(
+            "(name) => { const el = document.querySelector(`select[name='${name}']`);"
+            " return el ? [...el.options].map(o => o.value) : null; }",
+            field,
+        )
+        raise AssertionError(
+            f"{waarop} niet gebeurd binnen {_SELECT_TIMEOUT_MS} ms voor {field}='{value}'; "
+            f"de keuzelijst biedt nu {opties}"
+        ) from exc
+
+
+def _select_when_offered(page: Page, field: str, value: str) -> None:
     """Wait until a dependent select actually offers *value*, pick it, and let the row settle.
 
     The cascade is server-side (the row's own values decide the list), so the option appears
@@ -127,37 +183,56 @@ def _select_when_offered(page: Page, field: str, value: str, timeout: int = 1000
     # De ECHTE <select> zoeken en niet getElementsByName()[0]: onder het nieuwe thema is
     # het eerste element met die naam de WIKKEL (<nldd-select-field>), en die heeft geen
     # .options. Het wachten liep dan af op iets dat nooit waar kon worden.
-    page.wait_for_function(
+    _wacht(
+        page,
         "([name, value]) => { const el = document.querySelector(`select[name='${name}']`);"
         " return el && [...el.options].some(o => o.value === value); }",
-        arg=[field, value],
-        timeout=timeout,
+        field,
+        value,
+        waarop="de keuzelijst bood de waarde aan",
     )
     veld(page, field).select_option(value)
-    page.wait_for_load_state("networkidle")
-    # Network-idle only says the XHR is done, not that the re-rendered row is in the
-    # DOM -- and the row that comes back is what carries the value. Waiting for the
-    # field to hold the value again is the signal that the swap landed; without it the
-    # next pick can go into a select that is about to be replaced, and both values are
-    # lost. Only shows up when the machine is busy (a loaded CI runner), never when the
-    # server answers in a few milliseconds.
-    page.wait_for_function(
+    # Waiting for the field to hold the value again is the signal that the swap landed;
+    # without it the next pick can go into a select that is about to be replaced, and
+    # both values are lost. Only shows up when the machine is busy (a loaded CI runner),
+    # never when the server answers in a few milliseconds.
+    #
+    # A ``page.wait_for_load_state("networkidle")`` used to sit here as well. It said only
+    # that the XHR was done, not that the re-rendered row was in the DOM -- and the row
+    # that comes back is what carries the value -- so it added a wait without adding a
+    # guarantee. The condition below is the real signal, and ``wait_for_htmx_quiet``
+    # further down covers the swap itself.
+    _wacht(
+        page,
         "([name, value]) => { const el = document.querySelector(`select[name='${name}']`);"
         " return el && el.value === value && !el.closest('form')?.classList.contains('htmx-request'); }",
-        arg=[field, value],
-        timeout=timeout,
+        field,
+        value,
+        waarop="de rij droeg de gekozen waarde weer",
     )
-    page.wait_for_timeout(600)
+    # Hier stond ``page.wait_for_timeout(600)``. Gemeten (RC-125): elke cascaderende pick
+    # levert precies TWEE ``htmx:afterSettle``-gebeurtenissen op, en de laatste landt
+    # 9-52 ms VOOR de voorwaarde hierboven waar wordt -- ook op een machine die op een
+    # kern staat te stampen. Die 600 ms dekte dus nooit iets af (wel 3 s per test), en
+    # voor een swap die er langer over doet is het een gok. ``wait_for_htmx_quiet``
+    # wacht op de gebeurtenis zelf en keert terug zodra het echt stil is.
+    wait_for_htmx_quiet(page)
+
+
+def _open_wizard_at_the_rule_step(page: Page, app_server: str, description: str) -> WizardHelper:
+    """Open a fresh create wizard and click through to the cross-domain step."""
+    wizard = WizardHelper(page, app_server)
+    wizard.open_create_wizard()
+    wizard.fill_identity(display_name=unique_project_name("cda"), description=description)
+    wizard.click_next()
+    wizard.fill_services([SERVICE])
+    _walk(wizard, page, until=STEP)
+    return wizard
 
 
 def _project_from_wizard(app_server: str, page: Page, captured: list[str], rule_name: str) -> dict[str, Any]:
     """Run the create wizard with one cross-domain rule and return the project it produced."""
-    wizard = WizardHelper(page, app_server)
-    wizard.open_create_wizard()
-    wizard.fill_identity(display_name=unique_project_name("cda"), description="cross-domain chain")
-    wizard.click_next()
-    wizard.fill_services([SERVICE])
-    _walk(wizard, page, until=STEP)
+    wizard = _open_wizard_at_the_rule_step(page, app_server, description="cross-domain chain")
 
     _fill_inbound_rule(page, rule_name)
     wizard.click_next()
@@ -209,18 +284,6 @@ def _ingress_peers(policy: dict[str, Any]) -> list[tuple[str, dict[str, str], li
     ]
 
 
-#: Waarom deze twee tests niet slagen op de hertekende wizard.
-#:
-#: Ze vullen een regel in waarvan de keuzelijsten CASCADEREN: het bron-project bepaalt de
-#: lijst deployments, die weer de lijst componenten. Dat werkt doordat zo'n veld
-#: ``data-rerender="true"`` draagt en static/js/wizard.js bij een change de stap opnieuw
-#: laat ophalen (``htmx.trigger(form, 'submit')``).
-#:
-#: Gemeten op de hertekende wizardpagina: na het kiezen van het bron-project vertrekt er
-#: GEEN ENKEL verzoek, en de tweede lijst blijft leeg. Ook een handmatige
-#: ``htmx.trigger(document.getElementById('wizard-step-form'), 'submit')`` in de console
-
-
 class TestTheWizardProducesANetworkPolicy:
     def test_a_rule_filled_in_the_browser_becomes_a_networkpolicy(
         self, app_server: str, auth_page: Page, captured_yaml: list[str]
@@ -249,16 +312,6 @@ class TestTheWizardProducesANetworkPolicy:
             )
         ]
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "Los draait deze test groen; na de test hierboven niet. De twee delen een "
-            "browsersessie, en sinds de cascade weer werkt vult de eerste test er "
-            "werkelijk een regel in, waar de tweede mee begint. Dat is isolatie tussen "
-            "deze twee tests en geen fout in de code; niet strikt, zodat een groene run "
-            "geen valse rode meldt."
-        ),
-    )
     def test_a_peer_that_does_not_exist_here_still_yields_the_policy(
         self, app_server: str, auth_page: Page, captured_yaml: list[str]
     ) -> None:
@@ -285,22 +338,34 @@ class TestTheWizardProducesANetworkPolicy:
         ]
 
 
-# --------------------------------------------------------------------- open bevinding
-#
-# Deze twee tests zijn op de NIEUWE vormgeving nog rood, en het is geen selectorprobleem
-# meer. Wat er gemeten is, zodat de volgende niet opnieuw hoeft te zoeken:
-#
-#   - De cascade loopt vast bij de TWEEDE keuzelijst. Na het kiezen van het peer-project
-#     blijft <select name=".../from/deployment"> achter met precies een lege optie.
-#   - Het is niet de selector: de select wordt gevonden, en de project-select ernaast
-#     draagt zijn waarde ('test-project') en zijn data-rerender="true".
-#   - Het formulier heeft zijn hx-post naar de stap, en de herrender-haak in
-#     static/js/wizard.js luistert op document voor 'change' en zoekt met
-#     closest('[data-rerender]'). De select staat in de LICHTE boom, dus closest() zou hem
-#     moeten vinden.
-#
-# Wat dus nog onbeantwoord is: of de herrender wel afgaat en de server de lijst leeg
-# terugstuurt, of dat de haak niet afgaat. Dat vraagt meten AAN DE SERVERKANT (wat komt er
-# binnen op /step/cross-domain-access-config) en niet nog een ronde selectors.
-#
-# Op de oude vormgeving zijn deze twee groen, dus het verschil zit in deze keten.
+def test_a_second_wizard_in_the_same_browser_session_starts_without_a_rule(app_server: str, auth_page: Page) -> None:
+    """De isolatiebewering van dit bestand, in een test in plaats van in een xfail-reden.
+
+    De twee tests hierboven stonden onder de aanname dat ze elkaar besmetten: "ze delen
+    een browsersessie, en de eerste vult er een regel in waar de tweede mee begint".
+    Gemeten (RC-125) klopt dat niet, en dit is de meting.
+
+    De eerste gang hier dient NIET in. Dat is met opzet: de indiening roept zelf
+    ``clear_wizard_state`` aan (``opi/web/router_wizard.py``), dus na een indiening is de
+    wizardstaat sowieso weg en toetst een tweede gang niets meer -- zo bleef deze test
+    groen met de restart eruit. Door te stoppen zodra de regel staat, is de wizardstaat
+    aantoonbaar AANWEZIG (de eerste assertie hieronder) en is de restart bij het openen
+    van de tweede gang het enige dat hem nog kan wissen. Haal die restart uit
+    ``open_create_wizard`` en deze test valt om.
+
+    De opzet is bovendien strenger dan wat de twee tests hierboven ooit doen: twee gangen
+    achter elkaar op DEZELFDE pagina, dezelfde context, dezelfde koekjespot, terwijl die
+    twee elk een verse context krijgen (``auth_page`` en ``authenticated_context`` staan
+    per test).
+    """
+    _open_wizard_at_the_rule_step(auth_page, app_server, description="eerste gang")
+    _fill_inbound_rule(auth_page, "eerste-gang")
+    assert _inbound_field_names(auth_page), (
+        "de eerste gang heeft geen regel achtergelaten om te wissen; dan toetst de tweede gang niets"
+    )
+
+    _open_wizard_at_the_rule_step(auth_page, app_server, description="tweede gang")
+
+    assert _inbound_field_names(auth_page) == [], (
+        "de tweede wizardgang begint met de regel van de eerste; de wizardstaat wordt niet gewist"
+    )
