@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-system
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      kind: Deployment
+      name: external-dns
+    patch: |-
+      # Alleen de eigen subzone, niet rijksapp.dev als geheel. ODCN beheert die zone ook,
+      # en hoe smaller het filter hoe kleiner het oppervlak waarop twee instanties elkaar
+      # kunnen raken.
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --domain-filter=fundament-poc.rijksapp.dev
+      # TransIP handhaaft RFC 1035 strikt: een CNAME kan niet naast een ander record met
+      # dezelfde naam bestaan. Daarom staat het eigendoms-TXT op een buurnaam.
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --txt-prefix=edns-
+      # DIT IS GEEN OPTIE. Zonder eigen owner-id draait deze instantie op de default,
+      # net als die op ODCN. Twee instanties met dezelfde owner-id zien elkaars records
+      # als de hunne en verwijderen wat niet in hun eigen gewenste toestand staat. Dat is
+      # DNS voor rijksapp.dev in productie. Met een eigen id slaat elke instantie de
+      # records van de ander over, en hoeft er aan ODCN niets te veranderen.
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --txt-owner-id=fundament-poc
