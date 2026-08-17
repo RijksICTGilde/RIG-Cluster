@@ -1,14 +1,14 @@
 # Review
 
-Checklist for reviewing a PR on this repo. These are strong expectations, not absolute gates: apply judgement, but if you skip one, say why in the review.
+Checklist for reviewing a PR on this repo. Most of these are strong expectations, not absolute gates: apply judgement, but if you skip one, say why in the review. The one **hard, non-negotiable gate is mergeability** — see "The bar for approve" at the bottom. A branch that isn't green does not get approved, however good the rest is.
 
 ## Code quality
 
-- UI components use Jinja ROOS components wherever possible — check `references/jinja_roos_copied.md`. A `<button>` where `<c-button>` belongs is a finding.
+- UI components use the Lord of the Components tags wherever possible — zie `features/lotc-bouwlijn.md`. A `<button>` where `<c-button>` belongs is a finding.
 - No duplicated logic. Look for similarly named patterns elsewhere before accepting a new helper; prefer reuse (DRY).
 - Methods live in the file/class where they belong (connectors for external calls, managers for orchestration, services for business logic, forms for wizard/edit behaviour).
 - Python imports are at the top of the file, never inline or local. Verify with `ruff check --select I`.
-- Post-dev validation passes: `ruff check . --fix`, `ruff format .`, `pyright`.
+- **Post-dev validation is the merge gate, not a checklist suggestion.** `uv run ruff check .`, `uv run ruff format --check .`, and `uv run pyright` must ALL be clean. A single lint error or type error means the branch is not mergeable → verdict **rework**, never approve.
 
 ## Test coverage
 
@@ -26,4 +26,17 @@ The goal: a reviewer should be able to see that every behaviour the PR changes i
 
 ## When something is missing
 
-If a PR changes an endpoint, a project-file write, or a UI/wizard flow without a corresponding test, call it out and, where practical, add the test. New ROOS components that don't exist yet go into `request_for_components.md` with a detailed request rather than a raw `<button>` workaround.
+If a PR changes an endpoint, a project-file write, or a UI/wizard flow without a corresponding test, call it out and, where practical, add the test. New components that don't exist yet go into `request_for_components.md` with a detailed request rather than a raw `<button>` workaround.
+
+## The bar for approve
+
+**Approve means the branch is mergeable.** That is a hard gate, not a judgement call:
+
+- `uv run ruff check .` clean, `uv run ruff format --check .` clean, `uv run pyright` clean.
+- The tests for what the PR touched pass (`uv run pytest tests/<file> -x -q --tb=short`). You do not need the full suite green — the cluster-dependent integration/e2e tests need a live sandbox and are out of scope for a plain review — but everything you *can* run for the changed code must pass.
+
+A single lint error, type error, or failing touched-test is **red → rework**, never approve. Do not wave red checks through as "non-blocking" or "minor": if it isn't green, it isn't mergeable.
+
+Genuine improvements that are **not** defects (nice-to-haves, future refactors, follow-up ideas) may be left as suggestions on the PR without blocking — that is the *only* thing "non-blocking" covers. It never covers something that is actually broken or red.
+
+- **Wachten is geen werk.** Zie de regel in `build.md`: wacht op de voorwaarde, niet op de klok. Een `sleep 300` kost vijf minuten ook als het na tien seconden klaar was. Gebruik `until <check>; do sleep 5; done`, of de wachtfuncties die er al zijn (`kubectl wait`, `kubectl rollout status`, `wait_for_task()`). Een time-out is een vangnet en geen wachtmethode: eindigt jouw wachten altijd op de time-out, dan wacht je niet maar gok je.

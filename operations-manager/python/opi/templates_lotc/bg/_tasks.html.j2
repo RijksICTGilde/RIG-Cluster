@@ -1,0 +1,81 @@
+{#
+  De takenlijst, als los fragment.
+
+  Overname van project-details/section-tasks.html.j2. Het gedrag blijft precies gelijk:
+  de wikkel haalt zichzelf elke vijf seconden opnieuw op zolang hij in de pagina staat, en
+  de Taken-tab ruimt zijn plek op als je hem verlaat - zo polt htmx alleen terwijl je kijkt.
+
+  De tabel was een kale <table> met eigen klassen (backup-table, tasks-table). Nu c-table.
+  Die heeft onder NLDD columns nodig, anders stapelen de cellen; zes kolommen, met de
+  ruimte naar soort en deployment omdat daar de langste teksten in staan.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+
+<div hx-get="/projects/{{ project_name }}/tasks" hx-trigger="every 5s" hx-swap="outerHTML">
+    {% call panel("Taken", "timer") %}
+        {% if not items %}
+            <c-paragraph>Er zijn nog geen taken uitgevoerd voor dit project.</c-paragraph>
+        {% else %}
+            <c-table columns="2fr 2fr 1fr 2fr 1fr 1fr">
+                <c-table-head>
+                    <c-th>Soort</c-th>
+                    <c-th>Deployment</c-th>
+                    <c-th>Status</c-th>
+                    <c-th>Door</c-th>
+                    <c-th>Gestart</c-th>
+                    <c-th>Beeindigd</c-th>
+                </c-table-head>
+                {% for item in items %}
+                    <c-table-row>
+                        {# De cel Soort is de INGANG naar de voortgang van die ene taak:
+                           /projects/progress/<id> toont de balk, de huidige stap, de
+                           subtaken en de fouten per component. Die pagina bestond al maar
+                           was alleen bereikbaar direct na het aanmaken van een project.
+
+                           Twee voorwaarden, en allebei om een eigen reden.
+
+                           item.task_id: alleen een achtergrondTAAK heeft een
+                           voortgangspagina. Deze tabel toont twee bronnen door elkaar, en
+                           een run (databaseconsole, job) heeft er geen; _normalize_run zet
+                           task_id daarom expliciet op None.
+
+                           item.active: alleen een taak die nog LOOPT. Een afgeronde taak
+                           wordt opgeruimd, en dan wijst de link naar een pagina die "Taak
+                           niet beschikbaar" zegt - een dode link die er levend uitziet.
+                           Hier stond eerst dat juist een mislukte taak een link verdiende
+                           ("daar staat wat er misging"), maar dat gaat alleen op zolang hij
+                           er nog is. #}
+                        <c-td>
+                            {% if item.task_id and item.active %}
+                                <c-link href="/projects/progress/{{ item.task_id }}">{{ item.soort }}</c-link>
+                            {% else %}
+                                {{ item.soort }}
+                            {% endif %}
+                        </c-td>
+                        <c-td>{{ item.deployment or "-" }}</c-td>
+                        <c-td>
+                            {# GEEN <c-stack> hieromheen: een cel is zelf al een kolom-flexbox, en met
+                               een stack ertussen krimpt de inhoud in FIREFOX tot 0 breed. Zelfde
+                               oorzaak als in bg/admin-approvals.html.j2; de uitleg staat daar en als
+                               punt 14 in request_for_components.md. Bewaakt door
+                               tests/test_lotc_stapel_in_tabelcel.py. #}
+                            <c-tag
+                                label="{{ item.status }}"
+                                type="{{ 'success' if item.status in ('Succeeded', 'completed') else 'error' if item.status in ('Failed', 'failed') else 'warning' if item.status in ('Running', 'running') else 'default' }}" />
+                            {# Bij een lopende taak toont de bestaande pagina de stap en
+                               het percentage eronder. Dat blijft. #}
+                            {% if item.active and item.step %}
+                                <c-paragraph size="sm">{{ item.step }}{% if item.progress %} ({{ item.progress }}%){% endif %}</c-paragraph>
+                            {% endif %}
+                        </c-td>
+                        <c-td>{{ item.door or "-" }}</c-td>
+                        {# Dezelfde inkorting als de bestaande pagina: de eerste zestien
+                           tekens van de ISO-tijd, met de T als spatie. #}
+                        <c-td>{{ (item.gestart or "")[:16] | replace("T", " ") }}</c-td>
+                        <c-td>{{ ((item.beeindigd or "")[:16] | replace("T", " ")) if item.beeindigd else "-" }}</c-td>
+                    </c-table-row>
+                {% endfor %}
+            </c-table>
+        {% endif %}
+    {% endcall %}
+</div>

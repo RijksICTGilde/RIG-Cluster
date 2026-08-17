@@ -1,0 +1,115 @@
+{#
+  Formulier Template - Based on RVO documentation/demopages/templates/Formulier.tsx
+
+  This template demonstrates comprehensive form field usage with proper RVO styling,
+  validation states, and accessibility features.
+#}
+
+<c-page title="Formulier template - ROOS" lang="nl" body-class="rvo-theme rvo-responsive">
+
+    <div class="rvo-demo-page">
+        {# Header #}
+        <c-header link="#"/>
+
+        <c-layout-flow gap="xl">
+            {# MenuBar #}
+            <c-menu type="bar" size="md"/>
+
+            <c-layout-flow gap="3xl">
+                <c-layout-flow gap="xl">
+
+                        <div class="rvo-form">
+                            <c-layout-flow gap="sm">
+
+                                {# Page header #}
+                                <div>
+                                    <c-link href="#" show-icon="before" icon="arrow-u-turn-backward" :no-underline="true"/>
+                                    <c-heading type="h1" label="Formulier template"/>
+                                    <p class="rvo-text--lg">
+                                        <span class="rvo-text--bold">Voorbeeld van een paragraaf met grote tekst</span>.
+                                        Deze paragraaf kan gebruikt worden als introductie voor het formulier. Door wie moet het
+                                        formulier ingevuld worden en waar moet de klant rekening mee houden.
+                                    </p>
+                                </div>
+
+                                {# Main form #}
+                                <form autocomplete="off">
+                                    <c-layout-flow>
+                                        <div>
+                                            {# Keyboard inputs section #}
+                                            <c-fieldset legend="Keyboard inputs">
+                                                <c-text-input-field id="text-basic" name="text-basic" label="Text"/>
+
+                                                <c-text-input-field id="text-helper" name="text-helper" label="Text with helper text"/>
+
+                                                <c-text-input-field id="text-basic-2" name="text-basic-2" label="Text"/>
+
+                                                <c-text-input-field id="text-error" name="text-error" label="Text with an error"/>
+
+                                                <c-text-input-field id="text-warning" name="text-warning" label="Text with a warning"/>
+
+                                                <c-text-input-field id="text-expandable" name="text-expandable" label="Text with expandable helper text"/>
+
+                                                <c-text-input-field id="text-disabled" name="text-disabled" label="Text disabled" disabled="true"/>
+
+                                                <c-text-input-field id="text-disabled-value" name="text-disabled-value" label="Text disabled with value" disabled="true" value="Value"/>
+
+                                                <c-text-input-field id="number-input" name="number-input" label="Number" type="number"/>
+
+                                                <c-textarea-field id="textarea-basic" name="textarea-basic" label="Textarea"/>
+                                            </c-fieldset>
+
+                                            {# Options section #}
+                                            <c-fieldset legend="Options">
+                                                <c-radio-button-field id="radio-basic" name="radio-buttons" label="Radio buttons"/>
+
+                                                <c-radio-button-field id="radio-error" name="radio-buttons-error" label="Radio buttons invalid"/>
+
+                                                <c-radio-button-field id="radio-warning" name="radio-buttons-warning" label="Radio buttons with warning"/>
+
+                                                <c-checkbox-field id="checkbox-basic" name="checkboxes" label="Checkboxes"/>
+
+                                                <c-checkbox-field id="checkbox-error" name="checkboxes-error" label="Checkboxes with error"/>
+
+                                                <c-checkbox-field id="checkbox-warning" name="checkboxes-warning" label="Checkboxes with a warning"/>
+
+                                                <c-select-field id="select-basic" name="select-basic" label="Select"/>
+                                            </c-fieldset>
+
+                                            {# Other inputs section #}
+                                            <c-fieldset legend="Other">
+                                                <c-file-input-field id="file-input" name="file-input" label="File"/>
+
+                                                <c-date-input-field id="date-input" name="date-input" label="Date"/>
+
+                                                {# Time input - manual HTML as no component exists yet #}
+                                                <div class="utrecht-form-field rvo-form-field rvo-layout-column rvo-layout-gap--sm">
+                                                    <div class="rvo-form-field__label rvo-layout-column rvo-layout-gap--2xs">
+                                                        <label for="time-input" class="utrecht-form-label rvo-form-field__label-text">
+                                                            Time
+                                                        </label>
+                                                    </div>
+                                                    <input type="time"
+                                                           id="time-input"
+                                                           name="time-input"
+                                                           placeholder=""
+                                                           class="utrecht-textbox utrecht-textbox--html-input utrecht-textbox--sm"
+                                                           value="">
+                                                </div>
+                                            </c-fieldset>
+                                        </div>
+
+                                        {# Action buttons #}
+                                        <c-action-group/>
+                                    </c-layout-flow>
+                                </form>
+                            </c-layout-flow>
+                        </div>
+                </c-layout-flow>
+
+                {# Footer #}
+                <c-footer max-width="lg"/>
+            </c-layout-flow>
+        </c-layout-flow>
+    </div>
+</c-page>

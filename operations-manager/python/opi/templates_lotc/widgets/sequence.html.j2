@@ -1,0 +1,67 @@
+{#
+  Herhaalbare reeks voor de LOTC-bouwlijn.
+
+  De sequence-klassen heten sinds RC-62 lotc-sequence__* in plaats van rvo-sequence__*.
+  Ze zijn geen rvo-rest: static/css/wizard.css maakt ze op, en die stylesheet wordt op
+  deze pagina's geladen. Weghalen zou de tussenruimte en de kop van een item slopen, dus
+  staan ze onder beide namen in wizard.css - de rvo-naam voor de roos-bouwlijn, de
+  lotc-naam hier. Wat wizard.js wel opzoekt is de id en de data-attributen hieronder.
+
+  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
+  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
+  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+#}
+{% from "widgets/_macros.html.j2" import helper_text, render_errors, render_warnings %}
+{% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
+{% set max_items = field.max_items or field.attributes.get('max_items') %}
+{% set add_label = field.attributes.get('add_label', 'Item toevoegen') %}
+{% set current_count = items_html|length %}
+{% set add_disabled = max_items is not none and current_count >= max_items|int %}
+{% set fixed_size = max_items is not none and min_items == max_items|int %}
+<div id="{{ field.path|e }}-container"
+     data-min-items="{{ min_items }}" data-max-items="{{ max_items|default('', true) }}" data-current-count="{{ current_count }}">
+    {# Deze reeks staat op het scherm, en dat moet de inzending zeggen. Een reeks die de
+       gebruiker leegmaakt stuurt niets mee, en een reeks die dit formulier nooit toonde
+       ook niet - zonder dit veld schreef de verwerker in beide gevallen een lege lijst
+       over de opgeslagen waarde heen. De haakjes achter de naam laat json-enc vallen, zodat
+       de meerdere reeksen als lijst aankomen. Zie opi/forms/editables/rendered_sequences.py. #}
+    <input type="hidden" name="{{ gerenderde_reeksen_veld }}[]" value="{{ field.path|e }}">
+    <span class="utrecht-form-label">{{ field.label|e }}</span>
+    {{ helper_text(field) }}
+    {# De items in een c-stack, zodat de tussenruimte van het COMPONENT komt en niet uit
+       een eigen CSS-regel. Hier stond een kale div, en die heeft geen gap: de kaarten van
+       een reeks - de componenten in de wizard bijvoorbeeld - stonden daardoor pal tegen
+       elkaar geplakt. Gemeten: 0px tussen alle zeven.
+
+       De klasse lotc-sequence__items blijft staan: wizard.css geeft de lijst zijn
+       ondermarge. wizard.js vindt de lijst via de id hieronder. #}
+    {# De id BOVEN de tag samenstellen: een ~ binnen :attrs laat de uitdrukkingslezer
+       struikelen ("Invalid expression in ':attrs'"). #}
+    {% set items_id = field.path ~ "-items" %}
+    <c-stack gap="lg" class="lotc-sequence__items" :attrs="{'id': items_id}">
+        {% for item in items_html %}{{ item }}{% endfor %}
+    </c-stack>
+    {% if not fixed_size and field.add_remove %}
+    <div class="lotc-sequence__actions">
+        {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
+       @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
+       stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
+        {% set toevoegen_js = "sequenceAdd('" ~ field.path ~ "')" %}
+        {# De tekst gaat via label= en NIET als kind: <c-button> wordt een <nldd-button>,
+           en dat element heeft geen standaard-slot, dus kinderen worden stilzwijgend
+           weggegooid. Gevolg was een knop met alleen een plusje - je kon nog wel raden
+           wat hij deed, maar "Item toevoegen" stond er niet meer. #}
+        <c-button type="tertiary" size="sm"
+                  label="{{ add_label|e }}"
+                  show-icon="before" icon="plus"
+                  :attrs="{'onclick': toevoegen_js}"
+                  :disabled="add_disabled" />
+    </div>
+    {% endif %}
+    {{ render_errors(field.errors) }}
+    {# Waarschuwingen horen bij elk veld dat ze kan krijgen, niet alleen bij een tekstveld.
+       Een reeks draagt ze omdat een ConfigAdvice de LIJST aanwijst ("deze uitnodiging heeft
+       geen realm-rol"), en zonder deze regel kwam die melding wel in field_warnings terecht
+       en werd hij nergens getekend. #}
+    {{ render_warnings(field.warnings) }}
+</div>

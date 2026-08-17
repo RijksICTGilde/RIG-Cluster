@@ -1,0 +1,26 @@
+{% from "widgets/_macros.html.j2" import helper_text %}
+{% set icon = field.attributes.get('icon', 'sleutel') %}
+{% set icon_color = field.attributes.get('icon_color', 'hemelblauw') %}
+{# De ruimte tussen de kop en wat eronder staat. xs blijft de standaard: bij een kaart met
+   een waarde erin (een sleutel, een tag) hoort die waarde dicht op zijn label. Een kaart die
+   alleen uitleg draagt heeft juist lucht nodig, anders plakt de tekst aan de titel. #}
+{% set gap = field.attributes.get('gap', 'xs') %}
+{% set val = field.value|string if field.value else '' %}
+<c-card padding="md" outline>
+    <c-layout-flow gap="{{ gap|e }}">
+        <div class="lotc-display-field__header">
+            <c-icon icon="{{ icon|nldd_icon|e }}" size="md" color="{{ icon_color|e }}"/>
+            <span class="utrecht-form-label">{{ field.label|e }}</span>
+        </div>
+        {% if val %}
+            {% if val in ['Versleuteld opgeslagen', 'Geconfigureerd'] %}
+        <c-tag type="success" label="{{ val|e }}"/>
+            {% elif val == 'Niet geconfigureerd' %}
+        <c-tag type="warning" label="{{ val|e }}"/>
+            {% else %}
+        <span>{{ val|e }}</span>
+            {% endif %}
+        {% endif %}
+        {{ helper_text(field) }}
+    </c-layout-flow>
+</c-card>

@@ -16,6 +16,7 @@ import pytest
 from freezegun import freeze_time
 from opi.core.async_task_service import TaskType
 from opi.core.backup_scheduler import BackupScheduler, parse_rrule
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 
 # 2026-05-20 is a Wednesday during CEST (UTC+2). 00:30 UTC = 02:30 Amsterdam,
 # which is just past today's 02:00 daily target — within the catch-up window
@@ -803,14 +804,26 @@ class TestSchedulerToHandlerPipeline:
         )
 
         projects_dict = {"test-project": project}
-        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+        with freeze_time(_FROZEN_TIME), patch("opi.core.backup_scheduler.get_project_store") as mock_get:
             mock_get.return_value.get_all.return_value = list(projects_dict.values())
             _run(scheduler._check_and_schedule())
 
         scheduler._task_service.create_task.assert_not_called()
 
     def test_schedule_changed_uses_new_frequency(self) -> None:
-        """After changing schedule from DAILY to WEEKLY, the new interval applies."""
+        """After changing schedule from DAILY to WEEKLY, the new interval applies.
+
+        Time is frozen on a WEDNESDAY, and that is the whole point of this test. The
+        scheduler decides on the DAY OF THE WEEK: a WEEKLY rule without BYDAY falls back
+        to Sunday. Zonder een vast moment slaagde deze test dus zes dagen per week omdat
+        het toevallig geen zondag was, en faalde hij op zondag - een test die zijn
+        uitkomst uit de kalender haalt in plaats van uit de code.
+
+        Dat maakte hem bovendien misleidend: de naam suggereert dat "twee dagen geleden"
+        te recent is voor een weekschema, maar zo rekent de scheduler niet. Wat hij hier
+        echt bewijst is dat de gewijzigde frequentie aanslaat - woensdag is een dag voor
+        DAILY en niet voor WEEKLY, dus er hoort niets te gebeuren.
+        """
         scheduler = _make_scheduler()
         # Last backup was 2 days ago — due for daily, not for weekly
         two_days_ago = datetime.now(tz=UTC) - timedelta(days=2)
@@ -830,7 +843,7 @@ class TestSchedulerToHandlerPipeline:
         )
 
         projects_dict = {"test-project": project}
-        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+        with freeze_time(_FROZEN_TIME), patch("opi.core.backup_scheduler.get_project_store") as mock_get:
             mock_get.return_value.get_all.return_value = list(projects_dict.values())
             _run(scheduler._check_and_schedule())
 
@@ -1257,9 +1270,11 @@ class TestCreateDeploymentFromSourceYAML:
         _run(_create_deployment_from_source("test-project", "staging", "production"))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
-        assert "base-domain" not in new_dep
-        assert "domain-mode" not in new_dep
-        assert "issuer" not in new_dep
+        # Asked of the service that owns them (RC-60), so the assertion says "this
+        # deployment has no domain configured" rather than "this key is not in that dict".
+        assert get_domain_setting(new_dep, DomainSetting.BASE_DOMAIN) is None
+        assert get_domain_setting(new_dep, DomainSetting.DOMAIN_MODE) is None
+        assert get_domain_setting(new_dep, DomainSetting.ISSUER) is None
 
     def test_new_deployment_auto_subdomain(self, yaml_mocks) -> None:
         """When source subdomain matches source name, new subdomain = target name."""
@@ -1268,7 +1283,7 @@ class TestCreateDeploymentFromSourceYAML:
         _run(_create_deployment_from_source("test-project", "staging", "production"))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
-        assert new_dep["subdomain"] == "staging"
+        assert get_domain_setting(new_dep, DomainSetting.SUBDOMAIN) == "staging"
 
     def test_deployment_config_overrides(self, yaml_mocks) -> None:
         """User-provided deployment_config overrides domain fields."""
@@ -1282,9 +1297,29 @@ class TestCreateDeploymentFromSourceYAML:
         _run(_create_deployment_from_source("test-project", "staging", "production", deployment_config=config))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
-        assert new_dep["subdomain"] == "my-staging"
-        assert new_dep["base-domain"] == "custom.dev"
-        assert new_dep["domain-format"] == "subdomain-project"
+        # A caller-supplied deployment_config still lands at the deployment root; the
+        # accessor reads it there, which is the read-both guarantee the relocation rests on.
+        assert get_domain_setting(new_dep, DomainSetting.SUBDOMAIN) == "my-staging"
+        assert get_domain_setting(new_dep, DomainSetting.BASE_DOMAIN) == "custom.dev"
+        assert get_domain_setting(new_dep, DomainSetting.DOMAIN_FORMAT) == "subdomain-project"
+
+    def test_an_explicit_empty_subdomain_is_a_choice_and_stays(self, yaml_mocks) -> None:
+        """A caller who stores ``subdomain: null`` said something; auto-fill must not undo it.
+
+        The auto-subdomain rule asks whether the field is CONFIGURED, not whether it has a
+        value (``has_domain_setting``). Reading it as "is None" would treat the explicit null
+        as absent and overwrite it with the target name (RC-60 review, suggestion 3).
+        """
+        from opi.core.backup_tasks import _create_deployment_from_source
+
+        _run(
+            _create_deployment_from_source(
+                "test-project", "staging", "production", deployment_config={"subdomain": None}
+            )
+        )
+
+        new_dep = yaml_mocks["project_data"]["deployments"][1]
+        assert get_domain_setting(new_dep, DomainSetting.SUBDOMAIN) is None
 
     def test_preserves_cluster_and_namespace(self, yaml_mocks) -> None:
         """Cluster, namespace, and repository are copied from source."""

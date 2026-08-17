@@ -31,7 +31,7 @@ async def main() -> None:
     await pool.initialize()
 
     # Create service and worker
-    task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+    task_service = AsyncTaskService(cluster=settings.CLUSTER_MANAGER)
     worker = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
     # Register handlers
@@ -39,6 +39,10 @@ async def main() -> None:
         handle_add_component,
         handle_add_component_to_deployment,
         handle_add_service,
+        handle_configure_service,
+        handle_configure_service_values,
+        handle_delete_component,
+        handle_manage_database_schemas,
         handle_update_component,
     )
     from opi.core.task_handlers_deployment import (
@@ -53,21 +57,33 @@ async def main() -> None:
     )
     from opi.core.task_handlers_project import (
         handle_create_project,
+        handle_delete_project,
         handle_upsert_deployment,
     )
+    from opi.services.catalog.attachments.task import handle_configure_attachment, handle_delete_attachment
+    from opi.services.catalog.sleep_mode.task import handle_sleep_transition
 
     worker.register_handler(TaskType.CREATE_PROJECT, handle_create_project)
     worker.register_handler(TaskType.UPSERT_DEPLOYMENT, handle_upsert_deployment)
     worker.register_handler(TaskType.UPDATE_IMAGE, handle_update_image)
     worker.register_handler(TaskType.DELETE_DEPLOYMENT, handle_delete_deployment)
+    worker.register_handler(TaskType.DELETE_PROJECT, handle_delete_project)
+    worker.register_handler(TaskType.DELETE_COMPONENT, handle_delete_component)
+    worker.register_handler(TaskType.DELETE_ATTACHMENT, handle_delete_attachment)
+    worker.register_handler(TaskType.CONFIGURE_ATTACHMENT, handle_configure_attachment)
     worker.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
     worker.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
     worker.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+    worker.register_handler(TaskType.SLEEP_DEPLOYMENT, handle_sleep_transition)
+    worker.register_handler(TaskType.WAKE_DEPLOYMENT, handle_sleep_transition)
     worker.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)
     worker.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
     worker.register_handler(TaskType.UPDATE_COMPONENT, handle_update_component)
     worker.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
     worker.register_handler(TaskType.ADD_SERVICE, handle_add_service)
+    worker.register_handler(TaskType.CONFIGURE_SERVICE, handle_configure_service)
+    worker.register_handler(TaskType.CONFIGURE_SERVICE_VALUES, handle_configure_service_values)
+    worker.register_handler(TaskType.MANAGE_DATABASE_SCHEMAS, handle_manage_database_schemas)
 
     # Handle graceful shutdown
     loop = asyncio.get_running_loop()

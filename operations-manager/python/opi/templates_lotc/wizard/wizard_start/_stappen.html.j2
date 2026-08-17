@@ -1,0 +1,46 @@
+{# De zes stappen die de wizard doorloopt.
+
+   Dit was een losse <div> met een <c-icon icon="info"> ernaast en de tekst in een tweede
+   <div>. Die twee stonden naast elkaar dankzij .rvo-alert__container uit base.css - een
+   flexregel die op de roos-markup sloeg. Onder NLDD raakt die selector niets meer, dus
+   het icoon viel op een eigen regel en zweefde boven de tekst.
+
+   Hier bestaat een component voor: <c-alert>. Die levert het informatie-icoon, de
+   uitlijning ernaast en de kop zelf, dus het losse icoon en de eigen kopregel kunnen weg. #}
+<c-alert type="info" heading="Wat kunt u verwachten?">
+    <c-layout-flow gap="lg">
+            <div>
+                <c-paragraph><strong>1. Project gegevens</strong></c-paragraph>
+                <c-paragraph>Basisgegvens over het project</c-paragraph>
+            </div>
+
+            <div>
+                <c-paragraph><strong>2. Services kiezen</strong></c-paragraph>
+                <c-paragraph>Selecteer de services die je applicatie nodig heeft, zoals een
+                    PostgreSQL database, Keycloak SSO, of object storage.
+                </c-paragraph>
+            </div>
+
+            <div>
+                <c-paragraph><strong>3. Team samenstellen</strong></c-paragraph>
+                <c-paragraph>Toekennen van (extra) personen en rollen.</c-paragraph>
+            </div>
+
+            <div>
+                <c-paragraph><strong>4. Componenten configureren</strong></c-paragraph>
+                <c-paragraph>Configureer de naam, poorten en
+                    resources voor elk component.
+                </c-paragraph>
+            </div>
+
+            <div>
+                <c-paragraph><strong>5. Domeinen en deployment</strong></c-paragraph>
+                <c-paragraph>Bepaal hoe je applicatie bereikbaar wordt.</c-paragraph>
+            </div>
+
+            <div>
+                <c-paragraph><strong>6. Controleren en aanmaken</strong></c-paragraph>
+                <c-paragraph>Controleer alle ingevulde gegevens in een overzicht.</c-paragraph>
+            </div>
+    </c-layout-flow>
+</c-alert>

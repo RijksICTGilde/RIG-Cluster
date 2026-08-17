@@ -40,6 +40,11 @@ OWNER_EMAIL = "owner@example.com"
 MEMBER_EMAIL = "member@example.com"
 ADMIN_EMAIL = "global-admin@example.com"
 
+# The wizard save path now schema-checks the finished file before handing it to the
+# store, so the secrets in this fixture have to look like what the schema demands:
+# AGE-encrypted, not plaintext placeholders.
+AGE_BLOB = "-----BEGIN AGE ENCRYPTED FILE-----\nfake\n-----END AGE ENCRYPTED FILE-----"
+
 STORED_DATA: dict[str, Any] = {
     "name": PROJECT_NAME,
     "display-name": "Takeover Target",
@@ -49,9 +54,9 @@ STORED_DATA: dict[str, Any] = {
         {"email": MEMBER_EMAIL, "role": "member"},
     ],
     "config": {
-        "api-key": "super-secret-api-key",
+        "api-key": AGE_BLOB,
         "age-public-key": "age1publicpublicpublic",
-        "age-private-key": "AGE-SECRET-KEY-PRIVATEPRIVATE",
+        "age-private-key": AGE_BLOB,
     },
     "components": [{"name": "frontend", "image": "nginx:latest"}],
 }
@@ -232,7 +237,7 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
             {"email": OWNER_EMAIL, "role": "owner"},
             {"email": "new-mate@example.com", "role": "member"},
         ],
-        "config": {"api-key": "rotated-key", "age-public-key": "age1publicpublicpublic"},
+        "config": {"api-key": AGE_BLOB, "age-public-key": "age1publicpublicpublic"},
     }
     with (
         patch("opi.web.project_edit_security.get_current_user", return_value={"email": OWNER_EMAIL}),
@@ -257,7 +262,7 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
 # member. This test pins the route -> gate wiring so a future refactor
 # cannot silently drop the gate call from `wizard_edit_page` without a test
 # failure. The route does light setup (get_flow / get_current_user /
-# get_templates) before calling the gate, all mocked here.
+# de templateomgeving) before calling the gate, all mocked here.
 # ---------------------------------------------------------------------------
 
 
@@ -279,7 +284,7 @@ async def test_wizard_edit_page_invokes_role_gate(project_service: ProjectServic
         ) as gate,
         patch("opi.web.router_wizard.get_current_user", return_value={"email": MEMBER_EMAIL}),
         patch("opi.web.router_wizard.get_flow", return_value=MagicMock()),
-        patch("opi.web.router_wizard.get_templates", return_value=MagicMock()),
+        patch("opi.web.router_wizard.templates_lotc", MagicMock()),
         pytest.raises(HTTPException) as exc,
     ):
         await wizard_edit_page(  # @requires_sso just delegates; calling the wrapper is fine

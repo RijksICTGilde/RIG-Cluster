@@ -1,0 +1,65 @@
+{#
+  Dienstenoverzicht, hertekend in bg-vorm.
+
+  De vertaalde versie toont dienstkaarten met onze eigen service-card-klassen uit
+  wizard.css. Hier zijn dat c-catalog-card's: dezelfde bedoeling, maar de vormgeving komt
+  uit het thema in plaats van uit onze stylesheet. Dat is precies de winst die het
+  componentenplan van een omzetting verwacht - eigen CSS die verdwijnt.
+
+  KLEUR PER DIENST
+
+  De kleur per dienst blijft, want die helpt herkennen: mensen onthouden "de groene"
+  sneller dan een naam. Twee soorten kleur, en het verschil is belangrijk:
+
+    - c-icon color="..." kleurt het icoon zelf. NLDD neemt onze eigen ROOS-kleurnamen
+      (hemelblauw, groen) ongewijzigd over.
+    - c-tag type="..." en c-catalog-card status-type="..." zijn SEMANTISCH: default,
+      info, success, warning, error. Die horen bij een betekenis (beschikbaar, storing)
+      en niet bij een merk. Gebruik ze niet om een dienst te kleuren, anders betekent
+      groen op de ene plek "PostgreSQL" en op de andere "alles in orde".
+
+  INFO-ICONEN
+
+  Elke dienst draagt uitleg, want juist hier lopen mensen vast: de namen zeggen niets als
+  je ze nog niet kent. Die uitleg opent in een DIALOOG, precies zoals op de bestaande
+  pagina: het vraagteken roept openServiceHelp() aan, static/js/wizard.js haalt de tekst
+  op bij /forms/wizard/help/<template> en zet hem in #service-help-content.
+
+  Hier stond een tijd een link naar ?help=<dienst>, die de uitleg inline op de pagina
+  zette. Dat was bij het omzetten zelf bedacht en het is teruggedraaid: een omzetting mag
+  er anders uitzien, maar niet iets anders doen. De kaart komt daarom uit
+  bg/_service-card.html.j2 en niet uit de macro in bg/_patterns.html.j2, die nog de
+  linkvorm heeft.
+
+  Deze pagina heeft daarvoor static/css/wizard.css en static/js/wizard.js nodig, net als
+  de bestaande services-overview.html.j2. Zonder die twee rendert de knop wel en doet hij
+  niets.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head, info %}
+{% from "bg/_service-card.html.j2" import service_card %}
+
+{% block page_title %}Services - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "Services overzicht",
+        "Wanneer je een service selecteert voor je project, worden alle onderstaande omgevingsvariabelen automatisch beschikbaar gesteld aan het component."
+    ) }}
+
+    <c-columns columns="1" lg="2" gap="md">
+        {% for service in services %}
+            {{ service_card(service) }}
+        {% endfor %}
+    </c-columns>
+
+    {% include "widgets/service_help_modal.html.j2" %}
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+{% endblock %}
+
+{% block additional_scripts %}
+<script src="{{ static_url('js/wizard.js') }}"></script>
+{% endblock %}

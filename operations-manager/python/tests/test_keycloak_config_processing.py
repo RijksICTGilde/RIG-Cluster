@@ -81,16 +81,16 @@ class TestKeycloakConfigExtraction:
         assert config["variables"] == {}
 
     def test_account_link_defaults_to_none_when_omitted(self):
-        """account-link omitted -> None (treated as stock 'verify' flow, opt-in)."""
+        """account-link omitted -> None (Keycloak's own flow; opt-in)."""
         project_data = {"name": "test-project", "services": [{"keycloak": {"config": {"template": "sso-only"}}}]}
 
         config = self.keycloak_manager._get_keycloak_service_config(project_data)
 
         assert config["account_link"] is None
 
-    @pytest.mark.parametrize("mode", ["automatic", "confirm", "verify"])
+    @pytest.mark.parametrize("mode", ["automatic", "confirm"])
     def test_account_link_accepts_valid_modes(self, mode):
-        """account-link accepts the three valid modes."""
+        """account-link accepts the two modes that do something."""
         project_data = {
             "name": "test-project",
             "services": [{"keycloak": {"config": {"template": "sso-only", "account-link": mode}}}],
@@ -109,6 +109,24 @@ class TestKeycloakConfigExtraction:
 
         with pytest.raises(ValueError, match="account-link must be"):
             self.keycloak_manager._get_keycloak_service_config(project_data)
+
+    def test_account_link_verify_blijft_verwerkbaar(self):
+        """Een bestaand projectbestand met de weggevallen stand blijft gewoon draaien.
+
+        ``verify`` deed niets - geen enkele tak in ``keycloak_yaml_handler`` keek ernaar -
+        en is daarom uit de enum, het schema en de keuzelijst gehaald. Hem daarna hard
+        afkeuren is het gevaarlijke deel: een waarde die niet meer valideert blokkeert elke
+        volgende verwerking van dat project, en dat gebeurt stil. Hij wordt dus gelezen als
+        "niets gekozen", en dat is precies wat hij al betekende.
+        """
+        project_data = {
+            "name": "test-project",
+            "services": [{"keycloak": {"config": {"template": "sso-only", "account-link": "verify"}}}],
+        }
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["account_link"] is None
 
 
 class TestKeycloakConfigValidation:
@@ -412,3 +430,61 @@ class TestTemplateFilesExist:
 if __name__ == "__main__":
     # Run tests with pytest
     pytest.main([__file__, "-v"])
+
+
+class TestKeycloakConfigRecordForm:
+    """The uniform ``{name, config}`` record must be read like the legacy form.
+
+    The lookup used to test ``"keycloak" in service_item``, which only matches the
+    legacy single-key dict. A record entry has the keys ``name`` and ``config``, so
+    the loop never matched and every project written in the current format fell back
+    to DEFAULT_CONFIG. ``restrict-access`` therefore silently did nothing: the realm
+    role was never created and no restriction was applied to the client.
+    """
+
+    def setup_method(self):
+        self.keycloak_manager = KeycloakManager(Mock())
+
+    def test_reads_restrict_access_from_a_record_entry(self):
+        project_data = {
+            "name": "test-project",
+            "services": [
+                "publish-on-web",
+                {
+                    "name": "keycloak",
+                    "config": {
+                        "template": "sso-support",
+                        "restrict-access": {"enabled": True, "realm-role": "allowed-user"},
+                    },
+                },
+            ],
+        }
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["template"] == "sso-support"
+        assert config["restrict_access"] is not None, "restrict-access silently dropped"
+        assert config["restrict_access"]["enabled"] is True
+        assert config["restrict_access"]["realm_role"] == "allowed-user"
+
+    def test_reads_type_from_a_record_entry(self):
+        """``type: external`` is a sibling of ``config`` on the record."""
+        project_data = {
+            "name": "test-project",
+            "services": [{"name": "keycloak", "type": "external", "config": {"template": "sso-only"}}],
+        }
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["type"] == "external"
+
+    def test_legacy_single_key_form_still_works(self):
+        project_data = {
+            "name": "test-project",
+            "services": [{"keycloak": {"type": "external", "config": {"template": "sso-only"}}}],
+        }
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["type"] == "external"
+        assert config["template"] == "sso-only"

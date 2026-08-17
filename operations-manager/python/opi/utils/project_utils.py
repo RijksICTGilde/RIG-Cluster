@@ -7,15 +7,19 @@ Extracted to avoid circular import issues.
 
 import logging
 import re
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import HTTPException
 from opi.core.config import settings
 from opi.services import ServiceAdapter
-from opi.utils.age import encrypt_age_content
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
+from opi.services.project_service import get_project_service
+from opi.utils.age import encrypt_age_content, is_age_encrypted
 from opi.utils.api_keys import generate_api_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.sops import generate_sops_key_pair
+from opi.utils.yaml_util import load_yaml_from_string
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
 
@@ -24,6 +28,48 @@ logger = logging.getLogger(__name__)
 
 class ComponentValidationError(ValueError):
     """Raised when component configuration validation fails."""
+
+
+class ProjectApiKeyError(RuntimeError):
+    """Raised when a generated project API key cannot be read back in plaintext."""
+
+
+def _apply_web_address_settings(
+    deployment_config: dict[str, Any],
+    project_data: Any,
+    deployment_name: str,
+    root_component: str | None,
+) -> None:
+    """Write the web-address settings of a freshly created deployment (RC-60).
+
+    One function for what used to be two near-identical blocks twenty lines apart -- the
+    kind of duplication where a change lands in one copy and the other keeps writing the
+    old shape. Every write goes through ``set_domain_setting``, so the location is decided
+    in one place (``catalog/publish_on_web/domain_config.py``) and creation cannot disagree
+    with the migration about where a value belongs.
+
+    Only settings the user actually chose are written: an absent setting means "inherit",
+    and writing an empty one would turn that into an explicit empty value.
+    """
+    if project_data.domain_mode == "deployment-name":
+        set_domain_setting(deployment_config, DomainSetting.SUBDOMAIN, deployment_name)
+    elif project_data.domain_mode == "custom" and project_data.subdomain:
+        set_domain_setting(deployment_config, DomainSetting.SUBDOMAIN, project_data.subdomain)
+    elif project_data.domain_mode == "nice-url":
+        set_domain_setting(deployment_config, DomainSetting.DOMAIN_MODE, "nice-url")
+        # For nice-url mode, subdomain is required and globally unique
+        if getattr(project_data, "subdomain", None):
+            set_domain_setting(deployment_config, DomainSetting.SUBDOMAIN, project_data.subdomain)
+    # For "component-specific" mode, don't set a subdomain at all
+
+    for setting, value in (
+        (DomainSetting.BASE_DOMAIN, getattr(project_data, "base_domain", None)),
+        (DomainSetting.DOMAIN_FORMAT, getattr(project_data, "domain_format", None)),
+        (DomainSetting.ISSUER, getattr(project_data, "issuer", None)),
+        (DomainSetting.ROOT_COMPONENT, root_component),
+    ):
+        if value:
+            set_domain_setting(deployment_config, setting, value)
 
 
 def validate_component_paths(component_paths: list[str], domain_mode: str) -> None:
@@ -166,6 +212,7 @@ async def build_component_config(
     port: int | None,
     path: str,
     services: list[str],
+    rewrite: str | None = None,
     cpu_limit: str | None = None,
     memory_limit: str | None = None,
     env_vars: str | None = None,
@@ -186,6 +233,9 @@ async def build_component_config(
         port: Inbound port (None for background workers)
         path: Ingress path (e.g., "/", "/api")
         services: Component's services list as strings
+        rewrite: Path the ingress rewrites the match to before the request reaches the
+            container (e.g. "/" for a component that listens on the root). Left out
+            entirely when not given, which keeps the path unchanged.
         cpu_limit: CPU limit (e.g., "1", "500m")
         memory_limit: Memory limit (e.g., "256Mi", "1Gi")
         env_vars: Environment variables in KEY=value format (will be encrypted)
@@ -203,6 +253,13 @@ async def build_component_config(
     # Build services list in v2 format (mixed string/dict)
     services_list = ServiceAdapter.build_component_service_entries(services)
 
+    # A rewrite is only written when the caller asked for one. Absent means "pass the
+    # path on unchanged", which is what a component that serves its own prefix needs;
+    # an empty value would render as a rewrite to the root in the ingress snippet.
+    path_entry: dict[str, str] = {"match": path}
+    if rewrite:
+        path_entry["rewrite"] = rewrite
+
     component_config: dict[str, Any] = {
         "name": name,
         "type": component_type,
@@ -211,7 +268,7 @@ async def build_component_config(
         # $defs/component-path and the COMPONENT_PATH editable's [{match}] shape),
         # not a bare string. Emitting the string here made add-component/creation
         # produce files their own schema rejects at process time.
-        "path": [{"match": path}],
+        "path": [path_entry],
         "services": services_list,
         "uses-components": [],
     }
@@ -229,11 +286,18 @@ async def build_component_config(
             encrypted_env_vars = await encrypt_age_content(env_vars, public_key)
             component_config["user-env-vars"] = LiteralScalarString(encrypted_env_vars)
 
-    # Add aliases if provided (no encryption needed - they reference system variables)
+    # Add aliases if provided. Stored as ONE AGE block whose plaintext is KEY=value
+    # lines, exactly like user-env-vars (RC-106). An unencrypted mapping is kept as-is
+    # when no public key is available (backward compatible).
     if aliases:
         aliases_dict = parse_aliases(aliases)
         if aliases_dict:
-            component_config["aliases"] = aliases_dict
+            if public_key:
+                block = "\n".join(f"{key}={value}" for key, value in aliases_dict.items())
+                component_config["aliases"] = LiteralScalarString(await encrypt_age_content(block, public_key))
+            else:
+                logger.warning("Could not encrypt aliases for component '%s': no AGE public key available", name)
+                component_config["aliases"] = aliases_dict
 
     return component_config
 
@@ -380,31 +444,10 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
             "components": component_refs,
         }
 
-        # Add subdomain based on domain-mode
-        if project_data.domain_mode == "deployment-name":
-            deployment_config["subdomain"] = deployment_name
-        elif project_data.domain_mode == "custom" and project_data.subdomain:
-            deployment_config["subdomain"] = project_data.subdomain
-        elif project_data.domain_mode == "nice-url":
-            deployment_config["domain-mode"] = "nice-url"
-            # For nice-url mode, subdomain is required and globally unique
-            if hasattr(project_data, "subdomain") and project_data.subdomain:
-                deployment_config["subdomain"] = project_data.subdomain
-        # For "component-specific" mode, don't add subdomain field
-
-        # Add external domain configuration if specified
-        if hasattr(project_data, "base_domain") and project_data.base_domain:
-            deployment_config["base-domain"] = project_data.base_domain
-        if hasattr(project_data, "domain_format") and project_data.domain_format:
-            deployment_config["domain-format"] = project_data.domain_format
-        if hasattr(project_data, "issuer") and project_data.issuer:
-            deployment_config["issuer"] = project_data.issuer
-
-        # Set root-component on deployment if any component is marked as root
-        for idx, comp in enumerate(project_data.components):
-            if comp.root:
-                deployment_config["root-component"] = f"component-{idx + 1}"
-                break
+        root_component = next(
+            (f"component-{idx + 1}" for idx, comp in enumerate(project_data.components) if comp.root), None
+        )
+        _apply_web_address_settings(deployment_config, project_data, deployment_name, root_component)
 
         deployments_list.append(deployment_config)
     else:
@@ -419,25 +462,7 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
             "components": [{"reference": "main", "image": "nginx:latest"}],
         }
 
-        # Add subdomain based on domain-mode
-        if project_data.domain_mode == "deployment-name":
-            deployment_config["subdomain"] = deployment_name
-        elif project_data.domain_mode == "custom" and project_data.subdomain:
-            deployment_config["subdomain"] = project_data.subdomain
-        elif project_data.domain_mode == "nice-url":
-            deployment_config["domain-mode"] = "nice-url"
-            # For nice-url mode, subdomain is required and globally unique
-            if hasattr(project_data, "subdomain") and project_data.subdomain:
-                deployment_config["subdomain"] = project_data.subdomain
-        # For "component-specific" mode, don't add subdomain field
-
-        # Add external domain configuration if specified
-        if hasattr(project_data, "base_domain") and project_data.base_domain:
-            deployment_config["base-domain"] = project_data.base_domain
-        if hasattr(project_data, "domain_format") and project_data.domain_format:
-            deployment_config["domain-format"] = project_data.domain_format
-        if hasattr(project_data, "issuer") and project_data.issuer:
-            deployment_config["issuer"] = project_data.issuer
+        _apply_web_address_settings(deployment_config, project_data, deployment_name, None)
 
         deployments_list.append(deployment_config)
 
@@ -507,3 +532,82 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     )
 
     return yaml_content
+
+
+async def generate_base_project_file(
+    project_name: str,
+    display_name: str,
+    description: str,
+    cluster: str,
+    owner_email: str,
+) -> tuple[dict[str, Any], str]:
+    """Build the base project file for a project created outside the wizard.
+
+    "Base" means: the project exists, knows its repository and carries its own
+    keys. That is everything the platform needs to recognise a project and
+    everything a caller needs to keep working on it through the API. What runs in
+    it -- components and deployments -- is configured afterwards, so this file
+    deliberately declares neither.
+
+    The content is not assembled here. It comes out of
+    ``generate_self_service_project_yaml``, the same builder the self-service
+    portal uses, so the repositories block, the AGE keypair and the API key are
+    produced in exactly one place. Only the parts that describe what runs are
+    removed afterwards.
+
+    Args:
+        project_name: Technical project name (already validated)
+        display_name: Human-readable name
+        description: Project description
+        cluster: Cluster the project targets
+        owner_email: The creator, recorded as the project's admin
+
+    Returns:
+        A tuple of the project file as a dict, and the plaintext API key of the
+        new project.
+
+    Raises:
+        ProjectApiKeyError: When the generated API key cannot be read back in
+            plaintext, so no usable key could be handed to the caller.
+    """
+    project_data = SimpleNamespace(
+        project_name=project_name,
+        display_name=display_name,
+        project_description=description,
+        cluster=cluster,
+        deployment_name="main",
+        domain_mode="component-specific",
+        domain_format=None,
+        subdomain=None,
+        base_domain=None,
+        issuer=None,
+        contact_email=None,
+        user_email=[owner_email],
+        user_role=["admin"],
+        services=[],
+        components=None,
+    )
+
+    yaml_content = await generate_self_service_project_yaml(project_data)
+    project_dict = load_yaml_from_string(yaml_content)
+    if not project_dict:
+        raise ProjectApiKeyError(f"Kon het gegenereerde projectbestand voor '{project_name}' niet inlezen")
+
+    # Nothing runs yet: drop the placeholder component and deployment the
+    # self-service builder adds for the form flow. A project without deployments
+    # is valid and is left alone by processing; the caller adds a deployment when
+    # there is something to deploy.
+    project_dict.pop("components", None)
+    project_dict.pop("deployments", None)
+
+    # config.api-key is stored AGE-encrypted. Read it back through the same path
+    # the project store uses, so the caller gets the key the API will compare
+    # against - and refuse to hand out anything else.
+    summary = get_project_service().build_project_from_data(dict(project_dict), f"projects/{project_name}.yaml")
+    if summary is None or not summary.api_key or is_age_encrypted(str(summary.api_key)):
+        raise ProjectApiKeyError(
+            f"De API-sleutel voor '{project_name}' kon niet in leesbare vorm worden bepaald; "
+            f"het project is niet aangemaakt."
+        )
+
+    return project_dict, str(summary.api_key)

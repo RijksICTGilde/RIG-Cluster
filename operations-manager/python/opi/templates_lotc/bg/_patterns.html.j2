@@ -1,0 +1,190 @@
+{#
+  Gedeelde patronen voor de hertekende pagina's.
+
+  WAAROM DIT BESTAAT
+
+  Een gap bestaat in dit systeem alleen waar een stack de OUDER is. Een <c-card> is geen
+  stack: hij zet zijn kinderen achter elkaar in een container. Wie dus dit schrijft:
+
+      <c-card>
+          <c-section-head title="Mijn projecten" />
+          <c-stack gap="md"> ... </c-stack>
+      </c-card>
+
+  krijgt een kop die tegen zijn eigen inhoud aan plakt. De stack regelt de afstand tussen
+  zijn kinderen, niet die tussen zichzelf en de kop erboven. Dat is geen vergissing die je
+  een keer maakt maar een die je op elke kaart opnieuw maakt.
+
+  De oplossing is niet "eraan denken" maar het onmogelijk maken: gebruik panel(), dan zit
+  de kop altijd IN de stack en klopt de afstand vanzelf.
+
+      {% call panel('Mijn projecten', 'rectangle-stack') %}
+          ...inhoud...
+      {% endcall %}
+
+  Dezelfde regel geldt overal: twee blokken naast elkaar zonder stack eromheen raken
+  elkaar. tests/test_lotc_layout_rules.py bewaakt dat voor de kaarten.
+#}
+
+{% macro panel(title, icon='', gap='md', aside='', info_text='') %}
+<c-card outline padding="lg">
+    <c-stack gap="{{ gap }}">
+        {% if title %}
+            {# GEEN kopicoon als er een knop in de kopregel staat. c-section-head zet
+               kinderen en icoon in dezelfde hoek, met het icoon ACHTER de knop; dat las
+               op een screenshot als een los koffertje naast "Nieuw Project", buiten de
+               knop en buiten de kaart. Het icoon is versiering - het herhaalt wat de
+               titel al zegt - en de knop is dat niet, dus die wint. #}
+            {% set kop_icoon = none if aside else (icon or none) %}
+            <c-section-head title="{{ title }}" :icon="kop_icoon">{{ aside }}</c-section-head>
+        {%- if info_text %}
+            {{ info(info_text) }}
+        {%- endif %}
+        {% endif %}
+        {{ caller() }}
+    </c-stack>
+</c-card>
+{% endmacro %}
+
+
+{#
+  De kop van een pagina: titel plus een regel uitleg. Staat hier omdat elke pagina hem
+  heeft en de afstand tussen die twee overal gelijk hoort te zijn.
+#}
+{% macro page_head(title, intro='') %}
+<c-stack gap="xs">
+    <c-heading type="h1" size="3" label="{{ title }}" />
+    {% if intro %}
+        <c-paragraph>{{ intro }}</c-paragraph>
+    {% endif %}
+</c-stack>
+{% endmacro %}
+
+
+{#
+  Uitleg bij een kopregel.
+
+  GEEN icoon met een tooltip. Die stond hier twee versies lang en deed niets zichtbaars:
+  een tooltip verschijnt bij zweven, en mensen klikken. Een klikbare popover werkte ook
+  niet betrouwbaar door het custom element eromheen.
+
+  Korte uitleg hoort gewoon te STAAN. Hij is kort genoeg om niet in de weg te zitten, en
+  wie hem niet nodig heeft leest eroverheen. Voor een lang verhaal is er de hulptekst van
+  een dienst, die met een klik in een venster opengaat - zie bg/_service-card.html.j2.
+#}
+{% macro info(text) %}
+<c-paragraph size="sm">{{ text }}</c-paragraph>
+{% endmacro %}
+
+
+{#
+  Uitleg boven aan een scherm: een alinea die verklaart wat je hier ziet, voor wie het
+  voor het eerst opent.
+
+  Bewust een gewone info-melding en GEEN c-just-in-time-education. Die laatste klinkt
+  alsof hij hiervoor bedoeld is, maar het is een verankerde coach-mark: hij positioneert
+  zichzelf bij een element en landde in onze proef linksboven over de zijkolom heen. Hij
+  hoort bij een handeling ("klik hier voor..."), niet bij een scherm.
+#}
+{% macro explainer(title, text) %}
+<c-alert type="info" heading="{{ title }}" closable="true">{{ text }}</c-alert>
+{% endmacro %}
+
+
+{#
+  Goedkeuringen die een deployment nog NIET heeft, zoals de eigenaardienst ze meldt
+  (``collect_deployment_approval_notices``, hetzelfde blok dat de API als ``approvals``
+  teruggeeft). De tekst komt van de dienst, want alleen die weet wat het gevolg is; hier
+  staat alleen hoe het eruitziet.
+
+  Dit is een macro en geen stuk sjabloon omdat het op twee plekken hoort te staan: bij de
+  deployment, en bij de PUBLIEKE LINKS. Een niet-goedgekeurd domein verandert namelijk het
+  adres dat je te zien krijgt -- de deployment publiceert dan op het clusteradres -- en dat
+  is precies waar iemand naar kijkt als hij zich afvraagt waarom zijn eigen domein er niet
+  staat. Zonder deze regel is er geen enkel spoor van de aanvraag naast de link.
+
+  ``denied`` krijgt de rode vorm en de rest de gele: op een afgewezen aanvraag ga je niet
+  zitten wachten, op een lopende wel.
+#}
+{% macro approval_alerts(notices) %}
+{% for notice in notices %}
+    <c-alert type="{{ 'error' if notice.status == 'denied' else 'warning' }}" heading="{{ notice.text }}">
+        <c-stack gap="xs">
+            {% if notice.by %}
+                <c-paragraph size="sm">Besluit door {{ notice.by }}{% if notice.date %} op {{ notice.date | dutch_date(include_time=False) }}{% endif %}.</c-paragraph>
+            {% endif %}
+            {% if notice.message %}
+                <c-paragraph size="sm">Toelichting: {{ notice.message }}</c-paragraph>
+            {% endif %}
+        </c-stack>
+    </c-alert>
+{% endfor %}
+{% endmacro %}
+
+
+{#
+  Een kaart voor een dienst, in de vorm die bg.rijks.app gebruikt op het artefactregister.
+
+  DE OPBOUW, en waarom die vaststaat
+
+  bg's kaarten lezen prettig omdat elk kaartje dezelfde plekken gebruikt: je oog weet na
+  de eerste kaart waar het de naam, de herkomst en de kenmerken moet zoeken. Dat werkt
+  alleen als de vorm overal gelijk is, en dus hoort hij in een macro en niet in elke
+  pagina opnieuw.
+
+      +--------------------------------------------------+
+      | [icoon] naam            soort           [merk]    |
+      |         sleutel-in-mono                           |
+      |         [chip] [chip] [chip]                      |
+      |  ----------------------------------------------   |
+      |  [icoon] waar hij gebruikt wordt                  |
+      +--------------------------------------------------+
+
+  De onderste regel staat achter een scheidingslijn, net als bij bg: het is een ander
+  soort gegeven (herkomst, gebruik) dan de kenmerken erboven.
+
+  KLEUR
+
+  Het icoon draagt de MERKkleur van de dienst - die helpt herkennen. Chips en labels zijn
+  semantisch en zeggen iets over betekenis. Die twee blijven gescheiden, anders betekent
+  groen op de ene plek een dienst en op de andere "in orde".
+#}
+{#
+  Een dienstkaart met de uitleg die opengeklapt kan worden.
+
+  Het informatie-icoon is een LINK naar ?help=<naam>, geen tooltip en geen dialoog in de
+  browser. Elke dienst heeft een eigen help-template met een echt verhaal, en dat wil je
+  lezen: een tooltip verschijnt bij zweven en verdwijnt weer. Zo is de uitleg bovendien
+  een deelbare URL, werkt hij zonder JavaScript, en kun je hem printen.
+#}
+
+
+{#
+  Een rij filterknoppen, zoals bg ze boven het artefactregister zet.
+
+  WAAROM KNOPPEN MET EEN URL EN GEEN c-segmented-control
+
+  Die laatste ziet er precies zo uit en lijkt dus de juiste keuze, maar het is een
+  FORMULIERBESTURING: hij draagt een radio-input en kent geen href. Filteren zou dan
+  alleen in de browser werken, en dat botst met de regel die we bij de tabs hebben
+  gekozen: een selectie hoort een eigen URL te hebben, zodat je hem kunt delen, de
+  terugknop werkt en de pagina het zonder JavaScript doet.
+
+  Vandaar knoppen met een href. De actieve is primary, de rest secondary; dat is precies
+  het verschil dat bg ook toont.
+
+      {{ filter_row("/lotc/bg/services", "kind", huidige_keuze, [
+             ("", "Alle", 19), ("user", "Zelf te kiezen", 14), ("system", "Altijd aan", 5),
+         ]) }}
+#}
+{% macro filter_row(base_url, param, current, options) %}
+<c-cluster gap="sm">
+    {% for value, label, count in options %}
+        <c-button
+            type="{{ 'primary' if value == current else 'secondary' }}"
+            size="sm"
+            label="{{ label }}{{ ' (' ~ count ~ ')' if count is not none else '' }}"
+            href="{{ base_url }}{{ '?' ~ param ~ '=' ~ value if value else '' }}" />
+    {% endfor %}
+</c-cluster>
+{% endmacro %}

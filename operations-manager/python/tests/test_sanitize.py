@@ -139,6 +139,66 @@ class TestSanitizeUnhealthyPods:
     @patch("opi.api.resource_router.get_metrics_connector")
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
+    async def test_oom_alone_does_not_disable(
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls
+    ):
+        """Veldgeval mpfpsm-lcl pr-204: OOM belongs to the resource tuner. Disabling
+        for it removes the pods whose OOM metric is the tuner's only signal, so a
+        memory set too low would never be repaired."""
+        project_data = {
+            "name": "my-project",
+            "components": [{"name": "api"}],
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "local",
+                    "components": [{"reference": "api"}],
+                }
+            ],
+        }
+        mock_project = MagicMock()
+        mock_project.data = project_data
+        mock_project.filename = "my-project.yaml"
+        mock_service = MagicMock()
+        mock_service.get.return_value = mock_project
+        mock_get_service.return_value = mock_service
+
+        mock_pm = MagicMock()
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm.close = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        mock_kubectl = AsyncMock()
+        mock_kubectl.get_deployment_status.return_value = [{"ready": "1/1", "replicas": "1"}]
+        mock_kubectl.get_namespace_events.return_value = []
+        mock_kubectl_cls.return_value = mock_kubectl
+
+        # Prometheus: restarts below the threshold, but OOM kills present.
+        mock_connector = AsyncMock()
+        mock_connector.get_pod_restarts.return_value = [{"metric": {"pod": "production-api-abc123"}, "value": [0, "2"]}]
+        mock_connector.custom_query.return_value = [{"value": [0, "1"]}]
+        mock_get_connector.return_value = mock_connector
+
+        from opi.api.resource_router import sanitize_deployment
+
+        mock_request = MagicMock()
+        response = await sanitize_deployment.__wrapped__(mock_request, "my-project", deployment=None)
+
+        import json
+
+        result = json.loads(response.body)
+        assert len(result["disabled"]) == 0
+        assert "api" in result["healthy"]
+        mock_pm.save_and_commit_project.assert_not_called()
+
+    @patch("opi.api.resource_router.ProjectManager")
+    @patch("opi.api.resource_router.KubectlConnector")
+    @patch("opi.api.resource_router.get_project_store")
+    @patch("opi.api.resource_router.get_metrics_connector")
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
+    @pytest.mark.asyncio
     async def test_already_disabled_skipped(
         self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls
     ):

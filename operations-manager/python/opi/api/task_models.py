@@ -9,12 +9,32 @@ Provides:
 
 from typing import Any
 
+from opi.api.v2.models import (
+    APPROVALS_DESCRIPTION,
+    ApprovalNoticeResponse,
+    ErrorCategory,
+    PendingRolloutResponse,
+    error_category_for,
+)
 from opi.core.async_task_service import TaskType
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Shared sub-models
 # ---------------------------------------------------------------------------
+
+#: Every result model that reports ``error_type`` reports the category beside it, in the
+#: same words, so a client does not have to keep its own table of free-form strings that
+#: goes quiet the day a new one appears. Filled in by ``task_response_from_dict``.
+ERROR_CATEGORY_FIELD = Field(
+    default=None,
+    description=(
+        "What kind of failure this is, for a client that must decide whether to retry or "
+        "to blame the call. 'InvalidInput' means the request itself was wrong and retrying "
+        "changes nothing; 'Unknown' means we could not attribute it. Derived from "
+        "'error_type', which stays the specific reason."
+    ),
+)
 
 
 class SubtaskStatus(BaseModel):
@@ -25,6 +45,7 @@ class SubtaskStatus(BaseModel):
     status: str  # pending, running, completed, failed
     error: str | None = None
     parent_id: str | None = None
+    subject: str | None = None  # What the step runs for, e.g. the deployment name
 
 
 class DeploymentUrls(BaseModel):
@@ -86,6 +107,8 @@ class CreateProjectResult(BaseModel):
     elapsed_time: str = ""
     file_path: str = ""
     error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class UpsertDeploymentResult(BaseModel):
@@ -95,12 +118,14 @@ class UpsertDeploymentResult(BaseModel):
     message: str = ""
     deployment: DeploymentInfo | None = None
     urls: dict[str, DeploymentUrls] = Field(default_factory=dict)
+    approvals: list[ApprovalNoticeResponse] = Field(default_factory=list, description=APPROVALS_DESCRIPTION)
     processing: ProcessingStatus | None = None
     warnings: list[str] | None = None
     # Failure fields
     deployment_name: str | None = None
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class UpdateImageResult(BaseModel):
@@ -113,6 +138,28 @@ class UpdateImageResult(BaseModel):
     component: str = ""
     updates: dict[str, Any] = Field(default_factory=dict)
     actions_performed: list[str] = Field(default_factory=list)
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
+
+
+class DeleteComponentResult(BaseModel):
+    """Result of a delete_component task."""
+
+    status: str
+    message: str = ""
+    project: str = ""
+    component: str = ""
+    uncoupled_from: list[dict[str, Any]] = Field(default_factory=list)
+    """The places the component was removed from along with its definition.
+
+    Empty unless ``confirm_in_use=true`` was needed: a component nothing referenced is
+    simply gone, while a confirmed deletion also changed deployments and dependency
+    declarations, and the caller should learn which ones."""
+    processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class DeleteDeploymentResult(BaseModel):
@@ -122,8 +169,19 @@ class DeleteDeploymentResult(BaseModel):
     message: str = ""
     project: str = ""
     deployment: str = ""
+    deleted: bool = True
+    """Whether this call is what removed the deployment.
+
+    False together with ``already_absent`` means the deployment was not there to begin
+    with. Deleting is idempotent on purpose, but "it is gone" and "it was never here"
+    are different facts and a script has to be able to tell them apart (RC-66)."""
+    already_absent: bool = False
+    """The deployment was not in the project; nothing was removed by this call."""
     deletion_results: dict[str, Any] = Field(default_factory=dict)
     warning: str = ""
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class CloneDatabaseResult(BaseModel):
@@ -132,6 +190,9 @@ class CloneDatabaseResult(BaseModel):
     source: dict[str, Any] = Field(default_factory=dict)
     target: dict[str, Any] = Field(default_factory=dict)
     rows_copied: int | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class CloneBucketResult(BaseModel):
@@ -140,6 +201,9 @@ class CloneBucketResult(BaseModel):
     source: dict[str, Any] = Field(default_factory=dict)
     target: dict[str, Any] = Field(default_factory=dict)
     objects_copied: int | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class RefreshProjectResult(BaseModel):
@@ -150,6 +214,9 @@ class RefreshProjectResult(BaseModel):
     project: ProjectInfo | None = None
     urls: dict[str, DeploymentUrls] = Field(default_factory=dict)
     processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class RefreshDeploymentResult(BaseModel):
@@ -160,6 +227,9 @@ class RefreshDeploymentResult(BaseModel):
     project: ProjectInfo | None = None
     urls: dict[str, DeploymentUrls] = Field(default_factory=dict)
     processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class AddComponentResult(BaseModel):
@@ -176,6 +246,7 @@ class AddComponentResult(BaseModel):
     component_name: str | None = None
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class AddComponentToDeploymentResult(BaseModel):
@@ -193,6 +264,7 @@ class AddComponentToDeploymentResult(BaseModel):
     deployment_name: str | None = None
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class AddServiceResult(BaseModel):
@@ -200,15 +272,117 @@ class AddServiceResult(BaseModel):
 
     status: str
     message: str = ""
-    services_added: list[str] = Field(default_factory=list)
-    services_skipped: list[str] = Field(default_factory=list)
-    components_updated: list[str] = Field(default_factory=list)
+    services_added: list[str] = Field(
+        default_factory=list,
+        description="Services newly selected at project level. Empty when the service was already selected.",
+    )
+    services_skipped: list[str] = Field(
+        default_factory=list,
+        description="Services that were already selected at project level. The components in the request are bound to them anyway.",
+    )
+    components_updated: list[str] = Field(
+        default_factory=list,
+        description="Components whose services list actually changed. A component that already had the service is absent, so this is never an echo of the request.",
+    )
     processing: ProcessingStatus | None = None
     warnings: list[str] | None = None
     # Failure fields
     service: str | None = None
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
+
+
+class ConfigureServiceResult(BaseModel):
+    """Result of a configure_service task (unified service-config endpoint)."""
+
+    status: str
+    service: str | None = None
+    target: str | None = None
+    removed: bool | None = None
+    generated: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Waarden die het platform invulde omdat u ze leeg liet, per yaml-pad in het projectbestand. "
+            "Leeg wanneer u alles zelf meegaf, wat het normale geval is. Vandaag is er een: een "
+            "uitnodigingssleutel ('services/invite/config/active[0]/key'), de code in de "
+            "uitnodigingslink. Dit is de enige plek waar u een gegenereerde code te zien krijgt op het "
+            "moment dat hij ontstaat; daarna is hij op te vragen met een gewone lezing van de "
+            "invite-config."
+        ),
+        examples=[{"services/invite/config/active[0]/key": "Xk3pQ7rL2mNvB8dTfW1aYz"}],
+    )
+    approvals: list[ApprovalNoticeResponse] = Field(default_factory=list, description=APPROVALS_DESCRIPTION)
+    warnings: list[str] | None = Field(
+        default=None,
+        description=(
+            "Wat dit project nu verwacht maar niet heeft. Anders dan 'approvals' wacht dit op "
+            "niemand, en anders dan een fout is de configuratie geldig: een veld is door een "
+            "instelling elders nodig geworden en is leeg gebleven. Elke regel begint met het "
+            "yaml-pad van het veld, zodat duidelijk is om welke entry het gaat. Vandaag is er "
+            "een: staat 'restrict-access' van keycloak aan, dan laat het realm alleen rolhouders "
+            "binnen en geeft een uitnodiging zonder realm-rol dus geen toegang. Het hele project "
+            "wordt beoordeeld, niet alleen het blok dat u zojuist schreef."
+        ),
+        examples=[
+            [
+                "services/invite/config/active[0]/realm-roles: Keycloak beperkt de toegang tot "
+                "houders van een rol; een uitnodiging zonder realm-rol geeft dus geen toegang."
+            ]
+        ],
+    )
+    processing: ProcessingStatus | None = None
+    # Failure fields
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
+
+
+class ConfigureServiceValuesResult(BaseModel):
+    """Result of a configure_service_values task (RC-55).
+
+    ``changed`` is False when the values asked for were already stored: the request
+    succeeded, nothing was committed and nothing was rolled out. Reported rather than
+    hidden, because "no commit appeared" is otherwise indistinguishable from a
+    silently dropped write.
+    """
+
+    status: str
+    service: str | None = None
+    target: str | None = None
+    component: str | None = None
+    deployment: str | None = None
+    operation: str | None = None
+    changed: bool | None = None
+    processing: ProcessingStatus | None = None
+    # Failure fields
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
+
+
+class ManageDatabaseSchemasResult(BaseModel):
+    """Result of a manage_database_schemas task (RC-59).
+
+    ``changed`` is False when the request found nothing to write -- removing a schema
+    that was already marked. The remaining flags say which of the three outcomes
+    happened, because "removed" alone would not distinguish marking (the schema and its
+    data stay, and it can come back) from forgetting the entry.
+    """
+
+    status: str
+    postfix: str | None = None
+    operation: str | None = None
+    changed: bool | None = None
+    created: bool | None = None
+    restored: bool | None = None
+    marked: bool | None = None
+    forgotten: bool | None = None
+    processing: ProcessingStatus | None = None
+    # Failure fields
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +402,9 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
     TaskType.UPDATE_COMPONENT: AddComponentResult,
     TaskType.ADD_COMPONENT_TO_DEPLOYMENT: AddComponentToDeploymentResult,
     TaskType.ADD_SERVICE: AddServiceResult,
+    TaskType.CONFIGURE_SERVICE: ConfigureServiceResult,
+    TaskType.CONFIGURE_SERVICE_VALUES: ConfigureServiceValuesResult,
+    TaskType.MANAGE_DATABASE_SCHEMAS: ManageDatabaseSchemasResult,
 }
 
 
@@ -247,16 +424,54 @@ class TaskResponse[TResult: BaseModel](BaseModel):
     """
 
     task_id: str = Field(..., description="Unique task identifier (UUID)")
-    task_type: str = Field(..., description="Type of operation being performed")
-    status: str = Field(..., description="Task status: pending, claimed, running, completed, failed, cancelled")
+    task_type: TaskType = Field(..., description="Type of operation being performed")
+    status: str = Field(
+        ...,
+        description=(
+            "Task status: pending, claimed, running, completed, failed, cancelled. "
+            "A task whose work failed reports 'failed' here, also when it failed part-way; "
+            "'completed' means the whole task succeeded."
+        ),
+    )
     progress_percent: int = Field(default=0, description="Completion percentage (0-100)")
     current_step: str = Field(default="", description="Human-readable description of the current step")
     subtasks: list[SubtaskStatus] | None = Field(default=None, description="Progress subtasks")
-    result: TResult | None = Field(default=None, description="Task result, populated when status is 'completed'")
+    result: TResult | None = Field(
+        default=None,
+        description="Task result, populated when the task finished, on 'completed' and on 'failed'",
+    )
     error_message: str | None = Field(default=None, description="Error details when status is 'failed'")
+    pending_rollout: PendingRolloutResponse | None = Field(
+        default=None,
+        description=(
+            "Saved changes that are not on the cluster yet, counted at the moment this task "
+            "reached its end state. Only on a finished task, and it includes this task's own "
+            "change. Reading it here rather than in a call of your own is what makes the number "
+            "reproducible: two writes that finish at the same time each report the count as it "
+            "was when they finished, instead of whenever the client got around to asking."
+        ),
+    )
     created_at: str = Field(..., description="ISO 8601 timestamp when the task was created")
     started_at: str | None = Field(default=None, description="ISO 8601 timestamp when execution started")
     completed_at: str | None = Field(default=None, description="ISO 8601 timestamp when execution finished")
+
+
+def _with_error_category(result: object) -> object:
+    """Put ``error_category`` beside ``error_type`` on a failed task result.
+
+    Here and not at the two dozen places that build a failure dict: this is the single
+    point where a stored task record becomes an API answer (V1 and V2 both), so one
+    translation covers every task type, including the ones added tomorrow.
+
+    A handler that sets the category itself keeps it. Everything else gets the derived
+    one, ``Unknown`` included: for a client, a category that is absent and a category
+    that says Unknown mean the same thing, and saying it out loud is the difference
+    between "we looked and cannot attribute this" and "this endpoint does not report
+    categories".
+    """
+    if not isinstance(result, dict) or "error_type" not in result or result.get("error_category"):
+        return result
+    return {**result, "error_category": error_category_for(result.get("error_type")).value}
 
 
 def task_response_from_dict(task: dict) -> dict:
@@ -272,8 +487,12 @@ def task_response_from_dict(task: dict) -> dict:
         "progress_percent": task.get("progress_percent", 0),
         "current_step": task.get("current_step", ""),
         "subtasks": task.get("subtasks"),
-        "result": task.get("result"),
+        "result": _with_error_category(task.get("result")),
         "error_message": task.get("error_message"),
+        # Altijd aanwezig, ook als er niets te tellen valt: een sleutel die soms ontbreekt
+        # dwingt elke lezer tot een extra controle, en null zegt hetzelfde. Gevuld door de
+        # taakroute zodra de taak klaar is (zad-cli, punt 24).
+        "pending_rollout": task.get("pending_rollout"),
         "created_at": _safe_datetime_str(task.get("created_at")) or "",
         "started_at": _safe_datetime_str(task.get("started_at")),
         "completed_at": _safe_datetime_str(task.get("completed_at")),

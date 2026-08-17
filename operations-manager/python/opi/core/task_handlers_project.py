@@ -10,6 +10,8 @@ import logging
 import time
 from typing import Any
 
+from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,7 +30,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     """
     from opi.core.simple_background import _monitor_argocd_and_deployment
     from opi.manager.project_manager import ProjectManager
-    from opi.services.project_store import get_project_store
+    from opi.services.project_store import ConflictError, get_project_store
     from opi.utils.project_utils import generate_self_service_project_yaml, validate_project_name
 
     start_time = time.time()
@@ -46,13 +48,18 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     # Step 1: Validation
     # ------------------------------------------------------------------
     validate_task = progress.add_task("Project validatie")
-    progress.update_current_step("Validating project name")
+    progress.update_current_step("Projectnaam controleren")
 
     if not validate_project_name(project_name):
         error_msg = f"Invalid project name format: {project_name}"
         progress.fail_task(validate_task, error_msg)
         progress.fail_project(error_msg)
-        return {"project_name": project_name, "status": "failed", "error": error_msg}
+        return {
+            "project_name": project_name,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "invalid_project_name",
+        }
 
     progress.complete_task(validate_task)
 
@@ -90,13 +97,18 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             error_msg = f"Failed to generate YAML: {exc}"
             progress.fail_task(yaml_task, error_msg)
             progress.fail_project(error_msg)
-            return {"project_name": project_name, "status": "failed", "error": error_msg}
+            return {
+                "project_name": project_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "internal_error",
+            }
 
     # ------------------------------------------------------------------
     # Step 3: Git operations
     # ------------------------------------------------------------------
     git_task = progress.add_task("Git repository operaties")
-    progress.update_current_step("Pushing project file to Git")
+    progress.update_current_step("Projectbestand naar Git pushen")
 
     try:
         from opi.utils.yaml_util import load_yaml_from_string
@@ -128,14 +140,24 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             )
             progress.fail_task(git_task, error_msg)
             progress.fail_project(error_msg)
-            return {"project_name": project_name, "status": "failed", "error": error_msg}
+            return {
+                "project_name": project_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "already_exists",
+            }
 
         project_data_dict = load_yaml_from_string(yaml_content)
         if not project_data_dict:
             error_msg = f"Kon de projectconfiguratie voor '{project_name}' niet inlezen"
             progress.fail_task(git_task, error_msg)
             progress.fail_project(error_msg)
-            return {"project_name": project_name, "status": "failed", "error": error_msg}
+            return {
+                "project_name": project_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "validation_error",
+            }
 
         # Persist through the single validated save path: schema + structural
         # integrity validation, canonical dumper, commit + push, and cache
@@ -143,32 +165,94 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         # No connector injected on purpose. Injecting one makes ProjectManager skip
         # the store's warm copy (see get_git_connector_for_project_files), so the
         # processing step below would read a clone taken before this very write.
+        # What arrives here is a COMPLETE project file, built from what the user saw
+        # when the form was rendered. Publishing it as-is overwrites anything that
+        # landed in between -- another portal user, another cluster, a direct push --
+        # without anyone noticing. ``base_version`` names the version the form started
+        # from, so the store can treat this as a change relative to that version and
+        # merge it with the newer state instead. A caller that does not send one keeps
+        # the old last-writer-wins behaviour; it is logged so the gap stays visible.
+        base: dict[str, Any] | None = None
+        if not is_new_project:
+            base_version: str | None = payload.get("base_version")
+            if base_version:
+                base = await store.read_version(base_version)
+                if base is None:
+                    logger.warning(
+                        "Version %s of %s is no longer readable; saving without a concurrency check",
+                        base_version,
+                        project_file_path,
+                    )
+            else:
+                logger.warning(
+                    "No base_version in the create_project payload for %s; that caller is not wired up yet, "
+                    "so a concurrent change to this project would be overwritten",
+                    project_name,
+                )
+
         project_manager = ProjectManager(project_file_relative_path=project_file_path)
-        await project_manager.save_and_commit_project(project_data_dict, commit_message)
+        await project_manager.save_and_commit_project(project_data_dict, commit_message, base=base)
         logger.info("Project file created and pushed at %s", project_file_path)
         progress.complete_task(git_task)
+    except ConflictError as exc:
+        logger.warning("Concurrent change blocked the save of %s: %s", project_name, exc)
+        error_msg = (
+            "Dit project is ondertussen door iemand anders gewijzigd en de wijzigingen konden niet "
+            "automatisch worden samengevoegd. Herlaad de pagina en probeer het opnieuw."
+        )
+        progress.fail_task(git_task, error_msg)
+        progress.fail_project(error_msg)
+        return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "conflict"}
     except Exception as exc:
         error_msg = f"Failed Git operations: {exc}"
         progress.fail_task(git_task, error_msg)
         progress.fail_project(error_msg)
-        return {"project_name": project_name, "status": "failed", "error": error_msg}
+        return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "internal_error"}
 
     # ------------------------------------------------------------------
     # Step 4: Project deployment
     # ------------------------------------------------------------------
-    deploy_task = progress.add_task("Project deployment")
-    progress.update_current_step("Deploying project")
+    # The project file is written and committed at this point. A caller that asked
+    # not to roll out stops here: nothing is generated and nothing reaches the
+    # cluster until the project is processed. That is what a project without
+    # deployments needs -- process_project reports "no deployments for this
+    # cluster" as a failure, which would mark a perfectly created project failed.
+    if not rollout_requested(payload):
+        await project_manager.close()
+        note_rollout_skipped(progress)
+        progress.update_current_step(f"Project {project_name} aangemaakt")
+        progress.complete_project()
+        elapsed_time = time.time() - start_time
+        return {
+            "project_name": project_name,
+            "project_description": payload.get("project_description", "No description"),
+            "components_count": len(payload.get("components", [])),
+            "elapsed_time": f"{elapsed_time:.2f}",
+            "file_path": project_file_path,
+            "status": "success",
+            "processing": skipped_processing(),
+        }
 
-    # Known ArgoCD cache-invalidation bug: creating a new project invalidates
-    # ArgoCD's cache, so its apps can take a few minutes to sync and the sync-wait
-    # may run into its timeout. Warn the user up front that a timeout here does NOT
-    # mean creation failed.
+    deploy_task = progress.add_task("Project uitrollen")
+    progress.update_current_step("Project uitrollen")
+
+    # Hier stond dat het aanmaken "door een bekende bug in ArgoCD een paar minuten kan
+    # duren, excuus daarvoor". Die zin zette de verwachting meteen op minuten, en dat is
+    # op de sandbox niet meer waar: op 14 augustus 2026 duurde het aanmaken van een heel
+    # project 42,9 seconden, waarvan 6 seconden wachten tot ArgoCD de applicatie had
+    # aangemaakt.
+    #
+    # Wat er WEL blijft staan is de enige zin die er echt toe deed: een time-out betekent
+    # niet dat het is mislukt. Dat is nog steeds waar, en het is uitgerekend het bericht
+    # dat je nodig hebt als het lang duurt. De meting hierboven komt van de SANDBOX; op
+    # productie is niet nagemeten of de Argo-fix hetzelfde oplevert, en daarom verdwijnt
+    # de geruststelling niet mee met het excuus.
     if payload.get("is_new_project", False):
         notice = progress.add_subtask(
             deploy_task,
-            "Let op: door een bekende bug in ArgoCD kan het aanmaken van een nieuw project een paar minuten duren, "
-            "excuus daarvoor. Een eventuele time-out-melding betekent niet dat het aanmaken is mislukt, alleen dat de "
-            "wachttijd is verstreken; het project wordt vrijwel zeker gewoon aangemaakt.",
+            "Duurt het wachten op ArgoCD lang, dan betekent een time-out-melding niet dat het "
+            "aanmaken is mislukt: alleen dat de wachttijd is verstreken. Het project wordt dan "
+            "vrijwel zeker gewoon aangemaakt.",
         )
         progress.complete_task(notice)
 
@@ -183,7 +267,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
         if processing_result:
             # ArgoCD monitoring
-            monitor_task = progress.add_subtask(deploy_task, "ArgoCD & deployment monitoring")
+            monitor_task = progress.add_subtask(deploy_task, "ArgoCD en de uitrol volgen")
             await _monitor_argocd_and_deployment(
                 _task_id="",  # not used by the monitor helper
                 project_name=project_name,
@@ -233,6 +317,12 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 "project_name": project_name,
                 "status": "failed",
                 "error": error_msg,
+                # Het uitrollen zelf mislukte. Bewust geen invoerfout en bewust niet
+                # "van ons": een component dat niet gezond wordt kan aan het image van
+                # de gebruiker liggen en aan het cluster, en welke van de twee staat in
+                # component_failures. Dit type valt daarom bij de client op "niet toe te
+                # schrijven", wat hier de eerlijke uitkomst is.
+                "error_type": "processing_failed",
                 "processing": {
                     "status": "failed",
                     "error": error_msg,
@@ -244,7 +334,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         error_msg = f"Failed deployment: {exc}"
         progress.fail_task(deploy_task, error_msg)
         progress.fail_project(error_msg)
-        return {"project_name": project_name, "status": "failed", "error": error_msg}
+        return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "internal_error"}
 
 
 async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
@@ -272,7 +362,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         # Step 1: Validation
         # ------------------------------------------------------------------
         validate_task = progress.add_task("Deployment validatie")
-        progress.update_current_step("Validating project and deployment names")
+        progress.update_current_step("Project- en deploymentnaam controleren")
 
         if not validate_project_name(project_name):
             error_msg = (
@@ -285,6 +375,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "deployment_name": deployment_name,
                 "status": "failed",
                 "error": error_msg,
+                "error_type": "validation_error",
             }
 
         sanitized_name = sanitize_kubernetes_name(deployment_name)
@@ -299,6 +390,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "deployment_name": deployment_name,
                 "status": "failed",
                 "error": error_msg,
+                "error_type": "validation_error",
             }
 
         progress.complete_task(validate_task)
@@ -306,8 +398,8 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 2: Upsert deployment in project YAML
         # ------------------------------------------------------------------
-        upsert_task = progress.add_task("Deployment upsert")
-        progress.update_current_step(f"Upserting deployment '{deployment_name}'")
+        upsert_task = progress.add_task("Deployment aanmaken of bijwerken")
+        progress.update_current_step(f"Deployment '{deployment_name}' aanmaken of bijwerken")
 
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(
@@ -345,58 +437,77 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 3: Process deployment
         # ------------------------------------------------------------------
-        deploy_task = progress.add_task("Deployment processing")
-        progress.update_current_step(f"Processing deployment '{deployment_name}'")
-
         # ArgoCD Application/AppProject resources only change when a new
         # deployment is created.  Image updates don't touch ArgoCD resources.
         is_new_deployment = result.get("created", False)
-
-        processing_result = await project_manager.process_project_from_git(
-            project_file_relative_path,
-            task_progress_manager=progress,
-            deployment_name=deployment_name,
-            force_clone=force_clone,
-            argocd_resources_changed=is_new_deployment,
-        )
-
         action = "created" if is_new_deployment else "updated"
 
-        # Collect URLs from deployment results
         urls: dict[str, dict[str, Any]] = {}
-        deployment_results = project_manager.get_deployment_results(deployment_name)
-        for dep_name, dep_result in deployment_results.items():
-            urls[dep_name] = {
-                "cluster": dep_result.cluster,
-                "urls": dep_result.urls,
-            }
-            # Report web addresses for each component URL
-            for url_name, url_value in (dep_result.urls or {}).items():
-                progress.update_component_web_address(url_name, url_value)
 
-        if processing_result:
-            progress.complete_task(deploy_task)
-
-            # Schedule fire-and-forget OOM watcher
-            from opi.core.config import settings
-            from opi.services.oom_watcher import schedule_oom_check
-
-            if settings.OOM_WATCHER_ENABLED:
-                oom_attempt = payload.get("oom_watch_attempt", 1)
-                schedule_oom_check(
-                    project_name,
-                    deployment_name,
-                    attempt=oom_attempt,
-                )
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            succeeded = True
+            processing: dict[str, Any] = skipped_processing()
         else:
-            processing_error = project_manager.get_processing_error() or "Deployment processing failed"
-            progress.fail_task(deploy_task, processing_error)
-            progress.fail_project(processing_error)
+            deploy_task = progress.add_task("Deployment verwerken")
+            progress.update_current_step(f"Deployment '{deployment_name}' verwerken")
+
+            processing_result = await project_manager.process_project_from_git(
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_name=deployment_name,
+                force_clone=force_clone,
+                argocd_resources_changed=is_new_deployment,
+            )
+
+            # Collect URLs from deployment results
+            deployment_results = project_manager.get_deployment_results(deployment_name)
+            for dep_name, dep_result in deployment_results.items():
+                urls[dep_name] = {
+                    "cluster": dep_result.cluster,
+                    "urls": dep_result.urls,
+                }
+                # Report web addresses for each component URL
+                for url_name, url_value in (dep_result.urls or {}).items():
+                    progress.update_component_web_address(url_name, url_value)
+
+            if processing_result:
+                progress.complete_task(deploy_task)
+
+                # Schedule fire-and-forget OOM watcher
+                from opi.core.config import settings
+                from opi.services.oom_watcher import schedule_oom_check
+
+                if settings.OOM_WATCHER_ENABLED:
+                    oom_attempt = payload.get("oom_watch_attempt", 1)
+                    schedule_oom_check(
+                        project_name,
+                        deployment_name,
+                        attempt=oom_attempt,
+                    )
+            else:
+                processing_error = project_manager.get_processing_error() or "Deployment processing failed"
+                progress.fail_task(deploy_task, processing_error)
+                progress.fail_project(processing_error)
+
+            succeeded = bool(processing_result)
+            processing = {
+                "status": "completed" if succeeded else "failed",
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **(
+                    {"component_failures": component_failures}
+                    if (component_failures := project_manager.get_component_failures())
+                    else {}
+                ),
+            }
 
         # ------------------------------------------------------------------
         # Build response
         # ------------------------------------------------------------------
-        succeeded = bool(processing_result)
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
             "message": (
@@ -418,19 +529,11 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "created": result.get("created", False),
             },
             "urls": urls,
-            "processing": {
-                "status": "completed" if succeeded else "failed",
-                **(
-                    {"error": project_manager.get_processing_error()}
-                    if not succeeded and project_manager.get_processing_error()
-                    else {}
-                ),
-                **(
-                    {"component_failures": component_failures}
-                    if (component_failures := project_manager.get_component_failures())
-                    else {}
-                ),
-            },
+            # Een deployment met een niet-goedgekeurd domein draait wel, maar op het
+            # standaard clusteradres. Dat staat dus ook in "urls" -- en zonder dit veld
+            # is er niets dat zegt waarom daar een ander adres staat dan gevraagd.
+            "approvals": result.get("approvals", []),
+            "processing": processing,
         }
         if result.get("warnings"):
             response["warnings"] = result["warnings"]
@@ -444,7 +547,67 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             "deployment_name": deployment_name,
             "status": "failed",
             "error": error_msg,
+            "error_type": "internal_error",
         }
     finally:
         if project_manager:
             await project_manager.close()
+
+
+async def handle_delete_project(payload: dict, progress: Any) -> dict:
+    """Handle async project deletion task.
+
+    Extracted from the web delete endpoint, which ran the whole teardown -- deployments,
+    ArgoCD, namespace, databases, buckets, the project file -- inside the request while
+    the browser sat on an open POST. As a task the dialog can follow it, and the answer
+    comes back through the same progress fragment as every other action.
+
+    Expected payload keys:
+        project_name: Name of the project to delete
+    """
+    from opi.manager.project_manager import create_project_manager
+
+    project_name: str = payload["project_name"]
+
+    logger.info(f"Task: deleting project {project_name}")
+
+    delete_task = progress.add_task(f"Project '{project_name}' verwijderen")
+    project_manager = create_project_manager()
+    try:
+        deletion_results = await project_manager.delete_project(project_name)
+    except Exception as exc:
+        error_msg = f"Failed to delete project: {exc}"
+        progress.fail_task(delete_task, error_msg)
+        progress.fail_project(error_msg)
+        raise
+    finally:
+        await project_manager.close()
+
+    if not deletion_results.get("success"):
+        # Deployments on another cluster are the one refusal that is not an error: this
+        # instance only manages its own cluster, so it cannot finish the job here.
+        remaining = deletion_results.get("remaining_deployments") or []
+        if remaining:
+            clusters = sorted({str(dep.get("cluster")) for dep in remaining if isinstance(dep, dict)})
+            error_msg = (
+                f"Project '{project_name}' kan niet verwijderd worden: er zijn nog deployments "
+                f"op andere clusters ({', '.join(clusters)})"
+            )
+        else:
+            errors = deletion_results.get("errors", []) or []
+            error_msg = f"Project '{project_name}' niet volledig verwijderd: " + (
+                "; ".join(str(e) for e in errors) or "onbekende fout"
+            )
+        progress.fail_task(delete_task, error_msg)
+        progress.fail_project(error_msg)
+        raise RuntimeError(error_msg)
+
+    progress.complete_task(delete_task)
+    logger.info(f"Task: project deletion completed successfully for {project_name}")
+    return {
+        "status": "completed",
+        "message": f"Project '{project_name}' deleted successfully",
+        "project": project_name,
+        "deletion_results": deletion_results,
+        "warning": "This deletion is permanent and cannot be undone",
+    }

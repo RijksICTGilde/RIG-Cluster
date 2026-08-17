@@ -68,7 +68,7 @@ Button click → openEditModal()
     → _build_backup_restore_context_async() (populates deployment/backup data)
     → Render wizard step with TemplatePartial (data available via yaml_data)
   → POST /step/{section_id} (raw form data stored directly, no editable validation)
-  → Review page (summary_fn generates confirmation text)
+  → Review page (summary_fn returns (label, value) pairs; the builder escapes them)
   → POST /confirm
     → _handle_backup_restore_submit()
       → create_task() → BackgroundTask(run_backup/restore_task)

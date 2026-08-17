@@ -1,0 +1,20 @@
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="lg" size="lg">
+    <c-heading type="h1" label="Dynamic Form Demo"/>
+
+    <c-span>
+        Dit is een demonstratie van het dynamische formulier systeem.
+        Het formulier wordt gegenereerd vanuit een Pydantic model met FormMeta annotaties.
+    </c-span>
+
+    {% include "project-form-demo/_formulier.html.j2" %}
+
+    {% include "project-form-demo/_velden.html.j2" %}
+
+    {% include "project-form-demo/_projectdata.html.j2" %}
+</c-layout-flow>
+{% endblock %}

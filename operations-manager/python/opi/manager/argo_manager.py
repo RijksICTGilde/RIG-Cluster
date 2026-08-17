@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.task_supersede import raise_if_superseded
+from opi.services.event_interpreter import condense_render_error
 from opi.utils.age import decrypt_password_smart
 from opi.utils.naming import (
     generate_argocd_application_name,
@@ -25,6 +26,41 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
+
+# ArgoCD condition types that mean the application can never reach a healthy synced state
+# on its own - the desired manifests could not be generated or compared (this is where a
+# broken kustomization / CMP render surfaces), or the spec/sync is invalid. When ArgoCD
+# hits one of these it sets sync.status=Unknown and does NOT start a sync operation, so
+# there is no operationState.phase to key off; the message lives only in status.conditions.
+_TERMINAL_CONDITION_TYPES = frozenset({"ComparisonError", "InvalidSpecError", "SyncError", "UnknownError"})
+
+
+def terminal_condition_message(status_data: dict[str, Any]) -> str | None:
+    """Return the message of the first terminal ArgoCD condition, or ``None``.
+
+    Reads ``status.conditions[]`` and looks for a type in :data:`_TERMINAL_CONDITION_TYPES`
+    (ComparisonError etc.). The message carries the underlying cause - for a broken
+    kustomization it includes the plugin stderr, e.g. "Failed to load target state: failed
+    to generate manifests in '<path>': ... exit status 1: <kustomize error>".
+    """
+    conditions = status_data.get("status", {}).get("conditions", []) or []
+    for condition in conditions:
+        if condition.get("type") in _TERMINAL_CONDITION_TYPES:
+            message = condition.get("message") or condition.get("type", "")
+            return f"{condition.get('type')}: {message}"
+    return None
+
+
+#: Hoe vaak de wachtlussen ArgoCD bevragen. Stond op 5 (en op 10 bij de infrastructuur)
+#: uit de tijd dat een nieuw project door een ArgoCD-bug minuten kon duren; dan valt een
+#: interval van 5 seconden weg in het geheel. Gemeten op 14 augustus 2026 duurt het
+#: aanmaken van een heel project 42,9 seconden, waarvan 6 seconden wachten tot de
+#: applicatie bestaat -- en dan is tot 5 seconden niets doen bijna de helft van die fase.
+#:
+#: Twee seconden, want dit gaat over hoe snel de gebruiker het ZIET: de stap is al klaar,
+#: alleen wij weten het nog niet. Lager heeft geen zin, want de voortgang in de browser
+#: ververst zelf ook niet sneller, en het kost ArgoCD wel verzoeken.
+POLL_INTERVAL_SECONDEN = 2
 
 
 class ArgoManager:
@@ -759,7 +795,9 @@ class ArgoManager:
             logger.exception(f"Error creating infrastructure ArgoCD application: {e}")
             return False
 
-    async def wait_for_application_created(self, app_name: str, timeout: int = 120, poll_interval: int = 5) -> bool:
+    async def wait_for_application_created(
+        self, app_name: str, timeout: int = 120, poll_interval: int = POLL_INTERVAL_SECONDEN
+    ) -> bool:
         """
         Wait for an ArgoCD application to be created and appear in the API.
 
@@ -769,7 +807,7 @@ class ArgoManager:
         Args:
             app_name: Name of the application to wait for
             timeout: Maximum time to wait in seconds (default: 120 = 2 minutes)
-            poll_interval: Seconds between checks (default: 5)
+            poll_interval: Seconds between checks (default: POLL_INTERVAL_SECONDEN)
 
         Returns:
             True if application was created, False otherwise
@@ -832,7 +870,7 @@ class ArgoManager:
         project_name: str,
         cluster_name: str,
         timeout: int = 300,
-        poll_interval: int = 10,
+        poll_interval: int = POLL_INTERVAL_SECONDEN,
         refreshed_after: str | None = None,
     ) -> bool:
         """
@@ -845,7 +883,7 @@ class ArgoManager:
             project_name: Name of the project
             cluster_name: Target cluster name
             timeout: Maximum time to wait in seconds (default: 300 = 5 minutes)
-            poll_interval: Seconds between status checks (default: 10)
+            poll_interval: Seconds between status checks (default: POLL_INTERVAL_SECONDEN)
             refreshed_after: ISO-8601 ``reconciledAt`` timestamp returned by
                 ``refresh_application``.  When set, terminal states are ignored
                 until ``reconciledAt`` moves past this value.
@@ -916,6 +954,20 @@ class ArgoManager:
                         )
 
                 if status_is_fresh:
+                    # A terminal ArgoCD condition (ComparisonError etc.) means the manifests
+                    # could not be generated or compared - independent of health, which may
+                    # still read Healthy from the last good reconciliation. Surface it now
+                    # instead of waiting for the timeout.
+                    condition_error = terminal_condition_message(status_data)
+                    if condition_error:
+                        logger.error(
+                            "Infrastructure application '%s' terminal condition: %s", app_name, condition_error
+                        )
+                        raise RuntimeError(
+                            f"Infrastructure application '{app_name}' cannot be rendered/compared: "
+                            f"{condense_render_error(condition_error)}"
+                        )
+
                     # Check for sync operation failures (unrecoverable errors)
                     operation_state = status_data.get("status", {}).get("operationState", {})
                     operation_phase = operation_state.get("phase")
@@ -989,7 +1041,7 @@ class ArgoManager:
         self,
         app_name: str,
         timeout: int = 300,
-        poll_interval: int = 5,
+        poll_interval: int = POLL_INTERVAL_SECONDEN,
         refreshed_after: str | None = None,
         on_progressing: Callable[[int], Awaitable[None]] | None = None,
     ) -> bool:
@@ -1069,6 +1121,22 @@ class ArgoManager:
                         )
 
                 if status_is_fresh:
+                    # Check for a terminal ArgoCD condition (ComparisonError etc.). This is
+                    # where a broken kustomization / CMP render shows up: sync goes to
+                    # Unknown with no sync operation, so without this the poll loop would run
+                    # to the full timeout and report a generic time-out for a deployment that
+                    # was never rendered. Raising here surfaces the real message instead.
+                    condition_error = terminal_condition_message(status_data)
+                    if condition_error:
+                        # Log the full condition (helpful for debugging), but raise the
+                        # condensed tail: ArgoCD's message can be kBs of echoed script source
+                        # with the real error at the very end.
+                        logger.error("Application '%s' terminal condition: %s", app_name, condition_error)
+                        raise RuntimeError(
+                            f"Application '{app_name}' cannot be rendered/compared: "
+                            f"{condense_render_error(condition_error)}"
+                        )
+
                     # Check for terminal sync failures
                     operation_state = status_data.get("status", {}).get("operationState", {})
                     operation_phase = operation_state.get("phase")

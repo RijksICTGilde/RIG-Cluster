@@ -1,0 +1,17 @@
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}Gebruikersbeheer - Self Service Portal{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+
+    {% include "admin/users/_kop.html.j2" %}
+
+    {% include "admin/users/_actiebalk.html.j2" %}
+
+    {% include "admin/users/_tabel.html.j2" %}
+
+    {% include "admin/users/_meldingen.html.j2" %}
+
+</c-layout-flow>
+{% endblock %}

@@ -21,6 +21,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The roles that may change a project, and therefore the roles that may hold its
+# API key: that key opens every mutating per-project API route and carries no role
+# of its own, so handing it out wider than this gate widens the gate.
+PROJECT_EDIT_ROLES: tuple[str, ...] = ("admin", "owner")
+
 
 def get_project_users(project_name: str) -> list[ProjectUser] | None:
     """Return the members of a project, or None when the project is unknown."""

@@ -1,0 +1,107 @@
+{#
+  Modal Wizard Review Fragment - confirmation screen before final submit.
+
+  Required context:
+    - steps: WizardSteps object
+    - flow_id: FormFlow ID
+    - project_name: str
+    - section_summaries: list of dicts with section_id, title, icon, fields
+    - action_label: str (button text)
+    - warnings: list of warning strings (optional)
+
+  Each field in section.fields is a dict:
+    - {label, value, is_list: false}  — key-value pair
+    - {label, value, is_list: true}   — value is a list, render as <c-list>
+    - {html}                          — pre-rendered HTML (sequences, custom)
+#}
+
+{# Step indicator (only for multi-step flows) #}
+{% if steps.count > 1 %}
+<div class="edit-step-indicator" id="modal-wizard-steps">
+    {% include "wizard/wizard_steps_indicator.html.j2" %}
+</div>
+{% endif %}
+
+<div class="wizard-review" id="modal-wizard-step-inner">
+    <c-layout-flow gap="lg">
+        <div class="wizard-step__header">
+            <c-cluster gap="sm" align="center">
+                <c-icon icon="check-mark-circle" size="md"/>
+                <c-heading type="h2" label="Controleer je wijzigingen"/>
+            </c-cluster>
+            <p class="wizard-step__description">
+                Controleer de wijzigingen hieronder voordat je verdergaat.
+            </p>
+        </div>
+
+        {% if warnings %}
+        <c-layout-flow gap="sm">
+            {% for warning in warnings %}
+            <c-alert heading="Let op">
+                {{ warning }}
+            </c-alert>
+            {% endfor %}
+        </c-layout-flow>
+        {% endif %}
+
+        {% if global_errors %}
+        <c-alert heading="Fouten">
+            <ul>
+                {% for err in global_errors %}
+                <li>{{ err }}</li>
+                {% endfor %}
+            </ul>
+        </c-alert>
+        {% endif %}
+
+        {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
+        {% for section in section_summaries %}
+        <c-card outline="true" padding="md">
+            <div class="wizard-review__section">
+                <div class="wizard-review__section-header">
+                    <c-cluster gap="sm" align="center">
+                        {% if section.icon %}<c-icon icon="{{ section.icon | nldd_icon }}" size="lg"/>{% endif %}
+                        <c-heading type="h3" label="{{ section.title }}"/>
+                    </c-cluster>
+                    <c-button size="sm" label="Bewerken" show-icon="before" icon="pencil-on-square"/>
+                </div>
+                <div class="wizard-review__section-content">
+                    {% for field in section.fields %}
+                        {% if field.html is defined %}
+                            {{ field.html | safe }}
+                        {% elif field.is_list %}
+                            <dl>
+                                <dt>{{ field.label }}</dt>
+                                <dd>
+                                    <c-list>
+                                        {% for item in field.value %}
+                                        <c-list-item>{{ item }}</c-list-item>
+                                        {% endfor %}
+                                    </c-list>
+                                </dd>
+                            </dl>
+                        {% else %}
+                            <dl><dt>{{ field.label }}</dt><dd>{{ field.value }}</dd></dl>
+                        {% endif %}
+                    {% else %}
+                        <p><em>Geen gegevens ingevuld</em></p>
+                    {% endfor %}
+                </div>
+            </div>
+        </c-card>
+        {% endfor %}
+    </c-layout-flow>
+
+    <div class="wizard-step__actions rvo-layout-margin-vertical--xl">
+        {% set lotc_onclick_1 %}closeEditModal(){% endset %}<c-button label="Annuleren"/>
+
+        <c-cluster gap="xs" align="center">
+            <c-button label="Vorige" show-icon="before" icon="caret-left"/>
+            {% if wizard_token %}<input type="hidden" id="modal-wizard-confirm-token" name="_wizard_token" value="{{ wizard_token }}" />{% endif %}
+            <span id="modal-wizard-confirm-saving" aria-hidden="true">
+                <c-icon icon="refresh" size="sm"/>Bezig…
+            </span>
+            <c-button label="{{ action_label }}" show-icon="before" icon="file-text"/>
+        </c-cluster>
+    </div>
+</div>

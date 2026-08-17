@@ -1,0 +1,67 @@
+/* Vormgeving die op elke pagina geldt. Stond als drie <style>-blokken in
+   opi/templates/base.html.j2, plus de klassen die de paginakoppen en lege tabellen
+   deelden en die daarvoor per pagina inline stonden.
+
+   RC-74 is dit bestand blok voor blok langsgelopen met een vraag: bestaat hier een
+   component voor in het thema? Wat wegkon staat hieronder niet meer; wat bleef staat er
+   met de reden erbij, zodat de volgende niet opnieuw hoeft te zoeken.
+
+   Drie blokken zijn weggehaald omdat ze op ROOS-markup sloegen, en ROOS is er niet meer:
+   ``lotc_rvo`` staat niet in DESIGN_SYSTEMS (opi/core/templates_lotc.py), dus geen enkel
+   component rendert nog een rvo- of utrecht-klasse. Het ging om:
+
+   - ``.rvo-footer__column-title`` - de voettekst is nu <nldd-page-footer>.
+   - ``h1..h6 .utrecht-icon`` - iconen zijn <nldd-icon> en lijnen zelf uit.
+   - ``.rvo-alert__container`` - stond hier met een "TODO: DELETE ME" omdat de ROOS
+     c-alert zijn eigen flexregel miste. Onder NLDD rendert <c-alert> als <nldd-banner>
+     en brengt die uitlijning zelf mee. De regel raakte niets meer, en dat was te zien:
+     de stappenuitleg op de wizardstart zette haar icoon op een eigen regel boven de
+     tekst omdat er in de markup een losse <c-icon> naast een <div> stond in plaats van
+     een <c-alert>. Dat is nu een <c-alert type="info">. */
+
+
+/* Verborgen tot JavaScript de klasse weghaalt. Staat hier en niet als
+   style="display: none" in de markup, zodat een template geen vormgeving draagt.
+
+   GEEN component. Dit is geen opmaak maar een schakelaar waar JavaScript aan hangt:
+   log_viewer.js, metrics_charts.js, edit_modal.js en de tools-pagina zetten en
+   halen deze klasse. Een component eromheen zou die schakelaar juist verstoppen.
+
+   Waarom !important: dit bestand staat in de <head> en de stylesheet van de pagina
+   wordt in de body gelinkt, dus later in de cascade. Een pagina die zijn eigen
+   display zet op hetzelfde element (.metrics-controls__filter{display:flex}) wint dan
+   bij gelijke specificiteit, en de klasse verbergt niets meer. Als style="display:none"
+   was dat niet zo; !important zet die verhouding terug. Deze klasse doet een ding en
+   moet dat winnen. */
+.is-hidden {
+    display: none !important;
+}
+
+/* De kop boven een sectie staat strak op de inhoud eronder.
+
+   GEEN component. Dit haalt de ondermarge van een <c-heading> weg, en een marge
+   wegnemen is nu juist wat een component niet aanbiedt - <c-heading> heeft geen
+   eigenschap voor "geen witruimte eronder". De sectiekoppen van de projectdetailpagina
+   leunen erop. Zou het thema ooit een kop-met-inhoud-blok krijgen, dan kan dit weg. */
+.section-heading {
+    margin-bottom: 0;
+}
+
+/* De cel die de plaats van een lege tabel inneemt, en de grijze tekst erin.
+
+   GEEN component. Het thema kent geen lege-toestand-component, en dit hangt bovendien
+   aan een <td colspan=...>: de cel MOET een tabelcel blijven, dus er kan geen wikkel
+   omheen. De kleur is met opzet nog een var(): valt hij weg, dan is de tekst gewoon de
+   normale tekstkleur en blijft de pagina leesbaar. */
+.table-empty-cell {
+    text-align: center;
+    padding: var(--rvo-space-xl);
+}
+
+.empty-state-text {
+    color: var(--rvo-color-grijs-600);
+}
+
+.text-center {
+    text-align: center;
+}

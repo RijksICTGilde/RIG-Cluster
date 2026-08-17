@@ -16,8 +16,11 @@ from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.postgres_scope import database_generation_service_type
+from opi.services.project import Project
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.schema_migration import migrate_to_latest
+from opi.services.services import service_entry_name
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
 from opi.utils.yaml_util import load_yaml_from_string, save_yaml_to_path
@@ -48,6 +51,48 @@ def is_image_pull_disable_reason(reason: str) -> bool:
     so match on the leading token.
     """
     return any(reason.startswith(r) for r in IMAGE_PULL_REASONS)
+
+
+def is_oom_disable_reason(reason: str) -> bool:
+    """Whether a ``disabled-reason`` string names an out-of-memory kill.
+
+    A substring match rather than a prefix match: sanitize joins its reasons with
+    "; ", so the OOM part can sit anywhere in the string. Read by the resource
+    tuner, which clears such a disable once it has repaired the memory that caused
+    the kills.
+    """
+    return "OOMKilled" in reason
+
+
+# Phrases in a pull error that mean "the registry could not answer", as opposed to
+# "the registry answered, and the image is not there". A 5xx or a rate limit says
+# nothing about whether the tag exists, so the component must NOT be auto-disabled
+# for one: disabling scales it to 0, which removes the pod that would have retried,
+# turning a registry hiccup into a permanent outage. Kubelet retries the pull with
+# backoff on its own and recovers once the registry does.
+#
+# Matched as literal phrases, never as a bare number: an image tag like
+# ``pr-500-abc1234`` is part of the same message and must not read as a 500.
+_REGISTRY_UNAVAILABLE_MARKERS = (
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "too many requests",
+    "http status: 500",
+    "http status: 502",
+    "http status: 503",
+    "http status: 504",
+    "http status: 429",
+)
+
+
+def is_transient_registry_error(message: str | None) -> bool:
+    """True when a pull error means the registry failed, not that the image is missing."""
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(marker in lowered for marker in _REGISTRY_UNAVAILABLE_MARKERS)
 
 
 # Default resource values for deployment containers
@@ -202,6 +247,48 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
         res["limits"]["memory"] = resources["limits_memory"]
     if "limits_cpu" in resources:
         res["limits"]["cpu"] = resources["limits_cpu"]
+
+
+def _prune_resource_history(history: list[dict[str, Any]], max_entries: int) -> list[dict[str, Any]]:
+    """Prune a newest-first history to ``max_entries``, always keeping the newest
+    ``oom-watcher`` entry.
+
+    The most recent oom-watcher entry is the OOM floor
+    (``get_resource_history_floor``); a burst of auto-tune entries must not push it
+    out of the cap and silently drop the floor. When it falls outside the cap it
+    replaces the oldest kept entry, so the total still respects ``max_entries``.
+    """
+    if len(history) <= max_entries:
+        return history
+    kept = history[:max_entries]
+    if any(entry.get("source") == "oom-watcher" for entry in kept):
+        return kept
+    for entry in history:  # newest-first: first match is the newest oom-watcher
+        if entry.get("source") == "oom-watcher":
+            return [*kept[:-1], entry]
+    return kept
+
+
+def _compact_resource_history_list(history: list[dict[str, Any]], max_entries: int) -> list[dict[str, Any]]:
+    """Collapse consecutive identical auto-tune entries, then prune.
+
+    A run of adjacent ``auto-tune`` entries with the same ``limits`` and ``requests``
+    is folded to its newest member (the older duplicates carry no information). The
+    newest oom-watcher entry is always preserved (``_prune_resource_history``). An
+    oom-watcher entry between two auto-tune entries breaks the run.
+    """
+    compacted: list[dict[str, Any]] = []
+    for entry in history:  # newest-first
+        if (
+            entry.get("source") == "auto-tune"
+            and compacted
+            and compacted[-1].get("source") == "auto-tune"
+            and compacted[-1].get("limits") == entry.get("limits")
+            and compacted[-1].get("requests") == entry.get("requests")
+        ):
+            continue  # identical older duplicate; the newer one is already kept
+        compacted.append(entry)
+    return _prune_resource_history(compacted, max_entries)
 
 
 def _migrate_flat_key_before_apply(res: dict[str, Any], key: str) -> None:
@@ -636,29 +723,6 @@ class ProjectFileHandler:
                 return [p for p in inbound if isinstance(p, int)]
         return []
 
-    def extract_component_probe(self, project_data: dict[str, Any], component_name: str) -> dict[str, str]:
-        """
-        Extract the health-probe configuration for a component by name.
-
-        Returns a dict with resolved defaults:
-            scheme: "tcp" (default) | "http" | "https"
-            readiness_path: HTTP path for the readiness probe (default "/")
-            liveness_path: HTTP path for the liveness/startup probes (default "/")
-
-        When no probe block is present, or scheme is "tcp", the paths are still
-        returned but are ignored by the template (which renders a tcpSocket probe).
-        """
-        base = f"$.components[?(@.name='{component_name}')].probe"
-        scheme = self.extract_value_by_path(project_data, f"{base}.scheme", "tcp")
-        readiness_path = self.extract_value_by_path(project_data, f"{base}.readiness-path", "/")
-        liveness_path = self.extract_value_by_path(project_data, f"{base}.liveness-path", "/")
-
-        return {
-            "scheme": scheme,
-            "readiness_path": readiness_path,
-            "liveness_path": liveness_path,
-        }
-
     def component_has_ports(self, project_data: dict[str, Any], component_name: str) -> bool:
         """
         Check if a component has at least one inbound port configured.
@@ -818,11 +882,13 @@ class ProjectFileHandler:
         return storage_configs
 
     def _find_component(self, project_data: dict[str, Any], component_name: str) -> dict[str, Any] | None:
-        """Find a component dict by name in project data."""
-        for comp in project_data.get("components", []):
-            if isinstance(comp, dict) and comp.get("name") == component_name:
-                return comp
-        return None
+        """Find a component dict by name in project data.
+
+        Delegates to the shared Project (RC-5 consolidation) so this
+        reference lookup uses the one reference-aware access layer instead of a
+        hand-rolled scan.
+        """
+        return Project(project_data).find("components", name=component_name)
 
     def _decrypt_and_clean_env_vars(self, env_vars: dict[str, Any], private_key: str | None) -> dict[str, str]:
         """Decrypt individual env var values.
@@ -1023,20 +1089,23 @@ class ProjectFileHandler:
                             return cfg
                 break
 
-        # 2. Component-level
+        # 2. Component-level. Format-agnostic: the legacy-only read (isinstance
+        # entry.get("publish-on-web")) missed a {reference: publish-on-web, config} record.
+        from opi.services.services import service_entry_config, service_entry_name
+
         component = self._find_component(project_data, component_name)
         if component:
             for entry in component.get("services", []):
-                if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-                    cfg = entry["publish-on-web"].get("config") or {}
-                    if cfg.get("tls") in valid:
+                if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
+                    cfg = service_entry_config(entry) or {}
+                    if isinstance(cfg, dict) and cfg.get("tls") in valid:
                         return cfg
 
         # 3. Root (project services) default
         for entry in project_data.get("services", []):
-            if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-                cfg = entry["publish-on-web"].get("config") or {}
-                if cfg.get("tls") in valid:
+            if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
+                cfg = service_entry_config(entry) or {}
+                if isinstance(cfg, dict) and cfg.get("tls") in valid:
                     return cfg
 
         return {}
@@ -1356,7 +1425,7 @@ class ProjectFileHandler:
                     comp["resources"] = {}
                 history = comp["resources"].get("history", [])
                 history.insert(0, entry)
-                comp["resources"]["history"] = history[:max_entries]
+                comp["resources"]["history"] = _prune_resource_history(history, max_entries)
                 return True
         return False
 
@@ -1395,9 +1464,42 @@ class ProjectFileHandler:
                     comp["resources"] = {}
                 history = comp["resources"].get("history", [])
                 history.insert(0, entry)
-                comp["resources"]["history"] = history[:max_entries]
+                comp["resources"]["history"] = _prune_resource_history(history, max_entries)
                 return True
         return False
+
+    def compact_resource_history(self, project_data: dict[str, Any], max_entries: int = 5) -> bool:
+        """Compact every component's resource history in place (task 7).
+
+        Folds runs of identical consecutive auto-tune entries and prunes to
+        ``max_entries`` while always keeping the newest oom-watcher entry, at both the
+        component-definition and deployment-component levels. Cleans windows that
+        already filled with auto-tune noise; the service calls this just before it
+        commits an already-needed change, so it costs no extra commit and never
+        rewrites a project that has nothing else to change.
+
+        Returns True if any history list was modified.
+        """
+        changed = False
+
+        def compact(resources: Any) -> None:
+            nonlocal changed
+            if not isinstance(resources, dict):
+                return
+            history = resources.get("history")
+            if not history:
+                return
+            new_history = _compact_resource_history_list(history, max_entries)
+            if new_history != history:
+                resources["history"] = new_history
+                changed = True
+
+        for comp in project_data.get("components", []):
+            compact(comp.get("resources"))
+        for dep in project_data.get("deployments", []):
+            for comp in dep.get("components", []):
+                compact(comp.get("resources"))
+        return changed
 
     def get_resource_history_floor(
         self,
@@ -1878,111 +1980,98 @@ class ProjectFileHandler:
             project_data, deployment_name, component_name, "persistent-storage", storage_name, generation
         )
 
-    def get_database_generation(
-        self, project_data: dict[str, Any], deployment_name: str, component_name: str, reference_name: str
-    ) -> int | None:
-        """
-        Get the current generation number for a database in a deployment component.
+    # A database and a bucket are named after the project and the DEPLOYMENT only
+    # (``{project}_{deployment}_v{gen}`` / ``{project}-{deployment}-v{gen}``, see
+    # ``generate_database_name`` / ``generate_bucket_name``): one per deployment, shared by
+    # every component in it. So their generation is a property of the deployment and lives in
+    # the deployment-level services block -- the same place provisioning
+    # (``database_manager`` / ``minio_manager``) and reconciliation read it from to decide
+    # which database the running deployment points at.
+    #
+    # A PVC is named after the deployment AND the component
+    # (``{deployment}-{component}-{storage}-pvc-v{gen}``), so storage generations stay
+    # component-level. That asymmetry is not a leftover; it follows the resource identity.
 
-        Uses the reference/config pattern:
-        deployments[name].components[reference].services.database[reference==reference_name].config.generation
+    def get_database_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
+        """
+        Get the current generation number for a deployment's database.
+
+        Reads the deployment-level services block, under whichever PostgreSQL service
+        name the project declares.
 
         Args:
             project_data: The parsed project data
             deployment_name: Name of the deployment
-            component_name: Name of the component
-            reference_name: Reference name of the database
 
         Returns:
             Generation number if set, None if not present
         """
-        return self._get_service_config_generation(
-            project_data, deployment_name, component_name, ServiceType.POSTGRESQL_DATABASE.value, reference_name
+        return self.get_deployment_service_generation(
+            project_data, deployment_name, database_generation_service_type(project_data)
         )
 
     def set_database_generation(
         self,
         project_data: dict[str, Any],
         deployment_name: str,
-        component_name: str,
-        reference_name: str,
         generation: int,
     ) -> dict[str, Any]:
         """
-        Set the generation number for a database in a deployment component.
+        Set the generation number for a deployment's database.
 
-        Uses the reference/config pattern:
-        deployments[name].components[reference].services.database
-          = [{"reference": reference_name, "config": {"generation": generation}}]
+        Writes the deployment-level services block, under whichever PostgreSQL service
+        name the project declares.
 
         Args:
             project_data: The parsed project data
             deployment_name: Name of the deployment
-            component_name: Name of the component
-            reference_name: Reference name of the database
             generation: Generation number to set
 
         Returns:
             Updated project_data dictionary
         """
-        return self._set_service_config_generation(
-            project_data,
-            deployment_name,
-            component_name,
-            ServiceType.POSTGRESQL_DATABASE.value,
-            reference_name,
-            generation,
+        return self.set_deployment_service_generation(
+            project_data, deployment_name, database_generation_service_type(project_data), generation
         )
 
-    def get_bucket_generation(
-        self, project_data: dict[str, Any], deployment_name: str, component_name: str, reference_name: str
-    ) -> int | None:
+    def get_bucket_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
         """
-        Get the current generation number for a bucket in a deployment component.
+        Get the current generation number for a deployment's bucket.
 
-        Uses the reference/config pattern:
-        deployments[name].components[reference].services.minio-storage[reference==reference_name].config.generation
+        Reads the deployment-level services block:
+        deployments[name].services[minio-storage].config.generation
 
         Args:
             project_data: The parsed project data
             deployment_name: Name of the deployment
-            component_name: Name of the component
-            reference_name: Reference name of the bucket
 
         Returns:
             Generation number if set, None if not present
         """
-        return self._get_service_config_generation(
-            project_data, deployment_name, component_name, "minio-storage", reference_name
-        )
+        return self.get_deployment_service_generation(project_data, deployment_name, ServiceType.MINIO_STORAGE.value)
 
     def set_bucket_generation(
         self,
         project_data: dict[str, Any],
         deployment_name: str,
-        component_name: str,
-        reference_name: str,
         generation: int,
     ) -> dict[str, Any]:
         """
-        Set the generation number for a bucket in a deployment component.
+        Set the generation number for a deployment's bucket.
 
-        Uses the reference/config pattern:
-        deployments[name].components[reference].services.minio-storage
-          = [{"reference": reference_name, "config": {"generation": generation}}]
+        Writes the deployment-level services block:
+        deployments[name].services[minio-storage].config.generation
 
         Args:
             project_data: The parsed project data
             deployment_name: Name of the deployment
-            component_name: Name of the component
-            reference_name: Reference name of the bucket
             generation: Generation number to set
 
         Returns:
             Updated project_data dictionary
         """
-        return self._set_service_config_generation(
-            project_data, deployment_name, component_name, "minio-storage", reference_name, generation
+        return self.set_deployment_service_generation(
+            project_data, deployment_name, ServiceType.MINIO_STORAGE.value, generation
         )
 
     # ========================================================================
@@ -2022,6 +2111,8 @@ class ProjectFileHandler:
                 config:
                   generation: 2
         """
+        from opi.services.services import service_entry_name
+
         deployments = project_data.get("deployments", [])
         for deployment in deployments:
             if deployment.get("name") == deployment_name:
@@ -2030,7 +2121,10 @@ class ProjectFileHandler:
                 # Services is a list of {reference: ..., config: ...}
                 if isinstance(services, list):
                     for item in services:
-                        if isinstance(item, dict) and item.get("reference") == service_type:
+                        # Resolve identity format-agnostically: a deployment clone-state entry
+                        # may be {reference}, {name} or a bare string; matching only on
+                        # ``reference`` silently missed the other forms (checklist 5).
+                        if isinstance(item, dict) and service_entry_name(item) == service_type:
                             config = item.get("config", {})
                             generation = config.get("generation")
                             if generation is not None:
@@ -2089,12 +2183,23 @@ class ProjectFileHandler:
                     deployment["services"] = new_list
                     services = deployment["services"]
 
-                # Find existing service entry or create new one
-                service_entry = None
-                for item in services:
-                    if isinstance(item, dict) and item.get("reference") == service_type:
+                # Find existing service entry or create new one. Identity is resolved
+                # format-agnostically, exactly as the getter does: matching only on
+                # ``reference`` missed an entry written as {name} or as a bare string, so the
+                # setter appended a SECOND entry for the same service and the getter kept
+                # reading the first one -- the generation was written and never read back.
+                service_entry: dict[str, Any] | None = None
+                for index, item in enumerate(services):
+                    if service_entry_name(item) != service_type:
+                        continue
+                    if isinstance(item, dict):
                         service_entry = item
-                        break
+                    else:
+                        # Bare string entry: promote it to a record in place so the
+                        # generation has somewhere to live, keeping its position.
+                        service_entry = {"reference": service_type}
+                        services[index] = service_entry
+                    break
 
                 if service_entry is None:
                     service_entry = {"reference": service_type, "config": {"generation": generation}}
@@ -2193,11 +2298,10 @@ class ProjectFileHandler:
             Remote source configuration or None if not found
         """
         remote_sources = self.extract_remote_sources(project_data)
-        for source in remote_sources:
-            if source.get("name") == name:
-                logger.debug(f"Found remote source: {name}")
-                return source
-
+        source = Project.locate(remote_sources, name=name)
+        if source is not None:
+            logger.debug(f"Found remote source: {name}")
+            return source
         logger.warning(f"Remote source '{name}' not found")
         return None
 
@@ -2418,11 +2522,10 @@ class ProjectFileHandler:
             Helm-chart configuration or None if not found
         """
         helm_charts = self.extract_helm_charts(project_data)
-        for chart in helm_charts:
-            if chart.get("name") == name:
-                logger.debug(f"Found helm chart: {name}")
-                return chart
-
+        chart = Project.locate(helm_charts, name=name)
+        if chart is not None:
+            logger.debug(f"Found helm chart: {name}")
+            return chart
         logger.warning(f"Helm chart '{name}' not found")
         return None
 
@@ -2669,11 +2772,10 @@ class ProjectFileHandler:
             Helmfile configuration or None if not found
         """
         helmfiles = self.extract_helmfiles(project_data)
-        for helmfile in helmfiles:
-            if helmfile.get("name") == name:
-                logger.debug(f"Found helmfile: {name}")
-                return helmfile
-
+        helmfile = Project.locate(helmfiles, name=name)
+        if helmfile is not None:
+            logger.debug(f"Found helmfile: {name}")
+            return helmfile
         logger.warning(f"Helmfile '{name}' not found")
         return None
 
@@ -2912,17 +3014,24 @@ class ProjectFileHandler:
             if not component:
                 continue
 
+            from opi.services.services import service_entry_name
+
             service_list = component.get("services", [])
             for service in service_list:
-                if isinstance(service, str):
-                    service_name = service
-                    service_ref = f"{deployment_name}-{service_name.split('-')[0]}"
-                elif isinstance(service, dict):
-                    service_name = next(iter(service.keys()))
-                    service_config = service[service_name]
-                    service_ref = service_config.get("reference", f"{deployment_name}-{service_name.split('-')[0]}")
-                else:
+                # Format-agnostic: ``next(iter(keys))`` returned "reference"/"name" for a
+                # uniform record, so a storage service in record form (the PVC case for
+                # backups) never matched service_types and its component was missed.
+                service_name = service_entry_name(service)
+                if service_name is None:
                     continue
+                default_ref = f"{deployment_name}-{service_name.split('-')[0]}"
+                service_ref = default_ref
+                # Only a legacy single-key body ({svc: {reference: ...}}) carries an
+                # explicit generation reference; the uniform record does not.
+                if isinstance(service, dict) and "name" not in service and "reference" not in service:
+                    body = service.get(service_name)
+                    if isinstance(body, dict):
+                        service_ref = body.get("reference", default_ref)
 
                 if service_name in service_types:
                     results.append(
@@ -2941,45 +3050,67 @@ class ProjectFileHandler:
 
     def extract_invites_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
-        Extract the invites configuration section from project data.
+        Extract the invite config from project data, normalized through the invite model.
+
+        Reads the invite service config at ``services/invite/config`` (RC-13), falling back
+        to the legacy top-level ``invites:`` block for files not yet migrated -- exactly the
+        both-locations read that ``get_domains_config`` does for publish-on-web. The result is
+        normalized through ``InviteConfig`` so every downstream reader (invite_manager,
+        invite_routes, the public templates) sees stable underscore field names (``realm_roles``,
+        ``restrict_domain``, ...) regardless of whether the file stores hyphen or underscore keys.
 
         Args:
             project_data: The parsed project data
 
         Returns:
-            Invites configuration dict with 'settings' and 'active' keys,
-            or empty dict if no invites configured
+            Config dict with 'default_language' and 'active' keys, or empty dict if no
+            invites are configured.
         """
-        invites = project_data.get("invites", {})
-        if invites:
-            logger.debug(f"Found invites config with {len(invites.get('active', []))} active invite(s)")
-        else:
-            logger.debug("No invites configuration found in project data")
-        return invites
+        from pydantic import ValidationError
+
+        from opi.services.catalog.invite.config_model import InviteConfig
+
+        raw = Project(project_data).service_config("invite")
+        if raw is None:
+            # Legacy top-level `invites:` block: flatten settings.default_language into the
+            # config shape so both locations read identically downstream.
+            legacy = project_data.get("invites")
+            if not isinstance(legacy, dict) or not legacy:
+                logger.debug("No invites configuration found in project data")
+                return {}
+            raw = {"active": legacy.get("active", []) or []}
+            settings = legacy.get("settings")
+            if isinstance(settings, dict) and settings.get("default_language"):
+                raw["default-language"] = settings["default_language"]
+
+        if not isinstance(raw, dict):
+            return {}
+        try:
+            config = InviteConfig.model_validate(raw)
+        except ValidationError:
+            logger.warning("Invite config failed model validation; returning raw config")
+            return raw
+        normalized = config.model_dump(exclude_none=True)
+        logger.debug(f"Found invites config with {len(normalized.get('active', []))} active invite(s)")
+        return normalized
 
     def get_invite_settings(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
-        Extract invite settings from project data.
+        Extract project-level invite settings.
+
+        Since RC-13 the only project-wide invite setting is ``default_language``. The former
+        allow-sso / allow-local / default-expiry settings were never accepted by the schema;
+        their behaviour is folded into ``get_invite_auth_methods`` (both methods allowed unless
+        an invite restricts them), and the expiry feature was removed.
 
         Args:
             project_data: The parsed project data
 
         Returns:
-            Settings dict with defaults applied:
-            - allow_sso: bool (default True)
-            - allow_local: bool (default True)
-            - default_expiration_days: int (default 7)
-            - default_language: str (default 'nl')
+            ``{"default_language": str}`` (default 'nl').
         """
         invites = self.extract_invites_config(project_data)
-        settings = invites.get("settings", {})
-
-        return {
-            "allow_sso": settings.get("allow_sso", True),
-            "allow_local": settings.get("allow_local", True),
-            "default_expiration_days": settings.get("default_expiration_days", 7),
-            "default_language": settings.get("default_language", "nl"),
-        }
+        return {"default_language": invites.get("default_language", "nl")}
 
     def get_invite_by_key(self, project_data: dict[str, Any], key: str) -> dict[str, Any] | None:
         """
@@ -2994,12 +3125,10 @@ class ProjectFileHandler:
         """
         invites = self.extract_invites_config(project_data)
         active_invites = invites.get("active", [])
-
-        for invite in active_invites:
-            if invite.get("key") == key:
-                logger.debug(f"Found invite with key: {key}")
-                return invite
-
+        invite = Project.locate(active_invites, key=key)
+        if invite is not None:
+            logger.debug(f"Found invite with key: {key}")
+            return invite
         logger.debug(f"Invite with key '{key}' not found")
         return None
 
@@ -3031,8 +3160,6 @@ class ProjectFileHandler:
         Returns:
             Dict with 'sso' and 'local' boolean values
         """
-        settings = self.get_invite_settings(project_data)
-
         # Check invite-specific auth_methods override
         invite_auth_methods = invite.get("auth_methods")
 
@@ -3043,11 +3170,9 @@ class ProjectFileHandler:
                 "local": "local" in invite_auth_methods,
             }
 
-        # Fall back to project-level settings
-        return {
-            "sso": settings.get("allow_sso", True),
-            "local": settings.get("allow_local", True),
-        }
+        # No per-invite restriction: fall back to "both allowed" (the project-level default;
+        # the realm and the invite-level auth-methods are the actual restrictions).
+        return {"sso": True, "local": True}
 
     def get_invite_message(self, invite: dict[str, Any], language: str = "nl") -> str:
         """
@@ -3146,23 +3271,23 @@ def extract_storage_from_component_services(component: dict[str, Any]) -> list[d
         List of storage config dicts with keys: name, size, mount-path, type
     """
     from opi.services.schema_migration import _STORAGE_SERVICE_TO_TYPE
+    from opi.services.services import service_entry_config, service_entry_name
 
     storage_configs: list[dict[str, Any]] = []
-    services = component.get("services", [])
-
-    for entry in services:
-        if not isinstance(entry, dict):
+    for entry in component.get("services", []):
+        # Format-agnostic (bare string / legacy name-as-key / new {reference, config}).
+        name = service_entry_name(entry)
+        if name not in _STORAGE_SERVICE_TO_TYPE:
             continue
-        for service_name, service_data in entry.items():
-            if service_name not in _STORAGE_SERVICE_TO_TYPE:
-                continue
-            storage_type = _STORAGE_SERVICE_TO_TYPE[service_name]
-            config_items = service_data.get("config", []) if isinstance(service_data, dict) else []
-            for item in config_items:
-                if isinstance(item, dict):
-                    config = dict(item)
-                    config["type"] = storage_type
-                    storage_configs.append(config)
+        storage_type = _STORAGE_SERVICE_TO_TYPE[name]
+        config_items = service_entry_config(entry)
+        if not isinstance(config_items, list):
+            continue
+        for item in config_items:
+            if isinstance(item, dict):
+                config = dict(item)
+                config["type"] = storage_type
+                storage_configs.append(config)
 
     return storage_configs
 
@@ -3233,22 +3358,85 @@ def find_attachment_data_list(services: Any) -> list[Any] | None:
     return None
 
 
+def ensure_attachment_data_list(services: list[Any]) -> list[Any]:
+    """Return the attachments ``data`` list within a services list, creating it if absent.
+
+    The write counterpart of :func:`find_attachment_data_list`, so a caller that adds to
+    the catalog does not have to know where the catalog lives or which of the two entry
+    shapes it is in. A bare ``"attachments"`` selection (the services picker writes the
+    service name as a plain string) is upgraded to its dict form in place rather than
+    duplicated, which is the same repair ``ResolveAttachmentsHook`` makes on save.
+    """
+    for index, entry in enumerate(services):
+        if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
+            data = entry["attachments"].setdefault("data", [])
+            if isinstance(data, list):
+                return data
+            entry["attachments"]["data"] = []
+            return entry["attachments"]["data"]
+        if entry == "attachments":
+            created: list[Any] = []
+            services[index] = {"attachments": {"data": created}}
+            return created
+    created = []
+    services.append({"attachments": {"data": created}})
+    return created
+
+
+def merge_staged_attachments(yaml_data: dict[str, Any], staged: dict[str, Any]) -> None:
+    """Write the attachments staged in a wizard session into the project's catalog.
+
+    One place for both flows (create: ``opi/web/router_wizard.py``; edit:
+    ``ResolveAttachmentsHook``), which each carried their own copy of this loop -- and a
+    replacement that lands in one copy and not in the other is exactly the silent half of
+    the feature this exists to prevent.
+
+    An id that is already in the catalog is only overwritten when the staged entry says
+    it is a replacement (``replace: True``, set by the wizard's replace flow, which checks
+    against the session that the id is the one the user opened). The catalog *entry* stays
+    where it is: only ``filename`` and ``content`` are written over it, so every component
+    that couples to that id keeps pointing at it. Without that flag the entry is left
+    alone and the staged file is dropped with a warning -- silently replacing content the
+    user did not ask to replace is the one outcome worse than not writing it.
+    """
+    data_list = ensure_attachment_data_list(yaml_data.setdefault("services", []))
+    by_id = {entry["id"]: entry for entry in data_list if isinstance(entry, dict) and entry.get("id")}
+    for attachment_id, info in staged.items():
+        existing = by_id.get(attachment_id)
+        if existing is not None:
+            if not info.get("replace"):
+                logger.warning(
+                    "Staged attachment '%s' collides with an existing catalog entry and is not a "
+                    "replacement; leaving the stored content in place",
+                    attachment_id,
+                )
+                continue
+            existing["filename"] = info.get("filename", attachment_id)
+            existing["content"] = info.get("content")
+            continue
+        data_list.append(
+            {"id": attachment_id, "filename": info.get("filename", attachment_id), "content": info.get("content")}
+        )
+
+
 def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract a component's attachment ``config`` coupling entries from its services list.
 
     Reads the ``config`` key (``use`` is the pre-rename name, still accepted for any
     not-yet-migrated data).
     """
+    from opi.services.services import service_entry_config, service_entry_name
+
     uses: list[dict[str, Any]] = []
     for entry in component.get("services", []):
-        if not isinstance(entry, dict):
+        # Format-agnostic (legacy {attachments: {config}} / new {reference: attachments, config}).
+        if service_entry_name(entry) != "attachments":
             continue
-        service_data = entry.get("attachments")
-        if not isinstance(service_data, dict):
-            continue
-        coupling = service_data.get("config")
-        if coupling is None:
-            coupling = service_data.get("use", [])
+        coupling = service_entry_config(entry)
+        if coupling is None and isinstance(entry, dict):
+            # Legacy pre-rename 'use' key (only on the legacy name-as-key form).
+            body = entry.get("attachments")
+            coupling = body.get("use", []) if isinstance(body, dict) else []
         uses.extend(item for item in (coupling or []) if isinstance(item, dict) and item.get("reference"))
     return uses
 
@@ -3366,12 +3554,15 @@ def validate_attachment_couplings(project_data: dict[str, Any]) -> list[str]:
     for dep in project_data.get("deployments", []) or []:
         if not isinstance(dep, dict):
             continue
+        dep_name = dep.get("name")
+        if not dep_name:
+            continue
         for ref in dep.get("components", []) or []:
             if not isinstance(ref, dict) or not ref.get("reference"):
                 continue
-            uses = extract_deployment_component_attachment_uses(project_data, dep.get("name"), ref["reference"])
+            uses = extract_deployment_component_attachment_uses(project_data, dep_name, ref["reference"])
             try:
-                _assert_unique_attachment_targets(uses, ref["reference"], dep.get("name"))
+                _assert_unique_attachment_targets(uses, ref["reference"], dep_name)
             except ValueError as e:
                 errors.append(str(e))
     return errors
@@ -3385,33 +3576,91 @@ def _publish_on_web_provided_ref(config: Any) -> str | None:
     return None
 
 
-def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str]]:
-    """Map each attachment id to the places that reference it (component names / labels).
+#: The label the root publish-on-web certificate is reported under; it belongs to no
+#: single component, so it names the project-wide publication instead.
+_PROJECT_WIDE_PUBLICATION = "publicatie (project-breed)"
+
+#: A coupling is a component's ``attachments`` use: which attachment, and how it reaches
+#: the pod. Removing one only breaks that one delivery.
+USAGE_COUPLING = "coupling"
+
+#: A certificate is a publish-on-web ``tls: provided`` reference. Removing it is not a
+#: coupling change but a change of how the site is served, which is why the confirmed
+#: delete cleans couplings and refuses certificates (see ProjectManager.remove_attachment).
+USAGE_CERTIFICATE = "certificate"
+
+
+@dataclass(frozen=True)
+class AttachmentUsageSite:
+    """One place that references an attachment: where it is, and what kind of use it is.
+
+    The question "where is this attachment used" is asked from three sides -- the wizard's
+    remove button, the delete-confirmation modal and the API delete -- and each used to
+    want a different shape of answer. It is one walk producing one record type, so the
+    three can never disagree about whether an attachment is free.
+    """
+
+    #: The component that uses it; empty for the project-wide publication certificate.
+    component: str
+    #: The deployment the use sits in, for a deployment-component override; None on a
+    #: base component and on the project-wide certificate.
+    deployment: str | None
+    #: ``USAGE_COUPLING`` or ``USAGE_CERTIFICATE``.
+    kind: str
+
+    @property
+    def label(self) -> str:
+        """This site in one phrase, as the portal and the validation errors name it."""
+        if not self.component:
+            return _PROJECT_WIDE_PUBLICATION
+        return f"{self.component} ({self.deployment})" if self.deployment else self.component
+
+    def as_dict(self) -> dict[str, Any]:
+        """This site as an API client reads it."""
+        return {
+            "component": self.component,
+            "deployment": self.deployment,
+            "kind": self.kind,
+            "label": self.label,
+        }
+
+
+def attachment_usage_sites(project_data: dict[str, Any]) -> dict[str, list[AttachmentUsageSite]]:
+    """Map each attachment id to the sites that reference it.
 
     Covers component attachment ``use`` couplings, deployment-component ``use`` overrides,
     and publish-on-web ``provided`` certificates at root, component and deployment-component
-    level. Used both as the delete-guard (``attachment_is_referenced``) and by the
-    delete-confirmation modal, so the two never disagree.
+    level. The single walk behind the delete-guard (``attachment_is_referenced``), the
+    delete-confirmation modal (``extract_attachment_usage``), the reference integrity check
+    (``validate_attachment_references``) and the API delete, so none of them can be looking
+    at a different set of places than the others.
     """
-    usage: dict[str, list[str]] = {}
+    from opi.services.services import service_entry_config, service_entry_name
 
-    def add(ref: Any, label: str) -> None:
+    usage: dict[str, list[AttachmentUsageSite]] = {}
+
+    def add(ref: Any, site: AttachmentUsageSite) -> None:
         if not isinstance(ref, str) or not ref:
             return
-        names = usage.setdefault(ref, [])
-        if label and label not in names:
-            names.append(label)
+        sites = usage.setdefault(ref, [])
+        if site not in sites:
+            sites.append(site)
 
     # Component level: attachment couplings + publish-on-web provided certificate.
+    # Format-agnostic: the legacy-only read missed a {reference: publish-on-web, config}
+    # record, so a certificate provided by a record-form entry escaped the delete-guard.
     for component in project_data.get("components", []):
         if not isinstance(component, dict):
             continue
         name = component.get("name", "")
         for use in extract_component_attachment_uses(component):
-            add(use.get("reference"), name)
+            add(use.get("reference"), AttachmentUsageSite(name, None, USAGE_COUPLING))
         for entry in component.get("services", []):
-            if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-                add(_publish_on_web_provided_ref(entry["publish-on-web"].get("config")), name)
+            if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
+                add(
+                    _publish_on_web_provided_ref(service_entry_config(entry)),
+                    AttachmentUsageSite(name, None, USAGE_CERTIFICATE),
+                )
 
     # Deployment-component overrides: attachment couplings + publish-on-web provided cert.
     for dep in project_data.get("deployments", []):
@@ -3422,23 +3671,276 @@ def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str
             if not isinstance(comp, dict):
                 continue
             cref = comp.get("reference", "")
-            label = f"{cref} ({dep_name})" if dep_name else cref
+            where = dep_name or None
             for use in extract_deployment_component_attachment_uses(project_data, dep_name, cref):
-                add(use.get("reference"), label)
+                add(use.get("reference"), AttachmentUsageSite(cref, where, USAGE_COUPLING))
             cfg = ((comp.get("services") or {}).get("publish-on-web") or {}).get("config")
-            add(_publish_on_web_provided_ref(cfg), label)
+            add(_publish_on_web_provided_ref(cfg), AttachmentUsageSite(cref, where, USAGE_CERTIFICATE))
 
     # Root publish-on-web default certificate.
     for entry in project_data.get("services", []):
-        if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-            add(_publish_on_web_provided_ref(entry["publish-on-web"].get("config")), "publicatie (project-breed)")
+        if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
+            add(
+                _publish_on_web_provided_ref(service_entry_config(entry)),
+                AttachmentUsageSite("", None, USAGE_CERTIFICATE),
+            )
 
     return usage
 
 
+def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str]]:
+    """Map each attachment id to the places that reference it, as labels for a reader.
+
+    The label projection of :func:`attachment_usage_sites`, for the portal (the
+    delete-confirmation modal, the attachments section) and for the reference-integrity
+    error text. Callers that have to *act* on a use -- which component, which deployment,
+    coupling or certificate -- ask for the sites instead.
+    """
+    # dict.fromkeys: one component that both couples an attachment and serves it as its
+    # certificate is two sites but one place, and the reader should be told once.
+    return {
+        ref: list(dict.fromkeys(site.label for site in sites))
+        for ref, sites in attachment_usage_sites(project_data).items()
+    }
+
+
 def attachment_is_referenced(project_data: dict[str, Any], attachment_id: str) -> bool:
     """True if any component or publish-on-web certificate uses the attachment (delete-guard)."""
-    return attachment_id in extract_attachment_usage(project_data)
+    return attachment_id in attachment_usage_sites(project_data)
+
+
+def _attachment_coupling_slot(entry: Any) -> tuple[dict[str, Any], str] | None:
+    """The dict and key holding one component service entry's attachment couplings.
+
+    Two shapes carry the same list and a writer has to hit whichever one is there: the
+    record form (``{reference: attachments, config: [...]}``) and the legacy name-as-key
+    form (``{attachments: {config: [...]}}``). A bare ``"attachments"`` string carries no
+    couplings at all. The readers are already format-agnostic
+    (``extract_component_attachment_uses``); this is that same tolerance for the write
+    side, in one place rather than per caller.
+
+    ``use`` is the pre-rename name of the ``config`` key. The schema migration renames it
+    on load (``schema_migration``), so it does not reach the readers and no reference under
+    it is ever reported as a use -- but a writer that skipped it could still leave one
+    behind on data that somehow arrived unmigrated, and leaving a reference behind is the
+    one outcome worth being paranoid about here.
+    """
+    from opi.services.services import service_entry_name
+
+    if not isinstance(entry, dict) or service_entry_name(entry) != ServiceType.ATTACHMENTS.value:
+        return None
+    body = entry.get(ServiceType.ATTACHMENTS.value)
+    if isinstance(body, dict):
+        for key in ("config", "use"):
+            if isinstance(body.get(key), list):
+                return body, key
+        return None
+    if isinstance(entry.get("config"), list):
+        return entry, "config"
+    return None
+
+
+def remove_attachment_references(project_data: dict[str, Any], attachment_id: str) -> list[AttachmentUsageSite]:
+    """Drop every component and deployment-component coupling of one attachment.
+
+    The cleanup half of a confirmed delete: the catalog entry is about to go, so every
+    ``reference`` to it has to go with it -- a reference left pointing at nothing is worse
+    than an attachment left lying around, because it makes the project file invalid
+    (``validate_attachment_references`` rejects it at save, which is the check that catches
+    a cleanup this function missed).
+
+    A component whose last coupling goes loses the whole ``attachments`` block and keeps
+    only its bare selection, which is what clearing a service config does everywhere else.
+    Certificates (``tls: provided``) are deliberately NOT touched: dropping one changes how
+    the site is served, so it is refused rather than cleaned up (see
+    ``ProjectManager.remove_attachment``).
+
+    Returns the sites it actually changed, so the caller can report what it did.
+    """
+    removed: list[AttachmentUsageSite] = []
+
+    def drop_from(couplings: list[Any]) -> list[Any]:
+        return [c for c in couplings if not (isinstance(c, dict) and c.get("reference") == attachment_id)]
+
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        services = component.get("services")
+        if not isinstance(services, list):
+            continue
+        for index, entry in enumerate(services):
+            slot = _attachment_coupling_slot(entry)
+            if slot is None:
+                continue
+            holder, key = slot
+            remaining = drop_from(holder[key])
+            if len(remaining) == len(holder[key]):
+                continue
+            if remaining:
+                holder[key] = remaining
+            else:
+                # Nothing left to couple: the block goes, the selection stays.
+                services[index] = ServiceType.ATTACHMENTS.value
+            removed.append(AttachmentUsageSite(component.get("name", ""), None, USAGE_COUPLING))
+
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        dep_name = deployment.get("name") or None
+        for comp in deployment.get("components", []) or []:
+            if not isinstance(comp, dict):
+                continue
+            services = comp.get("services")
+            # A deployment component's services is a MAP keyed by service name, not the
+            # list a base component carries; the two shapes are why this loop is separate.
+            if not isinstance(services, dict):
+                continue
+            block = services.get(ServiceType.ATTACHMENTS.value)
+            if not isinstance(block, dict) or not isinstance(block.get("config"), list):
+                continue
+            remaining = drop_from(block["config"])
+            if len(remaining) == len(block["config"]):
+                continue
+            if remaining:
+                block["config"] = remaining
+            else:
+                del services[ServiceType.ATTACHMENTS.value]
+                if not services:
+                    del comp["services"]
+            removed.append(AttachmentUsageSite(comp.get("reference", ""), dep_name, USAGE_COUPLING))
+
+    return removed
+
+
+#: A deployment lists the component among the things it deploys. Removing that entry takes
+#: the component out of one deployment and leaves the deployment itself intact.
+COMPONENT_USAGE_DEPLOYMENT = "deployment"
+
+#: Another component names it in ``uses-components``. Removing that entry drops a declared
+#: dependency and changes nothing else.
+COMPONENT_USAGE_DEPENDENCY = "dependency"
+
+#: A deployment's web address is built around it (``root-component`` or
+#: ``expose-component-on-bare-domain``). That is not a reference that can be dropped: it
+#: decides how the site is served, so it is refused rather than cleaned up -- the same rule
+#: publish-on-web certificates get in ``remove_attachment``.
+COMPONENT_USAGE_WEB_ADDRESS = "web-address"
+
+
+@dataclass(frozen=True)
+class ComponentUsageSite:
+    """One place that references a component: where it is, and what kind of use it is.
+
+    The component counterpart of :class:`AttachmentUsageSite`. The delete guard, the
+    confirmation dialog and the API delete all ask "where is this component used", and one
+    walk producing one record type is what keeps them from disagreeing about whether a
+    component is free.
+    """
+
+    #: The deployment the use sits in; None for a dependency declared by another component.
+    deployment: str | None
+    #: The component that declares the dependency; None for a deployment or web-address use.
+    component: str | None
+    #: One of the ``COMPONENT_USAGE_*`` kinds.
+    kind: str
+
+    @property
+    def label(self) -> str:
+        """This site in one phrase, as the portal and the error texts name it."""
+        if self.kind == COMPONENT_USAGE_DEPENDENCY:
+            return f"component '{self.component}'"
+        if self.kind == COMPONENT_USAGE_WEB_ADDRESS:
+            return f"het webadres van deployment '{self.deployment}'"
+        return f"deployment '{self.deployment}'"
+
+    def as_dict(self) -> dict[str, Any]:
+        """This site as an API client reads it."""
+        return {
+            "deployment": self.deployment,
+            "component": self.component,
+            "kind": self.kind,
+            "label": self.label,
+        }
+
+
+def component_usage_sites(project_data: dict[str, Any]) -> dict[str, list[ComponentUsageSite]]:
+    """Map each component name to the sites that reference it.
+
+    Covers the three places a component name appears outside its own definition: a
+    deployment's component list, another component's ``uses-components``, and the two
+    web-address settings that name a component (``root-component`` and
+    ``expose-component-on-bare-domain``).
+    """
+    from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+
+    usage: dict[str, list[ComponentUsageSite]] = {}
+
+    def add(name: Any, site: ComponentUsageSite) -> None:
+        if not isinstance(name, str) or not name:
+            return
+        sites = usage.setdefault(name, [])
+        if site not in sites:
+            sites.append(site)
+
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        for dependency in component.get("uses-components", []) or []:
+            add(dependency, ComponentUsageSite(None, component.get("name", ""), COMPONENT_USAGE_DEPENDENCY))
+
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        dep_name = deployment.get("name") or None
+        for comp in deployment.get("components", []) or []:
+            if isinstance(comp, dict):
+                add(comp.get("reference"), ComponentUsageSite(dep_name, None, COMPONENT_USAGE_DEPLOYMENT))
+        for setting in (DomainSetting.ROOT_COMPONENT, DomainSetting.BARE_DOMAIN_COMPONENT):
+            add(
+                get_domain_setting(deployment, setting),
+                ComponentUsageSite(dep_name, None, COMPONENT_USAGE_WEB_ADDRESS),
+            )
+
+    return usage
+
+
+def remove_component_references(project_data: dict[str, Any], component_name: str) -> list[ComponentUsageSite]:
+    """Drop every deployment entry and dependency declaration naming one component.
+
+    The cleanup half of a confirmed delete: the definition is about to go, so every
+    reference to it has to go with it -- a deployment left referencing a component that no
+    longer exists makes the project file invalid (``validate_component_references`` rejects
+    it at save, which is the check that catches a cleanup this function missed).
+
+    Web-address uses are deliberately NOT touched: they are refused up front, because
+    deciding how a site should be served instead is not a decision a delete gets to make.
+
+    Returns the sites it actually changed, so the caller can report what it did.
+    """
+    removed: list[ComponentUsageSite] = []
+
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        dependencies = component.get("uses-components")
+        if not isinstance(dependencies, list) or component_name not in dependencies:
+            continue
+        component["uses-components"] = [d for d in dependencies if d != component_name]
+        removed.append(ComponentUsageSite(None, component.get("name", ""), COMPONENT_USAGE_DEPENDENCY))
+
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        refs = deployment.get("components")
+        if not isinstance(refs, list):
+            continue
+        remaining = [c for c in refs if not (isinstance(c, dict) and c.get("reference") == component_name)]
+        if len(remaining) == len(refs):
+            continue
+        deployment["components"] = remaining
+        removed.append(ComponentUsageSite(deployment.get("name") or None, None, COMPONENT_USAGE_DEPLOYMENT))
+
+    return removed
 
 
 def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:
@@ -3480,19 +3982,20 @@ def _filter_empty_service_entries(services: list[str | dict]) -> list[str | dict
     when a service was selected but not configured. These should not be treated
     as active services.
 
-    String entries are always kept. Dict entries are kept only when their
-    value is not None and not an empty dict/list.
+    String entries are always kept. Dict entries are kept only when they carry a
+    non-empty value (a name/reference or a non-empty config).
     """
-    result: list[str | dict] = []
-    for entry in services:
+
+    def keep(entry: str | dict) -> bool:
         if isinstance(entry, str):
-            result.append(entry)
-        elif isinstance(entry, dict):
-            for value in entry.values():
-                if value is not None and value != {} and value != []:
-                    result.append(entry)
-                break  # single-key dicts
-    return result
+            return True
+        # Scan every value: the old ``break  # single-key dicts`` assumed exactly one
+        # key, but a uniform record ({name/reference, config}) has more than one.
+        return isinstance(entry, dict) and any(
+            value is not None and value != {} and value != [] for value in entry.values()
+        )
+
+    return [entry for entry in services if keep(entry)]
 
 
 def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:

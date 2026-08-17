@@ -176,6 +176,97 @@ class TestRenderRealTemplates:
         assert container["startupProbe"]["tcpSocket"]["port"] == 3000
         assert container["readinessProbe"]["tcpSocket"]["port"] == 3000
 
+    def test_deployment_template_http_probe_targets_probe_port_and_paths(self):
+        """An http probe (health-check service) probes probe_port, not the application
+        port, and renders the configured liveness/readiness paths + HTTP scheme."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "dirmgr",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                # Functional mTLS port; the probe must NOT target this one.
+                "application_port": 8443,
+                "inbound_ports": [8443],
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+                "probe_scheme": "http",
+                "probe_port": 8080,
+                "probe_liveness_path": "/health/live",
+                "probe_readiness_path": "/health/ready",
+            },
+        )
+        container = YAML().load(result)["spec"]["template"]["spec"]["containers"][0]
+        assert container["startupProbe"]["httpGet"] == {
+            "port": 8080,
+            "path": "/health/live",
+            "scheme": "HTTP",
+        }
+        assert container["livenessProbe"]["httpGet"]["port"] == 8080
+        assert container["livenessProbe"]["httpGet"]["path"] == "/health/live"
+        assert container["readinessProbe"]["httpGet"]["port"] == 8080
+        assert container["readinessProbe"]["httpGet"]["path"] == "/health/ready"
+
+    def test_deployment_template_probe_port_falls_back_to_application_port(self):
+        """With an http scheme but no probe_port, the probe falls back to the app port
+        and paths fall back to '/' (a half-filled health-check config)."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "inbound_ports": [3000],
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+                "probe_scheme": "http",
+                "probe_port": None,
+            },
+        )
+        container = YAML().load(result)["spec"]["template"]["spec"]["containers"][0]
+        assert container["livenessProbe"]["httpGet"]["port"] == 3000
+        assert container["livenessProbe"]["httpGet"]["path"] == "/"
+        assert container["readinessProbe"]["httpGet"]["path"] == "/"
+
+    def test_deployment_template_probe_port_with_yaml_injection_neutralized(self):
+        """A hostile string probe_port (reachable only via a direct git commit, which
+        skips the pydantic int guard) is rendered as a quoted scalar and cannot inject
+        sibling pod-spec keys. tojson at the render sink is the defence, independent of
+        which validation path the project file took."""
+        malicious_port = '8080\n          command: ["/bin/sh", "-c", "curl evil"]\n          x: "'
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "dirmgr",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8443,
+                "inbound_ports": [8443],
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+                "probe_scheme": "http",
+                "probe_port": malicious_port,
+                "probe_liveness_path": "/health/live",
+                "probe_readiness_path": "/health/ready",
+            },
+        )
+        container = YAML().load(result)["spec"]["template"]["spec"]["containers"][0]
+        # The forged key never lands as a container-level sibling: the whole hostile
+        # value is confined to the httpGet.port scalar.
+        assert "command" not in container
+        assert container["startupProbe"]["httpGet"]["port"] == malicious_port
+        assert set(container["startupProbe"]["httpGet"]) == {"port", "path", "scheme"}
+
     def test_deployment_template_container_ports_lists_all_inbound(self):
         """The Deployment declares a containerPort for every inbound port (first named http)."""
         result = render_template(
@@ -749,6 +840,141 @@ class TestRenderRealTemplates:
         containers = doc["spec"]["template"]["spec"]["containers"]
         assert len(containers) == 1
         assert containers[0]["name"] == "app"
+
+    def test_deployment_template_object_name_overrides_metadata_name(self):
+        """``object_name`` renames the Deployment while ``name`` still drives the app label.
+
+        This is how the sleep-mode waker lands a ``<name>-waker`` Deployment behind the
+        same Service: the metadata name is unique, but ``app: <name>`` matches the Service.
+        """
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "object_name": "api-waker",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/waker:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["metadata"]["name"] == "api-waker"
+        # The app label and both selectors still use ``name`` so the waker sits behind the Service.
+        assert doc["metadata"]["labels"]["app"] == "api"
+        assert doc["spec"]["selector"]["matchLabels"]["app"] == "api"
+        assert doc["spec"]["template"]["metadata"]["labels"]["app"] == "api"
+
+    def test_deployment_template_extra_selector_labels_in_selector_and_pod(self):
+        """``extra_selector_labels`` appear in both the selector and the pod labels."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "object_name": "api-waker",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/waker:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "extra_selector_labels": {"zad-role": "waker"},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["spec"]["selector"]["matchLabels"]["zad-role"] == "waker"
+        assert doc["spec"]["template"]["metadata"]["labels"]["zad-role"] == "waker"
+
+    def test_deployment_template_readiness_failure_threshold_override(self):
+        """``probe_readiness_failure_threshold`` overrides the default 3."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/waker:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "probe_scheme": "http",
+                "probe_readiness_failure_threshold": 1,
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        probe = doc["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]
+        assert probe["failureThreshold"] == 1
+
+    def test_deployment_template_env_from_configmaps(self):
+        """``env_from_configmaps`` add configMapRef entries to envFrom alongside secrets."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/waker:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "env_from_secrets": ["api-waker-token"],
+                "env_from_configmaps": ["api-waker-config"],
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        env_from = doc["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+        assert {"secretRef": {"name": "api-waker-token"}} in env_from
+        assert {"configMapRef": {"name": "api-waker-config"}} in env_from
+
+    def test_configmap_template_renders_data(self):
+        """The generic configmap template emits labels and every data key."""
+        result = render_template(
+            "configmap.yaml.jinja",
+            {
+                "name": "api-waker-config",
+                "namespace": "rig-proj",
+                "app_label": "api",
+                "project": {"name": "myproj"},
+                "data": {"ZAD_APP_TITLE": "My App", "ZAD_POLL_INTERVAL_SEC": "3"},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["kind"] == "ConfigMap"
+        assert doc["metadata"]["name"] == "api-waker-config"
+        assert doc["metadata"]["labels"]["app"] == "api"
+        assert doc["metadata"]["labels"]["project"] == "myproj"
+        assert doc["data"]["ZAD_APP_TITLE"] == "My App"
+        assert doc["data"]["ZAD_POLL_INTERVAL_SEC"] == "3"
+
+    def test_configmap_template_app_label_defaults_to_name(self):
+        """Without ``app_label`` the configmap labels fall back to ``name``."""
+        result = render_template(
+            "configmap.yaml.jinja",
+            {
+                "name": "cfg",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "data": {},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["metadata"]["labels"]["app"] == "cfg"
 
     def test_service_template_with_authorization_wall_port(self):
         result = render_template(

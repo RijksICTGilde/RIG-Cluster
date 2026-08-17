@@ -1,0 +1,154 @@
+"""Visualizers for the keycloak service (project-level SSO config)."""
+
+from __future__ import annotations
+
+from opi.forms.editables.editable import WidgetType
+from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.catalog.keycloak.editables import (
+    KEYCLOAK_ACCOUNT_LINK_EDITABLE,
+    KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
+    KEYCLOAK_CLIENT_NAME_EDITABLE,
+    KEYCLOAK_CLIENT_REDIRECT_URI_EDITABLE,
+    KEYCLOAK_CLIENT_REDIRECT_URIS_EDITABLE,
+    KEYCLOAK_REALM_ROLES_EDITABLE,
+    KEYCLOAK_REDIRECT_URI_ITEM_EDITABLE,
+    KEYCLOAK_REDIRECT_URIS_EDITABLE,
+    KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE_EDITABLE,
+    KEYCLOAK_RESTRICT_ACCESS_EDITABLE,
+    KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE,
+    KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE,
+    KEYCLOAK_ROLE_DESCRIPTION_EDITABLE,
+    KEYCLOAK_ROLE_NAME_EDITABLE,
+    KEYCLOAK_TEMPLATE_EDITABLE,
+)
+
+# Het enige veld van een regel die je zelf toevoegt heet "URI", en lotc-forms zet
+# "Optioneel" achter elk niet-verplicht veld (rijksconventie: markeer optioneel, niet
+# verplicht). "URI Optioneel" zegt niets: dat je een regel toevoegt IS de keuze. Dit
+# merk-attribuut laat alleen de badge weg en beweert - anders dan de omweg required -
+# niets over wat er ingevuld moet worden. Onze kopie van templates_lotc/components/
+# _forms.j2 leest het. Per veld een eigen kopie: de bundel gaat als dict door naar het
+# veld en daar wordt hij verderop nog aangevuld.
+GEEN_OPTIONEEL_BADGE = {"data-no-optional-badge": "1"}
+
+KEYCLOAK_TEMPLATE = EditableVisualizer(
+    editable=KEYCLOAK_TEMPLATE_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Keycloak template",
+)
+
+KEYCLOAK_REDIRECT_URI_ITEM = EditableVisualizer(
+    editable=KEYCLOAK_REDIRECT_URI_ITEM_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="URI",
+    attributes=dict(GEEN_OPTIONEEL_BADGE),
+)
+
+KEYCLOAK_REDIRECT_URIS = EditableVisualizer(
+    editable=KEYCLOAK_REDIRECT_URIS_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Extra redirect URI's",
+    help_text="Redirect URI's voor lokale ontwikkeling of externe integraties.",
+    children=[KEYCLOAK_REDIRECT_URI_ITEM],
+)
+
+KEYCLOAK_RESTRICT_ACCESS = EditableVisualizer(
+    editable=KEYCLOAK_RESTRICT_ACCESS_EDITABLE,
+    widget=WidgetType.CHECKBOX,
+    label="Toegang beperken",
+    help_text="Wanneer ingeschakeld kunnen alleen gebruikers met de opgegeven realm-rol de applicatie openen",
+    locked_by_service="authorization-wall",
+    attributes={"data-rerender": "true"},
+)
+
+KEYCLOAK_RESTRICT_ACCESS_ROLE = EditableVisualizer(
+    editable=KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Realm rol",
+    help_text=(
+        "De naam van de Keycloak realm-rol die toegang verleent. "
+        "Elke gebruiker met deze rol mag de applicatie gebruiken. "
+        "De rol wordt door de projectbeheerder aan gebruikers toegekend; "
+        "de exacte naam maakt niet uit. Bij twijfel: gebruik de standaardwaarde."
+    ),
+)
+
+KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE = EditableVisualizer(
+    editable=KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Client rol",
+    help_text=(
+        "Optioneel, naast de realm-rol hierboven. Een clientrol hoort bij een enkele "
+        "Keycloak-client in plaats van bij de hele realm. Laat leeg tenzij de applicatie "
+        "haar rollen per client toekent."
+    ),
+)
+
+KEYCLOAK_ACCOUNT_LINK = EditableVisualizer(
+    editable=KEYCLOAK_ACCOUNT_LINK_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Account koppelen",
+    help_text=(
+        "Wat er gebeurt wanneer iemand via SSO Rijk inlogt en er al een account met "
+        "hetzelfde e-mailadres in dit realm bestaat."
+    ),
+)
+
+KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG = EditableVisualizer(
+    editable=KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Foutmelding",
+    help_text=(
+        "Bericht dat wordt getoond wanneer een gebruiker geen toegang heeft. "
+        "De standaardwaarde gebruikt een vertaalbaar template. "
+        "Bij twijfel: gebruik de standaardwaarde."
+    ),
+)
+
+KEYCLOAK_CLIENT_NAME = EditableVisualizer(
+    editable=KEYCLOAK_CLIENT_NAME_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Client naam",
+)
+
+KEYCLOAK_CLIENT_REDIRECT_URI = EditableVisualizer(
+    editable=KEYCLOAK_CLIENT_REDIRECT_URI_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="URI",
+    attributes=dict(GEEN_OPTIONEEL_BADGE),
+)
+
+KEYCLOAK_CLIENT_REDIRECT_URIS = EditableVisualizer(
+    editable=KEYCLOAK_CLIENT_REDIRECT_URIS_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Redirect URI's",
+    children=[KEYCLOAK_CLIENT_REDIRECT_URI],
+)
+
+KEYCLOAK_ADDITIONAL_CLIENTS = EditableVisualizer(
+    editable=KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Extra Keycloak clients",
+    help_text="Extra clients voor microservices of externe applicaties die dezelfde realm delen.",
+    children=[KEYCLOAK_CLIENT_NAME, KEYCLOAK_CLIENT_REDIRECT_URIS],
+)
+
+KEYCLOAK_ROLE_NAME = EditableVisualizer(
+    editable=KEYCLOAK_ROLE_NAME_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Rolnaam",
+)
+
+KEYCLOAK_ROLE_DESCRIPTION = EditableVisualizer(
+    editable=KEYCLOAK_ROLE_DESCRIPTION_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Omschrijving",
+)
+
+KEYCLOAK_REALM_ROLES = EditableVisualizer(
+    editable=KEYCLOAK_REALM_ROLES_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Realm rollen",
+    help_text="Aangepaste rollen voor fijnmazige toegangscontrole.",
+    children=[KEYCLOAK_ROLE_NAME, KEYCLOAK_ROLE_DESCRIPTION],
+)

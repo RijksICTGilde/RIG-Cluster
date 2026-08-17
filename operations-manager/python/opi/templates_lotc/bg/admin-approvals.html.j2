@@ -1,0 +1,272 @@
+{#
+  Domeinbeheer: de aanvragen voor domeinen en subdomeinen, per project.
+
+  Een OVERNAME van admin/approvals.html.j2 plus zijn vier deeltemplates. Dezelfde blokken
+  in dezelfde volgorde, dezelfde gegevens, hetzelfde gedrag:
+
+    _kop        -> page_head()
+    _melding    -> c-alert
+    _aanvragen  -> per project een panel() met een c-table; de badges voor soort en
+                   status zijn c-tag geworden in plaats van spans met eigen klassen
+    _modal      -> zie hieronder, en dat is de plek waar deze pagina afwijkt
+
+  WAAROM DE DIALOOG GEEN c-modal-dialog IS
+
+  Het thema heeft er een (<c-modal-dialog>), en op de meeste plekken zou die de juiste
+  keuze zijn. Hier niet, om een reden die pas bij het meten bleek: de dialoog van deze
+  pagina wordt niet door zichzelf bestuurd maar door /static/js/edit_modal.js, en dat
+  bestand selecteert op de KLASSE ``.edit-section-modal``. Daar hangt alles aan wat je van
+  een beoordelingsvenster verwacht:
+
+    - Escape sluit het venster, tenzij er een taak loopt
+    - een klik op de achtergrond waarschuwt bij niet-opgeslagen werk
+    - zolang de goedkeuring draait is het venster niet weg te klikken
+    - de scrollpositie blijft staan over htmx-wisselingen heen
+
+  ``class`` komt op c-modal-dialog niet door: het component geeft alleen id en zijn eigen
+  attributen door aan het custom element. De dialoog zou er dus uitzien als NLDD en
+  ondertussen stilletjes zijn Escape-afhandeling en zijn blokkade tijdens een lopende taak
+  kwijt zijn. Dat is precies het soort verlies dat je pas merkt als het misgaat.
+
+  Bovendien wordt de INHOUD van dit venster door de andere omgeving gerenderd: het is de
+  modal-wizard uit opi/templates/wizard/, in roos-componenten. Die kan hier niet
+  meeverhuizen zonder de wizard zelf om te zetten, en dat is fase 4.
+
+  Daarom staat de dialoog hier zoals hij is, met dezelfde markup, dezelfde klassen en
+  dezelfde scripts. Wat de LOTC-schil niet zelf meebrengt (json-enc en edit_modal.js komen
+  bij de bestaande pagina uit base.html.j2) wordt hieronder alsnog geladen.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Domeinbeheer - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Domeinbeheer", "Beheer domein- en subdomeinaanvragen voor alle projecten.") }}
+
+    {% if success_message %}
+        <c-alert type="success" heading="{{ success_message }}" />
+    {% endif %}
+
+    {# ---- Filteren op status --------------------------------------------------
+       DEZELFDE VORM ALS HET SORTEREN OP /projects, en dat is geen smaakkwestie: hier
+       stond eerst een kaal <c-select> in een <c-cluster>, en dat staat naast de
+       toolbar-knop van de projectenpagina als iets uit een andere applicatie.
+
+       Wat die vorm inhoudt, en waarom hij zo is (gemeten, zie bg/projects.html.j2):
+
+       - de toolbar staat als kale nldd-markup en niet als <c-toolbar>: dat component
+         gooit ELK kind weg, ook een kind met een slot, want het heeft geen standaard-slot;
+       - de knop met zijn menu ook, want <c-button> heeft geen standaard-slot en zou het
+         menu in slot="popup" weggooien;
+       - het menu ook, want <c-menu> rendert altijd een <nldd-menu-bar> - een horizontale
+         navigatiebalk, geen uitklapmenu - en dat blijft in een popup-slot leeg.
+
+       De items dragen hun bestemming twee keer: href zodat een gefilterde lijst een
+       deelbare URL is, en hx-get omdat een <nldd-menu-item> niet uit zichzelf op zijn href
+       navigeert (gemeten op de sandbox: menu open, optie klikbaar, en er gebeurde niets).
+
+       SERVER-SIDE, om dezelfde drie redenen als daar: het werkt zonder JavaScript, de URL
+       is deelbaar, en de gekozen waarde staat na een swap nog in het menu omdat de server
+       hem meerendert (`selected` op het item) in plaats van dat de browser hem onthoudt.
+
+       Het filter staat BINNEN het geswapte gebied. Stond het erbuiten, dan hertekende de
+       lijst wel en de knop niet, en raakte het label uit de pas met wat je ziet. #}
+    <c-stack id="approvals-gebied" gap="lg">
+    {% set huidige_status = (approval_statussen | selectattr('0', 'equalto', approval_status) | map(attribute='1') | first) | default('Alle statussen') %}
+    <nldd-toolbar label="Domeinaanvragen" size="md">
+        <nldd-toolbar-item slot="start" size="md">
+            <nldd-button variant="secondary" expandable start-icon="filter"
+                         text="Status: {{ huidige_status }}" type="button"
+                         popup-type="menu" size="md">
+                <nldd-menu slot="popup" placement="bottom-start">
+                    {% for sleutel, label in approval_statussen %}
+                        {% set filter_url = "/admin/approvals" ~ ("?status=" ~ sleutel if sleutel else "") %}
+                        <nldd-menu-item type="radio" text="{{ label }}"
+                                        href="{{ filter_url }}"
+                                        hx-get="{{ filter_url }}"
+                                        hx-select="#approvals-gebied"
+                                        hx-target="#approvals-gebied"
+                                        hx-swap="outerHTML"
+                                        hx-push-url="true"
+                                        {% if sleutel == approval_status %}selected{% endif %}></nldd-menu-item>
+                    {% endfor %}
+                </nldd-menu>
+            </nldd-button>
+        </nldd-toolbar-item>
+
+        {# GEEN eigen overloopgroep (nldd-menu-group met slot=overflow). Die stond op /projects
+           bedoeld voor een smal scherm, maar hier kwam hij ERNAAST te staan in plaats van
+           ervoor in de plaats: het filter stond dubbel op het scherm, als knop en als
+           hamburgermenu. Deze toolbar draagt maar een ding, dus er valt ook niets over te
+           laten lopen. #}
+    </nldd-toolbar>
+
+    <c-paragraph size="sm" color="grijs-500">
+        {{ approvals_getoond }} van {{ approvals_totaal }}
+        aanvra{{ 'gen' if approvals_totaal != 1 else 'ag' }}
+    </c-paragraph>
+
+    {% if projects_data %}
+        {% for project in projects_data %}
+            {# De knop haalt het formulier zelf op, met htmx. De URL staat in een GEWOON
+               attribuut (hx-get) en wordt dus door Jinja gerenderd; dat is de reden dat het
+               zo moet. In de @-afhandelaar zou `{{ project.project_name }}` letterlijk in het
+               onclick-attribuut belanden zonder ooit langs Jinja te komen, en dan vroeg de
+               dialoog /admin/approvals/%7B%7B%20project.project_name%20%7D%7D/... op.
+               Bewaakt door tests/test_lotc_klikattributen.py; gemeten in
+               tests/e2e/test_lotc_domeinbeheer.py.
+
+               Wat de @-afhandelaar nog wel doet, is het venster openen: htmx haalt inhoud op
+               maar maakt geen schil zichtbaar. Er staat daarom geen Jinja in - alleen de
+               projectnaam uit het data-attribuut. #}
+            {% set beheren %}<c-button type="primary" size="sm" label="Beheren" icon="pencil-on-square" show-icon="before" data-project="{{ project.project_name }}" hx-get="/admin/approvals/{{ project.project_name | urlencode }}/modal-wizard/admin-approval" hx-target="#edit-section-inner" hx-swap="innerHTML" hx-indicator="#approval-loading" @click="openApprovalDialog(this.dataset.project)" />{% endset %}
+            {% call panel(project.project_name, "rectangle-stack", aside=beheren) %}
+{# c-table-head IS de kopregel; daar hoort geen c-table-row in. En zonder
+                   columns stapelen de cellen, want NLDD maakt er een CSS-grid van. #}
+                <c-table columns="1fr 2fr 2fr 1fr 2fr">
+                    <c-table-head>
+                        <c-th>Type</c-th>
+                        <c-th>Domein</c-th>
+                        <c-th>Naam</c-th>
+                        <c-th>Status</c-th>
+                        <c-th>Laatste wijziging</c-th>
+                    </c-table-head>
+                    {% for item in project.approval_items %}
+                        <c-table-row>
+                            <c-td>
+                                <c-tag type="default" label="{{ 'Subdomein' if item.type == 'subdomain' else 'Domein' }}" />
+                            </c-td>
+                            <c-td>{{ item.domain }}</c-td>
+                            <c-td><c-b>{{ item.name }}</c-b></c-td>
+                            <c-td>
+                                {# De kleur zat in het origineel in de klasse van de badge;
+                                   hier in het soort tag. Aangevraagd blijft opvallen, want
+                                   dat is de rij waar je iets mee moet. #}
+                                {% set status_labels = {'requested': 'Aangevraagd', 'approved': 'Goedgekeurd', 'denied': 'Afgewezen'} %}
+                                {% set status_types = {'requested': 'warning', 'approved': 'success', 'denied': 'error'} %}
+                                <c-tag
+                                    type="{{ status_types.get(item.current_status, 'default') }}"
+                                    label="{{ status_labels.get(item.current_status, item.current_status) }}" />
+                            </c-td>
+                            <c-td>
+                                {# GEEN <c-stack> hieromheen. Een cel is zelf al een kolom-flexbox, dus
+                                   de twee regels stapelen vanzelf - en met een stack ertussen viel deze
+                                   kolom in FIREFOX om: <nldd-cell> legt zijn kinderen neer met
+                                   `align-items: flex-start`, en Firefox rekent de intrinsieke breedte van
+                                   `div.lotc-stack` (flex) met een `nldd-rich-text` (grid) erin uit als 0.
+                                   De cel bleef 212px, de inhoud kromp tot niets en "16 augustus 2026" viel
+                                   over veertien regels uiteen, een teken per regel. Chromium en WebKit
+                                   toonden dezelfde HTML goed, dus dit is alleen in Firefox te zien.
+                                   Zonder de stack meten alle drie de motoren hetzelfde: 212px, een regel.
+                                   Wat er in LOTC zou moeten veranderen staat als punt 14 in
+                                   request_for_components.md; zolang dat er niet is, is dit de vorm.
+                                   Gemeten door tests/e2e/test_lotc_domeinbeheer.py. #}
+                                {% if item.history %}
+                                    {% set last = item.history[-1] %}
+                                    <c-paragraph size="sm" no-spacing>{{ last.date | dutch_date(include_time=False) }}</c-paragraph>
+                                    {% if last.by %}
+                                        <c-paragraph size="sm" no-spacing>door {{ last.by }}</c-paragraph>
+                                    {% endif %}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </c-td>
+                        </c-table-row>
+                    {% endfor %}
+                </c-table>
+            {% endcall %}
+        {% endfor %}
+    {% else %}
+        {% call panel("") %}
+            {# Twee verschillende dingen, en het verschil is het enige dat een gefilterde
+               lege pagina bruikbaar maakt: er is niets, of er is niets MET DEZE STATUS. #}
+            {% if approvals_totaal %}
+                <c-paragraph>Geen aanvragen met deze status. Er zijn er {{ approvals_totaal }} met een andere.</c-paragraph>
+            {% else %}
+                <c-paragraph>Geen domein- of subdomeinaanvragen gevonden.</c-paragraph>
+            {% endif %}
+        {% endcall %}
+    {% endif %}
+    </c-stack>
+
+    {# Het venster waarin een aanvraag wordt beoordeeld. Dezelfde markup als de bestaande
+       pagina, inclusief de klassen waar edit_modal.js op selecteert. De achtergrond gaat
+       langs de gedeelde afhandeling en niet rechtstreeks langs sluiten: die negeert de
+       klik zolang er een taak loopt en waarschuwt bij niet-opgeslagen werk. #}
+    <div id="approval-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
+    <div id="approval-modal" class="edit-section-modal" role="dialog" aria-modal="true">
+        {# .edit-section-header was flex + space-between + align-items + gap: dat is
+       <c-cluster justify="between">. De lijn eronder en de marge blijven in
+       modal.css - daar heeft het thema niets voor. #}
+    <c-cluster justify="between" align="center" class="edit-section-header">
+            {# Het icoon staat NAAST de kop en niet erin: een kop legt zijn kinderen niet
+               naast elkaar, dus een icoon binnen <c-heading> lijnt op de tekstBASISlijn uit
+               en zakt daarmee uit de lijn. Een cluster centreert wel. De id blijft op de kop
+               staan, en #approval-title-text blijft de span die openApprovalDialog beschrijft. #}
+            <c-cluster gap="sm" align="center">
+                <c-icon icon="check-mark-circle" size="lg" />
+                <c-heading type="h2" size="4" id="approval-title">
+                    <span id="approval-title-text">Domeingoedkeuring</span>
+                </c-heading>
+            </c-cluster>
+            <c-button type="tertiary" size="sm" label="Sluiten" icon="dismiss" show-icon="before" class="edit-modal-close-btn"
+                      @click="closeApprovalModal()" />
+        </c-cluster>
+        {# De laadtoestand is van htmx: hx-indicator zet .htmx-request op dit element voor de
+           duur van het verzoek, en css/modal.css zet hem daarmee aan en de oude inhoud uit.
+           Er staat GEEN lege foutbak meer boven de dialoog: een fout komt terug als fragment
+           en landt hieronder, in #edit-section-inner. #}
+        <div id="approval-loading" class="edit-section-loading"><c-paragraph>Laden...</c-paragraph></div>
+        <div id="edit-section-inner"></div>
+    </div>
+{% endblock %}
+
+{% block additional_styles %}
+    <link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+    <link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+{% endblock %}
+
+{% block additional_scripts %}
+    {# Deze twee komen bij de bestaande pagina uit base.html.j2 en dus niet mee met de
+       LOTC-schil: json-enc laat htmx het stapformulier als JSON versturen (de route weigert
+       iets anders), en edit_modal.js draagt het sluiten, Escape en de blokkade tijdens een
+       lopende taak. Zonder allebei doet het venster het niet. #}
+    <script src="{{ static_url('js/json-enc.js') }}"></script>
+    <script src="{{ static_url('js/edit_modal.js') }}"></script>
+    <script>
+        // Het OPENEN van het venster, en verder niets. Het ophalen, de laadtoestand en het
+        // plaatsen van het antwoord doet htmx via hx-get/hx-target/hx-indicator op de knop;
+        // dat stond hier eerder met de hand (fetch + innerHTML + een eigen foutbak), en
+        // alle drie de fouten van 15 en 16 augustus kwamen daaruit voort.
+        //
+        // Wat htmx niet kan is een schil zichtbaar maken. Dat is dit: de twee klassen waar
+        // edit_modal.js op selecteert, plus de titel die het project noemt.
+        function openApprovalDialog(projectNaam) {
+            document.getElementById('approval-title-text').textContent = 'Domeingoedkeuring - ' + projectNaam;
+            document.getElementById('approval-backdrop').classList.add('is-open');
+            document.getElementById('approval-modal').classList.add('is-open');
+            document.body.style.overflow = 'hidden';
+        }
+
+        // htmx wisselt standaard NIETS in bij een 4xx of 5xx. Voor deze dialoog is dat het
+        // slechtste gedrag dat er is: je klikt op Beheren, het venster gaat open en blijft
+        // leeg, zonder dat iemand je vertelt waarom. De route beantwoordt haar eigen
+        // weigeringen met een leesbaar fragment (zie opi/web/router_approvals.py); dit is de
+        // htmx-kant die het ook echt laat zien, en meteen ook voor een storing die de route
+        // nooit bereikt. Dit is htmx' eigen haak hiervoor, geen nagebouwde afhandeling.
+        document.body.addEventListener('htmx:beforeSwap', function (evt) {
+            var doel = evt.detail.target;
+            if (doel && doel.id === 'edit-section-inner' && evt.detail.xhr && evt.detail.xhr.status >= 400) {
+                evt.detail.shouldSwap = true;
+                evt.detail.isError = false;
+            }
+        });
+
+        // closeEditModal / closeEditModalAndReload komen uit edit_modal.js hierboven. Deze
+        // dialoog doet aan dat systeem mee doordat hij de klassen .edit-section-modal en
+        // .edit-section-backdrop draagt; daar zitten ook de Escape-afhandeling en de
+        // blokkade tijdens een lopende taak in, dus die staan hier niet nog een keer.
+        function closeApprovalModal() { closeEditModal(); }
+    </script>
+{% endblock %}

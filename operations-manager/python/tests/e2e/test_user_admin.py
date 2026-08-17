@@ -109,8 +109,8 @@ class TestUserCreatePage:
     def test_form_fields_present(self, app_server: str, auth_page: Page) -> None:
         """Email and full_name fields are rendered."""
         auth_page.goto(f"{app_server}{CREATE_URL}")
-        assert auth_page.locator("[name='email']").is_visible()
-        assert auth_page.locator("[name='full_name']").is_visible()
+        assert auth_page.locator("input[name='email']").is_visible()
+        assert auth_page.locator("input[name='full_name']").is_visible()
 
     def test_labels_in_dutch(self, app_server: str, auth_page: Page) -> None:
         """Form labels use Dutch text."""
@@ -144,8 +144,8 @@ class TestUserCreateValidation:
     def test_invalid_email_shows_error(self, app_server: str, auth_page: Page) -> None:
         """Submitting an invalid email shows a validation error."""
         auth_page.goto(f"{app_server}{CREATE_URL}")
-        auth_page.locator("[name='email']").fill("not-an-email")
-        auth_page.locator("[name='full_name']").fill("Test User")
+        auth_page.locator("input[name='email']").fill("not-an-email")
+        auth_page.locator("input[name='full_name']").fill("Test User")
         auth_page.locator("button[type='submit'], input[type='submit']").first.click()
         auth_page.wait_for_load_state("networkidle")
 
@@ -155,8 +155,8 @@ class TestUserCreateValidation:
     def test_short_name_shows_error(self, app_server: str, auth_page: Page) -> None:
         """Submitting a name shorter than 2 chars shows a validation error."""
         auth_page.goto(f"{app_server}{CREATE_URL}")
-        auth_page.locator("[name='email']").fill("valid@example.nl")
-        auth_page.locator("[name='full_name']").fill("A")
+        auth_page.locator("input[name='email']").fill("valid@example.nl")
+        auth_page.locator("input[name='full_name']").fill("A")
         auth_page.locator("button[type='submit'], input[type='submit']").first.click()
         auth_page.wait_for_load_state("networkidle")
 
@@ -166,7 +166,7 @@ class TestUserCreateValidation:
     def test_validation_preserves_roos_rendering(self, app_server: str, auth_page: Page) -> None:
         """After validation error, ROOS components still render correctly."""
         auth_page.goto(f"{app_server}{CREATE_URL}")
-        auth_page.locator("[name='email']").fill("bad")
+        auth_page.locator("input[name='email']").fill("bad")
         auth_page.locator("button[type='submit'], input[type='submit']").first.click()
         auth_page.wait_for_load_state("networkidle")
         _assert_no_raw_roos_tags(auth_page, f"{CREATE_URL} (after validation)")
@@ -178,8 +178,8 @@ class TestUserCreateFlow:
     def test_create_user_appears_in_list(self, app_server: str, auth_page: Page) -> None:
         """Create a user via the form and verify it appears in the list."""
         auth_page.goto(f"{app_server}{CREATE_URL}")
-        auth_page.locator("[name='email']").fill("nieuw@example.nl")
-        auth_page.locator("[name='full_name']").fill("Nieuwe Gebruiker")
+        auth_page.locator("input[name='email']").fill("nieuw@example.nl")
+        auth_page.locator("input[name='full_name']").fill("Nieuwe Gebruiker")
         auth_page.locator("button[type='submit'], input[type='submit']").first.click()
 
         # Should redirect to list with success message
@@ -204,8 +204,8 @@ class TestUserEditPage:
         assert response is not None
         assert response.ok
 
-        email_value = auth_page.locator("[name='email']").input_value()
-        name_value = auth_page.locator("[name='full_name']").input_value()
+        email_value = auth_page.locator("input[name='email']").input_value()
+        name_value = auth_page.locator("input[name='full_name']").input_value()
         assert "@" in email_value  # Should be pre-filled
         assert len(name_value) > 0
 

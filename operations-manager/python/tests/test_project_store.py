@@ -20,6 +20,7 @@ tests/test_git_store_primitives.py.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import Any
 
 import pytest
@@ -119,6 +120,23 @@ class FakeGitConnector:
         for commit in self.remote.commits:
             if commit["ref"] == ref:
                 return commit["files"].get(path)
+        return None
+
+    @staticmethod
+    def _blob_sha(content: str) -> str:
+        """Content-addressed like a real git blob: same content, same 40-hex name."""
+        return hashlib.sha1(content.encode(), usedforsecurity=False).hexdigest()
+
+    async def get_blob_sha(self, path: str, ref: str = "HEAD") -> str | None:
+        content = await self.show_file_at(ref, path)
+        return None if content is None else self._blob_sha(content)
+
+    async def read_blob(self, blob_sha: str) -> str | None:
+        # Every version ever committed stays reachable, as it does in a real clone.
+        for commit in self.remote.commits:
+            for content in commit["files"].values():
+                if self._blob_sha(content) == blob_sha:
+                    return content
         return None
 
     async def list_file_revisions(self, path: str, limit: int = 50) -> list[dict[str, str]]:
@@ -557,6 +575,37 @@ async def test_previous_returns_version_before_head(harness: StoreHarness) -> No
 
 
 # ----------------------------------------------------------------------------
+# version_of / read_version
+# ----------------------------------------------------------------------------
+
+
+async def test_version_token_reads_back_the_version_it_named(harness: StoreHarness) -> None:
+    """A form is rendered from a version; the token must still resolve to it later."""
+    version = await harness.store.version_of(RELATIVE_PATH)
+    assert version is not None
+
+    await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add dep-1", actor="tester")
+
+    as_rendered = await harness.store.read_version(version)
+    assert as_rendered is not None
+    assert as_rendered["deployments"] == [], "the token resolved to the current version, not the one it named"
+
+
+async def test_version_token_changes_when_the_file_changes(harness: StoreHarness) -> None:
+    before = await harness.store.version_of(RELATIVE_PATH)
+    await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add dep-1", actor="tester")
+    after = await harness.store.version_of(RELATIVE_PATH)
+
+    assert before != after
+
+
+async def test_a_malformed_version_token_never_reaches_git(harness: StoreHarness) -> None:
+    """Tokens come back from the browser, so they are validated, not passed through."""
+    assert await harness.store.read_version("../../etc/passwd") is None
+    assert await harness.store.read_version("HEAD") is None
+
+
+# ----------------------------------------------------------------------------
 # reconcile
 # ----------------------------------------------------------------------------
 
@@ -640,6 +689,158 @@ async def test_mutation_logs_lock_and_persist_timing(harness: StoreHarness, capl
     # a write that changed nothing is indistinguishable in production from one that
     # did, except by the presence of a store-push line beside it.
     assert any(m.startswith("store-persist") and "committed " in m and "timed" in m for m in messages), messages
+
+
+async def test_self_heal_reset_reloads_externally_changed_projects(harness: StoreHarness) -> None:
+    """The self-heal reset must not desync the cache from git.
+
+    An interrupted rollback leaves an unpushed local commit. The next write's
+    self-heal does fetch + hard reset, which does not only discard that local commit
+    -- it fast-forwards the disk over every commit another writer pushed meanwhile.
+    Those projects are then on disk but stale in the cache, and reconcile's fast path
+    (remote head == local head) reads "nothing to do" forever. This is the exact
+    production failure: a project served without its newest deployments until restart.
+    """
+    other_path = "projects/other.yaml"
+    other_v1 = _project(name="other", deployments=[])
+
+    # Remote starts with demo + other; load both into the cache.
+    harness.remote.commit(
+        "add other", {RELATIVE_PATH: dump_yaml_to_string(_project()), other_path: dump_yaml_to_string(other_v1)}
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.base_ref = harness.remote.head
+    harness.connector.local_head = harness.remote.head
+    await harness.store.bootstrap()
+    assert harness.store.get("other") is not None
+    assert [d["name"] for d in harness.store.get("other").data["deployments"]] == []
+
+    # Another pod adds a deployment to 'other' -- the "pr-480" of the incident.
+    other_v2 = _project(
+        name="other",
+        deployments=[{"name": "pr-480", "cluster": "odcn-production", "namespace": "other", "components": []}],
+    )
+    harness.remote.commit(
+        "external: pr-480 on other",
+        {RELATIVE_PATH: harness.remote.files[RELATIVE_PATH], other_path: dump_yaml_to_string(other_v2)},
+    )
+
+    # An interrupted rollback left an unpushed commit on the warm copy.
+    harness.connector._built["built-orphan"] = (dict(harness.connector.tree), "orphan")
+    harness.connector.local_head = "built-orphan"
+    assert await harness.connector.count_unpushed_commits() == 1
+
+    # A normal write to a DIFFERENT project triggers the self-heal.
+    await harness.store.save(
+        PROJECT_NAME, _add_deployment_result("d1"), message="unrelated write", actor="tester", enforce_validation=False
+    )
+
+    other = harness.store.get("other")
+    assert other is not None
+    names = [d["name"] for d in other.data["deployments"]]
+    assert "pr-480" in names, "self-heal pulled pr-480 onto disk; the cache must reflect it, not a restart"
+
+
+async def test_reconcile_repairs_cache_drift_even_when_disk_equals_remote(harness: StoreHarness) -> None:
+    """The backstop: reconcile detects a cache that lags the disk, not just the remote.
+
+    Gating reconcile on remote-head == disk-head assumes the cache matches the disk.
+    If any path advances the disk without the cache (the self-heal reset was one such
+    path), disk == remote holds while the cache is stale, and the old fast path read
+    "nothing to do" forever. Tracking the head the cache reflects closes that: even
+    with disk == remote, a cache behind that head is reloaded.
+    """
+    other_path = "projects/other.yaml"
+    harness.remote.commit(
+        "add other",
+        {RELATIVE_PATH: dump_yaml_to_string(_project()), other_path: dump_yaml_to_string(_project(name="other"))},
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.base_ref = harness.remote.head
+    harness.connector.local_head = harness.remote.head
+    await harness.store.bootstrap()
+
+    # An external commit lands (another cluster/pod), and the disk is fast-forwarded
+    # onto it WITHOUT the cache -- simulating any drift path, not a specific bug.
+    other_v2 = _project(
+        name="other",
+        deployments=[{"name": "pr-480", "cluster": "odcn-production", "namespace": "other", "components": []}],
+    )
+    harness.remote.commit(
+        "external: pr-480",
+        {RELATIVE_PATH: harness.remote.files[RELATIVE_PATH], other_path: dump_yaml_to_string(other_v2)},
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.local_head = harness.remote.head  # disk == remote, cache still behind
+
+    assert "pr-480" not in [d["name"] for d in harness.store.get("other").data["deployments"]]
+
+    # disk == remote, so the old fast path would return here. The cache-head check must
+    # still notice the cache is behind and reload.
+    await harness.store.reconcile()
+
+    assert "pr-480" in [d["name"] for d in harness.store.get("other").data["deployments"]], (
+        "reconcile must repair a cache that lags the disk, even when disk == remote"
+    )
+
+
+async def test_reconcile_logs_error_only_for_drift_not_for_external_pulls(harness: StoreHarness, caplog) -> None:
+    """Drift is an unknown path and must be loud; an external pull is routine and must not be.
+
+    The discriminator is whether the disk had to move. If reconcile reloads changed
+    data while the disk already matched the remote, no external commit explains it --
+    a path advanced the working copy without the cache, which should not happen.
+    """
+    import logging
+
+    other_path = "projects/other.yaml"
+    harness.remote.commit(
+        "add other",
+        {RELATIVE_PATH: dump_yaml_to_string(_project()), other_path: dump_yaml_to_string(_project(name="other"))},
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.base_ref = harness.remote.head
+    harness.connector.local_head = harness.remote.head
+    await harness.store.bootstrap()
+
+    # (1) External pull: remote ahead of disk. Routine -- INFO, never ERROR.
+    other_v2 = _project(
+        name="other",
+        deployments=[{"name": "ext", "cluster": "odcn-production", "namespace": "other", "components": []}],
+    )
+    harness.remote.commit(
+        "external", {RELATIVE_PATH: harness.remote.files[RELATIVE_PATH], other_path: dump_yaml_to_string(other_v2)}
+    )
+    # disk still behind remote (local_head not advanced) -> reset will move it.
+    with caplog.at_level(logging.INFO, logger="opi.services.project_store"):
+        await harness.store.reconcile()
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR], "an external pull is not an error"
+    assert "ext" in [d["name"] for d in harness.store.get("other").data["deployments"]]
+
+    # (2) Drift: disk already at remote, but the cache is stale. This is the anomaly.
+    caplog.clear()
+    other_v3 = _project(
+        name="other",
+        deployments=[{"name": "drifted", "cluster": "odcn-production", "namespace": "other", "components": []}],
+    )
+    harness.remote.commit(
+        "silent", {RELATIVE_PATH: harness.remote.files[RELATIVE_PATH], other_path: dump_yaml_to_string(other_v3)}
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.local_head = harness.remote.head  # disk == remote, cache behind
+
+    with caplog.at_level(logging.INFO, logger="opi.services.project_store"):
+        await harness.store.reconcile()
+
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors, "drift with disk == remote must be logged as an error"
+    assert "drifted from git" in errors[0]
+    assert "drifted" in [d["name"] for d in harness.store.get("other").data["deployments"]]
+
+
+def _add_deployment_result(name: str) -> dict[str, Any]:
+    """demo with one deployment -- a plain dict for save(), not a change function."""
+    return _project(deployments=[{"name": name, "cluster": "odcn-production", "namespace": "demo", "components": []}])
 
 
 async def test_persist_reports_a_write_that_changed_nothing(harness: StoreHarness, caplog) -> None:

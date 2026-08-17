@@ -94,6 +94,11 @@ class KopiaSnapshot:
         return self._get_tag("storage")
 
     @property
+    def source_database(self) -> str | None:
+        """The database this snapshot was dumped from (database backups only)."""
+        return self._get_tag("source_database")
+
+    @property
     def generation(self) -> int | None:
         """Extract generation from tags."""
         value = self._get_tag("generation")
@@ -139,6 +144,22 @@ class KopiaSnapshot:
             ResourceType.BUCKET: "bucket",
         }
         return self._get_tag(tag_map.get(self.resource_type, "storage"))
+
+    @property
+    def restore_reference(self) -> str:
+        """The name the restore endpoints accept for this snapshot.
+
+        A database or bucket snapshot carries no ``pvc`` tag, so ``pvc_name`` fell
+        back to the last segment of the source path -- "backup" for a database dump
+        and "bucket-backup" for a mirrored bucket. Both listings published that
+        basename while the restore route wants the reference the backup was
+        registered under, which is why every name a caller could read was refused
+        (RC-95). Those two kinds are named by their own tag; a PVC keeps its
+        ``pvc`` tag, because that is what the PVC restore route takes.
+        """
+        if self.resource_type in (ResourceType.DATABASE, ResourceType.BUCKET):
+            return self.reference_name or self.pvc_name
+        return self.pvc_name
 
 
 @dataclass

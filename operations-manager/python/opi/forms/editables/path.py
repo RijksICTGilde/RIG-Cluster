@@ -17,10 +17,15 @@ Supports a rich path syntax for get/set operations:
     deployments[0]/components{name=frontend}/image
 
 Dict-key filter ``{K}``
-    The list is a mix of strings and dicts.  Finds the dict whose
-    top-level key matches *K* and descends into ``dict[K]``.
+    The list is a mix of strings and dicts.  Finds the entry identified by *K*
+    and descends into its body.  Two entry forms carry a body, and both are
+    understood (RC-60): the legacy single-key dict ``{K: {…}}``, whose body is
+    ``dict[K]``, and the uniform record ``{name|reference: K, …}``, which IS its
+    own body.  Matching only the legacy form is how a component whose
+    ``publish-on-web`` entry had already been normalised to a record read back
+    as empty -- the form showed a default where a stored value was.
     On write, promotes a matching string to ``{K: {}}`` or appends
-    a new entry if not found.
+    a new entry if not found; an existing record is written into as-is.
 
 Field-match filter ``{F=V}``
     The list contains dicts.  Finds the first dict where ``dict[F] == V``
@@ -120,7 +125,7 @@ def _get_recursive(current: Any, parts: list[str]) -> Any:
 def _filter_get(items: list[Any], filt: str) -> Any:
     """Apply a filter expression to a list and return the matched value.
 
-    {K}     → find dict with top-level key K, return dict[K]
+    {K}     → find the entry identified by K, return its body
     {F=V}   → find dict where dict[F] == V, return that dict
     """
     if "=" in filt:
@@ -130,11 +135,24 @@ def _filter_get(items: list[Any], filt: str) -> Any:
                 return item
         return None
 
-    # {K} - dict-key filter in mixed list
+    # {K} - identity filter in a mixed list, both entry forms
     for item in items:
-        if isinstance(item, dict) and filt in item:
+        if not isinstance(item, dict):
+            continue
+        if _is_record_for(item, filt):
+            return item
+        if filt in item:
             return item[filt]
     return None
+
+
+def _is_record_for(item: dict[str, Any], name: str) -> bool:
+    """Whether ``item`` is the uniform record ``{name|reference: name, …}``.
+
+    The record form carries its body on the entry itself, so a matching record is
+    descended into directly rather than through a name key.
+    """
+    return item.get("name") == name or item.get("reference") == name
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +217,17 @@ def delete_value(data: dict[str, Any], yaml_path: str) -> None:
             if not isinstance(current, list) or index >= len(current):
                 return
             current = current[index]
+        elif filt is not None:
+            # A filter segment was silently ignored here, so navigation walked into the
+            # LIST and the next segment found no dict -- every delete through a
+            # ``services{X}/config/...`` path was a no-op. That is what made
+            # ``remove_when_none`` do nothing for service config: clearing a field left
+            # the old value in the file (RC-60).
+            if not isinstance(current, list):
+                return
+            current = _filter_get(current, filt)
+            if current is None:
+                return
 
     # Remove the terminal key
     last_key, last_idx, _last_filt = _parse_segment(parts[-1])
@@ -268,8 +297,19 @@ def _filter_set_terminal(lst: list[Any], filt: str, value: Any) -> None:
             value.setdefault(field, match_val)
         lst.append(value)
     else:
-        # {K} - set the value at dict[K]
+        # {K} - set the value at the entry identified by filt
         for i, item in enumerate(lst):
+            if isinstance(item, dict) and _is_record_for(item, filt):
+                # A record IS its own body; replacing it would drop its identity, so a
+                # terminal write onto a record means "become this value" only when the
+                # value is a mapping we can merge into it.
+                if value is None:
+                    lst[i] = filt
+                elif isinstance(value, dict):
+                    item.update(value)
+                else:
+                    lst[i] = {filt: value}
+                return
             if isinstance(item, str) and item == filt:
                 if value is None:
                     return  # already a plain string, nothing to clear
@@ -301,7 +341,15 @@ def _filter_ensure(lst: list[Any], filt: str) -> dict[str, Any]:
         lst.append(new_item)
         return new_item
 
-    # {K} - dict-key filter in mixed list
+    # {K} - identity filter in a mixed list
+    # Zeroth pass: an existing uniform record is its own body, so descend into it
+    # rather than adding a second entry beside it under the name key.
+    for item in lst:
+        if isinstance(item, dict) and _is_record_for(item, filt):
+            while filt in lst:
+                lst.remove(filt)
+            return item
+
     # First pass: prefer an existing dict entry (avoids duplicates when
     # the list contains both a plain string and a dict for the same key).
     for item in lst:

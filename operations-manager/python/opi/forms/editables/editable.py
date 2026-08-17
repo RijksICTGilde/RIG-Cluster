@@ -5,6 +5,20 @@ from dataclasses import dataclass, field
 from enum import Enum, StrEnum, auto
 from typing import Any, Protocol, runtime_checkable
 
+#: The two keys a service's configuration can live under, real first.
+#:
+#: ``services`` is where a saved project file keeps it; ``_services-config`` is the
+#: virtual key the wizard posts it under so a config section does not collide with the
+#: selection list it configures. The same configuration, two places, depending only on
+#: whether you are mid-wizard or looking at a project file.
+#:
+#: Declared here -- the leaf of the forms import graph -- so that there is ONE pair.
+#: Thirteen service packages each wrote it out by hand, which is thirteen chances for a
+#: typo that silently turns virtualization off, and one more place to miss when the pair
+#: changes. Service editables use it as their ``virtualize`` value; readers resolve
+#: across it via ``opi.forms.editables.service_path``.
+SERVICE_VIRTUALIZE: tuple[str, str] = ("services", "_services-config")
+
 
 @runtime_checkable
 class EditableConverter(Protocol):
@@ -33,6 +47,26 @@ class EditableValidator(Protocol):
     """Sync field-level validator."""
 
     def validate(self, value: Any) -> list[str]:
+        """Return error messages (empty list = valid)."""
+        ...
+
+
+@runtime_checkable
+class ContextAwareEditableValidator(Protocol):
+    """Sync field-level validator that also wants the surrounding context.
+
+    Most validators judge a value on its own and implement ``EditableValidator``.
+    A few need the rest of the form or project data (e.g. to check a value against
+    a sibling field) and declare a second ``context`` parameter. Both shapes are
+    stored in ``Editable.validator``; ``FormProcessor`` picks the call form that
+    matches the validator it holds.
+
+    Note that ``runtime_checkable`` cannot tell the two protocols apart -- it only
+    checks that a ``validate`` attribute exists, not its signature -- so this type
+    is for static checking and ``cast``, not for ``isinstance``.
+    """
+
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
         """Return error messages (empty list = valid)."""
         ...
 
@@ -83,6 +117,25 @@ class EditableGenerator(Protocol):
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
         """Compute a value from the current project data."""
+        ...
+
+
+@runtime_checkable
+class EditableSummarizer(Protocol):
+    """Decides what a field looks like on a summary screen.
+
+    A summary is not a small form: the review page and the edit modal show what
+    was filled in, and not every field should appear there verbatim. A secret is
+    the obvious case -- the field has a value, showing it is the problem.
+
+    ``summarize`` returns the text to display, or None to leave the field out of
+    the summary entirely. It is the summary counterpart of ``EditableConverter``'s
+    ``read``/``write``/``view``, but it lives on its own so a field can control its
+    summary without inventing a converter that also has to answer for storage.
+    """
+
+    def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
+        """YAML value -> summary text, or None to omit the field."""
         ...
 
 
@@ -181,11 +234,44 @@ class Editable:
     yaml_path: str
     validator: EditableValidator | None = None
     converter: EditableConverter | None = None
+    summarizer: EditableSummarizer | None = None
+    """How this field appears on a summary screen. None means "show the value".
+
+    Set it on the field rather than on the visualizer: whether something is a
+    secret is a property of the data, so it holds in every flow that reuses this
+    editable, including one written later. ``HiddenSummary`` keeps the field out
+    of the summary, ``MaskedSummary`` states that it is set without saying what
+    it is."""
     enforcer: EditableEnforcer | None = None
     generator: EditableGenerator | None = None
     values_provider: str | None = None
+    values_must_exist: bool = False
+    """Whether a stored value MUST be one the provider currently offers.
+
+    Off by default, and that default is the honest one: for most fields the option list
+    is a MENU and not a closed set (``sleep-after-deploy`` offers 4h..168h and accepts
+    ``90m``), so refusing everything outside it would reject values the API legitimately
+    takes. Turning it on says something stronger and narrower: the value is a REFERENCE
+    into this project, so a value the project does not contain is a typo and nothing else.
+
+    Only meaningful on a provider whose list comes from the project itself -- the one that
+    declares an ``OptionsSource`` and therefore publishes ``x-choices-source`` in the API
+    document. That is deliberately the same source: the list a caller is told to read and
+    the list their value is judged against must not be two lists.
+
+    Enforced by ``validate_declared_choices`` at the save chokepoint, as a
+    ``ProjectIntegrityError``. Not by the form widget: a select can only ever show what it
+    offers, while the API and hand-written YAML never pass a widget at all.
+    """
     required: bool = False
     default: Any = None
+    """Value used when the field has none stored yet.
+
+    A callable is allowed and receives the surrounding project data, so a default can be
+    derived (the first team member's address, a text carrying the project name) instead of
+    being a constant. It is invoked only when nothing is stored, so it never overwrites a
+    user's input, and returning None means "no default after all".
+    """
     children: list[Editable] | None = None
     min_items: int = 0
     max_items: int | None = None

@@ -947,38 +947,44 @@ class PostgresConnector:
             logger.exception(f"Failed to create schema {schema_name} in database {database}")
             raise PostgresExecutionError(f"Schema creation failed: {e}") from e
 
-    async def set_role_search_path(self, username: str, database: str, schema: str) -> None:
+    async def set_role_search_path(self, username: str, database: str, schemas: list[str]) -> None:
         """Set the default search_path for a role scoped to a specific database.
 
         This ensures applications that don't explicitly set a search_path
-        (e.g. via connection options) still resolve to the correct schema.
+        (e.g. via connection options) still resolve to the correct schema. With
+        multiple schemas (RC-17) the order is preserved -- the primary schema first --
+        and ``public`` is always appended last.
 
-        Executes: ALTER ROLE <user> IN DATABASE <db> SET search_path TO <schema>
+        Executes: ALTER ROLE <user> IN DATABASE <db> SET search_path TO <schemas...>, public
 
         Args:
             username: Role name to configure
             database: Database to scope the setting to
-            schema: Schema to set as default search_path
+            schemas: Ordered schemas to set as the search_path (primary first); must be
+                non-empty.
 
         Raises:
             PostgresExecutionError: If the ALTER ROLE fails
             PostgresValidationError: If input validation fails
         """
+        if not schemas:
+            raise PostgresValidationError("set_role_search_path requires at least one schema")
+
         validated_username = self._validate_identifier(username, "username")
         validated_database = self._validate_identifier(database, "database")
-        validated_schema = self._validate_identifier(schema, "schema")
+        validated_schemas = [self._validate_identifier(schema, "schema") for schema in schemas]
 
         quoted_username = self._quote_identifier(validated_username)
         quoted_database = self._quote_identifier(validated_database)
-        quoted_schema = self._quote_identifier(validated_schema)
+        search_path = ", ".join(self._quote_identifier(schema) for schema in validated_schemas)
 
         conn = await self._get_or_create_connection(validated_database)
         await conn.execute(
-            f"ALTER ROLE {quoted_username} IN DATABASE {quoted_database} SET search_path TO {quoted_schema}, public"
+            f"ALTER ROLE {quoted_username} IN DATABASE {quoted_database} SET search_path TO {search_path}, public"
         )
         logger.info(
             f"Set default search_path for role {validated_username} "
-            f"in database {validated_database} to {validated_schema}"
+            f"in database {validated_database} to {', '.join(validated_schemas)}"
         )
 
     async def delete_schema(self, schema_name: str, database: str, cascade: bool = False) -> dict[str, Any]:
@@ -1030,6 +1036,43 @@ class PostgresConnector:
         except Exception as e:
             logger.exception(f"Failed to delete schema {schema_name}")
             raise PostgresExecutionError(f"Schema deletion failed: {e}") from e
+
+    async def database_has_user_data(self, database: str) -> bool:
+        """Whether a database holds any application object outside the system schemas.
+
+        This is the bottom under a restore: restoring into a database that already holds
+        the application's tables adds the backup ON TOP of the rows already there, which
+        is how a repeated restore doubled a row count (RC-123). A database that exists but
+        is still empty is fine to restore into -- that is what a retry after a restore that
+        failed halfway looks like -- so the question is "empty?", not "exists?".
+
+        Args:
+            database: Database name to inspect
+
+        Returns:
+            True if any table, view, sequence or foreign table exists in a non-system schema
+
+        Raises:
+            PostgresExecutionError: If the check cannot be performed
+        """
+        try:
+            conn = await self._get_or_create_connection(database)
+            has_data = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                      AND n.nspname NOT LIKE 'pg\\_toast%'
+                      AND n.nspname NOT LIKE 'pg\\_temp%'
+                      AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+                )
+            """)
+            return bool(has_data)
+
+        except Exception as e:
+            logger.exception(f"Failed to inspect database {database} on {self._host}")
+            raise PostgresExecutionError(f"Database emptiness check failed: {e}") from e
 
     async def list_schemas(self, database: str) -> list[dict[str, Any]]:
         """List all database schemas using the bound admin credentials.
@@ -1340,6 +1383,7 @@ class PostgresConnector:
         target_schema: str,
         target_owner: str,
         target_owner_password: str,
+        additional_schemas: list[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Clone a schema from source database to target database on the bound server.
 
@@ -1354,6 +1398,11 @@ class PostgresConnector:
             target_schema: Target schema name
             target_owner: Owner for the cloned schema
             target_owner_password: Password for target owner (needed for pg_dump)
+            additional_schemas: Extra schemas (RC-17) to clone into the same target
+                database, as ``(source_name, target_name)`` pairs. Each one is cloned
+                through the very same single-schema pipeline as the default schema (so
+                its extensions, restore and rename-if-different are handled identically);
+                when empty, this method behaves exactly as before.
 
         Returns:
             Dictionary with operation status and details
@@ -1369,6 +1418,13 @@ class PostgresConnector:
             validated_source_schema = self._validate_identifier(source_schema, "source_schema")
             validated_target_schema = self._validate_identifier(target_schema, "target_schema")
             validated_target_owner = self._validate_identifier(target_owner, "target_owner")
+            validated_additional = [
+                (
+                    self._validate_identifier(src, "additional_source_schema"),
+                    self._validate_identifier(tgt, "additional_target_schema"),
+                )
+                for src, tgt in (additional_schemas or [])
+            ]
 
             conn = await self._get_or_create_connection("postgres")
 
@@ -1421,6 +1477,38 @@ class PostgresConnector:
             logger.info(
                 f"Successfully cloned schema '{validated_source_schema}' from '{validated_source_db}' to '{validated_target_db}' as '{validated_target_schema}'"
             )
+
+            # Extra schemas (RC-17): clone each one through the identical single-schema
+            # pipeline. The default schema is created first, so any cross-schema
+            # dependency onto it already resolves. Same source/target name skips the
+            # rename; a cross-deployment clone (different names) renames just like the
+            # default schema does.
+            for extra_source, extra_target in validated_additional:
+                extra_precreated = await self._precreate_extensions_for_clone(
+                    source_database=validated_source_db,
+                    source_schema=extra_source,
+                    target_database=validated_target_db,
+                    target_schema=extra_source,
+                )
+                await self._execute_pgdump_clone(
+                    source_host=self._host,
+                    source_username=self._admin_username,
+                    source_password=self._admin_password,
+                    source_database=validated_source_db,
+                    source_schema=extra_source,
+                    target_host=self._host,
+                    target_port=5432,
+                    target_username=self._admin_username,
+                    target_password=self._admin_password,
+                    target_database=validated_target_db,
+                    target_schema=extra_target,
+                    target_owner=validated_target_owner,
+                    target_owner_password=target_owner_password,
+                    source_port=5432,
+                    schema_precreated=len(extra_precreated) > 0,
+                )
+                logger.info(f"Cloned extra schema '{extra_source}' -> '{extra_target}' in '{validated_target_db}'")
+
             return {
                 "status": "success",
                 "message": f"Database cloned successfully from {validated_source_db} to {validated_target_db}",
@@ -1428,6 +1516,7 @@ class PostgresConnector:
                 "target_database": validated_target_db,
                 "source_schema": validated_source_schema,
                 "target_schema": validated_target_schema,
+                "additional_schemas": validated_additional,
             }
 
         except PostgresValidationError:

@@ -181,10 +181,19 @@ class ServiceListConverter:
         ``attachments`` entry; otherwise saving the services list would silently drop
         every uploaded attachment.
         """
+        from opi.forms.wizard.services_merge import dedupe_service_list
+
         if isinstance(value, str) and value:
             value = [value]
         if not isinstance(value, list):
             return []
+
+        # The selection is a set keyed by service name, so collapse duplicates here rather
+        # than letting one reach the project file (where only the first entry gets promoted
+        # to a config record). The picker used to produce them itself, via the hidden input
+        # that travelled alongside a locked-and-therefore-disabled checkbox; that input is
+        # gone, but a set is still a set.
+        value = dedupe_service_list(value)
 
         if self._preserve_catalog_data:
             existing_data = self._existing_attachments_data(context_data)
@@ -201,7 +210,9 @@ class ServiceListConverter:
 
     @staticmethod
     def _restore_attachments_data(item: Any, existing_data: Any) -> Any:
-        name = item if isinstance(item, str) else (next(iter(item), None) if isinstance(item, dict) else None)
+        from opi.services.services import service_entry_name
+
+        name = service_entry_name(item)
         if name != "attachments":
             return item
         current = item["attachments"] if isinstance(item, dict) and isinstance(item.get("attachments"), dict) else {}
@@ -295,10 +306,11 @@ class KeyValueConverter:
 
     Two write modes controlled by ``write_as``:
 
-    - ``"dict"`` (default): Parses ``KEY=value`` text into a dict.
-      Used for ``aliases`` which are stored as YAML maps.
+    - ``"dict"`` (default): Parses ``KEY=value`` text into a dict, encrypting each
+      value on its own. No editable uses this since RC-106 moved ``aliases`` onto the
+      block shape; it is kept as the general map mode of this converter.
     - ``"string"``: Keeps the raw text as a string literal.
-      Used for ``user-env-vars`` which are stored as a string
+      Used for ``user-env-vars`` and ``aliases``, which are stored as one string
       (and later AGE-encrypted by a generator).
 
     When the stored value is AGE-encrypted, ``read()`` and ``view()``
@@ -316,9 +328,9 @@ class KeyValueConverter:
         If the value is AGE-encrypted and ``context_data`` is provided,
         the value is decrypted first using the project's private key.
         """
-        logger.info(
-            "[KeyValueConverter.read] write_as=%s, input type=%s, value=%r", self.write_as, type(value).__name__, value
-        )
+        # Never log the value: this converter carries user-env-vars and aliases, which
+        # hold secrets (the deploy path holds the same rule, project_manager.py).
+        logger.debug("[KeyValueConverter.read] write_as=%s, input type=%s", self.write_as, type(value).__name__)
         value = self._maybe_decrypt(value, context_data)
         if isinstance(value, dict):
             if not value:
@@ -337,16 +349,15 @@ class KeyValueConverter:
         When ``write_as="string"`` and *context_data* contains a project
         AGE public key, the result is AGE-encrypted automatically.
         """
-        logger.info(
-            "[KeyValueConverter.write] write_as=%s, input type=%s, value=%r", self.write_as, type(value).__name__, value
-        )
+        logger.debug("[KeyValueConverter.write] write_as=%s, input type=%s", self.write_as, type(value).__name__)
         result = self._write_as_string(value) if self.write_as == "string" else self._write_as_dict(value)
         if result and self.write_as == "string" and isinstance(result, str):
             result = self._maybe_encrypt(result, context_data)
-        logger.info(
-            "[KeyValueConverter.write] result type=%s, result=%r",
-            type(result).__name__ if result is not None else "None",
-            result,
+        elif result and self.write_as == "dict" and isinstance(result, dict):
+            # Map mode: encrypt each value independently (values may hold secrets).
+            result = {k: self._maybe_encrypt(str(v), context_data) for k, v in result.items()}
+        logger.debug(
+            "[KeyValueConverter.write] result type=%s", type(result).__name__ if result is not None else "None"
         )
         return result
 
@@ -398,7 +409,13 @@ class KeyValueConverter:
 
     @staticmethod
     def _maybe_decrypt(value: Any, context_data: dict[str, Any] | None) -> Any:
-        """Decrypt AGE-encrypted value using the project's private key."""
+        """Decrypt AGE-encrypted value using the project's private key.
+
+        Aliases are stored as a dict of ``name -> value``; each value may be
+        AGE-encrypted independently, so decrypt them per-entry.
+        """
+        if isinstance(value, dict):
+            return {k: KeyValueConverter._maybe_decrypt(v, context_data) for k, v in value.items()}
         if not isinstance(value, str) or "BEGIN AGE ENCRYPTED FILE" not in value:
             return value
         if not context_data:
@@ -436,7 +453,7 @@ class KeyValueConverter:
                 logger.debug("[KeyValueConverter] No project AGE public key, skipping encryption")
                 return value
             encrypted = encrypt_age_content_sync(value, public_key)
-            logger.debug("[KeyValueConverter] Encrypted user-env-vars with project AGE key")
+            logger.debug("[KeyValueConverter] Encrypted value with project AGE key")
             return LiteralScalarString(encrypted)
         except Exception:
             logger.warning("[KeyValueConverter] AGE encryption failed, returning plain value", exc_info=True)
@@ -766,3 +783,175 @@ class RRuleMonthDayConverter:
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
         return self.read(value, context_data=context_data)
+
+
+class BooleanConverter:
+    """Maps a Ja/Nee select (values "true"/"false") to a real YAML boolean.
+
+    Use on boolean config fields whose cluster-wide default may be True: a form value
+    that merely omits the key would inherit that default, so this always writes an
+    explicit ``true``/``false`` instead.
+    """
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        if value is None or value == "":
+            return ""
+        return "true" if value in (True, "true", "on", "yes", "1") else "false"
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> bool:
+        return value in (True, "true", "on", "yes", "1")
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        return "Ja" if value in (True, "true", "on", "yes", "1") else "Nee"
+
+
+class CommaSeparatedListConverter:
+    """Converts a list to/from a comma-separated string (trimmed, empties dropped)."""
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        if isinstance(value, list):
+            return ", ".join(str(v) for v in value)
+        return str(value or "")
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
+        if isinstance(value, list):
+            return value
+        return [part.strip() for part in str(value).split(",") if part.strip()]
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        return self.read(value, context_data=context_data)
+
+
+class CommandLineConverter:
+    """Een startcommando als een regel tekst, opgeslagen als lijst argumenten.
+
+    Kubernetes wil ``command`` als losse argumenten, maar niemand typt een lijst. Dit veld
+    toont dus een regel zoals je hem in een terminal schrijft en splitst hem hier, zodat
+    het projectbestand de vorm houdt die het cluster verwacht:
+
+        sh -c "/app/docker/prod/seeder && exec /app/docker/prod/web"
+
+    wordt
+
+        ["sh", "-c", "/app/docker/prod/seeder && exec /app/docker/prod/web"]
+
+    De regels, bewust klein gehouden:
+
+    * witruimte scheidt argumenten;
+    * wat tussen dubbele quotes staat blijft bij elkaar, spaties incluis;
+    * een dubbele quote is een scheidingsteken en bereikt de container niet. Wil je er echt
+      een doorgeven, dan verdubbel je hem (``""``), zoals in een spreadsheet.
+
+    Geen backslash-escapes, anders dan een shell. Een backslash in een commando is meestal
+    een pad op Windows of een regeleinde, en die stilzwijgend opeten is erger dan hem
+    doorgeven. Wie een letterlijke quote nodig heeft, heeft ``""``.
+    """
+
+    QUOTE = '"'
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        """Lijst -> de regel die de gebruiker ziet."""
+        if not isinstance(value, list):
+            return "" if value is None else str(value)
+        return " ".join(self._quote(str(argument)) for argument in value)
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str] | None:
+        """De getypte regel -> de lijst die het cluster krijgt.
+
+        Leeg levert None, zodat ``remove_when_none`` de sleutel weghaalt: het schema eist
+        minstens een argument, dus een lege lijst opslaan zou het project afkeuren.
+        """
+        if isinstance(value, list):
+            argumenten = [str(item) for item in value if str(item).strip()]
+            return argumenten or None
+        argumenten = split_command_line(str(value or ""))
+        return argumenten or None
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        """Alleen-lezen weergave: dezelfde regel die je zou typen."""
+        if not value:
+            return "Zoals in het image"
+        return self.read(value, context_data)
+
+    def _quote(self, argument: str) -> str:
+        verdubbeld = argument.replace(self.QUOTE, self.QUOTE * 2)
+        if argument == "" or any(teken.isspace() for teken in argument) or self.QUOTE in argument:
+            return f"{self.QUOTE}{verdubbeld}{self.QUOTE}"
+        return verdubbeld
+
+
+def split_command_line(regel: str) -> list[str]:
+    """Splits een commandoregel in argumenten. Zie ``CommandLineConverter`` voor de regels.
+
+    Een niet-gesloten quote wordt hier afgesloten alsof hij aan het eind stond; het is de
+    validator die daarover klaagt, zodat de gebruiker een foutmelding krijgt in plaats van
+    een stilzwijgend ander commando.
+    """
+    argumenten: list[str] = []
+    huidig: list[str] = []
+    begonnen = False
+    in_quote = False
+    index = 0
+    while index < len(regel):
+        teken = regel[index]
+        if teken == CommandLineConverter.QUOTE:
+            if regel[index + 1 : index + 2] == CommandLineConverter.QUOTE:
+                huidig.append(CommandLineConverter.QUOTE)
+                begonnen = True
+                index += 2
+                continue
+            in_quote = not in_quote
+            begonnen = True
+            index += 1
+            continue
+        if teken.isspace() and not in_quote:
+            if begonnen:
+                argumenten.append("".join(huidig))
+                huidig, begonnen = [], False
+            index += 1
+            continue
+        huidig.append(teken)
+        begonnen = True
+        index += 1
+    if begonnen:
+        argumenten.append("".join(huidig))
+    return argumenten
+
+
+def command_line_has_unbalanced_quote(regel: str) -> bool:
+    """Of er een dubbele quote openstaat aan het eind van de regel."""
+    open_quote = False
+    index = 0
+    while index < len(regel):
+        if regel[index] == CommandLineConverter.QUOTE:
+            if regel[index + 1 : index + 2] == CommandLineConverter.QUOTE:
+                index += 2
+                continue
+            open_quote = not open_quote
+        index += 1
+    return open_quote
+
+
+class NonEmptyListConverter:
+    """Laat lege keuzes niet in de lijst belanden.
+
+    Voor een reeks met een vaste maat waar de lege optie "geen" betekent. Zo'n reeks
+    rendert altijd een rij, dus zonder dit levert "geen rol toekennen" een lijst met een
+    lege string op, en dat is iets anders dan geen rol: het is een rol zonder naam.
+
+    Geeft None terug als er niets overblijft, zodat ``remove_when_none`` de sleutel
+    weghaalt in plaats van een lege lijst te schrijven.
+    """
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+        return value
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[Any] | None:
+        if value is None:
+            return None
+        items = value if isinstance(value, list) else [value]
+        overgebleven = [item for item in items if item is not None and str(item).strip() != ""]
+        return overgebleven or None
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+        return value

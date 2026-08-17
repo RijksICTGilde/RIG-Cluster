@@ -1,0 +1,83 @@
+{# De lijst met projecten van de gebruiker. #}
+<c-layout-flow gap="lg">
+    {# .page-header-row uit base.css was display:flex + space-between + align-items:center
+       voor "titel links, actie rechts". Dat is <c-cluster justify="between">. NIET
+       <c-bar>: zonder center-slot valt zijn end-slot in de middelste gridkolom. #}
+    <c-cluster justify="between" align="center">
+        <c-heading type="h2" label="Mijn Projecten"/>
+        {% set lotc_onclick_1 %}window.location.href='/projects/new'{% endset %}<c-button label="Nieuw Project" show-icon="before" icon="plus"/>
+    </c-cluster>
+
+    {% if projects %}
+    {# .projects-grid was repeat(auto-fit, minmax(320px, 1fr)): <c-auto-grid min="320px">.
+       Daarmee vervalt ook de mediaregel die dit raster onder 768px op een kolom zette -
+       auto-fit doet dat vanzelf. #}
+    <c-auto-grid min="320px" gap="lg">
+        {% for project in projects %}
+        <a href="/projects/{{ project.name }}/details" class="project-card-link">
+            <c-card class="project-card project-card-{{ project.health | default('Unknown') | lower }}" outline="true" padding="lg" background-color="wit">
+                <c-layout-flow gap="md">
+                    {# .project-header was flex + space-between + align-items:center:
+                       <c-cluster justify="between">. #}
+                    <c-cluster justify="between" align="center">
+                        <c-heading type="h3" label="{{ project.display_name }}"/>
+                        {# De gekleurde pil met de toestand is <c-tag>: het type bepaalt de
+                           kleur, dus .project-status en de zes .status-*-kleurregels
+                           konden weg. Het BOLLETJE gaat als inhoud mee in de tag - dat
+                           werkt, gemeten in de browser - en houdt zijn eigen klasse: een
+                           stip die pulseert bij Progressing en Degraded is geen opmaak
+                           maar een teken dat er iets loopt, en daar heeft het thema niets
+                           voor.
+
+                           Uitgeschakeld en Niet actief houden hun eigen tekst (RC-31): de
+                           eerste blijft uit tot iemand hem aanzet, de tweede komt vanzelf
+                           terug. Ze samenvegen zou een andere onwaarheid zijn. #}
+                        {% set health = project.health | default('Unknown') %}
+                        {% set toestanden = {
+                            'Healthy': ('success', 'Healthy'),
+                            'Progressing': ('warning', 'Progressing'),
+                            'Degraded': ('error', 'Degraded'),
+                            'Disabled': ('default', 'Uitgeschakeld'),
+                            'Inactive': ('info', 'Niet actief'),
+                        } %}
+                        {% set soort, opschrift = toestanden.get(health, ('default', 'Unknown')) %}
+                        <c-tag type="{{ soort }}">
+                            <span class="status-dot status-dot-{{ health | lower }}"></span>
+                            {{ opschrift }}
+                        </c-tag>
+                    </c-cluster>
+                    {% if project.description %}
+                    <p>{{ project.description }}</p>
+                    {% endif %}
+                    {# .project-metrics was flex + gap + wrap, en .metric was flex +
+                       align-items:center + gap om icoon en tekst naast elkaar te zetten.
+                       Allebei <c-cluster>; alleen de kleur en de tekstgrootte van .metric
+                       staan nog in het stijlblad. #}
+                    <c-cluster gap="md">
+                        <c-cluster gap="xs" align="center" class="metric">
+                            <c-icon icon="cylinder-split" size="sm"/>
+                            <span>{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 }}</span>
+                        </c-cluster>
+                        <c-cluster gap="xs" align="center" class="metric">
+                            <c-icon icon="user" size="sm"/>
+                            <span>{{ project.user_count }} gebruiker{{ 's' if project.user_count != 1 }}</span>
+                        </c-cluster>
+                    </c-cluster>
+                    {% if project.last_deployed %}
+                    {# Ook een cluster; de lijn erboven en de kleur blijven eigen opmaak. #}
+                    <c-cluster gap="xs" align="center" class="project-deploy-time">
+                        <c-icon icon="calendar" size="sm"/>
+                        <span data-deploy-time="{{ project.last_deployed }}">
+                            {{ project.last_deployed[:16]|replace('T', ' ') }} UTC
+                        </span>
+                    </c-cluster>
+                    {% endif %}
+                </c-layout-flow>
+            </c-card>
+        </a>
+        {% endfor %}
+    </c-auto-grid>
+    {% else %}
+    <c-alert type="info" heading="Geen projecten gevonden."/>
+    {% endif %}
+</c-layout-flow>

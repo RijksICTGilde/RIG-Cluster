@@ -1,0 +1,290 @@
+{
+  "$defs": {
+    "InboundRulePatch": {
+      "additionalProperties": false,
+      "properties": {
+        "disabled": {
+          "default": false,
+          "description": "Keep the rule but do not apply it.",
+          "title": "Disabled",
+          "type": "boolean"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PeerRefPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The peer that is allowed to reach me; may be partial."
+        },
+        "name": {
+          "description": "Name of this rule; a deployment-level entry with the same name patches the project rule.",
+          "maxLength": 40,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalTargetPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "My component and port the peer reaches; may be partial."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "InboundRulePatch",
+      "type": "object"
+    },
+    "LocalRefPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "My component the rule is about.",
+          "title": "Component"
+        }
+      },
+      "title": "LocalRefPatch",
+      "type": "object"
+    },
+    "LocalTargetPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "My component the peer reaches.",
+          "title": "Component"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Port on my component the peer reaches it on.",
+          "title": "Port"
+        }
+      },
+      "title": "LocalTargetPatch",
+      "type": "object"
+    },
+    "OutboundRulePatch": {
+      "additionalProperties": false,
+      "properties": {
+        "disabled": {
+          "default": false,
+          "description": "Keep the rule but do not apply it.",
+          "title": "Disabled",
+          "type": "boolean"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalRefPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "My component that reaches out; may be partial."
+        },
+        "name": {
+          "description": "Name of this rule; a deployment-level entry with the same name patches the project rule.",
+          "maxLength": 40,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PeerTargetPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The peer component and port it may reach; may be partial."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "OutboundRulePatch",
+      "type": "object"
+    },
+    "PeerRefPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Component of the peer, as a DNS-1123 label.",
+          "title": "Component"
+        },
+        "deployment": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Deployment of the peer; may be left open on a project-level rule and filled in per deployment.",
+          "title": "Deployment"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Project of the peer, as a DNS-1123 label.",
+          "title": "Project"
+        }
+      },
+      "title": "PeerRefPatch",
+      "type": "object"
+    },
+    "PeerTargetPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Component of the peer, as a DNS-1123 label.",
+          "title": "Component"
+        },
+        "deployment": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Deployment of the peer; may be left open on a project-level rule and filled in per deployment.",
+          "title": "Deployment"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Port on the peer component that is reached.",
+          "title": "Port"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Project of the peer, as a DNS-1123 label.",
+          "title": "Project"
+        }
+      },
+      "title": "PeerTargetPatch",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Project- or deployment-level cross-domain-access config: two lists of named rules.\n\nThis is the STORED shape (patch models), because a root rule may leave the peer\ndeployment open and a deployment rule is a partial patch keyed on ``name``. The\ncompleteness of a rule is judged after the merge, not here.",
+  "properties": {
+    "inbound": {
+      "description": "Rules letting another project's component reach one of mine.",
+      "items": {
+        "$ref": "#/$defs/InboundRulePatch"
+      },
+      "title": "Inbound",
+      "type": "array"
+    },
+    "outbound": {
+      "description": "Rules letting one of my components reach another project's.",
+      "items": {
+        "$ref": "#/$defs/OutboundRulePatch"
+      },
+      "title": "Outbound",
+      "type": "array"
+    }
+  },
+  "title": "CrossDomainAccessConfig",
+  "type": "object"
+}

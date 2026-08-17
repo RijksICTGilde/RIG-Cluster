@@ -1,0 +1,9 @@
+{% from "widgets/_macros.html.j2" import helper_text, render_errors %}
+<div id="{{ field.path|e }}-group">
+    <span class="utrecht-form-label">{{ field.label|e }}</span>
+    {{ helper_text(field) }}
+    <c-cluster gap="md">
+        {% for child in children_html %}{{ child }}{% endfor %}
+    </c-cluster>
+    {{ render_errors(field.errors) }}
+</div>

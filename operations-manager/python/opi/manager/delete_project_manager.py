@@ -5,16 +5,23 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
 from opi.connectors import create_argo_connector
-from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.base import RemovalContext
+from opi.services.persistence.subdomain_registry import SubdomainConnector
+from opi.services.postgres_scope import project_uses_dedicated_postgres
+from opi.services.project import Project
 from opi.services.project_store import get_project_store
+from opi.services.registry import get_service
+from opi.services.services import service_entry_name
+from opi.services.services_enums import ManagerKey
+from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -145,7 +152,7 @@ class DeleteProjectManager:
 
             # Also check for orphaned AppProjects
             # AppProjects typically follow pattern: {project_name}-{deployment_name} or {project_name}-infrastructure
-            appproject_prefix = generate_argocd_appproject_prefix(project_name)
+            # (matched by `project_name in line` below).
             argo_namespace = get_argo_namespace(settings.CLUSTER_MANAGER)
 
             # Use kubectl to list AppProjects matching the pattern
@@ -187,7 +194,7 @@ class DeleteProjectManager:
             deletion_results["errors"].append(f"Orphaned ArgoCD cleanup error: {e}")
 
     async def _delete_project_argocd_folder(
-        self, project_name: str, cluster: str, deletion_results: dict[str, Any]
+        self, project_name: str, cluster: str, deletion_results: dict[str, Any], expect_folder: bool = False
     ) -> None:
         """
         Delete the project's ArgoCD folder from the GitOps repository.
@@ -202,13 +209,31 @@ class DeleteProjectManager:
             project_name: Name of the project
             cluster: Cluster name (e.g., "local", "odcn-production")
             deletion_results: Results dictionary to append operations/errors to
+            expect_folder: True wanneer het project deployments op DIT cluster had. Dan
+                HOORT de map er te zijn en is een ontbrekende map een fout, geen
+                schouderophalen. Zie hieronder waarom dat verschil telt.
+
+        Een ontbrekende map is namelijk twee heel verschillende dingen. Bij een project
+        zonder deployments op dit cluster is er nooit een map geweest en klopt "niet
+        gevonden". Bij een project MET deployments hoort hij er te zijn, en betekent
+        "niet gevonden" dat we hem niet konden vinden - niet dat hij er niet is.
+
+        Dat onderscheid ontbrak, en dat is precies hoe er vijf verweesde ArgoCD-mappen
+        ontstonden: de verwijdering noteerde ``not_found``, ging door, en gooide het
+        projectbestand weg. Daarna stond de map in de repo zonder project ernaast, maakte
+        de root-application de Application telkens opnieuw aan, faalde die op
+        ``app path does not exist`` en probeerde het met ``retry limit -1`` elke 30
+        seconden opnieuw. Niets ruimde dat ooit op.
         """
         project_argocd_folder_rel = os.path.join(cluster, project_name)
         logger.info(f"Deleting project ArgoCD folder: {project_argocd_folder_rel}")
 
         try:
             gitops_connector = await self.project_manager.get_git_connector_for_argocd()
-            await gitops_connector.ensure_repo_cloned()
+            # Verversen en niet alleen klonen: de connector is gecached en ensure_repo_cloned
+            # fetcht hooguit eenmaal per proces, terwijl we hieronder een BESLISSING nemen op
+            # wat er op schijf staat.
+            await gitops_connector.refresh_working_tree()
             working_dir = await gitops_connector.get_working_dir()
             project_argocd_folder = os.path.join(working_dir, project_argocd_folder_rel)
 
@@ -233,6 +258,24 @@ class DeleteProjectManager:
                 # repository secret are pruned promptly
                 argo_connector = create_argo_connector()
                 await argo_connector.refresh_application("user-applications")
+            elif expect_folder:
+                # Hij hoorde er te zijn. Doorgaan zou het projectbestand weggooien en de map
+                # laten staan, en dat is precies de wees die niemand daarna nog terugvindt.
+                message = (
+                    f"ArgoCD folder '{project_argocd_folder_rel}' was expected but not found in the GitOps "
+                    f"repository; refusing to continue so the project file is not removed while its ArgoCD "
+                    f"resources stay behind"
+                )
+                logger.error(message)
+                deletion_results["operations"].append(
+                    {
+                        "type": "project_argocd_folder_deletion",
+                        "target": project_argocd_folder_rel,
+                        "status": "missing",
+                    }
+                )
+                deletion_results["errors"].append(message)
+                deletion_results["success"] = False
             else:
                 deletion_results["operations"].append(
                     {
@@ -244,9 +287,15 @@ class DeleteProjectManager:
         except Exception as e:
             logger.exception(f"Error deleting project ArgoCD folder for {project_name}")
             deletion_results["errors"].append(f"Failed to delete project ArgoCD folder: {e}")
+            deletion_results["success"] = False
 
     async def _cleanup_project_keycloak_realm(
-        self, project_name: str, cluster: str, kc_config: dict[str, Any], deletion_results: dict[str, Any]
+        self,
+        project_name: str,
+        cluster: str,
+        kc_config: dict[str, Any],
+        deletion_results: dict[str, Any],
+        only_if_present: bool = False,
     ) -> None:
         """
         Clean up project-level Keycloak resources for a cluster.
@@ -282,6 +331,13 @@ class DeleteProjectManager:
                 admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
                 admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
             )
+
+            if only_if_present and not await keycloak.realm_exists(realm_name):
+                # Called with names derived from project + cluster rather than read from the
+                # file. A project that never used Keycloak has nothing here, and reporting
+                # three failed deletions for it would bury the failures that do matter.
+                logger.info(f"No Keycloak realm '{realm_name}' present; nothing to clean up")
+                return
 
             # 1. Delete project realm
             try:
@@ -323,13 +379,15 @@ class DeleteProjectManager:
             # 4. Remove keycloak config entry from project.yaml
             try:
                 project_data = await self.project_manager.get_contents()
-                keycloak_list = project_data.get("config", {}).get("keycloak", [])
+                # RC-5 B: keycloak connections live under the keycloak service config.
+                view = Project(project_data)
+                keycloak_list = view.get("services/keycloak/config/realms") or []
 
                 # Remove entry matching this realm
                 updated_list = [kc for kc in keycloak_list if kc.get("realm") != realm_name]
 
                 if updated_list != keycloak_list:
-                    project_data["config"]["keycloak"] = updated_list
+                    view.set("services/keycloak/config/realms", updated_list)
                     # Central save: writes and commits as one locked operation. This used
                     # to be save_project_data(), which wrote the file into the shared warm
                     # working copy and never committed it -- leaving it to be swept up by
@@ -396,15 +454,14 @@ class DeleteProjectManager:
 
         # Check if project uses any namespace-specific service
         project_services = project_data.get("services", [])
-        uses_namespace_infrastructure = False
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item in NAMESPACE_SERVICES:
-                    uses_namespace_infrastructure = True
-                    break
-            elif isinstance(service_item, dict) and any(svc in service_item for svc in NAMESPACE_SERVICES):
-                uses_namespace_infrastructure = True
-                break
+        # service_entry_name resolves all three entry formats. Matching on the raw dict
+        # keys only saw the legacy single-key form, so a namespace service carrying
+        # config went undetected here and its infrastructure was left behind on delete.
+        # postgresql-database with scope: project also owns an infrastructure namespace
+        # (RC-17), so include it or its dedicated cluster leaks on delete.
+        uses_namespace_infrastructure = any(
+            service_entry_name(entry) in NAMESPACE_SERVICES for entry in project_services
+        ) or project_uses_dedicated_postgres(project_data)
 
         if not uses_namespace_infrastructure:
             logger.debug(
@@ -575,13 +632,22 @@ class DeleteProjectManager:
                     )
                     logger.info(f"Successfully deleted infrastructure namespace: {infra_namespace}")
                 else:
+                    # As above: --ignore-not-found makes a genuinely absent namespace
+                    # return True, so a False is a real failure -- surface it rather than
+                    # calling it "not_found" and leaking the infrastructure namespace.
                     deletion_results["operations"].append(
                         {
                             "type": "infrastructure_namespace_deletion",
                             "target": infra_namespace,
-                            "status": "not_found",
+                            "status": "error",
+                            "error": "kubectl delete namespace failed (see logs); namespace left behind",
                         }
                     )
+                    deletion_results["errors"].append(
+                        f"Failed to delete infrastructure namespace '{infra_namespace}' (see logs)."
+                    )
+                    deletion_results["success"] = False
+                    logger.error(f"Failed to delete infrastructure namespace {infra_namespace}; it was left behind")
 
             # 5. Delete infrastructure manifests folder from deployment git repo
             repositories = project_data.get("repositories", [])
@@ -798,11 +864,34 @@ class DeleteProjectManager:
                         kc_config=kc_config,
                         deletion_results=deletion_results,
                     )
+                else:
+                    # No config entry does not mean nothing was created. The realm and the
+                    # master-realm admin user are named deterministically from project and
+                    # cluster, so they can be removed without the file telling us. Skipping
+                    # here used to leave both behind silently, and an orphaned admin account
+                    # that still carries an OTP credential is not something to leave lying
+                    # around because a config block went missing.
+                    await self._cleanup_project_keycloak_realm(
+                        project_name=project_name,
+                        cluster=current_cluster,
+                        kc_config={
+                            "realm": generate_project_realm_name(project_name, current_cluster),
+                            "username": generate_project_admin_username(project_name, current_cluster),
+                            "host": self.project_manager._get_keycloak_url_for_cluster(current_cluster),
+                        },
+                        deletion_results=deletion_results,
+                        only_if_present=True,
+                    )
 
             # Step 4.7: Delete the project's ArgoCD folder (AppProject, repository secret, kustomization)
             # from the GitOps repo, so the root application prunes these resources
             if deletion_results["success"] or force:
-                await self._delete_project_argocd_folder(project_name, current_cluster, deletion_results)
+                await self._delete_project_argocd_folder(
+                    project_name,
+                    current_cluster,
+                    deletion_results,
+                    expect_folder=len(current_cluster_deployments) > 0,
+                )
 
             # Step 5: Delete the project file if all deployment deletions succeeded (or in force mode)
             should_delete_project_file = deletion_results["success"] or force
@@ -994,6 +1083,9 @@ class DeleteProjectManager:
             "errors": [],
             "service_results": {},
             "force_mode": force,
+            # "It is gone" and "it was never there" are both success, and a script
+            # cannot act on the difference unless the answer states it (RC-66).
+            "already_absent": False,
         }
 
         if force:
@@ -1357,16 +1449,25 @@ class DeleteProjectManager:
                         )
                         logger.info(f"Successfully deleted namespace: {namespace}")
                     else:
+                        # delete_namespace uses --ignore-not-found, so a genuinely absent
+                        # namespace returns True. A False here is therefore a real delete
+                        # failure (e.g. an RBAC 403), NOT "already gone" -- surface it
+                        # instead of silently reporting success and leaking the namespace.
                         deletion_results["operations"].append(
                             {
                                 "type": "namespace_deletion",
                                 "target": namespace,
                                 "cluster": cluster,
                                 "deployment": deployment_name,
-                                "status": "not_found",
+                                "status": "error",
+                                "error": "kubectl delete namespace failed (see logs); namespace left behind",
                             }
                         )
-                        logger.info(f"Namespace {namespace} was not found (already deleted)")
+                        deletion_results["errors"].append(
+                            f"Failed to delete namespace '{namespace}' (see logs for the kubectl error)."
+                        )
+                        deletion_results["success"] = False
+                        logger.error(f"Failed to delete namespace {namespace}; it was left behind")
                 else:
                     deletion_results["operations"].append(
                         {
@@ -1421,8 +1522,8 @@ class DeleteProjectManager:
                     from opi.core.database_pools import get_database_pool
                     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
-                    pool = get_database_pool("main")
-                    marked_for_deletion_service = MarkedForDeletionService(pool)
+                    get_database_pool("main")  # guard: raises if the DB is unavailable -> immediate delete
+                    marked_for_deletion_service = MarkedForDeletionService()
                     logger.info(
                         f"Using deferred deletion for {project_name}/{deployment_name} "
                         f"(data-retention-period: {retention_period}, {retention_hours}h)"
@@ -1498,11 +1599,12 @@ class DeleteProjectManager:
                     f"ArgoCD application not confirmed deleted. Marking for deferred cleanup."
                 )
                 try:
-                    from opi.core.database_pools import get_database_pool
                     from opi.services.marked_for_deletion_service import MarkedForDeletionService as MFDService
 
-                    pool = get_database_pool("main")
-                    deferred_service = MFDService(pool)
+                    # MFDService is ORM-backed and takes no constructor arguments.
+                    # Passing a pool raised TypeError, which the except below swallowed,
+                    # so manifests were never actually marked for deferred cleanup.
+                    deferred_service = MFDService()
                     resource_name = f"{cluster}/{project_name}/{deployment_name}"
                     await deferred_service.mark_resource(
                         resource_type="deployment_manifests",
@@ -1714,6 +1816,17 @@ class DeleteProjectManager:
                         f"({http_error.detail}) - treating as deleted"
                     )
                     deletion_results["success"] = True
+                    # Idempotent, and visibly so: the caller asked to remove something
+                    # that was not there, and gets told that instead of "deleted".
+                    deletion_results["already_absent"] = True
+                    deletion_results["operations"].append(
+                        {
+                            "type": "deployment_deletion",
+                            "target": deployment_name,
+                            "status": "not_found",
+                            "reason": str(http_error.detail),
+                        }
+                    )
                     return deletion_results
                 deletion_results["success"] = False
                 deletion_results["errors"].append(f"HTTP error during deployment deletion (force mode): {http_error}")
@@ -1878,7 +1991,21 @@ class DeleteProjectManager:
         try:
             argo_connector = create_argo_connector()
             app_name = generate_argocd_application_name(project_name, deployment_name)
-            app_exists = await argo_connector.application_exists(app_name)
+            try:
+                app_exists = await argo_connector.application_exists(app_name)
+            except PermissionError:
+                # ArgoCD returns 403 for an application that is already gone (and when
+                # it is stalled). This pre-check must not treat that as an error: it
+                # would log a traceback and mark a successful deletion as failed, which
+                # is exactly what happened for a deployment whose app WAS deleted. Fall
+                # through to the deletion wait, which resolves the 403 against the
+                # Kubernetes API as ground truth.
+                logger.info(
+                    "ArgoCD returned permission denied for '%s' during the pre-check; the app is likely "
+                    "already gone. Confirming via the deletion wait (Kubernetes API).",
+                    app_name,
+                )
+                app_exists = True
 
             if app_exists:
                 await argo_connector.refresh_application("user-applications")
@@ -1934,17 +2061,17 @@ class DeleteProjectManager:
                 [ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value],
             )
         else:
-            # Legacy fallback: unreliable but kept for backward compatibility
+            # Legacy fallback: unreliable but kept for backward compatibility. Resolve
+            # entries via the canonical helper (bare string / legacy / record) and match
+            # the same canonical service types the primary path uses, instead of reading
+            # only ``reference`` against non-canonical name literals.
             services = deployment_data.get("services", [])
-            has_database = any(
-                s.get("reference") in ("database", "postgresql") for s in services if isinstance(s, dict)
+            service_names = {service_entry_name(s) for s in services}
+            has_database = bool(
+                service_names & {ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value}
             )
-            has_minio = any(
-                s.get("reference") in ("minio", "minio-storage", "object-storage")
-                for s in services
-                if isinstance(s, dict)
-            )
-            has_redis = False  # Legacy path didn't handle Redis
+            has_minio = ServiceType.MINIO_STORAGE.value in service_names
+            has_redis = bool(service_names & {ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value})
 
         # 3. Delete Keycloak resources (ephemeral)
         # Uses service_check_yaml so the deployment's component references are found
@@ -2119,11 +2246,12 @@ class DeleteProjectManager:
                 deployment_name,
             )
             try:
-                from opi.core.database_pools import get_database_pool
                 from opi.services.marked_for_deletion_service import MarkedForDeletionService as MFDService
 
-                pool = get_database_pool("main")
-                deferred_service = MFDService(pool)
+                # MFDService is ORM-backed and takes no constructor arguments.
+                # Passing a pool raised TypeError, which the except below swallowed,
+                # so manifests were never actually marked for deferred cleanup.
+                deferred_service = MFDService()
                 resource_name = f"{cluster}/{project_name}/{deployment_name}"
                 app_name_for_mark = generate_argocd_application_name(project_name, deployment_name)
                 await deferred_service.mark_resource(
@@ -2229,31 +2357,26 @@ class DeleteProjectManager:
         )
         return deletion_results
 
-    # -- Service-type → manager mapping -----------------------------------
+    # -- Manager-key → manager instance resolution ------------------------
+    # The service-type → manager-key mapping now lives on each provider as
+    # `cleanup_manager_key` (RC-5 Phase 5); this only resolves a key to its
+    # manager instance, invoked via RemovalContext.get_manager.
 
-    _SERVICE_TYPE_MANAGER_ATTR: ClassVar[dict[ServiceType, str]] = {
-        ServiceType.POSTGRESQL_DATABASE: "database",
-        ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
-        ServiceType.MINIO_STORAGE: "minio",
-        ServiceType.REDIS: "redis",
-        ServiceType.NAMESPACE_REDIS: "redis",
-        ServiceType.KEYCLOAK: "keycloak",
-        ServiceType.PERSISTENT_STORAGE: "pvc",
-    }
+    async def _get_manager_for_service(self, manager_key: ManagerKey) -> Any:
+        """Resolve the manager instance for a given manager key.
 
-    async def _get_manager_for_service(self, manager_key: str) -> Any:
-        """Resolve the manager instance for a given manager key."""
-        if manager_key == "database":
+        Database is special (an async ensure); the rest are plain attributes, so a
+        dict lookup replaces the old if-chain. The enum makes the set exhaustive at
+        type-check time -- a bad key is a pyright error, not a teardown-time crash.
+        """
+        if manager_key is ManagerKey.DATABASE:
             return await self.project_manager._ensure_database_manager()
-        if manager_key == "minio":
-            return self.project_manager._minio_manager
-        if manager_key == "redis":
-            return self.project_manager._redis_manager
-        if manager_key == "keycloak":
-            return self.project_manager._keycloak_manager
-        if manager_key == "pvc":
-            return self.project_manager._pvc_manager
-        raise ValueError(f"Unknown manager key: {manager_key}")
+        return {
+            ManagerKey.MINIO: self.project_manager._minio_manager,
+            ManagerKey.REDIS: self.project_manager._redis_manager,
+            ManagerKey.KEYCLOAK: self.project_manager._keycloak_manager,
+            ManagerKey.PVC: self.project_manager._pvc_manager,
+        }[manager_key]
 
     async def cleanup_removed_services_from_yaml_change(
         self,
@@ -2317,8 +2440,11 @@ class DeleteProjectManager:
                 # Group related service types that share a manager
                 # (e.g., namespace-postgresql-database is handled by database manager)
                 # We only need to check once per manager per deployment
-                manager_key = self._SERVICE_TYPE_MANAGER_ATTR.get(svc_type)
-                if manager_key is None:
+                # RC-5 Phase 5: dispatch cleanup through the provider registry instead
+                # of the _SERVICE_TYPE_MANAGER_ATTR map. Byte-identical -- the provider
+                # resolves the same manager by key and delegates handle_service_removal.
+                provider = get_service(svc_type)
+                if provider.cleanup_manager_key is None:
                     continue
 
                 was_used = file_handler.deployment_uses_service(previous_yaml, dep_name, svc_values)
@@ -2334,13 +2460,15 @@ class DeleteProjectManager:
                     results["services_removed"] += 1
 
                     try:
-                        manager = await self._get_manager_for_service(manager_key)
-                        svc_result = await manager.handle_service_removal(
-                            project_name=project_name,
-                            deployment_name=dep_name,
-                            deployment_data=prev_dep_data,
-                            project_data=previous_yaml,
-                            marked_for_deletion_service=marked_for_deletion_service,
+                        svc_result = await provider.handle_service_removal(
+                            RemovalContext(
+                                project_name=project_name,
+                                deployment_name=dep_name,
+                                deployment_data=prev_dep_data,
+                                project_data=previous_yaml,
+                                marked_for_deletion_service=marked_for_deletion_service,
+                                get_manager=self._get_manager_for_service,
+                            )
                         )
                         results["service_results"].append(svc_result)
                         if svc_result.get("errors"):

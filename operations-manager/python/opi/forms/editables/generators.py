@@ -17,6 +17,11 @@ from opi.connectors.subdomain import (
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_issuer
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.component_values import ComponentValuesError
+from opi.services.component_values import decode as decode_component_values
+from opi.services.component_values import encode as encode_component_values
+from opi.utils.age import is_age_encrypted
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +113,7 @@ class IssuerGenerator:
         if not isinstance(dep, dict):
             return None
 
-        base_domain = dep.get("base-domain")
+        base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN)
         if not base_domain:
             return None
 
@@ -178,38 +183,98 @@ class AttachmentStagingResolveGenerator:
 
 
 class UserEnvVarsEncryptGenerator:
-    """Encrypt user-env-vars on each component with the project's AGE public key.
+    """Encrypt user-env-vars with the project's AGE public key, on BOTH layers.
 
-    Iterates over all components and encrypts any non-empty ``user-env-vars``
-    string value. Skips values that are already AGE-encrypted.
+    Encrypts any non-empty ``user-env-vars`` string value that is not already an AGE
+    block. Skips values that are already encrypted.
+
+    Both layers, not just ``components[*]``: the same service owns
+    ``deployments[*]/components[*]/user-env-vars`` (RC-25), and a deployment override
+    holds exactly the same kind of secret as the component value it overrides. This
+    generator is the backstop for when the converter did not encrypt (no context data,
+    a hand-edited file), and a backstop that covers half the layers leaves the other
+    half in plaintext in git -- which is what it did until RC-55.
 
     Must run after ``AGEKeyPairGenerator`` so the project public key exists.
     Uses a ``_generated`` path - the return value is discarded during cleanup.
     """
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from ruamel.yaml.scalarstring import LiteralScalarString
-
-        from opi.utils.age import encrypt_age_content_sync
-
         public_key = yaml_data.get("config", {}).get("age-public-key")
         if not public_key:
             logger.debug("No project public key available, skipping user-env-vars encryption")
             return True
 
         for component in yaml_data.get("components", []):
+            self._encrypt(component, public_key, component.get("name") if isinstance(component, dict) else None)
+        for deployment in yaml_data.get("deployments", []):
+            if not isinstance(deployment, dict):
+                continue
+            for component in deployment.get("components", []):
+                self._encrypt(
+                    component,
+                    public_key,
+                    component.get("reference") if isinstance(component, dict) else None,
+                )
+
+        return True
+
+    @staticmethod
+    def _encrypt(component: Any, public_key: str, label: str | None) -> None:
+        from ruamel.yaml.scalarstring import LiteralScalarString
+
+        from opi.utils.age import encrypt_age_content_sync
+
+        if not isinstance(component, dict):
+            return
+        user_env_vars = component.get("user-env-vars")
+        if not user_env_vars or not isinstance(user_env_vars, str):
+            return
+        if "BEGIN AGE ENCRYPTED FILE" in user_env_vars:
+            return
+        component["user-env-vars"] = LiteralScalarString(encrypt_age_content_sync(user_env_vars, public_key))
+        logger.debug("Encrypted user-env-vars for component %s", label or "unknown")
+
+
+class ComponentAliasesEncryptGenerator:
+    """Encrypt a component's aliases with the project's AGE public key.
+
+    Since RC-106 aliases are stored exactly like ``user-env-vars``: ONE AGE block whose
+    plaintext is ``KEY=value`` lines. A mapping still found here is the unencrypted
+    shape (a hand-written file, or an older per-value one) and is joined into that block
+    first; a value that is already an AGE block is decrypted first, because a block
+    inside a block is not readable by anything downstream.
+
+    Must run after ``AGEKeyPairGenerator`` so the project public key exists.
+    Uses a ``_generated`` path - the return value is discarded during cleanup.
+    """
+
+    def generate(self, yaml_data: dict[str, Any]) -> Any:
+        public_key = yaml_data.get("config", {}).get("age-public-key")
+        if not public_key:
+            logger.debug("No project public key available, skipping aliases encryption")
+            return True
+
+        for component in yaml_data.get("components", []):
             if not isinstance(component, dict):
                 continue
-            user_env_vars = component.get("user-env-vars")
-            if not user_env_vars or not isinstance(user_env_vars, str):
+            aliases = component.get("aliases")
+            if not aliases or (isinstance(aliases, str) and is_age_encrypted(aliases)):
                 continue
-            if "BEGIN AGE ENCRYPTED FILE" in user_env_vars:
+            try:
+                values = decode_component_values(aliases, yaml_data)
+            except (ComponentValuesError, ValueError) as error:
+                logger.warning(
+                    "Could not read aliases of component %s, leaving them as stored: %s",
+                    component.get("name", "unknown"),
+                    error,
+                )
                 continue
-            encrypted = encrypt_age_content_sync(user_env_vars, public_key)
-            component["user-env-vars"] = LiteralScalarString(encrypted)
-            logger.debug(
-                "Encrypted user-env-vars for component %s",
-                component.get("name", "unknown"),
-            )
+            encoded = encode_component_values(values, yaml_data)
+            if encoded is None:
+                component.pop("aliases", None)
+            else:
+                component["aliases"] = encoded
+            logger.debug("Encrypted aliases for component %s", component.get("name", "unknown"))
 
         return True

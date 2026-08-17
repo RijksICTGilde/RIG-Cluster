@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.e2e.helpers.edit_modal import EditModalHelper
+from tests.e2e.helpers.tekst import veld
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,10 +37,7 @@ class TestEditIdentity:
         modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
 
         body = modal.get_body_text()
-        assert (
-            "Detail Test Project" in body
-            or modal.page.locator("[name='display-name']").input_value() == "Detail Test Project"
-        )
+        assert "Detail Test Project" in body or veld(modal.page, "display-name").input_value() == "Detail Test Project"
 
     def test_validation_short_display_name(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """Fill display-name with too-short value (min 3 chars), submit, verify error."""
@@ -59,13 +57,33 @@ class TestEditIdentity:
         """Change description, submit, verify success screen and updated detail page."""
         modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
 
+        # The project is shared with every other test in this file and with the other
+        # files that read this project, and the app is session-scoped: a saved
+        # description stays saved. So remember what was there and put it back, instead
+        # of leaving a project whose description depends on whether this test ran.
+        original_description = veld(modal.page, "description").input_value()
+
         new_description = "Updated description via E2E test"
         modal.fill_field("description", new_description)
-        modal.submit_step()
 
-        modal.wait_for_success()
-        body = modal.get_body_text()
-        assert "Wijzigingen opgeslagen" in body
+        # The submit itself is INSIDE the try. It is the step that changes the shared
+        # project, and it can fail after the server already saved -- measured: the step
+        # POST exceeded its own 10s wait while the response was still coming, so the save
+        # landed and the restore below never ran. `test_detail_page_renders` then failed
+        # on a description this test had overwritten, which reads as an unrelated,
+        # order-dependent failure. Whatever may have been written has to be undone, so
+        # the restore has to cover the write, not only the assertions after it.
+        try:
+            modal.submit_step()
+            modal.wait_for_success()
+            body = modal.get_body_text()
+            assert "Wijzigingen opgeslagen" in body
+        finally:
+            modal.open_detail_page()
+            modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
+            modal.fill_field("description", original_description)
+            modal.submit_step()
+            modal.wait_for_success()
 
     def test_screenshot(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """Screenshot the identity edit modal."""
@@ -90,7 +108,10 @@ class TestEditTeam:
         modal.open_edit_modal("modal-edit-team", "Projectleden beheren")
 
         # Emails are in input field values, not text content
-        inputs = modal.page.locator("#edit-section-inner input[type='email'], #edit-section-inner [name*='email']")
+        # Op de INVOERtags en niet op [name*=...]: onder het nieuwe thema draagt de wikkel
+        # hetzelfde name-attribuut als het veld erin, en dan is input_value() zinloos
+        # ("Node is not an <input>").
+        inputs = modal.page.locator("#edit-section-inner input[type='email'], #edit-section-inner input[name*='email']")
         values = [inputs.nth(i).input_value() for i in range(inputs.count())]
         assert "test@example.com" in values
         assert "developer@example.com" in values
@@ -178,11 +199,9 @@ class TestEditServices:
         labels_lower = [label.lower() for label in step_labels]
         assert any("keycloak" in label for label in labels_lower)
 
-        # Advance through keycloak config (accept defaults)
-        modal.submit_step()
-
-        # Advance through authorization-wall config (accept defaults)
-        modal.submit_step()
+        # Advance through the remaining config steps (accept defaults). Their number
+        # follows the selected services, so walk until the review rather than count.
+        modal.advance_to_review()
 
         # Should reach review
         modal.wait_for_review()

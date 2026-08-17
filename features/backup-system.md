@@ -334,9 +334,127 @@ snapshots — see "Trigger metadata and retention isolation" below.
   },
   "new_generation": 2,
   "project_updated": true,
-  "refresh_triggered": true
+  "refresh_triggered": true,
+  "refresh_succeeded": true
 }
 ```
+
+### A restore that lands but is not applied
+
+A versioned restore does two things: it puts the data in a new generation of the
+resource, and it then triggers a project refresh that regenerates the manifests and
+secrets so the deployment starts using that new generation. The second half can fail on
+its own, and then the data is restored while the deployment keeps running on the old
+manifests.
+
+That is reported, not hidden in the OPI log:
+
+| Outcome | `status` | HTTP | `refresh_triggered` | `refresh_succeeded` |
+|---|---|---|---|---|
+| Restored and applied | `success` | `200` | `true` | `true` |
+| Restored, applying it failed | `partial` | `207` | `true` | `false` |
+| Restored, no refresh asked for (`update_deployment: false`) | `success` | `200` | `false` | `null` |
+| The restore itself failed | `failed` | `500` | `false` | `false` |
+
+On `partial` the message says so as well. The restored data is in place; retry the
+restore or trigger a project refresh once the cause is cleared.
+
+### Restoring a database keeps the deployment's credentials
+
+A database restore creates a **new generation** of the database (`myproject_prod` ->
+`myproject_prod_v1`) owned by the same database user, and bumps the generation in the
+project file. It deliberately does **not** touch that user's password.
+
+That is not a detail, it is the whole reason the restore works. The password lives in
+the `{deployment}-database` secret, whose manifest is in `zad-deployments` and which
+ArgoCD applies with `syncPolicy.automated.selfHeal: true`. A direct `kubectl patch` of
+that secret is reverted within milliseconds, so the **only** route into it is the
+project refresh -- and the refresh reads the secret first, tests it, and refuses to
+touch a secret whose credentials no longer work (`Manual intervention required to fix
+database user or update secret`). Rotating the password therefore locked the project:
+the restore reported `success`, the refresh aborted before writing any manifest, and
+every later change hit the same wall.
+
+Nothing was gained by rotating: the user already exists and simply becomes the owner of
+the new generation as well. A password is only generated when there is no secret to read
+one from -- the restore pod needs something to connect with.
+
+The switch-over runs the ordinary GitOps route: the refresh writes the new
+`DATABASE_DB`/`DATABASE_SCHEMA` into `zad-deployments`, ArgoCD syncs, and the pods pick
+up the new generation. Pinned in `tests/test_restore_database_secret.py` (unit) and
+`tests/e2e/test_sandbox_restore_op_slot.py` (against a live sandbox, including a change
+made after the restore).
+
+### Which schema a database restore renames
+
+A backup dumps the **whole** database (`pg_dump --format=custom`, no `-n`), so the dump
+carries the default schema *and* every extra schema (RC-17,
+`features/postgresql-scope-and-schemas.md`). A restore into a new generation has to
+rename exactly one of them: the default schema, because OPI puts the generation in the
+database name **and** in the default schema name (`db_schema = db_database`). The extra
+schemas (`{project}_{deployment}_{postfix}`) carry no generation, so their name is
+already right in the target database and they are left alone.
+
+Which schema that is, is **named by the platform** (`generate_database_name`) and passed
+to the restore pod as `SOURCE_SCHEMA`; the pod never reads it from the dump. It used to:
+
+```sh
+pg_restore --list "$DUMP_PATH" | grep " SCHEMA - " | head -1 | awk '{print $6}'
+```
+
+and `pg_restore --list` sorts schemas **alphabetically**, not by creation order. A project
+with a `rapportage` schema, restored to its second generation (`amt_prod_v2` ->
+`amt_prod_v3`), therefore renamed `amt_prod_rapportage` (r < v) to `amt_prod_v3`: the
+application read the reporting tables, its own data sat unused in `amt_prod_v2`, and
+`DATABASE_SCHEMA_RAPPORTAGE` pointed at a schema that no longer existed. The restore
+reported success. The first generation restore went fine (`amt_prod` is a prefix of
+`amt_prod_rapportage` and sorts first), which is why it stayed unnoticed.
+
+Three more things the pod now does on that path:
+
+* it drops the target schema only when it is **empty** and with `RESTRICT`, never
+  `CASCADE`. A non-empty target schema holds data the restore just wrote, so the restore
+  **stops** instead of destroying it;
+* it refuses a schema name that is not `[a-z][a-z0-9_]*`, and quotes both identifiers;
+* it logs which schema was renamed and which schemas were left untouched, plus the final
+  list of schemas — so a failure shows up in the pod log, not in the application.
+
+If the source name cannot be established (a snapshot without project/deployment
+metadata), the restore only continues when the dump itself already contains a schema with
+the target's name — then there is provably nothing to rename. Otherwise it stops: a
+restore that guesses puts the wrong data under the name the application reads.
+
+Pinned in `tests/test_restore_schema_rename.py`, including three `requires_infra` tests
+that run the shipped shell block against a real PostgreSQL.
+
+### Failed restore: whose fault was it?
+
+`POST /api/v1/restore/database/...` and `POST /api/v1/restore/bucket/...` answer a failure
+with an `error_category` next to `message`, so a client does not have to read the pod log
+text to decide whether retrying makes sense:
+
+| Situation | Status | `error_category` |
+|---|---|---|
+| The destination the caller supplied is unusable: host does not resolve, port refuses, database/bucket unknown, or the credentials are rejected | `400` | `InvalidTarget` |
+| Anything on our side: the Kopia repository, a missing snapshot, a pod that will not start, a timeout, the cluster | `500` | `Unknown` |
+| Success | `200` | field absent |
+
+**How that is decided — never on the log text.** Both restore pods probe their destination
+before touching any data (`psql -c "SELECT 1"`, `mc alias set`). That gate exits with the
+dedicated `RESTORE_TARGET_UNUSABLE_EXIT_CODE` (`opi/core/backup_constants.py`), and the
+manager reads the exit code from the pod status into `RestoreResult.target_unusable`.
+Matching on `could not translate host name` would break the moment PostgreSQL or mc rewords
+its error; an exit code we choose ourselves does not.
+
+**A restore without target fields never gets `InvalidTarget`.** Omit the four target fields
+and the platform picks the project's own service (see "Restore a Database" below),
+so a destination failure cannot be the caller's input — it stays `500`/`Unknown`.
+
+Known limit: a destination that lets you in but refuses the write (enough rights to connect,
+too few to restore) passes the gate and fails afterwards, which is a `500`.
+
+The category never carries a value the caller supplied — the pod's error line names the
+fields, not their contents. Pinned in `tests/test_restore_target_fault.py`.
 
 ## Configuration
 
@@ -484,7 +602,11 @@ generation: 2     -> myproject-staging-v2
 
 ### Project File Structure
 
-Generation is stored at different levels depending on resource type:
+Generation is stored at the level the resource's NAME is scoped to. That is not a
+convention you have to remember separately — read the naming table above: a PVC name
+carries the component, a database and a bucket name carry only the project and the
+deployment. So a PVC has one generation per component, a database and a bucket have one
+per deployment, shared by every component in it.
 
 **PVC Generation** (component-level):
 ```yaml
@@ -492,9 +614,11 @@ deployments:
   - name: production
     components:
       - reference: my-app
-        storage:
-          - mount-path: /data
-            generation: 2  # PVC generation
+        services:
+          persistent-storage:
+            - reference: data
+              config:
+                generation: 2  # PVC generation
 ```
 
 **Database/Bucket Generation** (deployment-level):
@@ -505,10 +629,48 @@ deployments:
       - reference: minio-storage
         config:
           generation: 1  # Bucket generation
-      - reference: database
-        config:
+      - reference: postgresql-database   # or namespace-postgresql-database,
+        config:                          # whichever the project declares
           generation: 1  # Database generation
 ```
+
+This is the block the provisioning (`database_manager`, `minio_manager`) and the
+reconciliation read to decide which database or bucket the running deployment points at,
+so it is also the block the restore writes.
+
+**Files written under the old placement are repaired on load.** A restore used to write
+the database/bucket generation deployment-level while reading it back component-level, so
+the number never travelled and every restore round recomputed `0 -> 1` (RC-123).
+`schema_migration.relocate_resource_generations_to_deployment` moves any component-level
+database/bucket generation up to the deployment on every project load; it is idempotent
+and leaves storage generations alone. When both placements hold a value and they disagree
+it keeps the **higher** one and logs a warning naming both, because a generation lower
+than reality resolves to a resource that already exists.
+
+The old component-level writer always used the fixed key `postgresql-database`, also for a
+project that declares `namespace-postgresql-database`. The repair therefore writes the
+value under the name the project actually declares and merges the two PostgreSQL names
+into one value, rather than leaving it under the key it was found. Under the other key it
+would not be read back at all, and next to a real entry it would shadow it: the
+reconciliation resolves `postgresql-database` first, so it would expect the older name and
+mark the running `_vN` database an orphan.
+
+### A restore never writes into a target that already holds data
+
+`pg_restore` adds rows, it does not replace them, and a bucket restore merges. So a
+restore whose target already exists AND is not empty is refused with a 500 naming the
+resource, instead of landing the backup on top of what is there:
+
+```
+Target database myproject_prod_v1 already exists and is not empty.
+Restoring into it would add the backup on top of the rows already there.
+Remove that database or raise the generation before retrying.
+```
+
+An existing but **empty** target is allowed through — that is what a retry after a restore
+that failed halfway looks like. The checks are
+`PostgresConnector.database_has_user_data` (any table, view, sequence or foreign table
+outside the system schemas) and `MinioConnector.bucket_has_objects`.
 
 ### Benefits
 
@@ -529,7 +691,26 @@ deployments:
 | `/var/lib/mysql` | `varlibmysql` |
 | `/app/uploads` | `appuploads` |
 
-**Database/Bucket reference_name**: Use the service reference name from your deployment configuration (e.g., `minio-storage`, `database`).
+**Database/Bucket reference_name**: the service reference the backup was registered
+under — a component service reference (`{deployment}-postgresql`, `{deployment}-minio`)
+or the deployment-wide fallback (`{deployment}-database`, `{deployment}-minio`).
+
+You do not have to derive it: both read endpoints publish exactly the name the restore
+endpoints accept.
+
+| Read endpoint | Field |
+|---|---|
+| `GET /api/v1/backup/runs/{project}/{deployment}` | `reference_name` |
+| `GET /api/v1/restore/snapshots/{cluster}/{namespace}` | `pvc_name` (carries every kind, PVC/database/bucket) |
+
+A database or bucket snapshot carries no `pvc` tag, so this listing used to fall back to
+the last segment of the snapshot's source path — `backup` for a database dump and
+`bucket-backup` for a mirrored bucket. Both endpoints published that directory name while
+the restore route wanted the reference, so no readable name was accepted (RC-95). The
+listing now reads the `database`/`bucket` tag for those kinds; a PVC keeps its `pvc` tag,
+which is what the PVC restore route takes.
+
+A reference no deployment carries answers 404, naming the references that do exist.
 
 ## Trigger metadata and retention isolation
 
@@ -574,8 +755,21 @@ on the caller's side.
 
 ### Restore a Database
 
+The four `target_database_*` fields are optional. Omit them all and the restore goes
+into the database of the project the API key belongs to: OPI reads those credentials
+from the deployment secret in the project's own namespace, because they are injected
+into the project's pods and are published by no API. Supply all four to restore into
+an external database. Supplying only some of them is answered with 422 naming the
+fields that are missing — OPI does not guess the rest.
+
 ```bash
-# Restore latest snapshot
+# Restore the latest snapshot into the project's OWN database (no credentials needed)
+curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Restore latest snapshot into an external database
 curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
@@ -605,7 +799,13 @@ curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project
 - `namespace`: Kubernetes namespace for the restore pod
 - `reference_name`: Logical name of the database backup to restore
 - `snapshot_id`: Optional specific snapshot ID (default: latest)
-- `target_database_*`: Connection parameters for the target database
+- `target_database_*`: Connection parameters for the target database. Optional as a
+  group: omit `target_database_host`, `target_database_name`, `target_database_user`
+  and `target_database_password` to restore into the project's own database. A partial
+  set is a 422. `reference_name` decides which deployment's database that is: it is
+  either a component service reference (`{deployment}-postgresql`) or the
+  deployment-wide fallback (`{deployment}-database`). An unknown reference, or a
+  database that is not provisioned yet, answers 404.
 
 ### Database Backup Response
 
@@ -643,8 +843,17 @@ S3 credentials alone can't decrypt them.
 
 ### Restore a Bucket
 
+The four target fields are optional, exactly as for databases: omit them all and the
+restore goes into the bucket of the project the API key belongs to.
+
 ```bash
-# Restore latest snapshot
+# Restore the latest snapshot into the project's OWN bucket (no credentials needed)
+curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Restore latest snapshot into an external bucket
 curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
@@ -674,7 +883,9 @@ curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/m
 - `namespace`: Kubernetes namespace for the restore pod
 - `reference_name`: Logical name of the bucket backup to restore
 - `snapshot_id`: Optional specific snapshot ID (default: latest)
-- `target_minio_endpoint`: Target MinIO endpoint URL
+- `target_minio_endpoint`: Target MinIO endpoint URL. This field and the three below
+  are optional as a group: omit them all to restore into the project's own bucket; a
+  partial set is a 422 naming what is missing
 - `target_bucket_name`: Target bucket name (can be different from source)
 - `target_access_key`: Target MinIO access key
 - `target_secret_key`: Target MinIO secret key

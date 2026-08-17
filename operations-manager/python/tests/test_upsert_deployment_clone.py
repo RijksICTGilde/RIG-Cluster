@@ -16,6 +16,9 @@ the source deployment's config. Several fields must NOT be copied:
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.services import service_entry_name
+
 
 def _make_manager():
     with (
@@ -184,6 +187,129 @@ class TestUpsertDeploymentClone:
         assert result["success"] is True
         new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr884")
         assert "root-component" not in new_deployment
+
+    async def test_clone_does_not_inherit_web_address_stored_under_the_service(self):
+        """Regression (RC-60): the web address moved into the source's ``services`` block.
+
+        Excluding the seven ROOT key names from the copy became a silent no-op the moment
+        the values moved, because ``services`` is copied as a whole. A clone would then
+        generate ingresses on EXACTLY the source's hostnames.
+        """
+        pm = _make_manager()
+        project_data = {
+            "name": "demo",
+            "clusters": ["odcn-production"],
+            "repositories": [{"name": "main-repo"}],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "cluster": "odcn-production",
+                    "namespace": "demo",
+                    "services": [
+                        {
+                            "reference": "publish-on-web",
+                            "config": {
+                                "subdomain": "wies",
+                                "base-domain": "rijksapps.nl",
+                                "domain-format": "component.subdomain",
+                                "domain-mode": "nice-url",
+                                "issuer": "letsencrypt",
+                                "root-component": "editor",
+                                "expose-component-on-bare-domain": "editor",
+                            },
+                        }
+                    ],
+                    "components": [{"reference": "editor", "image": "ghcr.io/org/editor:v1"}],
+                }
+            ],
+        }
+        _wire_create_mocks(pm, project_data)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr857",
+                components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr857")],
+                clone_from="productie",
+            )
+
+        assert result["success"] is True
+        new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr857")
+        for setting in DomainSetting:
+            assert get_domain_setting(new_deployment, setting) is None, f"{setting.value} was inherited"
+        # And no empty publish-on-web record left behind for a clone that has no web address.
+        assert new_deployment.get("services") is None
+
+    async def test_clone_keeps_the_subdomain_the_caller_asked_for(self):
+        """The requested settings are written BEFORE the copy from the source lands on the
+        same service block. They must survive it -- otherwise the clone silently claims the
+        source's hostname instead of its own."""
+        pm = _make_manager()
+        project_data = {
+            "name": "demo",
+            "clusters": ["odcn-production"],
+            "repositories": [{"name": "main-repo"}],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "cluster": "odcn-production",
+                    "namespace": "demo",
+                    "services": [
+                        {
+                            "reference": "publish-on-web",
+                            "config": {"subdomain": "wies", "base-domain": "rijksapps.nl"},
+                        }
+                    ],
+                    "components": [{"reference": "editor", "image": "ghcr.io/org/editor:v1"}],
+                }
+            ],
+        }
+        _wire_create_mocks(pm, project_data)
+        pm._enforce_domain_config = AsyncMock(return_value=None)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr-123",
+                components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr-123")],
+                clone_from="productie",
+                subdomain="pr-123",
+            )
+
+        assert result["success"] is True
+        new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr-123")
+        assert get_domain_setting(new_deployment, DomainSetting.SUBDOMAIN) == "pr-123"
+        assert get_domain_setting(new_deployment, DomainSetting.BASE_DOMAIN) is None
+
+    async def test_clone_keeps_other_service_entries(self):
+        """Dropping the web address must not drop the source's other deployment services."""
+        pm = _make_manager()
+        project_data = {
+            "name": "demo",
+            "clusters": ["odcn-production"],
+            "repositories": [{"name": "main-repo"}],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "cluster": "odcn-production",
+                    "namespace": "demo",
+                    "services": [
+                        {"reference": "publish-on-web", "config": {"subdomain": "wies"}},
+                        {"reference": "cross-domain-access", "config": {"allowed-origins": ["https://x.nl"]}},
+                    ],
+                    "components": [{"reference": "editor", "image": "ghcr.io/org/editor:v1"}],
+                }
+            ],
+        }
+        _wire_create_mocks(pm, project_data)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            await pm.upsert_deployment(
+                deployment_name="pr857",
+                components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr857")],
+                clone_from="productie",
+            )
+
+        new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr857")
+        assert [service_entry_name(entry) for entry in new_deployment["services"]] == ["cross-domain-access"]
 
     async def test_clone_leaves_source_backup_untouched(self):
         pm = _make_manager()

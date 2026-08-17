@@ -42,8 +42,10 @@ not change.
 import asyncio
 import contextlib
 import copy
+import inspect
 import logging
 import os
+import re
 import shutil
 import time
 from abc import ABC, abstractmethod
@@ -64,7 +66,7 @@ from opi.core.project_schema import (
     validate_project_schema,
 )
 from opi.manager.project_validation import validate_project_structure
-from opi.services.project_service import Project, ProjectUser, get_project_service
+from opi.services.project_service import ProjectSummary, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_age_content, get_decoded_project_private_key
@@ -80,8 +82,17 @@ MAX_MUTATION_ATTEMPTS = 5
 # rather than DEBUG/INFO, so an operator sees contention without turning on debug
 # logging. Tune from what the logs actually show.
 _LOCK_WAIT_WARN_SECONDS = 2.0
+
+# How long the "last changed" mapping stays good enough. The overview page asks for it
+# on every keystroke in its search box, and a change that lands in between is visible
+# one refresh later -- which is what the project cache itself already does.
+_LAST_MODIFIED_TTL_SECONDS = 30.0
 _PERSIST_WARN_SECONDS = 3.0
 AGE_HEADER = "-----BEGIN AGE ENCRYPTED FILE-----"
+
+# Version tokens travel to the browser and back, so they are validated before they
+# reach git: a blob SHA is exactly 40 hex characters, anything else is not asked for.
+_BLOB_SHA_RE = re.compile(r"[0-9a-f]{40}")
 
 
 class ProjectStoreError(RuntimeError):
@@ -153,13 +164,13 @@ class ProjectStore(ABC):
     # ---- reads: served from the in-memory cache, no I/O ----
 
     @abstractmethod
-    def get(self, name: str) -> Project | None: ...
+    def get(self, name: str) -> ProjectSummary | None: ...
 
     @abstractmethod
-    def get_all(self) -> list[Project]: ...
+    def get_all(self) -> list[ProjectSummary]: ...
 
     @abstractmethod
-    def get_by_api_key(self, api_key: str) -> Project | None: ...
+    def get_by_api_key(self, api_key: str) -> ProjectSummary | None: ...
 
     @abstractmethod
     def exists(self, name: str) -> bool: ...
@@ -170,7 +181,7 @@ class ProjectStore(ABC):
     # ---- mutations: serialized read-modify-write, validated before persist ----
 
     @abstractmethod
-    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> Project: ...
+    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> ProjectSummary: ...
 
     @abstractmethod
     async def mutate(self, name: str, change: ChangeFunction, *, message: str, actor: str) -> MutationResult: ...
@@ -197,6 +208,9 @@ class ProjectStore(ABC):
     @abstractmethod
     async def bootstrap(self) -> None: ...
 
+    @abstractmethod
+    def cache_head(self) -> str | None: ...
+
 
 class GitProjectStore(ProjectStore):
     """ProjectStore backed by the ``zad-projects`` git repository.
@@ -210,6 +224,19 @@ class GitProjectStore(ProjectStore):
         self._lock = asyncio.Lock()
         self._connector: GitConnector | None = None
         self._working_dir = working_dir or os.path.join(settings.TEMP_DIR, "zad-projects-warm")
+        # The commit the cache is known to fully reflect. Set only where the whole
+        # cache is loaded consistently: bootstrap and reconcile. It is the backstop
+        # against cache/disk drift -- reconcile reloads everything changed between
+        # this and the current tree, so a path that advances the disk without the
+        # cache is caught within one reconcile tick instead of surviving to a restart.
+        # Kept as a lower bound on purpose: if it lags, reconcile re-reads a few files
+        # redundantly (safe); it is never allowed to run ahead of what the cache holds.
+        self._cache_head: str | None = None
+        # "Last changed" per project, and when that mapping was built. Separate from
+        # the project cache because it is derived from history rather than from the
+        # tree, and only the overview page needs it.
+        self._last_modified_cache: dict[str, str] | None = None
+        self._last_modified_at: float = 0.0
 
     # ------------------------------------------------------------------
     # warm working copy
@@ -295,13 +322,13 @@ class GitProjectStore(ProjectStore):
     # reads
     # ------------------------------------------------------------------
 
-    def get(self, name: str) -> Project | None:
+    def get(self, name: str) -> ProjectSummary | None:
         return get_project_service().get_project(name)
 
-    def get_all(self) -> list[Project]:
+    def get_all(self) -> list[ProjectSummary]:
         return list(get_project_service().get_all_projects().values())
 
-    def get_by_api_key(self, api_key: str) -> Project | None:
+    def get_by_api_key(self, api_key: str) -> ProjectSummary | None:
         return get_project_service().get_project_by_api_key(api_key)
 
     def exists(self, name: str) -> bool:
@@ -361,7 +388,7 @@ class GitProjectStore(ProjectStore):
     # mutations
     # ------------------------------------------------------------------
 
-    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> Project:
+    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> ProjectSummary:
         """Create a new project file. Fails if the project already exists."""
         async with self._locked("create", name):
             connector = await self.get_connector()
@@ -441,10 +468,18 @@ class GitProjectStore(ProjectStore):
                 # reset_to_remote() fetches it. Merging once before the loop would
                 # therefore republish the caller's version over whatever was just
                 # fetched -- the same lost update, arriving by the other route.
+                logger.info(
+                    "store.save '%s' attempt %d/%d (msg=%r, has_base=%s)",
+                    name,
+                    attempt + 1,
+                    MAX_MUTATION_ATTEMPTS,
+                    message,
+                    base is not None,
+                )
                 attempt_data = data
                 if base is not None:
                     attempt_data = await self._reconcile_with_concurrent_write(
-                        connector, relative_path, name=name, base=base, data=data
+                        connector, relative_path, name=name, base=base, data=data, actor=actor
                     )
 
                 await self._validate(attempt_data, enforce=enforce_validation)
@@ -505,9 +540,11 @@ class GitProjectStore(ProjectStore):
                 if current is None:
                     raise ProjectNotFoundError(f"Project '{name}' does not exist")
 
-                mutated = change(copy.deepcopy(current))
-                if asyncio.iscoroutine(mutated):
-                    mutated = await mutated
+                # A ChangeFunction may be sync or async. Awaiting into a second name
+                # keeps the awaited result's type visible; reassigning the same name
+                # left it a union with the un-awaited Awaitable for everything below.
+                changed = change(copy.deepcopy(current))
+                mutated = await changed if inspect.isawaitable(changed) else changed
 
                 if mutated is None:
                     # Idempotent no-op: the change is already applied.
@@ -594,6 +631,7 @@ class GitProjectStore(ProjectStore):
         name: str,
         base: dict[str, Any],
         data: dict[str, Any],
+        actor: str = "?",
     ) -> dict[str, Any]:
         """Compare-and-swap for a pre-built dict, with a three-way merge fallback.
 
@@ -612,15 +650,37 @@ class GitProjectStore(ProjectStore):
         """
         current = await self._read_committed(connector, relative_path)
         if current is None or current == base:
+            logger.info(
+                "reconcile '%s' [%s]: current==base (no concurrent change since read) -> publishing as-is",
+                name,
+                actor,
+            )
             return data
 
-        logger.info("Project '%s' changed since it was read; re-applying our change on top of it", name)
+        # Our change IS the committed state already: a request handler saved it and a
+        # follow-up re-writes the same content against the version it started from (the
+        # modal edit hands its result to the deployment task, which saves it again).
+        # There is nothing to merge, and re-applying a delta that is already applied
+        # would be reported as a conflict.
+        if current == data:
+            logger.info(
+                "reconcile '%s' [%s]: current==data (our change already committed by a prior save) -> no-op",
+                name,
+                actor,
+            )
+            return data
+
+        logger.info(
+            "reconcile '%s' [%s]: file changed since read (current!=base, current!=data) -> three-way merging",
+            name,
+            actor,
+        )
 
         merged = _apply_our_change_to(base=base, ours=data, theirs=current)
         if merged is None:
             raise ConflictError(
-                f"Project '{name}' is gewijzigd sinds u begon met bewerken, en die wijziging raakt "
-                f"hetzelfde onderdeel als de uwe. Haal de laatste versie op en voer uw wijziging opnieuw uit."
+                f"Project '{name}' is gewijzigd sinds je begon met bewerken, en die wijziging raakt "
+                f"hetzelfde onderdeel als dat van jou. Haal de laatste versie op en voer je wijziging opnieuw uit."
             )
 
         # Fails closed: a merge is only accepted when the RESULT is valid, never on
@@ -630,7 +690,7 @@ class GitProjectStore(ProjectStore):
             await validate_project_structure(merged)
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             raise ConflictError(
-                f"Project '{name}' is gewijzigd sinds u begon met bewerken en de samengevoegde "
+                f"Project '{name}' is gewijzigd sinds je begon met bewerken en de samengevoegde "
                 f"versie is ongeldig ({e}). Haal de laatste versie op en probeer opnieuw."
             ) from e
 
@@ -736,7 +796,18 @@ class GitProjectStore(ProjectStore):
                 "This means an earlier rollback did not complete.",
                 unpushed,
             )
+            # reset_to_remote() is `fetch` + `reset --hard origin/main`, so it does not
+            # only discard the local-ahead commit: it also fast-forwards the disk over
+            # every commit another writer pushed meanwhile. Those external projects are
+            # now on disk but NOT in the cache, and reconcile's fast path (remote head
+            # == local head) will then read "nothing to do" forever -- so the cache
+            # served a project without its newest deployments until a restart. Reload
+            # the diff into the cache, exactly as the push-conflict path does.
+            before_reset = await connector.get_local_commit_hash()
             await connector.reset_to_remote()
+            after_reset = await connector.get_local_commit_hash()
+            if before_reset != after_reset:
+                await self._reload_changed_into_cache(connector, before_reset, after_reset)
 
         old_head = await connector.get_local_commit_hash()
 
@@ -760,7 +831,7 @@ class GitProjectStore(ProjectStore):
         await connector.sync_worktree_to_head()
         return commit, True
 
-    def _refresh_cache(self, name: str, data: dict[str, Any], filename: str) -> Project:
+    def _refresh_cache(self, name: str, data: dict[str, Any], filename: str) -> ProjectSummary:
         """Write-through cache update. Called only after a successful push."""
         service = get_project_service()
         service.load_project_from_data(data, filename)
@@ -773,7 +844,7 @@ class GitProjectStore(ProjectStore):
             # the next restart.
             users = _users_from_data(data)
             service.register(name, "", filename, users, data)
-            project = service.get_project(name) or Project(
+            project = service.get_project(name) or ProjectSummary(
                 name=name, api_key="", filename=filename, users=users, data=data
             )
         return project
@@ -800,9 +871,74 @@ class GitProjectStore(ProjectStore):
         raw = await connector.list_file_revisions(self._relative_path(name))
         return [Revision(ref=r["ref"], message=r["message"], author=r["author"], timestamp=r["timestamp"]) for r in raw]
 
+    async def last_modified_all(self) -> dict[str, str]:
+        """When each project was last changed, keyed by project name, ISO 8601.
+
+        Serves the overview page, which wants this for every row at once. One git
+        log pass for the whole repository, cached for a short while: the page is
+        reloaded on every keystroke in the search box (htmx), and the answer cannot
+        meaningfully change between two of those.
+
+        A project without an entry is simply absent from the mapping. Never raises:
+        this makes the overview page do a git operation it never used to do, and a
+        decoration at the end of a row must not be able to take the page down with it.
+        The three types are what the way in can throw: OSError from the working copy,
+        ValueError when the repository password cannot be decrypted (no AGE key -- the
+        way this first went wrong), and RuntimeError from the git connector itself.
+        """
+        now = time.monotonic()
+        if self._last_modified_cache is not None and now - self._last_modified_at < _LAST_MODIFIED_TTL_SECONDS:
+            return self._last_modified_cache
+
+        try:
+            connector = await self.get_connector()
+            per_path = await connector.last_modified_per_file(PROJECTS_SUBDIR)
+        except (OSError, ValueError, RuntimeError) as exc:
+            logger.warning("Could not read project modification times: %s", exc)
+            return self._last_modified_cache or {}
+
+        # Back to project names: the store addresses projects by name, and a legacy
+        # filename resolves to the same stem as its canonical form.
+        per_project = {os.path.splitext(os.path.basename(path))[0]: stamp for path, stamp in per_path.items()}
+        self._last_modified_cache = per_project
+        self._last_modified_at = now
+        return per_project
+
     async def read_at(self, name: str, ref: str) -> dict[str, Any] | None:
         connector = await self.get_connector()
         return await self._read_committed(connector, self._relative_path(name), ref=ref)
+
+    async def version_of(self, relative_path: str) -> str | None:
+        """Version token for a project file: its git blob SHA at HEAD.
+
+        Handed to a client that is about to build an edit from what it just read
+        (a form, a wizard step). Sent back with the resulting write it becomes the
+        compare-and-swap base, so an edit is applied as a *change* relative to the
+        version the user actually saw, not as a wholesale overwrite of whatever is
+        there by then. None when the file does not exist yet.
+        """
+        connector = await self.get_connector()
+        return await connector.get_blob_sha(relative_path)
+
+    async def read_version(self, version: str) -> dict[str, Any] | None:
+        """Project data exactly as it was in the given ``version_of`` token.
+
+        None when the token is malformed or its blob is not in the clone, so the
+        caller falls back rather than merging against a guess.
+        """
+        if not _BLOB_SHA_RE.fullmatch(version):
+            logger.warning("Rejected malformed project version token: %r", version)
+            return None
+
+        connector = await self.get_connector()
+        content = await connector.read_blob(version)
+        if content is None:
+            return None
+        data = load_yaml_from_string(content)
+        if data is None:
+            return None
+        migrated, _ = migrate_to_latest(data)
+        return migrated
 
     async def read_path(self, relative_path: str, ref: str = "HEAD") -> dict[str, Any] | None:
         """Read a project file by its repo-relative path (``projects/<file>.yaml``).
@@ -861,6 +997,10 @@ class GitProjectStore(ProjectStore):
     # freshness / lifecycle
     # ------------------------------------------------------------------
 
+    def cache_head(self) -> str | None:
+        """Commit the cache was last loaded at, or None before the first load."""
+        return self._cache_head
+
     async def reconcile(self) -> None:
         """Pull edits made outside ZAD into the cache, incrementally.
 
@@ -878,21 +1018,47 @@ class GitProjectStore(ProjectStore):
 
         # Cheap check outside the lock: no divergence means no work, and no reason
         # to make readers queue behind a write that can hold the lock for seconds.
+        # The cache is provably fresh only when it matches BOTH the remote (no external
+        # commit waiting) AND its own last-loaded head (no silent disk advance). Gating
+        # on remote == disk alone was the gap that let a self-heal reset move the disk
+        # past the cache and never recover: reconcile read "nothing to do" while the
+        # cache served a stale project until a restart.
         remote_head = await connector.get_remote_commit_hash()
-        if remote_head is not None and remote_head == await connector.get_local_commit_hash():
-            logger.debug("Reconcile: remote is unchanged, nothing to do")
+        disk_head = await connector.get_local_commit_hash()
+        if remote_head is not None and remote_head == disk_head == self._cache_head:
+            logger.debug("Reconcile: remote, disk and cache all current, nothing to do")
             return
 
         async with self._locked("reconcile", "*"):
-            old_head = await connector.get_local_commit_hash()
+            disk_before = await connector.get_local_commit_hash()
             await connector.reset_to_remote()
             new_head = await connector.get_local_commit_hash()
 
-            if old_head == new_head:
-                logger.debug("Reconcile: no new commits")
-                return
+            # Reload from what the CACHE last reflected, not from the disk's prior head:
+            # if some path advanced the disk without the cache, only cache_head knows
+            # how far back the cache actually is, and therefore what must be re-read.
+            base = self._cache_head or new_head
+            changed = await self._reload_changed_into_cache(connector, base, new_head) if base != new_head else []
+            self._cache_head = new_head
 
-            await self._reload_changed_into_cache(connector, old_head, new_head)
+            # A reset that moved the disk means external commits were waiting -- normal:
+            # another cluster or a hand edit pushed, and pulling them in is this loop's
+            # job. But a reload that CHANGED cached data while the disk did NOT move means
+            # the disk already matched the remote, yet the cache was stale. That is a path
+            # advancing the working copy without updating the cache -- the class of bug
+            # this backstop exists to catch. It should not happen; log it loudly so the
+            # path gets found, not just silently repaired.
+            disk_moved = disk_before != new_head
+            if changed and not disk_moved:
+                logger.error(
+                    "ProjectStore cache had drifted from git: %s were stale in the cache while the working "
+                    "copy already matched the remote (%s). Some write path advanced the disk without updating "
+                    "the cache. reconcile repaired it, but the path must be found -- this should not happen.",
+                    changed,
+                    new_head[:8],
+                )
+            elif changed:
+                logger.info("Reconcile: pulled external change(s) into the cache: %s", changed)
 
     async def _resync_after_conflict(self, connector: GitConnector) -> None:
         """Fetch the remote after a rejected push, and take the whole tree with us.
@@ -920,7 +1086,7 @@ class GitProjectStore(ProjectStore):
         if old_head != new_head:
             await self._reload_changed_into_cache(connector, old_head, new_head)
 
-    async def _reload_changed_into_cache(self, connector: GitConnector, old_head: str, new_head: str) -> None:
+    async def _reload_changed_into_cache(self, connector: GitConnector, old_head: str, new_head: str) -> list[str]:
         """Re-read the project files that changed between two commits into the cache.
 
         Shared by reconcile and by the push-conflict retry path. A rejected push is
@@ -929,14 +1095,20 @@ class GitProjectStore(ProjectStore):
         on disk. Without this the cache would keep serving the old version of those
         projects until someone triggered a reconcile, which since the removal of the
         30-second poll may be a long time. The fetch is already paid for here.
+
+        Returns the filenames whose cached data ACTUALLY changed (not merely files that
+        differ between the two commits). Write-through means the cache is often already
+        current for a file that git shows as changed; only a genuine change is drift
+        worth flagging, so reconcile uses this to tell its own writes from a real gap.
         """
         changed = await connector.list_changed_files(old_head, new_head)
         project_files = [p for p in changed if p.startswith(f"{PROJECTS_SUBDIR}/") and p.endswith((".yaml", ".yml"))]
         if not project_files:
-            return
+            return []
 
         logger.info("Reloading %d changed project file(s) between %s..%s", len(project_files), old_head, new_head)
 
+        really_changed: list[str] = []
         for relative_path in project_files:
             data = await self._read_committed(connector, relative_path)
             filename = os.path.basename(relative_path)
@@ -946,9 +1118,15 @@ class GitProjectStore(ProjectStore):
                 for name in removed:
                     get_project_service().remove_project(name)
                     logger.info("Evicted externally deleted project '%s'", name)
+                if removed:
+                    really_changed.append(filename)
                 continue
+            before = self._cached_by_filename(filename)
             get_project_service().load_project_from_data(data, filename)
-            logger.info("Reloaded '%s' from git", filename)
+            if before != data:
+                really_changed.append(filename)
+                logger.info("Reloaded '%s' from git", filename)
+        return really_changed
 
     async def _list_project_files(self, connector: GitConnector) -> list[str]:
         """Filenames of the project files present in the warm working copy."""
@@ -976,7 +1154,7 @@ class GitProjectStore(ProjectStore):
             connector = await self.get_connector()
             service = get_project_service()
 
-            loaded: dict[str, Project] = {}
+            loaded: dict[str, ProjectSummary] = {}
             member_emails: list[str] = []
             for filename in await self._list_project_files(connector):
                 data = await self._read_committed(connector, f"{PROJECTS_SUBDIR}/{filename}")
@@ -999,7 +1177,32 @@ class GitProjectStore(ProjectStore):
             if member_emails:
                 get_user_service().add_allowed_emails(member_emails)
 
-            logger.info("ProjectStore bootstrap loaded %d project(s)", len(loaded))
+            # The cache now reflects the tree at this commit; record it as the
+            # freshness baseline reconcile checks against.
+            self._cache_head = await connector.get_local_commit_hash()
+
+            logger.info("ProjectStore bootstrap loaded %d project(s) at %s", len(loaded), (self._cache_head or "?")[:8])
+
+
+def _as_plain(value: Any) -> Any:
+    """Dezelfde inhoud in kale Python-containers, voor een diff die over inhoud gaat.
+
+    ruamel geeft bij het laden ``CommentedMap``/``CommentedSeq`` en scalarsubklassen als
+    ``LiteralScalarString`` terug. Voor ``==`` zijn die gelijk aan hun kale evenknie, maar
+    DeepDiff rapporteert ze als typewissel en maakt de diff daarmee grover dan de
+    wijziging is. Deze functie neemt alleen de VORM weg; elke waarde blijft wat hij was.
+    """
+    if isinstance(value, dict):
+        return {key: _as_plain(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_as_plain(item) for item in value]
+    if isinstance(value, str) and type(value) is not str:
+        return str(value)
+    if isinstance(value, int) and not isinstance(value, bool) and type(value) is not int:
+        return int(value)
+    if isinstance(value, float) and type(value) is not float:
+        return float(value)
+    return value
 
 
 def _apply_our_change_to(
@@ -1032,6 +1235,25 @@ def _apply_our_change_to(
     would refine it.
     """
     try:
+        # De diff moet over INHOUD gaan, niet over containervormen. ``theirs`` komt uit
+        # een YAML-lees en is een ruamel ``CommentedMap``; ``base`` kan dat ook zijn;
+        # ``ours`` is doorgaans een platte ``dict`` uit een formulier of API-pad. Voor
+        # ``==`` maakt dat niets uit (CommentedMap is een dict-subklasse), maar DeepDiff
+        # ziet het als ``type_changes`` op het EERSTE knooppunt waar de vormen uiteenlopen
+        # -- in het gemeten geval de root -- en stopt daar met afdalen. De hele wijziging
+        # wordt dan een vervanging-in-zijn-geheel, en zo'n delta verifieert zijn oude
+        # waarde tegen ``theirs``: elk verschil, hoe onschuldig ook, laat hem weigeren.
+        # Gevolg (RC-118): de domeinwizard gaf een PERMANENT "gewijzigd sinds je begon
+        # met bewerken" terwijl niemand anders schreef en het bestand niet bewoog.
+        #
+        # Normaliseren verzint geen gelijkheid: alleen de vorm wordt gelijkgetrokken,
+        # de waarden niet, dus een echte botsing op hetzelfde veld blijft een conflict
+        # (de tests op de grenzen staan in test_store_merge_containervormen.py). De
+        # delta wordt op de ECHTE ``theirs`` toegepast; de verificatie daarbinnen
+        # vergelijkt met ``==`` en is dus container-blind.
+        base = _as_plain(base)
+        ours = _as_plain(ours)
+
         diff = DeepDiff(base, ours)
 
         collisions = _conflicting_added_keys(diff, ours=ours, theirs=theirs)

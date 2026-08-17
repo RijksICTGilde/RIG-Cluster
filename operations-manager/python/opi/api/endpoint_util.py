@@ -10,6 +10,20 @@ from opi.core.config import settings
 from opi.services.project_store import get_project_store
 from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
 
+REQUIRES_PROJECT_NAME = "zad_requires_project_name"
+"""Markering op een route die met een projectsleutel wordt afgeschermd.
+
+De controle legitimeert de sleutel TEGEN een project en leest dat project uit de
+routeparameters, dus een route zonder ``project_name`` kan hem per definitie niet doorstaan
+en antwoordt altijd 401 -- wat de aanroeper ook meestuurt, want FastAPI geeft een route
+alleen de parameters die in haar signatuur staan. Dat overkwam
+``GET /api/subdomains/check/{subdomain}``: het endpoint was onbereikbaar en het document
+noemde de ontbrekende parameter nergens.
+
+De markering staat hier zodat ``tests/test_subdomein_check_endpoint.py`` die eis uit de
+routes zelf kan lezen in plaats van uit een lijst met paden.
+"""
+
 
 def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
     """
@@ -17,7 +31,9 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
 
     This decorator requires project-specific API key via X-API-Key header.
     ALWAYS validates that the API key matches the project_name from the route.
-    Returns 401 if project_name is missing from the route parameters.
+
+    The route must therefore be able to receive ``project_name`` -- in its path, or as a
+    REQUIRED query parameter; see :data:`REQUIRES_PROJECT_NAME`.
 
     Args:
         func: The route function to decorate
@@ -40,7 +56,11 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
         project_name_from_url = kwargs.get("project_name")
 
         if not project_name_from_url:
-            logger.warning(f"Missing project_name parameter for route {func.__name__}")
+            # Een routefout, geen aanroepfout: de aanroeper kan hier niets aan doen.
+            logger.error(
+                f"Route {func.__name__} draagt validate_api_token maar kreeg geen project_name; "
+                "zonder project valt een projectsleutel niet te controleren"
+            )
             raise HTTPException(status_code=401, detail="Missing project_name parameter")
 
         project = get_project_store().get(project_name_from_url)
@@ -54,6 +74,7 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
         kwargs["project_name"] = project.name
         return await func(*args, request=request, **kwargs)
 
+    setattr(wrapper, REQUIRES_PROJECT_NAME, True)
     return wrapper
 
 

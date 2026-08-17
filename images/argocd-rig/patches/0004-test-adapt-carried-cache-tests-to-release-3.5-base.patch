@@ -1,0 +1,38 @@
+From dc3081b0f2be485390a0f2c2129ce8057e9e10bb Mon Sep 17 00:00:00 2001
+From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
+Date: Thu, 13 Aug 2026 23:39:32 +0200
+Subject: [PATCH 4/4] test: adapt carried cache tests to release-3.5 base
+
+The kubetest helper moved under the vendored gitops-engine module path,
+and the carried cluster tests use strings.Join while the release-3.5
+version of cluster_test.go no longer imports strings.
+---
+ gitops-engine/pkg/cache/cluster_test.go        | 1 +
+ gitops-engine/pkg/cache/rig_regression_test.go | 2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/gitops-engine/pkg/cache/cluster_test.go b/gitops-engine/pkg/cache/cluster_test.go
+index f7a995a77..793d862fd 100644
+--- a/gitops-engine/pkg/cache/cluster_test.go
++++ b/gitops-engine/pkg/cache/cluster_test.go
+@@ -5,6 +5,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"sort"
++	"strings"
+ 	"sync"
+ 	"testing"
+ 	"time"
+diff --git a/gitops-engine/pkg/cache/rig_regression_test.go b/gitops-engine/pkg/cache/rig_regression_test.go
+index c624f7a69..31598dc55 100644
+--- a/gitops-engine/pkg/cache/rig_regression_test.go
++++ b/gitops-engine/pkg/cache/rig_regression_test.go
+@@ -14,7 +14,7 @@ import (
+ 	kubefake "k8s.io/client-go/kubernetes/fake"
+ 	testcore "k8s.io/client-go/testing"
+ 
+-	"github.com/argoproj/gitops-engine/pkg/utils/kube/kubetest"
++	"github.com/argoproj/argo-cd/gitops-engine/pkg/utils/kube/kubetest"
+ )
+ 
+ func rigSSAR(allowed bool) *kubefake.Clientset {

@@ -24,14 +24,55 @@ function sequenceRemove(path, index) {
  * Route the sequence action to the correct handler based on context.
  */
 function _sequenceDispatch(action, path, index) {
+    /* MELDEN WAT ER GEBEURT.
+     *
+     * Deze functie had drie stille uitgangen: geen formulier, verzoek nog bezig, of geen
+     * bewerkdialoog. In alle drie gebeurde er niets, zonder fout en zonder verzoek, en dan
+     * lijkt de knop stuk terwijl hij keurig is aangeroepen. Dat kostte een middag zoeken.
+     * Elke uitgang zegt nu wat hij doet, zodat de console het antwoord geeft in plaats van
+     * dat iemand het moet reconstrueren. */
     var form = document.getElementById('wizard-step-form')
             || document.getElementById('modal-wizard-form');
     if (form) {
+        /* A [data-rerender] change (e.g. toggling a service) fires its own re-render
+           submit on this form. While that request is in flight, htmx drops a second
+           submit triggered here, so the sequence action would be silently lost and the
+           in-flight re-render would then swap the form out from under it. Wait for the
+           in-flight request to settle, then re-dispatch against the fresh form. */
+        if (form.classList.contains('htmx-request')) {
+            document.body.addEventListener(
+                'htmx:afterSettle',
+                function () { _sequenceDispatch(action, path, index); },
+                { once: true }
+            );
+            return;
+        }
         /* Wizard / modal-wizard context: inject hidden fields and trigger HTMX submit */
         _seqHidden(form, '_seq_action', action);
         _seqHidden(form, '_seq_path', path);
         _seqHidden(form, '_seq_index', index);
+
+        /* GEEN BROWSERVALIDATIE OP EEN RIJ ERBIJ OF ERAF.
+         *
+         * Dit is geen opslaan maar een herteken-actie: de server krijgt de stap terug met
+         * een rij meer of minder. Toch liep hij op de validatie van het formulier stuk.
+         *
+         * Gemeten in de modal-wizard bij Bijlagen: een nieuwe rij brengt een <select
+         * required> mee die leeg begint ("-- Kies een bijlage --"). Vanaf dat moment
+         * weigert de browser ELKE indiening van dit formulier, en omdat het veld in een
+         * nldd-form-field zit zie je ook de foutbel niet. Het gevolg is dat alle knoppen
+         * dood lijken, ook die van andere secties, want het is een formulier. Geen fout,
+         * geen verzoek, niets.
+         *
+         * Bij poorten en paden viel het niet op: daar komt een nieuwe rij met een waarde.
+         *
+         * noValidate rond de indiening zet dat uit voor deze ene actie. htmx kijkt naar
+         * dezelfde vlag, dus dit dekt zijn eigen validatiestap mee. Daarna meteen terug,
+         * zodat de knop Volgende wel gewoon valideert. */
+        var validatieStond = form.noValidate;
+        form.noValidate = true;
         htmx.trigger(form, 'submit');
+        form.noValidate = validatieStond;
         return;
     }
 
@@ -39,7 +80,11 @@ function _sequenceDispatch(action, path, index) {
     var modal = document.getElementById('edit-section-modal');
     if (modal && modal.dataset.projectName && modal.dataset.sectionId) {
         _sequenceEditModal(modal, action, path, index);
+        return;
     }
+    /* Hier gebeurt er werkelijk niets meer: geen wizardformulier en geen bewerkdialoog.
+       Stilte kostte ons een middag zoeken, dus dit ene geval meldt zich wel. */
+    console.warn('[sequence] geen wizardformulier en geen bewerkdialoog gevonden; er is niets gebeurd');
 }
 
 /**
@@ -82,7 +127,9 @@ function _sequenceEditModal(modal, action, path, index) {
         var errorEl = document.getElementById('edit-section-error');
         if (errorEl) {
             errorEl.textContent = err.message;
-            errorEl.style.display = '';
+            // De verborgen begintoestand staat als .is-hidden in wizard.css, zodat de
+            // markup van de foutmelding geen vormgeving hoeft te dragen.
+            errorEl.classList.remove('is-hidden');
         }
     });
 }
@@ -264,22 +311,25 @@ function initServiceCards(grid) {
             }
 
             if (cb) {
-                cb.disabled = locked;
-                /* Sync ROOS label class with current checked state */
-                var label = cb.closest('label[data-roos-component="checkbox"]');
-                if (label) {
-                    label.classList.toggle('rvo-checkbox--checked', checked);
-                    label.classList.toggle('rvo-checkbox--not-checked', !checked);
-                }
+                /* Bewust GEEN cb.disabled = locked. Vergrendeld betekent "niet aanpasbaar",
+                   en disabled betekent daarnaast "niet versturen" -- dat tweede bedoelen we
+                   niet, en juist daardoor viel een vergrendelde dienst uit de POST. Het slot
+                   wordt bewaakt door de change-handler hieronder (die de wijziging
+                   terugdraait) en door de server. */
+                cb.setAttribute('aria-disabled', locked ? 'true' : 'false');
+                syncLabel(cb);
             }
 
-            var hint = card.querySelector('.service-card__hint');
+            /* Only the dependency hint: a card can carry other hint lines (e.g. where a
+               service without project-wide settings IS configured), and matching on the
+               shared class alone removed those on the first update. */
+            var hint = card.querySelector('.service-card__hint--depends');
             if (locked) {
                 var labels = requirers.map(function(r) { return getLabel(r); });
                 var text = 'Vereist door: ' + labels.join(', ');
                 if (!hint) {
                     hint = document.createElement('p');
-                    hint.className = 'service-card__hint';
+                    hint.className = 'service-card__hint service-card__hint--depends';
                     var content = card.querySelector('.service-card__content');
                     if (content) content.appendChild(hint);
                 }
@@ -303,20 +353,36 @@ function initServiceCards(grid) {
         updateAllVisuals();
     }
 
+    /* Zet de ROOS-labelklasse gelijk aan de stand van de checkbox. */
+    function syncLabel(cb) {
+        var label = cb.closest('label[data-roos-component="checkbox"]');
+        if (!label) return;
+        label.classList.toggle('rvo-checkbox--checked', cb.checked);
+        label.classList.toggle('rvo-checkbox--not-checked', !cb.checked);
+    }
+
     /* change event from native checkbox click */
     grid.addEventListener('change', function(e) {
         if (processing) return;
         var card = e.target.closest('.service-card');
         if (!card) return;
         var svc = card.dataset.service;
-        processing = true;
-        /* Sync the ROOS label class for the clicked checkbox */
-        var label = e.target.closest('label[data-roos-component="checkbox"]');
-        if (label) {
-            var checked = e.target.checked;
-            label.classList.toggle('rvo-checkbox--checked', checked);
-            label.classList.toggle('rvo-checkbox--not-checked', !checked);
+
+        /* Hier is het slot een slot. De checkbox is niet disabled -- anders zou hij zijn
+           waarde niet versturen -- dus wordt het uitvinken teruggedraaid en wordt gezegd
+           waarom. */
+        if (card.classList.contains('service-card--locked-checked') && !e.target.checked) {
+            processing = true;
+            e.target.checked = true;
+            syncLabel(e.target);
+            processing = false;
+            var slotHint = card.querySelector('.service-card__hint--depends');
+            if (slotHint) alert(slotHint.textContent);
+            return;
         }
+
+        processing = true;
+        syncLabel(e.target);
         handleToggle(svc);
         processing = false;
     });
@@ -331,7 +397,7 @@ function initServiceCards(grid) {
             if (processing) return;
 
             if (card.classList.contains('service-card--locked-checked')) {
-                var hint = card.querySelector('.service-card__hint');
+                var hint = card.querySelector('.service-card__hint--depends');
                 if (hint) alert(hint.textContent);
                 return;
             }
@@ -363,7 +429,10 @@ function openServiceHelp(templateName) {
     modal.classList.add('is-open');
     document.body.style.overflow = 'hidden';
 
-    fetch('/forms/wizard/help/' + encodeURIComponent(templateName))
+    /* A service's help text is addressed as "<service-package>/help.md", so
+       encode per path segment -- encodeURIComponent would escape the separator. */
+    var encoded = templateName.split('/').map(encodeURIComponent).join('/');
+    fetch('/forms/wizard/help/' + encoded)
         .then(function(resp) {
             if (!resp.ok) throw new Error('Not found');
             return resp.text();
@@ -405,7 +474,7 @@ document.addEventListener('keydown', function(e) {
 function scrollToFirstError(container) {
     container = container || document;
     var el = container.querySelector('[aria-invalid="true"]')
-          || container.querySelector('.rvo-form-field__error-text')
+          || container.querySelector('.rvo-form-field__error-text, .lotc-form-field__error-text')
           || container.querySelector('[data-roos-component="alert"]');
     if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -484,13 +553,110 @@ function flashCleanIndicator(input) {
     });
 }
 
+/* ========================================================================
+ * Hertekenen na een keuze in een cascade
+ * ======================================================================== */
+
+function _huidigStapFormulier() {
+    return document.getElementById('wizard-step-form')
+        || document.getElementById('modal-wizard-form');
+}
+
+function _hertekenNu(form) {
+    _seqHidden(form, '_rerender', '1');
+    /* Zelfde reden als bij een rij toevoegen of verwijderen: dit is HERTEKENEN en geen
+       opslaan. Een cascade vult juist de velden waar de volgende keuze van afhangt, dus op
+       dat moment staan er per definitie verplichte velden leeg. Zonder dit weigert de
+       browser de indiening zonder een woord te zeggen: geen fout, geen verzoek, en dan
+       lijkt het alsof de lijst eronder niet reageert.
+       Gemeld op Bron-project bij cross-domain: kiezen leverde geen enkele POST op. */
+    var validatieStond = form.noValidate;
+    form.noValidate = true;
+    htmx.trigger(form, 'submit');
+    form.noValidate = validatieStond;
+}
+
+/* De BESTURING met deze naam, niet de omhulling eromheen.
+ * Een keuzelijst is onder het thema een kale <select> met de naam erop, maar een tekstveld
+ * is een <nldd-text-field> met de echte <input> in zijn schaduwboom. Het element dat de
+ * waarde draagt is in beide gevallen het eerste met deze naam dat een string-value heeft. */
+function _besturingMetNaam(naam) {
+    var kandidaten = document.querySelectorAll('[name="' + naam + '"]');
+    for (var i = 0; i < kandidaten.length; i++) {
+        if (typeof kandidaten[i].value === 'string') return kandidaten[i];
+    }
+    return null;
+}
+
+function _kanDeWaardeDragen(el, waarde) {
+    if (!el.options) return true;
+    for (var i = 0; i < el.options.length; i++) {
+        if (el.options[i].value === waarde) return true;
+    }
+    return false;
+}
+
+/* EEN KEUZE DIE VALT TERWIJL ER NOG EEN VERZOEK LOOPT, MAG NIET VERDWIJNEN.
+ *
+ * Gemeten in de browser (RC-127), op de cross-domain-stap in de aanmaakwizard: verandert er
+ * een tweede [data-rerender]-veld terwijl het formulier al een hertekenverzoek open heeft
+ * staan, dan levert die tweede wijziging GEEN htmx:configRequest en GEEN
+ * htmx:beforeRequest op - er vertrekt niets, ook niet later:
+ *
+ *     change  to/component   inflight=false  -> configRequest, beforeRequest
+ *     change  from/project    inflight=true  -> (niets)
+ *     beforeSwap, afterRequest, afterSettle
+ *     de keuzelijst 'from/deployment' biedt daarna alleen [''], en blijft dat
+ *
+ * htmx zet dat tweede verzoek in de wachtrij van het ELEMENT dat het doet (hier het
+ * formulier) en speelt het na het eerste antwoord opnieuw af. Maar het antwoord vervangt
+ * #wizard-step-content, en het formulier zit daarbinnen: het haalt zichzelf dus uit de
+ * pagina. htmx weigert een verzoek op een element dat niet meer in het document staat, en
+ * daarmee is de keuze weg zonder fout, zonder melding en zonder herstel. Dat is precies het
+ * beeld van de gestrande cascade: een geldige keuze in de rij en een lege lijst eronder.
+ *
+ * Vandaar dezelfde bescherming die _sequenceDispatch al had, plus wat daar niet nodig was:
+ * de keuze zelf terugzetten. Het antwoord dat onderweg was, is gerenderd ZONDER deze keuze,
+ * dus de verse rij komt leeg terug - opnieuw indienen alleen zou een leeg veld versturen.
+ */
+function _hertekenNaDeSwap(naam, waarde, bron) {
+    function haak() {
+        var form = _huidigStapFormulier();
+        // Nog bezig: het oude formulier draagt htmx-request tot na de swap. Zo landen we
+        // niet op de OOB-swap van de stapbalk, die vóór de inhoud kan komen.
+        if (!form || form.classList.contains('htmx-request')) return;
+        document.body.removeEventListener('htmx:afterSettle', haak);
+
+        if (document.contains(bron)) {
+            // De swap raakte ons veld niet, dus de waarde staat er nog: gewoon hertekenen.
+            _hertekenNu(form);
+            return;
+        }
+        var vers = naam ? _besturingMetNaam(naam) : null;
+        if (!vers) {
+            console.warn('[herteken] veld "' + naam + '" is na de swap verdwenen; de keuze is niet doorgegeven');
+            return;
+        }
+        if (vers.value === waarde) return;  // de render die landde kende de keuze al
+        if (!_kanDeWaardeDragen(vers, waarde)) {
+            console.warn('[herteken] "' + waarde + '" staat niet meer in de lijst van "' + naam + '"');
+            return;
+        }
+        vers.value = waarde;
+        vers.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    document.body.addEventListener('htmx:afterSettle', haak);
+}
+
 /* Re-render the current step when a [data-rerender] field changes */
 document.addEventListener('change', function(e) {
     var el = e.target.closest('[data-rerender]');
     if (!el) return;
-    var form = document.getElementById('wizard-step-form')
-            || document.getElementById('modal-wizard-form');
+    var form = _huidigStapFormulier();
     if (!form) return;
-    _seqHidden(form, '_rerender', '1');
-    htmx.trigger(form, 'submit');
+    if (form.classList.contains('htmx-request')) {
+        _hertekenNaDeSwap(e.target.getAttribute('name'), e.target.value, e.target);
+        return;
+    }
+    _hertekenNu(form);
 });

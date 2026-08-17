@@ -1,0 +1,109 @@
+{#
+  De deploymenttabel van een project, plus de telling erboven.
+
+  Een APART bestand omdat dit het stuk is dat htmx vervangt als je zoekt of sorteert: de
+  kop en het zoekveld eromheen blijven staan. Zelfde opzet als bg/_projects-lijst.html.j2,
+  want daar is deze vorm aan ontleend.
+
+  WAAR HIJ STAAT, en waarom dat het tabblad Overzicht is
+
+  Hier stond "Deployment Status": een kaart per deployment, elk met zijn eigen
+  ArgoCD-bevraging. Bij drie deployments is dat een prima beeld en bij twintig is het
+  onleesbaar - je scrolt langs twintig kaarten om te zien of er een rood is. Deze tabel
+  VERVANGT die kaarten; ze staan er niet naast, want twee weergaven van dezelfde lijst
+  lopen vroeg of laat uiteen.
+
+  DE KOLOM ``columns`` IS GEEN VORMGEVING. NLDD maakt van een tabel een CSS-grid: zonder
+  ``columns`` staat alles in EEN kolom en stapelen de koppen en de cellen onder elkaar.
+  Dat is precies wat er de vorige keer gebeurde - de HTML klopte, de browsertest was
+  groen, en op het scherm stond geen tabel maar een lijst. Er staat nu een screenshot-toets
+  op (tests/e2e/test_lotc_deploymentstabel.py).
+
+  DE KOLOMMEN, en waarom deze vijf
+
+    naam         - waar je op zoekt, en de link naar het tabblad Deployments
+    cluster      - onderscheidt anders identieke namen
+    status       - waarvoor je komt kijken
+    laatste sync - wanneer ArgoCD deze deployment voor het laatst heeft bijgewerkt
+    componenten  - een aantal, als ingang naar het detail
+
+  DE STATUSKOLOM
+
+  Twee bronnen, samengevoegd in opi/web/lotc_switch.py (deployment_status_tags), zodat de
+  regel waarmee ze samenkomen op EEN plek staat en toetsbaar is zonder een pagina te
+  renderen:
+
+    - wat de DIENSTEN melden (slaapstand, uitgeschakeld), dat de server toch al berekent;
+    - de gezondheid en de sync van ARGOCD, uit EEN gebundelde bevraging voor het hele
+      project (opi/services/argocd_overview.py). Twintig rijen kosten dus een verzoek en
+      geen twintig. Dat was de reden dat deze kolom er eerst niet in stond; die reden is
+      hiermee weg, en een statusoverzicht zonder status is geen overzicht.
+
+  DE RIJ WIJST NAAR HET TABBLAD DEPLOYMENTS, met een gewone link
+  (/projects/<project>/deployments/<naam>). Daar staat die ene deployment met zijn acties.
+  De naam staat in het PAD en niet in een parameter: het is een eigen pagina, dus dat werkt
+  zonder JavaScript en de link is deelbaar.
+#}
+
+{# De telling alleen als het project deployments HEEFT. "Totaal: 0 deployments" boven een
+   leeg project is ruis; daar staat de melding "Nog geen deployments" onder, die zegt wat
+   je eraan kunt doen. #}
+{% if deployments_alle %}
+<c-paragraph size="sm" color="grijs-500">
+    Totaal: {{ deployments_zichtbaar | length }} deployment{{ 's' if deployments_zichtbaar | length != 1 else '' }}
+    {%- if deployment_query %} van {{ deployments_alle | length }}{% endif %}
+</c-paragraph>
+{% endif %}
+
+{% if deployments_zichtbaar %}
+    <c-table columns="2fr 1fr 2fr 1.5fr auto">
+        <c-table-head>
+            <c-th>Naam</c-th>
+            <c-th>Cluster</c-th>
+            <c-th>Status</c-th>
+            <c-th>Laatste sync</c-th>
+            <c-th numeric>Componenten</c-th>
+        </c-table-head>
+
+        {% for deployment in deployments_zichtbaar %}
+            {% set argocd = (deployment_argocd | default({})).get(deployment.name) %}
+            <c-table-row>
+                <c-td>
+                    <c-link href="/projects/{{ project.name }}/deployments/{{ deployment.name | urlencode }}">{{ deployment.name }}</c-link>
+                </c-td>
+                <c-td>{{ deployment.cluster or '-' }}</c-td>
+                <c-td>
+                    {% set tags = (deployment_status_tags | default({})).get(deployment.name) or [] %}
+                    {% if tags %}
+                        <c-cluster gap="xs">
+                            {% for tag in tags %}
+                                <c-tag type="{{ tag.type }}" label="{{ tag.label }}" />
+                            {% endfor %}
+                        </c-cluster>
+                    {% else %}
+                        {# ArgoCD is niet verbonden en geen enkele dienst meldt iets. Er
+                           staat dan een melding boven de tabel die dat zegt; hier een
+                           verzonnen woord neerzetten zou die tegenspreken. #}
+                        <c-paragraph size="sm" color="grijs-500">-</c-paragraph>
+                    {% endif %}
+                </c-td>
+                <c-td>
+                    {% if argocd and argocd.last_sync %}
+                        {{ argocd.last_sync | dutch_date }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </c-td>
+                <c-td numeric>{{ deployment.components | default([]) | length }}</c-td>
+            </c-table-row>
+        {% endfor %}
+    </c-table>
+{% elif deployment_query %}
+    {# Alleen de "niets gevonden"-melding staat hier. Het lege PROJECT is een andere
+       toestand en wordt onder de tabel gemeld ("Nog geen deployments", met wat je eraan
+       kunt doen); die tekst hier herhalen zou hem twee keer op de pagina zetten. #}
+    <c-cluster gap="sm" align="center">
+        <c-icon icon="info" size="lg" />
+        <c-span>Geen deployments gevonden voor "{{ deployment_query }}".</c-span>
+    </c-cluster>
+{% endif %}

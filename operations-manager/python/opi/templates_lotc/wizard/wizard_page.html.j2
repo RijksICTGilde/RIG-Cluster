@@ -1,0 +1,53 @@
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}{{ flow_title }}{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="lg" size="lg">
+    {# Het kruimelpad. Was een eigen <ol class="lotc-breadcrumb"> met opmaak uit
+       wizard-start.css; <c-breadcrumbs> levert hetzelfde en verandert mee met het thema.
+       Een item zonder href is de huidige pagina. #}
+    <c-breadcrumbs aria-label="Kruimelpad">
+        <c-breadcrumbs-item label="Projecten" href="/projects" />
+        {% if project_name %}
+        <c-breadcrumbs-item label="{{ project_name }}" href="/projects/{{ project_name }}/details" />
+        <c-breadcrumbs-item label="Bewerken" />
+        {% else %}
+        <c-breadcrumbs-item label="Nieuw project" />
+        {% endif %}
+    </c-breadcrumbs>
+
+    <c-heading type="h1" label="{{ flow_title }}"/>
+
+    {# Step Indicator. De WIKKEL draagt het id: de stappenbalk wordt bij elke stap buiten
+       het doel om verwisseld (hx-swap-oob op #wizard-steps in wizard_step/wizard_review),
+       en die sjablonen zetten er zelf zo'n div omheen. De partial had het id ook, wat
+       twee elementen met hetzelfde id opleverde. Nu staat het op een plek. #}
+    <div id="wizard-steps">{% include "wizard/wizard_steps_indicator.html.j2" %}</div>
+
+    {# Step Content Area - HTMX target #}
+    {# .wizard-content was een wit vlak met padding, een hoekstraal en een schaduw: dat is
+       <c-card>. De KLASSE en het id blijven erop staan - #wizard-step-content is het doel
+       van elke htmx-swap in de stappen en in de stappenbalk. #}
+    <c-card id="wizard-step-content" class="wizard-content" padding="xl" background-color="wit" outline="true">
+        {% with embedded=True %}{% include "wizard/wizard_step.html.j2" %}{% endwith %}
+    </c-card>
+</c-layout-flow>
+
+{% include "widgets/service_help_modal.html.j2" %}
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+{# Hier stond css/modal.css bij, omdat de takenlijst van de voortgang zijn display:flex
+   daarvandaan haalde en het pictogram anders boven de tekst viel. Dat was een pleister
+   per pagina: vier sjablonen tonen die lijst en de andere drie laden dit stijlblad niet.
+   De lijst staat nu op componenten (widgets/_macros.html.j2, progress_task_list) en
+   heeft geen stijlblad meer nodig. #}
+{% endblock %}
+
+{% block additional_scripts %}
+<script src="{{ static_url('js/codemirror-bundle.js') }}"></script>
+<script src="{{ static_url('js/codemirror-kv.js') }}"></script>
+<script src="{{ static_url('js/wizard.js') }}"></script>
+{% endblock %}

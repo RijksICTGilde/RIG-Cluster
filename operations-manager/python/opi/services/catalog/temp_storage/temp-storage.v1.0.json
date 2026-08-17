@@ -1,0 +1,37 @@
+{
+  "$defs": {
+    "StorageEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "mount-path": {
+          "description": "Absolute path in the container to mount it at. No '..' anywhere in the path.",
+          "title": "Mount-Path",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name of this mount within the component; also names the volume.",
+          "title": "Name",
+          "type": "string"
+        },
+        "size": {
+          "description": "Size of the volume as a Kubernetes quantity, e.g. 500Mi. At most 1Gi; the platform offers 50Mi, 100Mi, 250Mi, 500Mi, 1Gi.",
+          "title": "Size",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "mount-path"
+      ],
+      "title": "StorageEntry",
+      "type": "object"
+    }
+  },
+  "description": "The component-level storage config: a list of mount specs.",
+  "items": {
+    "$ref": "#/$defs/StorageEntry"
+  },
+  "title": "StorageConfig",
+  "type": "array"
+}

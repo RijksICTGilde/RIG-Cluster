@@ -6,10 +6,18 @@ WizardSteps provides structured navigation context for templates.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
-from opi.forms.wizard.services_merge import merge_service_lists
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE
+from opi.forms.editables.merge import deep_merge_into
+from opi.forms.wizard.services_merge import merge_service_lists, service_name
+from opi.services.services import service_entry_body
+
+#: The keys whose value is a services list: the selection and the virtual config key.
+#: The same pair the service packages declare and ``service_path`` resolves.
+_SERVICE_LIST_KEYS = SERVICE_VIRTUALIZE
 
 CLEARED_FIELD = "__wizard-field-cleared__"
 """Tombstone marker for fields the user cleared in a wizard step.
@@ -32,6 +40,116 @@ def _strip_cleared_fields(value: Any) -> None:
     elif isinstance(value, list):
         for item in value:
             _strip_cleared_fields(item)
+
+
+def _config_overlay(entry: Any, name: str | None) -> dict[str, Any] | None:
+    """The config-bearing fields of a service entry, without its identity key.
+
+    ``service_entry_body`` returns the entry itself for the record form, so its
+    identity (``name``/``reference``) sits among the fields to overlay. Carrying that
+    key into a merge grafts a stray ``name`` onto the target, so strip it here: the
+    target already knows who it is.
+    """
+    body = service_entry_body(entry, name)
+    if not isinstance(body, dict):
+        return None
+    if body is entry:
+        return {key: value for key, value in body.items() if key not in ("name", "reference")}
+    return body
+
+
+def _fold_virtual(container: dict[str, Any], real_key: str, virt_data: Any) -> None:
+    """Fold one virtual payload onto its real sibling inside *container*."""
+    real_data = container.get(real_key)
+    if isinstance(real_data, list) and isinstance(virt_data, (list, dict)):
+        # The carrier arrives in two shapes: a list of entries, or a name -> body
+        # mapping (what a single-service config section posts, e.g.
+        # {"keycloak": {"config": {...}}}). Reduce both to name -> entry so the fold
+        # below does not have to care which one it got.
+        carrier_by_name: dict[str, Any] = {}
+        if isinstance(virt_data, dict):
+            carrier_by_name = {name: {name: body} for name, body in virt_data.items() if isinstance(body, dict)}
+        else:
+            for entry in virt_data:
+                name = service_name(entry)
+                if name is not None and isinstance(entry, dict):
+                    carrier_by_name[name] = entry
+        # Fold each carried config onto its selected entry. Only names already in the
+        # selection are touched: a service the user deselected must not come back
+        # from a stale carrier.
+        #
+        # Merging the config-bearing FIELDS rather than whole entries is what makes
+        # this format-agnostic: ``service_entry_body`` hands back the live sub-dict for
+        # the legacy form ({keycloak: {config}}) and the entry itself for the record
+        # form ({name: keycloak, config}), so the same overlay lands correctly on
+        # either. Merging whole entries grafted the carrier's wrapper key onto the
+        # target whenever the two forms differed.
+        #
+        # Matching on identity rather than on the entry still being a bare string is
+        # what makes a SECOND edit stick. Once config has been saved the entry is a
+        # dict, and the old string-only check skipped it without a word: the modal
+        # reported success, the store logged "no change", and the project kept its
+        # previous value (toets-hn7 keycloak template, 2026-08-05).
+        for i, entry in enumerate(real_data):
+            name = service_name(entry)
+            if name is None or name not in carrier_by_name:
+                continue
+            carrier = carrier_by_name[name]
+            target_body = service_entry_body(entry, name)
+            overlay = _config_overlay(carrier, name)
+            if isinstance(target_body, dict) and overlay is not None:
+                deep_merge_into(target_body, overlay)
+            elif not isinstance(target_body, dict):
+                # A bare selection entry has no body yet; take the carrier's own form.
+                real_data[i] = copy.deepcopy(carrier)
+    elif isinstance(virt_data, dict):
+        if isinstance(real_data, dict):
+            real_data.update(virt_data)
+        else:
+            container[real_key] = virt_data
+
+
+def _update_item(target: dict[str, Any], src: dict[str, Any]) -> None:
+    """Overlay one section's version of a list item onto the merged one.
+
+    A plain ``update`` everywhere except the item's own service list: a section stores
+    only the service entries it configures (see ``_extract_section_data``), so replacing
+    the list would drop every other service's deployment config -- clone state, a
+    cross-domain patch -- for a section that never mentioned them. Merged by name, the
+    same rule the project-level services list already follows (RC-60).
+    """
+    for key, value in src.items():
+        if key in _SERVICE_LIST_KEYS and isinstance(target.get(key), list) and isinstance(value, list):
+            target[key] = merge_service_lists(target[key], value)
+        else:
+            target[key] = copy.deepcopy(value)
+
+
+def _devirtualize(value: Any, virt_mappings: dict[str, str]) -> None:
+    """Fold virtual keys onto their real siblings at every level, then drop them.
+
+    A virtual key (e.g. ``_services-config``) is a form-transport concern: it
+    exists so a config section does not collide with the selection list it
+    configures. It must never reach project data.
+
+    The fold walks the whole structure rather than only the root because
+    ``services`` occurs both project-wide and per component. Popping at the root
+    only left ``components[i]._services-config`` behind, which the schema rejects
+    (``additionalProperties: false`` on ``component``). Components whose service
+    editable happened to run were cleaned as a side effect during field
+    processing; a component with no services at all never was.
+    """
+    if isinstance(value, list):
+        for item in value:
+            _devirtualize(item, virt_mappings)
+        return
+    if not isinstance(value, dict):
+        return
+    for virt_key, real_key in virt_mappings.items():
+        if virt_key in value:
+            _fold_virtual(value, real_key, value.pop(virt_key))
+    for child in value.values():
+        _devirtualize(child, virt_mappings)
 
 
 @dataclass
@@ -117,6 +235,36 @@ class WizardState:
     Stored in the Starlette session. Tracks which steps are completed,
     holds validated form data per step, and resolves the active step list
     (including conditional sections).
+
+    A WIZARD IS A BASE PLUS MUTATIONS
+    ---------------------------------
+    Two things make up the result, and every flow uses both:
+
+    - the **base** (``base_data``): what was already there before the user
+      started. Empty-with-seeds for the create wizard (there is no project
+      yet); the part of the project file this flow does not own for an edit
+      flow. The base is never written by a form; it is the floor the result
+      stands on.
+    - the **mutations** (``step_data``, one entry per section): what the user
+      changed. A section stores only the fields its own editables own.
+
+    ``get_merged_data`` is base plus mutations, in that order. The create and
+    edit flows differ in what the base *is*, and in nothing else.
+
+    THE RULE FOR "ABSENT"
+    ---------------------
+    A key that is not in a mutation means *unchanged*, never *removed*. A form
+    posts what it renders, and what it does not render (a collapsed section, a
+    step the user never opened, a locked field) is simply missing -- treating
+    that as a removal is how services disappeared from project files.
+
+    Removal is therefore always explicit:
+
+    - a field the user emptied is stored as ``CLEARED_FIELD`` (a tombstone) and
+      deleted after merging;
+    - an item unticked in a SELECTION list is removed by
+      ``apply_selection_mutation`` -- but only if the form actually offered it,
+      because a name the form never showed cannot have been unticked.
     """
 
     flow_id: str
@@ -137,8 +285,32 @@ class WizardState:
     project_name: str | None = None
     """None for create wizard, set for edit wizard."""
 
-    template_data: dict[str, Any] = field(default_factory=dict)
-    """Static project template data (repositories, etc.) - lowest priority layer."""
+    base_version: str | None = None
+    """Version of the project file this wizard was seeded from (ProjectStore token).
+
+    Travels with the resulting write so it is applied as a change relative to what
+    the user saw, and a change someone else made in the meantime is merged rather
+    than overwritten. None for the create wizard: there is no earlier version.
+    """
+
+    base_data: dict[str, Any] = field(default_factory=dict)
+    """The base: what was already there before this wizard started.
+
+    Lowest-priority layer of ``get_merged_data``; every mutation in
+    ``step_data`` is applied on top of it.
+
+    - create wizard: the project template plus the seeds the first steps need
+      (there is no project yet, so the base is a skeleton);
+    - edit flows: the part of the project file this flow does NOT own. Keys a
+      flow does own are deliberately left out -- see ``_fully_owned_list_keys``
+      in ``router_detail_edit`` -- because a base copy of a list would resurrect
+      items the user removed.
+
+    Also carries render-only context that is not project data (``is_new``,
+    ``existing_component_names``, ``_backup_runs``). Those never reach a project
+    file because a save writes only the yaml_paths the flow's editables declare
+    (see ``wizard/write_set.py``), not everything the session happens to hold.
+    """
 
     locked_services: list[str] = field(default_factory=list)
     """Services that existed in the project before the wizard started.
@@ -170,12 +342,24 @@ class WizardState:
     (create: AttachmentStagingResolveGenerator; edit: ResolveAttachmentsHook).
     """
 
+    @property
+    def is_edit(self) -> bool:
+        """Whether this wizard has an existing project as its base.
+
+        The one question behind every create-vs-edit difference: does a project
+        already exist? Read it here rather than re-deriving
+        ``project_name is not None`` at each call site -- that derivation was
+        repeated ten times in the wizard router alone, which is how a rule can
+        hold in one flow and not in the other.
+        """
+        return self.project_name is not None
+
     def get_merged_data(self, strip_cleared: bool = True) -> dict[str, Any]:
-        """Merge template and step data into a single dict.
+        """Merge the base and the mutations into a single dict.
 
         Merge order (later overrides earlier):
-        1. template_data (static skeleton - repositories, base config)
-        2. step_data per active section (user-entered form values)
+        1. base_data (what was already there)
+        2. step_data per active section (the user's mutations)
         3. devirtualize: fold virtual keys back into real keys
 
         For list values (e.g. ``deployments``), items are merged by index
@@ -191,16 +375,23 @@ class WizardState:
         import copy
 
         merged: dict[str, Any] = {}
-        if self.template_data:
-            merged.update(copy.deepcopy(self.template_data))
+        if self.base_data:
+            merged.update(copy.deepcopy(self.base_data))
         for section_id in self.active_sections:
             if section_id not in self.step_data:
                 continue
             for key, value in self.step_data[section_id].items():
-                if key == "services" and isinstance(merged.get(key), list) and isinstance(value, list):
+                if key in _SERVICE_LIST_KEYS and isinstance(merged.get(key), list) and isinstance(value, list):
                     # Services is a selection set keyed by service name, not positional.
                     # Merge by name so a section still carrying the pre-edit list cannot
                     # index-swap or duplicate services (see services_merge).
+                    #
+                    # The same holds for the virtual key that carries the CONFIG, and that
+                    # was missing: each step stores only the services it configures, so a
+                    # plain replace made the keycloak step's config vanish behind the
+                    # invite step's. It stayed hidden while every step still carried a copy
+                    # of everything -- then the last copy won, stale value and all, which is
+                    # what made the keycloak template reappear with its old value.
                     merged[key] = merge_service_lists(merged[key], value)
                 elif key in merged and isinstance(merged[key], list) and isinstance(value, list):
                     # Selection lists (all-scalar) replace entirely. Structural lists
@@ -213,7 +404,7 @@ class WizardState:
                         for i, src_item in enumerate(value):
                             if i < len(target):
                                 if isinstance(target[i], dict) and isinstance(src_item, dict):
-                                    target[i].update(copy.deepcopy(src_item))
+                                    _update_item(target[i], src_item)
                                 else:
                                     target[i] = copy.deepcopy(src_item)
                             else:
@@ -226,34 +417,7 @@ class WizardState:
 
         # Devirtualize: fold virtual keys back into real keys so that
         # smart_get_value can find config at real yaml_paths.
-        for virt_key, real_key in self.virt_mappings.items():
-            virt_data = merged.pop(virt_key, None)
-            if virt_data is None:
-                continue
-            real_data = merged.get(real_key)
-            if isinstance(virt_data, list) and isinstance(real_data, list):
-                # Build lookup from virtual list entries
-                config_by_name: dict[str, dict[str, Any]] = {}
-                for entry in virt_data:
-                    if isinstance(entry, dict):
-                        for name in entry:
-                            config_by_name[name] = entry
-                # Replace plain string entries with config dicts
-                for i, entry in enumerate(real_data):
-                    if isinstance(entry, str) and entry in config_by_name:
-                        real_data[i] = config_by_name[entry]
-            elif isinstance(virt_data, dict) and isinstance(real_data, list):
-                # Virtual data is a dict (name -> config), real data is a
-                # mixed list.  Replace matching plain-string entries with
-                # their config dict equivalents.
-                for i, entry in enumerate(real_data):
-                    if isinstance(entry, str) and entry in virt_data:
-                        real_data[i] = {entry: virt_data[entry]}
-            elif isinstance(virt_data, dict):
-                if isinstance(real_data, dict):
-                    real_data.update(virt_data)
-                else:
-                    merged[real_key] = virt_data
+        _devirtualize(merged, self.virt_mappings)
 
         if strip_cleared:
             _strip_cleared_fields(merged)
@@ -307,7 +471,8 @@ class WizardState:
             "step_data": self.step_data,
             "active_sections": self.active_sections,
             "project_name": self.project_name,
-            "template_data": self.template_data,
+            "base_version": self.base_version,
+            "base_data": self.base_data,
             "stashed_data": self.stashed_data,
             "locked_services": self.locked_services,
             "virt_mappings": self.virt_mappings,
@@ -345,7 +510,10 @@ class WizardState:
             step_data=data.get("step_data", {}),
             active_sections=data.get("active_sections", []),
             project_name=data.get("project_name"),
-            template_data=data.get("template_data", {}),
+            base_version=data.get("base_version"),
+            # ``template_data`` is the old name for the same layer; a session written
+            # before the rename must keep working across a deploy.
+            base_data=data.get("base_data", data.get("template_data", {})),
             stashed_data=data.get("stashed_data", {}),
             locked_services=data.get("locked_services", []),
             virt_mappings=data.get("virt_mappings", {}),

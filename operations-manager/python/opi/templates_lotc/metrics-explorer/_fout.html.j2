@@ -1,0 +1,13 @@
+{# De melding als het ophalen mislukt.
+
+   Was een <c-card> met daarin een <p class="metrics-error-text"> die alleen een rode
+   kleur meebracht. Een foutmelding is <c-alert type="error">: de kleur, het icoon en het
+   vlak horen bij het type melding en niet bij deze pagina.
+
+   De wikkel met id="error-msg" blijft, want het script zet .is-hidden op precies dat
+   element; id="error-text" blijft om dezelfde reden (errorText.textContent). #}
+<div id="error-msg" class="is-hidden">
+    <c-alert type="error">
+        <span id="error-text">Fout bij het ophalen van metrics.</span>
+    </c-alert>
+</div>

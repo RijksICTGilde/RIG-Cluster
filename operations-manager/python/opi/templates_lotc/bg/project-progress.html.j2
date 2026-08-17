@@ -1,0 +1,30 @@
+{#
+  Voortgang van een project.
+
+  Een OVERNAME van opi/templates/project-progress.html.j2. Dezelfde drie blokken in
+  dezelfde volgorde: de kop met de projectnaam, de voortgang in een kaart, en de knop
+  terug naar het dashboard.
+
+  De pagina is net als de bestaande niet meer dan een omhulsel; de voortgang zelf komt
+  uit bg/_task-progress.html.j2 en ververst zichzelf met htmx. Er staat hier geen
+  JavaScript, en er wordt niets in de browser opgemaakt.
+
+  De eigen stylesheet (static/css/modal.css) valt weg: de voortgangsbalk en de takenlijst
+  komen nu uit het thema.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Project Voortgang - {{ project_name }}{% endblock %}
+
+{% block content %}
+    {{ page_head("Project Voortgang", "Project: " ~ project_name) }}
+
+    {% call panel("Voortgang", "timer") %}
+        {% include "bg/_task-progress.html.j2" %}
+    {% endcall %}
+
+    <c-action-group align="start">
+        <c-button type="secondary" label="Terug naar Dashboard" icon="house" show-icon="before" href="/dashboard" />
+    </c-action-group>
+{% endblock %}

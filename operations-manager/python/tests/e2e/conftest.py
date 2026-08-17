@@ -12,6 +12,7 @@ code changes needed.
 
 import base64
 import contextlib
+import faulthandler
 import json
 import os
 import socket
@@ -24,7 +25,7 @@ import pytest
 import uvicorn
 from itsdangerous import TimestampSigner
 from tests.e2e.helpers.forgejo import ForgejoClient
-from tests.e2e.testserver import SECRET_KEY, create_test_app
+from tests.e2e.testserver import SECRET_KEY, _preinitialize_kubectl_without_probing, create_test_app
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -75,10 +76,62 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+@pytest.fixture(autouse=True)
+def _quiet_faulthandler_for_e2e() -> None:
+    """Disarm pytest's per-test faulthandler timer for E2E tests.
+
+    The repo sets ``faulthandler_timeout = 60`` globally, which is a useful hang
+    net for the fast unit tests. But sandbox E2E tests legitimately run for
+    minutes (they wait on real ArgoCD sync and CNPG clusters coming up), so that
+    timer fires mid-test and dumps every thread's stack -- pure noise that reads
+    like a failure ("Timeout (0:01:00)!"). pytest arms the timer once for the whole
+    test protocol; cancelling it here (during setup) leaves it disarmed through the
+    long call phase, for E2E only, leaving the stricter unit-test setting untouched.
+    Per-test timeouts still come from the helpers' own bounded waits."""
+    faulthandler.cancel_dump_traceback_later()
+
+
+@pytest.fixture(autouse=True)
+def _keep_kubectl_from_probing() -> None:
+    """Re-arm the no-probe kubectl singleton that the root conftest resets each test.
+
+    ``tests/conftest.py`` has an autouse ``reset_kubectl_singleton`` that sets
+    ``KubectlConnector._instance = None`` around every test. For the unit tests that is
+    right. For E2E it is not: the app under test keeps running across tests, so the next
+    route that constructs a connector runs ``__init__`` again -- and that does a BLOCKING
+    ``subprocess.run(["kubectl", "auth", "whoami"], timeout=10)`` on the uvicorn event
+    loop. With no cluster but a kubectl binary present (any dev box with kind, and the
+    shared dev server) that hangs the full 10 seconds and stalls every request in flight.
+
+    That is what made this suite look order-dependent: the stall lands on whichever test
+    is unlucky in that shuffle, and its neighbour's own 10s wait expires with it. Rooted
+    here rather than in ``create_test_app`` precisely because the reset is per test, so
+    doing it once at startup does not hold.
+
+    Root-conftest fixtures are set up before package-level ones, so this runs after the
+    reset and puts the initialised singleton back.
+    """
+    _preinitialize_kubectl_without_probing()
+
+
 @pytest.fixture(scope="session")
 def browser_type_launch_args(browser_type_launch_args: dict) -> dict:
     """Add --no-sandbox for running in containers (e.g. Docker as root)."""
-    return {**browser_type_launch_args, "args": ["--no-sandbox", "--disable-setuid-sandbox"]}
+    args = ["--no-sandbox", "--disable-setuid-sandbox"]
+    # ZAD_RESOLVE_HOST laat Chromium namen naar een adres wijzen zonder /etc/hosts of een
+    # poortforward, dus zonder root. Nodig zodra de sandbox niet op 127.0.0.1 staat maar op
+    # een server: de ingress routeert op de Host-header, dus rechtstreeks het IP aanroepen
+    # levert de default backend op. Komma-gescheiden, want een run raakt meerdere namen:
+    #   "zad.sandbox.rijksapp.dev=100.65.119.96,forgejo.sandbox.rijksapp.dev=100.65.119.96"
+    # Let op: dit dekt alleen de browser. Aanroepen die de test zelf doet (httpx naar
+    # Forgejo) gaan hier niet doorheen en hebben hun eigen weg nodig.
+    resolve = os.environ.get("ZAD_RESOLVE_HOST")
+    if resolve:
+        rules = ", ".join(
+            f"MAP {host} {addr}" for host, _, addr in (m.partition("=") for m in resolve.split(",")) if addr
+        )
+        args.append(f"--host-resolver-rules={rules}")
+    return {**browser_type_launch_args, "args": args}
 
 
 @pytest.fixture(scope="session")
@@ -119,14 +172,20 @@ def authenticated_context(app_server: str, browser: BrowserContext) -> Generator
     parsed = urlparse(app_server)
     context = browser.new_context()
     signed = _sign_session({"user": TEST_USER})
+    domein = parsed.hostname or "127.0.0.1"
     context.add_cookies(
         [
             {
                 "name": "session",
                 "value": signed,
-                "domain": parsed.hostname or "127.0.0.1",
+                "domain": domein,
                 "path": "/",
-            }
+            },
+            # Hier stond een tweede koekje, zad_layout=roos, dat de bestaande e2e-tests
+            # op de oude vormgeving pinde: ze klikken op .rvo-knoppen en roepen switchTab()
+            # aan, en die bestaan alleen daar. Er is nog een vormgeving, dus dat koekje
+            # doet niets meer en is weg; wat die tests toetsten meten ze nu op de pagina
+            # die de gebruiker ook krijgt.
         ]
     )
     yield context
@@ -160,6 +219,33 @@ def artifact_dir() -> Path:
     path = Path(env_dir) if env_dir else Path(__file__).parent / "artifacts"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items: list) -> None:
+    """Geef modules met de marker ``serial`` hun bestandsvolgorde terug.
+
+    pytest-randomly schudt de tests binnen een module, en dat is precies de bedoeling:
+    een test die van zijn buurman afhangt hoort om te vallen. Voor een enkele suite is
+    die afhankelijkheid het onderwerp zelf: ``test_sandbox_reallife`` bouwt vijf
+    projectbestanden in ronden op en de slotronde meet wat alle voorgaande ronden samen
+    hebben achtergelaten. Elke ronde zijn eigen uitgangspunt laten maken zou de meting
+    kapotmaken (dan is er geen geschiedenis meer om in te verliezen) en kost per ronde
+    minuten aan echte provisioning.
+
+    Zo'n module zegt dat expliciet met ``pytest.mark.serial``, en hier zetten we hem
+    terug op zijn bestandsvolgorde. ``trylast`` omdat pytest-randomly in dezelfde hook
+    schudt: wij moeten daarna.
+    """
+    serial_positions: dict[str, list[int]] = {}
+    for position, item in enumerate(items):
+        if item.get_closest_marker("serial") is not None:
+            serial_positions.setdefault(item.module.__name__, []).append(position)
+
+    for positions in serial_positions.values():
+        in_file_order = sorted((items[p] for p in positions), key=lambda i: i.reportinfo()[1] or 0)
+        for position, item in zip(sorted(positions), in_file_order, strict=True):
+            items[position] = item
 
 
 @pytest.hookimpl(hookwrapper=True)

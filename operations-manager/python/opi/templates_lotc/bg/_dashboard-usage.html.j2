@@ -1,0 +1,235 @@
+{#
+  Het resourcegebruik van het dashboard, als los fragment.
+
+  Overname van dashboard/_resourcegebruik.html.j2 en _resourceverdeling.html.j2, met een
+  verschil dat er toe doet: het wordt APART opgehaald. Die zes Prometheus-queries plus een
+  per project duurden te lang om de pagina op te laten wachten - precies waarom de
+  RVO-pagina hier ook lazy loading voor had.
+
+  DE METERS
+
+  Hier stonden een tijd voortgangsbalken in plaats van de vier kaarten van het origineel.
+  Dat is teruggedraaid: de bestaande pagina toont drie halve-cirkelmeters (CPU, geheugen,
+  opslag) en een lijngrafiek voor het netwerkverkeer, en die zijn hier weer wat ze waren.
+  Dezelfde vier canvassen met dezelfde id's - cpu-gauge, memory-gauge, storage-gauge,
+  network-chart - dezelfde koppen en dezelfde onderschriften.
+
+  De tekencode staat in static/js/dashboard_gauges.js en wordt door bg/dashboard.html.j2
+  geladen. Ze wordt hieronder aangeroepen en niet op DOMContentLoaded, want dit fragment
+  komt pas NA het laden van de pagina binnen; op dat moment zijn de canvassen er.
+
+  Wat de meters van hun maat en plaats haalt is static/css/dashboard.css
+  (.metrics-grid, .gauge-container, .chart-container), dezelfde stylesheet als op de
+  bestaande pagina; ook die wordt door bg/dashboard.html.j2 geladen. Een kanttekening:
+  .gauge-percentage vraagt om var(--rvo-color-hemelblauw), en die kleurvariabele bestaat
+  in het NLDD-thema niet. Het percentage erft dan de tekstkleur - de meter zelf, die door
+  het canvas getekend wordt, is volledig gelijk aan het origineel.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{# Dezelfde schrijfwijze als de projectkaart, uit hetzelfde bestand: zie
+   bg/_resource-formats.html.j2. #}
+{% from "bg/_resource-formats.html.j2" import cores, gib %}
+
+{# De kop IN de kaart, zoals overal: de kop van EEN blok hoort in dat blok. De vier
+   metingen blijven hun eigen kaart houden binnen deze; dat leest als een groep. #}
+{% if prometheus_available and metrics %}
+    {% call panel("Resourcegebruik", "chart-x-y-axis-line") %}
+    {# .metrics-grid uit dashboard.css was repeat(auto-fit, minmax(280px, 1fr)):
+       <c-auto-grid min="280px">. Let op: dezelfde KLASSENAAM staat ook in
+       metrics-charts.css, waar hij een flexkolom is. Door dit raster een component te
+       maken is die naamsbotsing hier weg.
+
+       De KLASSE blijft er wel op staan: tests/e2e/test_lotc_pariteit.py leest de meters
+       uit met locator(".metrics-grid"). Hij is dus geen opmaak meer maar een haak.
+
+       De kaart eromheen komt van de basis (RC-70): de kop van EEN kaart hoort erin. #}
+    <c-auto-grid min="280px" gap="lg" class="metrics-grid">
+        {% call panel("CPU", "chart-x-y-axis-line") %}
+            <div class="gauge-container">
+                <canvas id="cpu-gauge" class="gauge"></canvas>
+                <div class="gauge-value">
+                    <span class="gauge-percentage">{{ metrics.cpu_percentage }}%</span>
+                    <span class="gauge-label">{{ metrics.cpu_usage_display }} / {{ metrics.cpu_limit_display }} cores</span>
+                </div>
+            </div>
+        {% endcall %}
+
+        {% call panel("Geheugen", "chart-x-y-axis-line") %}
+            <div class="gauge-container">
+                <canvas id="memory-gauge" class="gauge"></canvas>
+                <div class="gauge-value">
+                    <span class="gauge-percentage">{{ metrics.memory_percentage }}%</span>
+                    <span class="gauge-label">{{ metrics.memory_usage_display }} / {{ metrics.memory_limit_display }}</span>
+                </div>
+            </div>
+        {% endcall %}
+
+        {% call panel("Opslag", "chart-x-y-axis-line") %}
+            <div class="gauge-container">
+                <canvas id="storage-gauge" class="gauge"></canvas>
+                <div class="gauge-value">
+                    <span class="gauge-percentage">{{ metrics.storage_percentage }}%</span>
+                    <span class="gauge-label">{{ metrics.storage_usage_display }} / {{ metrics.storage_capacity_display }}</span>
+                </div>
+            </div>
+        {% endcall %}
+
+        {# Zonder meetpunten tekende hier een grafiek met een streepje op de as en twee
+           nullen: een leeg vlak, niet te onderscheiden van een grafiek die niet wil.
+           Dan liever zeggen wat er aan de hand is - dezelfde keuze als bij de metingen
+           per deployment. #}
+        {% call panel("Netwerkverkeer", "chart-x-y-axis-line") %}
+            {% if metrics.network_in_data or metrics.network_out_data %}
+                <div class="chart-container">
+                    <canvas id="network-chart" class="chart"></canvas>
+                </div>
+                <c-paragraph size="sm">Inkomend en uitgaand (KB/s, laatste 30 min)</c-paragraph>
+            {% else %}
+                <c-alert type="info" heading="Nog geen metingen">
+                    Prometheus heeft over de laatste 30 minuten geen netwerkverkeer gemeten.
+                    Vlak na een start hoort dat zo; het kan ook betekenen dat er geen verkeer was.
+                </c-alert>
+            {% endif %}
+        {% endcall %}
+    </c-auto-grid>
+    {% endcall %}
+
+    <script>
+        initializeGauges({{ metrics.cpu_percentage }}, {{ metrics.memory_percentage }}, {{ metrics.storage_percentage }});
+        initializeCharts({{ metrics.network_in_data | tojson }}, {{ metrics.network_out_data | tojson }});
+    </script>
+
+    {# GEBRUIK PER PROJECT
+       ====================
+
+       Hier stond "Verdeling over projecten" met alleen CPU, en die kaart had twee
+       problemen. Er ontbrak geheugen - juist het cijfer waar je op stuurt, want daar valt
+       een pod op om als het opraakt, terwijl CPU geknepen wordt. En op een rustig cluster
+       is het CPU-cijfer vrijwel nul, waardoor de kaart in de praktijk leeg stond terwijl
+       er wel degelijk geheugen in gebruik was.
+
+       DE VORM IS DIE VAN DE PROJECTKAART, NIET EEN NIEUWE
+
+       Overgenomen van bg/_resource-usage.html.j2 ("Resourcegebruik (heel project)"): per
+       regel een label met icoon links, rechts de gebruikte waarde vet gevolgd door de
+       limiet MET eenheid en het percentage, en dan pas de balk. Ook de schrijfwijze is
+       dezelfde - de twee macro's komen uit bg/_resource-formats.html.j2, zodat 512 MiB
+       hier niet anders geschreven wordt dan daar.
+
+       WAT DE BALK VOORSTELT: het gebruik ten opzichte van de LIMIET van dat project.
+
+       Niet het aandeel van het clustertotaal. Dat was de vorige vorm, en die beantwoordt
+       een andere vraag: "wie is de grootste" in plaats van "hoeveel ruimte heeft dit
+       project nog". Alleen die tweede is bruikbaar - een project op 95% van zijn
+       geheugenlimiet is een probleem, ook als het maar 3% van het cluster is. Het is
+       bovendien de vraag die de projectkaart beantwoordt, en die vorm is gevraagd.
+       Zonder limiet geen percentage en geen balk, precies zoals daar: een balk zonder
+       schaal is geen meting.
+
+       De regels worden met .get opgebouwd en niet met selectattr/sort op de projecten
+       zelf: de omgeving staat op StrictUndefined, dus die struikelen al bij het LEZEN van
+       een sleutel die een project zonder meting niet draagt. Dat komt hier langs.
+
+       De guard telt de REGELS en niet het totaal. Op het totaal stond hij eerder, en toen
+       toonde de kaart zijn kop met daaronder niets: het totaal stond net boven nul terwijl
+       geen enkel project door de lus kwam. #}
+    {% set regels = [] %}
+    {% for project in projects %}
+        {% set mem_mb = project.get('memory_mb') or 0 %}
+        {% set cpu = project.get('cpu_cores') or 0 %}
+        {% set mem_limit_mb = project.get('memory_limit_mb') or 0 %}
+        {% set cpu_limit = project.get('cpu_limit_cores') or 0 %}
+        {# ELK project komt in de lijst, ook zonder verbruik. Hier stond een guard op
+           ``mem_mb or cpu``, en die liet een project dat niets gebruikt stil VERDWIJNEN:
+           op de sandbox toonde de kaart twee van de elf projecten, en niets vertelde dat
+           er negen misten. Verdwijnen is de slechtste vorm van nul.
+
+           Het kost ook niets om ze te tonen: de cijfers zijn er al. De metingen komen uit
+           vier ``by (namespace)``-queries over ALLE namespaces tegelijk (zie
+           collect_dashboard_metrics), dus het aantal projecten verandert het aantal
+           queries niet -- de guard gooide alleen weg wat al opgehaald was. #}
+        {% set _ = regels.append({
+            'naam': project.display_name,
+            'pad': project.name,
+            'mem_used': mem_mb * 1048576,
+            'mem_limit': mem_limit_mb * 1048576,
+            'mem_pct': ([100, (mem_mb / mem_limit_mb * 100) | round | int] | min) if mem_limit_mb else 0,
+            'cpu_used': cpu,
+            'cpu_limit': cpu_limit,
+            'cpu_pct': ([100, (cpu / cpu_limit * 100) | round | int] | min) if cpu_limit else 0,
+        }) %}
+    {% endfor %}
+    {% set op_geheugen = regels | sort(attribute='mem_used', reverse=true) | list %}
+
+    {% call panel("Gebruik per project", "chart-x-y-axis-line") %}
+        <c-stack gap="lg">
+            {% if op_geheugen %}
+                <c-paragraph size="sm">Wat elk project gebruikt, gesorteerd op geheugen.</c-paragraph>
+                {% for regel in op_geheugen %}
+                    <c-stack gap="sm">
+                        {# De naam is een LINK naar het project: je leest hier dat een
+                           project tegen zijn limiet aanloopt, en de eerste vraag daarna is
+                           altijd "waar zit dat in".
+
+                           <c-link> en geen kale <a>: die laatste stond er als onopgemaakt
+                           blauw met een streep eronder, want het thema styleert alleen zijn
+                           eigen componenten. De kop krijgt daarom geen label-attribuut maar
+                           een kind, zodat de link erin past. #}
+                        <c-heading type="h3" size="5">
+                            <c-link href="/projects/{{ regel.pad }}/details" label="{{ regel.naam }}" />
+                        </c-heading>
+
+                        {# Geheugen eerst: dat is waar je op stuurt. #}
+                        <c-stack gap="xs">
+                            <c-cluster justify="between" align="center" gap="sm">
+                                <c-span><c-icon icon="database" size="sm" color="groen" /> Geheugen (in gebruik)</c-span>
+                                <c-span><strong>{{ gib(regel.mem_used) }}</strong>{% if regel.mem_limit > 0 %} / {{ gib(regel.mem_limit) }} ({{ regel.mem_pct }}%){% endif %}</c-span>
+                            </c-cluster>
+                            {% if regel.mem_limit > 0 %}
+                                <c-progress-bar
+                                    :value="regel.mem_pct"
+                                    max="100"
+                                    value-display="tooltip"
+                                    color="success"
+                                    accessible-label="{{ regel.naam }}: geheugengebruik ten opzichte van de limiet" />
+                            {% endif %}
+                        </c-stack>
+
+                        <c-stack gap="xs">
+                            <c-cluster justify="between" align="center" gap="sm">
+                                <c-span><c-icon icon="cylinder-split" size="sm" color="donkerblauw" /> CPU</c-span>
+                                <c-span><strong>{{ cores(regel.cpu_used) }}</strong>{% if regel.cpu_limit > 0 %} / {{ cores(regel.cpu_limit) }} cores ({{ regel.cpu_pct }}%){% else %} cores{% endif %}</c-span>
+                            </c-cluster>
+                            {% if regel.cpu_limit > 0 %}
+                                <c-progress-bar
+                                    :value="regel.cpu_pct"
+                                    max="100"
+                                    value-display="tooltip"
+                                    color="info"
+                                    accessible-label="{{ regel.naam }}: CPU-gebruik ten opzichte van de limiet" />
+                            {% endif %}
+                        </c-stack>
+                    </c-stack>
+                {% endfor %}
+            {% else %}
+                {# Zeggen dat er niets gemeten is, in plaats van een kop zonder inhoud of
+                   een kaart die zonder uitleg verdwijnt - dat laatste leest als kapot. #}
+                <c-alert type="info" heading="Nog geen metingen per project">
+                    Prometheus heeft voor deze projecten nog geen gebruik gemeten. Vlak na een
+                    start hoort dat zo; de eerste waarden verschijnen zodra er iets draait.
+                </c-alert>
+            {% endif %}
+        </c-stack>
+    {% endcall %}
+{% else %}
+    <c-alert type="info" heading="Resourcegebruik niet beschikbaar">
+        Prometheus is niet verbonden, of er zijn geen namespaces gevonden.
+    </c-alert>
+{% endif %}
+
+{# De kaart Pods staat in de PAGINA, maar het getal komt uit een van de queries hierboven.
+   De pagina rendert daarom een 0 en dit fragment schuift de kaart er via een out-of-band
+   swap overheen. #}
+<div id="kerncijfer-pods" hx-swap-oob="true">
+    <c-metric icon="cylinder-split" value="{{ pod_count }}" label="Pods" />
+</div>

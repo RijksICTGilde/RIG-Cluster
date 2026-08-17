@@ -72,7 +72,11 @@ class TestSequenceEditables:
     def test_components_sequence_has_children(self):
         assert str(COMPONENTS_SEQUENCE.widget) == "sequence"
         assert COMPONENTS_SEQUENCE.children is not None
-        assert len(COMPONENTS_SEQUENCE.children) == 19
+        # +4 over the base for the health-check service's component fields
+        # (scheme, port, liveness-path, readiness-path), +1 for the optional start command,
+        # +1 for the authorization-wall signpost (a read-only pointer to the project-level
+        # setting, shown only when that service is on this component).
+        assert len(COMPONENTS_SEQUENCE.children) == 25
         assert COMPONENTS_SEQUENCE.editable.min_items == 1
 
     def test_deployments_sequence_has_children(self):
@@ -86,8 +90,9 @@ class TestSequenceEditables:
         assert len(nested_seq) == 1
         assert nested_seq[0].editable.yaml_path == "deployments[*]/components"
         assert nested_seq[0].children is not None
-        # reference, image, pullPolicy, user-env-vars, per-deployment attachments sequence
-        assert len(nested_seq[0].children) == 5
+        # reference, image, pullPolicy, user-env-vars, the publish-on-web certificate
+        # override (tls + attachment, RC-78), per-deployment attachments sequence
+        assert len(nested_seq[0].children) == 7
 
 
 class TestReadonlyEditables:

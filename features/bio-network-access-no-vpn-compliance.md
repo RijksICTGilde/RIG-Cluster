@@ -88,9 +88,12 @@ wederzijdse authenticatie (PKIoverheid-certificaten op ODCN). Zie
 
 **Invulling**: per-project namespaces (`rig-prd-{project}`) met NetworkPolicies
 realiseren de segmentatie; dit vervangt de isolatiefunctie die een VPN anders zou
-leveren. Let op: op `sandboxed-local` (kindnet) handhaaft de CNI geen NetworkPolicies,
-dus segmentatie is alleen op `odcn-production` daadwerkelijk afdwingbaar. Zie
-`features/restrictive-network-policies.md`.
+leveren. NetworkPolicies worden **ook op `sandboxed-local` gehandhaafd** -- gemeten
+(2026-07-28): een pod zonder het `deployment=<naam>`-label krijgt time-outs, met dat
+label HTTP 200. De eerdere aanname dat kindnet in de sandbox geen NetworkPolicies
+afdwong klopt niet; een ontbrekende outbound-poort laat zich daardoor zien als een
+time-out, niet als een duidelijke fout. Zie `features/restrictive-network-policies.md`
+en `vlam.md`.
 
 ### 8.31 Scheiden van ontwikkel-, test- en productieomgevingen (BBN 1)
 

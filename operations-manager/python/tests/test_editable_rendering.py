@@ -7,7 +7,7 @@ from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.project_registry import get_all_project_editables, get_project_form_layout
 from opi.forms.visualizers.visualizer import EditableVisualizer
-from opi.forms.widgets.roos import ROOSWidgetAdapter
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
 SAMPLE_YAML = {
     "name": "test-project",
@@ -52,7 +52,7 @@ SAMPLE_YAML = {
 
 def _create_renderer() -> FormRenderer:
     return FormRenderer(
-        widget_adapter=ROOSWidgetAdapter(),
+        widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
     )
 
@@ -184,10 +184,10 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 13 children: storage/attachment sequences hidden (no storage services),
-        # path (with nested match/rewrite) always visible, plus the publish-on-web
-        # TLS field (component enables publish-on-web).
-        assert len(first_item.children) == 13
+        # 14 children: storage/attachment sequences hidden (no storage services),
+        # path (with nested match/rewrite) always visible, the publish-on-web TLS field
+        # (component enables publish-on-web), and the optional start command.
+        assert len(first_item.children) == 14
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
@@ -210,10 +210,10 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 14 children: storage sequence visible (persistent-storage enabled),
-        # path (with nested match/rewrite) always visible, plus the publish-on-web
-        # TLS field (component enables publish-on-web).
-        assert len(first_item.children) == 14
+        # 15 children: storage sequence visible (persistent-storage enabled),
+        # path (with nested match/rewrite) always visible, the publish-on-web TLS field
+        # (component enables publish-on-web), and the optional start command.
+        assert len(first_item.children) == 15
 
 
 class TestNestedSequenceRendering:
@@ -257,8 +257,10 @@ class TestNestedSequenceRendering:
         nested_seq = nested_seqs[0]
         first_comp = nested_seq.children[0]
         assert first_comp.widget_type == "sequence_item"
-        # reference, image, pullPolicy, user-env-vars, per-deployment attachments sequence
-        assert len(first_comp.children) == 5
+        # reference, image, pullPolicy, user-env-vars, the publish-on-web TLS override
+        # (RC-78) and the per-deployment attachments sequence. The certificate picker next
+        # to the TLS override is not here: its show_when only admits it for 'provided'.
+        assert len(first_comp.children) == 6
 
 
 class TestDisplayCardRendering:
@@ -395,10 +397,18 @@ SAMPLE_YAML_WITH_DOMAIN = {
     "deployments": [
         {
             **SAMPLE_YAML["deployments"][0],
-            "domain-format": "component-deployment-project",
-            "subdomain": "mijnapp",
-            "base-domain": "rijksapp.nl",
-            "root-component": "frontend",
+            # The migrated shape (v2.7): the web address sits under the service.
+            "services": [
+                {
+                    "reference": "publish-on-web",
+                    "config": {
+                        "domain-format": "component-deployment-project",
+                        "subdomain": "mijnapp",
+                        "base-domain": "rijksapp.nl",
+                        "root-component": "frontend",
+                    },
+                }
+            ],
         },
     ],
 }
@@ -489,7 +499,7 @@ class TestTextareaValueRendering:
         assert desc_field.value == "Mijn omschrijving", f"Expected 'Mijn omschrijving', got {desc_field.value!r}"
 
     def test_textarea_renders_value_in_tag_content(self):
-        """The c-textarea-field tag must contain the value as inner text."""
+        """Het tekstvlak moet de waarde dragen, anders is een bewerkdialoog leeg."""
         editable = EditableVisualizer(
             editable=Editable(yaml_path="description"),
             widget=WidgetType.TEXTAREA,
@@ -502,7 +512,7 @@ class TestTextareaValueRendering:
             yaml_data=yaml_data,
             layout=["description"],
         )
-        assert ">Hallo wereld</c-textarea-field>" in html, f"Expected value between textarea tags, got:\n{html}"
+        assert 'value="Hallo wereld"' in html, f"Expected the value on the textarea, got:\n{html}"
 
         """An editable whose dependency is satisfied should be included."""
         renderer = _create_renderer()

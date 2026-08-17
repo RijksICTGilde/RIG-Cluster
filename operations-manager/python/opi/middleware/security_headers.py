@@ -45,14 +45,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         keycloak = f" {self._keycloak_host}" if self._keycloak_host else ""
         prometheus = f" {self._prometheus_host}" if self._prometheus_host else ""
 
-        # Inline styles: ROOS components render style attributes; 'unsafe-inline' required.
+        # Inline styles: de componenten renderen style-attributen; 'unsafe-inline' nodig.
         # Inline scripts: HTMX event handlers are inline; 'unsafe-inline' required.
         # cdn.jsdelivr.net: Chart.js loaded from CDN on project-details page.
-        # unpkg.com: HTMX loaded from CDN by jinja-roos-components.
+        # unpkg.com stond hier voor de HTMX die jinja-roos-components van een CDN haalde.
+        # Die schil is weg en HTMX komt uit static/js/, dus die herkomst is ook weg.
         # frame-src: metrics explorer embeds the Prometheus UI in an iframe.
         parts = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com",
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
             f"img-src 'self' data: https://fastapi.tiangolo.com{keycloak}",
             "font-src 'self'",

@@ -1,0 +1,193 @@
+/*
+ * Kleine aanvullingen op het thema, voor de nieuwe vormgeving.
+ *
+ * Dit bestand hoort KLEIN te blijven. Alles wat het thema zelf levert hoort niet hier;
+ * wat hier staat is wat wij nodig hebben en wat een design system niet voor ons kan
+ * bedenken. Groeit dit bestand, dan is dat een signaal dat er iets nagebouwd wordt wat
+ * bij het thema of bij een component thuishoort.
+ *
+ * RC-74 is dit bestand langsgelopen met dezelfde vraag als de andere stijlbladen, en er
+ * viel niets weg: elk blok hieronder staat er al met de meting en de reden erbij, en de
+ * twee die om een component vroegen staan als punt 8 in request_for_components.md. Wat
+ * die ronde WEL opleverde staat in de variabelenlijst verderop - zie de opmerking daar
+ * over krimpen.
+ */
+
+/* De opmaak voor .lotc-checkbox-regel stond hier omdat de groep aanvinkvakjes kale
+ * <input>'s gebruikte. Die groep gebruikt nu <c-checkbox-field> met <c-checkbox>-kinderen
+ * en krijgt zijn opmaak van het thema, dus deze regels hadden geen gebruiker meer.
+ * Zie features/aanvinkvakje.md. */
+
+/*
+ * Lucht tussen de pagina-inhoud en de voettekst.
+ *
+ * Zonder dit plakt de voettekst tegen het laatste element - op de wizard tegen de knoppen
+ * "Vorige" en "Volgende", wat leest alsof de links in de voettekst bij die knoppen horen.
+ * De bestaande pagina heeft die scheiding wel.
+ */
+.lotc-app-shell__main > *:last-child {
+    margin-bottom: 0;
+}
+
+nldd-page-footer {
+    display: block;
+    margin-top: 3rem;
+}
+
+/*
+ * De ontwerpvariabelen die ONZE eigen stylesheets gebruiken.
+ *
+ * Dit is de belangrijkste regel in dit bestand, en de reden verdient uitleg.
+ *
+ * Onze eigen CSS (modal.css, wizard.css, project-details.css, dashboard.css, ...) is
+ * geschreven tegen de variabelen van het OUDE thema: kleuren, afstanden, hoekstralen.
+ * Die variabelen komen uit de stylesheet van dat thema, en die laadt de nieuwe vormgeving
+ * niet. Gevolg: 368 plekken in onze CSS verwezen naar iets wat niet bestaat, en een
+ * eigenschap met een lege waarde wordt door de browser genegeerd.
+ *
+ * Zichtbaar werd dat als "half werk": de gedeelde dialoog had geen achtergrond en was
+ * dus DOORZICHTIG, blokken verloren hun witruimte, randen verdwenen. Stuk voor stuk
+ * onvindbaar met een gedragsmeting - de HTML klopt, de klasse staat er, alleen de waarde
+ * erachter is leeg.
+ *
+ * Hieronder staan alleen de variabelen die in het oude thema ECHT bestonden, met hun
+ * eigen waarde. Namen die daar ook al niet bestonden staan er bewust NIET bij: die deden
+ * in de oude weergave ook niets, en ze alsnog invullen zou de nieuwe weergave anders maken
+ * dan het origineel - precies wat deze omzetting niet mag.
+ *
+ * Dit hoort te KRIMPEN: elke keer dat een van onze stylesheets vervangen wordt door wat
+ * het thema zelf levert, kan hier een regel weg.
+ */
+:root {
+    /* Hier stonden --rvo-space-2xs en --rvo-alert-gap. Ze bestonden voor EEN gebruiker:
+       .rvo-alert__container in base.css, de flexregel die de ROOS-c-alert zijn uitlijning
+       terug moest geven. Die regel raakte onder NLDD niets meer (<c-alert> is
+       <nldd-banner> en lijnt zichzelf uit) en is in RC-74 weggehaald; daarmee had ook dit
+       paar geen lezer meer. Dit is precies het krimpen dat hierboven bedoeld wordt. */
+    --rvo-color-donkerblauw: #01689b;
+    --rvo-color-grijs-050: #F8FAFC;
+    --rvo-color-grijs-100: #F1F5F9;
+    --rvo-color-grijs-200: #E2E8F0;
+    --rvo-color-grijs-300: #CBD5E1;
+    --rvo-color-grijs-400: #94A3B8;
+    --rvo-color-grijs-500: #64748B;
+    --rvo-color-grijs-600: #475569;
+    --rvo-color-grijs-700: #334155;
+    --rvo-color-grijs-800: #1E293B;
+    --rvo-color-grijs-900: #0F172A;
+    --rvo-color-groen: #39870C;
+    --rvo-color-groen-150: #E2EDDB;
+    --rvo-color-groen-750: #6BA549;
+    --rvo-color-hemelblauw: #007BC7;
+    --rvo-color-hemelblauw-150: #D9EBF7;
+    --rvo-color-hemelblauw-750: #409CD5;
+    --rvo-color-oranje: #E17000;
+    --rvo-color-rood: #D51B1E;
+    --rvo-color-rood-150: #F9DFDD;
+    --rvo-color-rood-300: #F3C0BC;
+    --rvo-color-rood-600: #E68078;
+    --rvo-color-rood-750: #E06056;
+    --rvo-color-wit: #FFFFFF;
+    --rvo-color-zwart: #000000;
+    --rvo-space-lg: 18px;
+    --rvo-space-md: 16px;
+    --rvo-space-sm: 12px;
+    --rvo-space-xl: 24px;
+    --rvo-space-xs: 8px;
+}
+
+/*
+ * De statuskaarten van Deployment Status even hoog in hun rij.
+ *
+ * Gemeten: de cellen van .lotc-auto-grid zijn AL even hoog (een grid rekt zijn cellen
+ * uit), maar de kaart in zo'n cel is zo hoog als zijn inhoud. Staat er in de ene een
+ * foutmelding en in de andere niet, dan is de linkerkaart twee keer zo hoog en hangt de
+ * rechter half in de lucht.
+ *
+ * Eerst gekeken of het thema er iets voor heeft, want daar gaat deze taak over:
+ * c-auto-grid kent alleen min/gap/class, c-card kent geen hoogte-stand, en er is geen
+ * hulpklasse voor "vul je cel". Dat is een verzoek geworden (request_for_components.md).
+ * Zolang dat er niet is, is dit de ene regel die het verschil maakt; hij hangt aan de id
+ * die er toch al stond.
+ */
+#deployment-status > div > nldd-card {
+    height: 100%;
+}
+
+
+/* Een formulier dat op zijn antwoord wacht, is niet aan te klikken.
+ *
+ * De klasse komt uit static/js/htmx-formgedrag.js. GEEN `disabled` op de velden: dat haalt
+ * ze uit de inzending, en bij een trage verbinding verlies je dan de helft van wat je net
+ * hebt ingevuld. Alleen de muis en het toetsenbord eruit, plus zichtbaar dat er iets loopt.
+ *
+ * De cursor staat op de wikkel zodat je ziet dat het aan het werk is en niet stuk.
+ */
+form.is-bezig {
+    pointer-events: none;
+    opacity: 0.6;
+    cursor: progress;
+}
+
+/* Het muiswiel moet het venster kunnen bereiken.
+ *
+ * <nldd-page> draagt `overflow-y: auto` EN `overscroll-behavior-y: contain`. Die combinatie
+ * maakt hem een scrollgebied dat wielgebeurtenissen opvangt en NIET doorgeeft aan het
+ * venster. In onze pagina heeft hij zelf niets te scrollen (scrollHeight == clientHeight),
+ * dus het wiel ging nergens heen: slepen aan de vensterscrollbalk werkte wel, het wiel niet.
+ *
+ * Gemeten met de keten onder de muis: div > div > nldd-sidebar-section > nldd-page
+ * (oy=auto, ob=contain) > body > html. Alleen nldd-page onderbreekt de keten.
+ *
+ * Dit is een pleister op een component en hoort daar opgelost te worden; gemeld aan het
+ * LOTC-project. Weghalen zodra <nldd-page> het wiel doorgeeft.
+ */
+nldd-page {
+    overscroll-behavior-y: auto;
+}
+
+/* De navigatie zonder eigen vlak.
+ *
+ * <nldd-sidebar-section> tekent zijn zijkolom in een `div.sidebar-section__sidebar-box` in
+ * zijn schaduwboom, met een grijze achtergrond en 10px ronde hoeken. Wij willen alleen de
+ * vlakverdeling met ons eigen menu erin, dus dat vlak moet weg.
+ *
+ * Dit is GEEN hack op een schaduwboom: dat kan niet met gewone CSS, en hoeft ook niet. Het
+ * component leest zijn kleuren uit eigen custom properties, en die erven wel naar binnen.
+ * We zetten dus zijn eigen tokens, wat de bedoelde weg is:
+ *
+ *   --components-sidebar-section-sidebar-box-background-color
+ *   --components-sidebar-section-sidebar-box-highlight-border-color   (de inset-rand)
+ *
+ * De hoekradius laten we staan: die komt uit --semantics-surfaces-corner-radius, een
+ * GLOBAAL token dat ook andere vlakken bedient, en op een doorzichtig vlak is hij onzichtbaar.
+ */
+nldd-sidebar-section {
+    --components-sidebar-section-sidebar-box-background-color: transparent;
+    --components-sidebar-section-sidebar-box-highlight-border-color: transparent;
+}
+
+/* Verbergen, voor de elementen die JavaScript aan- en uitzet.
+ *
+ * Deze klasse is geen vormgeving maar bedrading: static/js/edit_modal.js, wizard.js en
+ * log_viewer.js zetten en halen hem weg, en een aantal sjablonen schrijft hem als
+ * BEGINTOESTAND - de foutbalk van een dialoog staat er vanaf het begin, verborgen, zodat
+ * JavaScript hem alleen hoeft te vullen.
+ *
+ * Hij stond alleen in static/css/base.css, en dat stylesheet hoort bij de oude schil:
+ * base_lotc.html.j2 laadt het niet. Op deze bouwlijn deed de klasse dus NIETS, en wat de
+ * gebruiker daarvan zag was een leeg rood vak van volle breedte boven in elke dialoog -
+ * .edit-section-error uit css/modal.css heeft rand, achtergrond en padding, en die worden
+ * ook zonder tekst getekend. Zelfde gat bij bg/_action-confirm.html.j2,
+ * bg/_modals.html.j2, bg/feedback.html.j2 en het filterblok van de metrics-explorer.
+ *
+ * Waarom !important: dezelfde reden als in base.css. Dit bestand staat in de <head> en de
+ * stylesheets van een pagina worden in de body gelinkt, dus later in de cascade. Een
+ * pagina die op hetzelfde element display zet, wint dan bij gelijke specificiteit en de
+ * klasse verbergt niets meer. Deze klasse doet een ding en moet dat winnen.
+ *
+ * Gemeten in tests/e2e/test_lotc_domeinbeheer.py: op HOOGTE, niet op het class-attribuut.
+ */
+.is-hidden {
+    display: none !important;
+}

@@ -2,9 +2,11 @@
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
+from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
 from opi.core.config import settings
 from opi.manager.backup.base import (
     BackupConfig,
@@ -15,9 +17,13 @@ from opi.manager.backup.base import (
     kopia_backup_identity,
     utc_now,
 )
-from opi.utils.naming import generate_backup_prefix
+from opi.utils.naming import generate_backup_prefix, generate_database_name
 
 logger = logging.getLogger(__name__)
+
+#: Every schema name the platform makes is lower-case letters, digits and underscores.
+#: A name that does not match is refused rather than quoted into the restore pod's SQL.
+_SCHEMA_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 @dataclass
@@ -329,6 +335,7 @@ class DatabaseBackupManager(BaseBackupManager):
         target_database_password: str,
         snapshot_id: str | None = None,
         project_name: str | None = None,
+        source_database_name: str | None = None,
     ) -> DatabaseRestoreResult:
         """
         Restore a PostgreSQL database from a Kopia backup.
@@ -344,6 +351,10 @@ class DatabaseBackupManager(BaseBackupManager):
             target_database_password: Target database password
             snapshot_id: Optional specific snapshot ID (defaults to latest)
             project_name: Project name for per-project backup bucket
+            source_database_name: Name of the database the dump was taken from, if the
+                caller knows it. That name is also its default schema, which the restore
+                pod renames to the target name. Used only when the snapshot itself does
+                not say (see _resolve_source_database_name for the order).
 
         Returns:
             DatabaseRestoreResult with operation details
@@ -361,6 +372,7 @@ class DatabaseBackupManager(BaseBackupManager):
                 target_database_password=target_database_password,
                 snapshot_id=snapshot_id,
                 project_name=project_name,
+                source_database_name=source_database_name,
             )
 
     async def _restore_database(
@@ -375,6 +387,7 @@ class DatabaseBackupManager(BaseBackupManager):
         target_database_password: str,
         snapshot_id: str | None = None,
         project_name: str | None = None,
+        source_database_name: str | None = None,
     ) -> DatabaseRestoreResult:
         """
         Internal: restore a PostgreSQL database (lock must be held).
@@ -386,6 +399,40 @@ class DatabaseBackupManager(BaseBackupManager):
         backup_prefix = generate_backup_prefix(cluster, namespace)
 
         logger.info(f"Starting database restore: {reference_name} -> {target_database_name}@{target_database_host}")
+
+        source_schema = await self._resolve_source_database_name(
+            cluster=cluster,
+            namespace=namespace,
+            reference_name=reference_name,
+            snapshot_id=snapshot_id,
+            project_name=project_name,
+            caller_supplied=source_database_name,
+        )
+        if source_schema is None:
+            # The pod refuses to rename anything it cannot name, unless the dump itself
+            # already carries the target schema name. Say here why it will have to.
+            logger.warning(
+                f"Could not establish the source database name for {reference_name}; "
+                "the restore proceeds only if the dump already carries the target schema name"
+            )
+        elif not _SCHEMA_NAME_PATTERN.match(source_schema):
+            error = (
+                f"Source schema name '{source_schema}' does not match the platform naming rule "
+                f"{_SCHEMA_NAME_PATTERN.pattern}; refusing to use it as a SQL identifier"
+            )
+            logger.error(error)
+            return DatabaseRestoreResult(
+                namespace=namespace,
+                pvc_name=reference_name,
+                success=False,
+                target_database_name=target_database_name,
+                reference_name=reference_name,
+                snapshot_id=snapshot_id,
+                error=error,
+                duration_seconds=(utc_now() - start_time).total_seconds(),
+            )
+        else:
+            logger.info(f"Source schema for restore of {reference_name}: {source_schema}")
 
         try:
             # 1. Derive restore key (same as backup key)
@@ -407,14 +454,18 @@ class DatabaseBackupManager(BaseBackupManager):
                 snapshot_id=snapshot_id,
                 project_name=project_name,
                 cluster=cluster,
+                source_schema=source_schema,
             )
 
             # 3. Wait for pod completion
             success = await self._wait_for_pod(namespace, pod_name)
 
             if not success:
+                target_unusable = await self._restore_target_was_unusable(namespace, pod_name)
                 logs = await self._get_pod_logs(namespace, pod_name)
-                logger.error(f"Database restore pod {pod_name} failed. Full logs:\n{logs}")
+                logger.error(
+                    f"Database restore pod {pod_name} failed (target_unusable={target_unusable}). Full logs:\n{logs}"
+                )
                 return DatabaseRestoreResult(
                     namespace=namespace,
                     pvc_name=reference_name,
@@ -424,6 +475,7 @@ class DatabaseBackupManager(BaseBackupManager):
                     snapshot_id=snapshot_id,
                     error=f"Restore pod failed. Logs: {logs[-500:] if logs else 'no logs'}",
                     duration_seconds=(utc_now() - start_time).total_seconds(),
+                    target_unusable=target_unusable,
                 )
 
             duration = (utc_now() - start_time).total_seconds()
@@ -457,6 +509,72 @@ class DatabaseBackupManager(BaseBackupManager):
             # Cleanup restore pod (best effort)
             await self._cleanup_pod(namespace, pod_name)
 
+    async def _resolve_source_database_name(
+        self,
+        cluster: str,
+        namespace: str,
+        reference_name: str,
+        snapshot_id: str | None,
+        project_name: str | None,
+        caller_supplied: str | None,
+    ) -> str | None:
+        """The name of the database the dump was taken from -- which is its default schema.
+
+        That schema is what the restore pod renames to the target name. It is established
+        here rather than read from the dump, because the dump carries the extra schemas
+        (RC-17) too and gives no way to tell them apart.
+
+        Three sources, best first:
+
+        1. The snapshot's ``source_database`` tag. The backup pod writes the database it
+           actually dumped, so this is the dump itself talking.
+        2. What the caller passed. A generation restore knows which generation it is
+           restoring from.
+        3. Composed from the snapshot's project/deployment/generation metadata, for
+           snapshots taken before the tag existed.
+
+        The order is what the cluster measurement forced: a second generation restore
+        passed ``{db}`` while the backup had dumped ``{db}_v1``, because the generation in
+        the project file lagged behind. Both reconstructions (2 and 3) were wrong there;
+        the tag is right by construction.
+
+        Returns None when none of the three can produce a name -- the pod then refuses to
+        rename anything rather than guessing.
+        """
+        snapshots = await self.list_database_snapshots(
+            cluster=cluster,
+            namespace=namespace,
+            reference_name=reference_name,
+            project_name=project_name,
+        )
+        if snapshot_id:
+            match = next((s for s in snapshots if s.snapshot_id == snapshot_id), None)
+        else:
+            # Same rule the pod uses when no snapshot is named: the newest one.
+            match = max(snapshots, key=lambda s: s.timestamp, default=None)
+
+        if match is not None and match.source_database:
+            return match.source_database
+
+        if caller_supplied:
+            return caller_supplied
+
+        if match is None:
+            logger.warning(f"No database snapshot found to read the source database name from ({reference_name})")
+            return None
+        if not match.project_name or not match.deployment_name:
+            logger.warning(
+                f"Snapshot {match.snapshot_id} carries neither a source_database tag nor "
+                "project/deployment metadata, so the source database name cannot be established"
+            )
+            return None
+
+        logger.info(
+            f"Snapshot {match.snapshot_id} predates the source_database tag; "
+            "composing the name from its project/deployment/generation metadata"
+        )
+        return generate_database_name(match.project_name, match.deployment_name, match.generation)
+
     async def _create_database_restore_pod(
         self,
         namespace: str,
@@ -472,6 +590,7 @@ class DatabaseBackupManager(BaseBackupManager):
         snapshot_id: str | None = None,
         project_name: str | None = None,
         cluster: str | None = None,
+        source_schema: str | None = None,
     ) -> None:
         """Create the database restore pod."""
         template_path = os.path.join(self.MANIFESTS_DIR, "restore-database-pod.yaml.jinja")
@@ -502,6 +621,8 @@ class DatabaseBackupManager(BaseBackupManager):
                 "kopia_password": kopia_password,
                 "snapshot_id": snapshot_id or "",
                 "timeout_seconds": self.config.timeout_seconds,
+                "target_unusable_exit_code": RESTORE_TARGET_UNUSABLE_EXIT_CODE,
+                "source_schema": source_schema or "",
             },
         )
 
@@ -586,6 +707,7 @@ class DatabaseBackupManager(BaseBackupManager):
                         component_name=ks.component_name,
                         storage_name=db_ref,  # Database reference
                         generation=ks.generation,
+                        source_database=ks.source_database,
                         backup_run_id=ks.backup_run_id,
                         resource_type="database",
                         trigger=ks.trigger,

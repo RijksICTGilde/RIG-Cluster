@@ -2,7 +2,7 @@
 
 import pytest
 from opi.services.services import ServiceAdapter, ServiceDefinition, VariableDefinition
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import ServiceBinding, ServiceType
 
 
 class TestServiceType:
@@ -21,14 +21,25 @@ class TestServiceType:
             "namespace-redis",
             "authorization-wall",
             "metrics-scraper",
+            "health-check",
             "platform",
             "attachments",
+            "sleep-mode",
+            "invite",
+            "resource-tuning",
+            "deployment-health",
+            "cross-domain-access",
+            "user-env-vars",
+            "aliases",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected
 
     def test_enum_count(self):
-        assert len(ServiceType) == 13
+        # 21 sinds de gezondheidscheck een systeemdienst werd (RC-28); 20 sinds
+        # user-env-vars en aliases systeemdiensten werden (RC-25); daarvoor 18, sinds
+        # cross-domain-access en resource-tuning er allebei bij kwamen.
+        assert len(ServiceType) == 21
 
 
 class TestGetAllServices:
@@ -52,7 +63,7 @@ class TestGetServiceDefinition:
 
     def test_publish_on_web_definition(self):
         defn = ServiceAdapter.get_service_definition(ServiceType.PUBLISH_ON_WEB)
-        assert defn.scope == "component"
+        assert defn.binding is ServiceBinding.COMPONENT
         assert defn.name == "Publiceren op het web"
 
     def test_publish_on_web_exposes_public_host_and_hostname(self):
@@ -67,7 +78,7 @@ class TestGetServiceDefinition:
 
     def test_postgresql_definition(self):
         defn = ServiceAdapter.get_service_definition(ServiceType.POSTGRESQL_DATABASE)
-        assert defn.scope == "deployment"
+        assert defn.binding is ServiceBinding.DEPLOYMENT
         assert defn.secret_class == "DatabaseSecret"
 
     def test_every_service_has_definition(self):
@@ -76,7 +87,14 @@ class TestGetServiceDefinition:
             assert defn is not None
             assert defn.name
             assert defn.description
-            assert defn.scope in ("component", "deployment")
+            # Drie mogelijkheden sinds RC: een dienst die aan niets bindt hoort bij het
+            # project als geheel. Invite was de aanleiding; die stond op COMPONENT omdat er
+            # geen andere waarde was, waarna hij in de componentkeuze verscheen.
+            assert defn.binding in (
+                ServiceBinding.COMPONENT,
+                ServiceBinding.DEPLOYMENT,
+                ServiceBinding.PROJECT,
+            )
 
 
 class TestGetServiceByValue:
@@ -291,12 +309,21 @@ class TestExtractServiceNamesFromProjectServices:
         assert ServiceAdapter.extract_service_names_from_project_services([]) == []
 
     def test_empty_dict_raises(self):
-        with pytest.raises(ValueError, match="empty"):
+        with pytest.raises(ValueError, match="Cannot determine service name"):
             ServiceAdapter.extract_service_names_from_project_services([{}])
 
-    def test_multi_key_dict_raises(self):
-        with pytest.raises(ValueError, match="exactly one key"):
+    def test_ambiguous_multi_key_dict_raises(self):
+        # A multi-key dict without name/reference is ambiguous (RC-5 A: the new form
+        # uses an explicit name/reference key).
+        with pytest.raises(ValueError, match="Cannot determine service name"):
             ServiceAdapter.extract_service_names_from_project_services([{"a": {}, "b": {}}])
+
+    def test_new_record_format_accepted(self):
+        # RC-5 A: {name/reference, config} records (multi-key dicts) resolve by the
+        # name/reference value, not the sole key.
+        assert ServiceAdapter.extract_service_names_from_project_services(
+            [{"name": "keycloak", "config": {"template": "sso-only"}}, {"reference": "publish-on-web"}]
+        ) == ["keycloak", "publish-on-web"]
 
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError, match="Invalid service item type"):
@@ -330,12 +357,28 @@ class TestFilterComponentAndDeploymentServices:
         assert ServiceAdapter.filter_component_services([]) == []
         assert ServiceAdapter.filter_deployment_services([]) == []
 
-    def test_all_services_are_either_component_or_deployment(self):
+    def test_every_service_is_bound_in_exactly_one_way(self):
+        """Component, deployment of geen van beide, en nooit twee tegelijk.
+
+        Het was eerder een tweedeling die alle diensten moest dekken. Dat klopte niet: een
+        uitnodiging bindt aan niets en werd daardoor als componentdienst opgevoerd, met als
+        zichtbaar gevolg dat hij in de componentkeuze stond en dat de UI meldde dat je hem
+        per component kiest.
+        """
+        from opi.services.registry import SERVICES
+        from opi.services.services_enums import ServiceBinding
+
         all_services = ServiceAdapter.get_all_services()
-        component = ServiceAdapter.filter_component_services(all_services)
-        deployment = ServiceAdapter.filter_deployment_services(all_services)
-        assert set(component) | set(deployment) == set(all_services)
-        assert set(component) & set(deployment) == set()
+        component = set(ServiceAdapter.filter_component_services(all_services))
+        deployment = set(ServiceAdapter.filter_deployment_services(all_services))
+        project = {
+            service for service in all_services if SERVICES[service].definition.binding is ServiceBinding.PROJECT
+        }
+
+        assert component & deployment == set(), "een dienst bindt niet aan twee dingen tegelijk"
+        assert component & project == set()
+        assert deployment & project == set()
+        assert component | deployment | project == set(all_services), "elke dienst hoort in precies een bak"
 
 
 class TestResolveServiceDependencies:

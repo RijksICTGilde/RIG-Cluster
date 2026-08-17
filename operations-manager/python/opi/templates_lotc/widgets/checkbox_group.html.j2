@@ -1,0 +1,49 @@
+{#
+  Groep aanvinkvakjes voor de LOTC-bouwlijn.
+
+  Dezelfde vorm als het enkele vakje: <c-checkbox-field>, met een <c-checkbox> per keuze
+  als kind. Beide worden onder NLDD hetzelfde <nldd-checkbox-field>, dus een groepsvakje
+  en een enkel vakje gedragen zich ook hetzelfde. De veldomlijsting (groepskop,
+  hulptekst, foutmelding) komt van het component, niet van onze eigen span en CSS.
+
+  HIER STONDEN KALE <input>'s, met als reden: "c-checkbox wordt een webcomponent die zijn
+  invoerveld in de schaduwboom zet, dus het formulier serialiseert hem niet". Het eerste
+  klopt (de <input> zit zelfs twee schaduwbomen diep), het tweede niet: het element is
+  form-associated en FormData krijgt hem gewoon mee. Wat wel misging zat in htmx, dat
+  zijn parameters niet uit FormData haalt - dat is nu bij de bron opgelost
+  (static/js/form-associated.js). Het hele verhaal, met de meting:
+  features/aanvinkvakje.md.
+
+  De dienstkaarten in service_cards.html.j2 houden hun eigen <input>; die uitzondering
+  staat daar toegelicht en is daar gemeten.
+
+  Elk vakje krijgt zijn eigen id (<pad>-<waarde>) op het besturingselement, zodat het net
+  als het enkele vakje met ``[id='...']`` precies terug te vinden is.
+
+  Het veldpad staat WEL in de attribuutbundel, anders dan bij het enkele vakje. LOTC
+  762e570 zet de id op het besturingselement van het ENKELE vakje; een groep rendert een
+  andere vorm (<nldd-form-field>) die de id-prop nergens als attribuut neerzet. Zonder de
+  bundel is er dus helemaal geen element meer met het veldpad als id en is de groep niet
+  meer met ``[id='<pad>']`` terug te vinden. Er is hier ook niets dubbels: de prop landt
+  nergens, dus de bundel is de enige plek waar de id vandaan komt.
+  Zie widgets/checkbox.html.j2 voor de andere kant van dit verhaal.
+#}
+{% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
+<c-checkbox-field
+    id="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    :help="combined_helper(field)|trim or none"
+    :required="field.required"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="dict(field_attrs(field), id=field.path)">
+    {% for option in options %}
+    <c-checkbox
+        name="{{ field.path|e }}[]"
+        value="{{ option.value|e }}"
+        label="{{ option.label|e }}"
+        :checked="option.value in selected_values"
+        :disabled="field.readonly"
+        :attrs="{'id': field.path + '-' + option.value}" />
+    {% endfor %}
+</c-checkbox-field>
+{{ render_examples(field) }}

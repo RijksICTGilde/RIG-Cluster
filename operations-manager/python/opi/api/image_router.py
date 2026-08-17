@@ -14,10 +14,11 @@ import tempfile
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.params import ProjectNamePath
 from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
-from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
+from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ CHUNK_SIZE = 64 * 1024  # 64 KB
 @image_router.post("/{project_name}/images/push")
 @validate_api_token
 async def push_image(
-    project_name: str,
+    project_name: ProjectNamePath,
     request: Request,
     file: UploadFile,
     image_name: str = Query(..., description="Name of the container image"),
@@ -42,6 +43,11 @@ async def push_image(
 
     The tarball should be created with `docker save`. It is streamed to disk in chunks
     to avoid holding the full image in memory, then pushed via skopeo.
+
+    The image lands on a tag that carries the project as its owner
+    (`{project_name}_{image_name}-{tag}`), so two projects pushing the same
+    `image_name` and `tag` get two different images and neither can overwrite the
+    other's. Use the returned `image` reference, not a hand-built one.
 
     Optionally, provide both `deployment` and `component` to update
     the deployment's image reference and trigger a redeployment after a successful push.
@@ -57,10 +63,10 @@ async def push_image(
 
     connector = SkopeoConnector()
 
-    # Validate early before accepting the upload
+    # Validate early before accepting the upload. The project name is part of the
+    # target, so it is validated here too: the destination tag is owner-pinned.
     try:
-        connector._validate_image_name(image_name)
-        connector._validate_tag(tag)
+        connector.validate_push_target(project_name, image_name, tag)
     except SkopeoValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -91,7 +97,7 @@ async def push_image(
             f"Received image tarball for {project_name}/{image_name}:{tag} ({bytes_written / (1024 * 1024):.1f} MB)"
         )
 
-        image_ref = await connector.push_image(tarball_path, image_name, tag)
+        image_ref = await connector.push_image(tarball_path, project_name, image_name, tag)
 
         response_data: dict[str, object] = {
             "status": "success",

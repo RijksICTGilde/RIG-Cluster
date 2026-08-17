@@ -62,22 +62,6 @@ class ForgejoClient:
             if isinstance(entry, dict) and entry.get("name", "").endswith(".yaml")
         }
 
-    def wait_for_new_project(self, before: set[str], *, timeout: float = 180.0, interval: float = 3.0) -> str | None:
-        """Poll until a project name appears that was not in `before`, returning it.
-
-        Project creation derives a random technical name from the display name, so
-        the resulting file name cannot be predicted; we detect it by diffing the
-        repo listing. Returns the new name, or None on timeout.
-        """
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            new = self.list_project_names() - before
-            if new:
-                return sorted(new)[0]
-            time.sleep(interval)
-        new = self.list_project_names() - before
-        return sorted(new)[0] if new else None
-
     def get_project_file(self, project_name: str) -> str | None:
         """Return the raw YAML text of the project file, or None if it does not exist."""
         with httpx.Client(verify=self._verify, timeout=30.0) as client:

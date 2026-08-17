@@ -74,11 +74,44 @@ Taskfile.yaml
 Dockerfile.*
 docker-compose*
 
-# Test files and data
-tests/
+# Operationele hulpscripts. Ze gaan de image niet in (de Dockerfile kopieert alleen
+# opi, manifests, extensions en static), maar ze staan wel in de buildcontext, en dan
+# telt elke schrijfactie erin als een bouwafhankelijkheid. kijk_sandbox.py schrijft bij
+# iedere aanroep zijn sessiebestand hier weg, en dat kostte een volledige rebuild in
+# plaats van een sync.
+operations-manager/python/scripts/
+
+# Test files and data.
+#
+# MET **/, want een patroon zonder wordt alleen tegen de wortel van de buildcontext
+# gelegd: "tests/" matchte een map ./tests die niet bestaat, en niet de map die er wel
+# is (operations-manager/python/tests). Ze zaten dus al die tijd in de context en elke
+# gewijzigde test kostte een rebuild in plaats van niets.
+#
+# Let ook op operations-manager/.dockerignore: dat bestand wordt NIET gelezen. Docker
+# kijkt alleen naar het .dockerignore bij de buildcontext, en die is de repo-wortel.
+# Wat daar staat moet hier staan.
+**/tests/
+**/functional_tests/
 test-*
-*_test.py
-functional_tests/
+**/*_test.py
+
+# Claude Code: sessiegegevens en vooral de WORKTREES.
+#
+# Een agent werkt in .claude/worktrees/agent-<id>/, en dat is een volledige kopie van deze
+# repo BINNEN de buildcontext. Gemeten op 17 augustus 2026: 21 worktrees, samen 12 GB, met
+# 13.355 gewijzigde .py-bestanden op een dag. Elk daarvan telt als bouwafhankelijkheid, dus
+# elke regel die een agent schrijft kostte een volledige rebuild - skaffold bouwde
+# onophoudelijk terwijl er aan de echte broncode niets veranderd was.
+#
+# De synchronisatieregels vangen dit niet af: die matchen op
+# operations-manager/python/opi/**/*.py, en een bestand in een worktree staat op
+# .claude/worktrees/agent-XXX/operations-manager/python/opi/..., wat daar niet op matcht.
+# Geen sync dus, maar een rebuild.
+#
+# Zelfde soort oorzaak als de scripts- en tests-regels hierboven, en de derde keer dat een
+# map in de context ongemerkt de bouwlus opat.
+.claude/
 
 # Node.js (if any)
 node_modules/

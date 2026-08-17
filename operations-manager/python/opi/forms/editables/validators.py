@@ -1,7 +1,46 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Annotated, Any
+
+from pydantic import TypeAdapter, ValidationError
+
+from opi.forms.editables.converters import command_line_has_unbalanced_quote, split_command_line
+from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+
+class ModelFieldValidator:
+    """Validate a form field with the pydantic field that ALREADY defines the rule.
+
+    Where a service has a config model, that model is the contract the API writes against and
+    the stored project file is validated against. A hand-written validator next to it is a
+    second definition of the same rule, and the two drift: the cross-domain peer fields
+    restated "DNS-1123 label" as ``KubernetesNameValidator``, which also demands a leading
+    LETTER -- so the form rejected a peer whose name the schema, the API and the project store
+    all accept. Same shape as ``opi/api/validation.py``'s reuse of shared editables, one layer
+    down: point at the definition instead of copying it.
+
+    The pydantic message stays out of the UI on purpose -- it is English and speaks about
+    types -- so the caller supplies the human explanation; only the RULE is shared.
+    """
+
+    def __init__(self, model: type[BaseModel], field_name: str, message: str) -> None:
+        field = model.model_fields[field_name]
+        self._adapter: TypeAdapter[Any] = TypeAdapter(Annotated[(field.annotation, *field.metadata)])
+        self._message = message
+
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+        # Emptiness is ``required``'s business, not the field rule's.
+        if value is None or value == "":
+            return []
+        try:
+            self._adapter.validate_python(value)
+        except ValidationError:
+            return [self._message]
+        return []
 
 
 class SlugValidator:
@@ -164,6 +203,64 @@ class AttachmentIdValidator:
         return []
 
 
+class SchemaPostfixValidator:
+    """Validates an extra-schema postfix (RC-17): lowercase letters, digits and
+    underscores, starting with a letter, and not longer than
+    ``SCHEMA_POSTFIX_MAX_LENGTH``.
+
+    The postfix becomes part of a PostgreSQL schema name
+    (``{project}_{deployment}_{postfix}``) and, uppercased, an env-variable name
+    (``DATABASE_SCHEMA_{POSTFIX}``), so both must be valid. Shape and length come from
+    ``opi/utils/naming.py``, the same place the config model and the API read them, so a
+    postfix cannot be accepted by one road in and refused by another.
+
+    The length here does not replace the composed 63-character check: uniqueness, that
+    limit and variable-name collisions are the section enforcer's job (they need the
+    project and deployment names). It only makes an obviously-too-long postfix fail as
+    what it is.
+
+    Never normalised. The shape is strict enough that lowercasing ``Rapportage`` would
+    mean storing something other than what was asked for, and the caller would find out
+    from the schema name in their database rather than from the response.
+    """
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return ["Postfix is verplicht"]
+        if not re.match(SCHEMA_POSTFIX_PATTERN, str(value)):
+            return [
+                "Gebruik alleen kleine letters, cijfers en underscores, beginnend met een letter (bijv. 'rapportage')"
+            ]
+        if len(str(value)) > SCHEMA_POSTFIX_MAX_LENGTH:
+            return [f"Een postfix mag hoogstens {SCHEMA_POSTFIX_MAX_LENGTH} tekens lang zijn"]
+        return []
+
+
+class InviteKeyValidator:
+    """Validates an invite key: letters, digits, hyphens and underscores, starting with a
+    letter or digit, 3 to 64 characters.
+
+    The key becomes a URL path segment (``/invite/{key}``), so spaces, slashes and percent
+    signs are rejected. Uppercase is allowed because a blank key is filled with a generated
+    ``secrets.token_urlsafe`` value (mixed-case, URL-safe base64), which is later re-validated
+    on edit and must pass. Emptiness is allowed here (the empty key is generated at save time);
+    only a non-empty, malformed key is rejected.
+    """
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []  # empty is generated at save time
+        value_str = str(value)
+        if len(value_str) < 3 or len(value_str) > 64:
+            return ["Uitnodigingssleutel moet tussen 3 en 64 tekens bevatten"]
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]*$", value_str):
+            return [
+                "Uitnodigingssleutel mag alleen letters, cijfers, streepjes en "
+                "onderstrepingstekens bevatten en moet met een letter of cijfer beginnen"
+            ]
+        return []
+
+
 class ContainerImageValidator:
     """Validates container image references.
 
@@ -208,6 +305,24 @@ class RealmRoleValidator:
             return ["Rolnaam mag maximaal 255 tekens bevatten"]
         if not re.match(r"^[a-zA-Z0-9_-]+$", value_str):
             return ["Rolnaam mag alleen letters, cijfers, streepjes en underscores bevatten"]
+        return []
+
+
+class EnvNameValidator:
+    """Validates an environment-variable name: a letter or underscore, then letters,
+    digits and underscores. Mirrors the ``_ENV_NAME`` regex the attachments config model
+    enforces (``AttachmentUse._valid_env_name``), so an invalid name is caught at the
+    field instead of only as a whole-config error at save time."""
+
+    _PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        if not self._PATTERN.match(str(value)):
+            return [
+                "Ongeldige omgevingsvariabelenaam: begin met een letter of underscore, daarna letters, cijfers en underscores"
+            ]
         return []
 
 
@@ -283,6 +398,29 @@ class AllowedValuesValidator:
             return []
         if str(value) not in self.allowed:
             return [f"Ongeldige waarde: {value}. Toegestaan: {', '.join(self.allowed)}"]
+        return []
+
+
+class StorageSizeValidator:
+    """Validates the size of one storage mount against the platform ceiling.
+
+    The rule itself lives with the storage config model
+    (``catalog/shared/storage.check_storage_size``), which is what types the config
+    API's request bodies. This wrapper puts the SAME rule on the form field, because
+    a dropdown is not a check: the size editable declares a ``values_provider`` and
+    nothing validated the value that came back, so a hand-made POST set any size it
+    liked.
+    """
+
+    def validate(self, value: Any) -> list[str]:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return []
+        from opi.services.catalog.shared.storage import check_storage_size
+
+        try:
+            check_storage_size(str(value))
+        except ValueError as e:
+            return [str(e)]
         return []
 
 
@@ -387,4 +525,43 @@ class DomainFormatValidator:
 
         if str(value) not in DOMAIN_FORMAT_TEMPLATES:
             return [f"Onbekend URL-formaat: {value}"]
+        return []
+
+
+class CommandLineValidator:
+    """Het startcommando van een container, als een regel tekst.
+
+    Ruim over de inhoud en streng over de vorm. Een echt commando ziet eruit als
+    ``sh -c "<script>"``, dus spaties, quotes en operatoren horen erin thuis; die weigeren
+    zou juist het geval uitsluiten waarvoor het veld bestaat.
+
+    Wat wel geweigerd wordt:
+
+    * een quote die openstaat aan het eind. Dan splitst de regel anders dan de gebruiker
+      bedoelde, en dat is precies het soort fout dat pas in een CrashLoopBackOff opvalt;
+    * stuurtekens, die je niet per ongeluk typt en die ongewijzigd de container bereiken;
+    * een regel die na het splitsen niets oplevert terwijl er wel iets stond.
+
+    Geen verdediging tegen YAML-injectie: de canonieke schrijver zet een meerregelige
+    waarde neer als literal block, dus een geknutseld argument komt terug als een string en
+    niet als extra sleutels. ``tests/test_component_command_field.py`` bewaakt dat.
+    """
+
+    MAX_LENGTH = 4096
+
+    def validate(self, value: Any) -> list[str]:
+        if value is None or value == "":
+            return []
+        text = str(value)
+        if not text.strip():
+            return []
+        if len(text) > self.MAX_LENGTH:
+            return [f"Een startcommando mag hoogstens {self.MAX_LENGTH} tekens zijn."]
+        verboden = [c for c in text if ord(c) < 32 and c not in "\n\t"]
+        if verboden:
+            return ["Dit commando bevat een stuurteken dat er niet in hoort."]
+        if command_line_has_unbalanced_quote(text):
+            return ['Er staat een dubbele quote open. Sluit hem, of typ "" als je er letterlijk een bedoelt.']
+        if not split_command_line(text):
+            return ["Dit commando levert geen argumenten op."]
         return []

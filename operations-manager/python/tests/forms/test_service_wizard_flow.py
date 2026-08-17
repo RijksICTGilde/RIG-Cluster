@@ -630,9 +630,9 @@ class TestStandaloneKeycloakEditFlow:
     def test_merged_data_with_template_services_produces_list(self, keycloak_flow, project_data):
         """get_merged_data must produce services as a list, not a dict.
 
-        When template_data includes the services list, devirtualize should
+        When base_data includes the services list, devirtualize should
         merge virtual config back into the list. Without the list in
-        template_data, devirtualize falls back to a dict which breaks
+        base_data, devirtualize falls back to a dict which breaks
         smart_get_value.
         """
         step_data = _split_data_across_sections(keycloak_flow, project_data)
@@ -642,8 +642,8 @@ class TestStandaloneKeycloakEditFlow:
             active_sections=["keycloak-config"],
             virt_mappings={"_services-config": "services"},
         )
-        # Simulate what router_detail_edit does: seed services in template_data
-        state.template_data = {"services": copy.deepcopy(project_data["services"])}
+        # Simulate what router_detail_edit does: seed services in base_data
+        state.base_data = {"services": copy.deepcopy(project_data["services"])}
 
         merged = state.get_merged_data()
 
@@ -653,7 +653,7 @@ class TestStandaloneKeycloakEditFlow:
         )
 
     def test_merged_data_without_template_services_produces_dict(self, keycloak_flow, project_data):
-        """Without services in template_data, devirtualize produces a dict.
+        """Without services in base_data, devirtualize produces a dict.
 
         This documents the bug that existed before the fix: smart_get_value
         expects a list and returns None for all fields.
@@ -665,14 +665,14 @@ class TestStandaloneKeycloakEditFlow:
             active_sections=["keycloak-config"],
             virt_mappings={"_services-config": "services"},
         )
-        # No template_data with services — the old buggy path
+        # No base_data with services — the old buggy path
 
         merged = state.get_merged_data()
 
         # Documents the problematic fallback behavior
         if "services" in merged:
             assert isinstance(merged["services"], dict), (
-                "Without template_data services, devirtualize should produce a dict (the bug)"
+                "Without base_data services, devirtualize should produce a dict (the bug)"
             )
 
     def test_smart_get_value_works_with_list(self, keycloak_flow, project_data):
@@ -686,7 +686,7 @@ class TestStandaloneKeycloakEditFlow:
             active_sections=["keycloak-config"],
             virt_mappings={"_services-config": "services"},
         )
-        state.template_data = {"services": copy.deepcopy(project_data["services"])}
+        state.base_data = {"services": copy.deepcopy(project_data["services"])}
 
         merged = state.get_merged_data()
 
@@ -711,6 +711,65 @@ class TestStandaloneKeycloakEditFlow:
         # When active_sections contains the keycloak section
         action = _determine_flow_action(keycloak_flow, keycloak_flow.sections)
         assert action == "process_project"
+
+    @pytest.mark.parametrize(
+        "existing_entry",
+        [
+            pytest.param({"keycloak": {"config": {"template": "sso-support"}}}, id="legacy-dict"),
+            pytest.param({"name": "keycloak", "config": {"template": "sso-support"}}, id="record"),
+            pytest.param("keycloak", id="bare-string"),
+        ],
+        # A service that already carries config is a dict, not a bare string, in either
+        # entry form. Folding used to match on "entry is a bare string", so the second
+        # and every later edit was dropped without an error: the modal reported success
+        # and the store logged "no change" (toets-hn7 keycloak template, 2026-08-05).
+    )
+    def test_edit_sticks_for_every_entry_form(self, existing_entry):
+        """A changed template must survive the merge whatever shape the entry has."""
+        from opi.forms.editables.service_path import smart_get_value
+
+        state = _make_state(
+            flow_id="modal-edit-keycloak-config",
+            step_data={"keycloak-config": {"_services-config": {"keycloak": {"config": {"template": "sso-only"}}}}},
+            active_sections=["keycloak-config"],
+            virt_mappings={"_services-config": "services"},
+        )
+        state.base_data = {"services": ["publish-on-web", copy.deepcopy(existing_entry)]}
+
+        merged = state.get_merged_data()
+
+        assert smart_get_value(merged, "services/keycloak/config/template") == "sso-only"
+
+    def test_edit_keeps_untouched_config_keys(self, project_data):
+        """Folding overlays the edited key; config the step did not carry stays put."""
+        from opi.forms.editables.service_path import smart_get_value
+
+        state = _make_state(
+            flow_id="modal-edit-keycloak-config",
+            step_data={"keycloak-config": {"_services-config": {"keycloak": {"config": {"template": "sso-only"}}}}},
+            active_sections=["keycloak-config"],
+            virt_mappings={"_services-config": "services"},
+        )
+        state.base_data = {"services": copy.deepcopy(project_data["services"])}
+
+        merged = state.get_merged_data()
+
+        assert smart_get_value(merged, "services/keycloak/config/template") == "sso-only"
+        assert smart_get_value(merged, "services/keycloak/config/restrict-access/realm-role") == "allowed-user"
+
+    def test_deselected_service_is_not_resurrected(self):
+        """A carrier for a service no longer selected must not add it back."""
+        state = _make_state(
+            flow_id="modal-edit-keycloak-config",
+            step_data={"keycloak-config": {"_services-config": {"keycloak": {"config": {"template": "sso-only"}}}}},
+            active_sections=["keycloak-config"],
+            virt_mappings={"_services-config": "services"},
+        )
+        state.base_data = {"services": ["publish-on-web"]}
+
+        merged = state.get_merged_data()
+
+        assert merged["services"] == ["publish-on-web"]
 
 
 class TestStandalonePostgresqlEditFlow:

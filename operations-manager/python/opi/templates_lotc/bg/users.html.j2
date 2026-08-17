@@ -1,0 +1,44 @@
+{#
+  Gebruikers, herontworpen in bg-vorm.
+
+  Dit blijft een tabel, en dat is met opzet: bg gebruikt kaarten waar het om bladeren
+  gaat en een tabel waar het om vergelijken gaat. Een gebruikerslijst hoort bij het
+  tweede - je wilt de rollen naast elkaar kunnen lezen.
+
+  Hertekenen betekent hier dus niet "er kaarten van maken" maar de tabel in een kaart met
+  kopregel zetten, zodat hij hetzelfde ritme volgt als de rest.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Gebruikers - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Gebruikers", "Wie toegang heeft, en met welke rol.") }}
+
+    {% call panel("Projectleden", "person-2") %}
+{# NLDD maakt van een tabel een CSS-grid, en zonder het columns-attribuut valt
+           alles in een kolom en stapelen de cellen - dat is geen bug maar de manier
+           waarop nldd-table werkt. Onder RVO is het een native tabel die vanzelf
+           uitlijnt, dus daar zou columns niet nodig zijn; dat verschil is precies wat
+           hier misging.
+
+           En let op: c-table-head IS de kopregel. Er hoort geen c-table-row in. #}
+        <c-table columns="2fr 1fr 2fr">
+            <c-table-head>
+                <c-th>E-mailadres</c-th>
+                <c-th>Rol</c-th>
+                <c-th>Project</c-th>
+            </c-table-head>
+            {% for project in projects %}
+                {% for member in project.users %}
+                    <c-table-row>
+                        <c-td>{{ member.email }}</c-td>
+                        <c-td><c-tag type="default" label="{{ member.role }}" /></c-td>
+                        <c-td>{{ project.display_name }}</c-td>
+                    </c-table-row>
+                {% endfor %}
+            {% endfor %}
+        </c-table>
+    {% endcall %}
+{% endblock %}

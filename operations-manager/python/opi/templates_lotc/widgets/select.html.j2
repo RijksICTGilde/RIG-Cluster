@@ -1,0 +1,39 @@
+{#
+  Keuzelijst voor de LOTC-bouwlijn.
+
+  Grootste verschil met de roos-versie: die gaf de opties mee als JSON in een prop
+  (:options="{{ options_json }}"). In LOTC zijn opties KINDEREN. Daardoor kan dit
+  template rechtstreeks over field.options lopen en is de JSON-omweg overbodig -
+  options_json wordt hier niet meer gebruikt.
+#}
+{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples %}
+{{ description_text(field) }}
+{# De gekozen waarde gaat via de attribuutbundel en niet via :value. c-select-field
+   heeft wel een value-attribuut, maar dat komt onder NLDD niet op de <nldd-combo-box>
+   terecht, waardoor de lijst dichtgeklapt leeg lijkt terwijl de juiste optie wel als
+   selected in de DOM staat. Gemeld bij het LOTC-project; via de bundel landt het wel.
+
+   En let op: een Jinja-commentaar hoort BOVEN de tag, niet erin. De voorbewerker leest
+   de woorden binnen een componenttag als attribuutnamen. #}
+{# native="true" geeft een ECHTE <select> met de opmaak van het thema eromheen. Zonder
+   dat wordt het een <nldd-combo-box>, en dan bestaat er geen <select> meer: elke test die
+   select_option() doet en elke JavaScript die .value leest of de lijst vult, vindt niets.
+
+   En let op de OPTIES hieronder: die staan er als kale <option>. <c-option> rendert
+   binnen een native select een <nldd-menu-item>, en daar maakt een <select> niets van -
+   de lijst blijft dan leeg. Dat is waarom native="true" eerder niets leek op te lossen. #}
+<c-select-field
+    native="true"
+    id="{{ field.path|e }}"
+    name="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    :help="combined_helper(field)|trim or none"
+    :required="field.required"
+    :disabled="field.readonly"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="dict(field_attrs(field), **{'value': value_str or none})"
+>
+    {% for option in field.options or [] %}
+        <option value="{{ option.value|e }}"{% if option.value|string == value_str %} selected{% endif %}>{{ option.label|e }}</option>
+    {% endfor %}
+</c-select-field>{{ render_examples(field) }}

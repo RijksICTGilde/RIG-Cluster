@@ -1,8 +1,8 @@
 """Regression tests for the namespace list on the admin usage page.
 
 ``_get_available_namespaces`` builds namespace strings from the project cache.
-When ``ProjectStore.get_all()`` changed from ``dict[str, Project]`` to
-``list[Project]``, ``for name in projects`` silently started yielding Project
+When ``ProjectStore.get_all()`` changed from ``dict[str, ProjectSummary]`` to
+``list[ProjectSummary]``, ``for name in projects`` silently started yielding Project
 objects instead of names, so the f-string interpolated the whole pydantic repr:
 
     rig-prd-name='demo' api_key='SECRET' filename='demo.yaml' ...
@@ -16,16 +16,16 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from opi.services.project_service import Project
+from opi.services.project_service import ProjectSummary
 from opi.web.router_usage import _get_available_namespaces
 
 CLUSTER = "odcn-production"
 
 
-def _projects() -> list[Project]:
+def _projects() -> list[ProjectSummary]:
     return [
-        Project(name="alpha", api_key="SECRET-ALPHA", filename="alpha.yaml", data={}),
-        Project(name="bravo", api_key="SECRET-BRAVO", filename="bravo.yaml", data={}),
+        ProjectSummary(name="alpha", api_key="SECRET-ALPHA", filename="alpha.yaml", data={}),
+        ProjectSummary(name="bravo", api_key="SECRET-BRAVO", filename="bravo.yaml", data={}),
     ]
 
 

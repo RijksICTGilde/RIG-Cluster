@@ -1,0 +1,59 @@
+{#
+  De kiezer waarmee je tussen deployments wisselt.
+
+  Stond alleen op het tabblad Deployments. Op Metrics speelt precies hetzelfde - je kijkt
+  daar per deployment - en daar moest je opnieuw kiezen. Nu staat hij op allebei, uit dit
+  ene bestand, en blijft de keuze staan bij het wisselen van tabblad: hij staat in het PAD
+  en de tabbalk neemt hem mee.
+
+  KIEZEN IS NAVIGEREN. De waarde van een optie is het ADRES van die deployment op dit
+  tabblad (/projects/<project>/<tabblad>/<naam>); wisselen haalt dus die pagina op, waarna
+  de URL zegt wat je ziet en de terugknop werkt. Hier stond JavaScript die blokken toonde
+  en verborg (switchDeployment); die blokken staan er niet meer, want de server rendert er
+  nog maar een.
+
+  DE ID BLIJFT: id="global-deployment-selector" is waar de tests de kiezer op vinden, en
+  elk tabblad is een eigen pagina, dus die id komt nooit twee keer in een document.
+
+  De kiezer als THEMAveld met een ECHTE <select> erin (native="true"). Hij stond hier als
+  kale <select> met een los <label><strong> ervoor: dat werkte wel maar stond er
+  onopgemaakt bij, en de afstand tot het blok eronder kwam van niets. c-select-field zet
+  er de vormgeving en de label-opmaak van het thema omheen en geeft nog steeds een echte
+  <select> - nodig, want de onchange leest this.value als adres.
+
+  De OPTIES staan er als kale <option>. Dat is geen slordigheid: <c-option> rendert binnen
+  een native select een <nldd-menu-item>, en daar maakt een <select> niets van - de lijst
+  blijft dan leeg. Gemeten.
+
+  ``selected`` STAAT OP DE OPTIE die de pagina toont (``deployment_open``, uit het pad).
+  Zonder dat wees de kiezer een andere deployment aan dan er open stond. Erger nog: een
+  <select> vuurt geen change als je de al getoonde optie kiest, dus bij twee deployments
+  was de getoonde via de kiezer niet meer te bereiken.
+
+  Geen class in :attrs: het component zet er zelf al een op, en twee class-attributen op
+  een tag betekent dat de browser de tweede negeert.
+
+  data-no-optional-badge, omdat lotc-forms elk niet-
+  verplicht veld van het label "Optioneel" voorziet (rijksconventie: markeer optioneel,
+  niet verplicht). Dat klopt voor een invoerveld en niet voor deze KIEZER: hij dient om
+  tussen deployments te wisselen, er staat er altijd een geselecteerd, en "optioneel"
+  slaat daar nergens op.
+
+  Dat dit een omweg is (de HTML zegt nu dat er iets ingevuld MOET worden) staat bekend en
+  ligt bij RC-72, samen met de rest van het "Optioneel"-label. Blijft hier dus staan zoals
+  het stond, om niet in dezelfde bestanden langs elkaar heen te werken.
+#}
+{% if project.deployments | length > 1 %}
+    {% set kiezer_gedrag = {'onchange': 'location.assign(this.value)'} %}
+    <c-select-field
+        native="true"
+        id="global-deployment-selector"
+        name="global-deployment-selector"
+        label="Deployment"
+        data-no-optional-badge="true"
+        :attrs="kiezer_gedrag">
+        {% for deployment in project.deployments | sort(attribute='name') %}
+            <option value="/projects/{{ project.name }}/{{ tabs[active_tab].path }}/{{ deployment.name | urlencode }}"{% if deployment.name == deployment_open %} selected{% endif %}>{{ deployment.name }} ({{ deployment.cluster }})</option>
+        {% endfor %}
+    </c-select-field>
+{% endif %}

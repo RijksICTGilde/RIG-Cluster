@@ -1,0 +1,103 @@
+{#
+  Modal Wizard Step Fragment - server-driven wizard inside the edit modal.
+
+  Required context:
+    - steps: WizardSteps object
+    - flow_id: FormFlow ID
+    - section: FormSection for the current step
+    - step_html: Pre-rendered form field HTML
+    - project_name: str
+    - errors: dict of field errors
+    - global_errors: list of global error messages
+    - step_base_url: URL prefix for step navigation
+    - step_target: HTMX target selector
+    - step_push_url: Whether to push URL on nav
+    - step_query_params: Query string for step URLs
+#}
+
+{# Step indicator (only for multi-step flows) #}
+{% if steps.count > 1 %}
+<div class="edit-step-indicator" id="modal-wizard-steps">
+    {% include "wizard/wizard_steps_indicator.html.j2" %}
+</div>
+{% endif %}
+
+{# Step content #}
+<div class="wizard-step" id="modal-wizard-step-inner">
+    <div class="wizard-step__header">
+        <c-cluster gap="sm" align="center">
+            {% if section.icon %}<c-icon icon="{{ section.icon | nldd_icon }}" size="xl"/>{% endif %}
+            <c-heading type="h2" label="{{ section.title }}"/>
+            {# The service's own explanation, same question mark as on its card. This is
+               where someone has to decide something, so it is the place that needed it
+               most and was the only surface without it. #}
+            {% if section.help_template %}
+            {% set lotc_onclick_1 %}openServiceHelp('{{ section.help_template|e }}'){% endset %}<c-icon icon="question-mark-circle" size="xl" color="hemelblauw" class="service-card__help-btn"/>
+            {% endif %}
+        </c-cluster>
+        {% if section.description %}
+        <p class="wizard-step__description">{{ section.description }}</p>
+        {% endif %}
+    </div>
+
+    {% if global_errors %}
+    <c-alert heading="Fouten">
+        <ul>
+            {% for err in global_errors %}
+            <li>{{ err }}</li>
+            {% endfor %}
+        </ul>
+    </c-alert>
+    {% endif %}
+
+    {% if warnings %}
+    <c-alert heading="Let op">
+        <ul>
+            {% for msg in warnings %}
+            <li>{{ msg }}</li>
+            {% endfor %}
+        </ul>
+    </c-alert>
+    {% endif %}
+
+    {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
+    {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
+    <form id="modal-wizard-form"
+          autocomplete="off"
+          hx-ext="json-enc"
+          hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+          hx-post="{{ _step_url_prefix }}{{ section.section_id }}{{ _token_qs }}"
+          hx-target="#edit-section-inner"
+          hx-swap="innerHTML"
+          hx-disabled-elt="#modal-wizard-form button[type='submit']">
+
+        {% if wizard_token %}
+        <input type="hidden" name="_wizard_token" value="{{ wizard_token }}" />
+        {% endif %}
+
+        <div class="wizard-step__fields" id="edit-section-content">
+            {{ step_html | safe }}
+        </div>
+
+        <c-cluster justify="between" align="center" class="wizard-step__actions" id="edit-section-actions">
+            {% if not steps.is_first %}
+            <c-button label="Vorige" show-icon="before" icon="caret-left"/>
+            {% else %}
+            {% set lotc_onclick_2 %}closeEditModal(){% endset %}<c-button type="secondary" label="Annuleren"/>
+            {% endif %}
+
+            <c-cluster gap="xs" align="center">
+                {% if steps.is_last %}
+                {% if not (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) %}
+                <span class="wizard-step__saving" aria-hidden="true">
+                    <c-icon icon="refresh" size="sm"/>Bezig met opslaan…
+                </span>
+                {% endif %}
+                <c-button html-type="submit" type="primary" show-icon="before" icon="file-text" :label="('Verder') if (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) else ('Opslaan')"/>
+                {% else %}
+                <c-button html-type="submit" type="primary" label="Volgende" show-icon="after" icon="caret-right"/>
+                {% endif %}
+            </c-cluster>
+        </c-cluster>
+    </form>
+</div>

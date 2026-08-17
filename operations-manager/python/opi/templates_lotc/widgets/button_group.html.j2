@@ -1,0 +1,12 @@
+{% from "widgets/_macros.html.j2" import html_attributes %}
+{#- De rvo-action-group-klassen zijn weg: geen geladen stylesheet maakt ze op, dus ook
+   rvo-action-group--{{ alignment }} deed niets. De uitlijning stond dus al niet op het
+   scherm; dat is een gat in de omzetting en geen gevolg van deze opruiming.
+
+   De tussenruimte komt van de NLDD-ruimtemaat in plaats van --rvo-space-*. Dezelfde
+   waarden (sm=12px, md=16px, lg=18px), maar uit het geladen thema in plaats van uit het
+   shimblok in lotc-app.css. #}
+{%- set gap_token = {"sm": "12", "md": "16", "lg": "18"}.get(button_group.gap, "16") %}
+<div{% if button_group.css_class %} class="{{ button_group.css_class|e }}"{% endif %} style="display: flex; gap: var(--primitives-space-{{ gap_token }});" {{ html_attributes(button_group.attributes) }}>
+    {{ buttons_content }}
+</div>

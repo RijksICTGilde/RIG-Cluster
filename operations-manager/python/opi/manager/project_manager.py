@@ -30,7 +30,12 @@ from opi.connectors.git import (
     create_git_connector_from_repo_config,
 )
 from opi.connectors.kubectl import KubectlConnector
-from opi.connectors.subdomain import SubdomainConnector, ensure_domain_requests
+from opi.connectors.subdomain import (
+    ensure_domain_requests,
+    get_supported_base_domains,
+    is_deployment_domain_approved,
+    validate_bare_domain_allowed,
+)
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
@@ -44,8 +49,6 @@ from opi.core.cluster_config import (
     get_ingress_tls_enabled,
     get_keycloak_discovery_url,
     get_letsencrypt_contact_email,
-    get_minio_host,
-    get_minio_port,
     get_namespace,
     get_prefixed_namespace,
     supports_vpa,
@@ -53,36 +56,84 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.core.task_errors import TaskInputError
 from opi.extensions import load_extensions
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
-from opi.generation.manifests import ManifestGenerator
+from opi.generation.manifests import (
+    CONFIG_HASH_IGNORE_LABEL_KEY,
+    CONFIG_HASH_IGNORE_LABEL_VALUE,
+    ManifestGenerator,
+)
 from opi.handlers.project_file_handler import (
+    COMPONENT_USAGE_WEB_ADDRESS,
+    USAGE_CERTIFICATE,
     ProjectFileHandler,
-    attachment_is_referenced,
+    attachment_usage_sites,
+    component_usage_sites,
+    ensure_attachment_data_list,
+    extract_attachment_catalog,
+    extract_component_attachment_uses,
     extract_service_names_from_component,
     find_attachment_data_list,
-    is_image_pull_disable_reason,
+    is_transient_registry_error,
+    remove_attachment_references,
+    remove_component_references,
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
-from opi.services.project_store import get_project_store
+from opi.services.approvals import collect_deployment_approval_notices, ensure_approval_requests
+from opi.services.catalog.base import (
+    ConfigLayer,
+    DeploymentManifestContext,
+    ManifestContext,
+    ProvisionContext,
+    SecretFileSpec,
+)
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    clear_domain_settings,
+    custom_domain_certificate_note,
+    get_domain_setting,
+    set_domain_setting,
+)
+from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
+from opi.services.component_values import ComponentValuesError
+from opi.services.component_values import decode as decode_component_values
+from opi.services.deployment_order import order_deployments_by_clone_dependency
+from opi.services.persistence.subdomain_registry import SubdomainConnector
+from opi.services.postgres_scope import project_uses_dedicated_postgres, schema_is_marked
+from opi.services.project import Project
+from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
+from opi.services.redeploy import run_redeploy_hooks
+from opi.services.registry import (
+    deployment_manifest_services,
+    generate_missing_values,
+    manifest_services,
+    provisioning_services,
+)
+from opi.services.services import service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
     decrypt_password_smart_auto,
     encrypt_age_content,
+    encrypt_file_to_age_block_sync,
     get_decoded_project_private_key,
     get_project_public_key,
 )
-from opi.utils.env_vars import detect_circular_references, extract_variable_references, substitute_variables
+from opi.utils.env_vars import (
+    detect_circular_references,
+    extract_variable_references,
+    substitute_known_variables,
+    substitute_variables,
+)
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     DOMAIN_FORMAT_TEMPLATES,
-    ROOT_COMPONENT_FORMAT_IDS,
     HostnameFormat,
     generate_argocd_application_name,
     generate_bare_domain_hostname,
@@ -117,7 +168,6 @@ from opi.utils.secrets import (
     BaseSecret,
     DatabaseSecret,
     KeycloakSecret,
-    MetricsAuthSecret,
     MinIOSecret,
     PlatformSecret,
     RedisSecret,
@@ -132,13 +182,18 @@ from opi.utils.yaml_util import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from opi.core.task_manager import TaskProgressManager
+    from opi.core.persistent_task_progress import AnyTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
 
 # TypeVar for generic secret types
 T = TypeVar("T", bound=BaseSecret)
 
 logger = logging.getLogger(__name__)
+
+# How many times upsert_deployment re-reads and re-applies on a concurrent-edit
+# conflict before giving up. Matches the store's own MAX_MUTATION_ATTEMPTS: a handful
+# absorbs the bursts a busy pipeline produces without masking a genuine, persistent clash.
+_UPSERT_CONFLICT_RETRIES = 5
 
 
 def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
@@ -288,6 +343,47 @@ def _select_obsolete_component_manifests(
     return sorted(selected)
 
 
+def _select_obsolete_service_manifests(
+    directory: str,
+    service_prefixes: set[str],
+    generated_files: set[str],
+) -> list[str]:
+    """Select deployment-wide, service-owned manifest files this run did not (re)generate.
+
+    Symmetric with ``_select_obsolete_component_manifests`` but keyed on the service
+    prefix ``f"{deployment_name}-{service_type.value}-"`` that every
+    ``DeploymentManifestSpec`` filename must carry (RC-15). A service-owned deployment
+    manifest has no component prefix, so the component prune never touches it; without
+    this, a NetworkPolicy would linger after its service is switched off and keep the
+    opening alive. ``*.marked-for-deletion.yaml`` files are left to the reconciliation
+    lifecycle.
+
+    Args:
+        directory: Deployment manifest directory to scan (non-recursive).
+        service_prefixes: One ``f"{deployment_name}-{svc.value}-"`` per ServiceType.
+        generated_files: Basenames generated this run (the desired-state set).
+
+    Returns:
+        Sorted list of basenames to remove.
+    """
+    if not os.path.isdir(directory):
+        return []
+    selected: list[str] = []
+    for path in glob.glob(os.path.join(directory, "*")):
+        if not os.path.isfile(path):
+            continue
+        basename = os.path.basename(path)
+        if not basename.endswith(_COMPONENT_MANIFEST_EXTENSIONS):
+            continue
+        if basename.endswith(".marked-for-deletion.yaml"):
+            continue
+        if basename in generated_files:
+            continue
+        if any(basename.startswith(prefix) for prefix in service_prefixes):
+            selected.append(basename)
+    return sorted(selected)
+
+
 # Registry auth/permission failures (missing or expired pull secret, denied robot)
 # are real, actionable errors worth an ERROR log + alert. A not-found / not-yet-built
 # image is expected churn for CI/CD and PR builds and belongs at WARNING, not ERROR
@@ -313,6 +409,26 @@ def _is_image_pull_auth_error(message: str | None) -> bool:
     return any(marker in lowered for marker in _IMAGE_PULL_AUTH_MARKERS)
 
 
+# Markers that identify an ArgoCD manifest-generation failure in a manifests-endpoint body.
+# These are the phrases ArgoCD's repo-server uses when a plugin (our SOPS/kustomize CMP)
+# cannot render, so they distinguish a real render failure from a transport/auth error (a
+# 401/404/network hiccup) that must not block the deploy.
+_RENDER_FAILURE_MARKERS = (
+    "failed to generate manifests",
+    "error generating manifests",
+    "manifest generation error",
+    "rpc error",
+)
+
+
+def _looks_like_render_failure(detail: str | None) -> bool:
+    """True when a failed manifests-endpoint body indicates a generation/render error."""
+    if not detail:
+        return False
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _RENDER_FAILURE_MARKERS)
+
+
 @dataclass
 class DeploymentResult:
     """Result information for a processed deployment."""
@@ -323,6 +439,19 @@ class DeploymentResult:
     urls: dict[str, str] = field(default_factory=dict)  # component_name -> public_url
     status: str = "success"
     errors: list[str] = field(default_factory=list)
+
+
+def _secret_labels_for(spec: SecretFileSpec) -> dict[str, str]:
+    """The Secret's metadata labels, including the config-hash opt-out when it applies.
+
+    A service declares ``include_in_config_hash=False`` when only its own auxiliary pod
+    reads the secret; translating that into the label happens here, once, for every
+    secret the manager writes.
+    """
+    labels = dict(spec.secret_labels or {})
+    if not spec.include_in_config_hash:
+        labels[CONFIG_HASH_IGNORE_LABEL_KEY] = CONFIG_HASH_IGNORE_LABEL_VALUE
+    return labels
 
 
 class ProjectManager:
@@ -444,23 +573,19 @@ class ProjectManager:
 
         from opi.core.cluster_config import get_database_cluster_service_endpoint, get_infrastructure_namespace
         from opi.manager.database_manager import DatabaseManager
-        from opi.services import ServiceType
         from opi.utils.naming import generate_postgres_superuser_secret_name
 
         project_data = await self.get_contents(record_base=False)
-        project_name = project_data.get("name")
-        project_services = project_data.get("services", [])
+        project_name = await self.get_name()
 
-        # Check if project uses namespace-specific PostgreSQL
-        uses_namespace_db = any(
-            ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service
-            if isinstance(service, dict)
-            else service == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-            for service in project_services
-        )
+        # A dedicated (project-scoped) cluster needs the infrastructure-namespace
+        # superuser; the shared instance uses the cluster admin. Both
+        # namespace-postgresql-database and postgresql-database with scope: project mean
+        # "dedicated" (RC-17), so route the decision through the shared helper.
+        uses_namespace_db = project_uses_dedicated_postgres(project_data)
 
         if uses_namespace_db:
-            # Namespace-specific database
+            # Dedicated-cluster database
             db_host = get_database_cluster_service_endpoint(settings.CLUSTER_MANAGER, project_name)
             infrastructure_namespace = get_infrastructure_namespace(settings.CLUSTER_MANAGER, project_name)
             secret_name = generate_postgres_superuser_secret_name(project_name)
@@ -484,6 +609,12 @@ class ProjectManager:
 
                 admin_username = secret_data.get("username")
                 admin_password = secret_data.get("password")
+                if not admin_username or not admin_password:
+                    raise RuntimeError(
+                        f"Superuser secret '{secret_name}' in '{infrastructure_namespace}' has no username "
+                        f"or password. Without them every database operation fails one step later, with an "
+                        f"error that points at the database instead of at the secret."
+                    )
                 logger.info(f"Initializing DatabaseManager with namespace-specific PostgreSQL: {db_host}")
         else:
             # Shared database
@@ -547,7 +678,15 @@ class ProjectManager:
             target_set = set(targets)
             deployments = [d for d in deployments if d.get("name") in target_set]
 
-        return deployments
+        # A deployment that clones from another must be processed after its source, and
+        # nothing enforced that: the loop walked file order, which happened to work only
+        # because the files grew that way. Ordering here rather than at the call site
+        # because this is the one door every caller comes through.
+        #
+        # Applied after the filters on purpose: ordering the ones you are going to use is
+        # the point, and a source filtered away (another cluster, a single-deployment
+        # request) cannot be waited for anyway.
+        return order_deployments_by_clone_dependency(deployments)
 
     async def get_deployment_by_name(self, deployment_name: str) -> dict[str, Any] | None:
         """
@@ -580,6 +719,19 @@ class ProjectManager:
                 return {deployment_name: self._deployment_results[deployment_name]}
             return {}
         return self._deployment_results
+
+    def _track_public_urls(self, project_data: dict[str, Any], deployment: dict[str, Any], project_name: str) -> None:
+        """Record the public addresses this deployment offers on its result.
+
+        The addresses come from publish-on-web, the service that decides whether a component
+        gets an ingress, so they are the same ones the deployment endpoint returns and the
+        detail page links. Deriving them here from the naming alone is what made a refresh
+        promise an address that nothing serves (RC-104, vraag 13): a component without an
+        ingress has a name, not an address.
+        """
+        self._deployment_results[deployment["name"]].urls.update(
+            public_url_map_for_deployment(project_data, deployment, project_name, self._project_file_handler)
+        )
 
     def get_processing_error(self) -> str | None:
         """
@@ -1006,7 +1158,7 @@ class ProjectManager:
 
         # Find the deployment in project data
         deployments = project_data.get("deployments", [])
-        deployment = next((d for d in deployments if d.get("name") == deployment_name), None)
+        deployment = Project.locate(deployments, name=deployment_name)
 
         if not deployment:
             logger.warning(f"Deployment '{deployment_name}' not found in project data")
@@ -1026,7 +1178,18 @@ class ProjectManager:
             if not component_definition:
                 logger.warning("Component '%s' referenced in deployment but not found in project", component_name)
                 continue
-            component_aliases = component_definition.get("aliases", {})
+            # Aliases are stored as ONE AGE block whose plaintext is KEY=value lines
+            # (RC-106), so reading them is a decrypt-and-parse and never a walk over the
+            # stored value. Through the shared decoder, which also still reads the
+            # unencrypted mapping and the per-value shape aliases used to be written in
+            # -- this is the deploy path, and an alias that fell away silently here is a
+            # running pod with a missing variable.
+            try:
+                component_aliases = decode_component_values(component_definition.get("aliases"), project_data)
+            except ComponentValuesError as e:
+                raise ValueError(
+                    f"Aliases of component '{component_name}' in deployment '{deployment_name}' could not be read: {e}"
+                ) from e
 
             if not component_aliases:
                 continue
@@ -1035,12 +1198,6 @@ class ProjectManager:
 
             # Categorize each alias
             for alias_name, alias_template in component_aliases.items():
-                if not isinstance(alias_template, str):
-                    logger.warning(
-                        f"Alias '{alias_name}' in component '{component_name}' has non-string value, skipping"
-                    )
-                    continue
-
                 try:
                     # Determine which service and source type this alias belongs to
                     service_category, source_type = self._categorize_alias(alias_name, alias_template)
@@ -1089,6 +1246,53 @@ class ProjectManager:
             logger.info(f"Collected {total_aliases} aliases for deployment '{deployment_name}' ({summary})")
 
         return categorized_aliases
+
+    @staticmethod
+    def _scope_direct_aliases_to_component(
+        direct_aliases: dict[str, dict[str, str]],
+        project_data: dict[str, Any],
+        component_name: str,
+    ) -> dict[str, dict[str, str]]:
+        """Narrow deployment-wide direct aliases to those *component_name* declares.
+
+        Aliases are collected per deployment because secret-sourced ones merge into a
+        single shared secret per service. Direct ones are different: they resolve
+        against the component's OWN env vars (PUBLIC_HOSTNAME from publish-on-web,
+        DATA_PATH from storage). Handing every component the deployment-wide set made
+        a sibling with neither service resolve another component's aliases against an
+        empty context, which raises "Variable references not found in context".
+
+        Args:
+            direct_aliases: service_category -> {alias_name: template}, deployment-wide.
+            project_data: The project file, used to read the component's own aliases.
+            component_name: Component currently being processed.
+
+        Returns:
+            The same structure, containing only aliases this component declares.
+            Empty service categories are dropped.
+        """
+        raw_aliases = next(
+            (
+                component.get("aliases")
+                for component in project_data.get("components", [])
+                if component.get("name") == component_name
+            ),
+            None,
+        )
+        # Decoded rather than read as a mapping: the stored shape is one AGE block, so
+        # membership has to be tested on the decrypted names (RC-106). Without this the
+        # test below is a substring/character test on a ciphertext and every direct
+        # alias silently drops out.
+        own_aliases = decode_component_values(raw_aliases, project_data)
+        if not own_aliases:
+            return {}
+
+        scoped: dict[str, dict[str, str]] = {}
+        for service_category, service_aliases in direct_aliases.items():
+            selected = {name: template for name, template in service_aliases.items() if name in own_aliases}
+            if selected:
+                scoped[service_category] = selected
+        return scoped
 
     def _resolve_aliases(self, aliases: dict[str, str], context: dict[str, str]) -> dict[str, str]:
         """
@@ -1139,6 +1343,172 @@ class ProjectManager:
         logger.info(f"Successfully resolved {len(resolved)} aliases")
         return resolved
 
+    async def _emit_waker_manifests(
+        self,
+        *,
+        project_data: dict[str, Any],
+        deployment: dict[str, Any],
+        component_name: str,
+        component_reference: str,
+        unique_name: str,
+        namespace: str,
+        cluster: str,
+        project_name: str,
+        output_dir: str,
+        created_files: list[str],
+    ) -> None:
+        """Emit the sleep-mode waker for one component, or nothing.
+
+        Renders the waker Deployment + ConfigMap and its SOPS token Secret behind the
+        component's Service (same ``app`` label, ``zad-role: waker``) when the deployment
+        is asleep/waking and this is the chosen waker component. The token comes from the
+        deployment's own ``sleep.wake-token`` (minted by the sweeper). All files go into
+        ``created_files`` so the obsolete-manifest prune removes them once awake.
+        """
+        from opi.services.catalog.sleep_mode import config as sleep_config
+        from opi.services.catalog.sleep_mode import manifests as sleep_manifests
+        from opi.services.catalog.sleep_mode import state as sleep_state
+        from opi.services.catalog.sleep_mode import token as sleep_token
+        from opi.services.catalog.sleep_mode.secret import WakeTokenSecret
+        from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING
+
+        deployment_name = deployment.get("name", "")
+        config = sleep_config.load(project_data, cluster)
+        if config is None or not config.waker:
+            return
+        current = sleep_state.read(project_data, deployment_name)
+        if current.state not in (STATE_SLEEPING, STATE_WAKING):
+            return
+        selected = sleep_manifests.select_waker_component(project_data, deployment, config, self._project_file_handler)
+        if selected != component_reference:
+            return
+        if not current.wake_token:
+            logger.warning(
+                "sleep-mode: no wake token stored for %s/%s; skipping waker manifests",
+                project_name,
+                deployment_name,
+            )
+            return
+
+        generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Waker Deployment
+        deployment_values = sleep_manifests.build_waker_deployment_values(
+            app_name=unique_name,
+            namespace=namespace,
+            project_name=project_name,
+            deployment_name=deployment_name,
+            cluster=cluster,
+            generated_at=generated_at,
+        )
+        deployment_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "deployment.yaml.jinja")
+        deployment_manifest_name = generate_manifest_name(component_name, "waker-deployment")
+        self._manifest_generator.create_manifest_file(
+            template_path=deployment_template,
+            values=deployment_values,
+            output_dir=output_dir,
+            output_filename=deployment_manifest_name,
+            use_sops=False,
+        )
+        created_files.append(f"{deployment_manifest_name}.yaml")
+
+        # Waker ConfigMap
+        configmap_values = sleep_manifests.build_waker_configmap_values(
+            app_name=unique_name,
+            namespace=namespace,
+            project_name=project_name,
+            deployment_name=deployment_name,
+            component_reference=component_reference,
+            config=config,
+            cluster=cluster,
+        )
+        configmap_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "configmap.yaml.jinja")
+        configmap_manifest_name = generate_manifest_name(component_name, "waker-config")
+        self._manifest_generator.create_manifest_file(
+            template_path=configmap_template,
+            values=configmap_values,
+            output_dir=output_dir,
+            output_filename=configmap_manifest_name,
+            use_sops=False,
+        )
+        created_files.append(f"{configmap_manifest_name}.yaml")
+
+        # Waker token Secret (SOPS), from the deployment's stored wake token
+        plain_token = await sleep_token.decrypt(current.wake_token, project_data)
+        secret_template = os.path.join(
+            os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
+        )
+        self._write_secret_file(
+            SecretFileSpec(
+                secret_name=sleep_manifests.waker_token_secret_name(unique_name),
+                secret_pairs=WakeTokenSecret(token=plain_token).to_k8s_secret_data(),
+                # Only the waker pod reads this, and it is pruned on wake. Counting it in
+                # the config hash restarted the application again right after it came up.
+                include_in_config_hash=False,
+            ),
+            deployment_name=deployment_name,
+            namespace=namespace,
+            output_dir=output_dir,
+            template_path=secret_template,
+            created_files=created_files,
+        )
+        logger.info(
+            "sleep-mode: emitted waker for %s/%s (component %s)", project_name, deployment_name, component_reference
+        )
+
+    def _write_secret_file(
+        self,
+        spec: SecretFileSpec,
+        *,
+        deployment_name: str,
+        namespace: str,
+        output_dir: str,
+        template_path: str,
+        created_files: list[str],
+    ) -> None:
+        """Write one deployment SOPS secret manifest (RC-5 Phase 6c shared writer).
+
+        The single place that turns a service's ``SecretFileSpec`` into a file:
+        optional secret registration, cross-component alias resolution,
+        ``create_manifest_file`` and obsolete-prune bookkeeping. Services declare the
+        spec (``Service.build_secret_files``); this stays service-agnostic.
+        """
+        if spec.register_secret is not None:
+            if not spec.secret_type:
+                msg = f"SecretFileSpec '{spec.secret_name}' registers a secret without a secret_type to file it under"
+                raise ValueError(msg)
+            self._add_secret_to_create(deployment_name, spec.secret_type, spec.register_secret)
+
+        secret_data = dict(spec.secret_pairs)
+        if spec.resolve_aliases and spec.secret_type:
+            aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get(spec.secret_type, {})
+            if aliases:
+                logger.debug(f"Resolving {len(aliases)} {spec.secret_type} aliases for deployment {deployment_name}")
+                resolved_aliases = self._resolve_aliases(aliases, secret_data)
+                secret_data.update(resolved_aliases)
+                logger.info(f"Added {len(resolved_aliases)} resolved {spec.secret_type} aliases to deployment secret")
+
+        manifest_name = f"{spec.secret_name}-secret"
+        secret_path = self._manifest_generator.create_manifest_file(
+            template_path=template_path,
+            values={
+                "name": spec.secret_name,
+                "namespace": namespace,
+                "secret_pairs": secret_data,
+                # One place turns "this is not application config" into the label the
+                # ArgoCD plugin filters on, so a service states what its secret IS and
+                # never has to know a config-hash exists.
+                "secret_labels": _secret_labels_for(spec),
+            },
+            output_dir=output_dir,
+            output_filename=manifest_name,
+            use_sops=True,
+        )
+        sops_filename = f"{manifest_name}.to-sops.yaml"
+        created_files.append(sops_filename)
+        logger.info(f"Secret '{spec.secret_name}' will be SOPS encrypted: {sops_filename}")
+        logger.debug(f"Successfully created secret manifest: {secret_path}")
+
     async def _get_project_keycloak_config_for_cluster(self, cluster: str) -> dict[str, Any] | None:
         """
         Find Keycloak config entry for a specific cluster.
@@ -1151,7 +1521,9 @@ class ProjectManager:
         """
 
         project_data = await self.get_contents(record_base=False)
-        keycloak_list = project_data.get("config", {}).get("keycloak", [])
+        # RC-5 B: keycloak admin connections live under the keycloak service config
+        # (relocated from the old project-level config.keycloak). Still matched by realm.
+        keycloak_list = Project(project_data).get("services/keycloak/config/realms") or []
         if not keycloak_list:
             return None
 
@@ -1265,7 +1637,7 @@ class ProjectManager:
             await self.__git_connector_for_argocd.close()
             self.__git_connector_for_argocd = None
 
-    def set_progress_manager(self, task_progress_manager: TaskProgressManager) -> None:
+    def set_progress_manager(self, task_progress_manager: AnyTaskProgressManager) -> None:
         """Set the task progress manager for tracking operation status."""
         self.__progress_manager = task_progress_manager
 
@@ -1292,9 +1664,38 @@ class ProjectManager:
                 return dep
         return None
 
-    def get_progress_manager(self) -> TaskProgressManager | None:
+    def get_progress_manager(self) -> AnyTaskProgressManager | None:
         """Get the task progress manager for tracking operation status."""
         return self.__progress_manager
+
+    # ------------------------------------------------------------------
+    # Progress steps
+    #
+    # A step is only reported when it is actually performed, so a step that
+    # shows up on the page always corresponds to work that ran. Skipped work
+    # gets no step at all rather than a green check it did not earn.
+    # ------------------------------------------------------------------
+
+    def _begin_step(self, name: str) -> str | None:
+        """Start a named progress step for the running task.
+
+        Returns the step id, or None when no progress manager is attached (the
+        pipeline also runs from schedulers and CLI paths that report nothing).
+        """
+        progress_manager = self.get_progress_manager()
+        if progress_manager is None:
+            return None
+        return progress_manager.add_task(name)
+
+    def _end_step(self, step_id: str | None, error: str | None = None) -> None:
+        """Close a step started with :meth:`_begin_step`: completed, or failed with a reason."""
+        progress_manager = self.get_progress_manager()
+        if progress_manager is None or step_id is None:
+            return
+        if error:
+            progress_manager.fail_task(step_id, error)
+        else:
+            progress_manager.complete_task(step_id)
 
     async def set_git_connector_for_deployment(self, name: str, git_connector: GitConnector) -> None:
         if name in self.__git_connectors_for_deployments:
@@ -1349,6 +1750,7 @@ class ProjectManager:
         *,
         refresh_cache: bool = True,
         enforce_validation: bool = True,
+        base: dict[str, Any] | None = None,
     ) -> None:
         """The ONLY validated way to persist a mutated project file.
 
@@ -1370,6 +1772,14 @@ class ProjectManager:
         block a recovery/optimization/credential write (which would otherwise
         leave on-disk and live state out of sync). It never introduces a
         less-validated write path: the same checks run either way.
+
+        base: the version ``project_data`` was built from, for callers that did not
+        read it through this instance. The task worker is that case: it receives a
+        finished project dict from a form submission, so ``get_contents()`` never ran,
+        ``__contents_as_read`` is None, and the store falls back to last-writer-wins --
+        silently dropping whatever landed in between. Passing the version the form was
+        rendered from restores the compare-and-swap, so the store merges the two
+        changes instead of overwriting one.
         """
         filename = (
             os.path.basename(self._project_file_relative_path)
@@ -1394,7 +1804,7 @@ class ProjectManager:
             enforce_validation=enforce_validation,
             filename=filename,
             refresh_cache=refresh_cache,
-            base=self.__contents_as_read,
+            base=base if base is not None else self.__contents_as_read,
         )
 
         # This manager now knows the current state, so a second save from the same
@@ -1447,7 +1857,10 @@ class ProjectManager:
         return result.committed
 
     async def check_and_create_namespaces(
-        self, deployment_name: str | None = None, deployment_names: list[str] | None = None
+        self,
+        deployment_name: str | None = None,
+        deployment_names: list[str] | None = None,
+        known_namespace_labels: dict[str, str] | None = None,
     ) -> bool:
         """
         Check and create namespaces for all deployments in the project for this cluster.
@@ -1456,6 +1869,11 @@ class ProjectManager:
             deployment_name: Optional single deployment to process
             deployment_names: Optional explicit set of deployments to process
                 (takes precedence over ``deployment_name``)
+            known_namespace_labels: namespace -> argocd managed-by value, as read in one
+                call by the caller. Given this, an existing namespace with the right
+                label costs no kubectl invocation at all. Startup passes it because it
+                walks every project; per-request callers leave it None and each check
+                talks to the cluster, which is what you want for a single deployment.
 
         Returns:
             True if all namespaces were checked/created successfully
@@ -1485,27 +1903,39 @@ class ProjectManager:
 
         all_successful = True
 
+        # Deployments share a namespace (one per project, not per deployment), so the
+        # same namespace was checked and labelled once per deployment: 127 rounds for
+        # 44 namespaces at startup. Collapse to the distinct set first.
+        namespaces: dict[str, list[str]] = {}
         for deployment in deployments:
             namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, cast("str", deployment["namespace"]))
+            namespaces.setdefault(namespace, []).append(cast("str", deployment["name"]))
 
+        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
+
+        for namespace, deployment_list in namespaces.items():
             logger.info(
-                f"Checking namespace '{namespace}' for deployment '{deployment['name']}' for project '{project_data['name']}':"
+                f"Checking namespace '{namespace}' for deployment(s) {deployment_list} for project '{project_data['name']}':"
             )
-            # Check if namespace exists
-            namespace_exists = await self._kubectl_connector.namespace_exists(namespace)
-            if namespace_exists:
-                logger.info(
-                    f"Namespace '{namespace}' already exists for deployment '{deployment['name']}' for project '{project_data['name']}'"
-                )
+
+            if known_namespace_labels is not None:
+                namespace_exists = namespace in known_namespace_labels
+                label_is_correct = known_namespace_labels.get(namespace) == manager_value
             else:
-                logger.info(
-                    f"Creating namespace '{namespace}' for deployment '{deployment['name']}' for project '{project_data['name']}':"
-                )
+                namespace_exists = await self._kubectl_connector.namespace_exists(namespace)
+                label_is_correct = False  # unknown, so apply it as before
+
+            if namespace_exists:
+                logger.info(f"Namespace '{namespace}' already exists for project '{project_data['name']}'")
+            else:
+                logger.info(f"Creating namespace '{namespace}' for project '{project_data['name']}':")
                 # Create the namespace using shared function
                 await self._create_namespace_with_argocd_label(namespace)
+                label_is_correct = True  # applied as part of creation
 
-            # Always ensure ArgoCD managed-by label exists (idempotent)
-            await self._ensure_argocd_managed_by_label(namespace)
+            # Idempotent, but not free: skip it when we already read the right value.
+            if not label_is_correct:
+                await self._ensure_argocd_managed_by_label(namespace)
 
             if progress_manager:
                 progress_manager.set_namespace(namespace)
@@ -1618,6 +2048,9 @@ class ProjectManager:
         logger.info(f"Checking SOPS secret for project {project_name} in namespace {namespace}")
 
         public_key = get_project_public_key(project_data)
+        if not public_key:
+            msg = f"Project {project_name} has no AGE public key; a SOPS secret cannot be written without it"
+            raise RuntimeError(msg)
         private_key = await get_decoded_project_private_key(project_data)
 
         existing_secret = await self._kubectl_connector.get_sops_secret_from_namespace(namespace)
@@ -1741,9 +2174,7 @@ class ProjectManager:
         progress_manager = self.get_progress_manager()
         namespace_subtask = None
         if progress_manager:
-            namespace_subtask = progress_manager.add_task(
-                f"Creating infrastructure namespace {infrastructure_namespace}"
-            )
+            namespace_subtask = progress_manager.add_task(f"Namespace {infrastructure_namespace} aanmaken")
 
         try:
             # Check if namespace exists, create if needed (using shared function)
@@ -1817,7 +2248,7 @@ class ProjectManager:
         progress_manager = self.get_progress_manager()
         infra_task = None
         if progress_manager:
-            infra_task = progress_manager.add_task("Creating infrastructure resources (database cluster)")
+            infra_task = progress_manager.add_task("Databasecluster aanmaken")
 
         try:
             # STEP 1: Check for existing superuser credentials and validate them
@@ -2023,6 +2454,11 @@ class ProjectManager:
                     "ops_namespace": get_namespace(cluster_name),
                     "backup_namespace": get_backup_namespace(cluster_name),
                     "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
+                    # The CNPG operator (in its own namespace) must reach the
+                    # dedicated cluster's pods to extract instance status, or the
+                    # Cluster never becomes Ready. The DB subsystem owns which
+                    # namespace that is; only the infra namespace needs this rule.
+                    "database_operator_namespace": database_cluster_config["database_operator_namespace"],
                     # The project's app namespaces must reach the PostgreSQL
                     # cluster that lives in this infrastructure namespace.
                     "allowed_ingress_namespaces": tenant_namespaces,
@@ -2148,11 +2584,12 @@ class ProjectManager:
             # STEP 8: Wait for infrastructure application to be created by ArgoCD
             infra_app_name = f"{project_name}-infrastructure"
             if progress_manager and infra_task:
-                progress_manager.update_task(infra_task, "Waiting for ArgoCD to create infrastructure application")
+                progress_manager.update_task(infra_task, "Wachten tot ArgoCD de infrastructuur aanmaakt")
 
             await self._argo_manager.wait_for_application_created(
                 app_name=infra_app_name,
                 timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
+                poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
             )
 
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
@@ -2170,7 +2607,7 @@ class ProjectManager:
             )
 
             if progress_manager and infra_task:
-                progress_manager.update_task(infra_task, "Waiting for database cluster to be ready")
+                progress_manager.update_task(infra_task, "Wachten tot het databasecluster klaar is")
 
             await self._argo_manager.wait_for_infrastructure_ready(
                 project_name=project_name,
@@ -2223,11 +2660,15 @@ class ProjectManager:
             logger.warning(f"No deployments found in project: {project_name}")
             return
 
-        for deployment in deployments:
-            cluster_name = deployment["cluster"]
-            base_namespace = deployment["namespace"]
-            namespace = get_prefixed_namespace(cluster_name, base_namespace)
+        # The SOPS secret lives per namespace, and deployments of a project share one,
+        # so iterating deployments read the same secret several times: 128 `kubectl get
+        # secret` calls for 44 namespaces at startup. Same fix as for the namespaces.
+        namespaces = {
+            get_prefixed_namespace(cast("str", deployment["cluster"]), cast("str", deployment["namespace"]))
+            for deployment in deployments
+        }
 
+        for namespace in sorted(namespaces):
             # Use shared function for SOPS secret creation
             await self._ensure_sops_secret_in_namespace(namespace, contents)
 
@@ -2298,7 +2739,7 @@ class ProjectManager:
     async def process_project_from_git(
         self,
         relative_project_file_path: str,
-        task_progress_manager: TaskProgressManager | None = None,
+        task_progress_manager: AnyTaskProgressManager | None = None,
         deployment_name: str | None = None,
         force_clone: bool = False,
         argocd_resources_changed: bool = True,
@@ -2365,36 +2806,50 @@ class ProjectManager:
         logger.info(f"Processing project from Git: {relative_project_file_path}")
 
         try:
-            git_connector_for_project_files = await self.get_git_connector_for_project_files()
+            read_step = self._begin_step("Projectbestand ophalen en controleren")
+            try:
+                git_connector_for_project_files = await self.get_git_connector_for_project_files()
 
-            # Use the file handler to analyze changes
-            # TODO: change detection may turn out too difficult or unpredictable, so perhaps we should use API calls instead for partial changes
-            analysis = await self._project_file_handler.analyze_project_changes(
-                git_connector_for_project_files, relative_project_file_path
-            )
+                # Use the file handler to analyze changes
+                # TODO: change detection may turn out too difficult or unpredictable, so perhaps we should use API calls instead for partial changes
+                analysis = await self._project_file_handler.analyze_project_changes(
+                    git_connector_for_project_files, relative_project_file_path
+                )
 
-            current_yaml = analysis["current_yaml"]
+                current_yaml = analysis["current_yaml"]
 
-            # Security gate FIRST: validate against the project schema before
-            # any side-effect (including the auto-migration save+commit+push
-            # below). Without this ordering, a hostile project that happens to
-            # migrate cleanly would be written to zad-projects with our ops-
-            # manager identity *before* validation rejected it. Fails closed.
-            validate_project_schema(current_yaml)
+                # Security gate FIRST: validate against the project schema before
+                # any side-effect (including the auto-migration save+commit+push
+                # below). Without this ordering, a hostile project that happens to
+                # migrate cleanly would be written to zad-projects with our ops-
+                # manager identity *before* validation rejected it. Fails closed.
+                validate_project_schema(current_yaml)
+            except Exception as e:
+                self._end_step(read_step, str(e))
+                raise
+            self._end_step(read_step)
 
             # read_project_file auto-migrates in memory; persist to disk if needed
             if self._project_file_handler.was_migrated:
                 project_name = current_yaml.get("name", relative_project_file_path)
                 logger.info(f"Schema migration applied for project '{project_name}', committing changes")
+                # Only reported when it actually happens: on a normal run there is no
+                # migration, and a step claiming one would be a lie.
+                migrate_step = self._begin_step("Projectbestand bijwerken naar de nieuwste vorm")
                 # Central save: one locked write+commit. The previous write-then-commit
                 # pair left the migrated file uncommitted in the shared warm copy in
                 # between, where a concurrent reconcile could discard it -- after which
                 # the commit found nothing to commit and still reported success.
-                await self.save_and_commit_project(
-                    current_yaml,
-                    f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}",
-                    enforce_validation=False,
-                )
+                try:
+                    await self.save_and_commit_project(
+                        current_yaml,
+                        f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}",
+                        enforce_validation=False,
+                    )
+                except Exception as e:
+                    self._end_step(migrate_step, str(e))
+                    raise
+                self._end_step(migrate_step)
 
             previous_yaml = analysis["previous_yaml"]
             changes = analysis["changes"]
@@ -2453,8 +2908,8 @@ class ProjectManager:
                 from opi.core.database_pools import get_database_pool
                 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
-                pool = get_database_pool("main")
-                marked_service = MarkedForDeletionService(pool)
+                get_database_pool("main")  # guard: raises if the DB is unavailable -> immediate delete
+                marked_service = MarkedForDeletionService()
             except KeyError, ValueError:
                 logger.warning("Database pool not available - persistent resources will be deleted immediately")
 
@@ -2463,6 +2918,11 @@ class ProjectManager:
             # Step 1.6: Process deployment removals BEFORE creations
             if previous_yaml is not None and deployment_changes["deleted"]:
                 logger.info("Processing %d deleted deployment(s)", len(deployment_changes["deleted"]))
+                # Only when there is something to remove; nothing to do gets no step.
+                delete_step = self._begin_step(
+                    f"Verwijderde deployments opruimen ({len(deployment_changes['deleted'])})"
+                )
+                delete_errors_before = len(critical_failures)
 
                 for value in deployment_changes["deleted"].values():
                     if isinstance(value, dict) and "name" in value:
@@ -2479,6 +2939,9 @@ class ProjectManager:
                         except Exception as e:
                             logger.exception("Failed to delete resources for deployment %s: %s", dep_name, e)
                             critical_failures.append(f"Failed to delete removed deployment '{dep_name}': {e}")
+
+                new_delete_errors = critical_failures[delete_errors_before:]
+                self._end_step(delete_step, "; ".join(new_delete_errors) if new_delete_errors else None)
 
             # Step 1.7: Detect and clean up services removed from surviving deployments
             if previous_yaml is not None:
@@ -2505,11 +2968,26 @@ class ProjectManager:
             # Step 2: Process the project with change context
             logger.info("Step 2: Processing project with change detection")
 
-            process_success = await self.process_project(
-                force_clone=force_clone, deployment_names=targets, force_reenable=force_reenable
-            )
+            process_step = self._begin_step("Diensten en manifesten bijwerken")
+            try:
+                process_success = await self.process_project(
+                    force_clone=force_clone, deployment_names=targets, force_reenable=force_reenable
+                )
+            except Exception as e:
+                self._end_step(process_step, str(e))
+                raise
             if not process_success:
-                critical_failures.append("Project processing failed - check logs for details")
+                # The reason, not a pointer at logs the caller has no access to (RC-66,
+                # bevinding 2). process_project records why it gave up in
+                # _processing_error; only when it did not is there nothing better to say
+                # than that this step failed.
+                critical_failures.append(self._processing_error or "Bijwerken van diensten en manifesten is mislukt")
+                self._end_step(
+                    process_step,
+                    self._processing_error or "Bijwerken van diensten en manifesten is mislukt",
+                )
+            else:
+                self._end_step(process_step)
 
             # Check for critical failures before triggering ArgoCD sync
             # Don't sync if there were failures during processing
@@ -2530,22 +3008,30 @@ class ProjectManager:
             )
 
             progress_manager = self.get_progress_manager()
-            argo_task = None
-            if progress_manager:
-                argo_task = progress_manager.add_task("Waiting for ArgoCD deployment sync")
+            argo_task = self._begin_step("Wachten tot ArgoCD gesynchroniseerd is")
 
             argo_connector = create_argo_connector()
 
             project_name = await self.get_name()
             deployments = await self.get_deployments(cluster_filter=True, deployment_names=targets)
+            # The project as it stands, for asking the services what they know about a
+            # deployment (RC-28). Same contents the deployments above came from.
+            sync_project_data = await self.get_contents(record_base=False)
             sync_failures: list[str] = []
             # Runtime pod-health issues (e.g. CrashLoopBackOff) are the user app crashing,
             # not a deploy/sync failure: OPI synced the manifests fine. These are logged
             # as warnings and do NOT fail the task, so a persistently-crashing app doesn't
             # flood ERRORs (and pages) on every reprocess of the project.
             health_warnings: list[str] = []
+            # Set when a warning came from the registry failing to serve an image. The
+            # closing sentence of the user-facing notice blames the tenant's own app,
+            # which is wrong for a platform-side registry outage.
+            registry_outage_seen = False
 
             if deployments and project_name:
+                from opi.services.catalog.base import ComponentHealth
+                from opi.services.deployment_observation import run_after_sync_observation
+                from opi.services.deployment_state import collect_deployment_state
                 from opi.services.oom_watcher import (
                     MAIN_CONTAINER_NAME,
                     STALL_NOTICE_SECONDS,
@@ -2554,7 +3040,6 @@ class ProjectManager:
                     describe_components_waiting,
                     disable_components_for_image_pull,
                 )
-                from opi.services.resource_tuning_service import tune_deployment_resources
                 from opi.utils.naming import generate_unique_name
 
                 # Build (app_name, deployment) pairs
@@ -2600,7 +3085,7 @@ class ProjectManager:
                     async def _wait_created(app_name: str) -> str | None:
                         try:
                             await self._argo_manager.wait_for_application_created(
-                                app_name=app_name, timeout=360, poll_interval=5
+                                app_name=app_name, timeout=360, poll_interval=1
                             )
                             return None
                         except TimeoutError:
@@ -2622,6 +3107,12 @@ class ProjectManager:
                     base_namespace = deployment.get("namespace", "")
                     cluster = deployment.get("cluster", "")
                     namespace = get_prefixed_namespace(cluster, base_namespace) if base_namespace and cluster else ""
+
+                    # What the services report about this deployment (RC-28): sleep-mode
+                    # says it scaled the application to zero, so "no pods" is the intended
+                    # state and not something to report as a stalled rollout. Collected
+                    # once here, from the project file, and handed to both readers below.
+                    deployment_state = collect_deployment_state(sync_project_data, dep_name)
 
                     # Build health check callback for this deployment
                     oom_callback = None
@@ -2646,6 +3137,7 @@ class ProjectManager:
                                 namespace,
                                 component_names,
                                 component_refs=component_refs,
+                                state=deployment_state,
                             )
 
                     # Live per-deployment progress subtask: surfaces "what are we
@@ -2660,11 +3152,18 @@ class ProjectManager:
 
                     # Track the last reported line per deployment to detect stalls.
                     stall: dict[str, Any] = {"line": None, "since": 0}
+                    # De statuspoll draait elke 2s; de kubectl-inspectie hieronder houdt zijn
+                    # eigen 5s-ritme zodat de snellere poll het cluster niet zwaarder belast.
+                    # (De OOM-callback verderop throttlet zichzelf al, via last_check_at.)
+                    describe_next: dict[str, int] = {"at": 0}
 
                     async def _on_progressing(elapsed: int) -> None:
-                        if app_subtask and namespace and component_names:
+                        if app_subtask and namespace and component_names and elapsed >= describe_next["at"]:
+                            describe_next["at"] = elapsed + 5
                             try:
-                                statuses = await describe_components_waiting(namespace, component_names, component_refs)
+                                statuses = await describe_components_waiting(
+                                    namespace, component_names, component_refs, deployment_state
+                                )
                             except Exception:
                                 statuses = []
                             if statuses:
@@ -2692,10 +3191,38 @@ class ProjectManager:
 
                     try:
                         reconciled_at = await argo_connector.refresh_application(app_name)
+
+                        # Actively fetch the render right after our push (and the refresh
+                        # above, so the repo-server has re-checked the source). A broken
+                        # kustomization returns the generation error here - including the
+                        # plugin stderr - so the deploy fails fast with the real cause
+                        # instead of a 300s time-out. This also covers helm/helmfile
+                        # deployments, which only render inside the CMP. A non-render failure
+                        # (network, 401) must not block the deploy: log and fall through to
+                        # the wait loop.
+                        render_ok, render_detail = await argo_connector.get_application_manifests(app_name)
+                        if not render_ok and _looks_like_render_failure(render_detail):
+                            from opi.services.event_interpreter import condense_render_error
+
+                            logger.error("Manifest render failed for '%s': %s", app_name, render_detail)
+                            raise RuntimeError(
+                                f"Manifest render failed for '{app_name}': {condense_render_error(render_detail)}"
+                            )
+                        if not render_ok:
+                            logger.warning(
+                                "Could not verify render for '%s' (not a render error), proceeding to wait: %s",
+                                app_name,
+                                render_detail,
+                            )
+
                         await self._argo_manager.wait_for_application_synced(
                             app_name=app_name,
                             timeout=300,
-                            poll_interval=5,
+                            # 2s: de status-GET is een goedkope live read; het oude 5s-rooster
+                            # betekende gemiddeld 2,5s extra wachten nadat de app al groen was.
+                            # De zwaardere componenten-inspectie in on_progressing zit op zijn
+                            # eigen 5s-throttle en versnelt hierdoor niet mee.
+                            poll_interval=2,
                             refreshed_after=reconciled_at,
                             on_progressing=on_progressing,
                         )
@@ -2723,7 +3250,7 @@ class ProjectManager:
                             last = stall["line"] or f"{dep_name}: nog niet gezond"
                             progress_manager.fail_subtask(
                                 app_subtask,
-                                f"Time-out na 300s — {last}. Controleer de logs van het component.",
+                                f"Time-out na 300s: {last}. Controleer de logs van het component.",
                             )
                         return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
                     except RuntimeError as e:
@@ -2734,7 +3261,9 @@ class ProjectManager:
 
                 pending_apps = [(a, d) for a, d in app_deployments if not any(a in f for f in sync_failures)]
                 if progress_manager and argo_task and pending_apps:
-                    progress_manager.update_task(argo_task, f"Waiting for {len(pending_apps)} application(s) to sync")
+                    progress_manager.update_task(
+                        argo_task, f"Wachten tot {len(pending_apps)} applicatie(s) gesynchroniseerd zijn"
+                    )
                 outcomes = await asyncio.gather(*(_refresh_and_wait(a, d) for a, d in pending_apps))
 
                 # Serial remediation pass over the outcomes. OOM tuning and
@@ -2790,8 +3319,22 @@ class ProjectManager:
 
                     # Categorize failures by type
                     oom_failures = [f for f in e.failures if f.failure_type == "oom"]
-                    image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
                     crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
+
+                    # Split the image-pull failures on what the registry actually told
+                    # us. A 5xx or a rate limit means the registry could not answer, so
+                    # whether the image exists is unknown -- those must never disable the
+                    # component: disabling scales it to 0, which removes the very pod
+                    # that would have retried, so a registry hiccup becomes a permanent
+                    # outage that no refresh undoes. Kubelet retries the pull with its
+                    # own backoff and recovers by itself once the registry does.
+                    all_image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
+                    registry_down_failures = [
+                        f for f in all_image_pull_failures if is_transient_registry_error(f.message)
+                    ]
+                    image_pull_failures = [
+                        f for f in all_image_pull_failures if not is_transient_registry_error(f.message)
+                    ]
 
                     task_service = (
                         progress_manager._task_service
@@ -2799,45 +3342,42 @@ class ProjectManager:
                         else None
                     )
 
-                    # Handle OOM: tune resources, queue refresh (existing behavior)
+                    # Handle OOM via the generic after-sync hook scan (no per-service
+                    # branch here): build the observed health for the OOM'd components
+                    # and let the registry decide. The resource-tuning system service
+                    # tunes and asks for a refresh; the runner commits once.
                     if oom_failures:
-                        oom_components = ", ".join(f.component_reference or f.component_name for f in oom_failures)
+                        oom_names = ", ".join(f.component_reference or f.component_name for f in oom_failures)
                         if progress_manager and argo_task:
                             progress_manager.update_task(
                                 argo_task,
-                                f"OOM detected for {oom_components} in {app_name}, tuning resources...",
+                                f"Te weinig geheugen voor {oom_names} in {app_name}, geheugenlimiet bijstellen...",
                             )
+                        component_health = {
+                            (f.component_reference or f.component_name): ComponentHealth(oom_detected=True)
+                            for f in oom_failures
+                        }
                         try:
-                            result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
-                            if result.changes:
+                            observation = await run_after_sync_observation(project_name, dep_name, component_health)
+                            if observation.requeue_refresh:
                                 logger.info(
-                                    "OOM auto-tune applied %d change(s) for %s/%s (components: %s), queuing refresh task",
-                                    len(result.changes),
+                                    "OOM auto-tune committed changes for %s/%s (components: %s), queuing refresh task",
                                     project_name,
                                     dep_name,
-                                    oom_components,
+                                    oom_names,
                                 )
                                 await self._queue_refresh_task(task_service, project_name, dep_name)
-                            else:
-                                logger.warning(
-                                    "OOM auto-tune found no actionable changes for %s/%s (components: %s)",
-                                    project_name,
-                                    dep_name,
-                                    oom_components,
-                                )
-                                sync_failures.append(
-                                    f"{app_name}: OOM detected for {oom_components} but auto-tune could not determine new limits"
-                                )
+                            sync_failures.extend(f"{app_name}: {msg}" for msg in observation.failures)
                         except Exception as tune_err:
                             logger.error(
-                                "OOM auto-tune failed for %s/%s (components: %s): %s",
+                                "OOM after-sync observation failed for %s/%s (components: %s): %s",
                                 project_name,
                                 dep_name,
-                                oom_components,
+                                oom_names,
                                 tune_err,
                             )
                             sync_failures.append(
-                                f"{app_name}: OOM detected for {oom_components}, auto-tune failed: {tune_err}"
+                                f"{app_name}: OOM detected for {oom_names}, auto-tune failed: {tune_err}"
                             )
 
                     # Handle ImagePullBackOff: disable component, queue refresh. A pod
@@ -2882,6 +3422,19 @@ class ProjectManager:
                             else:
                                 health_warnings.append(msg)
 
+                    # Registry outage: nothing to remediate and nothing the tenant did
+                    # wrong, so only report it -- named as a registry problem, so the
+                    # user does not go looking for a broken image that is fine.
+                    for f in registry_down_failures:
+                        registry_outage_seen = True
+                        image = f" [image {f.image}]" if f.image else ""
+                        reason = " ".join(f.message.split()) if f.message else ""
+                        health_warnings.append(
+                            f"{app_name}: de registry kon het image voor component "
+                            f"'{f.component_name}'{image} niet leveren: {reason}. "
+                            "Het component blijft aan staan en probeert het opnieuw."
+                        )
+
                     # CrashLoopBackOff is the user's app crashing at runtime, not a
                     # deploy/sync failure - report it as a warning, don't fail the task.
                     if crash_loop_failures:
@@ -2903,7 +3456,31 @@ class ProjectManager:
                 self._processing_error = failure_summary
                 return False
             elif health_warnings:
+                # The deploy itself succeeded: manifests generated, pushed, and synced.
+                # The app's own pods are crashing (CrashLoopBackOff, a not-yet-built PR
+                # image), which is the tenant's problem, not ours. This branch used to
+                # fall through WITHOUT returning, so the function returned None, the
+                # caller read that as failure, and a crash-looping PR environment
+                # produced a failed task and a useless "Deployment processing failed"
+                # alert on every push. Complete the task and report the reason instead.
+                summary = "; ".join(health_warnings)
                 logger.info("ArgoCD applications synced (%d runtime health warning(s) above)", len(health_warnings))
+                if progress_manager and argo_task:
+                    progress_manager.complete_task(argo_task)
+                    cause = (
+                        "Een deel daarvan ligt aan het platform: de registry kon een image niet leveren. "
+                        "Daar hoef je zelf niets voor te doen, het ophalen wordt vanzelf opnieuw geprobeerd."
+                        if registry_outage_seen
+                        else "Dat ligt aan de applicatie zelf (bijvoorbeeld een crashende pod of een image dat "
+                        "nog niet gebouwd is), niet aan het uitrollen."
+                    )
+                    notice = progress_manager.add_subtask(
+                        argo_task,
+                        f"Let op: de deployment is uitgerold, maar de applicatie draait niet gezond: {summary}. "
+                        f"{cause}",
+                    )
+                    progress_manager.complete_task(notice)
+                return True
             else:
                 logger.info("All ArgoCD applications are synced and healthy")
                 if progress_manager and argo_task:
@@ -2975,7 +3552,7 @@ class ProjectManager:
         for repo_name, repo_deployments in deployments_by_repo.items():
             logger.info(f"Processing repository: {repo_name} with {len(repo_deployments)} deployments")
 
-            repo_info = next((r for r in repositories if r.get("name") == repo_name), None)
+            repo_info = Project.locate(repositories, name=repo_name)
             if not repo_info:
                 raise Exception(f"Repository configuration not found: {repo_name}")
 
@@ -3016,10 +3593,8 @@ class ProjectManager:
         project_data = await self.get_contents()
         repositories = project_data.get("repositories") or []
         repositories: list[dict[str, str]] = repositories
-        for repo in repositories:
-            if repo.get("name") == repository_name:
-                return repo.get("path", "")
-        return ""
+        repo = Project.locate(repositories, name=repository_name)
+        return repo.get("path", "") if repo else ""
 
     @staticmethod
     async def _sops_private_key_for(project_data: dict[str, Any]) -> str | None:
@@ -3079,6 +3654,29 @@ class ProjectManager:
         for basename in obsolete:
             os.remove(os.path.join(target_path, basename))
 
+    def _prune_obsolete_service_manifests(
+        self, deployment: dict[str, Any], target_path: str, generated_files: list[str]
+    ) -> None:
+        """Delete deployment-wide, service-owned manifest files this run did not regenerate.
+
+        The counterpart of ``_prune_obsolete_component_manifests`` for the RC-15
+        deployment-manifest hook: a service (cross-domain-access today) writes files named
+        ``<deployment>-<service>-...``. When the service is switched off, its last rule is
+        removed, a component scope disappears, or a target project vanishes, the run no
+        longer generates that file, and this removes it (ArgoCD then prunes the resource).
+        The component prune leaves these alone because they carry no component prefix.
+        """
+        deployment_name = deployment["name"]
+        service_prefixes = {f"{deployment_name}-{service.value}-" for service in ServiceType}
+        obsolete = _select_obsolete_service_manifests(target_path, service_prefixes, set(generated_files))
+        if not obsolete:
+            return
+        logger.info(
+            f"Pruning {len(obsolete)} obsolete service manifest(s) from {deployment_name}: {', '.join(obsolete)}"
+        )
+        for basename in obsolete:
+            os.remove(os.path.join(target_path, basename))
+
     async def _process_deployment_manifests(
         self,
         deployment: dict[str, Any],
@@ -3100,7 +3698,7 @@ class ProjectManager:
         """
         project_data = await self.get_contents()
         project_name = await self.get_name()
-        deployment_name = deployment.get("name")
+        deployment_name = deployment["name"]
         cluster_name = deployment["cluster"]
 
         repo_path = await self.get_repository_path(deployment["repository"])
@@ -3151,6 +3749,13 @@ class ProjectManager:
         # glob, so leftovers would otherwise be re-adopted and keep dead workloads in
         # ArgoCD. Symmetric with the removed-service cleanup in DeleteProjectManager.
         self._prune_obsolete_component_manifests(deployment, target_path, created_files)
+
+        # Prune obsolete deployment-wide, service-owned manifests (RC-15). A service (e.g.
+        # cross-domain-access) writes <deployment>-<service>-* files; when the service is
+        # switched off or stops contributing, this removes the leftover so ArgoCD prunes
+        # the resource. Symmetric with the component prune above and non-overlapping (those
+        # files carry no component prefix).
+        self._prune_obsolete_service_manifests(deployment, target_path, created_files)
 
         # Run manifest extensions (e.g. registry rewrite for ODCN)
         extension_pipeline = load_extensions(cluster_name)
@@ -3251,9 +3856,9 @@ class ProjectManager:
 
         # Add deployment-level variables for hostname, subdomain, base-domain, issuer
         cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
-        subdomain = deployment.get("subdomain")
-        base_domain = deployment.get("base-domain")
-        issuer_config = deployment.get("issuer")
+        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
         use_https = get_ingress_tls_enabled(cluster_name)
 
         # Calculate hostname based on configuration
@@ -3601,8 +4206,8 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = deployment.get("issuer")
-        base_domain = deployment.get("base-domain")
+        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         # Only auto-generate issuer if issuer_config is exactly "letsencrypt" or "letsencrypt-staging"
         # If issuer_config already contains a domain suffix, use it as-is (no generation needed)
@@ -3984,8 +4589,8 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = deployment.get("issuer")
-        base_domain = deployment.get("base-domain")
+        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
             project_contact_email = project_data.get("config", {}).get("contact-email")
@@ -4304,10 +4909,19 @@ class ProjectManager:
             )
 
             if not await self.has_deployments_for_current_cluster():
+                # Nothing to reconcile is not a failure (RC-66, bevinding 2). A project
+                # created through POST /api/v2/projects has no deployments at all yet,
+                # and a project whose deployments all live on another cluster is simply
+                # not this operations manager's work. Reporting False made every refresh
+                # of such a project fail with "Project processing failed - check logs
+                # for details", pointing at logs the caller cannot read for a state that
+                # is entirely correct.
                 logger.info(
                     f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
                 )
-                return False
+                self._processing_error = None
+                self._component_failures = None
+                return True
 
             # Clear stale image-pull auto-disables so a component can deploy again:
             # when the image reference changed (any edit path), or -- on an explicit
@@ -4349,7 +4963,7 @@ class ProjectManager:
             creation_task = None
 
             if progress_manager:
-                creation_task = progress_manager.add_task("Project creation")
+                creation_task = progress_manager.add_task("Project aanmaken")
 
             # TODO: consider checking if a deployment needs to be done for this cluster instead of checking per method call
 
@@ -4358,15 +4972,11 @@ class ProjectManager:
             await self.check_and_create_namespaces(deployment_names=targets)
             await self.check_and_create_sops_secrets_in_namespaces(deployment_names=targets)
 
-            # Check if project requires infrastructure namespace (namespace-specific PostgreSQL)
-            # This check is infrastructure-level, independent of any manager initialization
-            project_services = project_data.get("services", [])
-            needs_infrastructure_namespace = any(
-                service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if isinstance(service_item, str)
-                else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
-                for service_item in (project_services or [])
-            )
+            # Check if project requires an infrastructure namespace (a dedicated,
+            # project-scoped PostgreSQL cluster). Both namespace-postgresql-database and
+            # postgresql-database with scope: project need it (RC-17). This check is
+            # infrastructure-level, independent of any manager initialization.
+            needs_infrastructure_namespace = project_uses_dedicated_postgres(project_data)
 
             # If infrastructure is needed, provision it BEFORE initializing managers
             if needs_infrastructure_namespace:
@@ -4400,10 +5010,21 @@ class ProjectManager:
             for deployment in deployments:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
                     current_deployment_name = deployment.get("name")
-                    await db_manager.create_resources_for_deployment(project_data, deployment, force_clone)
-                    await self._minio_manager.create_resources_for_deployment(project_data, deployment, force_clone)
-                    await self._keycloak_manager.create_resources_for_deployment(project_data, deployment)
-                    await self._redis_manager.create_resources_for_deployment(project_data, deployment)
+                    # RC-5 Phase 4: dispatch provisioning through the provider registry
+                    # instead of a hand-maintained sequence. Byte-identical -- the same
+                    # managers, in the same db -> minio -> keycloak -> redis order, with
+                    # the same args (managers keep their own self-guards).
+                    provision_ctx = ProvisionContext(
+                        project_data=project_data,
+                        deployment=deployment,
+                        force_clone=force_clone,
+                        database_manager=db_manager,
+                        minio_manager=self._minio_manager,
+                        keycloak_manager=self._keycloak_manager,
+                        redis_manager=self._redis_manager,
+                    )
+                    for provider in provisioning_services():
+                        await provider.provision(provision_ctx)
 
             # Generate application manifests (including PVC) BEFORE setting clone status.
             # PVC clone relies on clone-from.status.completed being false to include dataSource.
@@ -4534,6 +5155,8 @@ class ProjectManager:
                 namespace=namespace,
             )
 
+        self._track_public_urls(project_data, deployment, project_name)
+
         logger.info(f"Processing deployment: {deployment_name} in prefixed namespace: {namespace}")
 
         # Check if deployment has components
@@ -4543,15 +5166,15 @@ class ProjectManager:
             return []
 
         # Register subdomain for nice-url mode (with rollback on failure)
-        domain_mode = deployment.get("domain-mode")
-        subdomain = deployment.get("subdomain")
-        base_domain = deployment.get("base-domain")
+        domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
         subdomain_registered = False  # Track if we registered a new subdomain for rollback
         subdomain_connector = None  # Initialize for use in rollback
 
         # Validate nice-url mode requirements BEFORE subdomain registration
         # This prevents orphaned subdomain entries when validation fails
-        root_component_name = deployment.get("root-component")
+        root_component_name = get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
         if domain_mode == "nice-url" and subdomain and base_domain:
             # Validate that all components with publish-on-web have ports configured
             # In nice-url mode, each component gets its own ingress at component.subdomain.base_domain
@@ -4614,9 +5237,16 @@ class ProjectManager:
             logger.info(f"Subdomain '{subdomain}.{base_domain}' registered/updated for project '{project_name}'")
 
         # Register or clean up bare domain in subdomain registry
-        expose_on_bare_domain = deployment.get("expose-component-on-bare-domain")
+        expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT)
         bare_domain_registered = False
         if expose_on_bare_domain and base_domain:
+            # The publication path enforces the bare-domain rule itself, not just the form
+            # layer: the setting is also writable through the service config API, which the
+            # form enforcer never sees. This is the point of no return -- past it a
+            # registration and an apex certificate exist, on a domain that has to be this
+            # project's own: the rule covers both "not a platform domain" and "approved
+            # for this project".
+            validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster), project_data)
             if subdomain_connector is None:
                 subdomain_connector = SubdomainConnector()
             await subdomain_connector.register_bare_domain(
@@ -4631,7 +5261,10 @@ class ProjectManager:
             # Bare domain deselected — clean up any existing registration
             if subdomain_connector is None:
                 subdomain_connector = SubdomainConnector()
-            deleted = await subdomain_connector.delete_bare_domain(base_domain)
+            # Scoped to this project: the base-domain is just a string in a project file,
+            # so an unscoped delete lets one project remove another tenant's apex
+            # registration by naming their domain.
+            deleted = await subdomain_connector.delete_bare_domain(base_domain, project_name=project_name)
             if deleted:
                 logger.info(f"Bare domain '{base_domain}' deregistered for project '{project_name}'")
 
@@ -4764,15 +5397,11 @@ class ProjectManager:
             has_inbound_port = bool(inbound_ports)
             application_port = inbound_ports[0] if has_inbound_port else None
 
-            # Extract health-probe configuration (scheme + readiness/liveness paths).
-            # scheme=tcp keeps the plain tcpSocket probe; http/https switch to httpGet
-            # so a TLS-serving app completes the handshake instead of logging a failed one.
-            probe_config = self._project_file_handler.extract_component_probe(project_data, component_reference)
-
-            # A component without an inbound port cannot be probed by the kubelet; force
-            # scheme=none so no startup/liveness/readiness probe is rendered.
-            if not has_inbound_port:
-                probe_config = {**probe_config, "scheme": "none"}
+            # Base health-probe scheme: a plain TCP probe on the first inbound port.
+            # A component without an inbound port cannot be probed by the kubelet, so
+            # scheme=none disables all probes. The optional health-check service
+            # overrides scheme/port/paths from here via its manifest contribution.
+            probe_scheme = "tcp" if has_inbound_port else "none"
 
             # Extract publication paths: deployment-level overrides component-level
             component_paths = self._project_file_handler.extract_deployment_component_paths(
@@ -4830,9 +5459,21 @@ class ProjectManager:
             is_disabled, disabled_reason = self._project_file_handler.extract_deployment_component_disabled(
                 project_data, deployment_name, component_reference
             )
-            replicas = 0 if is_disabled else 1
+            # Sleep-mode: a sleeping deployment scales every component to zero (a broken
+            # image `disabled` always wins). `waking` keeps the app at 1 so it cold-starts
+            # while the waker still serves the loading page. Applies to every component,
+            # endpoint or not.
+            from opi.services.catalog.sleep_mode import state as sleep_mode_state
+
+            sleep_state = sleep_mode_state.read(project_data, deployment_name).state
+            is_sleeping = sleep_state == sleep_mode_state.STATE_SLEEPING
+            replicas = 0 if (is_disabled or is_sleeping) else 1
             if is_disabled:
                 logger.info(f"Component '{component_name}' is disabled (reason: {disabled_reason}), setting replicas=0")
+            elif is_sleeping:
+                logger.info(
+                    f"Deployment '{deployment_name}' is sleeping, setting component '{component_name}' replicas=0"
+                )
 
             # Extract user environment variables from component definition
             user_env_vars = await self._project_file_handler.extract_component_user_env_vars(
@@ -4914,12 +5555,12 @@ class ProjectManager:
             # Generate ingress map based on cluster configuration and optional subdomain using centralized utility
             ingress_postfix = get_ingress_postfix(cluster)
             use_https = get_ingress_tls_enabled(cluster)
-            subdomain = deployment.get("subdomain")
-            base_domain = deployment.get("base-domain")
-            issuer_config = deployment.get("issuer")
-            domain_mode = deployment.get("domain-mode")
-            domain_format = deployment.get("domain-format")
-            expose_on_bare_domain = deployment.get("expose-component-on-bare-domain", False)
+            subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+            base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+            issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+            domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+            domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
+            expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
             logger.info(
                 f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
                 f"issuer: {issuer_config}, domain-mode: {domain_mode}, domain-format: {domain_format}, "
@@ -4945,15 +5586,12 @@ class ProjectManager:
             logger.info(f"Generated ingress_map for {component_name}: {ingress_map}")
             logger.info(f"Primary hostname for {component_name}: {hostname}")
 
-            # Track component URL in deployment results
-            if hostname:
-                web_address = generate_public_url(hostname, use_https)
-                self._deployment_results[deployment_name].urls[component_name] = web_address
-                logger.debug(f"Tracked component {component_name} URL: {web_address}")
-
-                # Also update progress manager if available (for background task UI)
-                if progress_manager:
-                    progress_manager.update_component_web_address(component_name, web_address)
+            # Show the component's public address in the background-task UI, but only the one
+            # that publish-on-web recorded for this deployment: a component without an ingress
+            # has no address to show, and the hostname above is only what it would be called.
+            web_address = self._deployment_results[deployment_name].urls.get(component_name)
+            if web_address and progress_manager:
+                progress_manager.update_component_web_address(component_name, web_address)
 
             # Generate environment variables using service-based registration pattern
             env_vars = {}
@@ -4970,9 +5608,16 @@ class ProjectManager:
                 if web_env_vars:
                     env_vars.update(web_env_vars)
 
-            # Resolve and add direct aliases (aliases that reference direct env vars)
-            # These are resolved per-component using the env_vars available to this component
-            direct_aliases = self._deployment_aliases.get(deployment_name, {}).get("direct", {})
+            # Resolve and add direct aliases (aliases that reference direct env vars).
+            # Scoped to the declaring component: the context below holds only THIS
+            # component's storage and publish-on-web variables, so a sibling without
+            # those services would resolve another component's aliases against an
+            # empty context and fail.
+            direct_aliases = self._scope_direct_aliases_to_component(
+                self._deployment_aliases.get(deployment_name, {}).get("direct", {}),
+                project_data,
+                component_name,
+            )
             for service_category, service_aliases in direct_aliases.items():
                 if service_aliases:
                     logger.debug(
@@ -4989,99 +5634,81 @@ class ProjectManager:
             # Register user environment variables
             # NOTE: User env vars go into a secret and are referenced via envFrom, not as direct env vars
             if user_env_vars:
-                # Substitute PUBLIC_HOST / PUBLIC_HOSTNAME in user-env-vars if referenced
-                # NOTE: This is a simple substitution for these two direct vars only. If we need
-                # to support more direct variables in user-env-vars in the future, consider
-                # extending the alias system to support "direct" source variables.
-                # IMPORTANT: substitute PUBLIC_HOSTNAME before PUBLIC_HOST so the longer name
-                # is matched first and isn't partially consumed by the PUBLIC_HOST replacement.
-                public_host: str | None = env_vars.get("PUBLIC_HOST")
-                public_hostname: str | None = env_vars.get("PUBLIC_HOSTNAME")
-                if public_host or public_hostname:
-                    substituted_user_env_vars: dict[str, Any] = {}
-                    for key, value in user_env_vars.items():
-                        if isinstance(value, str) and (
-                            "$PUBLIC_HOST" in value or "${PUBLIC_HOST}" in value or "${PUBLIC_HOSTNAME}" in value
-                        ):
-                            substituted_value = value
-                            if public_hostname:
-                                substituted_value = substituted_value.replace("${PUBLIC_HOSTNAME}", public_hostname)
-                                substituted_value = substituted_value.replace("$PUBLIC_HOSTNAME", public_hostname)
-                            if public_host:
-                                substituted_value = substituted_value.replace("${PUBLIC_HOST}", public_host)
-                                substituted_value = substituted_value.replace("$PUBLIC_HOST", public_host)
-                            substituted_user_env_vars[key] = substituted_value
-                            if substituted_value != value:
-                                logger.debug(
-                                    f"Substituted PUBLIC_HOST/HOSTNAME in user-env-var {key}: "
-                                    f"{value} -> {substituted_value}"
-                                )
-                        else:
-                            substituted_user_env_vars[key] = value
-                    user_env_vars = substituted_user_env_vars
+                # Resolve $VAR / ${VAR} in user-env-vars against everything this component
+                # can see: the storage, publish-on-web and resolved-alias variables built
+                # above. This used to special-case PUBLIC_HOST and PUBLIC_HOSTNAME by hand,
+                # with a note to extend the alias system if more were ever needed -- so
+                # this is that extension, using the same engine aliases already use.
+                #
+                # Deliberately the LENIENT substitution: an unknown $NAME is left as-is.
+                # In an alias a missing reference is a typo and must fail, but a user-env-var
+                # value is often just a password that happens to contain a dollar. Measured
+                # on production: regel-k4c's ADMIN_PASSWORD and rijks-595's DJANGO_SECRET_KEY
+                # both carry one, and strict substitution would fail their deploy outright.
+                substituted_user_env_vars: dict[str, Any] = {}
+                for key, value in user_env_vars.items():
+                    if not isinstance(value, str) or "$" not in value:
+                        substituted_user_env_vars[key] = value
+                        continue
+                    substituted_value = substitute_known_variables(
+                        # No key name: a user-env-var's NAME is the user's business too, and
+                        # the component is enough to locate the warning.
+                        value,
+                        env_vars,
+                        where=f"a user-env-var of component {component_name}",
+                    )
+                    substituted_user_env_vars[key] = substituted_value
+                    if substituted_value != value:
+                        # Neither the value nor the name: user-env-vars are the user's.
+                        logger.debug(f"Substituted variable references in a user-env-var of {component_name}")
+                user_env_vars = substituted_user_env_vars
 
             # # IMPORTANT: Add component FIRST to prevent fallback creation with namespace=None
             # if config_handler:
             #     logger.debug(f"Config DEBUG: Adding component {component_name} with namespace: {namespace}")
             #     config_handler.add_component(component_name, "component", namespace)
 
-            # Determine which services this component uses (check once, use multiple times)
-            component_uses_postgresql = False
-            component_uses_minio = False
-            component_uses_sso = False
-            component_uses_redis = False
+            # Service contributions (envFrom, sidecars, template vars, secret files) are
+            # driven generically off the provider registry (RC-5 Phase 6). Only the
+            # auth-wall observability log below still needs an explicit flag.
             component_uses_authorization_wall = False
-            component_uses_metrics_scraper = False
             component_def = None
-            metrics_config = {"port": None, "path": None}
+            all_services: list[str] = []
 
             if component_reference:
                 component_def = self._project_file_handler._find_component(project_data, component_reference)
-                all_services: list[str] = extract_service_names_from_component(component_def) if component_def else []
+                all_services = extract_service_names_from_component(component_def) if component_def else []
 
-                # Check for both postgresql-database (shared) and namespace-postgresql-database (dedicated)
-                component_uses_postgresql = (
-                    ServiceType.POSTGRESQL_DATABASE.value in all_services
-                    or ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in all_services
-                )
-                component_uses_minio = ServiceType.MINIO_STORAGE.value in all_services
-                component_uses_sso = ServiceType.KEYCLOAK.value in all_services
-                component_uses_redis = (
-                    ServiceType.REDIS.value in all_services or ServiceType.NAMESPACE_REDIS.value in all_services
-                )
                 component_uses_authorization_wall = ServiceType.AUTHORIZATION_WALL.value in all_services
-                component_uses_metrics_scraper = ServiceType.METRICS_SCRAPER.value in all_services
+
+            # Collect each used service's manifest contribution once (RC-5 Phase 6).
+            # A provider may add envFrom secrets + sidecars (additive) and override
+            # template vars (e.g. auth-wall service_port 8080 -> 4180). envFrom is
+            # applied here (it is a template var itself); template_vars/sidecars are
+            # merged after the template context dict is built, below.
+            manifest_ctx = ManifestContext(
+                deployment_name=deployment_name,
+                project_data=project_data,
+                unique_name=unique_name,
+                cluster=cluster,
+                get_secret=self._get_secret_from_map,
+                component_def=component_def,
+            )
+            manifest_contributions = [
+                provider.contribute_manifest_context(manifest_ctx)
+                for provider in manifest_services()
+                if any(t.value in all_services for t in provider.manifest_activation_types())
+            ]
 
             # Build envFrom secrets list based on services used and user env vars
             # This list determines which secrets are referenced in the deployment manifest
             # Note: Secret FILES are only generated if the secret is in _secrets_to_create map
             env_from_secrets = []
 
-            # Add deployment-level secrets based on services used
-            if component_uses_postgresql:
-                database_secret_name = DatabaseSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(database_secret_name)
-                logger.debug(f"Database secret added to envFrom: {database_secret_name}")
-
-            if component_uses_minio:
-                minio_secret_name = MinIOSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(minio_secret_name)
-                logger.debug(f"MinIO secret added to envFrom: {minio_secret_name}")
-
-            if component_uses_sso:
-                keycloak_secret_name = KeycloakSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(keycloak_secret_name)
-                logger.debug(f"Keycloak secret added to envFrom: {keycloak_secret_name}")
-
-            if component_uses_redis:
-                redis_secret_name = RedisSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(redis_secret_name)
-                logger.debug(f"Redis secret added to envFrom: {redis_secret_name}")
-
-            if component_uses_metrics_scraper:
-                metrics_auth_secret_name = MetricsAuthSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(metrics_auth_secret_name)
-                logger.debug(f"Metrics auth secret added to envFrom: {metrics_auth_secret_name}")
+            # Add deployment-level secrets in manifest_order -- byte-identical to the old
+            # fixed db -> minio -> keycloak -> redis -> metrics append sequence.
+            for contribution in manifest_contributions:
+                env_from_secrets.extend(contribution.env_from_secrets)
 
             # Platform secret (always present, per-component)
             platform_secret_name = PlatformSecret.get_secret_name(unique_name)
@@ -5124,9 +5751,12 @@ class ProjectManager:
                 # The full inbound-port list. Both the Deployment (containerPorts) and the
                 # Service render every port; the first is the primary (ingress + probe).
                 "inbound_ports": inbound_ports,
-                "probe_scheme": probe_config["scheme"],  # tcp | http | https
-                "probe_readiness_path": probe_config["readiness_path"],
-                "probe_liveness_path": probe_config["liveness_path"],
+                # Base probe: tcp on the application port (or none when there is no
+                # inbound port). The health-check service overrides these via its
+                # manifest contribution; the template keeps its own path defaults
+                # (| default('/')) and falls probe_port back to application_port.
+                "probe_scheme": probe_scheme,  # none | tcp | http | https
+                "probe_port": None,  # None -> template falls back to application_port
                 "path": component_path,  # Publication path for ingress routing
                 "storage_configs": processed_storage_configs,
                 "env_vars": env_vars,
@@ -5141,8 +5771,10 @@ class ProjectManager:
                 "generated_at": generated_at,
                 # CA certificate configuration for SSL/TLS
                 "ca_config": get_ca_certificate_config(cluster),
-                # Prometheus metrics configuration (passed to template if metrics-scraper service enabled)
-                "metrics_config": metrics_config if component_uses_metrics_scraper else None,
+                # Prometheus metrics configuration. Base is None; the metrics-scraper
+                # provider overrides this with the component's scrape {port, path} via
+                # its manifest contribution (RC-5 Phase 6b) when the service is used.
+                "metrics_config": None,
                 # Resource configuration (requests and limits)
                 "resources_requests_memory": component_resources["requests_memory"],
                 "resources_requests_cpu": component_resources["requests_cpu"],
@@ -5202,88 +5834,26 @@ class ProjectManager:
             # config_handler.add_custom_config(component_name, "port", application_port)
             # config_handler.add_custom_config(component_name, "unique_name", unique_name)
 
-            # Add authorization-wall sidecar if enabled
-            if component_uses_authorization_wall:
-                keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
-                if keycloak_secret:
-                    # Extract optional config (banner) from project-level services
-                    banner_text = None
-                    project_services = project_data.get("services", [])
-                    for service_item in project_services:
-                        if isinstance(service_item, dict) and ServiceType.AUTHORIZATION_WALL.value in service_item:
-                            auth_wall_data = service_item[ServiceType.AUTHORIZATION_WALL.value]
-                            if isinstance(auth_wall_data, dict):
-                                auth_wall_config = auth_wall_data.get("config", {})
-                                if isinstance(auth_wall_config, dict):
-                                    banner_text = auth_wall_config.get("banner")
-                            break
+            # Merge each service's manifest contribution into the template context
+            # (RC-5 Phase 6b): sidecars are additive, template_vars override base keys
+            # (auth-wall sets authorization_wall + service_port 8080 -> 4180). The
+            # contributions were collected once, above, before the dict was built.
+            for contribution in manifest_contributions:
+                variables.update(contribution.template_vars)
+                if contribution.sidecars:
+                    variables.setdefault("sidecars", []).extend(contribution.sidecars)
 
-                    variables["authorization_wall"] = {
-                        "issuer_url": keycloak_secret.discovery_url.replace("/.well-known/openid-configuration", ""),
-                        "client_id": keycloak_secret.client_id,
-                        "keycloak_secret_name": KeycloakSecret.get_secret_name(deployment_name),
-                        "cookie_secret_name": f"{unique_name}-oauth2-cookie",
-                        "banner": banner_text,
-                    }
-                    variables["sidecars"] = ["authorization-wall"]
-                    # The ingress goes through the auth proxy on 4180; the app's own primary port
-                    # stays behind it. The extra inbound ports are separate (not fronted by the
-                    # proxy), so they keep their Service entries for cluster-internal reachability.
-                    variables["service_port"] = 4180
+            # Auth-wall observability: the provider contributes nothing when a component
+            # asks for an auth wall but no keycloak secret is provisioned (old warn path).
+            # The cookie secret itself is now part of the auth-wall provider's
+            # contribution (secret_files), written in the shared loop below.
+            if component_uses_authorization_wall:
+                if "authorization_wall" in variables:
                     logger.info(f"Authorization wall enabled for component '{component_name}'")
                 else:
                     logger.warning(
                         f"Component '{component_name}' uses authorization-wall but no keycloak service configured"
                     )
-
-            # Create authorization-wall cookie secret if needed
-            if component_uses_authorization_wall and "authorization_wall" in variables:
-                import secrets as secrets_module
-
-                cookie_secret_value = secrets_module.token_urlsafe(32)
-                cookie_secret_name = variables["authorization_wall"]["cookie_secret_name"]
-                secret_template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
-                )
-                cookie_secret_vars = {
-                    "name": cookie_secret_name,
-                    "namespace": namespace,
-                    "secret_pairs": {"cookie-secret": cookie_secret_value},
-                }
-                # Determine output dir for the cookie secret manifest
-                if target_dir:
-                    cookie_output_dir = os.path.join(working_dir, target_dir)
-                else:
-                    cookie_output_dir = os.path.join(working_dir, project_name, deployment_name)
-                self._manifest_generator.create_manifest_file(
-                    template_path=secret_template_path,
-                    values=cookie_secret_vars,
-                    output_dir=cookie_output_dir,
-                    output_filename=f"{cookie_secret_name}-secret",
-                    use_sops=True,
-                )
-                # Register the generated file so the obsolete-manifest prune keeps it;
-                # its name carries the <deployment>-<component>- prefix the prune targets.
-                created_files.append(f"{cookie_secret_name}-secret.to-sops.yaml")
-                logger.info(f"Created authorization-wall cookie secret: {cookie_secret_name}")
-
-            # Configure metrics scraper if enabled
-            if component_uses_metrics_scraper and component_def:
-                # Extract metrics config from component's service definition.
-                # Config is stored as: services: [{metrics-scraper: {config: [{port, path}]}}]
-                services = component_def.get("services", [])
-                for service_item in services:
-                    if isinstance(service_item, dict) and ServiceType.METRICS_SCRAPER.value in service_item:
-                        metrics_data = service_item[ServiceType.METRICS_SCRAPER.value]
-                        if isinstance(metrics_data, dict):
-                            metrics_config = {
-                                "port": metrics_data.get("port"),
-                                "path": metrics_data.get("path"),
-                            }
-                        break
-                logger.info(
-                    f"Metrics scraper enabled for component '{component_name}': port={metrics_config.get('port')}, path={metrics_config.get('path')}"
-                )
 
             # Generate extra manifests for sidecars (e.g. ConfigMaps)
             # Each sidecar template can define a 'configmap' section that produces a standalone manifest
@@ -5495,6 +6065,11 @@ class ProjectManager:
                     # Create root ingress for nice-url mode if this is the root component.
                     # When domain-format is set, skip root ingress if the template does not
                     # include {component} (all components already share the same hostname).
+                    # The root ingress composes ``subdomain.base-domain`` itself instead of
+                    # asking get_component_ingress_map, so the approval fallback that moves
+                    # the components to the cluster address does not reach it. Without this
+                    # check an unapproved domain still got an apex-style ingress plus a
+                    # certificate request for a domain nobody granted this project.
                     is_root_component = component_name == root_component_name
                     template_has_component = (
                         "{component}" in DOMAIN_FORMAT_TEMPLATES.get(domain_format, "") if domain_format else True
@@ -5505,6 +6080,7 @@ class ProjectManager:
                         and base_domain
                         and is_root_component
                         and template_has_component
+                        and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
                     ):
                         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
                         root_ingress_name = f"{deployment_name}-root"
@@ -5559,7 +6135,7 @@ class ProjectManager:
                         # Clean up stale root ingress from previous root component
                         previous_dep = self.get_previous_deployment(deployment_name)
                         if previous_dep:
-                            old_root = previous_dep.get("root-component")
+                            old_root = get_domain_setting(previous_dep, DomainSetting.ROOT_COMPONENT)
                             if old_root and old_root != root_component_name:
                                 old_manifest = f"{generate_manifest_name(old_root, 'ingress-root')}.yaml"
                                 old_manifest_path = os.path.join(full_output_dir, old_manifest)
@@ -5573,6 +6149,10 @@ class ProjectManager:
                     # Create bare domain ingress for expose-component-on-bare-domain mode.
                     # expose_on_bare_domain holds the component name that should serve the bare domain.
                     if expose_on_bare_domain and base_domain and component_name == expose_on_bare_domain:
+                        # Same rule as at registration: never an apex ingress plus
+                        # certificate from a tenant namespace on a platform domain, nor on
+                        # a domain that is not approved for this project.
+                        validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster), project_data)
                         bare_hostname = generate_bare_domain_hostname(base_domain)
                         bare_ingress_name = f"{deployment_name}-bare-domain"
                         bare_manifest_name = generate_manifest_name(component_name, "ingress-bare-domain")
@@ -5625,7 +6205,7 @@ class ProjectManager:
                         # Clean up stale bare domain ingress from previous component
                         previous_dep = self.get_previous_deployment(deployment_name)
                         if previous_dep:
-                            old_bare = previous_dep.get("expose-component-on-bare-domain")
+                            old_bare = get_domain_setting(previous_dep, DomainSetting.BARE_DOMAIN_COMPONENT)
                             if old_bare and old_bare != expose_on_bare_domain:
                                 old_manifest = f"{generate_manifest_name(old_bare, 'ingress-bare-domain')}.yaml"
                                 old_manifest_path = os.path.join(full_output_dir, old_manifest)
@@ -5655,6 +6235,23 @@ class ProjectManager:
                     # Add to the list of created files with component name for uniqueness
                     created_files.append(f"{unique_manifest_name}.yaml")
                     logger.info(f"Successfully created {manifest_file} manifest: {manifest_file_path}")
+
+            # Sleep-mode: emit the waker (Deployment + ConfigMap + token Secret) behind
+            # this component's Service when the deployment sleeps and this is the chosen
+            # waker component. No-op otherwise. Pruned by the obsolete-manifest sweep like
+            # any other component file once the deployment is awake again.
+            await self._emit_waker_manifests(
+                project_data=project_data,
+                deployment=deployment,
+                component_name=component_name,
+                component_reference=component_reference,
+                unique_name=unique_name,
+                namespace=namespace,
+                cluster=cluster,
+                project_name=project_name,
+                output_dir=full_output_dir,
+                created_files=created_files,
+            )
 
             # Create PVC manifests for persistent storage using PVCManager
             persistent_storage = self._project_file_handler.get_persistent_storage(processed_storage_configs)
@@ -5934,212 +6531,21 @@ class ProjectManager:
                             f"(set contact-email in project config or letsencrypt.contact_email in cluster config)"
                         )
 
-            # Create database secret if component uses PostgreSQL service
-            if component_uses_postgresql:
-                db_credentials = self._get_secret_from_map(deployment_name, "database", DatabaseSecret)
-
-                if db_credentials:
-                    logger.debug(f"Creating database secret for {component_name} with PostgreSQL credentials")
-
-                    # Use the host from db_credentials - database_manager already determined
-                    # the correct host (namespace-specific or shared) based on service type
-                    database_secret = DatabaseSecret(
-                        host=db_credentials.host,  # Already set by database_manager
-                        port=db_credentials.port,
-                        username=db_credentials.username,
-                        password=db_credentials.password,
-                        database=db_credentials.database,
-                        schema=db_credentials.schema,
-                    )
-
-                    # Store the updated secret instance for configuration tracking
-                    self._add_secret_to_create(deployment_name, "database", database_secret)
-
-                    # Get base database secret data
-                    database_secret_data = database_secret.to_k8s_secret_data()
-
-                    # Add resolved database aliases from all components
-                    database_aliases = (
-                        self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("database", {})
-                    )
-                    if database_aliases:
-                        logger.debug(
-                            f"Resolving {len(database_aliases)} database aliases for deployment {deployment_name}"
-                        )
-                        resolved_aliases = self._resolve_aliases(database_aliases, database_secret_data)
-                        database_secret_data.update(resolved_aliases)
-                        logger.info(f"Added {len(resolved_aliases)} resolved database aliases to deployment secret")
-
-                    # Create database secret vars with all required environment variables + aliases
-                    # Use deployment-level naming for the secret name
-                    database_secret_vars = {
-                        "name": DatabaseSecret.get_secret_name(deployment_name),
-                        "namespace": namespace,
-                        "secret_pairs": database_secret_data,  # Now includes base + aliases
-                    }
-
-                    # Create database secret with deployment-level naming (not component-level)
-                    # This matches what we look for in _get_existing_database_credentials_from_k8s
-                    database_manifest_name = f"{DatabaseSecret.get_secret_name(deployment_name)}-secret"
-
-                    database_secret_path = self._manifest_generator.create_manifest_file(
-                        template_path=secret_template_path,
-                        values=database_secret_vars,
+            # Write each used service's declared secret files via the shared writer
+            # (RC-5 Phase 6c). The typed secret plus alias/register flags are built by
+            # the service provider (build_secret_files); this loop only drives the
+            # shared write. Byte-identical to the old per-service blocks -- write order
+            # is immaterial (kustomization is built from a disk scan and the
+            # obsolete-manifest prune keeps a name set, both order-independent).
+            for contribution in manifest_contributions:
+                for spec in contribution.secret_files:
+                    self._write_secret_file(
+                        spec,
+                        deployment_name=deployment_name,
+                        namespace=namespace,
                         output_dir=full_output_dir,
-                        output_filename=database_manifest_name,
-                        use_sops=True,
-                    )
-
-                    # All secrets are SOPS encrypted for security
-                    sops_filename = f"{database_manifest_name}.to-sops.yaml"
-                    created_files.append(sops_filename)
-                    logger.info(f"Database secret will be SOPS encrypted: {sops_filename}")
-                    logger.info(f"Successfully created database secret manifest: {database_secret_path}")
-                else:
-                    logger.warning(
-                        f"Component {component_name} uses PostgreSQL but no database credentials found in deployment {deployment_name}"
-                    )
-
-            # Create MinIO secret if component uses object storage service
-            if component_uses_minio:
-                # Get MinIO credentials from the private secrets map (not from deployment data)
-                minio_credentials = self._get_secret_from_map(deployment_name, "minio", MinIOSecret)
-
-                if minio_credentials:
-                    logger.debug(f"Creating MinIO secret for {component_name} with object storage credentials")
-
-                    # Create typed MinIO secret with cluster-specific host and port
-                    minio_secret = MinIOSecret(
-                        host=get_minio_host(cluster),
-                        port=get_minio_port(cluster),
-                        access_key=minio_credentials.access_key,
-                        secret_key=minio_credentials.secret_key,
-                        bucket_name=minio_credentials.bucket_name,
-                        region=minio_credentials.region,
-                    )
-
-                    # Get base MinIO secret data
-                    minio_secret_data = minio_secret.to_k8s_secret_data()
-
-                    # Add resolved MinIO aliases from all components
-                    minio_aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("minio", {})
-                    if minio_aliases:
-                        logger.debug(f"Resolving {len(minio_aliases)} minio aliases for deployment {deployment_name}")
-                        resolved_aliases = self._resolve_aliases(minio_aliases, minio_secret_data)
-                        minio_secret_data.update(resolved_aliases)
-                        logger.info(f"Added {len(resolved_aliases)} resolved minio aliases to deployment secret")
-
-                    # Create MinIO secret vars with all required environment variables + aliases
-                    # Use deployment-level naming for the secret name
-                    minio_secret_vars = {
-                        "name": MinIOSecret.get_secret_name(deployment_name),
-                        "namespace": namespace,
-                        "secret_pairs": minio_secret_data,  # Now includes base + aliases
-                    }
-
-                    # Create MinIO secret with deployment-level naming (not component-level)
-                    # This matches what we look for in _get_existing_minio_credentials_from_k8s
-                    minio_manifest_name = f"{MinIOSecret.get_secret_name(deployment_name)}-secret"
-
-                    minio_secret_path = self._manifest_generator.create_manifest_file(
                         template_path=secret_template_path,
-                        values=minio_secret_vars,
-                        output_dir=full_output_dir,
-                        output_filename=minio_manifest_name,
-                        use_sops=True,
-                    )
-
-                    # All secrets are SOPS encrypted for security
-                    sops_filename = f"{minio_manifest_name}.to-sops.yaml"
-                    created_files.append(sops_filename)
-                    logger.info(f"MinIO secret will be SOPS encrypted: {sops_filename}")
-                    logger.info(f"Successfully created MinIO secret manifest: {minio_secret_path}")
-                else:
-                    logger.warning(
-                        f"Component {component_name} uses MinIO but no object storage credentials found in deployment {deployment_name}"
-                    )
-
-            # Create Redis secret if component uses Redis cache service
-            if component_uses_redis:
-                # Get Redis credentials from the private secrets map
-                redis_credentials = self._get_secret_from_map(deployment_name, "redis", RedisSecret)
-
-                if redis_credentials:
-                    logger.debug(f"Creating Redis secret for {component_name} with cache credentials")
-
-                    redis_secret = RedisSecret(
-                        host=redis_credentials.host,
-                        port=redis_credentials.port,
-                        username=redis_credentials.username,
-                        password=redis_credentials.password,
-                        key_prefix=redis_credentials.key_prefix,
-                    )
-
-                    # Get base Redis secret data
-                    redis_secret_data = redis_secret.to_k8s_secret_data()
-
-                    # Add resolved Redis aliases from all components
-                    redis_aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("redis", {})
-                    if redis_aliases:
-                        logger.debug(f"Resolving {len(redis_aliases)} redis aliases for deployment {deployment_name}")
-                        resolved_aliases = self._resolve_aliases(redis_aliases, redis_secret_data)
-                        redis_secret_data.update(resolved_aliases)
-                        logger.info(f"Added {len(resolved_aliases)} resolved redis aliases to deployment secret")
-
-                    redis_secret_vars = {
-                        "name": RedisSecret.get_secret_name(deployment_name),
-                        "namespace": namespace,
-                        "secret_pairs": redis_secret_data,
-                    }
-
-                    redis_manifest_name = f"{RedisSecret.get_secret_name(deployment_name)}-secret"
-
-                    redis_secret_path = self._manifest_generator.create_manifest_file(
-                        template_path=secret_template_path,
-                        values=redis_secret_vars,
-                        output_dir=full_output_dir,
-                        output_filename=redis_manifest_name,
-                        use_sops=True,
-                    )
-
-                    sops_filename = f"{redis_manifest_name}.to-sops.yaml"
-                    created_files.append(sops_filename)
-                    logger.info(f"Redis secret will be SOPS encrypted: {sops_filename}")
-                    logger.info(f"Successfully created Redis secret manifest: {redis_secret_path}")
-                else:
-                    logger.warning(
-                        f"Component {component_name} uses Redis but no cache credentials found in deployment {deployment_name}"
-                    )
-
-            # Create metrics auth secret if component uses metrics-scraper
-            if component_uses_metrics_scraper:
-                metrics_auth_token = settings.PROMETHEUS_METRICS_AUTH_TOKEN
-                if metrics_auth_token:
-                    metrics_secret = MetricsAuthSecret(token=metrics_auth_token)
-                    metrics_secret_data = metrics_secret.to_k8s_secret_data()
-
-                    metrics_secret_vars = {
-                        "name": MetricsAuthSecret.get_secret_name(deployment_name),
-                        "namespace": namespace,
-                        "secret_pairs": metrics_secret_data,
-                    }
-
-                    metrics_manifest_name = f"{MetricsAuthSecret.get_secret_name(deployment_name)}-secret"
-
-                    self._manifest_generator.create_manifest_file(
-                        template_path=secret_template_path,
-                        values=metrics_secret_vars,
-                        output_dir=full_output_dir,
-                        output_filename=metrics_manifest_name,
-                        use_sops=True,
-                    )
-
-                    sops_filename = f"{metrics_manifest_name}.to-sops.yaml"
-                    created_files.append(sops_filename)
-                    logger.info(f"Metrics auth secret will be SOPS encrypted: {sops_filename}")
-                else:
-                    logger.warning(
-                        f"Component {component_name} uses metrics-scraper but PROMETHEUS_METRICS_AUTH_TOKEN is not configured"
+                        created_files=created_files,
                     )
 
         # Emit one tenant-baseline NetworkPolicy per deployment after all
@@ -6165,6 +6571,9 @@ class ProjectManager:
             "ops_namespace": get_namespace(cluster),
             "backup_namespace": get_backup_namespace(cluster),
             "ingress_controller_selector": get_ingress_controller_selector(cluster),
+            # A regular app namespace hosts no CNPG cluster, so the operator does
+            # not need ingress here (only the infrastructure namespace does).
+            "database_operator_namespace": None,
             "project_infra_namespace": get_infrastructure_namespace(cluster, project_name),
         }
         self._manifest_generator.create_manifest_file(
@@ -6181,6 +6590,35 @@ class ProjectManager:
             f"backup={baseline_variables['backup_namespace']}, "
             f"ingress={baseline_variables['ingress_controller_selector']['namespace']})"
         )
+
+        # Deployment-wide, service-owned manifests (RC-15). After the component loop and the
+        # baseline, every service that overrides contribute_deployment_manifests may add
+        # resources scoped to the whole deployment (cross-domain-access adds one NetworkPolicy
+        # per own component with rules). The kustomization is rebuilt from the on-disk glob,
+        # so writing the files is enough for them to be included; the prune in
+        # _process_deployment_manifests removes any that this run no longer generates.
+        deployment_manifest_ctx = DeploymentManifestContext(
+            project_name=project_name,
+            project_data=project_data,
+            deployment=deployment,
+            cluster=cluster,
+            namespace=namespace,
+        )
+        service_manifest_template_dir = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
+        for service in deployment_manifest_services():
+            for spec in service.contribute_deployment_manifests(deployment_manifest_ctx):
+                self._manifest_generator.create_manifest_file(
+                    template_path=os.path.join(service_manifest_template_dir, spec.template_path),
+                    values=spec.values,
+                    output_dir=deployment_output_dir,
+                    output_filename=spec.filename,
+                    use_sops=False,
+                )
+                created_files.append(f"{spec.filename}.yaml")
+                logger.info(
+                    f"Created {service.service_type.value} deployment manifest '{spec.filename}.yaml' "
+                    f"for deployment '{deployment_name}'"
+                )
 
         # Clear rollback info on success
         self._pending_subdomain_rollback = None
@@ -6364,9 +6802,14 @@ class ProjectManager:
         requires a domain that supports dots (a dash-only ODCN domain with a
         dot format produces an unreachable multi-label hostname).
 
-        API callers cannot tick a "request domain" checkbox, so an unapproved
-        custom domain (a non-blocking warning in the wizard) is treated as a
-        hard rejection here.
+        A ``FieldWarning`` is NOT a violation, here no more than in the wizard. The
+        enforcer raises one for exactly one thing: a domain or subdomain that is on
+        request. This used to be a hard rejection, on the grounds that an API caller
+        cannot tick the wizard's "Domein aanvragen" checkbox -- but the consequence was
+        that the one path that would have created the request (``ensure_approval_requests``,
+        a few lines further on in every caller) was never reached, so asking for a domain
+        through the API could only fail. It is now the request itself that carries the
+        answer, and the caller reads back where it stands under ``approvals``.
 
         Returns an error message on violation, or None when the config is valid.
         """
@@ -6381,11 +6824,140 @@ class ProjectManager:
             await DomainConfigEnforcer(deployment_index=index).enforce(
                 project_data, {"project_name": await self.get_name()}
             )
-        except (ValueError, FieldWarning) as e:  # FieldError is a ValueError subclass
+        except FieldWarning as e:
+            logger.info("Domain on request for deployment '%s': %s", deployment_name, e)
+        except ValueError as e:  # FieldError is a ValueError subclass
             return str(e)
         return None
 
+    @staticmethod
+    def _approval_notices(project_data: dict[str, Any], deployment_name: str | None) -> list[dict[str, Any]]:
+        """What the owner of ``deployment_name`` must be told about ungranted approvals.
+
+        Empty when the write named no deployment: the values that need approving are
+        deployment-level, so there is nothing to report about a project- or
+        component-level write. The sentences come from the services themselves
+        (``collect_deployment_approval_notices``), so the API says the same thing the
+        portal says about the same state.
+        """
+        if not deployment_name:
+            return []
+        deployment = next(
+            (
+                d
+                for d in project_data.get("deployments", [])
+                if isinstance(d, dict) and d.get("name") == deployment_name
+            ),
+            None,
+        )
+        if deployment is None:
+            return []
+        return list(collect_deployment_approval_notices(project_data, deployment))
+
+    @staticmethod
+    def _certificate_warnings(project_data: dict[str, Any], deployment_name: str) -> list[str]:
+        """What this write means for the deployment's certificate, if anything.
+
+        A warning and not an approval: ``approvals`` reports what is waiting for an
+        administrator, and this waits for nobody. It is also the state that BEGINS where
+        the approval notice ends -- a domain of the user's own on a cluster that cannot
+        issue for it stops being reported the moment an approver grants it, and that is
+        exactly when the certificate never appears (zad-cli, bevinding 22).
+
+        The sentence comes from publish-on-web, so the API says what the wizard's field
+        warning says about the same value.
+        """
+        deployment = next(
+            (
+                d
+                for d in project_data.get("deployments", [])
+                if isinstance(d, dict) and d.get("name") == deployment_name
+            ),
+            None,
+        )
+        if deployment is None:
+            return []
+        note = custom_domain_certificate_note(
+            settings.CLUSTER_MANAGER, get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+        )
+        return [note] if note else []
+
+    @staticmethod
+    def _config_advice_warnings(project_data: dict[str, Any]) -> list[str]:
+        """What this project now expects but does not have, after this write.
+
+        Same channel and same reasoning as ``_certificate_warnings``: nobody is waiting
+        on an administrator, so this is not an approval, and the project file is valid,
+        so it is not an error. It is a field that has become necessary because of a
+        setting somewhere else, and the sentence comes from the service that owns the
+        field, so the API says what the wizard's field warning says.
+
+        The whole project is judged, not only the block that was just written. The two
+        halves of an advice sit in two services, and either write can be the one that
+        makes it true -- switching keycloak's ``restrict-access`` on is as much the
+        moment as saving a roleless invite is.
+
+        Prefixed with the path so a caller knows which entry of a list is meant; the
+        message alone would name the same thing for every invite.
+        """
+        from opi.services.services import collect_config_advice
+
+        return [f"{notice.field_path}: {notice.message}" for notice in collect_config_advice(project_data)]
+
     async def upsert_deployment(
+        self,
+        deployment_name: str,
+        components: list,  # ComponentReference objects from router
+        clone_from: str | None = None,
+        force_clone: bool = False,
+        domain_format: str | None = None,
+        subdomain: str | None = None,
+        base_domain: str | None = None,
+    ) -> dict[str, Any]:
+        """Create or update a deployment, retrying a concurrent-edit conflict.
+
+        Busy projects (regelrecht pushes many image updates in seconds) make two
+        writers touch the same deployment at once. The store refuses to lose either
+        edit and raises ConflictError -- correct, but a single-shot upsert then failed
+        the task and leaned on the caller's pipeline to push again. Because each
+        attempt re-reads the freshest state via get_contents() and re-applies the image
+        change on top, a bounded retry resolves the conflict here instead. Only the
+        concurrent-edit conflict is retried; every other outcome returns as before.
+        """
+        for attempt in range(_UPSERT_CONFLICT_RETRIES):
+            try:
+                return await self._upsert_deployment_once(
+                    deployment_name,
+                    components,
+                    clone_from=clone_from,
+                    force_clone=force_clone,
+                    domain_format=domain_format,
+                    subdomain=subdomain,
+                    base_domain=base_domain,
+                )
+            except (ConflictError, ConcurrencyError) as e:
+                if attempt == _UPSERT_CONFLICT_RETRIES - 1:
+                    logger.warning(
+                        "Upsert of '%s' still conflicts after %d attempts; giving up",
+                        deployment_name,
+                        _UPSERT_CONFLICT_RETRIES,
+                    )
+                    return {
+                        "success": False,
+                        "created": False,
+                        "error": f"Error upserting deployment '{deployment_name}': {e}",
+                        "error_type": "conflict",
+                    }
+                logger.info(
+                    "Upsert of '%s' hit a concurrent edit (attempt %d/%d); re-reading and retrying",
+                    deployment_name,
+                    attempt + 1,
+                    _UPSERT_CONFLICT_RETRIES,
+                )
+        # Unreachable: the loop either returns a result or the final-attempt error.
+        return {"success": False, "created": False, "error": "upsert retry loop exhausted", "error_type": "conflict"}
+
+    async def _upsert_deployment_once(
         self,
         deployment_name: str,
         components: list,  # ComponentReference objects from router
@@ -6484,11 +7056,11 @@ class ProjectManager:
 
                         # Update domain settings if provided
                         if domain_format is not None:
-                            deployment["domain-format"] = domain_format
+                            set_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT, domain_format)
                         if subdomain is not None:
-                            deployment["subdomain"] = subdomain
+                            set_domain_setting(deployment, DomainSetting.SUBDOMAIN, subdomain)
                         if base_domain is not None:
-                            deployment["base-domain"] = base_domain
+                            set_domain_setting(deployment, DomainSetting.BASE_DOMAIN, base_domain)
 
                         # Handle clone_from only if force_clone is true
                         if clone_from and force_clone:
@@ -6513,6 +7085,24 @@ class ProjectManager:
                             "error": domain_error,
                             "error_type": "domain_validation",
                         }
+                    normalized_warnings.extend(self._certificate_warnings(project_data, deployment_name))
+
+                # An upsert rolls new content onto this deployment exactly as an image
+                # update does, so the services clear what they recorded about the old
+                # content through the same hook (RC-37). Only the components this call
+                # actually names, and only in this UPDATE branch: a deployment being
+                # created has no earlier state to clear.
+                upsert_deployment_dict = next(
+                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
+                )
+                state_notices: list[str] = []
+                if upsert_deployment_dict is not None:
+                    state_notices = await run_redeploy_hooks(
+                        project_name,
+                        project_data,
+                        upsert_deployment_dict,
+                        [component.reference for component in components],
+                    )
 
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
@@ -6535,9 +7125,17 @@ class ProjectManager:
                 await self.save_and_commit_project(project_data, commit_message)
 
                 logger.info(f"Successfully updated deployment '{deployment_name}' in project '{project_name}'")
-                result: dict[str, Any] = {"success": True, "created": False, "error": None, "error_type": None}
+                result: dict[str, Any] = {
+                    "success": True,
+                    "created": False,
+                    "error": None,
+                    "error_type": None,
+                    "approvals": self._approval_notices(project_data, deployment_name),
+                }
                 if normalized_warnings:
                     result["warnings"] = normalized_warnings
+                if state_notices:
+                    result["state_cleared"] = state_notices
                 return result
 
             else:
@@ -6547,13 +7145,18 @@ class ProjectManager:
                 # Create new deployment object
                 new_deployment: dict[str, Any] = {"name": deployment_name, "components": []}
 
-                # Apply domain settings if provided
+                # Apply domain settings if provided. Kept as a mapping because the clone
+                # path has to write them a second time: the copy from the source lands on
+                # the same service block these go into.
+                requested_domain_settings: dict[DomainSetting, str] = {}
                 if domain_format:
-                    new_deployment["domain-format"] = domain_format
+                    requested_domain_settings[DomainSetting.DOMAIN_FORMAT] = domain_format
                 if subdomain:
-                    new_deployment["subdomain"] = subdomain
+                    requested_domain_settings[DomainSetting.SUBDOMAIN] = subdomain
                 if base_domain:
-                    new_deployment["base-domain"] = base_domain
+                    requested_domain_settings[DomainSetting.BASE_DOMAIN] = base_domain
+                for setting, setting_value in requested_domain_settings.items():
+                    set_domain_setting(new_deployment, setting, setting_value)
 
                 # Convert components from router objects to dict format
                 normalized_warnings_create: list[str] = []
@@ -6578,27 +7181,11 @@ class ProjectManager:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
 
                         # Clone properties from source, excluding fields that must be
-                        # unique or that tie the deployment to a custom domain setup.
-                        # Custom domains (base-domain, domain-mode, domain-format, issuer)
-                        # are not copied because cloned deployments should use the default
-                        # cluster domain rather than inheriting the source's DNS config.
-                        # domain-format in particular must be dropped: a dot-based format
-                        # (e.g. component.subdomain) inherited without the source's
-                        # base-domain resolves onto the cluster wildcard, producing a
-                        # multi-label host the single-label wildcard cert cannot cover.
-                        # The backup block is not copied either: backups are an explicit
-                        # per-deployment choice, and inheriting the source's schedule made
-                        # every PR preview accumulate nightly snapshots.
-                        clone_exclude_keys = [
-                            "name",
-                            "components",
-                            "subdomain",
-                            "base-domain",
-                            "domain-mode",
-                            "domain-format",
-                            "issuer",
-                            "backup",
-                        ]
+                        # unique per deployment. The backup block is not copied: backups
+                        # are an explicit per-deployment choice, and inheriting the
+                        # source's schedule made every PR preview accumulate nightly
+                        # snapshots.
+                        clone_exclude_keys = ["name", "components", "backup"]
                         new_deployment.update(
                             {
                                 key: copy.deepcopy(value)
@@ -6607,24 +7194,31 @@ class ProjectManager:
                             }
                         )
 
-                        # A clone uses its own (target) domain setup, not the source's.
-                        # Drop an inherited root-component when the target format does not
-                        # expose a root host, so it isn't carried as inert config. Same
-                        # applicability rule as validate_root_component.
-                        if new_deployment.get("root-component"):
-                            target_mode = new_deployment.get("domain-mode")
-                            target_format = new_deployment.get("domain-format")
-                            if target_mode != "nice-url" and target_format not in ROOT_COMPONENT_FORMAT_IDS:
-                                new_deployment.pop("root-component", None)
+                        # A clone uses its own (target) domain setup, never the source's:
+                        # it must land on the default cluster domain rather than inherit
+                        # the source's DNS config, or two deployments claim the same
+                        # hostnames. domain-format in particular must be dropped: a
+                        # dot-based format (e.g. component.subdomain) inherited without
+                        # the source's base-domain resolves onto the cluster wildcard,
+                        # producing a multi-label host the single-label wildcard cert
+                        # cannot cover. The web address now travels inside the source's
+                        # `services` block, so it is removed AFTER the copy -- excluding
+                        # the old root key names would be a silent no-op.
+                        clear_domain_settings(new_deployment)
+
+                        # The caller's own request was written before that copy and got
+                        # overwritten by it. Write it again; it must beat the source.
+                        for setting, setting_value in requested_domain_settings.items():
+                            set_domain_setting(new_deployment, setting, setting_value)
 
                         # When the source's subdomain matches its deployment name, it means
                         # components share a single hostname and use paths to differentiate.
                         # Preserve this pattern for the clone by setting subdomain to the
                         # new deployment name.
-                        source_subdomain = source_deployment.get("subdomain")
+                        source_subdomain = get_domain_setting(source_deployment, DomainSetting.SUBDOMAIN)
                         source_name = source_deployment.get("name")
                         if source_subdomain and source_subdomain == source_name:
-                            new_deployment["subdomain"] = deployment_name
+                            set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, deployment_name)
                             logger.info(
                                 f"Source subdomain '{source_subdomain}' matches source deployment name, "
                                 f"setting cloned subdomain to '{deployment_name}'"
@@ -6680,8 +7274,11 @@ class ProjectManager:
                         logger.error(error_msg)
                         return {"success": False, "created": False, "error": error_msg, "error_type": "no_repositories"}
 
-                # Add the new deployment to the project data
-                project_data["deployments"].append(new_deployment)
+                # Add the new deployment to the project data. A project created through
+                # POST /api/v2/projects has no `deployments` key at all -- there is
+                # nothing to roll out yet -- so the first deployment added to it must
+                # create the list rather than assume one (RC-66).
+                project_data.setdefault("deployments", []).append(new_deployment)
 
                 # Validate domain config when this call sets domain settings.
                 if domain_format is not None or base_domain is not None or subdomain is not None:
@@ -6693,6 +7290,7 @@ class ProjectManager:
                             "error": domain_error,
                             "error_type": "domain_validation",
                         }
+                    normalized_warnings_create.extend(self._certificate_warnings(project_data, deployment_name))
 
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
@@ -6705,11 +7303,21 @@ class ProjectManager:
                 await self.save_and_commit_project(project_data, commit_message)
 
                 logger.info(f"Successfully created deployment '{deployment_name}' in project '{project_name}'")
-                result_create: dict[str, Any] = {"success": True, "created": True, "error": None, "error_type": None}
+                result_create: dict[str, Any] = {
+                    "success": True,
+                    "created": True,
+                    "error": None,
+                    "error_type": None,
+                    "approvals": self._approval_notices(project_data, deployment_name),
+                }
                 if normalized_warnings_create:
                     result_create["warnings"] = normalized_warnings_create
                 return result_create
 
+        except ConflictError, ConcurrencyError:
+            # Retried by upsert_deployment on a fresh read. Must propagate, not become a
+            # generic error dict, or the retry never sees it.
+            raise
         except Exception as e:
             error_msg = f"Error upserting deployment '{deployment_name}': {e}"
             logger.exception(error_msg)
@@ -6718,12 +7326,13 @@ class ProjectManager:
     async def add_component(
         self,
         name: str,
-        image: str,
+        image: str | None,
         deployment_names: list[str],
         component_type: str = "single",
         port: int | None = None,
         ports: list[int] | None = None,
         path: str = "/",
+        rewrite: str | None = None,
         services: list[str] | None = None,
         cpu_limit: str | None = None,
         memory_limit: str | None = None,
@@ -6741,6 +7350,8 @@ class ProjectManager:
             component_type: Component type (e.g. "single", "frontend", "backend")
             port: Inbound port (None for background workers that don't serve HTTP)
             path: Ingress path (only relevant if publish-on-web is in services)
+            rewrite: Path the ingress rewrites `path` to before the request reaches the
+                container (None keeps the path unchanged)
             services: Component's services list (e.g. ["postgresql-database"])
             cpu_limit: CPU limit (e.g. "500m")
             memory_limit: Memory limit (e.g. "512Mi")
@@ -6781,7 +7392,7 @@ class ProjectManager:
                 dep_name = deployment.get("name")
                 if dep_name not in deployment_names:
                     continue
-                domain_mode = deployment.get("domain-mode", "component-specific")
+                domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE, "component-specific")
 
                 # Collect existing component paths in this deployment
                 existing_paths = []
@@ -6810,7 +7421,10 @@ class ProjectManager:
                     ]
                     try:
                         validate_root_component(
-                            name, [*dep_component_names, name], domain_mode, deployment.get("domain-format")
+                            name,
+                            [*dep_component_names, name],
+                            domain_mode,
+                            get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
                         )
                     except ComponentValidationError as e:
                         return {
@@ -6819,24 +7433,25 @@ class ProjectManager:
                             "error_type": "validation_error",
                         }
 
-            # Validate requested services against project-level services
+            # A service the project has not selected is added here when the service allows
+            # it (RC-84), and refused with a message naming it when it needs a project-level
+            # decision first. The write goes through save_and_commit_project below, like
+            # every other change to the project file.
             if services:
-                project_service_names = set(
-                    ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
-                )
-                invalid_services = [s for s in services if s not in project_service_names]
-                if invalid_services:
-                    return {
-                        "success": False,
-                        "error": f"Services not defined on project: {invalid_services}. Available services: {sorted(project_service_names) if project_service_names else 'none'}",
-                        "error_type": "invalid_services",
-                    }
+                try:
+                    ServiceAdapter.ensure_project_selection(project_data, *services)
+                except ServiceValidationError as e:
+                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
 
-            # Normalize image
-            normalized_image, was_normalized = normalize_container_image(image)
+            # Normalize the image, if there is one. The image lives on the deployment
+            # reference and nowhere else -- build_component_config below does not carry it --
+            # so defining a component without attaching it anywhere needs no image at all.
             warnings: list[str] = []
-            if was_normalized:
-                warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
+            normalized_image = ""
+            if image:
+                normalized_image, was_normalized = normalize_container_image(image)
+                if was_normalized:
+                    warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
 
             # Build component config using shared function
             public_key = get_project_public_key(project_data)
@@ -6847,6 +7462,7 @@ class ProjectManager:
                     port=port,
                     ports=ports,
                     path=path,
+                    rewrite=rewrite,
                     services=services or [],
                     cpu_limit=cpu_limit,
                     memory_limit=memory_limit,
@@ -6876,7 +7492,7 @@ class ProjectManager:
                         ref: dict[str, Any] = {"reference": name, "image": normalized_image}
                         deployment.setdefault("components", []).append(ref)
                         if root:
-                            deployment["root-component"] = name
+                            set_domain_setting(deployment, DomainSetting.ROOT_COMPONENT, name)
                         deployments_updated.append(dep_name)
 
             # Validate (schema + structural) then save and commit through the single path
@@ -6906,13 +7522,26 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
-    async def delete_component(self, component_name: str) -> dict[str, Any]:
+    async def delete_component(self, component_name: str, *, confirm_in_use: bool = False) -> dict[str, Any]:
         """Remove a component definition from the project.
 
         Mirrors add_component's read-mutate-save-commit lifecycle so the deletion goes through
         the single ProjectManager path (fresh contents from Git, save, commit+push). It never
         builds the commit from the in-memory cache, which could lag behind Git and silently
         overwrite components added since the cache was last refreshed.
+
+        By default it refuses a component that is still referenced -- with ``used_by`` naming
+        every place -- so the caller can show what the deletion would break instead of only
+        hearing "no". ``confirm_in_use`` is the caller saying "I have seen that list and I
+        want it gone anyway": every deployment entry and every ``uses-components`` mention is
+        dropped together with the definition, in a single save, because a reference left
+        pointing at a component that no longer exists makes the project file invalid. Same
+        shape, same flag name and the same reasoning as ``remove_attachment`` (RC-52).
+
+        One case is refused even with the confirmation: a component a deployment's web address
+        is built around (``root-component`` or ``expose-component-on-bare-domain``). There is
+        no reference to remove there without also deciding how that site should be served
+        instead, and that is not a decision this call gets to make.
         """
         try:
             project_data = await self.get_contents()
@@ -6926,17 +7555,45 @@ class ProjectManager:
                     "error_type": "not_found",
                 }
 
+            sites = component_usage_sites(project_data).get(component_name, [])
+            web_addresses = [site for site in sites if site.kind == COMPONENT_USAGE_WEB_ADDRESS]
+            if sites and (not confirm_in_use or web_addresses):
+                if web_addresses:
+                    reason = (
+                        f"Component '{component_name}' bepaalt het webadres van: "
+                        f"{', '.join(site.label for site in web_addresses)}. Wijzig eerst het webadres daar; "
+                        "een component waar een adres omheen gebouwd is kan niet zomaar worden verwijderd."
+                    )
+                else:
+                    reason = (
+                        f"Component '{component_name}' is in gebruik door: "
+                        f"{', '.join(site.label for site in sites)} en kan niet worden verwijderd"
+                    )
+                return {
+                    "success": False,
+                    "error": reason,
+                    "error_type": "in_use",
+                    "used_by": [site.as_dict() for site in sites],
+                }
+
+            uncoupled = remove_component_references(project_data, component_name) if sites else []
             project_data["components"] = [
                 c for c in components if not (isinstance(c, dict) and c.get("name") == component_name)
             ]
 
+            where = f" and removed from {', '.join(site.label for site in uncoupled)}" if uncoupled else ""
             await self.save_and_commit_project(
-                project_data, f"Remove component '{component_name}' from project '{project_name}'"
+                project_data, f"Remove component '{component_name}' from project '{project_name}'{where}"
             )
 
-            logger.info(f"Successfully removed component '{component_name}' from project '{project_name}'")
-            return {"success": True}
+            logger.info(f"Successfully removed component '{component_name}' from project '{project_name}'{where}")
+            return {"success": True, "uncoupled_from": [site.as_dict() for site in uncoupled]}
 
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            # The save is the check that a cleanup left no reference behind: a dangling
+            # reference is exactly what validate_component_references rejects here.
+            logger.warning("Component '%s' removal rejected by project validation: %s", component_name, e)
+            return {"success": False, "error": str(e), "error_type": "validation_error"}
         except Exception as e:
             error_msg = f"Error removing component '{component_name}': {e}"
             logger.exception(error_msg)
@@ -6949,7 +7606,10 @@ class ProjectManager:
         port: int | None = None,
         ports: list[int] | None = None,
         path: str | None = None,
+        rewrite: str | None = None,
         services: list[str] | None = None,
+        add_services: list[str] | None = None,
+        remove_services: list[str] | None = None,
         cpu_limit: str | None = None,
         memory_limit: str | None = None,
     ) -> dict[str, Any]:
@@ -6998,21 +7658,68 @@ class ProjectManager:
                 port_block["inbound"] = inbound
                 port_block.setdefault("outbound", [80, 443])
 
-            if path is not None:
-                component["path"] = [{"match": path}]
+            # match and rewrite are two halves of one path entry, so each is written into
+            # the entry that is already there instead of replacing it: updating only the
+            # rewrite must leave the match alone, and the other way round.
+            if path is not None or rewrite:
+                existing = component.get("path")
+                if isinstance(existing, list) and existing and isinstance(existing[0], dict):
+                    entry = dict(existing[0])
+                elif isinstance(existing, str):
+                    entry = {"match": existing}
+                else:
+                    entry = {}
+                if path is not None:
+                    entry["match"] = path
+                if rewrite:
+                    entry["rewrite"] = rewrite
+                entry.setdefault("match", "/")
+                component["path"] = [entry]
 
             if services is not None:
-                project_service_names = set(
-                    ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
+                # As in add_component: a service that may enrol itself is added at project
+                # level here (RC-84), one that may not is refused by name.
+                try:
+                    ServiceAdapter.ensure_project_selection(project_data, *services)
+                except ServiceValidationError as e:
+                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
+                component["services"] = ServiceAdapter.merge_component_service_entries(
+                    component.get("services") or [], services
                 )
-                invalid_services = [s for s in services if s not in project_service_names]
-                if invalid_services:
-                    return {
-                        "success": False,
-                        "error": f"Services not defined on project: {invalid_services}. Available services: {sorted(project_service_names) if project_service_names else 'none'}",
-                        "error_type": "invalid_services",
-                    }
-                component["services"] = ServiceAdapter.build_component_service_entries(services)
+            elif remove_services:
+                # Component-local only: the entry leaves with its config; the project-level
+                # selection stays (another component may still use the service).
+                try:
+                    ServiceAdapter.parse_services_from_strings(remove_services)
+                except ServiceValidationError as e:
+                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
+                removed = set(remove_services)
+                component["services"] = [
+                    entry for entry in component.get("services") or [] if service_entry_name(entry) not in removed
+                ]
+                if add_services:
+                    try:
+                        ServiceAdapter.ensure_project_selection(project_data, *add_services)
+                    except ServiceValidationError as e:
+                        return {"success": False, "error": str(e), "error_type": "invalid_services"}
+                    existing_names = set(
+                        ServiceAdapter.extract_service_names_from_project_services(component["services"])
+                    )
+                    component["services"].extend(
+                        ServiceAdapter.build_component_service_entries(
+                            [svc for svc in add_services if svc not in existing_names]
+                        )
+                    )
+            elif add_services:
+                try:
+                    ServiceAdapter.ensure_project_selection(project_data, *add_services)
+                except ServiceValidationError as e:
+                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
+                existing_entries = component.get("services") or []
+                existing_names = set(ServiceAdapter.extract_service_names_from_project_services(existing_entries))
+                component["services"] = existing_entries + ServiceAdapter.build_component_service_entries(
+                    [svc for svc in add_services if svc not in existing_names]
+                )
 
             if cpu_limit is not None or memory_limit is not None:
                 resources = component.setdefault("resources", {})
@@ -7034,12 +7741,29 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
-    async def remove_attachment(self, attachment_id: str) -> dict[str, Any]:
+    async def remove_attachment(self, attachment_id: str, *, confirm_in_use: bool = False) -> dict[str, Any]:
         """Remove an attachment from the project's catalog.
 
-        Idempotent (already-absent is a no-op success) and refuses removal while the attachment
-        is still referenced. Uses the single ProjectManager path: fresh contents from Git, save,
-        commit and push, with no cache in the mutate-commit path.
+        Idempotent (already-absent is a no-op success) and, by default, refuses removal
+        while the attachment is still referenced -- with ``used_by`` naming every place
+        that references it, so the caller can show what it would be breaking instead of
+        only hearing "no".
+
+        ``confirm_in_use`` is the caller saying "I know it is in use and I want it gone
+        anyway". It then becomes one cleanup: every component and deployment-component
+        coupling is dropped along with the catalog entry, in a single save, because a
+        reference left pointing at a deleted id makes the project file invalid. The flag is
+        named for the *acknowledgement* rather than for the effect (a ``force`` says only
+        that something was overridden, not what was known) -- the same reasoning behind
+        ``rollout=false``.
+
+        One case is refused even with the confirmation: an attachment serving as a
+        publish-on-web certificate (``tls: provided``). There is no reference to remove
+        there without also deciding how the site should be served instead, and quietly
+        moving a site off its own certificate is not a decision this call gets to make.
+
+        Uses the single ProjectManager path: fresh contents from Git, save, commit and
+        push, with no cache in the mutate-commit path.
         """
         try:
             project_data = await self.get_contents()
@@ -7049,26 +7773,220 @@ class ProjectManager:
             if data is None or not any(isinstance(e, dict) and e.get("id") == attachment_id for e in data):
                 return {"success": True, "changed": False}
 
-            if attachment_is_referenced(project_data, attachment_id):
+            sites = attachment_usage_sites(project_data).get(attachment_id, [])
+            certificates = [site for site in sites if site.kind == USAGE_CERTIFICATE]
+            if sites and (not confirm_in_use or certificates):
+                if certificates:
+                    reason = (
+                        f"Bijlage '{attachment_id}' wordt als certificaat gebruikt door: "
+                        f"{', '.join(site.label for site in certificates)}. Wijzig eerst de TLS-modus daar; "
+                        "een certificaat kan niet zomaar worden losgekoppeld."
+                    )
+                else:
+                    reason = (
+                        f"Bijlage '{attachment_id}' is in gebruik door: "
+                        f"{', '.join(site.label for site in sites)} en kan niet worden verwijderd"
+                    )
                 return {
                     "success": False,
-                    "error": f"Bijlage '{attachment_id}' is in gebruik en kan niet worden verwijderd",
+                    "error": reason,
                     "error_type": "in_use",
+                    "used_by": [site.as_dict() for site in sites],
                 }
 
+            uncoupled = remove_attachment_references(project_data, attachment_id) if sites else []
             data[:] = [e for e in data if not (isinstance(e, dict) and e.get("id") == attachment_id)]
 
+            where = f" and uncoupled from {', '.join(site.label for site in uncoupled)}" if uncoupled else ""
             await self.save_and_commit_project(
-                project_data, f"Remove attachment '{attachment_id}' from project '{project_name}'"
+                project_data, f"Remove attachment '{attachment_id}' from project '{project_name}'{where}"
             )
 
-            logger.info(f"Removed attachment '{attachment_id}' from project '{project_name}'")
-            return {"success": True, "changed": True}
+            logger.info(f"Removed attachment '{attachment_id}' from project '{project_name}'{where}")
+            return {"success": True, "changed": True, "uncoupled_from": [site.as_dict() for site in uncoupled]}
 
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            # The save is the check that a cleanup left no reference behind: a dangling
+            # reference is exactly what validate_attachment_references rejects here.
+            logger.warning("Attachment '%s' removal rejected by project validation: %s", attachment_id, e)
+            return {"success": False, "error": str(e), "error_type": "validation_error"}
         except Exception as e:
             error_msg = f"Error removing attachment '{attachment_id}': {e}"
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def upsert_attachment(
+        self,
+        attachment_id: str,
+        filename: str | None,
+        content: bytes | None,
+        *,
+        on_existing: str,
+        on_absent: str,
+        component_name: str | None = None,
+        binding: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Put one attachment in the project's catalog, optionally bound to a component.
+
+        The write side of the attachments service's DEFINE role: the file is encrypted
+        with the project's AGE public key and stored in the catalog under
+        ``attachment_id``. With ``component_name`` and ``binding`` the same call also
+        records the component's *use* of it (which attachment) and its *binding* (as a
+        file at a path, or as an env-var), so "upload and couple" is one request rather
+        than two that can half-fail.
+
+        ``on_existing`` / ``on_absent`` carry the verb's promise (see
+        ``services/catalog/actions.py``): ``reject`` refuses, ``replace`` overwrites
+        without asking, ``create`` adds. Replacing is deliberately silent -- the caller
+        asked for an upsert -- and that is exactly why only the upsert verb passes
+        ``replace`` with an absent-id ``create``.
+
+        Without ``content`` the caller referenced an attachment that is already in the
+        catalog: nothing is encrypted and the catalog entry is left untouched, only the
+        component's use of it is written. The verb's promise then applies to *that
+        coupling*, because that is what the request creates or changes -- the catalog
+        entry has to exist either way, or the reference points at nothing.
+
+        Uses the single ProjectManager path: fresh contents from Git, mutate, save and
+        commit, so the catalog model and the coupling checks run before anything lands.
+        """
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            catalog = extract_attachment_catalog(project_data)
+            exists = attachment_id in catalog
+            if content is None:
+                # Reference only: the entry has to be there, and the verb's promise is
+                # about the coupling this request writes, not about the catalog.
+                if not exists:
+                    return {
+                        "success": False,
+                        "error": f"Bijlage '{attachment_id}' bestaat niet in project '{project_name}'",
+                        "error_type": "not_found",
+                    }
+            elif exists and on_existing == "reject":
+                return {
+                    "success": False,
+                    "error": f"Bijlage '{attachment_id}' bestaat al in project '{project_name}'",
+                    "error_type": "conflict",
+                }
+            elif not exists and on_absent == "reject":
+                return {
+                    "success": False,
+                    "error": f"Bijlage '{attachment_id}' bestaat niet in project '{project_name}'",
+                    "error_type": "not_found",
+                }
+
+            public_key = (project_data.get("config") or {}).get("age-public-key")
+            if content is not None and not public_key:
+                # Fail closed rather than store the bytes unencrypted: the catalog is
+                # committed to the projects repository, and attachments are certificates.
+                return {
+                    "success": False,
+                    "error": f"Project '{project_name}' heeft geen AGE-publieke sleutel",
+                    "error_type": "no_encryption_key",
+                }
+
+            if component_name and not any(
+                isinstance(c, dict) and c.get("name") == component_name
+                for c in project_data.get("components", []) or []
+            ):
+                return {
+                    "success": False,
+                    "error": f"Component '{component_name}' bestaat niet in project '{project_name}'",
+                    "error_type": "not_found",
+                }
+
+            # The service must be selected on the project (and on the component, when one
+            # is named) or the reference has nothing to resolve against.
+            ServiceAdapter.add_services_to_project(
+                project_data, [ServiceType.ATTACHMENTS.value], [component_name] if component_name else None
+            )
+
+            if content is not None:
+                data_list = ensure_attachment_data_list(project_data.setdefault("services", []))
+                entry = {
+                    "id": attachment_id,
+                    "filename": filename,
+                    "content": LiteralScalarString(encrypt_file_to_age_block_sync(content, public_key)),
+                }
+                for index, existing in enumerate(data_list):
+                    if isinstance(existing, dict) and existing.get("id") == attachment_id:
+                        data_list[index] = entry
+                        break
+                else:
+                    data_list.append(entry)
+
+            coupled = False
+            if component_name and binding:
+                component = next(
+                    c for c in project_data["components"] if isinstance(c, dict) and c.get("name") == component_name
+                )
+                uses = [
+                    use for use in extract_component_attachment_uses(component) if use.get("reference") != attachment_id
+                ]
+                coupled = len(uses) != len(extract_component_attachment_uses(component))
+                if content is None:
+                    # Nothing is written yet, so refusing here leaves the project as it was.
+                    if coupled and on_existing == "reject":
+                        return {
+                            "success": False,
+                            "error": (
+                                f"Component '{component_name}' gebruikt bijlage '{attachment_id}' al in "
+                                f"project '{project_name}'"
+                            ),
+                            "error_type": "conflict",
+                        }
+                    if not coupled and on_absent == "reject":
+                        return {
+                            "success": False,
+                            "error": (
+                                f"Component '{component_name}' gebruikt bijlage '{attachment_id}' niet in "
+                                f"project '{project_name}'"
+                            ),
+                            "error_type": "not_found",
+                        }
+                uses.append({"reference": attachment_id, **binding})
+                ServiceAdapter.set_service_config(
+                    project_data,
+                    ServiceType.ATTACHMENTS.value,
+                    ConfigLayer.COMPONENT,
+                    uses,
+                    component_name=component_name,
+                )
+
+            where = f" and coupled to component '{component_name}'" if component_name and binding else ""
+            what = "Couple attachment" if content is None else "Upsert attachment"
+            try:
+                await self.save_and_commit_project(
+                    project_data, f"{what} '{attachment_id}' in project '{project_name}'{where}"
+                )
+            except (ProjectSchemaError, ProjectIntegrityError) as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            logger.info(f"{what} '{attachment_id}' in project '{project_name}'{where}")
+            return {
+                "success": True,
+                "attachment": attachment_id,
+                "replaced": coupled if content is None else exists,
+                "component": component_name,
+            }
+
+        except Exception as e:
+            error_msg = f"Error upserting attachment '{attachment_id}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    @staticmethod
+    def _add_service_commit_message(project_name: str, service_name: str, result: dict[str, Any]) -> str:
+        """Name in the commit what actually changed, selection and binding apart."""
+        parts: list[str] = []
+        if result["services_added"]:
+            parts.append(f"add service(s) {', '.join(result['services_added'])}")
+        if result["components_updated"]:
+            parts.append(f"bind '{service_name}' to component(s) {', '.join(result['components_updated'])}")
+        return f"{'; '.join(parts).capitalize()} in project '{project_name}'"
 
     async def add_service(
         self,
@@ -7101,15 +8019,18 @@ class ProjectManager:
                 error_type = "invalid_components" if "Components not found" in str(e) else "invalid_service"
                 return {"success": False, "error": str(e), "error_type": error_type}
 
-            # Persist changes only when something was actually added
-            if result["services_added"]:
-                added = ", ".join(result["services_added"])
-                commit_message = f"Add service(s) {added} to project '{project_name}'"
+            # Persist whenever the project data changed. Binding an already-selected
+            # service to a component IS a change: gating on services_added alone threw
+            # that mutation away while the response still reported the component as
+            # updated, which is the ordinary second call (configure, then bind).
+            if result["services_added"] or result["components_updated"]:
+                commit_message = self._add_service_commit_message(project_name, service_name, result)
                 await self.save_and_commit_project(project_data, commit_message)
 
             logger.info(
                 f"Add service '{service_name}' to project '{project_name}': "
-                f"added={result['services_added']}, skipped={result['services_skipped']}"
+                f"added={result['services_added']}, skipped={result['services_skipped']}, "
+                f"components={result['components_updated']}"
             )
 
             return {"success": True, **result}
@@ -7118,6 +8039,403 @@ class ProjectManager:
             error_msg = f"Error adding service '{service_name}': {e}"
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def configure_service(
+        self,
+        service_name: str,
+        target: str,
+        config: dict[str, Any] | list[Any],
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Upsert one service's config block at a target layer, then persist.
+
+        The write itself is the pure ``ServiceAdapter.set_service_config``; this
+        method resolves the target, ensures the service is selected, and commits
+        through ``save_and_commit_project`` -- the single validated write path. A
+        config the service's model rejects surfaces as ``validation_error`` carrying
+        the chokepoint's message (which lists the accepted fields), so the same
+        guard the wizard hits also guards the API. ``target`` is a ``ConfigLayer``
+        value (``project`` / ``component`` / ``deployment`` / ``deployment-component``).
+        """
+        from opi.services.catalog.base import ConfigLayer
+
+        try:
+            layer = ConfigLayer(target)
+        except ValueError:
+            return {"success": False, "error": f"Unknown target '{target}'", "error_type": "invalid_target"}
+
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            try:
+                ServiceAdapter.set_service_config(
+                    project_data,
+                    service_name,
+                    layer,
+                    config,
+                    component_name=component_name,
+                    deployment_name=deployment_name,
+                )
+            except ServiceValidationError as e:
+                return {"success": False, "error": str(e), "error_type": "invalid_target"}
+
+            # Wat de schrijver leeg liet en de dienst zelf invult -- vandaag een
+            # uitnodigingssleutel. De portal deed dit al via post_merge; deze weg deed het
+            # niet, dus een via de API aangemaakte uitnodiging hield de lege string en had
+            # een link waar niemand iets mee kon.
+            generated = generate_missing_values(project_data)
+
+            # Domeinen en subdomeinen zijn op aanvraag, en deze weg kon er een claimen
+            # zonder de aanvraag te doen: de config werd geschreven, er kwam geen ingress
+            # op het gevraagde adres en niets vertelde de client waarom. Dit is dezelfde
+            # aanvraag die de portal maakt, in hetzelfde blok, voor dezelfde beheerder.
+            ensure_approval_requests(project_data)
+
+            commit_message = f"Configure service '{service_name}' at {target} target in project '{project_name}'"
+            try:
+                await self.save_and_commit_project(project_data, commit_message)
+            except (ProjectSchemaError, ProjectIntegrityError) as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            logger.info(f"Configured service '{service_name}' at {target} target in project '{project_name}'")
+            return {
+                "success": True,
+                "service": service_name,
+                "target": target,
+                "generated": generated,
+                "approvals": self._approval_notices(project_data, deployment_name),
+                "warnings": self._config_advice_warnings(project_data),
+            }
+
+        except Exception as e:
+            error_msg = f"Error configuring service '{service_name}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def clear_service_config(
+        self,
+        service_name: str,
+        target: str,
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Remove one service's config at a target layer (demote to bare string).
+
+        Idempotent: removing config that is not there is a success no-op and, per
+        the logging rule, writes nothing to the log. Only a real change commits and
+        logs one INFO line.
+        """
+        from opi.services.catalog.base import ConfigLayer
+
+        try:
+            layer = ConfigLayer(target)
+        except ValueError:
+            return {"success": False, "error": f"Unknown target '{target}'", "error_type": "invalid_target"}
+
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            try:
+                removed = ServiceAdapter.remove_service_config(
+                    project_data, service_name, layer, component_name=component_name, deployment_name=deployment_name
+                )
+            except ServiceValidationError as e:
+                return {"success": False, "error": str(e), "error_type": "invalid_target"}
+
+            if not removed:
+                return {"success": True, "service": service_name, "target": target, "removed": False}
+
+            commit_message = f"Clear service '{service_name}' config at {target} target in project '{project_name}'"
+            try:
+                await self.save_and_commit_project(project_data, commit_message)
+            except (ProjectSchemaError, ProjectIntegrityError) as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            logger.info(f"Cleared service '{service_name}' config at {target} target in project '{project_name}'")
+            return {"success": True, "service": service_name, "target": target, "removed": True}
+
+        except Exception as e:
+            error_msg = f"Error clearing service '{service_name}' config: {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def patch_service_config_list(
+        self,
+        service_name: str,
+        target: str,
+        *,
+        add: list[Any],
+        remove: list[str],
+        list_field: str | None = None,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Add/update/remove items in one list of a service's config, then persist.
+
+        The merge itself is the pure ``ServiceAdapter.patch_service_config_list``: only
+        the named items change, on the freshly read project file, so a caller that
+        adjusts one storage mount, attachment coupling, invite, access rule or sleep-mode
+        pattern never rewrites the rest (and cannot silently drop them). ``list_field``
+        names the list inside an object-shaped config and is ``None`` when the config
+        itself is the list. Commits through ``save_and_commit_project`` like every write.
+        Even a full no-op commits nothing extra -- an unchanged file is an unchanged
+        push, and the counts in the result tell which run it was.
+        """
+        from opi.services.catalog.base import ConfigLayer
+
+        try:
+            layer = ConfigLayer(target)
+        except ValueError:
+            return {"success": False, "error": f"Unknown target '{target}'", "error_type": "invalid_target"}
+
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            try:
+                counts = ServiceAdapter.patch_service_config_list(
+                    project_data,
+                    service_name,
+                    layer,
+                    add=add,
+                    remove=remove,
+                    list_field=list_field,
+                    component_name=component_name,
+                    deployment_name=deployment_name,
+                )
+            except ServiceValidationError as e:
+                return {"success": False, "error": str(e), "error_type": "invalid_target"}
+
+            # Een toegevoegde entry kan net zo goed een lege uitnodigingssleutel dragen
+            # als een hele config dat kan; zie configure_service.
+            generated = generate_missing_values(project_data)
+
+            commit_message = f"Patch service '{service_name}' config at {target} target in project '{project_name}'"
+            try:
+                await self.save_and_commit_project(project_data, commit_message)
+            except (ProjectSchemaError, ProjectIntegrityError) as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            logger.info(f"Patched service '{service_name}' config at {target} target in project '{project_name}'")
+            return {
+                "success": True,
+                "service": service_name,
+                "target": target,
+                "generated": generated,
+                "warnings": self._config_advice_warnings(project_data),
+                **counts,
+            }
+
+        except Exception as e:
+            error_msg = f"Error patching service '{service_name}' config: {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def manage_database_schemas(
+        self,
+        operation: str,
+        postfix: str,
+        *,
+        description: str = "",
+        forget: bool = False,
+    ) -> dict[str, Any]:
+        """Add or remove one extra database schema without resending the rest of the config (RC-59).
+
+        The schema list is the one part of a service config where "write the whole block
+        back with one entry less" is dangerous. RC-17 decided that a schema leaving the
+        list does **not** mean its data may go: removing it marks it, so the schema and its
+        contents stay and only the variable stops being offered. But marking is a field a
+        user ticks, not a consequence of dropping a line -- so a client that rewrites the
+        config with one schema fewer silently loses that protection, and a client that
+        knows only the request schema has no way to know it was there.
+
+        This method is that protection, moved to where it cannot be skipped:
+
+        * ``add`` puts a new schema in the list. A postfix that is already there and active
+          is a conflict; one that is there but marked comes back (its data was never
+          removed, so restoring it is the whole point of marking rather than dropping).
+        * ``remove`` marks. The schema and its data stay in PostgreSQL, and the entry stays
+          in the project file recording that it exists.
+        * ``remove`` with ``forget`` takes the entry out of the file. The data still stays
+          in PostgreSQL -- nothing here ever drops a schema -- but the project no longer
+          records that the schema exists, so it cannot be brought back through the API.
+
+        Uniqueness, the 63-character limit on the full name and collisions with the
+        variables the database service already exposes are NOT re-checked here: they are
+        enforced at save time, by the same chokepoint the wizard hits, and surface as
+        ``validation_error``.
+        """
+        service_name = ServiceType.POSTGRESQL_DATABASE.value
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            view = Project(project_data)
+            if not view.uses_service(service_name):
+                return {
+                    "success": False,
+                    "error": f"Project '{project_name}' gebruikt de dienst '{service_name}' niet",
+                    "error_type": "not_found",
+                }
+
+            raw_config = view.service_config(service_name)
+            config: dict[str, Any] = copy.deepcopy(raw_config) if isinstance(raw_config, dict) else {}
+            entries: list[dict[str, Any]] = list(config.get("schemas") or [])
+            index = next((i for i, entry in enumerate(entries) if entry.get("postfix") == postfix), None)
+
+            if operation == "add":
+                if index is None:
+                    entries.append({"postfix": postfix, "description": description})
+                    outcome = {"created": True, "restored": False}
+                elif not schema_is_marked(entries[index]):
+                    return {
+                        "success": False,
+                        "error": f"Schema '{postfix}' bestaat al in dit project",
+                        "error_type": "conflict",
+                    }
+                else:
+                    entry = dict(entries[index])
+                    entry.pop("marked-for-deletion", None)
+                    entry.pop("marked_for_deletion", None)
+                    if description:
+                        entry["description"] = description
+                    entries[index] = entry
+                    outcome = {"created": False, "restored": True}
+            elif operation == "remove":
+                if index is None:
+                    return {
+                        "success": False,
+                        "error": f"Schema '{postfix}' bestaat niet in dit project",
+                        "error_type": "not_found",
+                    }
+                if forget:
+                    entries.pop(index)
+                    outcome = {"marked": False, "forgotten": True}
+                elif schema_is_marked(entries[index]):
+                    # Already on its way out: nothing to write, and saying so is better
+                    # than a commit that changes nothing.
+                    return {"success": True, "changed": False, "marked": True, "forgotten": False}
+                else:
+                    entries[index] = {**entries[index], "marked-for-deletion": True}
+                    outcome = {"marked": True, "forgotten": False}
+            else:
+                return {"success": False, "error": f"Unknown operation '{operation}'", "error_type": "invalid_request"}
+
+            config["schemas"] = entries
+            try:
+                ServiceAdapter.set_service_config(project_data, service_name, ConfigLayer.PROJECT, config)
+            except ServiceValidationError as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            commit_message = f"{operation.capitalize()} database schema '{postfix}' in project '{project_name}'"
+            try:
+                await self.save_and_commit_project(project_data, commit_message)
+            except (ProjectSchemaError, ProjectIntegrityError) as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            logger.info("Schema '%s' %s in project '%s'", postfix, operation, project_name)
+            return {"success": True, "changed": True, **outcome}
+
+        except Exception as e:
+            error_msg = f"Error managing database schema '{postfix}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def set_component_values(
+        self,
+        service_name: str,
+        layer: str,
+        operation: str,
+        *,
+        component_name: str,
+        deployment_name: str | None = None,
+        values: dict[str, str] | None = None,
+        keys: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Add, patch, delete or clear the values a service owns on one component (RC-55).
+
+        The sibling of ``configure_service`` for the two services that own a plain
+        component property instead of a block in a ``services:`` list. The whole
+        decrypt -> mutate -> re-encrypt round trip happens inside the change function so
+        it runs against the freshest committed file, and re-runs against whatever landed
+        if someone else pushed first -- a block ciphertext computed before the read would
+        otherwise drop the other writer's entries.
+
+        Returns ``changed=False`` when the resulting values equal what is already stored.
+        AGE is not deterministic, so re-encrypting an unchanged set would produce a
+        different ciphertext and therefore a commit per call; comparing after decryption
+        is the only comparison that means anything here.
+        """
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.component_values import (
+            ValuesOperation,
+            apply_operation,
+            encode,
+            locate,
+            validate_value_for_storage,
+        )
+        from opi.services.registry import get_service
+        from opi.services.services_enums import ServiceType
+
+        service = get_service(ServiceType(service_name))
+        owned_property = service.owned_property
+        if not service.owned_values_map or owned_property is None:  # pragma: no cover - guarded by the API
+            return {
+                "success": False,
+                "error": f"Service '{service_name}' owns no values",
+                "error_type": "invalid_target",
+            }
+        config_layer = ConfigLayer(layer)
+        values_operation = ValuesOperation(operation)
+        try:
+            for key, value in (values or {}).items():
+                # The API refuses these too, with a 422. Repeated here because this is the
+                # write path: a value the storage form normalises would differ from what is
+                # stored on every read, so the no-op check below could never be true again.
+                validate_value_for_storage(key, value)
+                # And the service's own rule on its values: an alias must point at a
+                # platform variable that exists (RC-66, bevinding 5).
+                service.validate_owned_value(key, value)
+        except ComponentValuesError as e:
+            return {"success": False, "error": str(e), "error_type": "invalid_values"}
+
+        def mutator(project_data: dict[str, Any]) -> dict[str, Any] | None:
+            node = locate(project_data, config_layer, component_name, deployment_name)
+            if node is None:
+                raise ComponentValuesError(
+                    f"Component '{component_name}' bestaat niet"
+                    + (f" in deployment '{deployment_name}'" if deployment_name else "")
+                    + "."
+                )
+            current = decode_component_values(node.get(owned_property), project_data)
+            updated = apply_operation(current, values_operation, values=values, keys=keys)
+            if updated == current:
+                return None
+            encoded = encode(updated, project_data)
+            if encoded is None:
+                node.pop(owned_property, None)
+            else:
+                node[owned_property] = encoded
+            return project_data
+
+        where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
+        commit_message = f"{operation.capitalize()} {service_name} values on {where}"
+        try:
+            committed = await self.mutate_and_commit_project(mutator, commit_message)
+        except ComponentValuesError as e:
+            return {"success": False, "error": str(e), "error_type": "invalid_values"}
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+        if committed:
+            # The names are not secret and are what makes this line useful; the values are.
+            logger.info("Applied %s of %s values on %s", operation, service_name, where)
+        return {"success": True, "service": service_name, "target": layer, "changed": committed}
 
     async def add_component_to_deployment(
         self,
@@ -7180,7 +8498,7 @@ class ProjectManager:
                 }
 
             # Validate path uniqueness
-            domain_mode = target_deployment.get("domain-mode", "component-specific")
+            domain_mode = get_domain_setting(target_deployment, DomainSetting.DOMAIN_MODE, "component-specific")
             new_path = component_def.get("path", "/")
 
             existing_paths = []
@@ -7339,6 +8657,7 @@ class ProjectManager:
         new_image_url: str,
         service_actions: dict[str, dict[str, dict[str, dict[str, str]]]] | None = None,
         registry: str | None = None,
+        rollout: bool = True,
     ) -> dict[str, Any]:
         """
         Update component image and optionally perform service-specific actions.
@@ -7361,6 +8680,9 @@ class ProjectManager:
                                 }
                             }
             registry: Optional registry name to link to this component for imagePullSecret creation
+            rollout: When False, the new image is written and committed to the project file
+                     but nothing is processed or synced. The project file then runs ahead of
+                     the cluster until the project is refreshed.
 
         Returns:
             Result dict with status, updates, and actions performed
@@ -7389,10 +8711,29 @@ class ProjectManager:
                     f"Available registries: {registry_names or 'none'}"
                 )
 
-        # 3. Find deployment (raise ValueError if not found)
-        deployment = await self.get_deployment_by_name(deployment_name)
+        # 3. Find the deployment WITHIN project_data -- the exact dict we save below.
+        # Using get_deployment_by_name() here was the bug: it runs its own get_contents(),
+        # so it returns a SEPARATE copy of the project, and setting comp["image"] on it
+        # never reached the project_data that gets committed. The store then saw no diff
+        # (current == data) and committed nothing, silently dropping the image update.
+        # Match get_deployments' cluster filter so we pick the same deployment it would.
+        deployment = next(
+            (
+                d
+                for d in project_data.get("deployments", [])
+                if d.get("name") == deployment_name and d.get("cluster") == settings.CLUSTER_MANAGER
+            ),
+            None,
+        )
         if not deployment:
-            raise ValueError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+            # TaskInputError en geen ValueError: dit is geen storing maar een verzoek dat
+            # niet kan, en de worker maakt er daardoor een blijvende mislukking van MET een
+            # reden die de aanroeper kan lezen. Hetzelfde woord dat de andere paden hier al
+            # gebruiken (add_component_to_deployment geeft 'deployment_not_found' terug).
+            raise TaskInputError(
+                f"Deployment '{deployment_name}' not found in project '{project_name}'",
+                error_type="deployment_not_found",
+            )
 
         # 3. Find component in deployment
         component_found = False
@@ -7408,21 +8749,19 @@ class ProjectManager:
                 break
 
         if not component_found:
-            raise ValueError(
-                f"Component '{component_name}' not found in deployment '{deployment_name}' of project '{project_name}'"
+            raise TaskInputError(
+                f"Component '{component_name}' not found in deployment '{deployment_name}' of project '{project_name}'",
+                error_type="component_not_found",
             )
 
         logger.info(f"Updated image: {old_image} -> {new_image_url}")
 
-        # Re-enable component if it was disabled due to an image pull error
-        is_disabled, disabled_reason = self._project_file_handler.extract_deployment_component_disabled(
-            project_data, deployment_name, component_name
-        )
-        if is_disabled and is_image_pull_disable_reason(disabled_reason):
-            self._project_file_handler.set_deployment_component_disabled(
-                project_data, deployment_name, component_name, False, ""
-            )
-            logger.info(f"Re-enabled component '{component_name}' (was disabled: {disabled_reason})")
+        # A new image replaces what ran here, so every state a service recorded about the
+        # old content is cleared -- by the services themselves, through the hook. This
+        # used to be one hardcoded ``if`` for image-pull disables plus a call into
+        # sleep-mode, which left an OOM-disabled component switched off after its image
+        # was fixed (RC-37).
+        state_notices = await run_redeploy_hooks(project_name, project_data, deployment, [component_name])
 
         # 4. Process service actions (e.g., increment PVC generations for persistent-storage)
         generation_changes = {}
@@ -7456,8 +8795,37 @@ class ProjectManager:
         if generation_changes:
             storage_list = ", ".join(generation_changes.keys())
             commit_msg += f" and recreate PVCs: {storage_list}"
-        await self.save_and_commit_project(project_data, commit_msg)
+        commit_step = self._begin_step("Nieuwe image vastleggen in het projectbestand")
+        try:
+            await self.save_and_commit_project(project_data, commit_msg)
+        except Exception as e:
+            self._end_step(commit_step, str(e))
+            raise
+        self._end_step(commit_step)
         logger.info("Saved and committed project YAML changes")
+
+        # The caller asked for the write only: stop before anything reaches the cluster.
+        if not rollout:
+            logger.info(
+                "Skipping processing and sync for %s/%s: rollout was deferred",
+                project_name,
+                deployment_name,
+            )
+            actions_deferred = ["image_update"]
+            if generation_changes:
+                actions_deferred.append("pvc_recreation")
+            deferred_result: dict[str, Any] = {
+                "status": "success",
+                "message": f"Successfully updated {component_name} in {deployment_name} (not rolled out)",
+                "updates": {
+                    "image": {"old": old_image, "new": new_image_url, "normalized": image_was_normalized},
+                    "storage_generations": generation_changes,
+                },
+                "actions_performed": actions_deferred,
+            }
+            if state_notices:
+                deferred_result["state_cleared"] = state_notices
+            return deferred_result
 
         # 7. CRITICAL: Process entire project for this deployment
         # This ensures all resources are created/updated (not just manifests)
@@ -7466,23 +8834,36 @@ class ProjectManager:
         # - Application manifests (including new PVC generations)
         # - ArgoCD resources
         logger.info(f"Processing deployment {deployment_name} to apply all changes")
-        process_success = await self.process_project(deployment_name)
+        process_step = self._begin_step("Diensten en manifesten bijwerken")
+        try:
+            process_success = await self.process_project(deployment_name)
+        except Exception as e:
+            self._end_step(process_step, str(e))
+            raise
 
         if not process_success:
+            self._end_step(process_step, f"Failed to process deployment {deployment_name}")
             raise Exception(f"Failed to process deployment {deployment_name}")
+        self._end_step(process_step)
 
         # 8. Trigger ArgoCD sync
         logger.info("Triggering ArgoCD sync for updated deployment")
-        argo_connector = create_argo_connector()
+        sync_step = self._begin_step("ArgoCD laten uitrollen")
+        try:
+            argo_connector = create_argo_connector()
 
-        # Refresh user-applications (contains project definitions)
-        await argo_connector.refresh_application("user-applications")
+            # Refresh user-applications (contains project definitions)
+            await argo_connector.refresh_application("user-applications")
 
-        # Refresh the specific deployment application
-        app_name = generate_argocd_application_name(project_name, deployment_name)
-        if await argo_connector.application_exists(app_name):
-            logger.info(f"Refreshing ArgoCD application: {app_name}")
-            await argo_connector.refresh_application(app_name)
+            # Refresh the specific deployment application
+            app_name = generate_argocd_application_name(project_name, deployment_name)
+            if await argo_connector.application_exists(app_name):
+                logger.info(f"Refreshing ArgoCD application: {app_name}")
+                await argo_connector.refresh_application(app_name)
+        except Exception as e:
+            self._end_step(sync_step, str(e))
+            raise
+        self._end_step(sync_step)
 
         # Schedule fire-and-forget health watcher so an image bump to a missing
         # image (ImagePullBackOff) gets auto-disabled, same as the deploy path.
@@ -7514,6 +8895,10 @@ class ProjectManager:
             },
             "actions_performed": actions_performed,
         }
+        # What the services cleared, so a re-enabled component is visible to whoever
+        # pushed the image instead of only in the log.
+        if state_notices:
+            result["state_cleared"] = state_notices
 
         logger.info(f"Image update completed successfully: {result}")
         return result

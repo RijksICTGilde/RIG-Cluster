@@ -38,11 +38,26 @@ dependencies = [
     "python-multipart>=0.0.27", # CVE-2026-42561 DoS via unbounded headers
     "mako>=1.3.12", # CVE-2026-44307 path traversal in TemplateLookup
     "aiohttp>=3.12.13",
+    # Directly imported by connectors/transip.py to sign the TransIP API request, and
+    # that module hangs off startup.py. Declared rather than inherited from authlib:
+    # a transitive dependency that disappears would take the whole boot down with it.
+    "cryptography>=48.0.0",
     "gitpython>=3.1.50", # CVE-2026-42215/42284/44243/44244 + GHSA-mv93-w799-cj2w
     "deepdiff>=8.0.1",
     "jsonpath-ng>=1.7.0",
     "tenacity>=9.1.2",
-    "jinja-roos-components @ git+https://github.com/RijksICTGilde/jinja-roos-components.git@table-and-more-conversion",
+    # Lord of the Components: het componentensysteem waar de interface naartoe gaat. Een
+    # gewone runtime-dependency en geen dev-extra, want de applicatie rendert er pagina's
+    # mee - hij hoort dus in de image te zitten.
+    #
+    # Gepind op een commit. Die pin is de reden dat dit veilig is: de NLDD-afgeleide
+    # componentlaag schuift met een bump mee, en meer dan duizend aanroepen mogen niet
+    # stil van vorm veranderen.
+    "lord-of-the-components @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#subdirectory=python",
+    "lotc-rvo @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#subdirectory=packages/lotc-rvo",
+    "lotc-nldd @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#subdirectory=packages/lotc-nldd",
+    "lotc-layout @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#subdirectory=packages/lotc-layout",
+    "lotc-forms @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#subdirectory=packages/lotc-forms",
     "beautifulsoup4>=4.13.4",
     "lxml>=6.0.1",
     "python-keycloak>=5.3.0",
@@ -75,6 +90,8 @@ test = [
     "vcrpy>=7.0.0",
     "pytest-minio-mock>=0.4.17",
     "pytest-timeout>=2.3.1",
+    "pytest-randomly>=3.16.0",
+    "testcontainers[postgres]>=4.0.0",
 ]
 dev = [
     "ruff>=0.11.11",
@@ -99,6 +116,19 @@ exclude = ["opi/migrations"]
 
 [tool.ruff.format]
 line-ending = "lf"
+
+[tool.djlint]
+profile = "jinja"
+extension = "html.j2"
+# Negeerlijst, per regel met de reden:
+# T003 (endblock zonder naam): de templates gebruiken consequent kale endblocks.
+# H021 (inline styles): het componentensysteem gebruikt style-attributen bewust.
+# H025 (orphan tag): false positive op de LOTC custom elementen (<c-card> e.d.).
+# T027/T001: vallen over bewuste jinja-escapes zoals {{' }} om `${{ }}` letterlijk
+#            te renderen (actions.html.j2).
+# T028 (spaceless in attribuut): meerdere-regel class-attributen zijn daar leesbaar.
+# J018 (url_for): de templates gebruiken bewust vaste paden; urls hebben geen namen.
+ignore = "T003,H021,H025,T027,T001,T028,J018"
 
 [tool.ruff.lint]
 select = ["I", "SIM", "B", "UP", "F", "E", "S", "C90", "DTZ", "LOG", "PIE", "PT", "ERA", "W", "C", "TRY", "RUF", "ANN", "A", "ICN", "RSE", "FLY", "ISC", "PLE", "FURB", "PERF", "TCH"]
@@ -155,13 +185,13 @@ reportUnknownVariableType = false
 reportUnknownMemberType = false
 reportUnknownArgumentType = false
 reportUnusedVariable = false
-reportCallIssue = false
+reportCallIssue = true
 reportPossiblyUnboundVariable = false
 reportAttributeAccessIssue = false
 reportOptionalMemberAccess = false
 reportOptionalSubscript = false
 reportOptionalIterable = false
-reportArgumentType = false
+reportArgumentType = true
 reportUndefinedVariable = false
 reportUnboundVariable = false
 reportReturnType = false
@@ -182,7 +212,11 @@ branch = true
 command_line = "-m pytest"
 relative_files = true # needed for sonarcloud code coverage
 omit = [
-    "tests/*"
+    "tests/*",
+    # Operational/diagnostic scripts are not application code under the 90% bar.
+    # Some are imported by tests (e.g. probe-spec drift, upgrade-safety), which
+    # would otherwise pull their partial coverage into the application metric.
+    "scripts/*",
 ]
 concurrency = ["greenlet", "thread"]
 
@@ -198,7 +232,11 @@ title = "opi"
 testpaths = [
     "tests"
 ]
-addopts = "--strict-markers -v -q -m 'not requires_infra and not e2e'"
+# -p no:randomly: pytest-randomly is installed to *check* order-independence, not to
+# impose it. Once installed it shuffles by default, which would reorder the ~6300 unit
+# tests on every run as a side effect of a change that is about the E2E layer. So it is
+# off here and switched on deliberately by `task test-e2e-random`.
+addopts = "--strict-markers -v -q -p no:randomly -m 'not requires_infra and not e2e'"
 asyncio_mode = "auto"
 filterwarnings = [
     "ignore::UserWarning"
@@ -212,7 +250,10 @@ markers = [
    "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)",
    "e2e: marks end-to-end browser tests (require playwright and chromium)",
    "sandbox: marks tests that require a running sandbox cluster",
-   "reallife: long-running real-life sandbox suite (5 projects, semi-concurrent UI+API mutations); excluded from the standard sandbox run"
+   "reallife: long-running real-life sandbox suite (5 projects, semi-concurrent UI+API mutations); excluded from the standard sandbox run",
+   "punt14: gerichte jacht op punt 14 uit de zad-cli-doorlopen (deployment_not_found); buiten de standaard sandboxrun",
+   "serial: tests in this module depend on each other by design and keep their file order, also under pytest-randomly",
+   "upgrade_safety: RC-20 upgrade-safety replay of real production project files (clones the projects repo; needs network)"
 ]
 pythonpath = "."
 
@@ -249,4 +290,22 @@ authorized_licenses = [
     "Python Software Foundation",
     "Public Domain",
     "The Unlicense (Unlicense)",
+]
+# lotc-forms draagt (nog) geen license-metadata in zijn pyproject, anders dan de vier
+# andere lotc-packages; de licentie is daarmee UNKNOWN terwijl de repo MIT is.
+[tool.liccheck.authorized_packages]
+lotc-forms = "*"
+
+[tool.ruff.lint.flake8-type-checking]
+# Both FastAPI and Pydantic read these annotations at runtime -- FastAPI to build the
+# OpenAPI schema from route signatures, Pydantic to build its models -- so the imports
+# they use cannot move into a type-checking block. Moving them would break the very spec
+# the shared aliases in opi/api/params.py and opi/api/enums.py exist to improve.
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+runtime-evaluated-decorators = [
+    "fastapi.APIRouter.get",
+    "fastapi.APIRouter.post",
+    "fastapi.APIRouter.put",
+    "fastapi.APIRouter.patch",
+    "fastapi.APIRouter.delete",
 ]

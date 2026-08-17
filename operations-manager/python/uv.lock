@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = "==3.14.*"
 
 [[package]]
@@ -608,6 +608,20 @@ wheels = [
 ]
 
 [[package]]
+name = "docker"
+version = "7.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "requests" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/7f/731ff914b0255d3d065f45fd4e626d4b8c95dbcbaada049f337a6ac16410/docker-7.2.0.tar.gz", hash = "sha256:cebb93773d334f778e023a7ee352a8d6e13ab1bd3b863a4d4a59dec897df43ac", size = 118731, upload-time = "2026-07-09T14:53:46.39Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/23/529140fe1aab80fc6992f93a706deec709140a6397439139a054e1515c45/docker-7.2.0-py3-none-any.whl", hash = "sha256:a3f45fdeb9165e2d25d9a1d02ddf3bc70fb572cf5ebbf9b58558c22caf29b71f", size = 148775, upload-time = "2026-07-09T14:53:45.224Z" },
+]
+
+[[package]]
 name = "editorconfig"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
@@ -892,16 +906,6 @@ wheels = [
 ]
 
 [[package]]
-name = "jinja-roos-components"
-version = "0.1"
-source = { git = "https://github.com/RijksICTGilde/jinja-roos-components.git?rev=table-and-more-conversion#d6ef4eb1d45327c683ff9e8b1db9cf8a49344eb2" }
-dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "jinja2" },
-    { name = "pydantic" },
-]
-
-[[package]]
 name = "jinja2"
 version = "3.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1028,6 +1032,43 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/40/71/d89bb0e71b1415453980fd32315f2a037aad9f7f70f695c7cec7035feb13/license_expression-30.4.4.tar.gz", hash = "sha256:73448f0aacd8d0808895bdc4b2c8e01a8d67646e4188f887375398c761f340fd", size = 186402, upload-time = "2025-07-22T11:13:32.17Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/40/791891d4c0c4dab4c5e187c17261cedc26285fd41541577f900470a45a4d/license_expression-30.4.4-py3-none-any.whl", hash = "sha256:421788fdcadb41f049d2dc934ce666626265aeccefddd25e162a26f23bcbf8a4", size = 120615, upload-time = "2025-07-22T11:13:31.217Z" },
+]
+
+[[package]]
+name = "lord-of-the-components"
+version = "0.1.0"
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=python&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+dependencies = [
+    { name = "jinja2" },
+]
+
+[[package]]
+name = "lotc-forms"
+version = "0.1.0"
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+
+[[package]]
+name = "lotc-layout"
+version = "0.1.0"
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+dependencies = [
+    { name = "lord-of-the-components" },
+]
+
+[[package]]
+name = "lotc-nldd"
+version = "0.1.0"
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+dependencies = [
+    { name = "lord-of-the-components" },
+]
+
+[[package]]
+name = "lotc-rvo"
+version = "0.1.0"
+source = { git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e#762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" }
+dependencies = [
+    { name = "lord-of-the-components" },
 ]
 
 [[package]]
@@ -1951,6 +1992,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-randomly"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/27/b3/36192dacc0f470ac2cc516f73e01739c9a48a8224f76beada4f85e1c8a89/pytest_randomly-4.1.0.tar.gz", hash = "sha256:47f1d9746c3bc3efabd53ae1ebfb8bb385cf3d4df4b505b6d58d9c97a3dfe70f", size = 14302, upload-time = "2026-04-20T13:01:51.831Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/db/2df9a1fca597a273f957a559c20c2d95d629928384507b2afa43ba6909d1/pytest_randomly-4.1.0-py3-none-any.whl", hash = "sha256:f55e89e53367b090c0c053697d7f9d77595543d0e0516c93978b50c0f6b252f9", size = 8353, upload-time = "2026-04-20T13:01:50.382Z" },
+]
+
+[[package]]
 name = "pytest-timeout"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2042,6 +2095,16 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f8/bf/abbd3cdfb8fbc7fb3d4d38d320f2441b1e7cbe29be4f23797b4a2b5d8aac/pytz-2025.2.tar.gz", hash = "sha256:360b9e3dbb49a209c21ad61809c7fb453643e048b38924c765813546746e81c3", size = 320884, upload-time = "2025-03-25T02:25:00.538Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/c4/34e93fe5f5429d7570ec1fa436f1986fb1f00c3e0f43a589fe2bbcd22c3f/pytz-2025.2-py2.py3-none-any.whl", hash = "sha256:5ddf76296dd8c44c26eb8f4b6f35488f3ccbf6fbbd7adee0b7262d43f0ec2f00", size = 509225, upload-time = "2025-03-25T02:24:58.468Z" },
+]
+
+[[package]]
+name = "pywin32"
+version = "312"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/2b/1f3cded5822fd49c02f40544cbb5f58c7cfd6b1694869fd476cb6170ee97/pywin32-312-cp314-cp314-win32.whl", hash = "sha256:a77a90fbb6881238d2ca9c6fd797b25817f3768fe78d214a90137ff055a75f5b", size = 6468928, upload-time = "2026-06-04T07:49:43.188Z" },
+    { url = "https://files.pythonhosted.org/packages/21/82/3bf86d2e2808902013132e1ce905a7da0da53790f3836c64bf44d55e24f3/pywin32-312-cp314-cp314-win_amd64.whl", hash = "sha256:a4dd3a848290ef724347b19f301045831d8e802fa4464f491b98b1e0a081432e", size = 7024157, upload-time = "2026-06-04T07:49:45.34Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/0e/73f6d6800b4f27655abd9e9f6aaeaefcddb2b946e4674efa2bab184a7f7b/pywin32-312-cp314-cp314-win_arm64.whl", hash = "sha256:9fce94568364e0155e6dfb781ac5d95903be8baf28670632beab1b523f300daa", size = 6839598, upload-time = "2026-06-04T07:49:47.613Z" },
 ]
 
 [[package]]
@@ -2348,6 +2411,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz", hash = "sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a", size = 49413, upload-time = "2026-02-07T10:45:33.841Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl", hash = "sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55", size = 28926, upload-time = "2026-02-07T10:45:32.24Z" },
+]
+
+[[package]]
+name = "testcontainers"
+version = "4.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docker" },
+    { name = "python-dotenv" },
+    { name = "typing-extensions" },
+    { name = "urllib3" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/13/2cc466bddf26d0085f30a2b2bd56b7f8708b54a54db833eec97c5c69129b/testcontainers-4.15.0.tar.gz", hash = "sha256:085cde086337632e19002719460b7b80bbab2bdd51bb3ea04f77d0de96504706", size = 95340, upload-time = "2026-07-24T23:08:01.731Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/7e/424aac8b355597835deb333e757a0e94b5ccf38ad00f07fe6ed1f4e17c88/testcontainers-4.15.0-py3-none-any.whl", hash = "sha256:8796c14e76604031ad39cf0ed3b8e9806283a1fbf5270965c2b1c594caa31b74", size = 160771, upload-time = "2026-07-24T23:08:00.13Z" },
 ]
 
 [[package]]
@@ -2697,16 +2776,21 @@ dependencies = [
     { name = "babel" },
     { name = "beautifulsoup4" },
     { name = "click" },
+    { name = "cryptography" },
     { name = "deepdiff" },
     { name = "fastapi" },
     { name = "fastapi-csrf-protect" },
     { name = "gitpython" },
     { name = "httpx" },
-    { name = "jinja-roos-components" },
     { name = "jinja2" },
     { name = "jinja2-base64-filters" },
     { name = "jsonpath-ng" },
     { name = "jsonschema" },
+    { name = "lord-of-the-components" },
+    { name = "lotc-forms" },
+    { name = "lotc-layout" },
+    { name = "lotc-nldd" },
+    { name = "lotc-rvo" },
     { name = "lxml" },
     { name = "mako" },
     { name = "opentelemetry-api" },
@@ -2758,7 +2842,9 @@ test = [
     { name = "pytest-minio-mock" },
     { name = "pytest-mock" },
     { name = "pytest-playwright" },
+    { name = "pytest-randomly" },
     { name = "pytest-timeout" },
+    { name = "testcontainers" },
     { name = "vcrpy" },
 ]
 
@@ -2773,16 +2859,21 @@ requires-dist = [
     { name = "babel", specifier = ">=2.17.0" },
     { name = "beautifulsoup4", specifier = ">=4.13.4" },
     { name = "click", specifier = ">=8.2.1" },
+    { name = "cryptography", specifier = ">=48.0.0" },
     { name = "deepdiff", specifier = ">=8.0.1" },
     { name = "fastapi", specifier = "==0.135.1" },
     { name = "fastapi-csrf-protect", specifier = ">=1.0.3" },
     { name = "gitpython", specifier = ">=3.1.50" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "jinja-roos-components", git = "https://github.com/RijksICTGilde/jinja-roos-components.git?rev=table-and-more-conversion" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jinja2-base64-filters", specifier = ">=0.1.4" },
     { name = "jsonpath-ng", specifier = ">=1.7.0" },
     { name = "jsonschema", specifier = ">=4.26.0" },
+    { name = "lord-of-the-components", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=python&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
+    { name = "lotc-forms", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
+    { name = "lotc-layout", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
+    { name = "lotc-nldd", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
+    { name = "lotc-rvo", git = "https://github.com/RijksICTGilde/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=762e57090ea32bd6f1c3d717f2fa6c9ac1ef2f4e" },
     { name = "lxml", specifier = ">=6.0.1" },
     { name = "mako", specifier = ">=1.3.12" },
     { name = "opentelemetry-api", specifier = ">=1.27.0" },
@@ -2834,7 +2925,9 @@ test = [
     { name = "pytest-minio-mock", specifier = ">=0.4.17" },
     { name = "pytest-mock", specifier = ">=3.14.0" },
     { name = "pytest-playwright", specifier = ">=0.7.0" },
+    { name = "pytest-randomly", specifier = ">=3.16.0" },
     { name = "pytest-timeout", specifier = ">=2.3.1" },
+    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.0.0" },
     { name = "vcrpy", specifier = ">=7.0.0" },
 ]
 

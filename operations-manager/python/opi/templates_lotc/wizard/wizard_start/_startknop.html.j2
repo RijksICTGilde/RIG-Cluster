@@ -1,0 +1,10 @@
+{# De knop die de wizard begint. #}
+<div>
+    <a href="/forms/wizard/create-project">
+        {# De tekst gaat als label= mee en niet als inhoud: nldd-button rendert zijn
+           opschrift uit het text-attribuut, en inhoud tussen de tags belandt in een slot
+           dat het component niet toont. Met de tekst ertussen stond hier een blauw vlak
+           zonder opschrift. #}
+        <c-button label="Start de wizard"/>
+    </a>
+</div>

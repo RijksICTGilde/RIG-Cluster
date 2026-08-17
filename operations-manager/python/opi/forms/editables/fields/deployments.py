@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from opi.forms.editables.conditions import SentinelValueCondition
 from opi.forms.editables.converters import (
     CloneFromConverter,
-    CustomDomainSelectConverter,
-    KeyValueConverter,
     RRuleDayConverter,
     RRuleFrequencyConverter,
     RRuleMonthDayConverter,
@@ -14,14 +11,19 @@ from opi.forms.editables.converters import (
 )
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
-    BaseDomainValidator,
-    CustomDomainValidator,
-    DomainFormatValidator,
-    KeyValueValidator,
     KubernetesNameValidator,
     PathValidator,
-    SubdomainValidator,
 )
+from opi.services.catalog.publish_on_web.editables import (
+    DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
+    DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
+    DOMAIN_BASE_DOMAIN_EDITABLE,
+    DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
+    DOMAIN_FORMAT_EDITABLE,
+    DOMAIN_MODE_EDITABLE,
+    DOMAIN_SUBDOMAIN_EDITABLE,
+)
+from opi.services.registry import deployment_component_service_editables, deployment_service_editables
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -36,28 +38,17 @@ DEPLOYMENT_CLUSTER_EDITABLE = Editable(
 DEPLOYMENT_REPOSITORY_EDITABLE = Editable(
     yaml_path="deployments[*]/repository", values_provider="RepositoryOptionsProvider"
 )
-DEPLOYMENT_SUBDOMAIN_EDITABLE = Editable(yaml_path="deployments[*]/subdomain", validator=SubdomainValidator())
-DEPLOYMENT_BASE_DOMAIN_EDITABLE = Editable(
-    yaml_path="deployments[*]/base-domain",
-    values_provider="BaseDomainOptionsProvider",
-    validator=BaseDomainValidator(),
-    converter=CustomDomainSelectConverter(),
-    defers_to="deployments[*]/base-domain:custom",
-    defer_when=SentinelValueCondition(),
-)
-DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE = Editable(
-    yaml_path="deployments[*]/base-domain:custom",
-    transient=True,
-    validator=CustomDomainValidator(),
-)
-DEPLOYMENT_DOMAIN_MODE_EDITABLE = Editable(
-    yaml_path="deployments[*]/domain-mode", values_provider="DomainModeOptionsProvider"
-)
-DEPLOYMENT_DOMAIN_FORMAT_EDITABLE = Editable(
-    yaml_path="deployments[*]/domain-format",
-    values_provider="DomainFormatOptionsProvider",
-    validator=DomainFormatValidator(),
-)
+# The web-address fields of a deployment are publish-on-web's (RC-60). This module used to
+# define its OWN base-domain / subdomain / domain-mode / domain-format editables, with
+# different providers and validators than the wizard's, for exactly the same yaml_path. Two
+# definitions for one path in two flows is how a conversion ends up half-done: whoever moves
+# one and misses the other leaves a flow writing the old shape. There is one set now, owned
+# by the service, and the deployment sequence uses it under the familiar names.
+DEPLOYMENT_SUBDOMAIN_EDITABLE = DOMAIN_SUBDOMAIN_EDITABLE
+DEPLOYMENT_BASE_DOMAIN_EDITABLE = DOMAIN_BASE_DOMAIN_EDITABLE
+DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE = DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE
+DEPLOYMENT_DOMAIN_MODE_EDITABLE = DOMAIN_MODE_EDITABLE
+DEPLOYMENT_DOMAIN_FORMAT_EDITABLE = DOMAIN_FORMAT_EDITABLE
 DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(
     yaml_path="deployments[*]/clone-from",
     values_provider="DeploymentCloneFromOptionsProvider",
@@ -137,13 +128,6 @@ DEPLOYMENT_COMP_PATH_EDITABLE = Editable(
         DEPLOYMENT_COMP_PATH_REWRITE_EDITABLE,
     ],
 )
-DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/user-env-vars",
-    converter=KeyValueConverter(fmt="env", write_as="string"),
-    validator=KeyValueValidator(),
-    remove_when_none=True,
-)
-
 # Per-deployment attachment coupling override. Mirrors the base-component coupling
 # (components[*]/services{attachments}/config) but on the deployment component, so a
 # certificate/file can differ per deployment. Optional (min_items=0): an empty list
@@ -202,33 +186,22 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
         DEPLOYMENT_COMP_IMAGE_EDITABLE,
         DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
         DEPLOYMENT_COMP_PATH_EDITABLE,
-        DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
+        # Per-service deployment-component fields, gathered from the registry (RC-25):
+        # user-env-vars owns this layer's one field.
+        *deployment_component_service_editables(),
         DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE,
     ],
-)
-
-# Per-deployment publish-on-web TLS override. Empty value = "erven" (no override):
-# resolution falls back to the component/root setting. Stored under
-# ``services.publish-on-web.config`` on the deployment component (services is a map;
-# this sits next to the system revision-map entries). See
-# features/publish-on-web-tls-modes.md.
-DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/services/publish-on-web/config/tls",
-    values_provider="PublishTlsOverrideOptionsProvider",
-    remove_when_none=True,
-)
-
-DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/services/publish-on-web/config/attachment",
-    values_provider="AttachmentOptionsProvider",
-    remove_when_none=True,
-    depends_on="deployments[*]/components[*]/services/publish-on-web/config/tls",
-    show_when={"value": ["provided"]},
 )
 
 # Focused, read-only-component sequence for the domain wizard's per-component TLS step.
 # Reuses the deployment-components path; the reference is shown read-only (you only pick
 # the TLS mode here, you do not add/remove components).
+#
+# The two override fields it shows are publish-on-web's, declared in the service package
+# (RC-78) and imported here rather than defined a second time. They used to be written out
+# in this module, which is why they existed on this step only: the deployment form gathers
+# the deployment-component layer from the registry, and a field the service never declared
+# could not arrive there.
 DEPLOYMENT_CERT_COMPONENTS_SEQ_EDITABLE = Editable(
     yaml_path="deployments[*]/components",
     min_items=0,
@@ -246,11 +219,9 @@ DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
         DEPLOYMENT_NAME_EDITABLE,
         DEPLOYMENT_CLUSTER_EDITABLE,
         DEPLOYMENT_REPOSITORY_EDITABLE,
-        DEPLOYMENT_SUBDOMAIN_EDITABLE,
-        DEPLOYMENT_BASE_DOMAIN_EDITABLE,
-        DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
-        DEPLOYMENT_DOMAIN_MODE_EDITABLE,
-        DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
+        # Per-service deployment fields, gathered from the registry (RC-60): the
+        # web-address set is publish-on-web's, and nothing here names it.
+        *deployment_service_editables(),
         DEPLOYMENT_CLONE_FROM_EDITABLE,
         DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE,
         DEPLOYMENT_BACKUP_SCHEDULE_TIME_EDITABLE,

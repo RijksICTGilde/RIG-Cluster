@@ -1,0 +1,196 @@
+{
+  "$defs": {
+    "I18nText": {
+      "additionalProperties": false,
+      "description": "A ``{nl, en}`` translated string. Replaces ``$defs/i18n-text``.",
+      "properties": {
+        "en": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "English text.",
+          "title": "En"
+        },
+        "nl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dutch text.",
+          "title": "Nl"
+        }
+      },
+      "title": "I18nText",
+      "type": "object"
+    },
+    "InviteEntry": {
+      "additionalProperties": false,
+      "description": "One invitation. ``key`` is the shared-link secret; everything else describes what\nthe redeeming user gets in the project's Keycloak realm.",
+      "properties": {
+        "application-url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where the user is sent after redeeming.",
+          "title": "Application-Url"
+        },
+        "auth-methods": {
+          "description": "The sign-in methods this invite offers; empty means every method the realm supports.",
+          "items": {
+            "enum": [
+              "sso",
+              "local"
+            ],
+            "type": "string"
+          },
+          "title": "Auth-Methods",
+          "type": "array"
+        },
+        "client-roles": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": "Per client, the client roles the redeeming user is given. Advanced; not offered in the portal.",
+          "title": "Client-Roles",
+          "type": "object"
+        },
+        "contact-email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Address shown to a user who needs help redeeming.",
+          "title": "Contact-Email"
+        },
+        "groups": {
+          "description": "Realm groups the redeeming user joins. Advanced; not offered in the portal.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Groups",
+          "type": "array"
+        },
+        "key": {
+          "description": "The secret in the invitation link; whoever holds it can redeem the invite. Send an empty string to have a random one generated -- the write reports it back under 'generated', which is the only place you learn a key you did not choose. It is RETURNED by a read of this config, deliberately: the code is the invitation, so whoever cannot read it back cannot send it on.",
+          "title": "Key",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/I18nText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Text shown on the invitation page."
+        },
+        "realm-roles": {
+          "description": "Realm roles the redeeming user is given.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Realm-Roles",
+          "type": "array"
+        },
+        "restrict-domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Only accept an email address in this domain, so the link cannot be passed on freely.",
+          "title": "Restrict-Domain"
+        },
+        "roles": {
+          "description": "Deprecated spelling of 'realm-roles', kept so existing files validate. Use realm-roles.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Roles",
+          "type": "array"
+        },
+        "success-button": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/I18nText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Label of the button leading to the application."
+        },
+        "success-title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/I18nText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Heading shown after a successful redemption."
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "InviteEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Project-level invite config: a default language and the list of active invites.\n\n``settings`` is gone (it was a second level meaning the same as ``config``);\n``default-language`` sits next to ``active``.",
+  "properties": {
+    "active": {
+      "description": "The invitations that can currently be redeemed. Over the API this is presented as ONE entry rather than a list, because in practice there is one; add a second with the PATCH on this field. Roles go in 'realm-roles' -- 'roles' is the older spelling of the same thing and only still exists so older project files keep validating.",
+      "items": {
+        "$ref": "#/$defs/InviteEntry"
+      },
+      "title": "Active",
+      "type": "array"
+    },
+    "default-language": {
+      "default": "nl",
+      "description": "Language the invitation page opens in when the visitor expresses no preference.",
+      "title": "Default-Language",
+      "type": "string"
+    }
+  },
+  "title": "InviteConfig",
+  "type": "object"
+}

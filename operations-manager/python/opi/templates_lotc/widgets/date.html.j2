@@ -1,0 +1,23 @@
+{#
+  Datumveld voor de LOTC-bouwlijn.
+
+  Blijft een tekstveld met type=date, net als in de roos-versie, omdat dit ene template
+  zowel date als datetime-local bedient. LOTC heeft ook c-date-input-field, dat onder
+  NLDD een echte datumpicker geeft, maar dat kent geen datetime-local; overstappen zou
+  hier dus een voorwaardelijke componentkeuze betekenen. Zodra die datetime aankan, is
+  dit template de plek om het te veranderen. Uitgezet bij het LOTC-project.
+#}
+{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples, format_value %}
+{{ description_text(field) }}
+<c-text-input-field
+    id="{{ field.path|e }}"
+    name="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    type="{{ 'datetime-local' if field.widget_type == 'datetime' else 'date' }}"
+    :help="combined_helper(field)|trim or none"
+    :required="field.required"
+    :disabled="field.readonly"
+    :value="format_value(field.value) or none"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="field_attrs(field)"
+/>{{ render_examples(field) }}
