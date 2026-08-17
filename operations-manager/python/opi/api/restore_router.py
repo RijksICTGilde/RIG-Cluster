@@ -2513,6 +2513,10 @@ async def _restore_database_with_versioning(
             target_database_password=db_password,
             snapshot_id=snapshot_id,
             project_name=project_name,
+            # The dump comes from the previous generation, whose database name is also
+            # its default schema name. Naming it here is what keeps the restore pod from
+            # having to guess which of the database's schemas is the application's own.
+            source_database_name=old_database_name,
         )
 
         if not restore_result.success:
