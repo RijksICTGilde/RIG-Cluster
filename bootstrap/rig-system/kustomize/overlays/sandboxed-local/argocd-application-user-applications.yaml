@@ -31,6 +31,10 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=false
+      # Alleen OutOfSync-resources toepassen; zelfde afweging als in de odcn-production
+      # overlay: opi is de enige schrijver van deze Application-CR's, dus het diff-oordeel
+      # is betrouwbaar en een volle apply van alle Applications per sync voegt niets toe.
+      - ApplyOutOfSyncOnly=true
     retry:
       limit: -1
       backoff:
