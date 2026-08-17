@@ -101,6 +101,7 @@ from opi.services.catalog.actions import (
     ActionContext,
     ActionField,
     ActionFieldKind,
+    ActionResult,
     ActionVerb,
     ServiceAction,
     UploadedFile,
@@ -3510,6 +3511,10 @@ def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> S
         )
         for flag in action.flags_for(verbs)
     ]
+    # An action that rolls out takes the same ``rollout`` flag as every other mutating
+    # endpoint, with the same meaning: save now, process later.
+    if action.rollout_task_type:
+        params.append(Parameter("rollout", Parameter.POSITIONAL_OR_KEYWORD, annotation=RolloutQuery, default=True))
     if verbs[0].takes_fields:
         params.append(
             Parameter(
@@ -3539,12 +3544,57 @@ def _action_description(action: ServiceAction, verbs: tuple[ActionVerb, ...]) ->
     if action.disjunctions and not verbs[0].targets_existing:
         lines += ["", "Exactly one of:"]
         lines += [f"- `{'` or `'.join(d.one_of)}` -- {d.describes}" for d in action.disjunctions]
+    if action.rollout_task_type:
+        lines += [
+            "",
+            "This route answers 202 with a task id: the change is written and validated in the "
+            "request, and the processing that puts it on the cluster runs as a task you can "
+            "follow at the Location header. A refusal (409, 422) is still the immediate answer. "
+            "Pass `rollout=false` to save without processing.",
+        ]
     flags = action.flags_for(verbs)
     if flags:
         lines += ["", "Flags:"]
         lines += [f"- `{flag.name}` (default false): {flag.description}" for flag in flags]
     lines += ["", "Example:", "```", action.example_for(verbs), "```"]
     return "\n".join(lines)
+
+
+async def _enqueue_action_rollout(
+    action: ServiceAction, verb: ActionVerb, kwargs: dict[str, Any], result: ActionResult
+) -> JSONResponse:
+    """Turn a written change into a followable rollout: 202 with a task id.
+
+    The write already happened -- it is validated and committed in the request, because
+    the content arrives as an upload and a file does not belong in a task payload. What
+    is enqueued is the processing that puts it on the cluster, so the caller gets the
+    same task id, the same ``rollout=false`` deferral and the same progress view that
+    every other mutating endpoint gives, instead of a 200 that says "saved" and leaves
+    the running pod on the old content.
+
+    The handler's own body travels along, so nothing the synchronous answer said is lost.
+    """
+    task_type = action.rollout_task_type or ""  # never empty: only called for an action that declares one
+    rollout = bool(kwargs.get("rollout", True))
+    task = await create_async_task(
+        request=kwargs["request"],
+        task_type=task_type,
+        project_name=kwargs["project_name"],
+        payload={
+            "project_name": kwargs["project_name"],
+            "action": action.action_id,
+            "verb": verb.value,
+            "item_id": kwargs.get(action.id_param),
+            "component": kwargs.get("component_name"),
+            "rollout": rollout,
+        },
+    )
+    task_id = str(task["task_id"])
+    return JSONResponse(
+        content={**build_accepted_response(task_id, task_type), **result.body},
+        status_code=202,
+        headers={"Location": f"/api/tasks/{task_id}"},
+    )
 
 
 def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
@@ -3586,6 +3636,8 @@ def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
                 flags={flag.name: bool(kwargs.get(_param_name(flag.name))) for flag in action.flags_for(verbs)},
             )
         )
+        if action.rollout_task_type and 200 <= result.status_code < 300:
+            return await _enqueue_action_rollout(action, verb, kwargs, result)
         return JSONResponse(result.body, status_code=result.status_code)
 
     endpoint.__signature__ = _action_signature(action, verbs)
@@ -3605,6 +3657,9 @@ def _register_service_action_routes(router: APIRouter) -> None:
                     tags=[service_type.value],
                     summary=f"{action.summary} ({'/'.join(v.value for v in verbs)})",
                     description=_action_description(action, verbs),
+                    # An action that rolls out answers 202 on success; the refusals it
+                    # can still give synchronously keep their own status codes.
+                    status_code=202 if action.rollout_task_type else None,
                 )
 
 

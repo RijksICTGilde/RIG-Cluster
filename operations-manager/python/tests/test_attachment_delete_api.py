@@ -7,7 +7,8 @@ already there -- ``DELETE`` next to the ``PUT`` on the same path.
 What belongs to this layer, and is therefore what is measured here:
 
 * the route exists on the item path and is reachable with the project's API key;
-* the three answers map onto the three status codes a client can act on -- 200 gone,
+* the three answers map onto the three status codes a client can act on -- 202 gone and
+  being rolled out (RC-119; it was 200 while the removal reached git and no further),
   404 never there, 409 in use;
 * the 409 carries ``used_by``, because "no" without "where" makes the caller go hunting;
 * the confirmation is a flag the caller sets, off by default, and it reaches the write
@@ -49,6 +50,13 @@ def _authorised_project():
         yield store
 
 
+@pytest.fixture(autouse=True)
+def created_task():
+    """The rollout enqueue boundary: a written change becomes a task to follow."""
+    with patch("opi.api.v2.router.create_async_task", new=AsyncMock(return_value={"task_id": "t-1"})) as mock:
+        yield mock
+
+
 @pytest.fixture
 def manager():
     """The ProjectManager the handler reaches for, with its write mocked out."""
@@ -75,11 +83,8 @@ def _in_use(*labels: str) -> dict:
 class TestTheRouteExists:
     def test_delete_sits_next_to_the_put_on_the_same_path(self, client, manager) -> None:
         # The whole point of the shape: one resource, addressed one way, several verbs.
-        assert client.delete(ITEM_URL, headers=HEADERS).status_code == 200
-        assert client.put(ITEM_URL, headers=HEADERS, files={"file": ("x.pem", b"x", "text/plain")}).status_code in (
-            200,
-            201,
-        )
+        assert client.delete(ITEM_URL, headers=HEADERS).status_code == 202
+        assert client.put(ITEM_URL, headers=HEADERS, files={"file": ("x.pem", b"x", "text/plain")}).status_code == 202
 
     def test_the_api_key_is_required(self, client, manager) -> None:
         assert client.delete(ITEM_URL).status_code == 401
@@ -94,7 +99,7 @@ class TestTheThreeAnswers:
     def test_an_attachment_nothing_uses_is_deleted(self, client, manager) -> None:
         response = client.delete(ITEM_URL, headers=HEADERS)
 
-        assert response.status_code == 200
+        assert response.status_code == 202
         assert response.json()["attachment"] == "server-cert"
         assert manager.remove_attachment.call_args.args[0] == "server-cert"
 
