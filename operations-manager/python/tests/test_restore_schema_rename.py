@@ -118,6 +118,40 @@ class TestTheSourceSchemaIsNamedNotGuessed:
         assert "cannot be established" in script
 
 
+class TestTheBackupSaysWhichDatabaseItDumped:
+    """The dump's own tag beats any reconstruction of the source name."""
+
+    def test_the_backup_pod_tags_the_database_it_dumps(self) -> None:
+        env = Environment(loader=FileSystemLoader(str(_MANIFESTS_DIR)), undefined=StrictUndefined)
+        source = env.loader.get_source(env, "backup-database-pod.yaml.jinja")[0]  # type: ignore[union-attr]
+        assert '--tags="source_database:{{ db_name }}"' in source, (
+            "without this tag the restore has to reconstruct the source name, "
+            "which the cluster measurement showed can be wrong"
+        )
+
+    @pytest.mark.parametrize(
+        "template",
+        ["backup-database-pod.yaml.jinja", "restore-database-pod.yaml.jinja"],
+    )
+    def test_no_comment_interrupts_a_continued_command(self, template: str) -> None:
+        """A `#` line between backslash-continued lines silently ends the command.
+
+        Measured on the cluster, not reasoned about: an explanatory comment placed
+        between two `--tags=... \\` lines made the shell run the next line as its own
+        command and the backup died with
+        `/bin/sh: --tags=source_database:...: not found`.
+        """
+        env = Environment(loader=FileSystemLoader(str(_MANIFESTS_DIR)), undefined=StrictUndefined)
+        source = env.loader.get_source(env, template)[0]  # type: ignore[union-attr]
+        lines = source.splitlines()
+        offenders = [
+            (number, line)
+            for number, line in enumerate(lines[1:], start=2)
+            if line.lstrip().startswith("#") and lines[number - 2].rstrip().endswith("\\")
+        ]
+        assert not offenders, f"comment inside a continued command in {template}: {offenders}"
+
+
 class TestTheDropIsSafe:
     """Only the empty target schema created at database setup may be dropped."""
 
