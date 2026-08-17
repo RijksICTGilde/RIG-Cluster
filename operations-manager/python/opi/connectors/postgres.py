@@ -1037,6 +1037,43 @@ class PostgresConnector:
             logger.exception(f"Failed to delete schema {schema_name}")
             raise PostgresExecutionError(f"Schema deletion failed: {e}") from e
 
+    async def database_has_user_data(self, database: str) -> bool:
+        """Whether a database holds any application object outside the system schemas.
+
+        This is the bottom under a restore: restoring into a database that already holds
+        the application's tables adds the backup ON TOP of the rows already there, which
+        is how a repeated restore doubled a row count (RC-123). A database that exists but
+        is still empty is fine to restore into -- that is what a retry after a restore that
+        failed halfway looks like -- so the question is "empty?", not "exists?".
+
+        Args:
+            database: Database name to inspect
+
+        Returns:
+            True if any table, view, sequence or foreign table exists in a non-system schema
+
+        Raises:
+            PostgresExecutionError: If the check cannot be performed
+        """
+        try:
+            conn = await self._get_or_create_connection(database)
+            has_data = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                      AND n.nspname NOT LIKE 'pg\\_toast%'
+                      AND n.nspname NOT LIKE 'pg\\_temp%'
+                      AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+                )
+            """)
+            return bool(has_data)
+
+        except Exception as e:
+            logger.exception(f"Failed to inspect database {database} on {self._host}")
+            raise PostgresExecutionError(f"Database emptiness check failed: {e}") from e
+
     async def list_schemas(self, database: str) -> list[dict[str, Any]]:
         """List all database schemas using the bound admin credentials.
 
