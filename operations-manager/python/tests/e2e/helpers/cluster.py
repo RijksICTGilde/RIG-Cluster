@@ -13,7 +13,6 @@ these checks only make sense on the machine that runs the sandbox.
 from __future__ import annotations
 
 import contextlib
-import itertools
 import json
 import socket
 import subprocess
@@ -248,9 +247,6 @@ def http_get_via_port_forward(
 #: producer is a shell/yq filter in bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml
 #: that cannot be imported.
 CONFIG_HASH_ANNOTATION = "checksum/config"
-
-
-_probe_seq = itertools.count(1)
 
 
 def probe_in_pod(namespace: str, pod: str, script: str, *, probe: str, target: str = "app") -> str | None:
