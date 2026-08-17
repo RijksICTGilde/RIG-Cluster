@@ -15,15 +15,17 @@ groen, en alleen de browsertests zagen het. Deze doorloop herstelt dat vertrouwe
 
 **Deze tak vraagt eerst een review, en daarna een verse testronde door iemand anders.**
 
-Er zijn zeven fouten gevonden en gerepareerd, waarvan vijf in de code. Dat is te veel
+Er zijn acht fouten gevonden en gerepareerd, waarvan zes in de code. Dat is te veel
 verandering om deze doorloop zelf als eindkeuring te laten gelden: de suites die hier groen
 staan zijn gedraaid op tussenliggende versies, niet allemaal op de eindtip. De weg vooruit is
 dus review -> merge-beslissing -> een nieuwe doorloop door een andere sessie, op een tak die
 niet meer beweegt.
 
-Alle zeven gevonden fouten zijn gerepareerd, elk met een test die omvalt als je de fix
-terugdraait, en **elke geautomatiseerde suite is groen gemeten op de eindcode** -- inclusief
-de sandboxsuite, en inclusief `-m reallife` en `-m punt14` gelijktijdig zoals het plan vroeg.
+Alle acht gevonden fouten zijn gerepareerd, elk met een test die omvalt als je de fix
+terugdraait. **Elke geautomatiseerde suite is groen gemeten** -- inclusief de sandboxsuite en
+inclusief `-m reallife` en `-m punt14` gelijktijdig zoals het plan vroeg -- maar op
+`4f483796`, dus vóór de merge met de basistak. Op de eindtip `eac1fc1c` staan de unitsuite
+(9099 groen) en de statische poorten; de clustersuites vragen de verse ronde hierboven.
 
 Taak 2 is deels gemeten: van de 47 voorbeeldprojecten zijn er **11 geldig gemeten** (4 healthy,
 1 omgevingsgrens, 6 getroffen door een infrastructuurstoring). De metingen daarna zijn
@@ -116,10 +118,18 @@ chokepoint snijd je niet zonder reproducerende test.
 
 ## Taak 1 — de geautomatiseerde suites
 
-| suite | uitslag | duur |
-|---|---|---|
-Alles hieronder is gemeten op de EINDCODE (`4f483796`), met de fixes aantoonbaar in de
-draaiende pod -- geverifieerd door de container zelf te bevragen, niet via `/version`.
+De tabel hieronder is gemeten op `4f483796`, met de fixes aantoonbaar in de draaiende pod --
+geverifieerd door de container zelf te bevragen, niet via `/version`.
+
+**NA de merge met de basistak (`2f9ed46f`) is alleen de unitsuite hermeten**, op `eac1fc1c`:
+**9099 passed, 7 skipped, 0 rood** in 10m34s (was 9036; de merge brengt er 63 mee). Samen met
+`ruff check` (schoon), `ruff format --check` (schoon) en `pyright` (0 errors) zijn dat de
+poorten die op de eindtip staan.
+
+De clustersuites zijn NIET hermeten. De sandboxsuite is op `eac1fc1c` wél gestart, met
+`/version` bevestigd, en na 2/69 groen bewust afgebroken: de volledige testronde wordt door
+een aparte sessie gedaan op een tak die niet meer beweegt, en die ronde twee keer draaien
+kost anders twee uur cluster voor niets.
 
 | suite | uitslag | duur |
 |---|---|---|
@@ -131,7 +141,8 @@ draaiende pod -- geverifieerd door de container zelf te bevragen, niet via `/ver
 | `uv run pytest -m punt14 -q` (gelijktijdig) | 1 rood -> bevinding 6 | 11m04s |
 | `uv run pytest -m punt14 -q` (na de fix) | **4 passed, 0 failed**, nul ReadTimeouts | 34m48s |
 
-De unitsuite ging van 9007 naar 9036: +29 door de tests bij de zes fixes.
+De unitsuite ging van 9007 naar 9036: +29 door de tests bij de fixes, en na de merge met de
+basistak naar 9099.
 
 De ene rode in de sandboxsuite en in de gelijktijdige punt14-run is dezelfde, en is bevinding
 6 hieronder. Na de fix is `-m punt14` opnieuw gedraaid en volledig groen.
@@ -504,7 +515,7 @@ gaan.
 **1. Elke fix legde de volgende bloot.** Fix 2 maakte het aanvraagvakje werkend, waardoor de
 geblokkeerde wizardstap zichtbaar werd; fix 4 opende die stap, waardoor de tweede opslag werd
 bereikt en het valse conflict verscheen; de gelijktijdige reallife/punt14-run bracht de trage
-statuspoll aan het licht. Vier van de zeven waren onvindbaar zonder de vorige. Dat is het
+statuspoll aan het licht. Vier van de acht waren onvindbaar zonder de vorige. Dat is het
 argument voor een doorloop met echte handelingen boven lezen.
 
 **2. De versie moet TIJDENS een lange meting bevestigd blijven.** Het plan zegt dit
