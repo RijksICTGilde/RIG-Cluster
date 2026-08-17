@@ -74,8 +74,8 @@ is per blok herhaald; de uitkomsten staan bij de blokken zelf.
 | Browser, gang 1 | `uv run pytest -m e2e -q` | **447 passed, 75 skipped, 0 rood** | 11m57s |
 | Browser, gang 2 | idem, direct erna | **447 passed, 75 skipped, 0 rood** | 11m48s |
 | zad-waker | `go vet ./...` + `go test ./...` | **vet clean, 8/8 PASS** | 5s |
-| Sandbox | `uv run pytest -m sandbox -q` tegen het cluster | *(zie hieronder)* | |
-| Reallife + punt14 | gelijktijdig, zoals RC-112 | *(zie hieronder)* | |
+| Sandbox | `uv run pytest -m sandbox -q` tegen het cluster | *(zie "de sandboxsuite")* | |
+| Reallife + punt14 | gelijktijdig, zoals RC-112 | *(zie "de sandboxsuite")* | |
 
 De twee browsergangen gaven **byte-identieke uitslagen**: zelfde aantal groen, zelfde
 skiplijst. Dat is wat de tweede gang moet aantonen — er zit geen ordeafhankelijkheid en geen
@@ -104,6 +104,50 @@ uv run pytest -m e2e -q -k "firefox or invite_register_has_hidden_csrf"
 Dus **0 rood, en van de skips blijft er precies één over die er volgens ontwerp hoort te
 zijn.** Wie deze suite in een schone omgeving draait moet Firefox meenemen, anders zijn die
 drie visuele tests stil weg.
+
+### De sandboxsuite, en waarom hij twee keer gedraaid moest worden
+
+De eerste gang liep vast. Niet op een test, maar op de node.
+
+**Wat er gebeurde.** Test 31 (`test_sandbox_punt14.py::test_deployment_overleeft_een_gelijktijdige_uitrol`)
+stond 35 minuten stil. De oorzaak:
+
+| Meting | Waarde |
+|---|---|
+| De node | **een** node, `4 cpu`, `16Gi`, **max 110 pods** |
+| Het project dat de punt14-tests aanmaken | **25 deployments, 71 pods, 3750m cpu-requests** |
+| De node op dat moment | **99% cpu-requests** (3985m van 4000m), **103 van 110 pods** |
+| Wat de wachtende pods zeiden | `FailedScheduling: 0/1 nodes are available: 1 Insufficient cpu` |
+
+Een rollende update wil per deployment tijdelijk een pod extra. Bij 25 deployments is dat 25
+pods erbij, en die ruimte was er niet, dus werd de rollout nooit `Healthy` en wachtte
+`wait_for_application_synced` per app tot zijn timeout van 300s.
+
+**Het is geen codefout, en dat is nagekeken in plaats van aangenomen.** De pollus in
+`oom_watcher` doet de normale sweep van 5s over ~60 componenten (dat verklaart de ~20
+kubectl-paren per seconde in het log, wat er als een hot loop uitzag), en de wacht in
+`argo_manager.wait_for_application_synced` is wel degelijk begrensd. Het is capaciteit.
+
+**Wat ik daarna deed.** De doorloop afgebroken, het testafval van eerdere runs opgeruimd via
+de echte weg (`DELETE /api/projects/{naam}` met `confirmDeletion`, zodat er geen ArgoCD-app
+of AppProject achterblijft): `p1482-qfi`, `e2e71-jqm`, `e2e71-p3c`, `p1450-8cu`, `rc118-5pf`,
+`rc118-tls`. Daarmee ging de node van **99% naar 39% cpu** en van **103 naar 32 pods**.
+Daarna de suite opnieuw, zonder de vier punt14-tests.
+
+**En daar kwam een tweede les uit.** In die tweede gang gaven de vijf tests in
+`test_sandbox_component_values_api.py` een ERROR: de module-fixture maakt een project via de
+echte wizard, en die liep na 246s af. In de eerste gang deed dezelfde test er 22s over en was
+hij groen. Losstaand opnieuw gedraaid:
+
+```
+uv run pytest tests/e2e/test_sandbox_component_values_api.py -m sandbox -q
+==> 5 passed in 191.63s
+```
+
+Dus **de code is niet stuk**: ik was de suite gestart binnen twee minuten na het verwijderen
+van zes projecten, terwijl namespaces en CNPG-clusters nog aan het opruimen waren. Na een
+bulkverwijdering moet het cluster eerst tot rust komen; anders meet de eerste test van de
+suite die opruiming. Dat is een meetfout van mij, geen bevinding over de tak.
 
 ### De poorten die geen test zijn
 
@@ -182,7 +226,124 @@ go test -v ./...
 
 ## 3. Wat er sinds de tweede generale bij is gekomen
 
-*(volgt)*
+Waar het een scherm betreft is er in de browser gemeten, op het levende cluster, en is de
+schermafdruk ook echt bekeken. Dat laatste is geen formaliteit: bij punt 9 en punt 8 gaven
+mijn eigen selectors eerst "niet gevonden", en op het scherm stond het er gewoon. Een meting
+met een verzonnen selector leest als een defect; die eerste uitkomsten staan daarom hieronder
+als les en niet als bevinding.
+
+### 1. De cascade in de wizard (RC-127)
+
+`tests/e2e/test_wizard_cascade_tijdens_verzoek.py` forceert het venster (twee keuzes in
+hetzelfde script) en eist ook dat het venster echt geraakt is. **Twee keer groen**, in beide
+browsergangen.
+
+Het plan vraagt ook naar een andere dienst met een cascade, omdat de bug in elk afhankelijk
+keuzeveld zat. Geteld op de bron, per `data-rerender` met zijn `widget=`:
+
+| Aantal | Widget | Waar |
+|---|---|---|
+| 11 | `SELECT` | cross-domain, TLS-modus (2x), URL-formaat, Basisdomein (2x), Root component, kaal domein, Leveren als (2x), Herhaling, Deployment |
+| 2 | `TEXT` | Subdomein, Eigen domein |
+| 1 | `CHECKBOX` | keycloak, "Toegang beperken" |
+| 1 | `CHECKBOX_GROUP` | de componentstap, "Gebruikte services" |
+
+De fix zelf is **generiek**: een `change`-luisteraar op `document` met filter
+`[data-rerender]`, dus geen veldnaam en geen dienst erin. Maar het herstelpad zet
+`vers.value = waarde` en zoekt het verse veld op via zijn `name` - en voor een vakje is
+`value` niet de stand. Gemeten op de componentstap: het `[data-rerender]`-element is
+`<nldd-checkbox-field>`, zijn `name` is de **lege string** (dus `naam ? ... : null` is falsy)
+en de inputs zitten in geneste schaduwbomen, nul in de lichte boom.
+
+**Toch klopt het gedrag**, en dat is empirisch vastgesteld en niet weggeredeneerd: de swap
+haalt die host niet uit het document, dus `_hertekenNaDeSwap` komt in zijn eerste tak
+(`document.contains(bron)`) en tekent gewoon opnieuw. Het waardepad is voor een vakje dode
+letter, maar ook niet nodig.
+
+Nieuw in deze PR staat dat vast in `tests/e2e/test_wizard_cascade_aanvinkvakje.py`: een test
+op de **vorm** van het veld en een op het **gedrag** in het venster. Verandert de vorm - gaat
+de host wel een naam dragen, of wordt hij bij de swap vervangen - dan valt de vormtest, in
+plaats van dat het waardepad stil onbruikbaar blijft.
+
+### 2. CAA-records (RC-126)
+
+| Meting | Uitkomst |
+|---|---|
+| De uit-stand in het opstartlog | `caa_reconciler - INFO - No TransIP credentials configured, skipping CAA reconciliation` |
+| `dig CAA rijks.app` | **leeg** |
+| `dig CAA rijksapp.nl` | **leeg** |
+| `dig CAA rijksapp.dev` | **leeg** |
+| Beide `secretKeyRef`s naar `transip-credentials` in de odcn-overlay | `optional: true` |
+| `dns_config.py` tegenover de feature-doc | `CAA_TTL = 3600`, `CAA_TAGS = ("issue", "issuewild")`, geen `iodef` - klopt |
+
+De aan/uit-knop werkt precies zoals gedocumenteerd, en de `optional: true` uit `65be1dcd`
+staat er op beide plekken - dat was een bootblokkade en die is dicht.
+
+Maar: **de grendel staat in de publieke DNS nog niet aan.** Geen van de drie zones heeft een
+CAA-record. Dat is geen fout in de tak (de sandbox heeft geen TransIP-sleutel en die sleutel
+is IP-gebonden aan productie), maar wie deze feature als "gedaan" leest, leest hem verkeerd:
+er is nog niets uitgerold en de eerste echte uitrol schrijft in publieke DNS.
+
+### 8. Het statusfilter op /admin/approvals
+
+Eerst mis gemeten: ik zocht `select[name="status"]` en vond er nul. Op het scherm bleek het
+**geen keuzelijst** maar een knop met een menu - `954fec37` gaf het filter de vorm van de
+sorteerknop ernaast. Opnieuw gemeten, met het menu onder die knop als bereik:
+
+| Meting | Uitkomst |
+|---|---|
+| Statusknoppen op de pagina | **1** (`Status: Alle statussen`) |
+| Menu-items eronder | **4**: Alle statussen, Aangevraagd, Goedgekeurd, Afgewezen |
+| `?status=requested` | knop `Status: Aangevraagd`, `selected` op **Aangevraagd** |
+| `?status=approved` | knop `Status: Goedgekeurd`, `selected` op **Goedgekeurd** |
+| `?status=denied` | knop `Status: Afgewezen`, `selected` op **Afgewezen** |
+| `?status=onzin` | valt terug op `Status: Alle statussen` |
+
+Dus: het filtert via de URL, de gekozen waarde staat na de swap nog in de lijst (de server
+rendert hem mee), en het staat er **niet** dubbel.
+
+**Kanttekening, en die hoort erbij:** op deze sandbox staan **nul** domeinaanvragen. Wat hier
+gemeten is, is het mechanisme - selectie, behoud na de swap, eenmaligheid, terugval. Dat het
+werkelijk rijen wegfiltert is **niet** gemeten, want er zijn geen rijen. De unittests
+(`tests/test_approvals_statusfilter.py`) dekken dat deel wel.
+
+### 9. Het projectenoverzicht
+
+| Meting | Uitkomst |
+|---|---|
+| De projectcode als chip | **ja** - `amt-odc-prd`, `algor-odc`, `amtbz-2m9`, `cot-zaq`, `jc-77j` staan als aparte chip in de kaart |
+| De bewerkdatum ernaast | **ja** - `Bewerkt 17 aug 2026, 11 uur geleden`, in dezelfde regel |
+| Sorteren op laatst bewerkt, beide kanten | **ja** - `?sort=bewerkt` en `?sort=bewerkt-op` geven een **exact omgekeerde** lijst |
+| Het zoekveld houdt zijn breedte | **ja** - host `416px` voor en `416px` na het typen |
+| Het zoekveld houdt de focus | **ja** - focuspad na drie tekens: `NLDD-SEARCH-FIELD > INPUT`, waarde `amt` |
+| Het sorteren staat er niet dubbel | **ja** - 1 sorteerknop, en **geen** zichtbare "Meer" in de schaduwboom van de toolbar op 1440px |
+
+Ook hier zat de eerste meting mis: ik gebruikte `?sort=updated&direction=asc`. Die sleutel
+bestaat niet, en een onbekende sleutel valt **stil** terug op naam-sortering - dus beide
+richtingen gaven dezelfde lijst en dat las als "sorteren werkt niet". De echte sleutels zijn
+`bewerkt` en `bewerkt-op`, en er is geen `direction`-parameter.
+
+### 10. De metingen
+
+| Pad | Canvas | Chart.js geladen |
+|---|---|---|
+| `/projects/jc-77j/deployments/poc` | **0** | **nee** |
+| `/projects/jc-77j/metrics/poc` | **6** | ja |
+
+De grafieken staan dus alleen nog op Metrics, en op Deployments wordt de bibliotheek niet
+eens ingeladen. Klopt met `cd557e34`.
+
+Twee dingen bij dit punt:
+
+- Het tabblad zit in het **pad**, niet in een `?tab=`-parameter (`tab_from_path` leest het
+  derde segment). Met `?tab=metrics` krijg je stil het Overzicht - opnieuw een onbekende
+  waarde die terugvalt in plaats van te klagen.
+- De kaart die **verhuisd** is, is "Resourcegebruik (heel project)", en die staat nu op
+  Overzicht (tussen Configuratie en Deployments) omdat hij over het hele project gaat terwijl
+  Metrics per deployment werkt. Op het scherm gezien en bevestigd.
+- **Niet gemeten:** "een deployment op een ander cluster zegt waarom er niets te zien is."
+  Alle 47 sandboxprojecten en alle bestaande projecten declareren `sandboxed-local`, dus er
+  is op dit cluster geen deployment op een ander cluster om die melding mee op te wekken.
 
 ## Oordeel
 
