@@ -24,10 +24,10 @@
     <c-card outline="true" padding="none" background-color="wit">
         <div class="project-group-header">
             <c-cluster justify="between" align="center">
-                <c-heading type="h3">
+                <c-cluster gap="sm" align="center">
                     <c-icon icon="rectangle-stack" size="md"/>
-                    {{ project.project_name }}
-                </c-heading>
+                    <c-heading type="h3" label="{{ project.project_name }}"/>
+                </c-cluster>
                 {% set lotc_onclick_1 %}openApprovalModal('{{ project.project_name }}'){% endset %}<c-button label="Beheren" size="sm" show-icon="before" icon="pencil-on-square"/>
             </c-cluster>
         </div>

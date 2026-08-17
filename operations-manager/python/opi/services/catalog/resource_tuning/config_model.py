@@ -54,3 +54,8 @@ class ResourceTuningConfig(BaseModel):
     #: Minimum absolute headroom the memory limit keeps above the request (Mi), so a
     #: container never ends up with limit == request (which dies on the first spike).
     min_limit_headroom_mi: int
+    #: Below this observed max (Mi) the measurement is treated as "no data" rather
+    #: than as a real value. A container that actually ran uses more than this within
+    #: seconds; a fraction of a Mi is the footprint of a pod that barely existed
+    #: inside the window, and sizing on it lands on the cluster minimum.
+    min_observed_mi: float

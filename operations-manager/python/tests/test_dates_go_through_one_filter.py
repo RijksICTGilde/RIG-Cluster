@@ -51,11 +51,13 @@ def test_the_three_converted_templates_use_the_filter() -> None:
     Het gaat om de plek waar de markup staat, niet om het bestand: toen
     admin/approvals.html.j2 werd opgedeeld in deeltemplates verhuisde de datum mee naar
     admin/approvals/_aanvragen.html.j2. Daarom wijst deze test naar het bestand dat de
-    datum nu toont.
+    datum nu toont. Om dezelfde reden staat de goedkeuringsmelding hier nu als
+    bg/_patterns.html.j2: die melding hoort ook naast de PUBLIEKE LINKS te staan, dus de
+    markup is naar de gedeelde macro ``approval_alerts`` verhuisd.
     """
     for name in (
         "wizard/partials/approval_items.html.j2",
         "admin/approvals/_aanvragen.html.j2",
-        "bg/_section-deployments.html.j2",
+        "bg/_patterns.html.j2",
     ):
         assert "dutch_date" in (_TEMPLATES / name).read_text(encoding="utf-8"), name

@@ -10,7 +10,7 @@ and BEFORE any write or commit. Fails closed on the first violation.
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -23,7 +23,7 @@ from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
-from opi.services.registry import get_service, property_owning_services
+from opi.services.registry import SERVICES, get_service, property_owning_services
 from opi.services.services import (
     service_entry_config,
     service_entry_data,
@@ -33,6 +33,9 @@ from opi.services.services import (
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_extra_database_schema, registry_tag_owner
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
 
 logger = logging.getLogger(__name__)
 
@@ -355,6 +358,95 @@ def _validate_services_listed_once(services: Any, project_name: str, where: str)
         seen.add(name)
 
 
+def _project_context_kwargs(provider_class: type, project_data: dict[str, Any]) -> dict[str, Any]:
+    """The constructor arguments *provider_class* accepts out of the project context.
+
+    The same trick the form bridge uses (``_filter_provider_kwargs``): a provider declares
+    what it needs as ``__init__`` parameters and the caller matches by name, so a provider
+    with a fixed list takes no arguments and one that reads the project takes ``yaml_data``.
+
+    ``current_value`` is deliberately NOT offered. A provider given one keeps an unknown
+    stored value as an option flagged "(bestaat niet meer)", which is what stops a form
+    save from silently dropping it -- and would make every value valid here.
+    """
+    import inspect
+
+    accepted = set(inspect.signature(provider_class.__init__).parameters) - {"self"}
+    return {"yaml_data": project_data} if "yaml_data" in accepted else {}
+
+
+def validate_declared_choices(project_data: dict[str, Any]) -> list[str]:
+    """Values that reference something in this project which is not in this project.
+
+    The sibling of ``collect_config_advice`` and deliberately the other verdict. That one
+    asks whether a field is FILLED given a setting elsewhere and warns; this one asks
+    whether the value that IS there exists, and refuses. A realm role that no keycloak
+    config defines is not a choice with a downside, it is a typo: keycloak assigns
+    nothing on redemption (``assign_realm_roles_to_user`` reports it under ``not_found``
+    and moves on), so the invited user arrives without the role and, under
+    ``restrict-access``, without access.
+
+    The set of valid values is not restated here. It comes from the field's own
+    ``values_provider`` -- the same provider that fills the form's select and the same one
+    ``x-choices-source`` names in the OpenAPI document, so a caller is judged against
+    exactly the list they were told to read.
+
+    Opt-in per field with ``Editable.values_must_exist``, because an options list is
+    usually a menu rather than a closed set (see that flag). Only fields that carry it are
+    looked at, and only the layers the service declares config on.
+    """
+    from opi.forms.editables.service_path import expand_wildcard_path
+    from opi.forms.visualizers.providers import PROVIDER_REGISTRY, UNDECLARED_SOURCE, OptionsSource
+
+    def walk(editables: list[Editable]) -> list[Editable]:
+        found: list[Editable] = []
+        for editable in editables:
+            found.append(editable)
+            found.extend(walk(editable.children or []))
+        return found
+
+    errors: list[str] = []
+    seen_paths: set[str] = set()
+    for service in SERVICES.values():
+        for layer in service.config_layers():
+            for editable in walk(service.config_editables(layer)):
+                if not editable.values_must_exist or not editable.values_provider:
+                    continue
+                if editable.yaml_path in seen_paths:
+                    continue  # the same editable can be declared on more than one layer
+                seen_paths.add(editable.yaml_path)
+                provider_class = PROVIDER_REGISTRY.get(editable.values_provider)
+                if provider_class is None:
+                    logger.warning(
+                        "Onbekende values_provider %r op %s; waarden niet gecontroleerd",
+                        editable.values_provider,
+                        editable.yaml_path,
+                    )
+                    continue
+                provider = provider_class(**_project_context_kwargs(provider_class, project_data))
+                allowed = {str(option.get("value")) for option in provider.get_options()}
+                offered = sorted(option for option in allowed if option)
+                if not offered:
+                    # The source is empty, so there is nothing to be measured against. This
+                    # is not "everything is wrong": it is a project whose values come from
+                    # somewhere this provider cannot see -- the four pre-service invite
+                    # files name roles of a realm nobody configured through ZAD. Refusing
+                    # there would claim knowledge we do not have, and would block the next
+                    # edit of a project over a value this release did not introduce. The
+                    # case that matters is never empty: with restrict-access on there is
+                    # always at least the wall role.
+                    continue
+                source = getattr(provider_class, "options_source", UNDECLARED_SOURCE)
+                what = f"{source.description} " if isinstance(source, OptionsSource) else ""
+                for path, value in expand_wildcard_path(project_data, editable.yaml_path):
+                    if value is None or str(value) in allowed:
+                        continue
+                    errors.append(
+                        f"'{value}' op {path} bestaat niet in dit project. {what}Nu beschikbaar: {', '.join(offered)}."
+                    )
+    return errors
+
+
 def validate_database_schema_names(project_data: dict[str, Any]) -> list[str]:
     """The composed schema names of every extra schema, against every deployment (RC-59).
 
@@ -640,6 +732,14 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
     registry_errors = validate_platform_registry_image_ownership(project_data)
     if registry_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(registry_errors)}")
+
+    # Values that point at something in this project: a realm role an invite hands out
+    # has to be a realm role the keycloak config defines, or nobody gets it. Per-service
+    # model validation cannot see this -- it judges one config block in isolation, and
+    # both halves of the reference live in different services.
+    choice_errors = validate_declared_choices(project_data)
+    if choice_errors:
+        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(choice_errors)}")
 
     # Per-service typed config validation (RC-5 A). Runs last: the envelope and
     # cross-field structure are valid by here, so this only judges the config values.

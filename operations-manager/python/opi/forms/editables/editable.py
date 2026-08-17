@@ -245,6 +245,24 @@ class Editable:
     enforcer: EditableEnforcer | None = None
     generator: EditableGenerator | None = None
     values_provider: str | None = None
+    values_must_exist: bool = False
+    """Whether a stored value MUST be one the provider currently offers.
+
+    Off by default, and that default is the honest one: for most fields the option list
+    is a MENU and not a closed set (``sleep-after-deploy`` offers 4h..168h and accepts
+    ``90m``), so refusing everything outside it would reject values the API legitimately
+    takes. Turning it on says something stronger and narrower: the value is a REFERENCE
+    into this project, so a value the project does not contain is a typo and nothing else.
+
+    Only meaningful on a provider whose list comes from the project itself -- the one that
+    declares an ``OptionsSource`` and therefore publishes ``x-choices-source`` in the API
+    document. That is deliberately the same source: the list a caller is told to read and
+    the list their value is judged against must not be two lists.
+
+    Enforced by ``validate_declared_choices`` at the save chokepoint, as a
+    ``ProjectIntegrityError``. Not by the form widget: a select can only ever show what it
+    offers, while the API and hand-written YAML never pass a widget at all.
+    """
     required: bool = False
     default: Any = None
     """Value used when the field has none stored yet.

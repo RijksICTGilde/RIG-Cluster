@@ -238,3 +238,82 @@ def http_get_via_port_forward(
         proc.terminate()
         with contextlib.suppress(subprocess.SubprocessError):
             proc.wait(timeout=5)
+
+
+#: The annotation the ArgoCD CMP plugin stamps on every pod template: a hash over all
+#: Secrets and ConfigMaps in the Application. It is what makes a pod restart when only the
+#: CONTENT of a secret changes, and it is injected at render time -- so it appears on the
+#: cluster and in no template under ``manifests/``. Pinned here as a literal because the
+#: producer is a shell/yq filter in bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml
+#: that cannot be imported.
+CONFIG_HASH_ANNOTATION = "checksum/config"
+
+
+def probe_in_pod(namespace: str, pod: str, script: str, *, probe: str, target: str = "app") -> str | None:
+    """Run a shell snippet against the target container's process and return its output.
+
+    ``kubectl exec`` is not an option here: the application images are distroless, so they
+    carry no shell and no coreutils, and every exec fails with "executable file not found".
+    An ephemeral debug container that shares the target's process namespace does have a
+    shell, and reaches the target through ``/proc/1`` -- its environment as the process
+    actually received it, and its filesystem as the container actually sees it.
+
+    That distinction is the whole point of these measurements: ``envFrom`` is injected once
+    at container start and a ``subPath`` mount is a one-time copy, so a value read this way
+    is proof of what the RUNNING container got, not of what the cluster currently holds.
+
+    Returns None when the probe could not be run or produced nothing.
+    """
+    started = _run(
+        [
+            "debug",
+            pod,
+            "-n",
+            namespace,
+            "--image=busybox:1.36",
+            f"--target={target}",
+            "-q",
+            "--attach=false",
+            "-c",
+            probe,
+            "--",
+            "sh",
+            "-c",
+            script,
+        ],
+        timeout=120.0,
+    )
+    if started.returncode != 0:
+        return None
+    if not wait_for(
+        lambda: (
+            _run(
+                [
+                    "get",
+                    "pod",
+                    pod,
+                    "-n",
+                    namespace,
+                    "-o",
+                    f'jsonpath={{.status.ephemeralContainerStatuses[?(@.name=="{probe}")].state.terminated.reason}}',
+                ],
+            ).stdout.strip()
+            == "Completed"
+        ),
+        timeout=120,
+        interval=3,
+    ):
+        return None
+    logs = _run(["logs", pod, "-n", namespace, "-c", probe], timeout=60.0)
+    return logs.stdout.strip() if logs.returncode == 0 else None
+
+
+def read_file_in_pod(namespace: str, pod: str, path: str, *, probe: str) -> str | None:
+    """Read one file out of the target container, through its own process view."""
+    return probe_in_pod(namespace, pod, f"cat /proc/1/root{path} 2>/dev/null", probe=probe)
+
+
+def env_in_pod(namespace: str, pod: str, name: str, *, probe: str) -> str | None:
+    """Read one environment variable as the target process actually received it."""
+    output = probe_in_pod(namespace, pod, f'tr "\\0" "\\n" < /proc/1/environ | grep "^{name}="', probe=probe)
+    return output.split("=", 1)[1] if output and "=" in output else None

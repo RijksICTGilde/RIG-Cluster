@@ -139,18 +139,25 @@
         {% set cpu = project.get('cpu_cores') or 0 %}
         {% set mem_limit_mb = project.get('memory_limit_mb') or 0 %}
         {% set cpu_limit = project.get('cpu_limit_cores') or 0 %}
-        {% if mem_mb or cpu %}
-            {% set _ = regels.append({
-                'naam': project.display_name,
-                'pad': project.name,
-                'mem_used': mem_mb * 1048576,
-                'mem_limit': mem_limit_mb * 1048576,
-                'mem_pct': ([100, (mem_mb / mem_limit_mb * 100) | round | int] | min) if mem_limit_mb else 0,
-                'cpu_used': cpu,
-                'cpu_limit': cpu_limit,
-                'cpu_pct': ([100, (cpu / cpu_limit * 100) | round | int] | min) if cpu_limit else 0,
-            }) %}
-        {% endif %}
+        {# ELK project komt in de lijst, ook zonder verbruik. Hier stond een guard op
+           ``mem_mb or cpu``, en die liet een project dat niets gebruikt stil VERDWIJNEN:
+           op de sandbox toonde de kaart twee van de elf projecten, en niets vertelde dat
+           er negen misten. Verdwijnen is de slechtste vorm van nul.
+
+           Het kost ook niets om ze te tonen: de cijfers zijn er al. De metingen komen uit
+           vier ``by (namespace)``-queries over ALLE namespaces tegelijk (zie
+           collect_dashboard_metrics), dus het aantal projecten verandert het aantal
+           queries niet -- de guard gooide alleen weg wat al opgehaald was. #}
+        {% set _ = regels.append({
+            'naam': project.display_name,
+            'pad': project.name,
+            'mem_used': mem_mb * 1048576,
+            'mem_limit': mem_limit_mb * 1048576,
+            'mem_pct': ([100, (mem_mb / mem_limit_mb * 100) | round | int] | min) if mem_limit_mb else 0,
+            'cpu_used': cpu,
+            'cpu_limit': cpu_limit,
+            'cpu_pct': ([100, (cpu / cpu_limit * 100) | round | int] | min) if cpu_limit else 0,
+        }) %}
     {% endfor %}
     {% set op_geheugen = regels | sort(attribute='mem_used', reverse=true) | list %}
 

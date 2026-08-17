@@ -109,7 +109,19 @@ def _await_task(base_url: str, task_id: str, api_key: str) -> dict[str, Any]:
     last: dict[str, Any] = {}
     with httpx.Client(verify=_VERIFY_SSL, timeout=30.0) as client:
         while time.monotonic() < deadline:
-            response = client.get(f"{base}/api/tasks/{task_id}", headers=headers)
+            # Een trage statuspoll is een TOESTAND, geen uitkomst. Deze tests zetten OPI
+            # bewust onder gelijktijdige druk -- en met ``rollout=true`` wacht een patch op
+            # een volledige ArgoCD-uitrol, veruit het traagste deel van een actie (RC-117).
+            # Dan haalt een enkele poll de 30 seconden van de client soms niet, en zonder
+            # deze vangst sneuvelde de hele test op die ene traagheid terwijl er nog uren
+            # deadline over waren. We hebben al een eigen deadline: binnen die grens is
+            # opnieuw vragen het juiste antwoord, en erbuiten valt de lus vanzelf uit.
+            try:
+                response = client.get(f"{base}/api/tasks/{task_id}", headers=headers)
+            except httpx.TransportError as trager_dan_de_client:
+                last = {"status": "poll_timeout", "error": str(trager_dan_de_client)}
+                time.sleep(2.0)
+                continue
             last = response.json() if response.content else {}
             if response.status_code == 200:
                 return last

@@ -25,7 +25,7 @@ from opi.core.cluster_config import (
     supports_vpa,
 )
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler, ResourceFloor
+from opi.handlers.project_file_handler import ProjectFileHandler, ResourceFloor, is_oom_disable_reason
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.catalog.resource_tuning.config import resource_tuning_config
 from opi.services.project_store import get_project_store
@@ -159,8 +159,12 @@ class _ComponentAnalysis:
     has_oom_kills: bool
     floor_blocked: bool = False
     floor_set_at: str | None = None
-    # Sizing source for this analysis: "vpa" (recommender) or "prometheus".
+    # Sizing source for this analysis: "vpa" (recommender), "prometheus", or
+    # "root" (the declared component value, restored by the repair below).
     source: str = "prometheus"
+    # True when this analysis is the repair of an override that sat below the
+    # declared root, rather than a measurement-driven recommendation.
+    root_repair: bool = False
     # CPU recommendation, present only when sourced from VPA and the change
     # cleared the deviation gate. None means "leave CPU untouched".
     new_cpu_limit: str | None = None
@@ -225,6 +229,56 @@ async def _analyze_component_resources(
         logger.debug(f"Auto-tuning disabled for {component_ref} in {dep_name}, skipping")
         return None
 
+    cfg = resource_tuning_config()
+    window_hours = cfg.window_hours
+    buffer_percent = cfg.memory_buffer_percent
+    increase_threshold = cfg.increase_threshold
+    decrease_threshold = cfg.decrease_threshold
+
+    root_resources = file_handler.extract_component_resources(project_data, component_ref)
+    current_resources = dict(root_resources)
+    deployment_overrides = file_handler.extract_deployment_component_resources(project_data, dep_name, component_ref)
+    if deployment_overrides:
+        current_resources.update(deployment_overrides)
+
+    current_limit_mb = _k8s_memory_to_mb(current_resources["limits_memory"])
+    current_request_mb = _k8s_memory_to_mb(current_resources["requests_memory"])
+
+    # Repair an override that already sits below the declared root, before anything
+    # is measured. Such an override starves the component, and both mechanisms that
+    # would otherwise correct it are blocked by exactly that starvation: the
+    # availability guard below skips a component that is not Available, and the
+    # measurement is taken from a pod that never got to run. Restoring the declared
+    # value needs neither, so it happens first. Raises only the deficient side; the
+    # root is a lower bound here, never a ceiling.
+    root_limit_mb = _k8s_memory_to_mb(root_resources["limits_memory"])
+    root_request_mb = _k8s_memory_to_mb(root_resources["requests_memory"])
+    if current_limit_mb < root_limit_mb or current_request_mb < root_request_mb:
+        repaired_limit = root_resources["limits_memory"] if current_limit_mb < root_limit_mb else None
+        repaired_request = root_resources["requests_memory"] if current_request_mb < root_request_mb else None
+        new_limit = repaired_limit or current_resources["limits_memory"]
+        new_request = repaired_request or current_resources["requests_memory"]
+        logger.info(
+            f"Override for {component_ref} in {dep_name} sits below the declared root "
+            f"(limit {current_resources['limits_memory']} < {root_resources['limits_memory']} or "
+            f"request {current_resources['requests_memory']} < {root_resources['requests_memory']}), restoring"
+        )
+        return _ComponentAnalysis(
+            current_resources=current_resources,
+            new_limit=new_limit,
+            new_request=new_request,
+            reason=(
+                f"Override below the declared component root restored: "
+                f"limit {current_resources['limits_memory']} -> {new_limit}, "
+                f"request {current_resources['requests_memory']} -> {new_request}"
+            ),
+            max_observed_mb=0.0,
+            avg_observed_mb=0.0,
+            has_oom_kills=False,
+            source="root",
+            root_repair=True,
+        )
+
     # Skip unhealthy deployments — their low memory usage is misleading. Not on the
     # OOM path: an OOM'ing component is unavailable precisely when it needs a bump,
     # so the availability guard (built for the nightly sweep) must not fire there.
@@ -242,19 +296,6 @@ async def _analyze_component_resources(
                     return None
         except Exception as e:
             logger.warning(f"Failed to check deployment health for {unique_name}: {e}")
-    cfg = resource_tuning_config()
-    window_hours = cfg.window_hours
-    buffer_percent = cfg.memory_buffer_percent
-    increase_threshold = cfg.increase_threshold
-    decrease_threshold = cfg.decrease_threshold
-
-    current_resources = file_handler.extract_component_resources(project_data, component_ref)
-    deployment_overrides = file_handler.extract_deployment_component_resources(project_data, dep_name, component_ref)
-    if deployment_overrides:
-        current_resources.update(deployment_overrides)
-
-    current_limit_mb = _k8s_memory_to_mb(current_resources["limits_memory"])
-    current_request_mb = _k8s_memory_to_mb(current_resources["requests_memory"])
 
     # Query Prometheus for max and average memory usage (app container only)
     max_observed_mb = 0.0
@@ -324,9 +365,17 @@ async def _analyze_component_resources(
         max_observed_mb = vpa_rec.target_memory_mi
         avg_observed_mb = vpa_rec.target_memory_mi
 
-    if max_observed_mb == 0:
+    # An implausibly small measurement is not a measurement. The exact-zero test this
+    # replaces let a fraction of a Mi through -- the footprint of a pod that barely
+    # existed inside the window -- and sizing on it lands on the cluster minimum
+    # (25Mi), which is below what most runtimes need to boot. A container that really
+    # ran passes this threshold within seconds.
+    if max_observed_mb < cfg.min_observed_mi:
         if not has_oom_kills:
-            logger.info(f"No memory data found for {unique_name}, skipping")
+            logger.info(
+                f"No usable memory data for {unique_name} "
+                f"(max {max_observed_mb:.2f}Mi below the {cfg.min_observed_mi:g}Mi plausibility floor), skipping"
+            )
             return None
         logger.info(
             f"No memory data for {unique_name} but OOM kills detected, "
@@ -479,7 +528,6 @@ async def _analyze_component_resources(
     # floor), never a ceiling — a deployment may still raise itself above root (see the
     # OOM path). Guards a temporarily-idle PR deployment from being pulled under the
     # declared value by the nightly sweep.
-    root_resources = file_handler.extract_component_resources(project_data, component_ref)
     if _k8s_memory_to_mb(new_limit) < _k8s_memory_to_mb(root_resources["limits_memory"]):
         new_limit = root_resources["limits_memory"]
     if _k8s_memory_to_mb(new_request) < _k8s_memory_to_mb(root_resources["requests_memory"]):
@@ -621,6 +669,22 @@ async def apply_resource_tuning(
             # 75Mi to 45Mi in six seconds. A new deployment inherits the declared root;
             # if that is too tight it OOMs once and the watcher raises its own override.
             file_handler.set_deployment_component_resources(project_data, dep_name, component_ref, resource_update)
+
+            # A repair removes the cause of an OOM disable, so the disable goes with it.
+            # Leaving it would make the repair invisible and permanent: with the
+            # component scaled to zero there are no pods, so no OOM metric, so nothing
+            # that would ever switch it back on. Same shape as the image-pull disable,
+            # which clears once the image changes.
+            if analysis.root_repair:
+                is_disabled, disabled_reason = file_handler.extract_deployment_component_disabled(
+                    project_data, dep_name, component_ref
+                )
+                if is_disabled and is_oom_disable_reason(disabled_reason):
+                    file_handler.set_deployment_component_disabled(project_data, dep_name, component_ref, False, "")
+                    logger.info(
+                        f"Re-enabled {component_ref} in {dep_name}: it was disabled for "
+                        f"'{disabled_reason}' and its memory has been restored to the declared root"
+                    )
 
             # Write resource history at deployment level. Both limits and requests are
             # recorded: a change that only moves the request otherwise reads as a no-op

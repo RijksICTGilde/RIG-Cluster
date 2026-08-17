@@ -254,7 +254,7 @@
         }
       ],
       "default": null,
-      "description": "How TLS is terminated: 'standard' uses the platform certificate, 'passthrough' lets the pod present its own, 'provided' terminates a certificate you supply as an attachment. Absent means inherit (deployment > component > root > standard).",
+      "description": "How TLS is terminated: 'standard' uses the platform certificate, 'passthrough' lets the pod present its own, 'provided' terminates a certificate you supply as an attachment. Absent means inherit (deployment > component > root > standard). 'standard' covers the domains the cluster offers; for a domain of your own on a cluster that reports custom-domain-certificates=false (GET /api/v2/projects/{project}/clusters) it yields no certificate at all, and 'provided' is the way to a working address there.",
       "title": "Tls"
     }
   },

@@ -6,7 +6,7 @@ the entire application, from form submission to project processing.
 """
 
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -191,6 +191,126 @@ def service_entry_data(entry: Any) -> Any:
     return None
 
 
+def unmet_service_requirements(project_data: dict[str, Any], requires: Iterable[str]) -> list[str]:
+    """The entries of a ``ServiceDefinition.requires`` this project does not satisfy yet.
+
+    ``requires`` is a list of yaml paths into the project-level ``services`` block, one
+    level (``services/keycloak``, the service must be selected) or deeper
+    (``services/keycloak/config/restrict-access``, that config key must be set). The
+    wizard resolves the one-level form by auto-selecting the dependency; nothing checked
+    the deeper form, and nothing reported either of them to an API caller, so an unmet
+    requirement surfaced as a later failure rather than as part of the refusal.
+
+    Identity comes from ``service_entry_name``, so a dependency that carries config is
+    found as readily as a bare one. Paths outside ``services/`` are skipped rather than
+    guessed at: this function reads that one block and says so instead of reporting a
+    requirement it never looked for as unmet.
+    """
+    entries = project_data.get("services") or []
+    by_name = {service_entry_name(entry): entry for entry in entries}
+    unmet: list[str] = []
+    for requirement in requires:
+        if not requirement.startswith("services/"):
+            continue
+        name, _, rest = requirement.removeprefix("services/").partition("/")
+        node: Any = by_name.get(name)
+        if node is None:
+            unmet.append(requirement)
+            continue
+        for segment in rest.split("/") if rest else []:
+            if not isinstance(node, dict) or segment not in node:
+                unmet.append(requirement)
+                break
+            node = node[segment]
+    return unmet
+
+
+@dataclass(frozen=True)
+class ConfigAdvice:
+    """A field that is only *worth* filling in because of a setting somewhere else.
+
+    ``requires`` is the unconditional, blocking form of a cross-service dependency: the
+    auth wall cannot work without keycloak, so binding it without keycloak is refused.
+    This is the conditional, non-blocking form, and it needs both halves of that
+    sentence to be different. An invite without a realm role is a perfectly valid
+    invitation -- it hands out a bare account -- right up to the moment keycloak's
+    ``restrict-access`` is switched on, because from then on only a role holder gets in.
+    The same file is correct or useless depending on a value in another service's config,
+    and until now nobody found out until someone tried the link.
+
+    So: a warning, never a refusal, and it is declared on the service that owns the
+    FIELD (invite), not on the service that owns the condition. That is what keeps the
+    advice discoverable from the thing you are editing, and it is why the shape is two
+    yaml paths rather than a service name -- generic code evaluates these without
+    knowing which services exist.
+
+    ``when``    a path anywhere in the project; the advice applies while it holds a
+                truthy value. A boolean toggle and a "this key is set" check therefore
+                read the same way, and ``enabled: false`` correctly says nothing.
+    ``expects`` a path this service owns that should then carry a value. One ``[*]``
+                per list level is expanded, so one advice covers every entry of a list
+                and the warning names the entry it is about
+                (``services/invite/config/active[0]/realm-roles``).
+    ``message`` what the user is told, in Dutch, at that field.
+
+    Both paths are read with ``smart_get_value``, so they resolve against the project
+    file and against the wizard's in-progress state alike.
+    """
+
+    when: str
+    expects: str
+    message: str
+
+
+@dataclass(frozen=True)
+class ConfigAdviceNotice:
+    """One piece of advice, against one concrete field.
+
+    ``field_path`` has its ``[*]`` resolved to the index it is about, so it is the key
+    the form's ``field_warnings`` dict uses and the path an API caller can act on.
+    """
+
+    field_path: str
+    message: str
+
+
+def _is_blank(value: Any) -> bool:
+    """Whether *value* counts as "not filled in" for ``ConfigAdvice.expects``.
+
+    ``False`` and ``0`` are answers, not omissions, so only None and the empty
+    string/list/dict qualify.
+    """
+    if value is None:
+        return True
+    return isinstance(value, str | list | dict | tuple) and len(value) == 0
+
+
+def collect_config_advice(project_data: dict[str, Any]) -> list[ConfigAdviceNotice]:
+    """Every ``ConfigAdvice`` in the catalog whose condition holds and whose field is empty.
+
+    The one evaluator, so the form and the API say the same thing about the same
+    project -- the shape ``custom_domain_certificate_note`` established for the
+    certificate case, where one sentence feeds both a field warning and the ``warnings``
+    on the write action.
+
+    A service that is not selected needs no special case: its ``expects`` path resolves
+    to nothing, so it yields nothing.
+    """
+    from opi.forms.editables.service_path import expand_wildcard_path, smart_get_value
+
+    notices: list[ConfigAdviceNotice] = []
+    for definition in ServiceAdapter.SERVICE_DEFINITIONS.values():
+        for advice in definition.config_advice:
+            if not smart_get_value(project_data, advice.when):
+                continue
+            notices.extend(
+                ConfigAdviceNotice(field_path, advice.message)
+                for field_path, value in expand_wildcard_path(project_data, advice.expects)
+                if _is_blank(value)
+            )
+    return notices
+
+
 @dataclass
 class VariableDefinition:
     """
@@ -250,6 +370,13 @@ class ServiceDefinition:
 
     Used for both UI behavior (auto-select, lock) and submit-time
     validation.
+    """
+    config_advice: list[ConfigAdvice] = field(default_factory=list)
+    """Fields of this service that only become necessary because of a setting elsewhere.
+
+    The conditional sibling of ``requires``: ``requires`` blocks unconditionally, this
+    warns while a condition holds. See ``ConfigAdvice`` for the shape and the reasoning,
+    and ``collect_config_advice`` for the single evaluator both the form and the API use.
     """
     cleanup_strategy: CleanupStrategy = CleanupStrategy.NONE
     """How server-side resources are cleaned up when the service is removed.
@@ -903,7 +1030,8 @@ class ServiceAdapter:
         name is allowed, so a rejected list leaves the project file as it was.
 
         Raises ``ServiceValidationError`` for an unknown service name, or when a service
-        may not enrol itself.
+        may not enrol itself. That refusal names the request that lifts it -- see
+        ``_refusal_message``.
         """
         cls.parse_services_from_strings(list(service_names))  # rejects an unknown service name
 
@@ -925,11 +1053,113 @@ class ServiceAdapter:
                 new_entries.append(entry)
 
         if refused:
-            raise ServiceValidationError(
-                f"Services that must be enabled at project level first: {refused}. They need project-level "
-                f"configuration that cannot be assumed, so they are not added automatically."
-            )
+            raise ServiceValidationError(cls._refusal_message(project_data, refused))
+
+        # Zichzelf mogen inschrijven zegt niets over of de dienst kán werken. De auth wall
+        # heeft op projectniveau niets te beslissen (alleen een optionele banner) en schrijft
+        # zich dus bij, maar zonder keycloak en publish-on-web staat er straks een muur voor
+        # een deur die er niet is. Dat is geen keuze die wij voor iemand maken maar een feit,
+        # en dat hoort de aanroeper NU te horen in plaats van het bij de uitrol te ontdekken.
+        # Alleen over wat we NU inschrijven. Een dienst die er al stond is een bestaande
+        # toestand, en die alsnog afkeuren zou betekenen dat een aanroep die er niets aan
+        # toevoegt ineens faalt op iets wat de aanroeper niet vroeg.
+        toegevoegd = {service_entry_name(entry) for entry in new_entries}
+        onvervuld = [
+            name
+            for name in service_names
+            if name in toegevoegd
+            and unmet_service_requirements(project_data, get_service(ServiceType(name)).definition.requires or [])
+        ]
+        if onvervuld:
+            raise ServiceValidationError(cls._refusal_message(project_data, onvervuld))
+
         services.extend(new_entries)
+
+    @classmethod
+    def _refusal_message(cls, project_data: dict[str, Any], refused: list[str]) -> str:
+        """Why these services were not enrolled, and what to send instead.
+
+        The refusal used to say only that the services "need project-level configuration
+        that cannot be assumed". That is the reason, not the way out: a client that hangs
+        an authorization-wall on a component learned that something was missing but not
+        which request supplies it, and the service's own ``requires`` -- publish-on-web,
+        keycloak, and keycloak's ``restrict-access`` -- surfaced only afterwards, one
+        failed call at a time (zad-cli, bevinding 21).
+
+        So the message carries three things per service: the endpoint that makes the
+        project-level decision (built with ``config_endpoint_path``, so it cannot drift
+        from the route that is actually registered), where to read what belongs in that
+        body, and the requirements this project does not satisfy yet. Only the unmet ones:
+        a list that repeats what is already there reads as a wall rather than a next step.
+
+        The endpoint is named only when it EXISTS. The generic config route is generated
+        for a layer that has a config model, and a service can carry a project layer
+        without one -- attachments defines a catalog under ``data`` and has no
+        project-level config block at all, so its route was never generated. Naming it
+        anyway would swap one dead end for a worse one: a 404 on a request the message
+        itself recommended. Those services get pointed at their own description instead,
+        which is where the actions they DO declare are listed.
+        """
+
+        # Lazy: de registry importeert deze module, dus niet op laadtijd.
+        from opi.services.registry import get_service
+
+        project_name = project_data.get("name") or "{project_name}"
+        parts: list[str] = []
+        for service_name in refused:
+            service_type = ServiceType(service_name)
+            definition = cls.SERVICE_DEFINITIONS.get(service_type)
+            unmet = unmet_service_requirements(project_data, definition.requires if definition else [])
+
+            # Twee verschillende redenen, en ze door elkaar halen stuurt de lezer de
+            # verkeerde kant op. Mag de dienst zichzelf niet inschrijven, dan moet er een
+            # BESLISSING genomen worden en volgt het endpoint dat die opneemt. Mag hij dat
+            # wel maar ontbreken er diensten waar hij op leunt, dan is er niets te beslissen
+            # en moet er iets anders eerst bestaan -- dan is het endpoint van deze dienst
+            # noemen alleen maar misleidend.
+            if get_service(service_type).implicit_project_entry() is None:
+                sentence = (
+                    f"Service '{service_name}' needs a project-level decision that cannot be assumed, so it is "
+                    f"not selected automatically. {cls._project_selection_hint(service_type, project_name)}"
+                )
+                if unmet:
+                    sentence += f" It also requires, and this project does not have yet: {', '.join(unmet)}."
+            else:
+                sentence = (
+                    f"Service '{service_name}' cannot work in this project yet: it requires "
+                    f"{', '.join(unmet)}, which this project does not have. Add those first; "
+                    f"'{service_name}' itself needs no project-level decision and is selected for you."
+                )
+            parts.append(sentence)
+        return " ".join(parts)
+
+    @classmethod
+    def _project_selection_hint(cls, service_type: ServiceType, project_name: str) -> str:
+        """The one request that selects ``service_type`` at project level.
+
+        Answered from what the service declares, with the same two conditions the v2
+        router uses to decide whether to generate the route at all: the service has to
+        carry the project layer AND have a model to validate a write against. Reading the
+        service rather than assuming the pattern is what keeps the message from pointing
+        at a 404.
+        """
+        from opi.services.catalog.base import ConfigLayer as Layer
+        from opi.services.catalog.base import config_endpoint_path
+        from opi.services.registry import get_service
+
+        service = get_service(service_type)
+        name = service_type.value
+        has_route = Layer.PROJECT in service.config_layers() and service.config_model_for(Layer.PROJECT) is not None
+        if has_route:
+            endpoint = config_endpoint_path(Layer.PROJECT, name, project_name)
+            return (
+                f"Select it first with PUT {endpoint} (the body is this service's project config; "
+                f"GET /api/v2/services/{name} describes it)."
+            )
+        return (
+            f"Its project layer takes no config block, so there is no config route for it; "
+            f"GET /api/v2/services/{name} lists the actions that put something there."
+        )
 
     @classmethod
     def remove_service_config(

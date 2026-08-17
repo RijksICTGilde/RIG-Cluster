@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.invite_routes import _realm_roles_unassigned
@@ -102,6 +103,34 @@ class TestKeyGeneration:
         assert generated[0].isalnum()  # never starts with '-' or '_'
         assert InviteKeyValidator().validate(generated) == []
 
+    def test_de_api_weg_genereert_de_sleutel_ook(self) -> None:
+        """Buiten het formulier om gebeurde dit niet, en dat was de kern van de klacht.
+
+        Een uitnodiging die via de API werd aangemaakt met een lege sleutel hield die lege
+        string, en haar link was letterlijk ``/invite/``. Nu loopt de catalogusrondgang
+        (die elke API-schrijfweg draait) door dezelfde generator.
+        """
+        from opi.services.registry import generate_missing_values
+
+        project = _invite_service_project([{"key": "", "realm-roles": ["allowed-user"]}])
+
+        generated = generate_missing_values(project)
+
+        sleutel = project["services"][-1]["config"]["active"][0]["key"]
+        assert sleutel, "een lege sleutel hoort ingevuld te worden"
+        assert InviteKeyValidator().validate(sleutel) == []
+        # En de aanroeper hoort te horen WAT er ingevuld is: zonder die waarde heeft hij
+        # een uitnodiging die hij niet kan versturen.
+        assert generated == {"services/invite/config/active[0]/key": sleutel}
+
+    def test_een_zelfgekozen_sleutel_levert_niets_op_om_te_melden(self) -> None:
+        from opi.services.registry import generate_missing_values
+
+        project = _invite_service_project([{"key": "mijn-sleutel"}])
+
+        assert generate_missing_values(project) == {}
+        assert project["services"][-1]["config"]["active"][0]["key"] == "mijn-sleutel"
+
     def test_generated_key_always_passes_its_own_validator(self) -> None:
         """A generated key must never start with '-'/'_': token_urlsafe (base64url) can,
         and the validator (start with a letter or digit) would reject it. Regression for
@@ -113,6 +142,58 @@ class TestKeyGeneration:
             assert len(key) == 22
             assert key[0].isalnum()
             assert InviteKeyValidator().validate(key) == []
+
+
+class TestDeSchrijfwegMeldtDeGegenereerdeCode:
+    """``configure_service`` moet de code teruggeven die het zelf verzon.
+
+    Anders staat er wel een geldige uitnodiging in het bestand, maar heeft de aanroeper
+    hem niet en kan hij hem dus niet versturen -- precies de klacht die dit oplost.
+    """
+
+    def _manager(self) -> Any:
+        with (
+            patch("opi.manager.project_manager.KubectlConnector"),
+            patch("opi.handlers.sops.SopsHandler"),
+            patch("opi.generation.manifests.ManifestGenerator"),
+            patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
+            patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
+            patch("opi.manager.delete_project_manager.DeleteProjectManager", return_value=MagicMock()),
+            patch("opi.manager.keycloak_manager.KeycloakManager", return_value=MagicMock()),
+            patch("opi.manager.minio_manager.MinioManager", return_value=MagicMock()),
+            patch("opi.manager.redis_manager.RedisManager", return_value=MagicMock()),
+            patch("opi.manager.pvc_manager.PVCManager", return_value=MagicMock()),
+        ):
+            from opi.manager.project_manager import ProjectManager
+
+            return ProjectManager()
+
+    async def test_een_lege_sleutel_wordt_gevuld_en_teruggemeld(self) -> None:
+        pm = self._manager()
+        project_data = {"name": "proj", "services": ["keycloak"], "components": [], "deployments": []}
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_name = AsyncMock(return_value="proj")
+        pm.save_and_commit_project = AsyncMock()
+
+        result = await pm.configure_service(
+            ServiceType.INVITE.value, "project", {"active": [{"key": "", "realm-roles": ["allowed-user"]}]}
+        )
+
+        assert result["success"] is True
+        opgeslagen = ProjectFileHandler().extract_invites_config(project_data)["active"][0]["key"]
+        assert opgeslagen, "de opslag hoort een echte sleutel te hebben"
+        assert result["generated"] == {"services/invite/config/active[0]/key": opgeslagen}
+
+    async def test_een_zelfgekozen_sleutel_meldt_niets(self) -> None:
+        pm = self._manager()
+        project_data = {"name": "proj", "services": ["keycloak"], "components": [], "deployments": []}
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_name = AsyncMock(return_value="proj")
+        pm.save_and_commit_project = AsyncMock()
+
+        result = await pm.configure_service(ServiceType.INVITE.value, "project", {"active": [{"key": "zelf-gekozen"}]})
+
+        assert result["generated"] == {}
 
 
 class TestInviteKeyValidator:

@@ -274,6 +274,41 @@ encrypt/decrypt. Het logpaneel liep tegen dezelfde grens aan, om een andere rede
 **Voorstel.** De inhoud volgen met een `MutationObserver`, of een publieke
 `setValue()`/`value` op het component.
 
+---
+
+## 14. Een `c-stack` in een `c-td` krimpt in Firefox tot niets
+
+**Wat er gebeurt.** `<nldd-cell>` legt zijn kinderen neer met `display: flex;
+flex-direction: column; align-items: flex-start`, dus ze worden op de dwarsas zo smal als
+hun eigen inhoud. Staat er een `<c-stack>` in de cel met een `<c-paragraph>` erin, dan
+komt de keten uit op `div.lotc-stack` (flex) > `nldd-rich-text` (grid), en Firefox rekent
+de intrinsieke breedte daarvan uit als **0**. Chromium en WebKit komen op de celbreedte
+uit.
+
+**Wat je ziet.** Een kolom van EEN LETTER breed, met de rest van de cel leeg ernaast.
+Gemeten op `/admin/approvals`, Firefox 1440px breed: cel 212px, `div.lotc-stack` 0px, en
+"16 augustus 2026" over veertien regels - een teken per regel. Dezelfde pagina staat in
+Chromium en WebKit goed.
+
+**Waarom dat pijn doet.** Het faalt in EEN motor, dus elke meting in Chromium is groen
+terwijl het scherm stuk is. En "twee dingen onder elkaar in een tabelcel" is precies waar
+je `c-stack` voor pakt: bij ons de datum met "door X" eronder (`bg/admin-approvals`) en
+een statuslabel met de lopende stap eronder (`bg/_tasks`).
+
+**Welke schakel het is.** Gemeten: een `<c-paragraph>` ZONDER stack in dezelfde cel is
+212px en eenregelig, en een `lotc-stack` met kale `<p>`-kinderen ook. Alleen de combinatie
+stack + `nldd-rich-text` valt om.
+
+**Wat wij intussen doen.** De `c-stack` weglaten. Dat kost niets: een cel IS al een
+kolom-flexbox, dus de kinderen stapelen vanzelf. Bewust GEEN eigen CSS-regel die
+`nldd-cell` overschrijft - dat werkt wel (`align-self: stretch` op de stack), maar het is
+een regel die met de componentlaag vecht en die niemand later durft weg te halen.
+`tests/test_lotc_stapel_in_tabelcel.py` houdt het patroon eruit.
+
+**Voorstel.** `nldd-cell` zijn kinderen laten uitrekken (`align-items: stretch`, met de
+uitlijning van de tekst waar hij hoort), of `.lotc-stack` een breedte geven die niet van
+de intrinsieke meting van zijn kinderen afhangt.
+
 ## Een pagina met een leesbare maximumbreedte, en de benoemde `layout-container`
 
 Gemeten in ZAD op 12 augustus 2026, op `/projects/deployments/<naam>`:
@@ -284,3 +319,30 @@ Gemeten in ZAD op 12 augustus 2026, op `/projects/deployments/<naam>`:
 Ter vergelijking een werkende NLDD-pagina elders: die zet `<nldd-page style="container: layout-container / inline-size;" background="inherit">` om de inhoud. Dat element bestaat in onze `lotc-nldd` niet als custom element; `<c-page>` rendert alleen `<html>/<head>/<body>` en zet geen container neer.
 
 **Verzoek:** laat het componentensysteem dit dragen, bijvoorbeeld op `<c-page>` of `<c-app-shell>`, in plaats van dat elke toepassing er eigen CSS voor schrijft. Wij hebben dat laatste bewust NIET gedaan: een eigen maximumbreedte is een ontwerpbeslissing die in het design system hoort, en het getal zou uit de huisstijl moeten komen en niet uit een toepassing.
+
+## Een `width=` overleeft geen swap: de afleiding naar `--_width` gebeurt niet opnieuw
+
+Gemeten in ZAD op 16 augustus 2026, op `/projects`, in Chromium. Het zoekveld staat er als:
+
+```html
+<nldd-search-field id="projects-zoekveld" width="26rem" ...>
+```
+
+De pagina vervangt bij het zoeken en sorteren het hele zoekgebied via htmx (`hx-swap="outerHTML"`), met **precies dezelfde markup**. De server geeft voor en na hetzelfde HTML terug; dat is nagemeten.
+
+| | huls | inline stijl | attribuut |
+|---|---|---|---|
+| eerste keer laden | 416px | `--_width: 26rem;` | `width="26rem"` |
+| na de htmx-swap | 321px | *weg* | `width="26rem"` |
+
+**Wat je ziet.** Het zoekveld wordt smaller zodra je zoekt of sorteert, en blijft dat. Bij ons was het van 26rem naar de breedte van de eigen inhoud.
+
+**Welke schakel het is.** De nldd-componenten zijn Lit-elementen die hun `width`-attribuut in `updated()` vertalen naar de CSS-variabele `--_width` (in `nldd.js`, het patroon `if(t.has("width")){...this.style.setProperty("--_width",...)}`). Na een swap staat het attribuut er nog, maar is die afleiding niet opnieuw gedaan en is de inline variabele verdwenen. Het element valt dan terug op de breedte van zijn inhoud.
+
+Dit raakt niet alleen `nldd-search-field`: hetzelfde patroon staat in `nldd.js` op meerdere componenten (knop, link, toolbar-item, dropdown), telkens met `width`, en soms ook met `min-width`/`max-width`. Elk daarvan in een htmx- of anderszins vervangen gebied heeft dus dezelfde stille versmalling.
+
+**Waarom dat pijn doet.** Het faalt alleen bij VERVANGING, niet bij het eerste laden, dus elke controle op een verse pagina staat groen terwijl het scherm na de eerste interactie stuk is. En het faalt stil: het attribuut staat er nog, dus in de opgeslagen HTML is niets te zien.
+
+**Wat wij intussen doen.** Na `htmx:afterSettle` het element vragen zijn eigen afleiding over te doen, met `el.requestUpdate("width", undefined)` (`static/js/htmx-formgedrag.js`). Bewust via de publieke Lit-API en bewust NIET door `--_width` van buitenaf te zetten: die naam begint met een underscore en is de keuken van het component. `tests/e2e/test_zoekveld_breedte.py` meet de breedte voor en na de swap en toetst dat `--_width` er weer staat.
+
+**Voorstel.** De afleiding niet aan `changedProperties.has("width")` hangen maar ook uitvoeren wanneer het element verbonden raakt met een attribuut dat nog niet is toegepast, zodat een element dat buiten het document is opgebouwd en daarna wordt ingevoegd zichzelf alsnog goed zet.

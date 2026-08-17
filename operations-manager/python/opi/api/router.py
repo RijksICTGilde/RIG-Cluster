@@ -394,6 +394,28 @@ class ComponentReference(BaseModel):
     image: str = Field(..., max_length=512, description="Image URL for this component", examples=["nginx:1.21"])
 
 
+# The two domain fields say the same thing in three request models, and the choices behind
+# them live on the publish-on-web config model instead -- so a caller reading the schema of
+# the request they are about to send finds no list and no pointer to one. These say once
+# where the list is. The value set itself is NOT restated here: base-domain is open by
+# design (a domain of your own is a legitimate value), and domain-format keeps its enum
+# from ``DomainFormatId``, which is where the closed set belongs.
+BASE_DOMAIN_DESCRIPTION = (
+    "Base domain for URL generation (e.g. 'rijksapp.nl'). Not a closed set: read the domains this "
+    "cluster offers from GET /api/v2/projects/{project_name}/clusters ('base-domains'), or write a "
+    "domain of your own here -- there is no separate field or marker for that. Only the cluster's "
+    "own domain ('default-domain' in that same response) and an empty value take effect immediately; "
+    "every other value needs an approval, and until it is granted the deployment runs on the cluster "
+    "address."
+)
+DOMAIN_FORMAT_DESCRIPTION = (
+    "URL format template ID that controls how hostnames are generated. Formats containing 'subdomain' "
+    "require the subdomain field to be set, and the dotted variants only work on a base domain that "
+    "supports separate subdomains. The same choices, per base domain, are on the publish-on-web "
+    "deployment config (PUT /api/v2/projects/{project_name}/services/publish-on-web/config/deployment)."
+)
+
+
 class UpsertDeploymentRequest(BaseModel):
     deploymentName: str = Field(..., max_length=63, description="Name of the deployment", examples=["production"])
     components: list[ComponentReference] = Field(
@@ -415,10 +437,7 @@ class UpsertDeploymentRequest(BaseModel):
     )
     domain_format: DomainFormatId | None = Field(
         None,
-        description=(
-            "URL format template ID that controls how hostnames are generated. "
-            "Formats containing 'subdomain' require the subdomain field to be set."
-        ),
+        description=DOMAIN_FORMAT_DESCRIPTION,
         examples=["component-deployment-subdomain"],
     )
     subdomain: str | None = Field(
@@ -432,7 +451,7 @@ class UpsertDeploymentRequest(BaseModel):
     )
     base_domain: str | None = Field(
         None,
-        description="Base domain for URL generation (e.g., 'rijksapp.nl'). Must be a cluster-supported domain.",
+        description=BASE_DOMAIN_DESCRIPTION,
         examples=["rijksapp.nl"],
         max_length=255,
     )
@@ -774,10 +793,7 @@ class DeploymentDomainSettingsRequest(BaseModel):
     )
     domain_format: DomainFormatId | None = Field(
         None,
-        description=(
-            "URL format template ID that controls how hostnames are generated. "
-            "Formats containing 'subdomain' require the subdomain field to be set."
-        ),
+        description=DOMAIN_FORMAT_DESCRIPTION,
         examples=["component-deployment-subdomain"],
     )
     subdomain: str | None = Field(
@@ -791,7 +807,7 @@ class DeploymentDomainSettingsRequest(BaseModel):
     )
     base_domain: str | None = Field(
         None,
-        description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
+        description=BASE_DOMAIN_DESCRIPTION,
         examples=["rijks.app"],
         max_length=255,
     )
@@ -1041,10 +1057,7 @@ class SelfServiceProjectRequest(BaseModel):
     )
     domain_format: DomainFormatId | None = Field(
         None,
-        description=(
-            "URL format template ID that controls how hostnames are generated. "
-            "Formats containing 'subdomain' require the subdomain field to be set."
-        ),
+        description=DOMAIN_FORMAT_DESCRIPTION,
         examples=["component-deployment-project"],
     )
     subdomain: str | None = Field(
@@ -1062,7 +1075,7 @@ class SelfServiceProjectRequest(BaseModel):
     base_domain: str | None = Field(
         None,
         max_length=255,
-        description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
+        description=BASE_DOMAIN_DESCRIPTION,
         examples=["rijks.app"],
     )
     issuer: str | None = Field(
@@ -1848,8 +1861,11 @@ async def add_service(
     project level.  If ``components`` is provided, the service is appended to those
     components' ``services`` lists; entries already there keep their config.
 
-    The request always succeeds - if the service already exists it is
-    reported in ``services_skipped`` / ``warnings``.
+    The request always succeeds - if the service already exists at project level it is
+    reported in ``services_skipped`` / ``warnings``, and the components in ``components``
+    are still bound to it. ``components_updated`` lists only the components whose
+    ``services`` list actually changed, so a component that already had the service is
+    absent from it.
 
     Headers:
         X-API-Key: The API key for the project (required)
@@ -1931,9 +1947,10 @@ async def add_service(
         )
 
         if result["success"]:
-            # Process deployments only when new services were actually added
+            # Process deployments when anything changed: a service selected at project
+            # level, or an already-selected one bound to a component.
             processing_status = "skipped"
-            if result.get("services_added"):
+            if result.get("services_added") or result.get("components_updated"):
                 processing_success = await project_manager.process_project_from_git(
                     f"projects/{project_name}.yaml",
                 )
@@ -3238,17 +3255,6 @@ async def _rollback_subdomain_registration(
 # Subdomain API endpoints for nice URL feature
 
 
-class SubdomainCheckResponse(BaseModel):
-    """Response for subdomain availability check."""
-
-    subdomain: str = Field(..., description="The subdomain that was checked", examples=["myapp"])
-    base_domain: str = Field(..., description="The base domain", examples=["rijks.app"])
-    available: bool = Field(..., description="Whether the subdomain is available", examples=[True])
-    validation_error: str | None = Field(
-        None, description="Validation error message if subdomain format is invalid", examples=[None]
-    )
-
-
 class SubdomainRegistration(BaseModel):
     """Subdomain registration details."""
 
@@ -3260,92 +3266,6 @@ class SubdomainRegistration(BaseModel):
     cluster: str = Field(..., description="Cluster where deployed", examples=["odcn-production"])
     created_at: str | None = Field(None, description="Registration timestamp")
     created_by: str | None = Field(None, description="Who created the registration")
-
-
-@api_router.get(
-    "/subdomains/check/{subdomain}",
-    response_model=SubdomainCheckResponse,
-    responses={
-        200: {"description": "Subdomain availability check result"},
-    },
-)
-@validate_api_token
-async def check_subdomain_availability(request: Request, subdomain: str, base_domain: str) -> SubdomainCheckResponse:
-    """
-    Check if a subdomain is available for registration.
-
-    This endpoint requires API token authentication to prevent unauthenticated
-    subdomain enumeration attacks.
-
-    Rate limited to 30 requests per minute per client (using multi-factor identification
-    to prevent X-Forwarded-For spoofing bypasses).
-
-    Headers:
-        X-API-Key: The API key for authentication (required)
-
-    Args:
-        request: The FastAPI request object
-        subdomain: The subdomain to check (e.g., "myapp")
-        base_domain: The base domain (e.g., "rijks.app") - must be a supported domain
-
-    Returns:
-        SubdomainCheckResponse with availability status
-
-    Example:
-    ```bash
-    curl "http://localhost:9595/api/subdomains/check/myapp?base_domain=rijks.app" \
-      -H "X-API-Key: your-api-key"
-    ```
-    """
-    # Rate limiting check - use robust client identification to prevent X-Forwarded-For spoofing
-    # This combines IP + browser fingerprint + session ID (when available)
-    client_id = IPRateLimiter.get_client_identifier(request)
-    if not subdomain_check_rate_limiter.is_allowed(client_id):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many requests. Please wait before checking again.",
-        )
-
-    # Audit log for subdomain availability checks (sanitize input to prevent log injection)
-    safe_subdomain = sanitize_for_log(subdomain)
-    safe_base_domain = sanitize_for_log(base_domain)
-    # Note: Only log IP portion of client_id to reduce log verbosity
-    client_ip = sanitize_for_log(IPRateLimiter.get_client_ip(request))
-    logger.info(f"AUDIT: Subdomain check - subdomain={safe_subdomain}, base_domain={safe_base_domain}, ip={client_ip}")
-
-    try:
-        # Validate subdomain format first
-        is_valid, validation_error = validate_subdomain(subdomain)
-        if not is_valid:
-            return SubdomainCheckResponse(
-                subdomain=subdomain.lower(),
-                base_domain=base_domain.lower(),
-                available=False,
-                validation_error=validation_error,
-            )
-
-        # Validate base_domain is a supported domain (prevents probing arbitrary domains)
-        is_valid_domain, domain_error = validate_base_domain(base_domain)
-        if not is_valid_domain:
-            return SubdomainCheckResponse(
-                subdomain=subdomain.lower(),
-                base_domain=base_domain.lower(),
-                available=False,
-                validation_error=domain_error,
-            )
-
-        connector = create_subdomain_connector()
-        is_available = await connector.check_availability(subdomain, base_domain)
-
-        return SubdomainCheckResponse(
-            subdomain=subdomain.lower(),
-            base_domain=base_domain.lower(),
-            available=is_available,
-            validation_error=None,
-        )
-    except Exception as e:
-        logger.error(f"Error checking subdomain availability: {e}")
-        raise HTTPException(status_code=500, detail=f"Error checking subdomain availability: {e}")
 
 
 class SubdomainListResponse(BaseModel):
@@ -3367,15 +3287,19 @@ class SubdomainListResponse(BaseModel):
 @validate_api_token
 async def list_subdomains(
     request: Request,
-    project_name: str | None = None,
+    project_name: str = Query(..., description="Project name matching the API key"),
     limit: int = 100,
     offset: int = 0,
 ) -> SubdomainListResponse:
     """
     List subdomain registrations with pagination support.
 
+    ``project_name`` is required and must match the API key: it stood in the document as an
+    optional filter, while leaving it out could only produce
+    ``401 Missing project_name parameter`` -- the projectsleutel is checked against it.
+
     Args:
-        project_name: Optional filter by project name
+        project_name: Project name matching the API key (required)
         limit: Maximum number of results to return (default: 100, max: 1000)
         offset: Number of results to skip for pagination (default: 0)
 
@@ -3384,14 +3308,13 @@ async def list_subdomains(
 
     Example:
     ```bash
-    # List first page of all subdomains
-    curl "http://localhost:9595/api/subdomains?limit=50&offset=0"
+    # First page for a project
+    curl "http://localhost:9595/api/subdomains?project_name=my-project&limit=50&offset=0" \\
+      -H "X-API-Key: your-api-key"
 
-    # List second page
-    curl "http://localhost:9595/api/subdomains?limit=50&offset=50"
-
-    # List subdomains for a specific project
-    curl "http://localhost:9595/api/subdomains?project_name=my-project&limit=20"
+    # Second page
+    curl "http://localhost:9595/api/subdomains?project_name=my-project&limit=50&offset=50" \\
+      -H "X-API-Key: your-api-key"
     ```
     """
     # Validate and cap limit to prevent excessive queries

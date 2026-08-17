@@ -79,6 +79,12 @@ spec:
 
           echo "Database connection successful"
 
+          # The source_database tag below names the database this dump is taken FROM.
+          # That name is also the name of its default schema, which a restore into a
+          # differently named database (a new generation) has to rename. Composing that
+          # name afterwards out of project/deployment/generation is a reconstruction, and
+          # it was measured wrong (RC-121): the generation in the project file lagged
+          # behind the database the backup actually read. This tag is the dump itself.
           echo "Starting database dump and backup..."
           PGPASSWORD="${DB_PASSWORD}" pg_dump \
             -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
@@ -93,6 +99,7 @@ spec:
               --tags="deployment:{{ deployment_name | default('unknown') }}" \
               --tags="component:{{ component_name | default('unknown') }}" \
               --tags="database:{{ reference_name }}" \
+              --tags="source_database:{{ db_name }}" \
               --tags="source_host:{{ db_host }}" \
               --tags="source_type:{{ source_type }}" \
               --tags="generation:{{ generation | default('0') }}" \
