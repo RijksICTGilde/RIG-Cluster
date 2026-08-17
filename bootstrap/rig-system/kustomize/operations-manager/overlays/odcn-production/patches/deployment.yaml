@@ -56,6 +56,18 @@ spec:
             secretKeyRef:
               name: prometheus-metrics-auth
               key: token
+        # TransIP DNS API, for the CAA records on rijks.app / rijksapp.nl / rijksapp.dev.
+        # The secret already exists in this namespace: external-dns uses it.
+        - name: TRANSIP_ACCOUNT_NAME
+          valueFrom:
+            secretKeyRef:
+              name: transip-credentials
+              key: TRANSIP_ACCOUNT_NAME
+        - name: TRANSIP_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: transip-credentials
+              key: TRANSIP_PRIVATE_KEY
         - name: LOG_ERRORS_TO_FILE
           value: "true"
         - name: LOG_ERRORS_FILE_PATH
