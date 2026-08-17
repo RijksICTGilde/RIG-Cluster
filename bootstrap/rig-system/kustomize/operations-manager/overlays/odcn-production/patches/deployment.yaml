@@ -9,7 +9,7 @@ spec:
       - name: ghcr-rig-robot-pull-secret
       containers:
       - name: operations-manager
-        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.07.27.0941-9d9c0764-dirty
+        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.08.17.2259-80ce0ca3-dirty
         resources:
           limits:
             cpu: "3"
