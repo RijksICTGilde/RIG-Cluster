@@ -60,21 +60,18 @@ curl -X PUT -H "X-API-Key: <key>" \
 ## De pod krijgt de nieuwe inhoud ook echt
 
 Een vervangen bijlage moest tot RC-119 wachten tot er toevallig iets anders met je project
-gebeurde: de wijziging werd opgeslagen in git en verder gebeurde er niets. En zelfs als er
-wel een manifest werd gegenereerd, bleef een draaiende pod het oude bestand houden: een
-bijlage wordt met een `subPath` gemount en zo'n bestand werkt Kubernetes principieel nooit
-bij. Hetzelfde gold voor je eigen env-vars, die via een secret met een vaste naam
-binnenkomen.
+gebeurde: de wijziging werd opgeslagen in git en verder gebeurde er niets. Er werd dus geen
+manifest gegenereerd, en zonder nieuw manifest merkte het platform de nieuwe inhoud niet op
+en bleef je pod het oude bestand houden. Dat is vervelender dan het klinkt, want een bijlage
+wordt met een `subPath` gemount en zo'n bestand werkt Kubernetes principieel nooit bij: de
+pod moet echt opnieuw starten.
 
-Twee dingen lossen dat samen op, en je merkt er verder niets van:
-
-* de pod-template draagt een **hash van de inhoud** van de geheimen die dit component
-  leest (je bijlagen en je env-vars). Verandert de inhoud, dan verandert de pod-spec en
-  start de pod opnieuw met het nieuwe bestand. Verandert er niets, dan verandert de hash
-  niet en herstart er niets. In de annotatie staat alleen de hash, nooit de inhoud;
-* de API-routes voor bijlagen **rollen zelf uit**. Ze antwoorden daarom `202` met een
-  `task_id` in plaats van `200`/`201`, en er zit een `Location`-header bij waarmee je de
-  uitrol kunt volgen. Een weigering (409, 422, 404) krijg je nog steeds meteen.
+De API-routes voor bijlagen **rollen nu zelf uit**. Ze antwoorden daarom `202` met een
+`task_id` in plaats van `200`/`201`, en er zit een `Location`-header bij waarmee je de
+uitrol kunt volgen. Een weigering (409, 422, 404) krijg je nog steeds meteen. Zodra het
+nieuwe manifest er is, zorgt de config-hash van het platform voor de herstart (zie
+[config-hash-pod-restart.md](config-hash-pod-restart.md)) en start je pod met het nieuwe
+bestand.
 
 Wil je meerdere wijzigingen verzamelen en in één keer uitrollen, stuur dan `?rollout=false`
 mee — dezelfde betekenis als bij de andere endpoints. Je rolt daarna uit met
@@ -85,9 +82,6 @@ curl -X PUT -H "X-API-Key: <key>" \
   -F file=@nieuw-certificaat.pem \
   'https://<host>/api/v2/projects/<project>/services/attachments/attachment/server-cert?rollout=false'
 ```
-
-Alleen de componenten die deze bijlage of deze env-vars gebruiken herstarten. Een project
-met vijf componenten waarvan er één het certificaat leest, herstart die ene.
 
 ## Een bijlage verwijderen
 

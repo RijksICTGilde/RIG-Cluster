@@ -1,19 +1,21 @@
-"""Op het cluster gemeten: een gewijzigd geheim bereikt de draaiende pod (RC-119).
+"""Op het cluster gemeten: een gewijzigde bijlage of env-var bereikt de draaiende pod.
 
-Dit is de meting die het plan eist, en het is de enige plek waar de ``subPath``-aanname
-zich kan bewijzen. De redenering die eronder ligt:
+Wat hier bewaakt wordt is de uitrol, niet het herstartmechanisme. Dat mechanisme bestaat
+al: de ArgoCD CMP-plugin hasht elk Secret en elke ConfigMap van een Application en stempelt
+dat als ``checksum/config`` op elke pod-template, dus een gewijzigd geheim verandert de
+pod-spec en de pod rolt. Dat is op de sandbox nagemeten, ook met de per-component hash uit
+de eerste opzet van RC-119 uitgezet: de pod herstartte en de nieuwe inhoud stond erin. Die
+tweede hash is daarom niet gebouwd.
 
-* de env-vars van een gebruiker komen binnen via een Secret met een VASTE naam
-  (``{prefix}-user``, ``envFrom``), en ``envFrom`` wordt alleen bij containerstart
-  geinjecteerd;
-* een bijlage komt binnen via een Secret met een VASTE naam (``{deployment}-attch-{id}``)
-  dat met een ``subPath`` gemount wordt, en zo'n bestand werkt Kubernetes principieel nooit
-  bij.
+Wat ONTBRAK was de aanleiding. De bijlage-routes maakten geen taak en verwerkten het
+project niet, dus er werd nooit een nieuw manifest gerenderd, dus zag de plugin nooit een
+gewijzigd geheim en bleef de pod op de oude inhoud draaien. Deze test meet dat gat: een
+schrijfactie via de API moet eindigen in een container die de nieuwe inhoud heeft.
 
-In beide gevallen verandert de Deployment-spec niet als alleen de inhoud verandert, dus
-rolt de pod niet en houdt de container wat hij bij zijn start kreeg. De hash-annotatie op
-de pod-template maakt de inhoud onderdeel van de spec; dat is wat hieronder gemeten wordt,
-in de enige vorm die telt: het bestand IN de container en de env-var IN het proces.
+Waarom er IN de container gekeken wordt en niet naar het Secret: ``envFrom`` wordt alleen
+bij containerstart geinjecteerd en een ``subPath``-mount is een eenmalige kopie die
+Kubernetes nooit ververst. De waarde in het proces is dus het enige bewijs dat de
+container echt opnieuw is gestart met de nieuwe inhoud.
 
 Draaien (heeft een sandbox nodig die op deze commit staat)::
 
@@ -29,9 +31,9 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pytest
-from opi.utils.secret_hash import SECRET_HASH_ANNOTATION
 from tests.e2e.conftest import FORGEJO_VERIFY_SSL, SANDBOX_TEST_USER
 from tests.e2e.helpers import cluster, sandbox_api
+from tests.e2e.helpers.cluster import CONFIG_HASH_ANNOTATION
 from tests.e2e.helpers.lifecycle import CreatedProject, create_project_via_wizard
 from tests.e2e.helpers.wizard import unique_project_name
 
@@ -113,7 +115,7 @@ def _pod_where(namespace: str, project: CreatedProject, predicate, what: str, *,
 
 
 def _hash(namespace: str) -> str | None:
-    return cluster.deployment_pod_annotations(namespace).get(SECRET_HASH_ANNOTATION)
+    return cluster.deployment_pod_annotations(namespace).get(CONFIG_HASH_ANNOTATION)
 
 
 def _upload(project: CreatedProject, sandbox_url: str, content: bytes, *, couple: bool) -> str:
@@ -168,11 +170,11 @@ def test_een_vervangen_bijlage_bereikt_de_draaiende_pod(
     pod_before = _pod_where(
         namespace,
         project,
-        lambda pod: "eerste-inhoud" in (cluster.read_file_in_pod(namespace, pod, _MOUNT_PATH) or ""),
+        lambda pod: "eerste-inhoud" in (cluster.read_file_in_pod(namespace, pod, _MOUNT_PATH, probe="rc119a") or ""),
         f"{_MOUNT_PATH} bevat 'eerste-inhoud'",
     )
     hash_before = _hash(namespace)
-    assert hash_before, f"Geen {SECRET_HASH_ANNOTATION} op de pod-template in {namespace}"
+    assert hash_before, f"Geen {CONFIG_HASH_ANNOTATION} op de pod-template in {namespace}"
     logger.info("RC-119 bijlage gekoppeld: pod=%s hash=%s", pod_before, hash_before)
 
     _wait(project, sandbox_url, _upload(project, sandbox_url, b"tweede-inhoud\n", couple=False))
@@ -186,7 +188,7 @@ def test_een_vervangen_bijlage_bereikt_de_draaiende_pod(
     pod_after = _pod_where(
         namespace,
         project,
-        lambda pod: "tweede-inhoud" in (cluster.read_file_in_pod(namespace, pod, _MOUNT_PATH) or ""),
+        lambda pod: "tweede-inhoud" in (cluster.read_file_in_pod(namespace, pod, _MOUNT_PATH, probe="rc119b") or ""),
         f"{_MOUNT_PATH} bevat 'tweede-inhoud'",
     )
     assert pod_after != pod_before, "Dezelfde pod met nieuwe inhoud kan niet: subPath wordt nooit ververst"
@@ -200,26 +202,28 @@ def test_een_gewijzigde_env_var_bereikt_de_draaiende_pod(
         pytest.skip("kubectl niet beschikbaar")
     path = f"/api/v2/projects/{project.name}/services/user-env-vars/values/component/{_COMPONENT}"
 
-    def _set(value: str) -> None:
+    def _set(method: str, value: str) -> None:
+        # POST voegt toe en weigert een naam die er al is; wijzigen is PATCH. Dat verschil
+        # is het contract van de values-endpoints, niet iets van deze test.
         _wait(
             project,
             sandbox_url,
             sandbox_api.start_task(
-                sandbox_url, "POST", path, project.api_key, {"values": {_ENV_NAME: value}}, verify_ssl=_VERIFY_SSL
+                sandbox_url, method, path, project.api_key, {"values": {_ENV_NAME: value}}, verify_ssl=_VERIFY_SSL
             ),
         )
 
-    _set("eerste")
+    _set("POST", "eerste")
     pod_before = _pod_where(
         namespace,
         project,
-        lambda pod: cluster.env_in_pod(namespace, pod, _ENV_NAME) == "eerste",
+        lambda pod: cluster.env_in_pod(namespace, pod, _ENV_NAME, probe="rc119c") == "eerste",
         f"{_ENV_NAME}=eerste",
     )
     hash_before = _hash(namespace)
-    assert hash_before, f"Geen {SECRET_HASH_ANNOTATION} op de pod-template in {namespace}"
+    assert hash_before, f"Geen {CONFIG_HASH_ANNOTATION} op de pod-template in {namespace}"
 
-    _set("tweede")
+    _set("PATCH", "tweede")
 
     assert _hash(namespace) != hash_before, "De inhoud-hash veranderde niet bij een gewijzigde env-var"
     # envFrom wordt alleen bij containerstart geinjecteerd, dus de nieuwe waarde IN het
@@ -227,7 +231,7 @@ def test_een_gewijzigde_env_var_bereikt_de_draaiende_pod(
     pod_after = _pod_where(
         namespace,
         project,
-        lambda pod: cluster.env_in_pod(namespace, pod, _ENV_NAME) == "tweede",
+        lambda pod: cluster.env_in_pod(namespace, pod, _ENV_NAME, probe="rc119d") == "tweede",
         f"{_ENV_NAME}=tweede",
     )
     assert pod_after != pod_before, "Dezelfde pod met een nieuwe env-var kan niet: envFrom wordt niet herladen"
