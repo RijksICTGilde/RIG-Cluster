@@ -166,3 +166,28 @@ nldd-sidebar-section {
     --components-sidebar-section-sidebar-box-background-color: transparent;
     --components-sidebar-section-sidebar-box-highlight-border-color: transparent;
 }
+
+/* Verbergen, voor de elementen die JavaScript aan- en uitzet.
+ *
+ * Deze klasse is geen vormgeving maar bedrading: static/js/edit_modal.js, wizard.js en
+ * log_viewer.js zetten en halen hem weg, en een aantal sjablonen schrijft hem als
+ * BEGINTOESTAND - de foutbalk van een dialoog staat er vanaf het begin, verborgen, zodat
+ * JavaScript hem alleen hoeft te vullen.
+ *
+ * Hij stond alleen in static/css/base.css, en dat stylesheet hoort bij de oude schil:
+ * base_lotc.html.j2 laadt het niet. Op deze bouwlijn deed de klasse dus NIETS, en wat de
+ * gebruiker daarvan zag was een leeg rood vak van volle breedte boven in elke dialoog -
+ * .edit-section-error uit css/modal.css heeft rand, achtergrond en padding, en die worden
+ * ook zonder tekst getekend. Zelfde gat bij bg/_action-confirm.html.j2,
+ * bg/_modals.html.j2, bg/feedback.html.j2 en het filterblok van de metrics-explorer.
+ *
+ * Waarom !important: dezelfde reden als in base.css. Dit bestand staat in de <head> en de
+ * stylesheets van een pagina worden in de body gelinkt, dus later in de cascade. Een
+ * pagina die op hetzelfde element display zet, wint dan bij gelijke specificiteit en de
+ * klasse verbergt niets meer. Deze klasse doet een ding en moet dat winnen.
+ *
+ * Gemeten in tests/e2e/test_lotc_domeinbeheer.py: op HOOGTE, niet op het class-attribuut.
+ */
+.is-hidden {
+    display: none !important;
+}

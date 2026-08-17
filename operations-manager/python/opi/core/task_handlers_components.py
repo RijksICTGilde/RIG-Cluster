@@ -496,13 +496,15 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 3: Process project (only if new services were added)
         # ------------------------------------------------------------------
-        # Nothing added means nothing to reconcile; a deferred rollout says the same for a
-        # different reason, and the reason travels with the status.
+        # Nothing added AND nothing bound means nothing to reconcile; a newly bound
+        # component needs its manifests just as much as a newly selected service does.
+        # A deferred rollout says "skipped" for a different reason, and the reason
+        # travels with the status.
         processing: dict[str, Any] = {"status": "skipped"}
         if not rollout_requested(payload):
             note_rollout_skipped(progress)
             processing = skipped_processing()
-        elif result.get("services_added"):
+        elif result.get("services_added") or result.get("components_updated"):
             deploy_task = progress.add_task("Project verwerken")
             progress.update_current_step("Project verwerken om de diensten klaar te zetten")
 
@@ -662,9 +664,17 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             "service": service_name,
             "target": target,
             **counts,
+            # Wat het platform invulde omdat de aanroeper het leeg liet. Dit is de enige
+            # plek waar hij een uitnodigingssleutel te zien krijgt die hij niet zelf koos,
+            # en zonder die sleutel is de uitnodiging niet te versturen.
+            "generated": result.get("generated", {}),
             # Wat er nog op een beheerder wacht. Zonder dit merkt een client pas dat zijn
             # domein niet is goedgekeurd doordat er geen ingress op dat adres verschijnt.
             "approvals": result.get("approvals", []),
+            # Wat op niemand wacht en toch niet werkt: een veld dat door een instelling
+            # elders nodig is geworden en leeg is gebleven. Zonder dit komt een client daar
+            # pas achter als iemand de uitnodiging probeert te gebruiken.
+            "warnings": result.get("warnings") or None,
             "processing": {
                 **processing,
                 **(

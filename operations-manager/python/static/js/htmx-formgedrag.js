@@ -75,15 +75,33 @@
 
     function actiefVeld() {
         var el = document.activeElement;
-        /* Staat de focus in een schaduwboom, dan is activeElement de HOST; daar zoeken we
-           naar door tot we bij het element met een id zijn. */
+        /* Staat de focus in een schaduwboom, dan is activeElement de HOST; daar dalen we
+           doorheen tot bij het invoerveld dat de focus echt heeft. Dat veld is waar de
+           CURSOR staat - het id komt ergens anders vandaan, zie hieronder. */
         while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
         return el;
     }
 
     document.addEventListener("htmx:beforeSwap", function () {
+        /* Het id zoeken we vanaf `document.activeElement` en NIET vanaf het veld uit
+           actiefVeld(). Dat is het hele verschil tussen wel en niet werken, en het is in de
+           browser gemeten op /projects:
+
+               document.activeElement  -> NLDD-SEARCH-FIELD#projects-zoekveld
+               actiefVeld()            -> INPUT (in de schaduwboom, zonder id)
+               INPUT.closest("[id]")   -> null
+
+           `closest()` klimt namelijk NIET over de rand van een schaduwboom heen. Zocht je
+           dus vanaf het echte invoerveld, dan vond je nooit een id - precies bij de velden
+           waarvoor dit herstel geschreven is. focusId bleef null en afterSettle stapte er
+           meteen weer uit; de focus viel op <body> en je kon niet verder typen.
+
+           `document.activeElement` staat altijd in de LICHTE boom (bij focus in een
+           schaduw is dat de host), dus daar werkt closest() gewoon. Voor een kaal
+           <input id="..."> verandert er niets: dat IS activeElement. */
+        var host = document.activeElement;
+        var drager = host && host.closest ? host.closest("[id]") : null;
         var el = actiefVeld();
-        var drager = el && el.closest ? el.closest("[id]") : null;
         focusId = drager ? drager.id : null;
         cursor = el && typeof el.selectionStart === "number" ? el.selectionStart : null;
     });
@@ -104,6 +122,35 @@
             }
         }
         cursor = null;
+    });
+
+    /* 4. EEN THEMACOMPONENT MET width= HOUDT ZIJN BREEDTE NA EEN SWAP.
+     *
+     * Gemeten op /projects, met exact dezelfde markup voor en na:
+     *
+     *     eerste keer laden : huls 416px, inline stijl "--_width: 26rem;"
+     *     na de htmx-swap   : huls 321px, inline stijl WEG, width="26rem" nog aanwezig
+     *
+     * De nldd-componenten zijn Lit-elementen die hun width-ATTRIBUUT in `updated()`
+     * vertalen naar de CSS-variabele --_width. Na een swap blijft het attribuut staan maar
+     * gebeurt die vertaling niet opnieuw, en dan valt het element terug op de breedte van
+     * zijn inhoud. Zichtbaar als: het zoekveld wordt smaller zodra je zoekt of sorteert.
+     *
+     * Wat hier gebeurt is NIET de variabele van het component van buitenaf zetten - die
+     * begint met een underscore, dat is zijn eigen keuken, en zoiets is precies het soort
+     * CSS-omweg dat we niet willen. Het element wordt gevraagd zijn eigen afleiding
+     * opnieuw te doen, via requestUpdate(), de publieke Lit-API daarvoor. Zonder tweede
+     * argument ziet Lit geen wijziging, dus de oude waarde gaat expliciet mee.
+     *
+     * Dit hoort in het component thuis en is als zodanig gemeld; zie
+     * request_for_components.md. Zolang dat niet rond is, staat het hier. */
+    document.addEventListener("htmx:afterSettle", function (e) {
+        var gebied = e && e.target && e.target.querySelectorAll ? e.target : document;
+        gebied.querySelectorAll("[width]").forEach(function (el) {
+            if (el.tagName.lastIndexOf("NLDD-", 0) !== 0) return;
+            if (typeof el.requestUpdate !== "function") return;
+            el.requestUpdate("width", undefined);
+        });
     });
 
     document.addEventListener("htmx:beforeRequest", function (e) {

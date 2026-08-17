@@ -290,6 +290,20 @@ class ServiceAction:
     disjunctions: tuple[FieldDisjunction, ...] = ()
     #: The boolean query parameters this action's routes take (see ``ActionFlag``).
     flags: tuple[ActionFlag, ...] = ()
+    #: The task type that rolls this action's change out to the cluster, when it has one.
+    #:
+    #: An action without it only writes the project file, and the change reaches the
+    #: cluster whenever something else happens to process the project -- which is a
+    #: coincidence, not a contract. That was the attachments bug: a replaced certificate
+    #: was committed and nothing ever generated a manifest from it.
+    #:
+    #: Declaring it changes the route's contract. It gains the ``rollout`` query parameter
+    #: every other mutating endpoint has, and answers 202 with a task id instead of a
+    #: synchronous 200/201: the write and its validation still happen in the request (the
+    #: file arrives as multipart and does not belong in a task payload), the processing
+    #: that follows does not. Refusals stay synchronous, so a 409 or a 422 is still the
+    #: immediate answer it was.
+    rollout_task_type: str | None = None
     #: A worked example of calling this action (a curl line), shown in the OpenAPI
     #: description. Concrete on purpose: the fields alone never show what a real call
     #: looks like, and this is the first thing anyone integrating reads.

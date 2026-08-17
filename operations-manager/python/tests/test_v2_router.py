@@ -386,6 +386,130 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
         assert realms["x-platform-managed"] is True
 
 
+#: One valid body per service whose config IS a list, for the PUT, and one entry to add
+#: for the PATCH. Kept beside the tests that use it because the bodies genuinely differ
+#: per service; ``test_every_list_shaped_service_is_covered_here`` pins that this map is
+#: the complete set, so a new list-shaped service cannot slip past this cover unnoticed.
+LIST_SHAPED_CONFIGS: dict[str, dict[str, Any]] = {
+    "persistent-storage": {
+        "put": [{"name": "data", "size": "1Gi", "mount-path": "/data"}],
+        "add": [{"name": "extra", "size": "2Gi", "mount-path": "/extra"}],
+    },
+    "temp-storage": {
+        "put": [{"name": "scratch", "size": "1Gi", "mount-path": "/scratch"}],
+        "add": [{"name": "cache", "size": "2Gi", "mount-path": "/cache"}],
+    },
+    "attachments": {
+        "put": [{"reference": "cert", "provide-as": "file", "path": "/etc/ssl/cert.pem"}],
+        "add": [{"reference": "key", "provide-as": "env-var", "env-name": "KEY"}],
+    },
+}
+
+
+class TestListShapedConfigWrites:
+    """A config that IS a list is written through the generated PUT like any other.
+
+    Regression cover for the reported storing. `PUT
+    .../services/persistent-storage/config/component/api` with exactly the documented body
+    -- `[{"name": "data", "size": "1Gi", "mount-path": "/data"}]` -- answered 500 while the
+    PATCH beside it, same entry and same moment, answered 200. That pair is the fingerprint:
+    the two routes share everything except the check that broke.
+
+    `_refuse_platform_managed` (ba6f15d1) does `managed & config.keys()` on the dumped body.
+    For `persistent-storage`, `temp-storage` and `attachments` the config model is a
+    `RootModel[list[...]]`, so the body dumps to a LIST and `.keys()` raised
+    `AttributeError` -- a 500 on a documented endpoint, thrown by a check that has nothing
+    to say about a list: a list has no named top-level fields, so the platform can own none
+    of them. The read side of that same commit guarded on `isinstance(config, dict)` from
+    the start; the write side did not, and no test wrote a list-shaped config through a
+    route, so nothing caught it.
+
+    Both component states are asserted at the mutator instead (a component that already has
+    the service and one that does not, in tests/test_service_config_api.py): these routes
+    only enqueue a task, so the project file is not read here and the two states are one and
+    the same request.
+    """
+
+    @pytest.mark.parametrize("service_name", sorted(LIST_SHAPED_CONFIGS))
+    def test_put_a_list_config_is_accepted(
+        self, service_name: str, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.put(
+            f"/api/v2/projects/test-project/services/{service_name}/config/component/api",
+            headers={"X-API-Key": API_KEY},
+            json=LIST_SHAPED_CONFIGS[service_name]["put"],
+        )
+
+        _assert_accepted(response, "configure_service")
+
+    @pytest.mark.parametrize("service_name", sorted(LIST_SHAPED_CONFIGS))
+    def test_put_forwards_the_whole_list_verbatim(
+        self, service_name: str, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """The PUT promises to replace the block with the list it was sent, so the list has
+        to reach the task as it was sent: same entries, same order, same on-disk keys."""
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        sent = LIST_SHAPED_CONFIGS[service_name]["put"]
+
+        v2_client.put(
+            f"/api/v2/projects/test-project/services/{service_name}/config/component/api",
+            headers={"X-API-Key": API_KEY},
+            json=sent,
+        )
+
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["operation"] == "upsert"
+        assert payload["config"] == sent
+        assert payload["component"] == "api"
+
+    @pytest.mark.parametrize("service_name", sorted(LIST_SHAPED_CONFIGS))
+    def test_patch_a_list_config_keeps_working(
+        self, service_name: str, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """The half that never broke, asserted next to the half that did: the reporter's
+        workaround must keep working after the fix."""
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.patch(
+            f"/api/v2/projects/test-project/services/{service_name}/config/component/api",
+            headers={"X-API-Key": API_KEY},
+            json={"add": LIST_SHAPED_CONFIGS[service_name]["add"]},
+        )
+
+        _assert_accepted(response, "configure_service")
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["operation"] == "patch"
+        assert payload["add"] == LIST_SHAPED_CONFIGS[service_name]["add"]
+
+    def test_every_list_shaped_service_is_covered_here(self) -> None:
+        """Read from the registry, so a service that starts keeping its config in a list
+        joins this cover by existing instead of by someone remembering."""
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.config_lists import list_item_type
+        from opi.services.registry import SERVICES
+        from pydantic import RootModel
+
+        list_shaped = set()
+        for service_type, service in SERVICES.items():
+            for layer in ConfigLayer:
+                model = service.config_model_for(layer)
+                if not (isinstance(model, type) and issubclass(model, RootModel)):
+                    continue
+                if list_item_type(model.model_fields["root"].annotation) is not None:
+                    list_shaped.add(service_type.value)
+
+        assert list_shaped == set(LIST_SHAPED_CONFIGS)
+
+    def test_the_platform_check_has_nothing_to_say_about_a_list(self) -> None:
+        """The guard itself, at the unit: a list carries no named field to own, so the
+        check returns instead of reaching for keys that a list does not have."""
+        from opi.api.v2.router import _refuse_platform_managed
+
+        _refuse_platform_managed("persistent-storage", [{"name": "data"}], frozenset({"realms"}))
+
+
 class TestListInsideObjectConfigPatch:
     """The same PATCH on a list that sits inside an object-shaped config.
 

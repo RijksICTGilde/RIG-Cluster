@@ -92,7 +92,7 @@ een paar tests, en is NIET wat een gebruiker ziet.
 
 ### Wat er anders is aan LOTC
 
-Bij het omzetten komen steeds dezelfde vier dingen terug:
+Bij het omzetten komen steeds dezelfde vijf dingen terug:
 
 1. **Attributen zijn kebab-case** (`body-class`, `max-width`), niet camelCase.
 2. **Samenstellingen krijgen kinderen, geen data-props.** `<c-menu>` met `<c-menu-item>`
@@ -102,6 +102,42 @@ Bij het omzetten komen steeds dezelfde vier dingen terug:
    `none` betekent weglaten - en `:attrs="<dict>"` voor een hele bundel.
 4. **`<c-page>` bedraadt de `<head>` zelf**, inclusief de CSS en JS van elk actief design
    system onder `/static/lotc/`.
+5. **`static/css/base.css` komt NIET mee.** Dat stylesheet hoort bij de oude schil;
+   `base_lotc.html.j2` laadt alleen `css/lotc-app.css`. Een sjabloon dat uit de oude boom
+   is overgenomen kan dus klassen dragen waar hier geen regel bij hoort, en zoiets valt
+   niet op in de markup - hij staat er, hij doet alleen niets. Zo werd `.is-hidden`
+   (verbergen, gezet en gehaald door onze JavaScript) een lege rode balk boven in elke
+   dialoog: `.edit-section-error` uit `css/modal.css` brengt rand, achtergrond en padding
+   mee en die worden ook zonder tekst getekend. `.is-hidden` staat sinds die reparatie in
+   `lotc-app.css`. Meet zo'n klasse in de BROWSER op hoogte; het class-attribuut lezen
+   levert een groene test op een zichtbaar vak.
+6. **Een formulierveld in een `<c-cluster>` heeft geen breedte om op te staan.** Een
+   cluster is flexbox zonder basismaat: de breedte van een kind komt uit wat de browser
+   voor die inhoud uitrekent, en een `<nldd-form-field>` levert daar niets voor. Firefox
+   rekent een `div.lotc-stack` met zo'n veld erin uit als 0 - dezelfde misrekening als in
+   een tabelcel, zie punt 14 in `request_for_components.md` - en dan liggen de velden over
+   elkaar heen terwijl Chromium dezelfde pagina goed tekent. `<c-switcher>` is wel de
+   juiste keuze: die geeft zijn kinderen een `flex-basis` uit de breedte van de CONTAINER,
+   dus er valt niets te meten. Gemeten op `/metrics-explorer`.
+7. **`element.textContent = ...` op een component sloopt dat component.** `<c-paragraph>`
+   rendert `<nldd-rich-text><p>...</p></nldd-rich-text>`, en die buitenste laag is een grid
+   waarvan alleen de `main`-kolom breedte heeft; de regel die de `<p>` daarin zet is
+   `nldd-rich-text > :is(p, ...)`. Schrijft JavaScript op de PARAGRAAF, dan is die `<p>`
+   weg en blijft er een kale tekstknoop over - geen element, dus geen enkele regel raakt
+   hem, en hij valt in de eerste kolom, die 0 breed is. Gemeten: een regel omschrijving
+   werd 135px hoog, een woord per regel. Laat het script in een `<span>` BINNEN het
+   component schrijven. Op de oude pagina ging dit vanzelf goed, want daar stond een kale
+   `<span>`; het is dus weer iets wat bij het overzetten niet meeverhuisde.
+8. **`closest()` klimt niet over de rand van een schaduwboom.** Sta je met de focus in een
+   component, dan wijst `document.activeElement` naar de HOST en zit het echte
+   invoerveld in zijn schaduwboom. Daal je daarheen af om iets van dat veld te lezen -
+   de cursorpositie bijvoorbeeld - dan sta je in een aparte boom, en `closest()` stopt bij
+   de rand daarvan. Zoeken naar een id levert vanaf daar dus `null` op, ook al staat dat
+   id een niveau hoger op de host. Lees het id vanaf `document.activeElement` (dat staat
+   altijd in de lichte boom) en de veldeigenschappen vanaf het element in de schaduw. Dit
+   kostte het focusherstel op `/projects`: het zoekveld sprong bij elke toetsaanslag naar
+   `<body>`, dus je kon na een letter niet verder typen, terwijl het herstel er gewoon
+   stond. Gemeten in de browser, vastgelegd in `tests/e2e/test_zoekveld_focus.py`.
 
 ### De volgorde van de design systems ligt vast
 
@@ -157,6 +193,11 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | test | bewaakt |
 |---|---|
 | `tests/test_lotc_component_names.py` | dat er nergens nog een `<c-p>` staat; die naam bestaat niet |
+| `tests/test_lotc_klikattributen.py` | dat er geen Jinja in de waarde van een `@`-afhandelaar staat - die waarde wordt niet gerenderd |
+| `tests/test_lotc_stapel_in_tabelcel.py` | dat er geen `<c-stack>` rechtstreeks in een `<c-td>` staat; die krimpt in Firefox tot 0 breed |
+| `tests/e2e/test_lotc_domeinbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, dat de datumkolom in FIREFOX zijn breedte houdt, dat de dialoog EEN kop heeft, dat er geen leeg foutvak in staat, dat een mislukte aanroep een leesbare melding geeft, dat het icoon in de kop hetzelfde verticale midden heeft als de titel, en dat de GEDEELDE schil (de bewerkdialogen van een project) nog opent, opslaat en met Escape sluit |
+| `tests/test_goedkeuringsdialoog_htmx.py` | dat de dialoog op `/admin/approvals` zijn formulier met `hx-get` ophaalt en niet met een eigen `fetch`, dat er geen lege foutbak in staat en dat `#approval-loading` aan beide kanten bestaat (sjabloon EN `modal.css`). Zonder browser, dus deze loopt wel mee in de gewone ronde - de e2e-tests hierboven niet |
+| `tests/test_lotc_icoon_in_kop.py` | dat er geen icoon BINNEN een kop staat; daar lijnt het op de tekstbasislijn uit en zakt het uit de lijn. Icoon en kop horen als broers in een `<c-cluster align="center">` |
 | `tests/test_lotc_icon_mapping.py` | dat elke iconnaam een icoon OPLEVERT, gemeten tegen de geleverde NLDD-bundel |
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
 | `tests/test_lotc_layout_rules.py` | dat kaarten via `panel()` gebouwd worden en gaps uit de schaal komen |
@@ -165,7 +206,9 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | `tests/test_lotc_modal_fragmenten.py` | hetzelfde voor de dialoogfragmenten die zonder takendienst niet via HTTP te bereiken zijn |
 | `tests/test_lotc_foutmelding_veld.py` | dat de veldfout bedraad wordt, en dat onze kopie van `components/_forms.j2` alleen op de bedoelde punten van de geïnstalleerde afwijkt |
 | `tests/e2e/test_lotc_veldfout_zichtbaar.py` | dat die foutmelding in een browser HOOGTE heeft - "staat de tekst er" was jarenlang groen terwijl niemand hem zag |
+| `tests/e2e/test_lotc_metrics_explorer.py` | dat de twee keuzelijsten van `/metrics-explorer` in FIREFOX naast elkaar staan en geen bedieningselement over een ander heen ligt, en dat de tekst die JavaScript eronder zet op EEN regel past |
 | `tests/test_lotc_optioneel_badge.py` / `tests/e2e/test_lotc_optioneel_label.py` | dat "Optioneel" weg is waar het niets betekent, zonder het veld verplicht te noemen |
+| `tests/e2e/test_zoekveld_focus.py` | dat het zoekveld op `/projects` de focus EN de cursorpositie houdt terwijl htmx het zoekgebied vervangt - anders typ je na een letter nergens meer |
 
 Compileren is een echte poort en geen telling: LOTC valideert bij het compileren al of
 elk component bestaat en of elk attribuut bij dat component hoort.
@@ -221,6 +264,39 @@ soort fout is erger dan geen meting - je leert hem negeren.
 `@click="f()"` werd half gelezen: de attribuutregex zag alleen `click="f()"`, kende dat
 attribuut niet op het component, en liet het vallen. Wat overbleef was een kale `@` in de
 tag. **58 keer, in 35 bestanden** - knoppen die keurig renderen en zwijgen.
+
+**En let op wat er WEL doorkomt.** De waarde van een `@`-afhandelaar wordt letterlijk uit
+de bron overgenomen en in het `onclick`-attribuut gezet; hij komt nooit langs Jinja. Staat
+er `@click="f('{{ naam }}')"`, dan krijgt de browser die accolades ook echt - en dat ziet
+er in het sjabloon volkomen normaal uit, want gewone attributen (`label`, `data-*`) worden
+wel gerenderd. Dat kostte op `/admin/approvals` de hele beoordelingsdialoog: de kop las
+"Domeingoedkeuring - {{ project.project_name }}" en het formulier werd opgehaald bij een
+pad met `%7B%7B` erin. De weg die niet omvalt is een gewoon attribuut plus een
+afhandelaar zonder Jinja erin:
+
+```html
+<c-button data-project="{{ project.project_name }}" @click="doeIets(this.dataset.project)" />
+```
+
+`tests/test_lotc_klikattributen.py` bewaakt dat er nergens meer Jinja in zo'n waarde staat.
+
+**En als het om een URL gaat: laat htmx het ophalen.** Het bovenstaande is de reparatie
+van een symptoom; de oorzaak was dat een fragment-URL met de hand in JavaScript werd
+samengesteld. Die hoort in een `hx-get`, want dat is een gewoon attribuut en wordt dus
+door Jinja gerenderd - de fout kan er niet in zitten. `/admin/approvals` doet het sinds
+RC-115 zo, en daarmee verdwenen ook de `fetch`, de `innerHTML` en de vooraf neergezette
+lege foutbak:
+
+```html
+<c-button hx-get="/admin/approvals/{{ project.project_name | urlencode }}/modal-wizard/admin-approval"
+          hx-target="#edit-section-inner" hx-swap="innerHTML" hx-indicator="#approval-loading" />
+```
+
+Twee dingen die daarbij horen. htmx wisselt bij een **4xx of 5xx** standaard niets in, dus
+een venster dat een fragment inlaadt heeft de `htmx:beforeSwap`-haak nodig die dat wel
+doet - anders gaat het open en blijft het leeg. En de laadtoestand van htmx werkt met
+`opacity`, wat ruimte blijft innemen; wil je hem echt weg hebben, gebruik dan `display`
+(zie `#approval-loading` in `static/css/modal.css`).
 
 De omzetter maakt er nu een echte `onclick` van via LOTC's `:attrs`-spread, met de aanroep
 in een `{% set %}`-blok vlak voor de tag. Dat is meteen het antwoord op "hier hoort een

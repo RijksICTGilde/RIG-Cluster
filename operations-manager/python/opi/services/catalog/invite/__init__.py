@@ -23,6 +23,29 @@ the next reader does not go looking for something that is deliberately absent:
 
 The one deviation from keycloak/sleep-mode is ``post_save_action="save_only"``: editing an
 invite changes no manifests, so it does not trigger a deploy.
+
+De uitnodigingscode komt WEL uit een leesantwoord (bewust besluit)
+-----------------------------------------------------------------
+
+``key`` is het geheim in de link, en toch geeft de gewone lezing van de invite-config hem
+terug -- en het aanmaken meldt hem als het platform hem genereerde. Dat ziet eruit als een
+fout en is het niet; het is een besluit van de eigenaar, en dit staat hier zodat de
+volgende lezer hem niet "herstelt". Drie argumenten:
+
+1. **De code IS de uitnodiging.** Je nodigt iemand uit door hem die link te sturen. Wie de
+   code niet kan teruglezen kan de uitnodiging niet versturen, alleen vervangen -- en dat
+   maakt een uitnodiging die al onderweg is ongeldig.
+2. **Hij is niet geheim in de gewone zin.** Wie de link heeft kan hem inwisselen, dus hij
+   is precies zo geheim als het kanaal waarover je hem stuurt. Er valt niets te beschermen
+   dat het versturen zelf niet al opgeeft.
+3. **Verbergen voor de projecteigenaar beschermt niemand.** Die heeft de projectsleutel
+   al, waarmee hij de invite kan overschrijven, de rollen kan veranderen en de hele dienst
+   kan uitzetten.
+
+Dit is NIET het antwoord voor ``user-env-vars``. Daar geldt een andere afweging: die
+waarden kunnen langlevende geheimen bevatten die met het lezen zelf niets te maken hebben,
+en ze blijven ontoegankelijk via de API (zie ``Service.owned_value_is_secret``). De twee
+gevallen consistent maken is precies de fout die hier niet gemaakt moet worden.
 """
 
 from __future__ import annotations
@@ -34,7 +57,7 @@ from typing import Any
 from opi.services.catalog.base import ConfigLayer, DetailPageSection, ProjectPageContext, Service, config_path
 from opi.services.catalog.events import on
 from opi.services.catalog.invite.config_model import InviteConfig
-from opi.services.services import ServiceDefinition, service_entry_name
+from opi.services.services import ConfigAdvice, ServiceDefinition, service_entry_name
 from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
 
 logger = logging.getLogger(__name__)
@@ -77,6 +100,22 @@ class InviteService(Service):
         # at submit that keycloak is present. An invite assigns a realm role, so keycloak
         # must exist. Do NOT build a second dependency mechanism next to this.
         requires=["services/keycloak"],
+        # De voorwaardelijke tegenhanger van ``requires``, en met opzet geen tweede eis:
+        # een uitnodiging zonder rol is volkomen geldig -- ze levert een kaal account op --
+        # totdat keycloak alleen nog rolhouders binnenlaat. Vanaf dat moment geeft dezelfde
+        # link geen toegang meer, en tot vandaag kwam niemand daar achter tot iemand hem
+        # probeerde. De verwachting staat hier, bij de dienst die het VELD bezit, en wijst
+        # met een pad naar de voorwaarde elders; generieke code leest allebei.
+        config_advice=[
+            ConfigAdvice(
+                when=config_path(ConfigLayer.PROJECT, ServiceType.KEYCLOAK, "config", "restrict-access", "enabled"),
+                expects=config_path(ConfigLayer.PROJECT, ServiceType.INVITE, "config", "active[*]", "realm-roles"),
+                message=(
+                    "Keycloak beperkt de toegang tot houders van een rol; een uitnodiging zonder "
+                    "realm-rol geeft dus geen toegang."
+                ),
+            )
+        ],
     )
     config_model = InviteConfig
     config_schema_version = "1.0"
@@ -105,25 +144,39 @@ class InviteService(Service):
         """
         return ServiceType.KEYCLOAK.value in [service_entry_name(entry) for entry in data.get("services", []) or []]
 
-    def _generate_missing_keys(self, project_data: dict[str, Any], _wizard_data: dict[str, Any]) -> None:
-        """Fill any empty invite key with a generated 128-bit random key (post-merge).
+    def generate_missing_values(self, project_data: dict[str, Any]) -> dict[str, str]:
+        """Fill any empty invite key with a generated 128-bit random key.
 
         The link is the only barrier, so a blank key becomes an unguessable, permanent
         key. A self-chosen key is left untouched.
+
+        Both write paths run this: the wizard through ``post_merge`` and the API through
+        ``registry.generate_missing_values``. It used to be the wizard's alone, so an
+        invite created over the API kept the empty string the caller sent and its link was
+        ``/invite/`` -- an invitation nobody could redeem. Returned keyed by yaml path,
+        because a generated key that the caller cannot read is the same dead invitation.
         """
         from opi.services.project import Project
 
-        active = (
-            Project(project_data).get(config_path(ConfigLayer.PROJECT, self.service_type, "config", "active")) or []
-        )
-        generated = 0
-        for entry in active:
+        base = config_path(ConfigLayer.PROJECT, self.service_type, "config", "active")
+        active = Project(project_data).get(base) or []
+        generated: dict[str, str] = {}
+        for index, entry in enumerate(active):
             if isinstance(entry, dict) and not entry.get("key"):
                 entry["key"] = _generate_invite_key()
-                generated += 1
+                generated[f"{base}[{index}]/key"] = entry["key"]
         if generated:
             project_name = project_data.get("name", "unknown")
-            logger.info(f"Generated {generated} invite key(s) for project '{project_name}'")
+            logger.info(f"Generated {len(generated)} invite key(s) for project '{project_name}'")
+        return generated
+
+    def _generate_missing_keys(self, project_data: dict[str, Any], _wizard_data: dict[str, Any]) -> None:
+        """The wizard's ``post_merge`` signature over :meth:`generate_missing_values`.
+
+        The form hands over two dicts and wants nothing back; one implementation serves
+        both, so the portal and the API cannot generate keys by different rules.
+        """
+        self.generate_missing_values(project_data)
 
     # --- config field ownership -------------------------------------------------
 

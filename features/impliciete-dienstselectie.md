@@ -68,6 +68,35 @@ Mag het niet, dan komt er een fout die de dienst bij naam noemt (`error_type:
 invalid_services`, HTTP 400), en het projectbestand blijft ongemoeid. Ook bij een lijst met
 meerdere diensten wordt er niets geschreven als er één bij zit die het niet mag.
 
+## Wat die fout zegt
+
+De weigering is de goede uitkomst, maar hij was alleen een *reden* en geen *volgende stap*:
+"they need project-level configuration that cannot be assumed". Wie de authorization-wall
+aan een component hing wist daarna dat er iets ontbrak, en niet welk verzoek het aanvult.
+De drie eisen van die dienst (`publish-on-web`, `keycloak`, en keycloaks `restrict-access`)
+vielen er daarna alsnog een voor een uit, elk als een eigen mislukte aanroep (zad-cli,
+bevinding 21).
+
+De melding draagt nu per geweigerde dienst drie dingen:
+
+* **Het verzoek dat de weigering opheft**, met de echte projectnaam erin:
+  `PUT /api/v2/projects/{p}/services/{svc}/config/project`. Het pad komt uit
+  `config_endpoint_path` (`catalog/base.py`), dezelfde bron waaruit de v2-router zijn
+  routes registreert, zodat de melding niet stilzwijgend kan verouderen.
+* **Waar de body beschreven staat**: `GET /api/v2/services/{svc}`.
+* **De eisen uit `requires` die dit project nog niet heeft**, en alleen die
+  (`unmet_service_requirements`). Een lijst die opsomt wat er al staat leest als een muur in
+  plaats van als een volgende stap.
+
+Het endpoint wordt **alleen genoemd als het bestaat**. De generieke configroute wordt
+gegenereerd voor een laag met een configmodel, en een dienst kan een projectlaag hebben
+zonder zo'n model: `attachments` definieert daar een catalogus onder `data` en heeft er
+helemaal geen configblok, dus die route is nooit gegenereerd. Die dienst wordt naar zijn
+eigen beschrijving verwezen, waar de acties staan die er wél iets neerzetten. Het
+alternatief -- het pad toch noemen -- zou één doodlopende weg inruilen voor een ergere: een
+404 op een verzoek dat de melding zelf aanraadde. `tests/test_visible_blockers.py` houdt
+iedere weigering tegen de werkelijk geregistreerde routes.
+
 ## Het antwoord per dienst
 
 21 dienstpakketten, 15 mogen zichzelf aanmelden, 6 niet. Twijfelgevallen horen bij nee: een

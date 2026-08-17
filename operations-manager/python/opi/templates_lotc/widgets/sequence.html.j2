@@ -11,7 +11,7 @@
   attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
   middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
 #}
-{% from "widgets/_macros.html.j2" import helper_text, render_errors %}
+{% from "widgets/_macros.html.j2" import helper_text, render_errors, render_warnings %}
 {% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
 {% set max_items = field.max_items or field.attributes.get('max_items') %}
 {% set add_label = field.attributes.get('add_label', 'Item toevoegen') %}
@@ -59,4 +59,9 @@
     </div>
     {% endif %}
     {{ render_errors(field.errors) }}
+    {# Waarschuwingen horen bij elk veld dat ze kan krijgen, niet alleen bij een tekstveld.
+       Een reeks draagt ze omdat een ConfigAdvice de LIJST aanwijst ("deze uitnodiging heeft
+       geen realm-rol"), en zonder deze regel kwam die melding wel in field_warnings terecht
+       en werd hij nergens getekend. #}
+    {{ render_warnings(field.warnings) }}
 </div>

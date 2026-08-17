@@ -385,6 +385,48 @@ up the new generation. Pinned in `tests/test_restore_database_secret.py` (unit) 
 `tests/e2e/test_sandbox_restore_op_slot.py` (against a live sandbox, including a change
 made after the restore).
 
+### Which schema a database restore renames
+
+A backup dumps the **whole** database (`pg_dump --format=custom`, no `-n`), so the dump
+carries the default schema *and* every extra schema (RC-17,
+`features/postgresql-scope-and-schemas.md`). A restore into a new generation has to
+rename exactly one of them: the default schema, because OPI puts the generation in the
+database name **and** in the default schema name (`db_schema = db_database`). The extra
+schemas (`{project}_{deployment}_{postfix}`) carry no generation, so their name is
+already right in the target database and they are left alone.
+
+Which schema that is, is **named by the platform** (`generate_database_name`) and passed
+to the restore pod as `SOURCE_SCHEMA`; the pod never reads it from the dump. It used to:
+
+```sh
+pg_restore --list "$DUMP_PATH" | grep " SCHEMA - " | head -1 | awk '{print $6}'
+```
+
+and `pg_restore --list` sorts schemas **alphabetically**, not by creation order. A project
+with a `rapportage` schema, restored to its second generation (`amt_prod_v2` ->
+`amt_prod_v3`), therefore renamed `amt_prod_rapportage` (r < v) to `amt_prod_v3`: the
+application read the reporting tables, its own data sat unused in `amt_prod_v2`, and
+`DATABASE_SCHEMA_RAPPORTAGE` pointed at a schema that no longer existed. The restore
+reported success. The first generation restore went fine (`amt_prod` is a prefix of
+`amt_prod_rapportage` and sorts first), which is why it stayed unnoticed.
+
+Three more things the pod now does on that path:
+
+* it drops the target schema only when it is **empty** and with `RESTRICT`, never
+  `CASCADE`. A non-empty target schema holds data the restore just wrote, so the restore
+  **stops** instead of destroying it;
+* it refuses a schema name that is not `[a-z][a-z0-9_]*`, and quotes both identifiers;
+* it logs which schema was renamed and which schemas were left untouched, plus the final
+  list of schemas — so a failure shows up in the pod log, not in the application.
+
+If the source name cannot be established (a snapshot without project/deployment
+metadata), the restore only continues when the dump itself already contains a schema with
+the target's name — then there is provably nothing to rename. Otherwise it stops: a
+restore that guesses puts the wrong data under the name the application reads.
+
+Pinned in `tests/test_restore_schema_rename.py`, including three `requires_infra` tests
+that run the shipped shell block against a real PostgreSQL.
+
 ### Failed restore: whose fault was it?
 
 `POST /api/v1/restore/database/...` and `POST /api/v1/restore/bucket/...` answer a failure

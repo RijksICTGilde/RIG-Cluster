@@ -7,19 +7,16 @@ import logging
 from opi.core.config import settings
 from opi.services.catalog.base import (
     ConfigLayer,
-    DeploymentPageContext,
-    DetailPageSection,
     ManifestContext,
     ManifestContribution,
     SecretFileSpec,
     Service,
 )
-from opi.services.catalog.events import on
 from opi.services.catalog.metrics_scraper.config_model import MetricsScraperConfig
 from opi.services.catalog.metrics_scraper.editables import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
 from opi.services.catalog.metrics_scraper.variables import MetricsScraperVariables
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
+from opi.services.services_enums import ServiceBinding, ServiceType
 from opi.utils.secrets import MetricsAuthSecret
 
 logger = logging.getLogger(__name__)
@@ -76,39 +73,19 @@ class MetricsScraperService(Service):
             )
         ]
 
-    @on(UIEvent.DEPLOYMENT_SECTIONS)
-    def metrics_block(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
-        # The Resource Metrics block belongs to this service: it exists because the
-        # project scrapes metrics. The general template used to render it for every
-        # project with a reachable Prometheus, service or no service.
-        project_name = ctx.project_data.get("name", "")
-        deployment_name = ctx.deployment.get("name", "")
-        if not project_name or not deployment_name:
-            return []
-
-        if not ctx.backend_available.get("prometheus", False):
-            reason = "Prometheus is niet verbonden. Resource metrics worden getoond wanneer Prometheus beschikbaar is."
-            available = False
-        elif ctx.deployment.get("cluster") != ctx.current_cluster:
-            reason = (
-                f"Deze deployment draait niet op cluster {ctx.current_cluster}. "
-                "Resource metrics zijn alleen beschikbaar voor deployments op het huidige cluster."
-            )
-            available = False
-        else:
-            reason, available = "", True
-
-        return [
-            DetailPageSection(
-                template="metrics_scraper/section-deployment.html.j2",
-                context={
-                    "project_name": project_name,
-                    "deployment_name": deployment_name,
-                    "available": available,
-                    "unavailable_reason": reason,
-                },
-            )
-        ]
+    # GEEN blok op UIEvent.DEPLOYMENT_SECTIONS meer. Hier hing "Resource Metrics", en dat
+    # haalde exact hetzelfde fragment op als het tabblad Metrics doet
+    # (/projects/details/<project>/metrics/<deployment>, id metrics-content-<naam>): dezelfde
+    # grafieken, twee keer, op twee tabbladen. Het blok was er eerder dan het tabblad; bij het
+    # toevoegen van het tabblad is het blijven staan.
+    #
+    # Dezelfde afweging die bij de backups al gemaakt is en die in project-tabs.html.j2
+    # opgeschreven staat: twee weergaven van dezelfde gegevens lopen uit de pas. Het tabblad
+    # is bovendien ruimer - het toont de grafieken voor ELK project met deployments, ook zonder
+    # deze dienst, omdat verbruik geen dienst-extraatje is.
+    #
+    # De twee meldingen die dit blok droeg zijn niet verdwenen maar verhuisd naar het fragment
+    # zelf (opi/web/router.py), zodat ze op EEN plek staan in plaats van naast een tweede kopie.
 
     def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
         # Contribute the scrape port/path as a template var so the deployment's

@@ -48,9 +48,62 @@
         <c-alert type="success" heading="{{ success_message }}" />
     {% endif %}
 
+    {# ---- Filteren op status --------------------------------------------------
+       SERVER-SIDE, net als het zoeken en sorteren op /projects, en om dezelfde drie
+       redenen: het werkt zonder JavaScript, een gefilterde lijst is deelbaar als URL, en
+       de gekozen waarde staat na een swap nog steeds in de lijst omdat de server hem
+       meerendert (`selected` hieronder) in plaats van dat de browser hem onthoudt.
+
+       Een echte <c-select> en niet <c-filter-select>: die laatste rendert een <div> met
+       een pijltje - een WEERGAVE van een filter, waar je niets in kunt kiezen.
+
+       Het filter staat BINNEN het geswapte gebied. Stond het erbuiten, dan hertekende de
+       lijst wel en de keuzelijst niet, en dan raakt de getoonde waarde uit de pas met wat
+       je ziet. Dezelfde les als bij de werkbalk van /projects.
+
+       Geen knop: hx-trigger="change" stuurt bij het kiezen. De <form method="get"> eromheen
+       is wat het zonder JavaScript laat werken (dan is er een verzendknop nodig, en die
+       hoort er dus te staan voor wie geen JS heeft - vandaar de noscript-knop). #}
+    <c-stack id="approvals-gebied" gap="lg">
+    <form method="get" action="/admin/approvals"
+          hx-get="/admin/approvals"
+          hx-select="#approvals-gebied"
+          hx-target="#approvals-gebied"
+          hx-swap="outerHTML"
+          hx-trigger="change"
+          hx-push-url="true">
+        <c-cluster gap="sm" align="center">
+            <c-select name="status" :attrs="{'aria-label': 'Filter op status'}">
+                {# :selected= en niet {% if %} tussen de attributen: de componentparser leest
+                   de attributenlijst zelf en struikelt over Jinja daarbinnen
+                   ("Unknown attribute '{%' on component 'c-option'"). De dubbelepunt bindt
+                   een gewone Python-uitdrukking. #}
+                {% for sleutel, label in approval_statussen %}
+                    <c-option value="{{ sleutel }}" :selected="sleutel == approval_status">{{ label }}</c-option>
+                {% endfor %}
+            </c-select>
+            <noscript><c-button type="secondary" label="Filter" /></noscript>
+            <c-paragraph size="sm" color="grijs-500" no-spacing>
+                {{ approvals_getoond }} van {{ approvals_totaal }}
+                aanvra{{ 'gen' if approvals_totaal != 1 else 'ag' }}
+            </c-paragraph>
+        </c-cluster>
+    </form>
+
     {% if projects_data %}
         {% for project in projects_data %}
-            {% set beheren %}<c-button type="primary" size="sm" label="Beheren" icon="pencil-on-square" show-icon="before" @click="openApprovalModal('{{ project.project_name }}')" />{% endset %}
+            {# De knop haalt het formulier zelf op, met htmx. De URL staat in een GEWOON
+               attribuut (hx-get) en wordt dus door Jinja gerenderd; dat is de reden dat het
+               zo moet. In de @-afhandelaar zou `{{ project.project_name }}` letterlijk in het
+               onclick-attribuut belanden zonder ooit langs Jinja te komen, en dan vroeg de
+               dialoog /admin/approvals/%7B%7B%20project.project_name%20%7D%7D/... op.
+               Bewaakt door tests/test_lotc_klikattributen.py; gemeten in
+               tests/e2e/test_lotc_domeinbeheer.py.
+
+               Wat de @-afhandelaar nog wel doet, is het venster openen: htmx haalt inhoud op
+               maar maakt geen schil zichtbaar. Er staat daarom geen Jinja in - alleen de
+               projectnaam uit het data-attribuut. #}
+            {% set beheren %}<c-button type="primary" size="sm" label="Beheren" icon="pencil-on-square" show-icon="before" data-project="{{ project.project_name }}" hx-get="/admin/approvals/{{ project.project_name | urlencode }}/modal-wizard/admin-approval" hx-target="#edit-section-inner" hx-swap="innerHTML" hx-indicator="#approval-loading" @click="openApprovalDialog(this.dataset.project)" />{% endset %}
             {% call panel(project.project_name, "rectangle-stack", aside=beheren) %}
 {# c-table-head IS de kopregel; daar hoort geen c-table-row in. En zonder
                    columns stapelen de cellen, want NLDD maakt er een CSS-grid van. #}
@@ -80,14 +133,24 @@
                                     label="{{ status_labels.get(item.current_status, item.current_status) }}" />
                             </c-td>
                             <c-td>
+                                {# GEEN <c-stack> hieromheen. Een cel is zelf al een kolom-flexbox, dus
+                                   de twee regels stapelen vanzelf - en met een stack ertussen viel deze
+                                   kolom in FIREFOX om: <nldd-cell> legt zijn kinderen neer met
+                                   `align-items: flex-start`, en Firefox rekent de intrinsieke breedte van
+                                   `div.lotc-stack` (flex) met een `nldd-rich-text` (grid) erin uit als 0.
+                                   De cel bleef 212px, de inhoud kromp tot niets en "16 augustus 2026" viel
+                                   over veertien regels uiteen, een teken per regel. Chromium en WebKit
+                                   toonden dezelfde HTML goed, dus dit is alleen in Firefox te zien.
+                                   Zonder de stack meten alle drie de motoren hetzelfde: 212px, een regel.
+                                   Wat er in LOTC zou moeten veranderen staat als punt 14 in
+                                   request_for_components.md; zolang dat er niet is, is dit de vorm.
+                                   Gemeten door tests/e2e/test_lotc_domeinbeheer.py. #}
                                 {% if item.history %}
                                     {% set last = item.history[-1] %}
-                                    <c-stack gap="xs">
-                                        <c-paragraph size="sm" no-spacing>{{ last.date | dutch_date(include_time=False) }}</c-paragraph>
-                                        {% if last.by %}
-                                            <c-paragraph size="sm" no-spacing>door {{ last.by }}</c-paragraph>
-                                        {% endif %}
-                                    </c-stack>
+                                    <c-paragraph size="sm" no-spacing>{{ last.date | dutch_date(include_time=False) }}</c-paragraph>
+                                    {% if last.by %}
+                                        <c-paragraph size="sm" no-spacing>door {{ last.by }}</c-paragraph>
+                                    {% endif %}
                                 {% else %}
                                     -
                                 {% endif %}
@@ -99,9 +162,16 @@
         {% endfor %}
     {% else %}
         {% call panel("") %}
-            <c-paragraph>Geen openstaande aanvragen gevonden.</c-paragraph>
+            {# Twee verschillende dingen, en het verschil is het enige dat een gefilterde
+               lege pagina bruikbaar maakt: er is niets, of er is niets MET DEZE STATUS. #}
+            {% if approvals_totaal %}
+                <c-paragraph>Geen aanvragen met deze status. Er zijn er {{ approvals_totaal }} met een andere.</c-paragraph>
+            {% else %}
+                <c-paragraph>Geen openstaande aanvragen gevonden.</c-paragraph>
+            {% endif %}
         {% endcall %}
     {% endif %}
+    </c-stack>
 
     {# Het venster waarin een aanvraag wordt beoordeeld. Dezelfde markup als de bestaande
        pagina, inclusief de klassen waar edit_modal.js op selecteert. De achtergrond gaat
@@ -113,19 +183,25 @@
        <c-cluster justify="between">. De lijn eronder en de marge blijven in
        modal.css - daar heeft het thema niets voor. #}
     <c-cluster justify="between" align="center" class="edit-section-header">
-            <c-heading type="h2" size="4" id="approval-title">
+            {# Het icoon staat NAAST de kop en niet erin: een kop legt zijn kinderen niet
+               naast elkaar, dus een icoon binnen <c-heading> lijnt op de tekstBASISlijn uit
+               en zakt daarmee uit de lijn. Een cluster centreert wel. De id blijft op de kop
+               staan, en #approval-title-text blijft de span die openApprovalDialog beschrijft. #}
+            <c-cluster gap="sm" align="center">
                 <c-icon icon="check-mark-circle" size="lg" />
-                <span id="approval-title-text">Domeingoedkeuring</span>
-            </c-heading>
+                <c-heading type="h2" size="4" id="approval-title">
+                    <span id="approval-title-text">Domeingoedkeuring</span>
+                </c-heading>
+            </c-cluster>
             <c-button type="tertiary" size="sm" label="Sluiten" icon="dismiss" show-icon="before" class="edit-modal-close-btn"
                       @click="closeApprovalModal()" />
         </c-cluster>
-        <div id="approval-error" class="edit-section-error is-hidden"></div>
-        <div id="edit-section-inner">
-            <div class="edit-section-content">
-                <div class="edit-section-loading"><c-paragraph>Laden...</c-paragraph></div>
-            </div>
-        </div>
+        {# De laadtoestand is van htmx: hx-indicator zet .htmx-request op dit element voor de
+           duur van het verzoek, en css/modal.css zet hem daarmee aan en de oude inhoud uit.
+           Er staat GEEN lege foutbak meer boven de dialoog: een fout komt terug als fragment
+           en landt hieronder, in #edit-section-inner. #}
+        <div id="approval-loading" class="edit-section-loading"><c-paragraph>Laden...</c-paragraph></div>
+        <div id="edit-section-inner"></div>
     </div>
 {% endblock %}
 
@@ -142,38 +218,33 @@
     <script src="{{ static_url('js/json-enc.js') }}"></script>
     <script src="{{ static_url('js/edit_modal.js') }}"></script>
     <script>
-        function openApprovalModal(projectName) {
-            document.getElementById('approval-title-text').textContent = 'Domeingoedkeuring - ' + projectName;
-
-            var errorEl = document.getElementById('approval-error');
-            errorEl.classList.add('is-hidden');
-
-            var innerEl = document.getElementById('edit-section-inner');
-            innerEl.innerHTML =
-                '<div class="edit-section-content">' +
-                    '<div class="edit-section-loading"><p>Laden...</p></div>' +
-                '</div>';
-
+        // Het OPENEN van het venster, en verder niets. Het ophalen, de laadtoestand en het
+        // plaatsen van het antwoord doet htmx via hx-get/hx-target/hx-indicator op de knop;
+        // dat stond hier eerder met de hand (fetch + innerHTML + een eigen foutbak), en
+        // alle drie de fouten van 15 en 16 augustus kwamen daaruit voort.
+        //
+        // Wat htmx niet kan is een schil zichtbaar maken. Dat is dit: de twee klassen waar
+        // edit_modal.js op selecteert, plus de titel die het project noemt.
+        function openApprovalDialog(projectNaam) {
+            document.getElementById('approval-title-text').textContent = 'Domeingoedkeuring - ' + projectNaam;
             document.getElementById('approval-backdrop').classList.add('is-open');
             document.getElementById('approval-modal').classList.add('is-open');
             document.body.style.overflow = 'hidden';
-
-            fetch('/admin/approvals/' + projectName + '/modal-wizard/admin-approval', {
-                credentials: 'same-origin',
-            })
-            .then(function(response) {
-                if (!response.ok) throw new Error('Fout bij het laden van het formulier');
-                return response.text();
-            })
-            .then(function(html) {
-                innerEl.innerHTML = html;
-                htmx.process(innerEl);
-            })
-            .catch(function(err) {
-                errorEl.textContent = err.message;
-                errorEl.classList.remove('is-hidden');
-            });
         }
+
+        // htmx wisselt standaard NIETS in bij een 4xx of 5xx. Voor deze dialoog is dat het
+        // slechtste gedrag dat er is: je klikt op Beheren, het venster gaat open en blijft
+        // leeg, zonder dat iemand je vertelt waarom. De route beantwoordt haar eigen
+        // weigeringen met een leesbaar fragment (zie opi/web/router_approvals.py); dit is de
+        // htmx-kant die het ook echt laat zien, en meteen ook voor een storing die de route
+        // nooit bereikt. Dit is htmx' eigen haak hiervoor, geen nagebouwde afhandeling.
+        document.body.addEventListener('htmx:beforeSwap', function (evt) {
+            var doel = evt.detail.target;
+            if (doel && doel.id === 'edit-section-inner' && evt.detail.xhr && evt.detail.xhr.status >= 400) {
+                evt.detail.shouldSwap = true;
+                evt.detail.isError = false;
+            }
+        });
 
         // closeEditModal / closeEditModalAndReload komen uit edit_modal.js hierboven. Deze
         // dialoog doet aan dat systeem mee doordat hij de klassen .edit-section-modal en
