@@ -10,9 +10,9 @@
   rig-prd-<project>            rig-prd-mail                       RON
 +---------------------+   +--------------------------+   +--------------------+
 | app                 |   | SMTP-relay               |   | upstream mailserver|
-| SMTP_HOST=...       |-->| :587 submission, AUTH    |-->| :587 AUTH, één     |
-| SMTP_USER=<project> |   | rate limit per account   |   | ons account        |
-| SMTP_PASS=<secret>  |   | From-policy + DKIM       |   |                    |
+| SMTP_HOST=...       |-->| :587 submission, AUTH    |-->| :25 STARTTLS       |
+| SMTP_USER=<project> |   | rate limit per account   |   | geen auth, ons IP  |
+| SMTP_PASS=<secret>  |   | From-policy + DKIM       |   | staat toegelaten   |
 +---------------------+   | header sanitatie         |   +--------------------+
      ClusterIP, geen      | egressGatewayPolicy:     |
      RON-egress nodig     |   rig-ron                |
@@ -29,12 +29,24 @@ Eén centrale relay, geen relay per project. Een project krijgt een SMTP-account
 
 Wat daar wél bij hoort: **dit één keer expliciet afstemmen met het mailteam.** Niet om toestemming te vragen voor techniek, maar om vast te leggen dat één account namens meerdere interne applicaties in ons eigen domein verstuurt, met een afgesproken volume. Dan is er later geen discussie. Het alternatief (hopen dat het niet opvalt) is precies het scenario dat je wilt vermijden, want dan komt de vraag op het slechtst mogelijke moment.
 
-## Waarom niet gewoon de upstream-credentials aan elke app geven
+## Gemeten op 17 augustus 2026, en dit wijkt af van wat hieronder is aangenomen
+
+De koppeling werkt en een testbericht is aangenomen. Vier correcties op de tekst hieronder, volledig uitgeschreven in `docs/ron-koppeling.md`:
+
+- **Uitleveren op poort 25**, niet 587 of 465, die zijn dicht.
+- **Geen authenticatie.** De upstream adverteert geen `AUTH` en vertrouwt op ons uitgaande IP `145.21.227.140`. Waar hieronder "credentials" of "één account" staat, lees "ons IP staat in hun toelating".
+- **STARTTLS** wordt aangeboden en moet gebruikt worden.
+- **30 MB** is hun grens (`SIZE 31457280`).
+
+Dat maakt de paragraaf hierna niet minder waar, maar juist dwingender: zonder authenticatie aan de andere kant is er niets dat een applicatie tegenhoudt behalve ons eigen netwerkbeleid.
+
+## Waarom niet gewoon de upstream langs elke app openzetten
 
 Dat is de nul-optie en die moet je expliciet verwerpen, anders bouw je iets duurs zonder reden:
 
 - Elke namespace zou `rig-ron` egress nodig hebben, en die annotatie neemt maar één waarde. Een project met RON-mail kan dan niet meer bij internet. Met een centrale relay heeft alleen die ene namespace RON nodig.
-- Eén gedeeld wachtwoord bij twintig applicaties: niet in te trekken, niet te herleiden, en één gecompromitteerde app brandt de hele relatie met het mailteam af.
+- Er is niet eens een wachtwoord om te delen: de upstream vertrouwt op het bronadres. Elke pod die dat adres op poort 25 kan bereiken, mailt namens onze organisatie zonder limiet, zonder From-policy, zonder DKIM en zonder log. Eén gecompromitteerde app brandt daarmee de hele relatie met het mailteam af, en is achteraf niet eens aan te wijzen.
+- Die grendel zit er structureel al: de enige externe egressregel staat hardgecodeerd op 443 en 80 in `manifests/tenant-baseline-network-policy.yaml.jinja`, en `ports.outbound` uit het projectbestand wordt nergens naar egress vertaald. Wat ontbreekt is een **regressietest die dat vastlegt**, want nu is het een stilzwijgende eigenschap waar de hele mailbeveiliging op rust.
 - Geen limiet. Een bug in een retry-loop stuurt tienduizend berichten voordat iemand het merkt.
 - Geen attributie. Bij een klacht weet je niet welk project het was.
 - Het mailteam moet elk egress-IP kennen. Met een centrale relay is dat er precies één, en dat is het adres uit `145.21.227.140/30` dat we al doorgeven (zie `docs/ron-koppeling.md`).
@@ -137,7 +149,7 @@ Volgens `instructions/services.md`, met de bestaande services als model. Dichtst
 - Eigen namespace, bijvoorbeeld `rig-prd-mail`, met `egress.projectcalico.org/egressGatewayPolicy: rig-ron`. Alleen deze namespace heeft RON nodig.
 - Kustomize onder `infrastructure/bootstrap/infrastructure/mail/` met `base` plus overlays per clustertype, zoals de andere componenten.
 - Opslag in PostgreSQL in plaats van een PVC. Dat scheelt de RWO-PVC-problematiek (`strategy: Recreate`), maakt meerdere replicas mogelijk en past bij wat we al draaien.
-- Upstream-credentials en de DKIM-sleutel als SOPS-secret, aan de pod gegeven als file of env, wat Stalwart allebei ondersteunt.
+- De DKIM-sleutel als SOPS-secret, aan de pod gegeven als file of env. Upstream-credentials zijn er niet, zie de correcties bovenaan.
 - Geen publieke ingress. De relay is uitsluitend intern bereikbaar.
 
 ## Gefaseerd, met verifieerbare uitkomst per stap

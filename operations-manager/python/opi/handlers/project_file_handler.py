@@ -16,9 +16,11 @@ from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.schema_migration import migrate_to_latest
+from opi.services.services import service_entry_name
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
 from opi.utils.yaml_util import load_yaml_from_string, save_yaml_to_path
@@ -1978,111 +1980,98 @@ class ProjectFileHandler:
             project_data, deployment_name, component_name, "persistent-storage", storage_name, generation
         )
 
-    def get_database_generation(
-        self, project_data: dict[str, Any], deployment_name: str, component_name: str, reference_name: str
-    ) -> int | None:
-        """
-        Get the current generation number for a database in a deployment component.
+    # A database and a bucket are named after the project and the DEPLOYMENT only
+    # (``{project}_{deployment}_v{gen}`` / ``{project}-{deployment}-v{gen}``, see
+    # ``generate_database_name`` / ``generate_bucket_name``): one per deployment, shared by
+    # every component in it. So their generation is a property of the deployment and lives in
+    # the deployment-level services block -- the same place provisioning
+    # (``database_manager`` / ``minio_manager``) and reconciliation read it from to decide
+    # which database the running deployment points at.
+    #
+    # A PVC is named after the deployment AND the component
+    # (``{deployment}-{component}-{storage}-pvc-v{gen}``), so storage generations stay
+    # component-level. That asymmetry is not a leftover; it follows the resource identity.
 
-        Uses the reference/config pattern:
-        deployments[name].components[reference].services.database[reference==reference_name].config.generation
+    def get_database_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
+        """
+        Get the current generation number for a deployment's database.
+
+        Reads the deployment-level services block, under whichever PostgreSQL service
+        name the project declares.
 
         Args:
             project_data: The parsed project data
             deployment_name: Name of the deployment
-            component_name: Name of the component
-            reference_name: Reference name of the database
 
         Returns:
             Generation number if set, None if not present
         """
-        return self._get_service_config_generation(
-            project_data, deployment_name, component_name, ServiceType.POSTGRESQL_DATABASE.value, reference_name
+        return self.get_deployment_service_generation(
+            project_data, deployment_name, database_generation_service_type(project_data)
         )
 
     def set_database_generation(
         self,
         project_data: dict[str, Any],
         deployment_name: str,
-        component_name: str,
-        reference_name: str,
         generation: int,
     ) -> dict[str, Any]:
         """
-        Set the generation number for a database in a deployment component.
+        Set the generation number for a deployment's database.
 
-        Uses the reference/config pattern:
-        deployments[name].components[reference].services.database
-          = [{"reference": reference_name, "config": {"generation": generation}}]
+        Writes the deployment-level services block, under whichever PostgreSQL service
+        name the project declares.
 
         Args:
             project_data: The parsed project data
             deployment_name: Name of the deployment
-            component_name: Name of the component
-            reference_name: Reference name of the database
             generation: Generation number to set
 
         Returns:
             Updated project_data dictionary
         """
-        return self._set_service_config_generation(
-            project_data,
-            deployment_name,
-            component_name,
-            ServiceType.POSTGRESQL_DATABASE.value,
-            reference_name,
-            generation,
+        return self.set_deployment_service_generation(
+            project_data, deployment_name, database_generation_service_type(project_data), generation
         )
 
-    def get_bucket_generation(
-        self, project_data: dict[str, Any], deployment_name: str, component_name: str, reference_name: str
-    ) -> int | None:
+    def get_bucket_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
         """
-        Get the current generation number for a bucket in a deployment component.
+        Get the current generation number for a deployment's bucket.
 
-        Uses the reference/config pattern:
-        deployments[name].components[reference].services.minio-storage[reference==reference_name].config.generation
+        Reads the deployment-level services block:
+        deployments[name].services[minio-storage].config.generation
 
         Args:
             project_data: The parsed project data
             deployment_name: Name of the deployment
-            component_name: Name of the component
-            reference_name: Reference name of the bucket
 
         Returns:
             Generation number if set, None if not present
         """
-        return self._get_service_config_generation(
-            project_data, deployment_name, component_name, "minio-storage", reference_name
-        )
+        return self.get_deployment_service_generation(project_data, deployment_name, ServiceType.MINIO_STORAGE.value)
 
     def set_bucket_generation(
         self,
         project_data: dict[str, Any],
         deployment_name: str,
-        component_name: str,
-        reference_name: str,
         generation: int,
     ) -> dict[str, Any]:
         """
-        Set the generation number for a bucket in a deployment component.
+        Set the generation number for a deployment's bucket.
 
-        Uses the reference/config pattern:
-        deployments[name].components[reference].services.minio-storage
-          = [{"reference": reference_name, "config": {"generation": generation}}]
+        Writes the deployment-level services block:
+        deployments[name].services[minio-storage].config.generation
 
         Args:
             project_data: The parsed project data
             deployment_name: Name of the deployment
-            component_name: Name of the component
-            reference_name: Reference name of the bucket
             generation: Generation number to set
 
         Returns:
             Updated project_data dictionary
         """
-        return self._set_service_config_generation(
-            project_data, deployment_name, component_name, "minio-storage", reference_name, generation
+        return self.set_deployment_service_generation(
+            project_data, deployment_name, ServiceType.MINIO_STORAGE.value, generation
         )
 
     # ========================================================================
@@ -2194,12 +2183,23 @@ class ProjectFileHandler:
                     deployment["services"] = new_list
                     services = deployment["services"]
 
-                # Find existing service entry or create new one
-                service_entry = None
-                for item in services:
-                    if isinstance(item, dict) and item.get("reference") == service_type:
+                # Find existing service entry or create new one. Identity is resolved
+                # format-agnostically, exactly as the getter does: matching only on
+                # ``reference`` missed an entry written as {name} or as a bare string, so the
+                # setter appended a SECOND entry for the same service and the getter kept
+                # reading the first one -- the generation was written and never read back.
+                service_entry: dict[str, Any] | None = None
+                for index, item in enumerate(services):
+                    if service_entry_name(item) != service_type:
+                        continue
+                    if isinstance(item, dict):
                         service_entry = item
-                        break
+                    else:
+                        # Bare string entry: promote it to a record in place so the
+                        # generation has somewhere to live, keeping its position.
+                        service_entry = {"reference": service_type}
+                        services[index] = service_entry
+                    break
 
                 if service_entry is None:
                     service_entry = {"reference": service_type, "config": {"generation": generation}}

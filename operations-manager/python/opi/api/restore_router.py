@@ -34,7 +34,6 @@ from opi.manager.backup import (
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
 from opi.services.project_store import get_project_store
-from opi.services.services import service_entry_name
 from opi.utils.naming import (
     generate_bucket_name,
     generate_database_name,
@@ -1313,28 +1312,12 @@ def _set_generation(
                 project_data, update.deployment, update.component, update.reference, update.new_generation
             )
         case ResourceType.DATABASE:
-            # Database is deployment-level - determine service type from project config
-            project_services = project_data.get("services", [])
-            # Format-agnostic: ``VALUE in service_item`` tested dict keys, so a
-            # namespace-postgres entry carrying config (a record) was missed and the
-            # wrong service type was chosen for the DB restore.
-            uses_namespace_postgresql = any(
-                service_entry_name(service_item) == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                for service_item in (project_services or [])
-            )
-            service_type = (
-                ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if uses_namespace_postgresql
-                else ServiceType.POSTGRESQL_DATABASE.value
-            )
-            project_file_handler.set_deployment_service_generation(
-                project_data, update.deployment, service_type, update.new_generation
-            )
+            # Database is deployment-level; the handler resolves which PostgreSQL service
+            # name the project declares, so the write and the read cannot disagree.
+            project_file_handler.set_database_generation(project_data, update.deployment, update.new_generation)
         case ResourceType.BUCKET:
             # Bucket is deployment-level
-            project_file_handler.set_deployment_service_generation(
-                project_data, update.deployment, ServiceType.MINIO_STORAGE.value, update.new_generation
-            )
+            project_file_handler.set_bucket_generation(project_data, update.deployment, update.new_generation)
 
 
 @restore_router.post(
@@ -2216,28 +2199,12 @@ async def restore_deployment_resource(
                 project_data, deployment_name, body.component_name, body.reference_name, result["new_generation"]
             )
         elif body.resource_type == "database":
-            # Database is deployment-level - determine service type from project config
-            project_services = project_data.get("services", [])
-            # Format-agnostic: ``VALUE in service_item`` tested dict keys, so a
-            # namespace-postgres entry carrying config (a record) was missed and the
-            # wrong service type was chosen for the DB restore.
-            uses_namespace_postgresql = any(
-                service_entry_name(service_item) == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                for service_item in (project_services or [])
-            )
-            service_type = (
-                ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if uses_namespace_postgresql
-                else ServiceType.POSTGRESQL_DATABASE.value
-            )
-            project_file_handler.set_deployment_service_generation(
-                project_data, deployment_name, service_type, result["new_generation"]
-            )
+            # Database is deployment-level; the handler resolves which PostgreSQL service
+            # name the project declares, so the write and the read cannot disagree.
+            project_file_handler.set_database_generation(project_data, deployment_name, result["new_generation"])
         else:  # minio
             # Bucket is deployment-level
-            project_file_handler.set_deployment_service_generation(
-                project_data, deployment_name, ServiceType.MINIO_STORAGE.value, result["new_generation"]
-            )
+            project_file_handler.set_bucket_generation(project_data, deployment_name, result["new_generation"])
         # 5. Commit and push the change
         commit_message = (
             f"Restore {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}\n\n"
@@ -2415,9 +2382,7 @@ async def _restore_database_with_versioning(
     from opi.utils.passwords import generate_secure_password
 
     # Get current generation
-    current_generation = project_file_handler.get_database_generation(
-        project_data, deployment_name, component_name, reference_name
-    )
+    current_generation = project_file_handler.get_database_generation(project_data, deployment_name)
     if current_generation is None:
         current_generation = 0
     next_generation = current_generation + 1
@@ -2478,9 +2443,32 @@ async def _restore_database_with_versioning(
         # Create new versioned database
         db_result = await postgres_connector.create_database(database_name=new_database_name, owner=db_username)
         if db_result["status"] not in ["created", "exists"]:
+            await postgres_connector.close()
             return {
                 "success": False,
                 "error": f"Failed to create new database {new_database_name}: {db_result.get('message')}",
+                "old_generation": current_generation,
+                "new_generation": next_generation,
+                "old_resource_name": old_database_name,
+                "new_resource_name": new_database_name,
+            }
+
+        # The target must be EMPTY. pg_restore adds rows, it does not replace them, so a
+        # restore into a database that already holds the application's tables lands the
+        # backup on top of the rows already there and doubles them. That is what a wrong
+        # generation caused (RC-123), but the damage is not the wrong number, it is this
+        # write -- so the refusal sits here, where the data is, and not only at the number.
+        # A database that exists but is empty is a half-finished earlier attempt and is
+        # fine to continue into.
+        if db_result["status"] == "exists" and await postgres_connector.database_has_user_data(new_database_name):
+            await postgres_connector.close()
+            return {
+                "success": False,
+                "error": (
+                    f"Target database {new_database_name} already exists and is not empty. "
+                    f"Restoring into it would add the backup on top of the rows already there. "
+                    f"Remove that database or raise the generation before retrying."
+                ),
                 "old_generation": current_generation,
                 "new_generation": next_generation,
                 "old_resource_name": old_database_name,
@@ -2572,9 +2560,7 @@ async def _restore_bucket_with_versioning(
     from opi.utils.passwords import generate_secure_password
 
     # Get current generation
-    current_generation = project_file_handler.get_bucket_generation(
-        project_data, deployment_name, component_name, reference_name
-    )
+    current_generation = project_file_handler.get_bucket_generation(project_data, deployment_name)
     if current_generation is None:
         current_generation = 0
     next_generation = current_generation + 1
@@ -2618,6 +2604,25 @@ async def _restore_bucket_with_versioning(
             return {
                 "success": False,
                 "error": f"Failed to create new bucket {new_bucket_name}: {bucket_result.get('message')}",
+                "old_generation": current_generation,
+                "new_generation": next_generation,
+                "old_resource_name": old_bucket_name,
+                "new_resource_name": new_bucket_name,
+            }
+
+        # Same bottom as the database path: a restore into a bucket that already holds
+        # objects merges the backup with what is there instead of replacing it, and
+        # ``clear_target=False`` below assumes a fresh bucket.
+        if bucket_result["status"] == "exists" and await minio_connector.bucket_has_objects(
+            alias_name, new_bucket_name
+        ):
+            return {
+                "success": False,
+                "error": (
+                    f"Target bucket {new_bucket_name} already exists and is not empty. "
+                    f"Restoring into it would merge the backup with the objects already there. "
+                    f"Remove that bucket or raise the generation before retrying."
+                ),
                 "old_generation": current_generation,
                 "new_generation": next_generation,
                 "old_resource_name": old_bucket_name,

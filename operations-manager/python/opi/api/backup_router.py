@@ -480,10 +480,10 @@ async def backup_project_deployment(
                         component_info = db_components[0]  # Take first component using database
                         component_name = component_info["component_name"]
                         reference_name = component_info["reference_name"]
-                        # Get generation from project file
-                        generation = project_file_handler.get_database_generation(
-                            project.data, deployment_name, component_name, reference_name
-                        )
+                        # Get generation from project file. The database is one per
+                        # deployment, so the generation is read per deployment, not per
+                        # component -- the component only names the backup.
+                        generation = project_file_handler.get_database_generation(project.data, deployment_name)
                     else:
                         component_name = None
                         reference_name = f"{deployment_name}-database"
@@ -548,10 +548,9 @@ async def backup_project_deployment(
                         component_info = minio_components[0]  # Take first component using minio
                         component_name = component_info["component_name"]
                         reference_name = component_info["reference_name"]
-                        # Get generation from project file
-                        generation = project_file_handler.get_bucket_generation(
-                            project.data, deployment_name, component_name, reference_name
-                        )
+                        # Get generation from project file. The bucket is one per deployment,
+                        # so the generation is read per deployment, not per component.
+                        generation = project_file_handler.get_bucket_generation(project.data, deployment_name)
                     else:
                         component_name = None
                         reference_name = f"{deployment_name}-minio"
