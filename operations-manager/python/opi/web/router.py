@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from opi.manager.project_manager import ProjectManager
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates_lotc import templates_lotc
@@ -881,7 +881,7 @@ async def _sum_by_namespace(prom: Any, promql: str) -> dict[str, float]:
     try:
         result = await prom.custom_query(promql)
     except Exception as e:
-        logger.debug(f"Dashboard per-namespace query failed: {e}")
+        logger.warning(f"Dashboard per-namespace query failed: {e}")
         return {}
 
     values: dict[str, float] = {}
@@ -934,7 +934,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         cpu_usage_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard CPU usage query failed: {e}")
+                    logger.warning(f"Dashboard CPU usage query failed: {e}")
 
                 try:
                     result = await prom.custom_query(
@@ -943,7 +943,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         cpu_limit_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard CPU limits query failed: {e}")
+                    logger.warning(f"Dashboard CPU limits query failed: {e}")
 
                 # Memory usage and limits
                 mem_usage_val = 0.0
@@ -955,7 +955,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         mem_usage_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard memory usage query failed: {e}")
+                    logger.warning(f"Dashboard memory usage query failed: {e}")
 
                 try:
                     result = await prom.custom_query(
@@ -964,7 +964,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         mem_limit_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard memory limits query failed: {e}")
+                    logger.warning(f"Dashboard memory limits query failed: {e}")
 
                 # Storage usage and capacity
                 storage_used_val = 0.0
@@ -974,7 +974,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         storage_used_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard storage usage query failed: {e}")
+                    logger.warning(f"Dashboard storage usage query failed: {e}")
 
                 try:
                     result = await prom.custom_query(
@@ -983,7 +983,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         storage_cap_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard storage capacity query failed: {e}")
+                    logger.warning(f"Dashboard storage capacity query failed: {e}")
 
                 # Pod count
                 try:
@@ -991,7 +991,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         pod_count = int(float(result[0]["value"][1]))
                 except Exception as e:
-                    logger.debug(f"Dashboard pod count query failed: {e}")
+                    logger.warning(f"Dashboard pod count query failed: {e}")
 
                 # Network traffic time-series (last 30min, 5min step)
                 network_in_data: list[dict] = []
@@ -1030,7 +1030,7 @@ async def collect_dashboard_metrics(
                                 }
                             )
                 except Exception as e:
-                    logger.debug(f"Dashboard network query failed: {e}")
+                    logger.warning(f"Dashboard network query failed: {e}")
 
                 # Compute display values
                 def _pct(used: float, total: float) -> int:
@@ -1938,7 +1938,6 @@ def _argocd_unavailable_result(app_name: str, message: str, source: str = "Appli
 
 def _annotate_argocd_error_ages(errors: list[dict[str, Any]]) -> None:
     """Add the Dutch ``age`` field in-place for entries that carry a timestamp."""
-    from datetime import datetime
 
     now = datetime.now(UTC)
     for error in errors:
