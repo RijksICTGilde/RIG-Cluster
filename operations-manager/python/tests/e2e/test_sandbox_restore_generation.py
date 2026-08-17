@@ -1,32 +1,29 @@
 """
-Sandbox E2E: twee generatie-restores achter elkaar, met een extra schema erbij (RC-121).
+Sandbox E2E: twee restorerondes achter elkaar, en dan de rijen tellen (RC-123).
 
-Dit is de doorloop die in productie misging. Een project met een extra schema
-(``{project}_{deployment}_rapportage``, RC-17) wordt TWEE keer teruggezet naar een
-nieuwe generatie. De tweede keer was de breuk: de restore-pod koos zijn bronschema met
-``pg_restore --list | grep " SCHEMA - " | head -1``, en die lijst is ALFABETISCH
-gesorteerd. Bij generatie 2 staat ``..._rapportage`` (r) voor ``..._v2`` (v), dus werd
-het rapportageschema hernoemd naar ``..._v3``: de applicatie las de rapportagetabellen,
-haar eigen data bleef in ``..._v2`` staan en ``DATABASE_SCHEMA_RAPPORTAGE`` wees naar
-een schema dat niet meer bestond. De restore meldde succes.
+De meting die deze taak veroorzaakte. Een restore hoort de teruggezette data in een
+database met een NIEUWE naam te zetten (``{db}``, ``{db}_v1``, ``{db}_v2``), maar elke
+ronde meldde opnieuw ``0 -> 1``: de restore schreef de generatie deployment-breed weg en
+las hem component-breed terug, dus het getal kwam nooit terug waar het opgehaald werd.
+Bron en doel kregen daardoor dezelfde naam, ``pg_restore`` telt rijen op in plaats van ze
+te vervangen, en een tweede restore verdubbelde de inhoud.
 
-Deze suite meet dat op het cluster, met echte data in beide schema's:
+Deze suite meet dat op het cluster, met echte rijen:
 
-1. maak een project met een databasedienst en voeg een extra schema toe;
-2. zet in het standaardschema ``klanten`` en in het extra schema ``cijfers``, elk met
-   een rij erin;
-3. backup + restore (generatie 1) -- die ging altijd al goed;
-4. backup + restore (generatie 2) -- de restore waar het op stukliep;
-5. lees het geheim in de namespace en kijk in de database: staat ``klanten`` in het
-   schema waar ``DATABASE_SCHEMA`` naar wijst, en bestaat het schema waar
-   ``DATABASE_SCHEMA_RAPPORTAGE`` naar wijst nog, met ``cijfers`` erin?
+1. maak een project met een databasedienst;
+2. zet er een tabel met drie rijen in;
+3. backup + restore (ronde 1);
+4. backup + restore (ronde 2);
+5. de twee rondes moeten TWEE VERSCHILLENDE databases opgeleverd hebben, en de
+   eindtoestand moet nog steeds drie rijen tellen -- niet zes.
 
-Vereist een draaiende sandbox met JOUW build, E2E_BASE_URL en kubectl-toegang.
+Het getal is de kern: een groene restore die "succes" meldt zei niets over waar de data
+belandde. Vereist een draaiende sandbox met JOUW build, E2E_BASE_URL en kubectl-toegang.
 Draaien met:
 
     E2E_BASE_URL=https://zad.sandbox.rijksapp.dev \
     E2E_SECRET_KEY=<SECRET_KEY van de sandbox> \
-    uv run pytest tests/e2e/test_sandbox_restore_extra_schema.py -m "e2e and sandbox" \
+    uv run pytest tests/e2e/test_sandbox_restore_generation.py -m "e2e and sandbox" \
       -o addopts="" -v -s
 """
 
@@ -58,7 +55,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 
 _VERIFY_SSL = FORGEJO_VERIFY_SSL
 _SERVICES = ["postgresql-database"]
-_POSTFIX = "rapportage"
+_ROWS = 3
 
 
 @pytest.fixture(scope="module")
@@ -67,7 +64,7 @@ def database_project(
     sandbox_url: str,
     forgejo: ForgejoClient,
 ) -> Generator[CreatedProject]:
-    display_name = unique_project_name(prefix="schema")
+    display_name = unique_project_name(prefix="generatie")
     page = sandbox_context.new_page()
     created: CreatedProject | None = None
     try:
@@ -110,16 +107,12 @@ def _read_secret(namespace: str, secret_name: str) -> dict[str, str]:
 
 
 def _psql(secret: dict[str, str], statement: str) -> tuple[int, str]:
-    """Run SQL against the deployment's own database, from inside the cluster.
-
-    With exactly the credentials the secret carries: that is what the application uses,
-    so it is what the assertions have to be about.
-    """
+    """Run SQL against the deployment's own database, with the credentials it uses."""
     result = subprocess.run(
         [
             "kubectl",
             "run",
-            f"psql-rc121-{uuid.uuid4().hex[:8]}",
+            f"psql-rc123-{uuid.uuid4().hex[:8]}",
             "-n",
             "rig-system",
             "--rm",
@@ -184,7 +177,9 @@ def _backup_and_restore(sandbox_url: str, project: str, deployment: str, key: st
 
 
 @pytest.mark.timeout(3600)
-def test_twee_generatie_restores_met_een_extra_schema(database_project: CreatedProject, sandbox_url: str) -> None:
+def test_twee_restores_geven_twee_databases_en_verdubbelen_de_rijen_niet(
+    database_project: CreatedProject, sandbox_url: str
+) -> None:
     if not cluster.kubectl_available():
         pytest.skip("kubectl niet beschikbaar; deze suite leest het geheim en de database")
 
@@ -194,52 +189,22 @@ def test_twee_generatie_restores_met_een_extra_schema(database_project: CreatedP
     namespace = f"rig-{project}"
     secret_name = f"{deployment}-database"
 
-    # 1. Een extra schema erbij. De naam ervan draagt GEEN generatie, dus hij moet elke
-    #    restore ongewijzigd doorkomen.
-    task_id = sandbox_api.start_task(
-        sandbox_url,
-        "POST",
-        f"/api/v2/projects/{project}/services/postgresql-database/schemas",
-        key,
-        {"postfix": _POSTFIX, "description": "RC-121"},
-        verify_ssl=_VERIFY_SSL,
-    )
-    sandbox_api.wait_for_task(sandbox_url, task_id, key, verify_ssl=_VERIFY_SSL, timeout=900.0)
-
-    schema_variable = f"DATABASE_SCHEMA_{_POSTFIX.upper()}"
-    assert cluster.wait_for(
-        lambda: schema_variable in _read_secret(namespace, secret_name),
-        timeout=600.0,
-        interval=10.0,
-    ), f"{schema_variable} staat niet in het geheim; het extra schema is nooit doorgekomen"
-
     start = _read_secret(namespace, secret_name)
-    logger.info(
-        "VOOR DE RESTORES: db=%s schema=%s extra=%s",
-        start["DATABASE_DB"],
-        start["DATABASE_SCHEMA"],
-        start[schema_variable],
-    )
+    logger.info("VOOR DE RESTORES: db=%s schema=%s", start["DATABASE_DB"], start["DATABASE_SCHEMA"])
 
-    # 2. Echte data in BEIDE schema's: zonder inhoud zegt een hernoeming niets.
+    # Echte rijen: het aantal is wat deze meting oplevert, "het werkt" zegt niets.
+    values = ", ".join(f"({n})" for n in range(1, _ROWS + 1))
     code, output = _psql(
         start,
         f'CREATE TABLE "{start["DATABASE_SCHEMA"]}".klanten (id int); '
-        f'INSERT INTO "{start["DATABASE_SCHEMA"]}".klanten VALUES (1); '
-        f'CREATE TABLE "{start[schema_variable]}".cijfers (id int); '
-        f'INSERT INTO "{start[schema_variable]}".cijfers VALUES (2);',
+        f'INSERT INTO "{start["DATABASE_SCHEMA"]}".klanten VALUES {values};',
     )
     assert code == 0, f"kon de testdata niet wegschrijven: {output[:1000]}"
 
-    # 3. Twee generatie-restores achter elkaar. De EERSTE ging altijd al goed (de
-    #    databasenaam zonder generatie is een prefix van de naam met postfix en sorteert
-    #    dus vooraan); de TWEEDE is waar het op stukliep.
-    #    De generatie loopt sinds RC-123 wel op, dus ronde 2 levert een echte nieuwe
-    #    database (``..._v2``). Dat het OPLOPEN klopt is de meting van
-    #    ``test_sandbox_restore_generation.py``; wat hieronder telt is waar de data
-    #    staat, want daar ging RC-121 over.
-    for round_name in ("generatie 1", "generatie 2"):
+    databases: list[str] = []
+    for round_name in ("ronde 1", "ronde 2"):
         target_db = _backup_and_restore(sandbox_url, project, deployment, key, round_name=round_name)
+        databases.append(target_db)
         # De refresh schrijft de generatie naar zad-deployments; ArgoCD brengt hem in het
         # geheim. Wachten op de toestand die de restore ZELF noemt, niet op een klok.
         assert cluster.wait_for(
@@ -247,29 +212,23 @@ def test_twee_generatie_restores_met_een_extra_schema(database_project: CreatedP
             timeout=600.0,
             interval=10.0,
         ), f"DATABASE_DB komt na '{round_name}' niet uit op {target_db}"
-        start = _read_secret(namespace, secret_name)
-        logger.info("[%s] NA DE RESTORE: db=%s schema=%s", round_name, start["DATABASE_DB"], start["DATABASE_SCHEMA"])
+        logger.info("[%s] NA DE RESTORE: db=%s", round_name, target_db)
 
+    # 1. De tweede ronde moet een ANDERE database opgeleverd hebben dan de eerste. Waren
+    #    ze gelijk, dan schreef ronde 2 in de database die ronde 1 zojuist vulde.
+    assert databases[0] != databases[1], (
+        f"beide restorerondes kwamen uit op dezelfde database {databases[0]}: "
+        f"de generatie loopt niet op en de tweede restore schrijft over de eerste heen"
+    )
+    assert databases[0].endswith("_v1"), databases
+    assert databases[1].endswith("_v2"), databases
+
+    # 2. En het aantal rijen is nog steeds wat het was. pg_restore telt rijen op, dus een
+    #    restore in een gevulde database maakt er 2 x _ROWS van.
     final = _read_secret(namespace, secret_name)
-    logger.info(
-        "EINDTOESTAND: db=%s schema=%s extra=%s",
-        final["DATABASE_DB"],
-        final["DATABASE_SCHEMA"],
-        final.get(schema_variable),
-    )
-
-    # 4. De applicatie ziet haar EIGEN tabellen onder de naam die zij leest.
-    code, output = _psql(final, f"SELECT to_regclass('\"{final['DATABASE_SCHEMA']}\".klanten')")
+    code, output = _psql(final, f'SELECT count(*) FROM "{final["DATABASE_SCHEMA"]}".klanten')
     assert code == 0, output[:1000]
-    assert output not in ("", "\\N"), (
-        f"tabel klanten staat niet in {final['DATABASE_SCHEMA']} (DATABASE_SCHEMA): {output[:500]}"
-    )
-
-    # 5. En het extra schema bestaat nog, met zijn eigen tabel, onder de naam waar
-    #    DATABASE_SCHEMA_RAPPORTAGE naar wijst.
-    assert schema_variable in final, f"{schema_variable} is uit het geheim verdwenen na de restores"
-    code, output = _psql(final, f"SELECT to_regclass('\"{final[schema_variable]}\".cijfers')")
-    assert code == 0, output[:1000]
-    assert output not in ("", "\\N"), (
-        f"tabel cijfers staat niet in {final[schema_variable]} ({schema_variable}): {output[:500]}"
+    logger.info("EINDTOESTAND: db=%s schema=%s rijen=%s", final["DATABASE_DB"], final["DATABASE_SCHEMA"], output)
+    assert output == str(_ROWS), (
+        f"na twee restorerondes staan er {output} rijen in {final['DATABASE_DB']}, verwacht {_ROWS}"
     )
