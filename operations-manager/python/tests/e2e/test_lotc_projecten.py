@@ -190,7 +190,14 @@ def test_zoeken_en_sorteren_staan_in_de_toolbar(client: httpx.Client) -> None:
     assert 'slot="start"' in antwoord, opgeslokt
     assert "nldd-search-field" in antwoord, opgeslokt
     assert 'slot="end"' in antwoord, "de sorteerknop staat niet in de toolbar"
-    assert 'slot="overflow"' in antwoord, "de overloopgroep voor smalle schermen ontbreekt"
+    # GEEN slot="overflow" meer, en dat is het omgekeerde van wat hier stond. De eigen
+    # overloopgroep is weg omdat de enkele aanwezigheid ervan de toolbar permanent een
+    # "Meer"-knop laat tonen: het sorteren stond daardoor dubbel op het scherm, ook op 1440
+    # breed, en de items in die groep werden nooit klikbaar. Het geeft niets op, want de
+    # overloop van dit component werkt sowieso niet - zonder de groep verschijnt op 1024px
+    # wel een "Meer"-knop maar is zijn menu leeg. De volledige meting staat in
+    # request_for_components.md; tests/test_lotc_toolbar_overloop.py houdt hem eruit.
+    assert 'slot="overflow"' not in antwoord, "de eigen overloopgroep is terug"
 
     # Een UITKLAPMENU en geen menuBALK. <c-menu> rendert altijd nldd-menu-bar, en die
     # bleef in de popup-slot leeg; daarom staat het menu hier als nldd-markup. Slaat dit
