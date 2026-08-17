@@ -9,13 +9,26 @@ Provides:
 
 from typing import Any
 
-from opi.api.v2.models import APPROVALS_DESCRIPTION, ApprovalNoticeResponse
+from opi.api.v2.models import APPROVALS_DESCRIPTION, ApprovalNoticeResponse, ErrorCategory, error_category_for
 from opi.core.async_task_service import TaskType
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Shared sub-models
 # ---------------------------------------------------------------------------
+
+#: Every result model that reports ``error_type`` reports the category beside it, in the
+#: same words, so a client does not have to keep its own table of free-form strings that
+#: goes quiet the day a new one appears. Filled in by ``task_response_from_dict``.
+ERROR_CATEGORY_FIELD = Field(
+    default=None,
+    description=(
+        "What kind of failure this is, for a client that must decide whether to retry or "
+        "to blame the call. 'InvalidInput' means the request itself was wrong and retrying "
+        "changes nothing; 'Unknown' means we could not attribute it. Derived from "
+        "'error_type', which stays the specific reason."
+    ),
+)
 
 
 class SubtaskStatus(BaseModel):
@@ -104,6 +117,7 @@ class UpsertDeploymentResult(BaseModel):
     deployment_name: str | None = None
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class UpdateImageResult(BaseModel):
@@ -203,6 +217,7 @@ class AddComponentResult(BaseModel):
     component_name: str | None = None
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class AddComponentToDeploymentResult(BaseModel):
@@ -220,6 +235,7 @@ class AddComponentToDeploymentResult(BaseModel):
     deployment_name: str | None = None
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class AddServiceResult(BaseModel):
@@ -245,6 +261,7 @@ class AddServiceResult(BaseModel):
     service: str | None = None
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class ConfigureServiceResult(BaseModel):
@@ -289,6 +306,7 @@ class ConfigureServiceResult(BaseModel):
     # Failure fields
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class ConfigureServiceValuesResult(BaseModel):
@@ -311,6 +329,7 @@ class ConfigureServiceValuesResult(BaseModel):
     # Failure fields
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class ManageDatabaseSchemasResult(BaseModel):
@@ -334,6 +353,7 @@ class ManageDatabaseSchemasResult(BaseModel):
     # Failure fields
     error: str | None = None
     error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +417,24 @@ class TaskResponse[TResult: BaseModel](BaseModel):
     completed_at: str | None = Field(default=None, description="ISO 8601 timestamp when execution finished")
 
 
+def _with_error_category(result: object) -> object:
+    """Put ``error_category`` beside ``error_type`` on a failed task result.
+
+    Here and not at the two dozen places that build a failure dict: this is the single
+    point where a stored task record becomes an API answer (V1 and V2 both), so one
+    translation covers every task type, including the ones added tomorrow.
+
+    A handler that sets the category itself keeps it. Everything else gets the derived
+    one, ``Unknown`` included: for a client, a category that is absent and a category
+    that says Unknown mean the same thing, and saying it out loud is the difference
+    between "we looked and cannot attribute this" and "this endpoint does not report
+    categories".
+    """
+    if not isinstance(result, dict) or "error_type" not in result or result.get("error_category"):
+        return result
+    return {**result, "error_category": error_category_for(result.get("error_type")).value}
+
+
 def task_response_from_dict(task: dict) -> dict:
     """Convert a task record dict to a TaskResponse-compatible dict.
 
@@ -410,7 +448,7 @@ def task_response_from_dict(task: dict) -> dict:
         "progress_percent": task.get("progress_percent", 0),
         "current_step": task.get("current_step", ""),
         "subtasks": task.get("subtasks"),
-        "result": task.get("result"),
+        "result": _with_error_category(task.get("result")),
         "error_message": task.get("error_message"),
         "created_at": _safe_datetime_str(task.get("created_at")) or "",
         "started_at": _safe_datetime_str(task.get("started_at")),
