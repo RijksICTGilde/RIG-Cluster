@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from opi.services.catalog.sleep_mode.api_models import DISABLED
+
 logger = logging.getLogger(__name__)
 
 
@@ -140,10 +142,13 @@ async def wake(
 
         cluster = deployment.get("cluster", "")
         config = sleep_config.load(project_data, cluster)
-        current = sleep_state.read(project_data, deployment_name)
         if config is None or not config.matches(deployment_name):
             steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
-            return WakeResult(changed=False, state=current.state)
+            # ``disabled``, not the stored state: sleep-mode does not apply here, and
+            # ``/status`` already says exactly that for this same case. Reporting the
+            # stored ``awake`` would make one word mean two things across the two
+            # endpoints again -- the thing this pair of fields exists to end.
+            return WakeResult(changed=False, state=DISABLED)
 
         waking_timeout = timedelta(minutes=settings.SLEEP_MODE_WAKING_TIMEOUT_MINUTES)
         if not service.begin_wake(project_data, deployment_name, now, waking_timeout):
@@ -209,10 +214,10 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
 
         cluster = deployment.get("cluster", "")
         config = sleep_config.load(project_data, cluster)
-        current = sleep_state.read(project_data, deployment_name)
         if config is None or not config.matches(deployment_name):
             steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
-            return WakeResult(changed=False, state=current.state)
+            # Same as in ``wake``: sleep-mode does not apply, so the state is ``disabled``.
+            return WakeResult(changed=False, state=DISABLED)
 
         # Mint a wake token only when a waker will actually be generated, mirroring the
         # sweeper's SLEEP branch, so the deployment can be woken from its own page later.
