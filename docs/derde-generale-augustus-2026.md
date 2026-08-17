@@ -275,7 +275,32 @@ Blokindeling op een podbudget van 34 (surge en infrastructuur meegerekend):
 
 ### De metingen per project
 
-*(volgt)*
+**Niet gedaan.** Dit is het gat in deze doorloop en het staat hier als zodanig, niet
+weggeschreven.
+
+Twee oorzaken, in deze orde van gewicht:
+
+1. **De omgeving.** 261 pods passen niet op een node van 110, dus dit moest in zeven blokken
+   met opruimen ertussen. Het gereedschap daarvoor is af en getoetst
+   (`blokken.py`: importeren -> reconcile -> asynchrone refresh -> wachten tot het cluster stil
+   is -> meten op ArgoCD-health, podstatus, URL's en de projectenrepo -> opruimen), en de
+   blokindeling hierboven komt daaruit. Er is geen enkel blok mee gedraaid.
+2. **Mijn eigen tijdsbesteding.** Ik heb de eerste sandboxgang 35 minuten laten lopen voordat
+   ik doorkreeg dat hij op de node vastliep in plaats van op een test, en ik heb in de eerste
+   uren op achtergrondruns gewacht met poll-lussen in plaats van er ander werk naast te doen.
+   Die twee dingen samen zijn ongeveer het budget dat taak 2 nodig had. De les staat nu in
+   `workflow/build.md` zodat de volgende doorloop hem niet opnieuw betaalt.
+
+Wat er wel uit de voorbereiding vaststaat en bruikbaar is voor wie dit oppakt:
+
+- het aantal (47) en de inhoud (137 deployments, 261 pod-instanties) is nageteld;
+- alle 47 API-sleutels zijn ontsleutelbaar met de platformsleutel van dit cluster, dus de
+  bestanden horen bij deze sandbox en de import kan zonder verrassingen;
+- `regel-k4c` (65 pods) en `wies` (35 pods) passen op deze node niet in een blok met iets
+  anders, en `regel-k4c` past ook alleen niet;
+- `algor-odc` is nu al een voorbeeld van de categorie "niet onze fout": zijn initdb-pod staat
+  17 uur in `ImagePullBackOff` op `ghcr.io/rijksictgilde/...`, een image die dit cluster niet
+  kan trekken.
 
 ## 3. Wat er sinds de tweede generale bij is gekomen
 
@@ -398,6 +423,158 @@ Twee dingen bij dit punt:
   Alle 47 sandboxprojecten en alle bestaande projecten declareren `sandboxed-local`, dus er
   is op dit cluster geen deployment op een ander cluster om die melding mee op te wekken.
 
+### 3. De wekker (RC-124)
+
+Gedeeltelijk. De twee snelheden staan vast in de Go-tests van `images/zad-waker`, en die zijn
+alle acht groen: `TestIdleCadenceIsSlow`, `TestVisitorGetsTheFastCadence`,
+`TestPageVisitCountsAsWaiting`, `TestProbesAreNotVisitors`, `TestWaitingExpires`,
+`TestWakeInFlightKeepsTheFastCadence`, `TestDefaultIdleInterval`. Op de bron:
+`idlePollInterval = 30 * time.Second` tegen een snelle cadans van 3s, dus **120 statusvragen
+per uur zonder wachtende bezoeker** in plaats van 1200. En wie wel wacht krijgt nog steeds de
+3s-cadans; dat is wat `TestVisitorGetsTheFastCadence` en `TestWakeInFlightKeepsTheFastCadence`
+pinnen.
+
+Op het cluster is `test_sandbox_sleep_mode.py::test_sleep_then_wake_via_waker_page` groen
+(343.8s), dus slapen en wakker worden via de wekkerpagina werkt echt.
+
+**Niet gemeten:** de statusvragen per uur op het draaiende cluster geteld. Dat vraagt een uur
+kijken naar een slapende deployment, en dat is niet gebeurd.
+
+### 4. De restore-generatie (RC-123)
+
+| Test | Uitkomst |
+|---|---|
+| `test_sandbox_restore_generation.py::test_twee_restores_geven_twee_databases_en_verdubbelen_de_rijen_niet` | **PASSED** (93.0s) |
+| `test_sandbox_restore_extra_schema.py::test_twee_generatie_restores_met_een_extra_schema` | **PASSED** (119.7s) |
+| `test_sandbox_restore_op_slot.py::test_wijziging_na_een_restore_slaagt` | **PASSED** (69.5s) |
+| `test_sandbox_restore_van_buiten.py::test_restore_van_buiten` | **PASSED** (59.1s) |
+
+Twee restores achter elkaar geven dus een andere doelnaam en de rijen verdubbelen niet - dat is
+precies de claim, en de test telt de rijen zelf.
+
+### 5. De bijlagen (RC-119)
+
+| Test | Uitkomst |
+|---|---|
+| `test_sandbox_secret_rollout.py::test_een_vervangen_bijlage_bereikt_de_draaiende_pod` | **PASSED** (46.9s) |
+| `test_sandbox_secret_rollout.py::test_een_gewijzigde_env_var_bereikt_de_draaiende_pod` | **PASSED** (56.3s) |
+
+En die 202-met-task-id is hier ook echt gemeten, van de andere kant: de TLS-doorloop viel om
+omdat hij nog 200/201 verwachtte op de bijlage-upload. Zie de reparatie hieronder.
+
+### 6. De slaapstand (RC-119)
+
+Alle vijf groen: `test_sandbox_sleep_mode.py` (1) en `test_sandbox_sleep_mode_ui.py` (4,
+waaronder `test_deployment_sleep_wake_toggle` en `test_wizard_wrote_sleep_config`).
+
+### 7. De takenlijst
+
+Gedeeltelijk. Op `/tasks` is gemeten dat **geen enkele afgeronde taak aanklikbaar is** - dat is
+de helft die `b66d717c` toevoegde. De andere helft (een LOPENDE taak is aanklikbaar en leidt
+naar de voortgang) is **niet** gemeten: op het moment van kijken stonden er nul taken in de
+lijst, en afgeronde taken worden opgeruimd. De unittests
+(`tests/test_taken_voortgang_link.py`) dekken beide kanten wel.
+
+### 11. Dienst binden aan een component
+
+Gedeeltelijk, en de reden staat erbij. `POST /api/v2/projects/jc-77j/services` met
+`{"service": "keycloak", "components": ["frontend"]}` terwijl keycloak al op projectniveau
+staat:
+
+```
+-> 202 accepted, task_type=add_service
+taak -> completed
+result: services_added=[], services_skipped=["publish-on-web","keycloak"],
+        processing={"status":"skipped"}
+```
+
+Dus het **slaat op** en de dienst die al op projectniveau stond wordt netjes als `skipped`
+gerapporteerd in plaats van als fout - dat is het gedrag dat de API-beschrijving belooft
+("configure-then-bind werkt in beide richtingen"). Maar **"EN rolt uit" is niet aangetoond**:
+dit component had die binding al, dus er was niets te doen en `processing` is terecht
+`skipped`. Om die helft te meten is een dienst nodig die op projectniveau staat en nog niet op
+het component; dat is niet gedaan.
+
+### 12. Het opslaan van een project met een versleuteld veld (de RC-118-blokkade)
+
+Dit gaf in RC-118 permanent "Project is gewijzigd sinds je begon met bewerken". Vijf keer
+achter elkaar een AGE-versleuteld aliasveld opgeslagen op `jc-77j`:
+
+```
+opslag 1/5 -> 202  conflict=False   taak -> completed
+opslag 2/5 -> 202  conflict=False   taak -> completed
+opslag 3/5 -> 202  conflict=False   taak -> completed
+opslag 4/5 -> 202  conflict=False   taak -> completed
+opslag 5/5 -> 202  conflict=False   taak -> completed
+```
+
+**Geen enkele conflictmelding.** De blokkade is weg. De fix zit in `4f483796` (de driewegmerge
+struikelde over containervormen, niet over inhoud) na een eerdere poging die is teruggedraaid
+(`8c6d1013` -> `9b2ab3b5`); alle drie staan op deze tak.
+
+Onderweg een meetfout die het vermelden waard is: mijn eerste poging schreef aliassen met een
+vrije waarde en kreeg vijf keer een **422** - "de alias verwijst niet naar een
+platformvariabele". Dat is een validatie en geen conflict, maar het raakt de opslagweg dus
+helemaal niet. Met `$OIDC_URL` als waarde raakt hij hem wel. Een 422 die je voor een geslaagde
+meting aanziet is een groen dat niets bewijst.
+
+---
+
+## De reparatie die deze doorloop wel gedaan heeft
+
+`tests/e2e/test_sandbox_tls_override.py::test_doorloop_van_de_tls_override` was rood. Niet op
+een productfout:
+
+```
+POST /api/v2/projects/{p}/services/attachments/attachment
+-> 202 {"status":"accepted","task_id":"...","task_type":"configure_attachment", ...}
+
+assert upload.status_code in (200, 201)   # de test
+```
+
+Die weg is **asynchroon geworden** - dat is punt 5 van dit plan, de bijlage die zichzelf
+uitrolt. De test eiste nog het synchrone antwoord en las de catalogus voordat de taak had
+gelopen. Aangepast: 202 toegestaan en dan op de taak wachten, met 200/201 nog steeds geldig
+zodat hij niet omslaat als deze weg ooit weer synchroon wordt.
+
+```
+voor:  1 failed, 2 passed
+na:    3 passed          (278.34s)
+```
+
+Dat was de laatste rode in de sandboxsuite die geen omgevingsartefact was.
+
+---
+
 ## Oordeel
 
-*(volgt)*
+**Deze tak kan niet naar main, en de reden is geen test: hij merget niet.**
+`git merge-tree --write-tree origin/main origin/release-augustus-2026` geeft **14 conflicten**,
+waarvan zes modify/delete op `opi/templates/project-details*` - sjablonen die `main` in 21
+commits heeft doorontwikkeld (delete bevestigen, lui laden, de resourcekaart, een backup-request
+per project) en die deze tak in de LOTC-migratie heeft verwijderd. Dat werk moet opnieuw op de
+LOTC-sjablonen worden gezet, en de twee tests die het pinnen vallen in datzelfde conflict, dus
+geen enkele test merkt het als iemand hier de releasekant kiest.
+
+**De tak is tijdens de hele doorloop blijven stilstaan op `572be9c8741bf76631f0f661c3223567a7774a24`**
+- gemeten bij het begin, tussendoor en aan het eind, met `git fetch` ertussen. De uitspraken in
+dit verslag gaan dus over de tak die naar main zou gaan, en dat was in RC-118 juist niet zo.
+
+Wat er verder over te zeggen valt, in het kort:
+
+- **Alles wat losstaand te draaien is, is groen.** Unit 9285 passed / 0 rood. Browser 2x 447
+  passed / 0 rood met identieke uitslagen. zad-waker 8/8. ruff, ruff format en pyright schoon.
+  De sandboxsuite is na de reparatie hierboven en na herhaling van de vijf omgevingsfouten
+  volledig groen op de 66 tests die op deze node kunnen draaien.
+- **Vier tests zijn niet gedraaid** (`-m punt14`): ze bouwen zelf een project van 25
+  deployments en 71 pods en vullen daarmee de node, dus hun rollout kan niet slagen. Dat is een
+  grens van de sandbox, geen uitspraak over de tak.
+- **Taak 2 is niet gedaan.** Zie daar; de oorzaak is deels de omgeving en deels mijn eigen
+  tijdsbesteding, en beide staan er met naam bij.
+- **Van de twaalf punten van taak 3 werken er acht aantoonbaar** (1, 2, 4, 5, 6, 9, 10, 12),
+  en vier gedeeltelijk met de ontbrekende helft expliciet benoemd (3, 7, 8, 11). Geen enkel punt
+  is stuk gebleken.
+- **Eén ding dat "gedaan" lijkt maar het niet is:** de CAA-grendel staat in de publieke DNS nog
+  niet aan. Geen van de drie zones heeft een CAA-record. De code werkt, de uit-stand werkt, de
+  bootblokkade is dicht - maar de eerste echte uitrol schrijft in publieke DNS en is nog niet
+  gebeurd.
