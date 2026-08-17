@@ -77,6 +77,15 @@ KIND_MAP: dict[ServiceType, tuple[str, str, tuple[str, ...]]] = {
     ServiceType.PLATFORM: ("metadata", "platform", ()),
     ServiceType.PUBLISH_ON_WEB: ("metadata", "web", ()),
     ServiceType.METRICS_SCRAPER: ("metadata", "metrics", ()),
+    # send-email is metadata en geen eigen probe-soort, en dat is een bewuste keuze.
+    # De dienst injecteert wel degelijk verbindingsgegevens (SMTP_HOST, SMTP_USERNAME,
+    # SMTP_PASSWORD, SMTP_FROM), dus SKIP zou onwaar zijn: die lijst is voor diensten
+    # die niets te verbinden hebben. Een echte round-trip zou een nieuwe probe-soort
+    # vragen die EHLO en AUTH doet tegen de relay, en dat is een wijziging in het
+    # e2e-allservices-image zelf. Als metadata-doel wordt nu wel bewaakt dat de
+    # variabelen daadwerkelijk geinjecteerd worden; wat niet bewaakt wordt is of ze
+    # ook werken. Dat verschil is de moeite van een vervolgstap waard.
+    ServiceType.SEND_EMAIL: ("metadata", "mail", ()),
 }
 
 # Services that legitimately inject no connection variables and so have no probe.
