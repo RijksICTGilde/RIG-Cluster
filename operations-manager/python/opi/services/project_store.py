@@ -1184,6 +1184,27 @@ class GitProjectStore(ProjectStore):
             logger.info("ProjectStore bootstrap loaded %d project(s) at %s", len(loaded), (self._cache_head or "?")[:8])
 
 
+def _as_plain(value: Any) -> Any:
+    """Dezelfde inhoud in kale Python-containers, voor een diff die over inhoud gaat.
+
+    ruamel geeft bij het laden ``CommentedMap``/``CommentedSeq`` en scalarsubklassen als
+    ``LiteralScalarString`` terug. Voor ``==`` zijn die gelijk aan hun kale evenknie, maar
+    DeepDiff rapporteert ze als typewissel en maakt de diff daarmee grover dan de
+    wijziging is. Deze functie neemt alleen de VORM weg; elke waarde blijft wat hij was.
+    """
+    if isinstance(value, dict):
+        return {key: _as_plain(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_as_plain(item) for item in value]
+    if isinstance(value, str) and type(value) is not str:
+        return str(value)
+    if isinstance(value, int) and not isinstance(value, bool) and type(value) is not int:
+        return int(value)
+    if isinstance(value, float) and type(value) is not float:
+        return float(value)
+    return value
+
+
 def _apply_our_change_to(
     *, base: dict[str, Any], ours: dict[str, Any], theirs: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -1214,6 +1235,25 @@ def _apply_our_change_to(
     would refine it.
     """
     try:
+        # De diff moet over INHOUD gaan, niet over containervormen. ``theirs`` komt uit
+        # een YAML-lees en is een ruamel ``CommentedMap``; ``base`` kan dat ook zijn;
+        # ``ours`` is doorgaans een platte ``dict`` uit een formulier of API-pad. Voor
+        # ``==`` maakt dat niets uit (CommentedMap is een dict-subklasse), maar DeepDiff
+        # ziet het als ``type_changes`` op het EERSTE knooppunt waar de vormen uiteenlopen
+        # -- in het gemeten geval de root -- en stopt daar met afdalen. De hele wijziging
+        # wordt dan een vervanging-in-zijn-geheel, en zo'n delta verifieert zijn oude
+        # waarde tegen ``theirs``: elk verschil, hoe onschuldig ook, laat hem weigeren.
+        # Gevolg (RC-118): de domeinwizard gaf een PERMANENT "gewijzigd sinds je begon
+        # met bewerken" terwijl niemand anders schreef en het bestand niet bewoog.
+        #
+        # Normaliseren verzint geen gelijkheid: alleen de vorm wordt gelijkgetrokken,
+        # de waarden niet, dus een echte botsing op hetzelfde veld blijft een conflict
+        # (de tests op de grenzen staan in test_store_merge_containervormen.py). De
+        # delta wordt op de ECHTE ``theirs`` toegepast; de verificatie daarbinnen
+        # vergelijkt met ``==`` en is dus container-blind.
+        base = _as_plain(base)
+        ours = _as_plain(ours)
+
         diff = DeepDiff(base, ours)
 
         collisions = _conflicting_added_keys(diff, ours=ours, theirs=theirs)
