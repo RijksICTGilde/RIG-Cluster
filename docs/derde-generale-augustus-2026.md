@@ -144,6 +144,22 @@ uv run pytest tests/e2e/test_sandbox_component_values_api.py -m sandbox -q
 ==> 5 passed in 191.63s
 ```
 
+**De aantallen, met de noemer erbij.** Zelf nageteld met `--collect-only`:
+
+| Selectie | Aantal |
+|---|---|
+| `-m sandbox` | **74** |
+| waarvan `-m "sandbox and punt14"` | 4 - niet draaibaar op deze node, zie hierboven |
+| `-m "sandbox and not punt14"` - de noemer van de tweede gang | **70** |
+
+De tweede gang zelf gaf **63 passed, 1 failed, 5 errors** (1:14:48). Dat zijn 69 uitkomsten
+op 70 tests; de 70e is een voorwaardelijke skip (verscheidene sandboxtests slaan hun
+clusterdeel over als `kubectl` iets niet teruggeeft), maar welke dat was heb ik niet
+vastgelegd en reken ik dus niet als groen mee. Na de reparatie van de ene failure en na de
+vijf errors losstaand te hebben herhaald: **69 van de 70 groen, 1 overgeslagen, 0 rood** -
+plus 4 punt14-tests die niet gedraaid zijn. Een eerdere versie van dit verslag zei "de 66
+tests"; dat getal komt met geen enkele telling overeen.
+
 Dus **de code is niet stuk**: ik was de suite gestart binnen twee minuten na het verwijderen
 van zes projecten, terwijl namespaces en CNPG-clusters nog aan het opruimen waren. Na een
 bulkverwijdering moet het cluster eerst tot rust komen; anders meet de eerste test van de
@@ -317,14 +333,23 @@ hetzelfde script) en eist ook dat het venster echt geraakt is. **Twee keer groen
 browsergangen.
 
 Het plan vraagt ook naar een andere dienst met een cascade, omdat de bug in elk afhankelijk
-keuzeveld zat. Geteld op de bron, per `data-rerender` met zijn `widget=`:
+keuzeveld zat. Geteld op de bron met een AST-telling over `opi/` - elke
+`EditableVisualizer` met `data-rerender` in zijn `attributes`, per `widget=`. In totaal
+**23 velden**:
 
 | Aantal | Widget | Waar |
 |---|---|---|
-| 11 | `SELECT` | cross-domain, TLS-modus (2x), URL-formaat, Basisdomein (2x), Root component, kaal domein, Leveren als (2x), Herhaling, Deployment |
-| 2 | `TEXT` | Subdomein, Eigen domein |
+| 19 | `SELECT` | cross-domain (8: Bron-project, Bron-deployment, Mijn component, Doel-project, Doel-deployment, Doel-component, Regel 2x), publish-on-web (6: TLS-modus, TLS-modus (deze deployment), URL-formaat, Basisdomein, Root component, kaal domein), deployments (4: Basisdomein, Herhaling, Deployment, Leveren als), bijlagen (1: Leveren als) |
+| 2 | `TEXT` | Subdomein, Eigen domein (beide publish-on-web) |
 | 1 | `CHECKBOX` | keycloak, "Toegang beperken" |
 | 1 | `CHECKBOX_GROUP` | de componentstap, "Gebruikte services" |
+
+Een eerdere versie van dit verslag zei **15 velden waarvan 11 SELECT**. Dat getal komt uit
+RC-127 en is te laag: het is een grep-telling, en die telt de acht cross-domain-velden als
+**een**, omdat ze een gedeelde constante `_CASCADE` als `attributes` meekrijgen in plaats van
+een eigen dict. Basisdomein en "Leveren als" staan bovendien elk op twee plekken. Alleen het
+getal en de noemer veranderen; de niet-SELECT-getallen (2 / 1 / 1) klopten wel, en dat zijn
+juist de velden waar de conclusie hieronder over gaat.
 
 De fix zelf is **generiek**: een `change`-luisteraar op `document` met filter
 `[data-rerender]`, dus geen veldnaam en geen dienst erin. Maar het herstelpad zet
@@ -426,7 +451,7 @@ Twee dingen bij dit punt:
 ### 3. De wekker (RC-124)
 
 Gedeeltelijk. De twee snelheden staan vast in de Go-tests van `images/zad-waker`, en die zijn
-alle acht groen: `TestIdleCadenceIsSlow`, `TestVisitorGetsTheFastCadence`,
+alle acht groen: `TestWokenFromOutside`, `TestIdleCadenceIsSlow`, `TestVisitorGetsTheFastCadence`,
 `TestPageVisitCountsAsWaiting`, `TestProbesAreNotVisitors`, `TestWaitingExpires`,
 `TestWakeInFlightKeepsTheFastCadence`, `TestDefaultIdleInterval`. Op de bron:
 `idlePollInterval = 30 * time.Second` tegen een snelle cadans van 3s, dus **120 statusvragen
@@ -565,7 +590,8 @@ Wat er verder over te zeggen valt, in het kort:
 - **Alles wat losstaand te draaien is, is groen.** Unit 9285 passed / 0 rood. Browser 2x 447
   passed / 0 rood met identieke uitslagen. zad-waker 8/8. ruff, ruff format en pyright schoon.
   De sandboxsuite is na de reparatie hierboven en na herhaling van de vijf omgevingsfouten
-  volledig groen op de 66 tests die op deze node kunnen draaien.
+  **0 rood op de 70 tests die op deze node kunnen draaien** (74 met de `sandbox`-marker, min
+  de 4 punt14-tests): 69 groen en 1 voorwaardelijke skip die ik niet heb vastgelegd.
 - **Vier tests zijn niet gedraaid** (`-m punt14`): ze bouwen zelf een project van 25
   deployments en 71 pods en vullen daarmee de node, dus hun rollout kan niet slagen. Dat is een
   grens van de sandbox, geen uitspraak over de tak.
