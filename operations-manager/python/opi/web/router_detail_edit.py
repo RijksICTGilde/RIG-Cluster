@@ -844,6 +844,10 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
+    # Waarschuwingen van deze stap, die meereizen naar de volgende: ze houden de navigatie
+    # niet tegen, maar mogen ook niet verdwijnen zodra je doorklikt.
+    section_warnings: dict[str, list[str]] = {}
+
     # Backup/restore sections have no editables - store raw form data directly
     if _is_backup_restore_flow(flow_id) and not section.editables:
         state.store_step_data(section_id, submitted_data)
@@ -884,7 +888,6 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # is "op aanvraag") is silently swallowed — invisible to the user AND to
         # the logs, which makes a stuck wizard impossible to diagnose.
         section_global_errors: list[str] = []
-        section_warnings: dict[str, list[str]] = {}
         if not errors and section.enforcer:
             section_global_errors = await processor.enforce_sections(
                 submitted_yaml,
@@ -894,7 +897,15 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
                 field_warnings=section_warnings,
             )
 
-        if errors or section_global_errors or section_warnings:
+        # ALLEEN fouten houden de stap tegen. Een waarschuwing informeert, en hield hier
+        # de navigatie tegen: bij een eigen domein op een cluster dat er geen certificaat
+        # voor kan aanvragen kwam er geen enkele fout, alleen een FieldWarning -- en dus
+        # bleef je op dezelfde stap staan zonder dat iets vertelde waarom, want een
+        # waarschuwing rendert als gewone tekst en niet als foutmelding. Precies de
+        # "vastzittende wizard" die de toelichting hierboven wilde kunnen diagnosticeren.
+        # De waarschuwing gaat mee naar de volgende stap, want dat is waar je er iets aan
+        # doet: in deze flow is dat de certificaatstap.
+        if errors or section_global_errors:
             # Log why the step did not advance so it is diagnosable from Loki, not
             # just from the (previously missing) on-screen message.
             logger.warning(
@@ -970,13 +981,30 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         yaml_data = state.get_merged_data()
 
         step_html = _render_section_html(next_section, yaml_data, locked_services=None)
-        rendered = _render_modal_step(request, wizard_token, state, flow_id, next_section, step_html, project_name)
+        rendered = _render_modal_step(
+            request,
+            wizard_token,
+            state,
+            flow_id,
+            next_section,
+            step_html,
+            project_name,
+            warnings=section_warnings or None,
+        )
         return HTMLResponse(content=rendered)
 
     # All steps completed - show review if flow requires it
     if flow.show_review:
         save_modal_state_by_token(wizard_token, state)
-        return _render_modal_review(request, wizard_token, project_name, flow_id, active_sections, state)
+        return _render_modal_review(
+            request,
+            wizard_token,
+            project_name,
+            flow_id,
+            active_sections,
+            state,
+            field_warnings=section_warnings or None,
+        )
 
     # No review needed - do the final submit
     save_modal_state_by_token(wizard_token, state)
@@ -1115,8 +1143,15 @@ def _render_modal_review(
     active_sections,
     state,
     global_errors: list[str] | None = None,
+    field_warnings: dict[str, list[str]] | None = None,
 ) -> HTMLResponse:
-    """Render the review/confirmation page for the modal wizard."""
+    """Render the review/confirmation page for the modal wizard.
+
+    ``field_warnings`` carries the warnings raised by the step that was just submitted.
+    A warning informs and does not block, so on every intermediate step it travels along
+    to the next step -- but the LAST step has no next step, and the warning fell on the
+    floor exactly there, on the screen where the user decides to confirm.
+    """
     from opi.web.router_wizard import _build_section_fields
 
     yaml_data = state.get_merged_data()
@@ -1141,6 +1176,10 @@ def _render_modal_review(
     steps = state.get_steps(section_meta)
 
     warnings: list[str] = []
+
+    # Warnings from the final step, which has no next step to carry them to
+    for messages in (field_warnings or {}).values():
+        warnings.extend(messages)
 
     # Restore flows: warn that restoring may break the running application
     if flow_id == "modal-restore":
