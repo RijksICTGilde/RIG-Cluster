@@ -119,12 +119,45 @@ spec:
 
           echo "Found dump file: $DUMP_PATH"
 
-          # Detect the source schema from the dump (may differ from target)
-          # pg_restore --list output: "6; 2615 27880 SCHEMA - bt_iu7_productie bt_iu7_productie"
-          SOURCE_SCHEMA=$(pg_restore --list "$DUMP_PATH" 2>/dev/null | \
-            grep " SCHEMA - " | head -1 | awk '{print $6}')
-          echo "Source schema in dump: ${SOURCE_SCHEMA:-unknown}"
+          # Which schema in the dump holds the application's own data.
+          #
+          # The name is supplied by the platform (SOURCE_SCHEMA, from
+          # generate_database_name) and is NOT read from the dump. The dump carries
+          # every schema of the source database, and pg_restore --list sorts them
+          # ALPHABETICALLY, so taking the first one renamed whichever extra schema
+          # happened to sort first -- a project with an extra schema restored to a
+          # second generation ended up with the reporting schema under the application's
+          # schema name and its own data left behind (RC-121).
+          echo "Source schema (named by the platform): ${SOURCE_SCHEMA:-<not supplied>}"
           echo "Target schema: ${TARGET_DB_NAME}"
+
+          # When a rename is needed, both names end up in SQL identifiers. Ours are
+          # [a-z][a-z0-9_]*; anything else is refused rather than quoted and hoped for.
+          # Only checked on the rename path: a restore into an externally named database
+          # never puts these names in SQL and has no reason to care.
+          LC_ALL=C
+          export LC_ALL
+          check_identifier() {
+            case "$2" in
+              [a-z]*) ;;
+              *)
+                echo "ERROR: $1 '$2' does not start with a lower-case letter"
+                exit 1
+                ;;
+            esac
+            case "$2" in
+              *[!a-z0-9_]*)
+                echo "ERROR: $1 '$2' contains characters outside a-z, 0-9 and _"
+                exit 1
+                ;;
+            esac
+          }
+
+          run_sql() {
+            PGPASSWORD="${TARGET_DB_PASSWORD}" psql \
+              -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
+              -v ON_ERROR_STOP=1 -Atc "$1"
+          }
 
           # Restore using pg_restore
           # --no-owner: Don't set ownership
@@ -138,26 +171,66 @@ spec:
               echo "pg_restore completed (some warnings may be expected)"
             }
 
-          # Rename schema if source differs from target (e.g. restoring
-          # productie backup into kopie database)
-          if [ -n "$SOURCE_SCHEMA" ] && [ "$SOURCE_SCHEMA" != "${TARGET_DB_NAME}" ]; then
+          # Rename the default schema when the source database had a different name
+          # (a new generation, or a restore into a differently named target). Extra
+          # schemas ({project}_{deployment}_{postfix}) carry no generation, so their
+          # name is already right in the target database and they are left alone.
+          if [ -z "${SOURCE_SCHEMA}" ]; then
+            # No name was supplied. Only proceed when the dump itself already carries a
+            # schema with the target name -- then there is provably nothing to rename.
+            # Anything else would be a guess, and a restore that guesses puts the wrong
+            # data under the name the application reads.
+            if pg_restore --list "$DUMP_PATH" | grep -qF " SCHEMA - ${TARGET_DB_NAME} "; then
+              echo "No source schema supplied, and the dump already carries ${TARGET_DB_NAME}: nothing to rename"
+            else
+              echo "ERROR: the platform did not supply the source schema name and the dump"
+              echo "       does not contain a schema named ${TARGET_DB_NAME}, so which schema"
+              echo "       belongs to the application cannot be established. Schemas in the dump:"
+              pg_restore --list "$DUMP_PATH" | grep " SCHEMA - " || true
+              exit 1
+            fi
+          elif [ "${SOURCE_SCHEMA}" = "${TARGET_DB_NAME}" ]; then
+            echo "Source and target schema are both ${TARGET_DB_NAME}: nothing to rename"
+          else
+            check_identifier "source schema" "${SOURCE_SCHEMA}"
+            check_identifier "target schema" "${TARGET_DB_NAME}"
+
             echo "Renaming schema ${SOURCE_SCHEMA} -> ${TARGET_DB_NAME}..."
 
-            # Drop the empty target schema (created during DB setup)
-            PGPASSWORD="${TARGET_DB_PASSWORD}" psql \
-              -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
-              -c "DROP SCHEMA IF EXISTS ${TARGET_DB_NAME} CASCADE;" || true
+            SOURCE_PRESENT=$(run_sql "SELECT count(*) FROM pg_namespace WHERE nspname = '${SOURCE_SCHEMA}'")
+            if [ "${SOURCE_PRESENT}" != "1" ]; then
+              echo "ERROR: schema ${SOURCE_SCHEMA} is not present after the restore, so there is"
+              echo "       nothing to rename. Schemas now in ${TARGET_DB_NAME}:"
+              run_sql "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' ORDER BY nspname"
+              exit 1
+            fi
 
-            # Rename source schema to target
-            PGPASSWORD="${TARGET_DB_PASSWORD}" psql \
-              -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
-              -c "ALTER SCHEMA ${SOURCE_SCHEMA} RENAME TO ${TARGET_DB_NAME};"
+            # Only the EMPTY target schema created during database setup may be dropped.
+            # If it holds anything, that is data the restore just put there, and dropping
+            # it with CASCADE is how a successful-looking restore used to destroy exactly
+            # what it had restored.
+            TARGET_OBJECTS=$(run_sql "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '${TARGET_DB_NAME}'")
+            if [ "${TARGET_OBJECTS}" != "0" ]; then
+              echo "ERROR: target schema ${TARGET_DB_NAME} already holds ${TARGET_OBJECTS} object(s);"
+              echo "       refusing to drop it. Nothing has been removed."
+              exit 1
+            fi
 
-            echo "Schema renamed successfully"
+            # RESTRICT, not CASCADE: anything the object count above does not cover
+            # (functions, types) still stops the restore instead of being dropped.
+            run_sql "DROP SCHEMA IF EXISTS \"${TARGET_DB_NAME}\" RESTRICT;"
+            run_sql "ALTER SCHEMA \"${SOURCE_SCHEMA}\" RENAME TO \"${TARGET_DB_NAME}\";"
+
+            echo "Renamed ${SOURCE_SCHEMA} to ${TARGET_DB_NAME}"
+            UNTOUCHED=$(run_sql "SELECT string_agg(nspname, ', ' ORDER BY nspname) FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname NOT IN ('information_schema', 'public', '${TARGET_DB_NAME}')")
+            echo "Schemas left untouched: ${UNTOUCHED:-none}"
           fi
 
           # Cleanup
           rm -rf /tmp/restore
+
+          echo "Schemas in ${TARGET_DB_NAME} after restore:"
+          run_sql "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' ORDER BY nspname"
 
           echo "Database restore completed successfully for {{ reference_name }} -> {{ target_db_name }}"
       env:
@@ -169,6 +242,10 @@ spec:
           value: "{{ target_db_name }}"
         - name: TARGET_DB_USER
           value: "{{ target_db_user }}"
+        # The default schema of the database the dump was taken from. Validated
+        # against the platform naming rule before this manifest is rendered.
+        - name: SOURCE_SCHEMA
+          value: "{{ source_schema }}"
         - name: TARGET_DB_PASSWORD
           value: "{{ target_db_password }}"
         - name: S3_ENDPOINT
