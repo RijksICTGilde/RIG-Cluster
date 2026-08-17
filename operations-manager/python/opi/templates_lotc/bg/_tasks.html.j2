@@ -32,13 +32,21 @@
                            subtaken en de fouten per component. Die pagina bestond al maar
                            was alleen bereikbaar direct na het aanmaken van een project.
 
-                           Alleen voor een achtergrondTAAK. Deze tabel toont twee bronnen
-                           door elkaar, en een run (databaseconsole, job) heeft geen
-                           voortgangspagina; zonder deze voorwaarde zou zo'n rij naar
-                           /projects/progress/None wijzen. _normalize_run zet task_id
-                           daarom expliciet op None. #}
+                           Twee voorwaarden, en allebei om een eigen reden.
+
+                           item.task_id: alleen een achtergrondTAAK heeft een
+                           voortgangspagina. Deze tabel toont twee bronnen door elkaar, en
+                           een run (databaseconsole, job) heeft er geen; _normalize_run zet
+                           task_id daarom expliciet op None.
+
+                           item.active: alleen een taak die nog LOOPT. Een afgeronde taak
+                           wordt opgeruimd, en dan wijst de link naar een pagina die "Taak
+                           niet beschikbaar" zegt - een dode link die er levend uitziet.
+                           Hier stond eerst dat juist een mislukte taak een link verdiende
+                           ("daar staat wat er misging"), maar dat gaat alleen op zolang hij
+                           er nog is. #}
                         <c-td>
-                            {% if item.task_id %}
+                            {% if item.task_id and item.active %}
                                 <c-link href="/projects/progress/{{ item.task_id }}">{{ item.soort }}</c-link>
                             {% else %}
                                 {{ item.soort }}
