@@ -71,6 +71,11 @@ def _normalize_run(run: dict) -> dict:
     status = run.get("status") or ""
     return {
         "soort": _RUN_LABELS.get(kind, kind),
+        # Een run is geen achtergrondtaak en heeft dus geen voortgangspagina. Expliciet
+        # None en niet weglaten: de tabel beslist hierop of de cel een link wordt, en een
+        # ontbrekende sleutel zou daar als lege string uitkomen en naar
+        # /projects/progress/ wijzen.
+        "task_id": None,
         "deployment": run.get("deployment"),
         "status": _STATUS_LABELS.get(status, status),
         "active": status in _RUN_ACTIVE,
@@ -87,6 +92,13 @@ def _normalize_task(task: dict) -> dict:
     status = task.get("status") or ""
     return {
         "soort": _TASK_LABELS.get(task_type, task_type.replace("_", " ").capitalize()),
+        # Het id gaat mee zodat de tabel naar de voortgangspagina kan wijzen. Die pagina
+        # (/projects/progress/<id>) bestond al met de balk, de huidige stap, de subtaken en
+        # de fouten per component, maar was alleen bereikbaar in het scherm direct na het
+        # aanmaken van een project: de takenlijst had het id in handen en gooide het hier
+        # weg. Ook bij een AFGERONDE taak, want juist bij een mislukking wil je die pagina
+        # in -- daar staat wat er misging.
+        "task_id": task.get("task_id"),
         "deployment": task.get("deployment_name"),
         "status": _STATUS_LABELS.get(status, status),
         "active": status in _TASK_ACTIVE,
