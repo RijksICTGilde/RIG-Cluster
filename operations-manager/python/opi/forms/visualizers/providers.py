@@ -836,8 +836,11 @@ class DomainFormatOptionsProvider:
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
             "Hangt af van het gekozen base-domain: de streepjes-varianten kunnen altijd, de "
-            "punt-varianten alleen als dat domein losse subdomeinen met punten ondersteunt."
+            "punt-varianten alleen als dat domein losse subdomeinen met punten ondersteunt. "
+            "Welk domein dat kan staat als 'supports-dots' bij het domein in de clusterlijst."
         ),
+        endpoint="GET /api/v2/projects/{project_name}/clusters",
+        path="clusters[].base-domains[].supports-dots",
     )
 
     def __init__(self, base_domain: str | None = None, cluster: str | None = None) -> None:
@@ -1503,6 +1506,8 @@ class CrossDomainPortOptionsProvider:
         description=(
             "De inkomende poorten van het ontvangende component, plus 4180 als daar een authorization-wall voor staat."
         ),
+        endpoint="GET /api/v2/projects/{project_name}/components",
+        path="components[].ports",
     )
 
     def __init__(
@@ -1666,8 +1671,10 @@ class InviteAuthMethodOptionsProvider:
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
             "sso kan altijd; local alleen als het keycloak-template van dit project lokale "
-            "accounts toestaat (services/keycloak/config/template is dan niet sso-only)."
+            "accounts toestaat (het template is dan niet sso-only)."
         ),
+        endpoint="GET /api/v2/projects/{project_name}/services/keycloak/config",
+        path="configurations[].config.template",
     )
 
     def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:

@@ -42,6 +42,31 @@ class TaskListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+async def _pending_rollout_for(task_service: object, project_name: str | None) -> dict | None:
+    """Hoeveel opgeslagen wijzigingen er nog op het cluster wachten, of ``None``.
+
+    Best effort en met opzet: dit is een ETIKET bij het antwoord over de taak. Werkt de
+    telling niet, dan is het antwoord over die taak nog steeds geldig en zou een fout hier
+    een geslaagde schrijfactie als mislukt laten lezen.
+    """
+    if not project_name:
+        return None
+    ophalen = getattr(task_service, "get_deferred_rollouts", None)
+    if ophalen is None:
+        return None
+    try:
+        pending = await ophalen(project_name)
+    except Exception:
+        logger.warning("Kon de wachtende wijzigingen van project %s niet tellen", project_name, exc_info=True)
+        return None
+    if not isinstance(pending, dict):
+        # Een takenservice die dit niet echt beantwoordt (een federatieproxy, een dubbel in
+        # een toets) levert iets anders op. Dan is er geen telling, en dat is een leeg etiket
+        # en geen fout.
+        return None
+    return {"project": project_name, **pending}
+
+
 def _validate_task_id(task_id: str) -> str:
     """Validate that task_id is a valid UUID string and return it."""
     try:
@@ -174,6 +199,15 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
 
     response_body = task_response_from_dict(task)
     status = task.get("status", "")
+
+    if status not in ("pending", "claimed", "running"):
+        # De teller hoort bij het antwoord dat zegt dat de schrijfactie klaar is, en niet bij
+        # een tweede aanroep erna. Twee gelijktijdige schrijfacties meldden "5" en "4
+        # wachtende wijzigingen" (zad-cli, punt 24): allebei waar op hun eigen moment, want
+        # elke client las de teller zelf op een ander tijdstip. Hier is dat moment vast: de
+        # taak is af, dus zijn eigen wijziging telt mee, en er is geen tweede ronde meer die
+        # ernaast kan zitten.
+        response_body["pending_rollout"] = await _pending_rollout_for(task_service, task.get("project_name"))
 
     if status in ("pending", "claimed", "running"):
         return JSONResponse(

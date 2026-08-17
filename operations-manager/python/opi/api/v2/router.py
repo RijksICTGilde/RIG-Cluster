@@ -87,7 +87,12 @@ from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
 from opi.connectors.subdomain import get_supported_base_domains, validate_base_domain, validate_subdomain
 from opi.core.auth_decorators import get_current_user
-from opi.core.cluster_config import get_ingress_postfix, get_selectable_clusters, supports_custom_domain_certificates
+from opi.core.cluster_config import (
+    get_domain_supports_dots,
+    get_ingress_postfix,
+    get_selectable_clusters,
+    supports_custom_domain_certificates,
+)
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
@@ -521,7 +526,19 @@ async def list_clusters_v2(
                 # alsnog te sturen. Wat hij WEL moet weten (schrijf de domeinnaam zelf) staat
                 # in de beschrijving van base-domain.
                 "base-domains": [
-                    ClusterDomainOption(value=str(option["value"]), label=str(option["label"]))
+                    # model_validate om dezelfde reden als hierboven: het veld heet in het
+                    # antwoord "supports-dots" en met een streepje is dat geen geldige
+                    # parameternaam. De waarde komt uit dezelfde clusterconfiguratie als de
+                    # lijst zelf; zonder dit veld is de regel achter domain-format (punt-
+                    # varianten alleen op een domein dat punten aankan) wel beschreven en
+                    # nergens uit af te leiden.
+                    ClusterDomainOption.model_validate(
+                        {
+                            "value": str(option["value"]),
+                            "label": str(option["label"]),
+                            "supports-dots": get_domain_supports_dots(cluster, str(option["value"])),
+                        }
+                    )
                     for option in ClusterBaseDomainOptionsProvider(cluster=cluster).get_options()
                     if option["value"] != CUSTOM_DOMAIN_SENTINEL
                 ],

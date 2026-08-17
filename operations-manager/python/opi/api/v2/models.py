@@ -481,6 +481,19 @@ class ClusterDomainOption(BaseModel):
         examples=["rijksapp.nl"],
     )
     label: str = Field(description="Hoe de portal deze keuze toont.", examples=["rijksapp.nl"])
+    supports_dots: bool = Field(
+        default=False,
+        alias="supports-dots",
+        description=(
+            "Of dit domein losse subdomeinen met punten aankan. Dat bepaalt welke waarden van "
+            "'domain-format' hier passen: de streepjes-varianten kunnen altijd, de punt-varianten "
+            "alleen als dit waar is. Zonder dit veld was die regel wel beschreven en nergens uit "
+            "af te leiden."
+        ),
+        examples=[True],
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ClusterInfo(BaseModel):

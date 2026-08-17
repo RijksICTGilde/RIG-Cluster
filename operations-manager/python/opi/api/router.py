@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.openapi_choices import CHOICES_PROVIDER_KEY
 from opi.api.params import DeploymentNamePath, ProjectNamePath
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
@@ -439,6 +440,9 @@ class UpsertDeploymentRequest(BaseModel):
         None,
         description=DOMAIN_FORMAT_DESCRIPTION,
         examples=["component-deployment-subdomain"],
+        # Dezelfde keuzebron als op de publish-on-web-config: het is hetzelfde veld, dus een
+        # client hoort er hetzelfde over te lezen (zad-cli, punt 23).
+        json_schema_extra={CHOICES_PROVIDER_KEY: "DomainFormatOptionsProvider"},
     )
     subdomain: str | None = Field(
         None,
@@ -454,6 +458,7 @@ class UpsertDeploymentRequest(BaseModel):
         description=BASE_DOMAIN_DESCRIPTION,
         examples=["rijksapp.nl"],
         max_length=255,
+        json_schema_extra={CHOICES_PROVIDER_KEY: "ClusterBaseDomainOptionsProvider"},
     )
 
     model_config = {
