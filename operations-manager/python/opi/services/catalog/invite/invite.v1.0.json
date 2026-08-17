@@ -177,7 +177,7 @@
   "description": "Project-level invite config: a default language and the list of active invites.\n\n``settings`` is gone (it was a second level meaning the same as ``config``);\n``default-language`` sits next to ``active``.",
   "properties": {
     "active": {
-      "description": "The invitations that can currently be redeemed.",
+      "description": "The invitations that can currently be redeemed. Over the API this is presented as ONE entry rather than a list, because in practice there is one; add a second with the PATCH on this field. Roles go in 'realm-roles' -- 'roles' is the older spelling of the same thing and only still exists so older project files keep validating.",
       "items": {
         "$ref": "#/$defs/InviteEntry"
       },
