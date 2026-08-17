@@ -1,8 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zad.rijksapp.dev/schemas/project-v2.json",
-  "title": "ZAD Project File (v2)",
-  "description": "Schema for ZAD self-service project definition files (schema-version 2).",
+  "title": "ZAD Project File (v2.7)",
+  "description": "Schema for ZAD self-service project definition files at the LATEST schema version. Older versions are not described here: they are composed from this file plus the legacy patches in schemas/project_legacy/ (see opi/core/project_schema.py). Anything an existing migration already removes belongs in the patch of the version that still carried it, not here.",
+  "x-zad-schema-version": 2.7,
   "type": "object",
   "required": ["name"],
   "additionalProperties": false,
@@ -52,84 +53,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/remote-source" }
     },
-    "invites": { "$ref": "#/$defs/invites" },
-    "backup": { "$ref": "#/$defs/backup" },
-    "domains": { "$ref": "#/$defs/domains" }
+    "backup": { "$ref": "#/$defs/backup" }
   },
 
   "$defs": {
-
-    "domains": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "allowed-subdomains": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/allowed-subdomain-entry" }
-        },
-        "allowed-domains": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/allowed-domain-entry" }
-        }
-      }
-    },
-
-    "allowed-subdomain-entry": {
-      "type": "object",
-      "required": ["domain", "subdomains"],
-      "additionalProperties": false,
-      "properties": {
-        "domain": { "type": "string" },
-        "subdomains": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/allowed-subdomain-detail" }
-        }
-      }
-    },
-
-    "allowed-subdomain-detail": {
-      "type": "object",
-      "required": ["name", "status"],
-      "additionalProperties": false,
-      "properties": {
-        "name": { "type": "string" },
-        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
-        "history": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/domain-history-entry" }
-        }
-      }
-    },
-
-    "allowed-domain-entry": {
-      "type": "object",
-      "required": ["domain", "status"],
-      "additionalProperties": false,
-      "properties": {
-        "domain": { "type": "string" },
-        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
-        "supports-dots": { "type": "boolean" },
-        "issuer": { "type": "string" },
-        "restricted-subdomains": { "type": "boolean" },
-        "history": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/domain-history-entry" }
-        }
-      }
-    },
-
-    "domain-history-entry": {
-      "type": "object",
-      "required": ["date", "status"],
-      "additionalProperties": false,
-      "properties": {
-        "date": { "type": "string" },
-        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
-        "by": { "type": "string" },
-        "message": { "type": "string" }
-      }
-    },
-
 
     "age-encrypted": {
       "type": "string",
@@ -159,22 +86,7 @@
       "properties": {
         "age-public-key": { "type": "string" },
         "age-private-key": { "$ref": "#/$defs/age-encrypted" },
-        "api-key": { "$ref": "#/$defs/age-encrypted" },
-        "keycloak": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/keycloak-config" }
-        }
-      }
-    },
-
-    "keycloak-config": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "host": { "type": "string" },
-        "realm": { "type": "string" },
-        "username": { "type": "string" },
-        "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
+        "api-key": { "$ref": "#/$defs/age-encrypted" }
       }
     },
 
@@ -207,14 +119,16 @@
     },
 
     "service-entry": {
-      "description": "A service reference: either a plain string name or a single-key dict with config.",
+      "description": "A service entry: a bare string, the uniform record ({name|reference, config}), or the legacy single-key dict. The config shape is validated per-service by the provider models, not here.",
       "oneOf": [
         { "type": "string" },
         {
           "type": "object",
-          "minProperties": 1,
-          "maxProperties": 1,
-          "additionalProperties": {}
+          "anyOf": [
+            { "required": ["name"] },
+            { "required": ["reference"] },
+            { "minProperties": 1, "maxProperties": 1 }
+          ]
         }
       ]
     },
@@ -229,7 +143,7 @@
     },
 
     "attachment-data-entry": {
-      "description": "A stored attachment in the project-level attachments catalog.",
+      "description": "A stored attachment in the project-level attachments catalog. Still not referenced from anywhere in this document -- the project-level services list validates its envelope only -- but no longer validated by nothing: the attachments service models its catalog itself (catalog/attachments/catalog_model.py, AttachmentCatalog) and validate_service_configs now walks the DEFINE-side 'data' block through Service.data_model_for. That model is the authority (it also rejects duplicate ids and unencrypted content); this shape is kept as the written record of what the envelope holds.",
       "type": "object",
       "required": ["id", "filename", "content"],
       "additionalProperties": false,
@@ -240,33 +154,7 @@
       }
     },
 
-    "attachment-use-entry": {
-      "description": "A component-level reference to a catalog attachment plus how it is delivered.",
-      "type": "object",
-      "required": ["reference", "provide-as"],
-      "additionalProperties": false,
-      "properties": {
-        "reference": { "type": "string", "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?\\Z", "maxLength": 40 },
-        "provide-as": { "type": "string", "enum": ["file", "env-var"] },
-        "path": { "type": "string", "pattern": "^/[^\\u0000]*\\Z" },
-        "env-name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" }
-      },
-      "if": { "properties": { "provide-as": { "const": "file" } } },
-      "then": { "required": ["path"] },
-      "else": { "required": ["env-name"] }
-    },
 
-    "publish-on-web-config": {
-      "description": "TLS handling for a published component. standard = platform certificate (Let's Encrypt); passthrough = the pod presents its own certificate (couple it separately as an attachment, mounted in the pod); provided = own certificate terminated on the ingress (reference the catalog attachment PEM via 'attachment'). Applies at root (project services), per component (component services), and as a per-deployment-component override; resolution is deployment > component > root > standard.",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "tls": { "type": "string", "enum": ["standard", "passthrough", "provided"] },
-        "attachment": { "type": "string", "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?\\Z", "maxLength": 40 }
-      },
-      "if": { "properties": { "tls": { "const": "provided" } }, "required": ["tls"] },
-      "then": { "required": ["attachment"] }
-    },
 
     "component-path": {
       "type": "object",
@@ -339,16 +227,6 @@
       }
     },
 
-    "storage-entry": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "type": { "type": "string" },
-        "size": { "type": "string" },
-        "mount-path": { "type": "string", "pattern": "^(?!.*\\.\\.)/[\\w./-]+\\Z" }
-      }
-    },
-
     "component": {
       "type": "object",
       "required": ["name"],
@@ -384,7 +262,6 @@
             { "type": "object" }
           ]
         },
-        "publish-on-web": { "type": "boolean" },
         "sso-rijk": { "type": "boolean" },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
@@ -399,33 +276,18 @@
           }
         },
         "command": {
+          "description": "Het startcommando van de container, als losse argumenten. Vervangt de ENTRYPOINT van het image, dus de eigen opstartlogica van het image vervalt. Laat weg om het image zijn eigen commando te laten gebruiken; een lege lijst is daarom ongeldig. Een gecombineerd commando zoals [\"/bin/sh\", \"-c\", \"<script>\"] mag, dus spaties, aanhalingstekens en regeleindes horen in een argument thuis.",
           "type": "array",
-          "items": { "type": "string" },
-          "minItems": 1
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "minItems": 1,
+          "maxItems": 10
         },
         "aliases": {
-          "type": "object",
-          "additionalProperties": { "type": "string" }
-        },
-        "uses-services": {
-          "description": "Legacy v1 field — should be migrated to services.",
-          "type": "array",
-          "items": { "$ref": "#/$defs/service-entry" }
-        },
-        "storage": {
-          "description": "Legacy v1 field — should be migrated to services.",
-          "type": "array",
-          "items": { "$ref": "#/$defs/storage-entry" }
-        },
-        "probe": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Health-check configuration for the component's first inbound port. scheme=tcp (default when omitted) keeps a plain tcpSocket probe; http/https switch to an httpGet probe so a TLS-serving app completes the handshake instead of logging a failed one every cycle. readiness-path may check dependencies; liveness-path should stay dumb (a failing liveness restarts the pod). startup reuses liveness-path. Paths default to '/' and are ignored when scheme=tcp. scheme=none disables all probes (no startup/liveness/readiness), for apps that expose no probeable port such as mTLS-only ports or components that register before they listen.",
-          "properties": {
-            "liveness-path": { "type": "string", "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z" },
-            "readiness-path": { "type": "string", "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z" },
-            "scheme": { "type": "string", "enum": ["none", "tcp", "http", "https"] }
-          }
+          "description": "Aliassen van dit component: de naam die de applicatie verwacht, gekoppeld aan een platform-variabele (POSTGRES_HOST: $DATABASE_SERVER_HOST). Opgeslagen als EEN AGE-blok waarvan de platte tekst KEY=value-regels zijn, net als user-env-vars; een onversleutelde mapping blijft geldig.",
+          "oneOf": [
+            { "type": "object", "additionalProperties": { "type": "string" } },
+            { "type": "string" }
+          ]
         }
       }
     },
@@ -439,11 +301,6 @@
         "cluster": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "repository": { "type": "string" },
-        "base-domain": { "type": ["string", "null"] },
-        "subdomain": { "type": ["string", "null"] },
-        "domain-mode": { "type": "string" },
-        "domain-format": { "type": "string" },
-        "issuer": { "type": "string" },
         "configuration": { "$ref": "#/$defs/age-encrypted" },
         "components": {
           "type": "array",
@@ -461,9 +318,19 @@
           "type": "array",
           "items": { "$ref": "#/$defs/deployment-helmfile" }
         },
-        "root-component": { "type": "string" },
         "clone-from": { "$ref": "#/$defs/clone-from" },
-        "backup": { "$ref": "#/$defs/deployment-backup" }
+        "backup": { "$ref": "#/$defs/deployment-backup" },
+        "sleep": { "$ref": "#/$defs/deployment-sleep" }
+      }
+    },
+
+    "deployment-sleep": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": { "type": "string", "enum": ["awake", "sleeping", "waking"] },
+        "expires-at": { "type": "string", "format": "date-time" },
+        "wake-token": { "$ref": "#/$defs/age-encrypted" }
       }
     },
 
@@ -492,30 +359,9 @@
           "items": { "$ref": "#/$defs/component-path" }
         },
         "services": {
+          "comment": "Envelope only, keyed by service name. Two shapes occur: a record carrying a config (publish-on-web, attachments) and a list of per-mount records (the storage services, which track a PVC generation per mount). What may be inside config is the service's own business, validated against its config_model_for(DEPLOYMENT_COMPONENT) by validate_service_configs. This used to name attachments and publish-on-web explicitly, which put their field lists in two places at once.",
           "type": "object",
-          "properties": {
-            "attachments": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "config": {
-                  "type": "array",
-                  "items": { "$ref": "#/$defs/attachment-use-entry" }
-                }
-              }
-            },
-            "publish-on-web": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "config": { "$ref": "#/$defs/publish-on-web-config" }
-              }
-            }
-          },
-          "additionalProperties": {
-            "type": "array",
-            "items": { "$ref": "#/$defs/deployment-service" }
-          }
+          "additionalProperties": { "$ref": "#/$defs/deployment-component-service" }
         },
         "user-env-vars": {
           "oneOf": [
@@ -529,9 +375,11 @@
           "additionalProperties": { "type": "string", "pattern": "^[^\\r\\n\\u0000]*\\Z" }
         },
         "command": {
+          "description": "Het startcommando van de container, als losse argumenten. Vervangt de ENTRYPOINT van het image, dus de eigen opstartlogica van het image vervalt. Laat weg om het image zijn eigen commando te laten gebruiken; een lege lijst is daarom ongeldig. Een gecombineerd commando zoals [\"/bin/sh\", \"-c\", \"<script>\"] mag, dus spaties, aanhalingstekens en regeleindes horen in een argument thuis.",
           "type": "array",
-          "items": { "type": "string" },
-          "minItems": 1
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "minItems": 1,
+          "maxItems": 10
         },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
@@ -541,17 +389,40 @@
     },
 
     "deployment-service": {
+      "comment": "Envelope only: {name|reference, schema-version?, config?}. What may appear inside config is the service's own business, checked against its config_model by validate_service_configs. Closing this here once meant no service other than the clone-state pair could use the deployment layer at all.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "name": { "type": "string" },
         "reference": { "type": "string" },
+        "schema-version": { "type": "string" },
         "config": { "$ref": "#/$defs/deployment-service-config" }
       }
     },
 
+    "deployment-component-service": {
+      "comment": "Either a record with a config, or a list of per-reference records.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "reference": { "type": "string" },
+            "schema-version": { "type": "string" },
+            "config": {}
+          }
+        },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deployment-service" }
+        }
+      ]
+    },
+
     "deployment-service-config": {
+      "comment": "Deliberately open: per-service models validate the contents. generation/revisions are named only so the shared clone-state shape stays documented in one place.",
       "type": "object",
-      "additionalProperties": false,
       "properties": {
         "generation": { "type": "integer" },
         "revisions": {
@@ -642,11 +513,6 @@
         "services": {
           "type": "array",
           "items": { "$ref": "#/$defs/service-entry" }
-        },
-        "uses-services": {
-          "description": "Legacy v1 field.",
-          "type": "array",
-          "items": { "$ref": "#/$defs/service-entry" }
         }
       }
     },
@@ -666,11 +532,6 @@
         },
         "helm-values": {},
         "services": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/service-entry" }
-        },
-        "uses-services": {
-          "description": "Legacy v1 field.",
           "type": "array",
           "items": { "$ref": "#/$defs/service-entry" }
         }
@@ -712,55 +573,6 @@
         "secret-key": { "$ref": "#/$defs/age-encrypted-or-plain" },
         "bucket": { "type": "string" },
         "secure": { "type": "boolean" }
-      },
-      "additionalProperties": false
-    },
-
-    "invites": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "settings": {
-          "type": "object",
-          "properties": {
-            "default_language": { "type": "string" }
-          },
-          "additionalProperties": false
-        },
-        "active": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/invite" }
-        }
-      }
-    },
-
-    "invite": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "key": { "type": "string" },
-        "roles": { "type": "array", "items": { "type": "string" } },
-        "realm_roles": { "type": "array", "items": { "type": "string" } },
-        "client_roles": {
-          "type": "object",
-          "additionalProperties": { "type": "array", "items": { "type": "string" } }
-        },
-        "groups": { "type": "array", "items": { "type": "string" } },
-        "restrict_domain": { "type": "string" },
-        "auth_methods": { "type": "array", "items": { "type": "string" } },
-        "contact_email": { "type": "string" },
-        "application_url": { "type": "string" },
-        "message": { "$ref": "#/$defs/i18n-text" },
-        "success_title": { "$ref": "#/$defs/i18n-text" },
-        "success_button": { "$ref": "#/$defs/i18n-text" }
-      }
-    },
-
-    "i18n-text": {
-      "type": "object",
-      "properties": {
-        "nl": { "type": "string" },
-        "en": { "type": "string" }
       },
       "additionalProperties": false
     },

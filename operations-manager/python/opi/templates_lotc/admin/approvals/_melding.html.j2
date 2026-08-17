@@ -1,0 +1,8 @@
+{# De melding na een geslaagde goed- of afkeuring.
+
+   Was een <c-card> om een <div class="flash-success"> (vinkje, groene kleur, flexregel
+   uit base.css). Dat is <c-alert type="success">: icoon, uitlijning en kleur horen bij
+   het type melding, niet bij deze pagina. #}
+{% if success_message %}
+<c-alert type="success" heading="{{ success_message }}"/>
+{% endif %}

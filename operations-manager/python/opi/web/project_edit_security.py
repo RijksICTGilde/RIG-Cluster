@@ -19,6 +19,7 @@ from fastapi import HTTPException, Request
 
 from opi.core.auth_decorators import get_current_user
 from opi.services.project_authorization import (
+    PROJECT_EDIT_ROLES,
     get_user_role_for_project,
     is_user_authorized_for_project,
 )
@@ -42,7 +43,7 @@ def require_project_edit_access(request: Request, project_name: str):
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
 
     user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ("admin", "owner"):
+    if user_role not in PROJECT_EDIT_ROLES:
         raise HTTPException(status_code=403, detail="Onvoldoende rechten om dit project te bewerken")
 
     return project, user_email

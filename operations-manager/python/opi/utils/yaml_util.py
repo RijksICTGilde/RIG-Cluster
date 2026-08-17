@@ -11,8 +11,53 @@ from typing import Any
 
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
+from ruamel.yaml.representer import RoundTripRepresenter
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString, SingleQuotedScalarString
 
 logger = logging.getLogger(__name__)
+
+
+def _fits_literal_block(data: str) -> bool:
+    """Whether a string should be written as a literal block scalar.
+
+    A carriage return disqualifies it: a block scalar writes the ``\\r`` out raw and
+    YAML normalizes line breaks on read, so ``a\\r\\nb`` would come back as ``a\\nb``.
+    Quoting escapes it and the value survives the round-trip.
+    """
+    return "\n" in data and "\r" not in data
+
+
+def _represent_multiline_str(representer: Any, data: str) -> Any:
+    """Emit a multi-line string as a literal block (``|``), not a quoted one-liner.
+
+    AGE-encrypted values (realm passwords, api keys, user-env-vars, attachments)
+    are wrapped in ``LiteralScalarString`` where they are produced, but that ruamel
+    type does not survive a round-trip through JSON, which the modal-edit wizard
+    session does. The value then reached the dumper as a plain ``str`` and came out
+    as one unreadable line full of ``\\n`` escapes. Choosing the style here, in the
+    one canonical writer, makes it hold for every write path instead of asking each
+    of them to remember.
+    """
+    return representer.represent_scalar("tag:yaml.org,2002:str", data, style="|" if _fits_literal_block(data) else None)
+
+
+_QUOTED_REPRESENTERS = {
+    SingleQuotedScalarString: RoundTripRepresenter.represent_single_quoted_scalarstring,
+    DoubleQuotedScalarString: RoundTripRepresenter.represent_double_quoted_scalarstring,
+}
+
+
+def _represent_quoted_scalarstring(representer: Any, data: str) -> Any:
+    """Same rule for a scalar the loader read back as quoted.
+
+    ``preserve_quotes`` keeps the quoting of values that were already quoted, which is
+    what we want for single-line ones. A multi-line quoted scalar, though, is only ever
+    the damage described above, already committed; re-emitting it verbatim would leave
+    such a file broken forever. Rewriting it as a block repairs it on the next write.
+    """
+    if _fits_literal_block(data):
+        return representer.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    return _QUOTED_REPRESENTERS[type(data)](representer, data)
 
 
 def _create_yaml_writer() -> YAML:
@@ -23,6 +68,11 @@ def _create_yaml_writer() -> YAML:
     yaml.default_flow_style = False
     yaml.indent(mapping=2, sequence=4, offset=2)
     yaml.representer.ignore_aliases = lambda *_: True
+    # Registration is by exact type, so LiteralScalarString and the other ruamel
+    # scalar-string subclasses keep their own representers and are unaffected.
+    yaml.representer.add_representer(str, _represent_multiline_str)
+    for quoted_type in _QUOTED_REPRESENTERS:
+        yaml.representer.add_representer(quoted_type, _represent_quoted_scalarstring)
     return yaml
 
 

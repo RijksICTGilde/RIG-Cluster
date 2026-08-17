@@ -1,0 +1,142 @@
+# Sanitized copy of a real production project (Keycloak template + own PostgreSQL).
+# schema-version 2: current shape, no schema-version bump expected beyond the
+# routine v2 -> v2.6 normalizations.
+schema-version: 2
+name: algor-odc
+display-name: Algoritmeregister (eigen database)
+description: Project created via self-service portal
+
+users:
+  - email: user@rijksoverheid.nl
+    role: admin
+
+clusters:
+  - odcn-production
+
+services:
+  - publish-on-web
+  - keycloak:
+      config:
+        template: algoritmeregister
+        additional_redirect_uris:
+          - http://localhost:8080/*
+          - http://127.0.0.1:8080/*
+  - namespace-postgresql-database:
+      config:
+        image: ghcr.io/rijksictgilde/algoritmeregister/postgresql-with-dictionaries:2024.11.19
+        registry: github-registry
+        instances: 1
+        storage: 1Gi
+        privileges:
+          - SUPERUSER
+
+registries:
+  - name: github-registry
+    url: ghcr.io
+    username: someuser
+    password: base64+age:UExBQ0VIT0xERVJfUkVHSVNUUllfUEFTU1dPUkQ=
+
+repositories:
+  - name: main-repo
+    url: https://github.com/RijksICTGilde/rig-cluster-application-test.git
+    username: git
+    password: base64+age:UExBQ0VIT0xERVJfUkVQT19QQVNTV09SRA==
+    branch: main
+    path: .
+    project_name: algor-odc
+
+components:
+  - name: component-1
+    type: single
+    ports:
+      inbound: [8000]
+      outbound: [80, 443]
+    path:
+      - match: /aanleverapi
+      - match: /api
+    uses-components: []
+    resources:
+      cpu: '1'
+      requests:
+        memory: 649Mi
+      limits:
+        memory: 649Mi
+      history:
+        - timestamp: '2026-03-24T12:52:18.964665+00:00'
+          limits:
+            memory: 649Mi
+          source: auto-tune
+          deployment: deployment-1
+          reason: 'Limit: max 499Mi + 25% + 25Mi headroom = 649Mi'
+    aliases:
+      POSTGRES_SERVER: $DATABASE_SERVER_HOST
+      POSTGRES_PORT: $DATABASE_SERVER_PORT
+      POSTGRES_USER: $DATABASE_SERVER_USER
+      POSTGRES_PASSWORD: $DATABASE_PASSWORD
+      POSTGRES_DB: $DATABASE_DB
+      KEYCLOAK_URI: $OIDC_URL
+      KEYCLOAK_REALM: $OIDC_REALM
+      PREVIEW_URL: $PUBLIC_HOST
+    user-env-vars: |-
+      -----BEGIN AGE ENCRYPTED FILE-----
+      UExBQ0VIT0xERVJfRU5WX1ZBUlM=
+      -----END AGE ENCRYPTED FILE-----
+    services:
+      - publish-on-web
+      - keycloak
+      - namespace-postgresql-database
+
+  - name: component-2
+    type: frontend
+    ports:
+      inbound: [3000]
+      outbound: [80, 443]
+    path: /
+    uses-components: []
+    resources:
+      requests:
+        memory: 158Mi
+      limits:
+        memory: 158Mi
+    user-env-vars: |-
+      -----BEGIN AGE ENCRYPTED FILE-----
+      UExBQ0VIT0xERVJfRU5WX1ZBUlNfMg==
+      -----END AGE ENCRYPTED FILE-----
+    services:
+      - publish-on-web
+      - keycloak
+
+deployments:
+  - name: deployment-1
+    cluster: odcn-production
+    namespace: algor-odc
+    repository: main-repo
+    subdomain: deployment-1
+    configuration: base64+age:UExBQ0VIT0xERVJfREVQTE9ZX0NPTkZJRw==
+    components:
+      - reference: component-1
+        image: ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24-fixed
+        registry: github-registry
+        resources:
+          requests:
+            memory: 649Mi
+          limits:
+            memory: 649Mi
+      - reference: component-2
+        image: ghcr.io/rijksictgilde/algoritmeregister/frontend:2024.11.21
+        registry: github-registry
+        resources:
+          requests:
+            memory: 158Mi
+          limits:
+            memory: 158Mi
+
+config:
+  age-public-key: age1d489e9c48pmwam6603vecp7y29zz9fx5cgpe9uk6cu9l7asfzg9sx5s0tq
+  age-private-key: base64+age:UExBQ0VIT0xERVJfQUdFX1BSSVZBVEVfS0VZ
+  api-key: base64+age:UExBQ0VIT0xERVJfQVBJX0tFWQ==
+  keycloak:
+    - host: https://keycloak.rijksapp.nl
+      realm: algor-odc-odcn-production
+      username: algor_odc_odcn_production_admin
+      password: base64+age:UExBQ0VIT0xERVJfS0NfQURNSU5fUFdE

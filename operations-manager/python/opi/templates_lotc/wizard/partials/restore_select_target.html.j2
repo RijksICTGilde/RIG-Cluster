@@ -1,0 +1,93 @@
+{#
+  Restore wizard step 2: Select target deployment for restore.
+
+  Supports two modes:
+  - existing: restore to an existing deployment (default)
+  - new: create a new deployment as the restore target
+
+  Expected context (via yaml_data):
+    - _cluster_deployments: list of dicts with keys: name, namespace
+    - _current_cluster: str
+    - _source_deployment: str (deployment name from selected backup run)
+    - _selected_deployment: str (deployment the user was viewing when they
+      opened the modal — used as the target_deployment default so a careless
+      submit doesn't restore into deployments[0])
+    - _restore_mode: str ("existing" or "new", default "existing")
+    - _project_name: str
+#}
+{% set deployments = _cluster_deployments | default([]) %}
+{% set restore_mode = _restore_mode | default("existing") %}
+{% set source_deployment = _source_deployment | default("") %}
+{% set default_target = _selected_deployment | default(deployments[0].name if deployments else "") %}
+
+<div id="restore-target-content">
+<c-layout-flow gap="lg">
+    {# Mode toggle #}
+    <fieldset>
+        <legend class="rvo-form-field__label"><strong>Herstel modus</strong></legend>
+        <div class="restore-mode-row">
+            <label class="rvo-radio-option restore-mode-option{% if restore_mode == 'existing' %} restore-mode-option--selected{% endif %}">
+                <input type="radio" name="restore_mode" value="existing"
+                       {% if restore_mode == "existing" %}checked{% endif %}
+                       hx-get="/projects/{{ _project_name }}/modal-wizard/modal-restore/select-restore-mode?restore_mode=existing{% if _wizard_token %}&amp;_wizard_token={{ _wizard_token }}{% endif %}"
+                       hx-target="#edit-section-inner"
+                       hx-swap="innerHTML"
+                       class="backup-checkbox-option__input" />
+                <span>Bestaande deployment</span>
+            </label>
+            <label class="rvo-radio-option restore-mode-option{% if restore_mode == 'new' %} restore-mode-option--selected{% endif %}">
+                <input type="radio" name="restore_mode" value="new"
+                       {% if restore_mode == "new" %}checked{% endif %}
+                       hx-get="/projects/{{ _project_name }}/modal-wizard/modal-restore/select-restore-mode?restore_mode=new{% if _wizard_token %}&amp;_wizard_token={{ _wizard_token }}{% endif %}"
+                       hx-target="#edit-section-inner"
+                       hx-swap="innerHTML"
+                       class="backup-checkbox-option__input" />
+                <span>Nieuwe deployment</span>
+            </label>
+        </div>
+    </fieldset>
+
+    {% if restore_mode == "existing" %}
+    {# Existing deployment selection #}
+    <fieldset>
+        <legend class="rvo-form-field__label"><strong>Doel deployment</strong></legend>
+        <p class="rvo-text--sm rvo-text--subtle backup-step__intro">
+            De backup wordt hersteld naar een bestaande deployment.
+        </p>
+        {% for dep in deployments %}
+        <label class="rvo-radio-option restore-target-option">
+            <input type="radio" name="target_deployment" value="{{ dep.name }}"
+                   {% if dep.name == default_target %}checked{% endif %}
+                   class="backup-checkbox-option__input" />
+            <div>
+                <strong>{{ dep.name }}</strong>
+                <span class="restore-target-option__namespace">{{ dep.namespace }}</span>
+            </div>
+        </label>
+        {% endfor %}
+    </fieldset>
+
+    <c-card padding="md" outline="true" background-color="grijs-050">
+        <c-cluster gap="sm">
+            <c-icon icon="info" size="md" color="oranje"/>
+            <div>
+                <strong>Let op</strong>
+                <p class="rvo-text--sm">Het herstellen van een backup overschrijft de huidige data in de geselecteerde deployment. Dit kan niet ongedaan worden gemaakt.</p>
+            </div>
+        </c-cluster>
+    </c-card>
+
+    {% elif restore_mode == "new" %}
+    {# New deployment - configuration fields are in the next step #}
+    <c-card padding="md" outline="true" background-color="grijs-050">
+        <c-cluster gap="sm">
+            <c-icon icon="info" size="md" color="hemelblauw"/>
+            <div>
+                <strong>Nieuwe deployment aanmaken</strong>
+                <p class="rvo-text--sm">In de volgende stappen stel je de naam, componenten en het domein in voor de nieuwe deployment.</p>
+            </div>
+        </c-cluster>
+    </c-card>
+    {% endif %}
+</c-layout-flow>
+</div>

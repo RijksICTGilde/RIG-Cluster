@@ -41,7 +41,7 @@ naar T2, en A gooit T2 weg - waarna iedereen opnieuw inlogt, met kans op een lus
 
 ## Resultaat
 
-| Detailpagina (`/projects/details/{project}`) | Vóór | Ná |
+| Detailpagina (`/projects/{project}/details`) | Vóór | Ná |
 |---|---|---|
 | Mediaan | 0,951 s | 0,217 s |
 | Spreiding (min-max) | 0,711-1,196 s | 0,213-0,223 s |

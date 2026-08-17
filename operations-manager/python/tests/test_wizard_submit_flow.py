@@ -22,6 +22,7 @@ flow explicit and traceable.
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.connectors.subdomain import get_domains_config
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import StripTransientsHook
 from opi.forms.editables.lifecycle import collect_hooks, run_hooks
@@ -45,9 +46,18 @@ def _build_wizard_merged_data() -> dict:
         "deployments": [
             {
                 "name": "productie",
-                "domain-format": "subdomain",
-                "base-domain": "sandbox.rijksapp.dev",
-                "subdomain": "mijn-test",
+                # What the wizard's merged data holds since v2.7: the web address under the
+                # service, the transient request checkbox still on the deployment itself.
+                "services": [
+                    {
+                        "reference": "publish-on-web",
+                        "config": {
+                            "domain-format": "subdomain",
+                            "base-domain": "sandbox.rijksapp.dev",
+                            "subdomain": "mijn-test",
+                        },
+                    }
+                ],
                 "_request-subdomain": True,
             }
         ],
@@ -106,7 +116,7 @@ class TestWizardSubmitFlowTraced:
     @pytest.mark.asyncio
     async def test_step4_process_json_submission_preserves_request_subdomain(self, monkeypatch):
         """Step 4: process_json_submission(strip_transients=False) should keep _request-subdomain."""
-        from opi.connectors.subdomain import SubdomainConnector
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
         monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))
@@ -135,7 +145,7 @@ class TestWizardSubmitFlowTraced:
     @pytest.mark.asyncio
     async def test_step5_hooks_create_domains_entry(self, monkeypatch):
         """Step 5: run_hooks(PRE_SAVE) should create domains.allowed-subdomains."""
-        from opi.connectors.subdomain import SubdomainConnector
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
         monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))
@@ -179,11 +189,12 @@ class TestWizardSubmitFlowTraced:
 
         await run_hooks(FormState.PRE_SAVE, all_with_system, final_data)
 
-        # Verify domains entry was created
-        assert "domains" in final_data, (
+        # Verify domains entry was created (now under the publish-on-web service config)
+        domains = get_domains_config(final_data)
+        assert domains is not None, (
             f"domains section not created by SubdomainRequestHook! Final data keys: {list(final_data.keys())}"
         )
-        allowed = final_data["domains"]["allowed-subdomains"]
+        allowed = domains["allowed-subdomains"]
         assert len(allowed) == 1
         assert allowed[0]["domain"] == "sandbox.rijksapp.dev"
         assert allowed[0]["subdomains"][0]["name"] == "mijn-test"
@@ -204,10 +215,8 @@ class TestClearedFieldRoundtrip:
     """
 
     def _component_section_editables(self):
-        from opi.forms.editables.fields.components import (
-            COMPONENT_ALIASES_EDITABLE,
-            COMPONENT_NAME_EDITABLE,
-        )
+        from opi.forms.editables.fields.components import COMPONENT_NAME_EDITABLE
+        from opi.services.catalog.aliases.editables import COMPONENT_ALIASES_EDITABLE
 
         return [
             EditableVisualizer(editable=COMPONENT_NAME_EDITABLE, widget=WidgetType.TEXT, label="Naam"),
@@ -229,7 +238,7 @@ class TestClearedFieldRoundtrip:
             flow_id="modal-component-edit",
             current_step="components-edit",
             active_sections=["components-edit"],
-            template_data={"components": [{"name": "web", "aliases": {"DB": "old"}, "image": "nginx:1"}]},
+            base_data={"components": [{"name": "web", "aliases": {"DB": "old"}, "image": "nginx:1"}]},
         )
         state.store_step_data("components-edit", fragment)
 
@@ -250,7 +259,7 @@ class TestClearedFieldRoundtrip:
             flow_id="modal-component-edit",
             current_step="components-edit",
             active_sections=["components-edit"],
-            template_data={"components": [{"name": "web", "aliases": {"DB": "old"}}]},
+            base_data={"components": [{"name": "web", "aliases": {"DB": "old"}}]},
         )
         state.store_step_data("components-edit", fragment)
 

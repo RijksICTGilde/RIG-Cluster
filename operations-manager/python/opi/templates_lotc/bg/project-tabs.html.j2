@@ -1,0 +1,977 @@
+{#
+  De projectpagina in tabs. Dit is de gekozen richting; het alternatief (de zijkolom laten
+  meewisselen met het project) staat geparkeerd in project-context.html.j2.
+
+  DE INDELING VOLGT DE BESTAANDE PAGINA
+
+  Niet zelf bedacht. De huidige projectdetailpagina heeft al tabs - Project, Deployments,
+  Taken - en die verdeling is er niet zomaar: hij scheidt "wat is dit project", "waar
+  draait het" en "wat is er aan de hand". Die drie blijven dus staan, met dezelfde secties
+  eronder.
+
+  Er komt er een bij: METRICS. Het resourcegebruik zat op de projecttab tussen de
+  tekstblokken, terwijl het het enige is dat je periodiek komt bekijken. Als eigen tab is
+  het te vinden, en er is ruimte om er meer te tonen dan twee balkjes.
+
+  Repositories is eruit. Die stond op de oude pagina omdat hij in het projectbestand
+  staat, niet omdat iemand hem nodig heeft.
+
+  WAT ER ANDERS IS DAN DE OUDE PAGINA
+
+  De tabs zijn ECHTE LINKS met een eigen PAD (/projects/<naam>/deployments), waar de oude
+  versie ze in de browser wisselt met switchTab(). Daardoor is een tab deelbaar, werkt de
+  terugknop, en doet de pagina het zonder JavaScript.
+
+  Het pad en niet ?tab=: een querystring leest als een filter op een pagina, terwijl een
+  tabblad een andere pagina over hetzelfde project is. De oude vorm is weg en verwijst ook
+  niet door; hij heeft nooit buiten deze applicatie geleefd. De adressen staan in
+  opi/web/lotc_switch.py (PROJECT_TABS, project_tab_url).
+
+  De balken voor CPU en geheugen waren eigen div's met een breedte in een style-attribuut
+  (usage-bar__fill). Dat is nu c-progress-bar: hetzelfde beeld, met de toegankelijkheid die
+  het thema meelevert, en het volgt een themawissel.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head, info, explainer, approval_alerts %}
+{# "with context": het paneel toont ook de stand die de diensten melden, en dat leest de
+   dienstnaam via ServiceAdapter uit de context. Zonder deze toevoeging ziet een macro
+   alleen zijn eigen argumenten. #}
+{% from "bg/_section-deployments.html.j2" import deployment_panel with context %}
+
+{% block head_extra %}
+    {# De gedeelde dialoog: zijn vormgeving (modal.css) en zijn gedrag (edit_modal.js:
+       openen, Escape, de blokkade zolang er een taak loopt, de waarschuwing bij
+       niet-opgeslagen werk). json-enc.js bedraadt de formulieren erin, net als op de
+       bestaande pagina. #}
+    <link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+    {# wizard.css om de hulpdialoog van een dienst, die bg/_modals.html.j2 hieronder
+       meeneemt net als de bestaande pagina dat doet. Zonder deze stylesheet heeft
+       .service-help-modal geen display:none en hangt zijn SLUITKNOP los onderaan de
+       pagina - een zwevend kruisje boven de voettekst. Precies het soort fout waar geen
+       enkele markupcontrole op aanslaat: de HTML klopte, alleen de opmaak ontbrak. #}
+    <link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+    {# base.css om EEN klasse: .is-hidden (display:none !important). De gedeelde dialoog
+       verbergt er zijn foutregel mee en de logweergave zijn gefilterde regels; zonder
+       deze stylesheet staan die meteen in beeld. De rest van base.css hangt aan
+       rvo-klassen die op deze pagina niet voorkomen.
+
+       Het tabblad Deployments gebruikte hem ook, om alle deployments behalve een te
+       verbergen. Dat is weg: de server rendert er nog maar EEN (die uit het pad), dus er
+       valt niets meer te verbergen. #}
+    <link rel="stylesheet" href="{{ static_url('css/base.css') }}">
+    <script src="{{ static_url('js/json-enc.js') }}"></script>
+    <script src="{{ static_url('js/edit_modal.js') }}"></script>
+    {# copyToClipboard(): de kopieerknoppen van de DIENSTBLOKKEN (keycloak, invite, de
+       OTP-code). Onder "Configuratie & Secrets" hangt hij niet meer: die waarden staan in
+       een <c-secret-field>, dat zijn eigen kopieerknop meebrengt. Stond inline op de
+       bestaande pagina; sinds deze omzetting in een eigen bestand. #}
+    <script src="{{ static_url('js/copy_to_clipboard.js') }}"></script>
+    {# De key-value editors (omgevingsvariabelen, aliassen) in de bewerkdialoog. De
+       bestaande pagina laadt deze twee ook; hier ontbraken ze, en dan blijft er in de
+       dialoog een kale textarea staan die zich niet gedraagt als de rest van het
+       formulier. De haak die ze na een htmx-swap opzet staat in kv_editor_hook.js -
+       nodig omdat de wizardstap pas NA het openen van de dialoog binnenkomt. #}
+    <script src="{{ static_url('js/codemirror-bundle.js') }}"></script>
+    <script src="{{ static_url('js/codemirror-kv.js') }}"></script>
+    <script src="{{ static_url('js/kv_editor_hook.js') }}"></script>
+{% endblock %}
+
+{% block page_title %}{{ project.display_name }} - {{ tabs[active_tab].label }}{% endblock %}
+
+{% block content %}
+    {# Het kruimelpad zegt waar je bent; de tabbalk zegt alleen welk aanzicht je hebt. #}
+    <c-breadcrumbs aria-label="Kruimelpad">
+        <c-breadcrumbs-item label="Projecten" href="/projects" />
+        <c-breadcrumbs-item label="{{ project.display_name }}" href="{{ tabs['project'].url }}" />
+        <c-breadcrumbs-item label="{{ tabs[active_tab].label }}" />
+    </c-breadcrumbs>
+
+    {# De kop met de bewerkknop ERNAAST, zoals project-details/section-header.html.j2 hem
+       heeft. page_head() kan dat niet en dat is hier geen bezwaar: dit is de enige plek
+       met een knop in de kop.
+
+       Deze knop was bij het omzetten verdwenen, en daarmee de ENIGE weg naar
+       modal-edit-identity: nergens anders op de pagina staat een verwijzing naar die
+       dialoog. Naam en omschrijving van een project waren dus niet meer te wijzigen.
+       Rol, functienaam en titel zijn letterlijk die van het origineel. #}
+    <c-stack gap="xs">
+        <c-cluster gap="sm" align="center">
+            <c-heading type="h1" size="3" label="{{ project.display_name }}" />
+            {% if user_role in ["admin", "owner"] %}
+                {% set identiteit_bewerken = "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" %}
+                <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before"
+                          :attrs="{'onclick': identiteit_bewerken}" />
+            {% endif %}
+        </c-cluster>
+        {% if project.description %}
+            <c-paragraph>{{ project.description }}</c-paragraph>
+        {% endif %}
+    </c-stack>
+
+    {% include "bg/_pending-rollout.html.j2" %}
+
+    <c-tabs aria-label="Aanzichten van dit project">
+        {% for key, tab in tabs.items() %}
+            <c-tab label="{{ tab.label }}" href="{{ tab.url }}" :active="key == active_tab" />
+        {% endfor %}
+    </c-tabs>
+
+    {# De inhoud van het tabblad in een wikkel met dezelfde id als op de bestaande pagina
+       (#tab-project, #tab-deployments, #tab-taken). Daar staan alle tabbladen in EEN
+       document en bakent die id ze af; hier is er een per URL, maar de id houdt de twee
+       VERGELIJKBAAR. Zonder wikkel moest een vergelijking de hele body nemen, en dan telt
+       de gedeelde kop - inclusief de knop "Bewerken" - mee als inhoud van het tabblad. #}
+    {# De flow-id telt de deployments: de modal-wizard opent daarmee een NIEUWE regel
+       achter de bestaande. Hier gezet en niet in een tabblad, omdat zowel Overzicht als
+       Deployments deze knop aanbiedt. #}
+    {% set deployment_toevoegen = "openEditModal('modal-add-deployment-" ~ (project.deployments | length) ~ "', 'Deployment toevoegen')" %}
+    {% set project_herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
+
+    <c-stack id="tab-{{ active_tab }}" gap="lg">
+
+    {% if active_tab == 'project' %}
+        {# HIER STOND EEN RIJ KERNCIJFERS (componenten, deployments, services,
+           teamleden). Ze toonden niets dat er niet al staat: de tabbladen dragen
+           diezelfde aantallen en zijn zelf de ingang. Een telling die alleen naar
+           een tabblad wijst dat er toch al is, kost ruimte bovenaan de pagina
+           zonder een vraag te beantwoorden. Weg op verzoek. #}
+
+        {# ---- Acties (project-details/section-actions.html.j2) ---------------- #}
+        {% if user_role in ["admin", "owner"] %}
+            {% call panel("Acties", "gear") %}
+                <c-action-group align="start">
+                    <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
+                    {# Uit de Gevarenzone hierheen: herverwerken is een gewone handeling en
+                       geen onomkeerbare. De aanroep wordt boven de tag opgebouwd omdat een
+                       genest aanhalingsteken binnen :attrs als het einde van het attribuut
+                       gelezen wordt. #}
+                    <c-button type="secondary" size="sm" label="Project herverwerken" icon="refresh" show-icon="before" :attrs="{'onclick': project_herverwerken}" />
+                </c-action-group>
+            {% endcall %}
+        {% endif %}
+
+        {# ---- Configuratie & Secrets (section-config.html.j2) ----------------- #}
+        {# Elke waarde staat in een <c-secret-field>, dat zijn eigen kopieerknop meebrengt.
+           Hier stond een losse knop met een inline copyToClipboard() erop, die vanaf de
+           knop de dichtstbijzijnde .config-item zocht en daarbinnen de .config-code;
+           daarom moesten die twee klassen letterlijk overgenomen worden. Dat is niet meer
+           nodig - de knop en de klassen zijn weg, het kopieren zit in het veld. De functie
+           zelf blijft bestaan voor de dienstblokken, in /static/js/copy_to_clipboard.js. #}
+        {% if user_role in ["admin", "owner"] %}
+            {% call panel("Configuratie & Secrets", "lock-closed", info_text="Project configuratie en gevoelige informatie") %}
+                    <c-stack gap="xs">
+                        <c-heading type="h3" size="6" label="Project Naam" />
+                        {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
+                           en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
+                           dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
+                        <c-secret-field value="{{ project.name }}" revealed show-copy />
+                    </c-stack>
+
+                {% if project.config %}
+                    {% if project.config.get('api-key') %}
+                        <c-stack gap="xs">
+                            <c-heading type="h3" size="6" label="API Key" />
+                            <c-secret-field value="{{ project.config['api-key'] }}" show-copy="true" />
+                        </c-stack>
+                    {% endif %}
+
+                    {% if project.config.get('age-public-key') %}
+                            <c-stack gap="xs">
+                                <c-heading type="h3" size="6" label="Age Public Key" />
+                                {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
+                                   en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
+                                   dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
+                                <c-secret-field value="{{ project.config['age-public-key'] }}" revealed show-copy />
+                            </c-stack>
+                    {% endif %}
+
+                    {% if project.config.get('age-private-key') %}
+                        <c-stack gap="xs">
+                            <c-heading type="h3" size="6" label="Age Private Key" />
+                            <c-secret-field value="{{ project.config['age-private-key'] }}" show-copy="true" />
+                        </c-stack>
+                    {% endif %}
+                {% else %}
+                    <c-paragraph>Geen configuratie beschikbaar</c-paragraph>
+                {% endif %}
+
+                {# Het cluster staat niet in de bestaande sectie, maar wel al op deze
+                   pagina sinds de eerste omzetting. Weghalen zou gegevens laten
+                   verdwijnen die er nu staan, dus hij blijft. #}
+                <c-detail-list>
+                    <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
+                </c-detail-list>
+            {% endcall %}
+        {% endif %}
+
+        {# ---- Resourcegebruik van het HELE project ---------------------------
+
+           Deze kaart stond op het tabblad Metrics, en dat klopte niet: dat tabblad is
+           PER DEPLOYMENT (een kiezer, een blok per keer), terwijl dit over het hele
+           project gaat - alle deployments delen een namespace, dus de blokken daar
+           tellen nooit op tot deze cijfers. Hier hoort hij, tussen Acties en
+           Deployments, en op Metrics blijft alleen wat werkelijk per deployment is.
+
+           Verplaatst en niet gekopieerd: twee weergaven van dezelfde cijfers lopen uit
+           de pas zodra er aan een van beide iets verandert.
+
+           Apart laden, zodat een trage of afwezige Prometheus deze pagina niet ophoudt.
+           Is het gebruik al meegegeven (de proefopstelling doet dat), dan komt HETZELFDE
+           fragment er rechtstreeks in - niet een tweede uitvoering van dezelfde kaart. #}
+        {% if project.name is defined and usage is not defined %}
+            {% call panel("Resourcegebruik (heel project)", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
+                <div hx-get="/projects/details/{{ project.name }}/resource-usage"
+                     hx-trigger="load"
+                     hx-swap="innerHTML">
+                    <c-paragraph>Metingen worden opgehaald...</c-paragraph>
+                </div>
+            {% endcall %}
+        {% else %}
+            {% call panel("Resourcegebruik (heel project)", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
+                {% include "bg/_resource-usage.html.j2" %}
+            {% endcall %}
+        {% endif %}
+
+        {# ---- Deployments (in plaats van section-deployment-status.html.j2) --- #}
+        {# Hier stond "Deployment Status": een kaart per deployment, die elk hun eigen
+           ArgoCD-bevraging deden zodra je ze in beeld kreeg. Dat is een TABEL geworden,
+           met de status erin, en de kaarten zijn weg - niet ernaast, want twee weergaven
+           van dezelfde lijst lopen uiteen.
+
+           De status komt uit een gebundelde bevraging bij het opbouwen van deze pagina
+           (opi/services/argocd_overview.py), dus het lui laden per kaart is niet meer
+           nodig: het waren er N, het is er nu een.
+
+           Het id #deployment-status blijft op de wikkel staan: wie vanaf elders naar dat
+           anker linkt komt nog steeds bij het deploymentblok uit. #}
+        {% if project.deployments %}
+            {% call panel("Deployments", "arrow-up-arrow-down", info_text="Waar dit project draait, met de stand die ArgoCD meldt.") %}
+                <div id="deployment-status">
+                {# Een stack eromheen: de melding, de werkbalk en de tabel stonden als
+                   kale broers in deze div, dus zoeken en sorteren plakten tegen de
+                   tabel eronder. De id blijft op de div, want er wordt naar gelinkt. #}
+                <c-stack gap="md">
+                    {% if not argocd_available %}
+                        <c-alert type="info" heading="Deployment status niet beschikbaar">
+                            ArgoCD is niet verbonden. De statuskolom vult zich zodra ArgoCD beschikbaar is.
+                        </c-alert>
+                    {% endif %}
+
+                    {# ---- Zoeken en sorteren -------------------------------------
+                       Zelfde vorm als de projectenlijst: een <form method="get"> zodat het
+                       zonder JavaScript een gewone zoekopdracht is die de pagina herlaadt,
+                       en met htmx alleen #deployments-lijst vervangt. De sorteerkeuze reist
+                       mee in een verborgen veld, zodat zoeken de sortering niet wegvaagt.
+
+                       htmx haalt de PAGINA op en pakt daar #deployments-lijst uit
+                       (hx-select) in plaats van een apart fragmentadres: dan staat er na
+                       het zoeken /projects/details/<naam>?q=... in de adresbalk - precies
+                       wat je wilt delen - en is er geen tweede adres met dezelfde gegevens
+                       dat kan gaan afwijken. #}
+                    {% set tabblad_url = tabs['project'].url %}
+                    {% set huidige_sortering = deployment_sorteringen | selectattr('0', 'equalto', deployment_sort) | map(attribute='1') | first | default('Naam (A-Z)') %}
+                    <form autocomplete="off" method="get" action="{{ tabblad_url }}"
+                          hx-get="{{ tabblad_url }}"
+                          hx-select="#deployments-lijst"
+                          hx-target="#deployments-lijst"
+                          hx-swap="outerHTML"
+                          hx-trigger="input delay:300ms, search, submit"
+                          hx-push-url="true">
+                        <input type="hidden" name="dsort" value="{{ deployment_sort }}">
+                        {# De toolbar staat er als nldd-markup en niet als <c-toolbar>: dat
+                           component gooit ELK kind weg, ook een kind met een slot, want het
+                           heeft geen standaard-slot. Zo verdween het hele zoekveld. #}
+                        <nldd-toolbar label="Deployments" size="md">
+                            <nldd-toolbar-item slot="start" size="md">
+                                <c-search-field name="q"
+                                                value="{{ deployment_query }}"
+                                                placeholder="Zoek op naam of cluster"
+                                                accessible-label="Zoek een deployment"
+                                                show-search-button
+                                                width="26rem" />
+                            </nldd-toolbar-item>
+
+                            {# De sorteerknop en zijn menu staan als nldd-markup, en de items
+                               dragen hun bestemming twee keer (href EN hx-get): een
+                               <nldd-menu-item> navigeert niet uit zichzelf op zijn href.
+                               Allebei gemeten op de projectenlijst; zie bg/projects.html.j2. #}
+                            <nldd-toolbar-item slot="end" size="md">
+                                <nldd-button variant="secondary" expandable start-icon="sort"
+                                             {# huidige_sortering hoort bij de PROJECTENlijst en wordt hier niet
+                                                meegegeven, dus de knop zei niet welke sortering aan stond terwijl
+                                                de URL en het vinkje in het menu dat wel deden. De naam komt uit
+                                                dezelfde lijst als de menu-items, dus er is geen tweede bron. #}
+                                             text="Sorteren: {{ (deployment_sorteringen | selectattr('0', 'equalto', deployment_sort) | map(attribute='1') | first) | default(deployment_sorteringen[0][1] if deployment_sorteringen else '', true) }}" type="button"
+                                             popup-type="menu" size="md">
+                                    <nldd-menu slot="popup" placement="bottom-end">
+                                        {% for sleutel, label in deployment_sorteringen %}
+                                            {% set sorteer_url = tabblad_url ~ "?dsort=" ~ sleutel ~ ("&q=" ~ deployment_query | urlencode if deployment_query else "") %}
+                                            <nldd-menu-item type="radio" text="{{ label }}"
+                                                            href="{{ sorteer_url }}"
+                                                            hx-get="{{ sorteer_url }}"
+                                                            hx-select="#deployments-lijst"
+                                                            hx-target="#deployments-lijst"
+                                                            hx-swap="outerHTML"
+                                                            hx-push-url="true"
+                                                            {% if sleutel == deployment_sort %}selected{% endif %}></nldd-menu-item>
+                                        {% endfor %}
+                                    </nldd-menu>
+                                </nldd-button>
+                            </nldd-toolbar-item>
+
+                            {# Hier stond een eigen overloopgroep voor een smal scherm. Weg,
+                               om dezelfde gemeten reden als op /projects: de aanwezigheid
+                               ervan laat de toolbar permanent een "Meer"-knop tonen, zodat
+                               het sorteren dubbel op het scherm staat, en de items erin
+                               worden nooit klikbaar. Zie de uitleg in bg/projects.html.j2,
+                               de meting in request_for_components.md, en
+                               tests/test_lotc_toolbar_overloop.py. #}
+                        </nldd-toolbar>
+                    </form>
+
+                    <div id="deployments-lijst">
+                        {% include "bg/_deployments-lijst.html.j2" %}
+                    </div>
+                </c-stack>
+                </div>
+            {% endcall %}
+        {% endif %}
+
+        {# DE BLOKKEN DIE DE DIENSTEN LEVEREN STAAN HIER NIET MEER. Ze hebben een eigen
+           tabblad gekregen (Toegang, hieronder): zie de toelichting daar. #}
+
+        {# ---- Danger zone (section-danger-zone.html.j2) ----------------------- #}
+        {% if user_role in ["admin", "owner"] %}
+            {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
+                {# De aanroep wordt hierboven opgebouwd en niet in de tag zelf: een
+                   genest aanhalingsteken binnen :attrs leest de voorbewerker als het einde
+                   van het attribuut. #}
+                {# "Project herverwerken" stond hier en is naar Acties gegaan: het is een
+                   gewone handeling die je vaker doet, en niets eraan is onomkeerbaar. In de
+                   Gevarenzone hoort alleen wat je niet terug kunt draaien, anders verliest
+                   die kop zijn betekenis. #}
+                {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
+                <c-action-group align="start">
+                    <c-button type="warning" label="Project verwijderen" :attrs="{'onclick': verwijderen}" />
+                </c-action-group>
+            {% endcall %}
+        {% endif %}
+
+    {% elif active_tab == 'team' %}
+    {# Team & Toegang was een kaart op Overzicht en is een eigen tabblad geworden:
+       wie hier komt, komt voor de rechten van mensen en niet voor de stand van het
+       project. Het staat direct na Overzicht, want het is het eerste dat je regelt. #}
+    <c-stack gap="lg">
+        {# ---- Team & Toegang (section-team.html.j2) --------------------------- #}
+        {# De bewerkknop staat IN de kopregel van het blok en niet los in de inhoud.
+           Hij stond onder de uitleg en boven de tabel, en dat las als een knop die
+           nergens bij hoort: geen kop ernaast, geen kader eromheen, alleen een knop in
+           de leegte. panel() geeft zijn kopregel door aan <c-section-head>, en dat
+           component IS "titel links, actie rechts" - de band tussen de twee komt daar
+           dus vandaan in plaats van uit de plek waar we hem toevallig neerzetten.
+
+           Het kopicoon vervalt daarmee vanzelf (zie panel()): dat is versiering die de
+           titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
+           knop. Een van de twee moet daar weg, en het is niet de knop. #}
+        {% set team_bewerken = "openEditModal('modal-edit-team', 'Projectleden beheren')" %}
+        {% set team_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': team_bewerken}" />{% endif %}{% endset %}
+        {% call panel("Team", "person-2", aside=team_bewerken_knop, info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
+            <c-table columns="2fr 1fr">
+                <c-table-head>
+                    <c-th>E-mailadres</c-th>
+                    <c-th>Rol</c-th>
+                </c-table-head>
+                {% for member in project.users | sort(attribute='email') %}
+                    <c-table-row>
+                        <c-td>{{ member.email }}</c-td>
+                        <c-td><c-tag type="default" label="{{ member.role }}" /></c-td>
+                    </c-table-row>
+                {% endfor %}
+            </c-table>
+        {% endcall %}
+
+    </c-stack>
+
+    {% elif active_tab == 'componenten' %}
+
+        {# ---- Components (section-components.html.j2) ------------------------- #}
+        {# Een eigen Acties-kaart, net als op Deployments. De knop stond in de kaart
+           Componenten zelf, boven de lijst, en las daar als iets dat bij het eerste
+           component hoorde. De uitleg erbij is weg: wat een component is hoort in de
+           hulptekst en niet boven elke lijst. #}
+        {% if user_role in ["admin", "owner"] %}
+            {% call panel("Acties", "gear") %}
+                {% set component_toevoegen = "openEditModal('modal-edit-component-" ~ (project.components | length) ~ "', 'Component toevoegen')" %}
+                <c-cluster gap="sm">
+                    <c-button type="secondary" size="sm" label="Component toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': component_toevoegen}" />
+                </c-cluster>
+            {% endcall %}
+        {% endif %}
+
+        {% call panel("Componenten", "rectangle-stack") %}
+            {% if project.components %}
+                <c-stack gap="md">
+                    {# Alfabetisch tonen, maar de flow-id van de bewerkdialoog blijft de
+                       oorspronkelijke index in het projectbestand - anders bewerk je een
+                       ander component dan je aanklikt. Overgenomen. #}
+                    {% for component in project.components | sort(attribute='name') %}
+                        {% set original_index = project.components.index(component) %}
+                        {% set component_bewerken = "openEditModal('modal-edit-component-" ~ original_index ~ "', 'Component bewerken - " ~ component.name ~ "')" %}
+                        {% set component_verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-component/confirm?target=" ~ (component.name | urlencode) ~ "', 'Component verwijderen')" %}
+                        {# De klasse component-card is die van section-components.html.j2 en
+                           wordt LETTERLIJK overgenomen: hij bakent een kaart af zodat je de
+                           knop van DIT component te pakken krijgt en niet die van het
+                           volgende. Zonder die afbakening meet een test de verkeerde knop -
+                           en dat is precies het soort fout dat er stil doorheen glipt. #}
+                        <c-card outline padding="md" class="component-card">
+                            <c-stack gap="sm">
+                                <c-cluster gap="sm" align="center" justify="between">
+                                    <c-stack gap="xs">
+                                        <c-heading type="h3" size="5" label="{{ component.name }}" />
+                                        <c-paragraph size="sm">{{ component.type | title }}</c-paragraph>
+                                    </c-stack>
+                                    {% if user_role in ["admin", "owner"] %}
+                                        <c-action-group align="end">
+                                            <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': component_bewerken}" />
+                                            <c-button type="warning" size="sm" label="Verwijderen" :attrs="{'onclick': component_verwijderen}" />
+                                        </c-action-group>
+                                    {% endif %}
+                                </c-cluster>
+
+                                {% if component.ports %}
+                                    <c-paragraph size="sm">
+                                        <b>Poorten:</b>
+                                        {% if component.ports.inbound %}Inbound: {{ component.ports.inbound | join(", ") }}{% endif %}
+                                        {% if component.ports.outbound %}{% if component.ports.inbound %} | {% endif %}Outbound: {{ component.ports.outbound | join(", ") }}{% endif %}
+                                    </c-paragraph>
+                                {% endif %}
+
+                                {% if component.resources %}
+                                    {% set req = component.resources.get('requests', {}) or {} %}
+                                    {% set lim = component.resources.get('limits', {}) or {} %}
+                                    <c-paragraph size="sm">
+                                        <b>Resources:</b>
+                                        {% if req.get('memory') or lim.get('memory') %}
+                                            Memory: {{ req.get('memory', '?') }} / {{ lim.get('memory', '?') }}
+                                        {% elif component.resources.memory is string %}
+                                            Memory: {{ component.resources.memory }}
+                                        {% endif %}
+                                        {% if req.get('cpu') or lim.get('cpu') %}
+                                            | CPU: {{ req.get('cpu', '?') }} / {{ lim.get('cpu', '?') }}
+                                        {% elif component.resources.cpu is string %}
+                                            | CPU: {{ component.resources.cpu }}
+                                        {% endif %}
+                                    </c-paragraph>
+                                {% endif %}
+
+                                {% if component.services %}
+                                    {# Dezelfde lezing als de bestaande pagina: de naam via
+                                       het service_name-filter, want een regel kan een
+                                       tekst, een {naam: {...}} of een {reference: ...}
+                                       zijn. Een kale {{ regel }} toonde bij die laatste
+                                       twee een python-dict. #}
+                                    <c-cluster gap="sm" align="center">
+                                        <b>Services:</b>
+                                        {% for svc in component.services %}
+                                            {% set definition = svc | service_definition %}
+                                            <c-chip>{{ definition.name if definition else svc | service_name }}</c-chip>
+                                            {# Het vraagteken opent de uitleg van die dienst, net als op de
+                                               bestaande pagina. Dezelfde functie uit static/js/wizard.js en
+                                               dezelfde dialoog; die staat in bg/_modals.html.j2, onderaan deze
+                                               pagina. stopPropagation staat erbij omdat de kaart eronder zelf
+                                               ook een klik afhandelt. #}
+                                            {% if definition and definition.help_template %}
+                                                {% set uitleg_js %}event.stopPropagation(); openServiceHelp('{{ definition.help_template | e }}'){% endset %}
+                                                <c-icon-button
+                                                    icon="question-mark-circle"
+                                                    accessible-label="Uitleg over {{ definition.name }}"
+                                                    variant="neutral-transparent"
+                                                    size="sm"
+                                                    :attrs="{'onclick': uitleg_js}" />
+                                            {% endif %}
+                                        {% endfor %}
+                                    </c-cluster>
+                                {% endif %}
+
+                                {% if component.ingress_links %}
+                                    {# De knop opent zijn eigen data-url; de URL staat op het
+                                       element en niet in de aanroep, precies zoals op de
+                                       bestaande pagina. #}
+                                    {% set open_link = "window.open(this.dataset.url, '_blank')" %}
+                                    <c-stack gap="xs">
+                                        <c-heading type="h4" size="6" label="Publieke links" />
+                                        <c-cluster gap="sm">
+                                            {% for link in component.ingress_links %}
+                                                <c-button
+                                                    type="secondary"
+                                                    size="sm"
+                                                    label="{{ link.deployment_name }} ({{ link.cluster }}){% if link.path and link.path != '/' %} {{ link.path }}{% endif %}"
+                                                    icon="link"
+                                                    show-icon="after"
+                                                    :attrs="{'data-url': link.url, 'onclick': open_link}" />
+                                            {% endfor %}
+                                        </c-cluster>
+                                        {# Een adres hierboven is het adres dat ECHT bediend wordt, en dat is niet
+                                           altijd het adres dat het project vroeg: zolang een eigen domein niet is
+                                           goedgekeurd publiceert de deployment op het clusteradres. Dat stond
+                                           alleen op het tabblad Deployments, dus wie hier keek zag een knop naar
+                                           een adres met geen woord over de aanvraag eronder.
+
+                                           Per deployment een keer, want de knoppen hierboven zijn er een per
+                                           deployment en de melding gaat over de deployment, niet over de link. #}
+                                        {% set gemeld = namespace(deployments=[]) %}
+                                        {% for link in component.ingress_links %}
+                                            {% if link.deployment_name not in gemeld.deployments %}
+                                                {% set _ = gemeld.deployments.append(link.deployment_name) %}
+                                                {{ approval_alerts(approval_notices.get(link.deployment_name, [])) }}
+                                            {% endif %}
+                                        {% endfor %}
+                                    </c-stack>
+                                {% endif %}
+
+                                {# De variabelen ZELF, in de kaart van het component waar ze bij
+                                   horen. Hier stond een regel die naar een aparte sectie verwees
+                                   ("zie Omgevingsvariabelen sectie"), en die sectie stond op een
+                                   ander tabblad; je moest dus wegklikken om te zien wat er stond.
+                                   De waarden zijn afgeschermd, want het zijn gebruikerswaarden en
+                                   er kan van alles in staan. #}
+                                {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars'] | length > 0 %}
+                                    <c-heading type="h5" size="6" label="Omgevingsvariabelen" />
+                                    <c-stack gap="xs">
+                                        {% for sleutel, waarde in component['user-env-vars'].items() | sort %}
+                                            <c-cluster gap="sm" align="center">
+                                                <c-icon icon="lock-closed" size="sm" />
+                                                <c-span>{{ sleutel }}</c-span>
+                                            </c-cluster>
+                                            <c-secret-field value="{{ waarde }}" show-copy />
+                                        {% endfor %}
+                                    </c-stack>
+                                {% endif %}
+
+                                {# De ALIASSEN, naast de omgevingsvariabelen en in dezelfde
+                                   kaart. Ze zijn hier nooit eerder getoond: je kon ze wel
+                                   invullen (via Bewerken op deze kaart, het aliassenveld) maar
+                                   nergens teruglezen, dus niemand wist wat er stond.
+
+                                   Aliassen leven ALLEEN op componentniveau; er is geen
+                                   deployment-variant om hier ook te tonen. Zie
+                                   opi/services/catalog/aliases/editables.py
+                                   (yaml_path "components[*]/aliases").
+
+                                   Afschermen doet de DIENST, niet dit sjabloon: een alias die
+                                   naar platformvariabelen verwijst noemt alleen waar de waarde
+                                   vandaan komt en is dus juist wat je wilt zien; alles wat geen
+                                   verwijzing is kan een geheim zijn. Dat oordeel staat in
+                                   AliasesService.owned_value_is_secret en komt hier binnen als
+                                   het filter is_verwijzing, zodat er niet twee regels ontstaan. #}
+                                {% if component.get('aliases') and component['aliases'] is mapping and component['aliases'] | length > 0 %}
+                                    <c-heading type="h5" size="6" label="Aliassen" />
+                                    <c-stack gap="xs">
+                                        {% for sleutel, waarde in component['aliases'].items() | sort %}
+                                            {# Naam en waarde op EEN regel: een alias is het verband
+                                               tussen die twee ("deze naam komt daarvandaan") en dat
+                                               verband gaat verloren zodra ze onder elkaar staan. Bij
+                                               de omgevingsvariabelen hierboven kan dat niet, want
+                                               daar is de waarde een veld over de volle breedte. #}
+                                            {% if waarde | string | is_verwijzing %}
+                                                <c-cluster gap="sm" align="center">
+                                                    <c-icon icon="link" size="sm" />
+                                                    <c-span>{{ sleutel }}</c-span>
+                                                    <c-code>{{ waarde }}</c-code>
+                                                </c-cluster>
+                                            {% else %}
+                                                <c-cluster gap="sm" align="center">
+                                                    <c-icon icon="lock-closed" size="sm" />
+                                                    <c-span>{{ sleutel }}</c-span>
+                                                </c-cluster>
+                                                <c-secret-field value="{{ waarde }}" show-copy />
+                                            {% endif %}
+                                        {% endfor %}
+                                    </c-stack>
+                                {% endif %}
+                            </c-stack>
+                        </c-card>
+                    {% endfor %}
+                </c-stack>
+            {% else %}
+                <c-alert type="info" heading="Geen componenten geconfigureerd" />
+            {% endif %}
+        {% endcall %}
+
+        {# ---- Helm Charts (section-helm-charts.html.j2) ----------------------- #}
+        {% if project.helm_charts %}
+            {# folder, niet folder-stack: die tweede naam bestaat in de NLDD-bundel maar
+               LOTC herschrijft hem in icons.json naar folder-on-folder, en DIE bestaat
+               niet. Het kopje rendeerde daardoor zonder icoon. #}
+            {% call panel("Helm Charts", "folder", info_text="Helm chart definities op project niveau") %}
+                <c-stack gap="md">
+                    {% for helm_chart in project.helm_charts %}
+                        <c-card outline padding="md">
+                            <c-stack gap="sm">
+                                <c-heading type="h3" size="5" label="{{ helm_chart.name }}" />
+                                {% if helm_chart.get('repository') %}
+                                    <c-paragraph size="sm">{{ helm_chart.repository }}</c-paragraph>
+                                {% endif %}
+                                <c-detail-list>
+                                    {% if helm_chart.get('chart') %}
+                                        <c-detail-item label="Chart" value="{{ helm_chart.chart }}" />
+                                    {% endif %}
+                                    {% if helm_chart.get('version') %}
+                                        <c-detail-item label="Version" value="{{ helm_chart.version }}" />
+                                    {% endif %}
+                                </c-detail-list>
+                                {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping and helm_chart['helm-values'] | length > 0 %}
+                                    <c-divider />
+                                    <c-cluster gap="sm" align="center">
+                                        <b>Helm Values (Base)</b>
+                                        <c-chip>{{ helm_chart['helm-values'] | length }} waarde{{ 'n' if helm_chart['helm-values'] | length != 1 else '' }}</c-chip>
+                                    </c-cluster>
+                                    <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) | forceescape }}" show-copy="true" />
+                                {% endif %}
+                            </c-stack>
+                        </c-card>
+                    {% endfor %}
+                </c-stack>
+            {% endcall %}
+        {% endif %}
+
+        {# ---- Helmfile (section-helmfile.html.j2) ----------------------------- #}
+        {% if project.helmfile %}
+            {% call panel("Helmfile", "square-on-square", info_text="Helmfile definities op project niveau") %}
+                <c-stack gap="md">
+                    {% for helmfile in project.helmfile %}
+                        <c-card outline padding="md">
+                            <c-stack gap="sm">
+                                <c-heading type="h3" size="5" label="{{ helmfile.name }}" />
+                                {% if helmfile.get('repository') %}
+                                    <c-paragraph size="sm">{{ helmfile.repository }}</c-paragraph>
+                                {% endif %}
+                                <c-detail-list>
+                                    {% if helmfile.get('path') %}
+                                        <c-detail-item label="Path" value="{{ helmfile.path }}" />
+                                    {% endif %}
+                                    {% if helmfile.get('branch') %}
+                                        <c-detail-item label="Branch" value="{{ helmfile.branch }}" />
+                                    {% endif %}
+                                </c-detail-list>
+                                {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values'] | length > 0 %}
+                                    <c-divider />
+                                    <c-cluster gap="sm" align="center">
+                                        <b>Helm Values (Base)</b>
+                                        <c-chip>{{ helmfile['helm-values'] | length }} waarde{{ 'n' if helmfile['helm-values'] | length != 1 else '' }}</c-chip>
+                                    </c-cluster>
+                                    <c-secret-field value="{{ helmfile['helm-values'] | tojson(indent=2) | forceescape }}" show-copy="true" />
+                                {% endif %}
+                            </c-stack>
+                        </c-card>
+                    {% endfor %}
+
+                </c-stack>
+            {% endcall %}
+        {% endif %}
+
+    {% elif active_tab == 'services' %}
+
+        {# ---- Services & Integraties (section-services.html.j2) --------------- #}
+        {# De bewerkknop staat IN de kopregel van het blok en niet los in de inhoud.
+           Hij stond onder de uitleg en boven de tabel, en dat las als een knop die
+           nergens bij hoort: geen kop ernaast, geen kader eromheen, alleen een knop in
+           de leegte. panel() geeft zijn kopregel door aan <c-section-head>, en dat
+           component IS "titel links, actie rechts" - de band tussen de twee komt daar
+           dus vandaan in plaats van uit de plek waar we hem toevallig neerzetten.
+
+           Het kopicoon vervalt daarmee vanzelf (zie panel()): dat is versiering die de
+           titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
+           knop. Een van de twee moet daar weg, en het is niet de knop. #}
+        {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
+        {% set diensten_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': diensten_bewerken}" />{% endif %}{% endset %}
+        {% call panel("Services & Integraties", "cylinder-split", aside=diensten_bewerken_knop, info_text="Services en features worden door het platform geleverd en beheerd. Je hoeft ze voor gebruik alleen te activeren en eventueel configureren.") %}
+            {% if project.services %}
+                <c-auto-grid min="280px" gap="md">
+                    {% for service in project.services %}
+                        {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
+                        {# service_binding_label en service_config_hint zijn FUNCTIES op de
+                           echte route, maar de proefopstelling (/lotc/bg/project-tabs,
+                           opi/web/lotc_fixtures.py) geeft er lege dicts voor door. Ze
+                           zonder meer aanroepen laat die pagina met een 500 omvallen, en
+                           dat is precies de pagina waarop deze secties gescreenshot
+                           worden. Vandaar de callable-toets. #}
+                        {% set binding_label = service_binding_label(service.enum) if service_binding_label is callable else '' %}
+                        {% set config_hint = service_config_hint(service.enum) if service_config_hint is callable else '' %}
+                        <c-card outline padding="md">
+                            <c-stack gap="sm">
+                                {# Het icoon van de dienst hoorde hier te staan en stond er niet:
+                                   elke dienst declareert er een (service_def.icon), maar deze kaart
+                                   toonde alleen de naam. Zelfde vorm als de kaart op /services (zie
+                                   bg/_service-card.html.j2): icoon en naam naast elkaar, met het
+                                   nldd_icon-filter ertussen omdat de definities Nederlandse namen
+                                   dragen en NLDD een eigen woordenschat heeft. #}
+                                <c-cluster gap="sm" align="center">
+                                    <c-icon icon="{{ service_def.icon | nldd_icon }}" color="{{ service_def.color }}" size="lg" />
+                                    <c-heading type="h3" size="5" label="{{ service_def.name }}" />
+                                </c-cluster>
+                                {% if binding_label %}
+                                    <c-chip>{{ binding_label }}</c-chip>
+                                {% endif %}
+                                <c-paragraph size="sm">{{ service_def.description }}</c-paragraph>
+                                {% if config_hint %}
+                                    <c-paragraph size="sm">{{ config_hint }}</c-paragraph>
+                                {% endif %}
+                                {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
+                                    {% set configureer = "openEditModal('" ~ service_config_sections[service.value] ~ "', '" ~ service_def.name ~ " configuratie')" %}
+                                    <c-action-group align="start">
+                                        <c-button type="tertiary" size="sm" label="Configureer" icon="gear" show-icon="before" :attrs="{'onclick': configureer}" />
+                                    </c-action-group>
+                                {% endif %}
+                            </c-stack>
+                        </c-card>
+                    {% endfor %}
+                </c-auto-grid>
+            {% else %}
+                <c-alert type="info" heading="Geen services geconfigureerd" />
+            {% endif %}
+        {% endcall %}
+
+    {% elif active_tab == 'services-info' %}
+        {# HET TABBLAD SERVICES INFO: de blokken die de DIENSTEN zelf leveren via de haak
+           detail_page_sections (de Keycloak-realm
+           met zijn console, gebruikersnaam, wachtwoord en OTP, de uitnodigingslinks, de
+           geuploade bestanden). Ze staan bij hun dienst, in zijn eigen map.
+
+           Het heette "Toegang", en dat beschreef wat de eerste drie diensten TOEVALLIG
+           tonen (een adres, een wachtwoord, een code) in plaats van wat het tabblad is:
+           zodra een dienst hier iets anders neerzet, klopt die naam niet meer. De HAAK is
+           wat het tabblad draagt, dus de naam noemt de diensten. Services ernaast gaat over
+           BEHEER (welke dienst staat aan, hoe is hij gebonden, waar zet je hem uit); dit
+           toont wat een dienst OVER ZICHZELF te melden heeft. Zie opi/web/lotc_switch.py
+           (PROJECT_TABS) voor de naam en features/services-info-tabblad.md.
+
+           De lus noemt GEEN dienst met naam: elke dienst levert zijn blok via
+           UIEvent.PROJECT_SECTIONS en komt hier vanzelf terecht. Zo hoeft de vierde dienst
+           die iets te tonen heeft dit sjabloon niet aan te raken. Drie diensten zijn er
+           genoeg om het zo te willen; een tabblad per dienst (de afweging uit RC-100) is
+           pas nodig als een dienst een eigen INDELING wil in plaats van een blok. Dat elk
+           blok ook echt bestaat toetst
+           tests/test_lotc_dienstblokken.py.
+
+           Er staat hier geen lege toestand: heeft geen enkele dienst iets, dan is er geen
+           tabblad. De route verwijst dat adres door naar Overzicht en de tabbalk laat hem
+           weg (TABS_MET_VOORWAARDE). #}
+        {% for section in service_detail_sections | default([]) %}
+            {% include section.template %}
+        {% endfor %}
+
+    {% elif active_tab == 'deployments' %}
+        {# EEN DEPLOYMENT PER PAGINA. Dit tabblad is de DETAILWEERGAVE: je kiest er een,
+           ziet zijn gegevens en kunt hem bewerken. De INGANG is de tabel op Overzicht; een
+           rij daar wijst hierheen met de naam in het PAD
+           (/projects/<project>/deployments/<naam>).
+
+           Hier stonden ALLE deployments, waarvan er alles behalve een met CSS verborgen
+           werd. Dat is werk voor blokken die niemand ziet - elk verborgen blok draagt zijn
+           eigen lazy-laders - en de keuze ging verloren zodra je van tabblad wisselde. De
+           server rendert er nu EEN: die uit het pad (``deployment_geopend``, gekozen door
+           de route). De keuze reist mee naar Metingen omdat de tabbalk hem in zijn
+           adressen meeneemt, en niet omdat de browser hem onthoudt.
+
+           DE DEPLOYMENTINFORMATIE STOND HIER TWEE KEER: een statuskaart met naam, cluster,
+           de rode melding, Uitgeschakeld/Synced en de laatste sync, en daaronder
+           "Deployment: <naam>" met de acties, de componenten en de publieke links.
+           Tweemaal dezelfde deployment onder elkaar, met de kop tweemaal. Ze zijn
+           SAMENGEVOEGD, met het tweede blok als uitgangspunt - dat draagt de acties en de
+           inhoud - en de statusgegevens staan er bovenin (zie het paneel in
+           bg/_section-deployments.html.j2).
+
+           Elk blok dat bij de deployment hoort zegt met een id (``deployment-<naam>``,
+           ``deployment-actions-<naam>``) of met ``data-deployment`` om welke het gaat. Er
+           valt niets meer te wisselen, dus ``deployment-section`` en ``is-hidden`` zijn
+           weg; de namen zelf blijven, want ze benoemen waar een blok over gaat.
+
+           De omgevingsvariabelen horen NIET bij een deployment - dat blok toont ze
+           allemaal - en staan daarom buiten dit alles, precies als in het origineel. #}
+
+        {# Alleen zonder deployments. Zodra er een is staat deze knop in de Acties-kaart,
+           naast "Images bewerken"; die kaart rendert niet op een leeg project, en dan zou
+           er geen enkele weg naar een eerste deployment zijn. #}
+        {% if user_role in ["admin", "owner"] and not project.deployments %}
+            <c-action-group align="start">
+                <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
+            </c-action-group>
+        {% endif %}
+
+        {% include "bg/_deployment-selector.html.j2" %}
+
+        <c-stack gap="md">
+            {% if deployment_geopend %}
+                {% include "bg/_deployment-actions.html.j2" %}
+
+                {# De blokken die de diensten voor DEZE deployment leveren (RC-24): de
+                   metingen van de metrics-scraper. Een dienst beslist zelf of zijn blok
+                   voor deze deployment geldt, dus hier staat geen dienstnaam en geen
+                   voorwaarde.
+
+                   De backups stonden hier ook en staan sinds RC-100 op hun eigen tabblad.
+                   Ze zijn niet gekopieerd: twee weergaven van dezelfde gegevens lopen uit
+                   de pas. #}
+                <div data-deployment="{{ deployment_geopend.name }}">
+                    <c-stack gap="md">
+                        {% with sections = (deployment_service_sections | default({})).get(deployment_geopend.name, []) %}
+                            {% include "bg/_deployment-service-sections.html.j2" %}
+                        {% endwith %}
+                    </c-stack>
+                </div>
+
+                {# Het paneel van de deployment - de statusgegevens EN de inhoud, in een
+                   blok. Het komt uit _section-deployments; deployment-card is de klasse
+                   die het paneel afbakent (zie static/css/project-details.css). #}
+                <div class="deployment-card" id="deployment-{{ deployment_geopend.name }}">
+                    {{ deployment_panel(deployment_geopend, project, approval_notices | default({}), user_role | default('')) }}
+                </div>
+            {% else %}
+                <c-alert type="info" heading="Nog geen deployments">
+                    Een deployment bepaalt waar je componenten draaien en op welk adres. Maak er een met de knop bovenaan.
+                </c-alert>
+            {% endif %}
+
+            {# GEEN omgevingsvariabelenblok hier. Het deploymentpaneel toont onder
+               "Omgevingsvariabelen" al de eigen variabelen van de GEOPENDE
+               deployment per component (_section-deployments.html.j2), en dat is
+               precies de overschrijvingsweergave. Hier stond een tweede lijst die
+               over ALLE deployments liep terwijl de pagina er een toont; twee
+               weergaven van hetzelfde, waarvan een op de verkeerde schaal. #}
+        </c-stack>
+
+    {% elif active_tab == 'metrics' %}
+        {# ---- Per deployment: CPU, geheugen, netwerk en disk over de tijd ---------
+
+           Deze grafieken hingen aan de metrics-scraper-DIENST
+           (metrics_scraper/section-deployment.html.j2), waardoor een project zonder die dienst
+           op dit tabblad alleen een teller zag. CPU- en geheugengebruik zijn geen
+           dienst-extraatje maar de basisvraag die je op een tabblad Metrics komt stellen,
+           dus staan ze hier voor ELK project met deployments.
+
+           Het fragment en zijn id zijn dezelfde als die de dienst gebruikt
+           (metrics-content-<naam>), dus er komt geen tweede weg naar dezelfde gegevens
+           bij. Levert Prometheus niets, dan toont het fragment zelf "No data".
+
+           intersect once, net als bij de dienst: elk blok is een reeks queries, en die
+           doe je pas als iemand kijkt.
+
+           EEN DEPLOYMENT PER PAGINA, net als op het tabblad Deployments, en om dezelfde
+           reden: je kijkt hier per deployment. De naam staat in het PAD
+           (/projects/<project>/metrics/<naam>) en de server rendert dat ene blok; ze
+           stonden hier alle onder elkaar, waarvan er alles behalve een verborgen werd.
+           Dezelfde kiezer als op Deployments (bg/_deployment-selector.html.j2), en de
+           keuze blijft staan bij het wisselen van tabblad omdat de tabbalk hem meeneemt. #}
+        {% if deployment_geopend %}
+            {% include "bg/_deployment-selector.html.j2" %}
+            <div data-deployment="{{ deployment_geopend.name }}">
+                {% call panel("Metingen - " ~ deployment_geopend.name, "chart-x-y-axis-line",
+                              info_text="Verbruik per component over de tijd.") %}
+                    <div id="metrics-content-{{ deployment_geopend.name }}"
+                         hx-get="/projects/details/{{ project.name }}/metrics/{{ deployment_geopend.name }}"
+                         {# EN DAARNA ELKE MINUUT, via een eigen gebeurtenis en niet via een
+                            kale "every 60s". De pagina draagt sinds RC-92 nog maar EEN blok, dus
+                            het argument "peil niet wat verborgen is" is vervallen - maar het
+                            script hieronder doet meer dan dat: het luistert op visibilitychange
+                            en zwijgt zodra het TABBLAD naar de achtergrond gaat. Een tijdklok van
+                            htmx blijft daar gewoon doorpeilen, dus een tabblad dat een dag
+                            openstaat zou Prometheus een dag lang elke minuut bevragen.
+
+                            Geen htmx-triggerfilter ("every 60s [conditie]") dus, en dat kan ook
+                            niet: htmx bouwt zo'n filter met de Function-constructor, en de
+                            Content-Security-Policy van deze applicatie staat geen unsafe-eval
+                            toe - die conditie zou stil nooit waar worden. Gemeten door RC-91. #}
+                         hx-trigger="intersect once, zad-metingen-ververs"
+                         hx-swap="innerHTML">
+                        <c-paragraph>Metingen worden opgehaald...</c-paragraph>
+                    </div>
+                {% endcall %}
+            </div>
+            <script>
+            (function () {
+                var TUSSENPOOS = 60000;
+
+                function ververs() {
+                    if (document.hidden || typeof htmx === 'undefined') return;
+                    // De pagina draagt er sinds RC-92 nog maar EEN. Hier stond een selector
+                    // die op de zichtbare deployment-sectie filterde; die hoorde bij de lus
+                    // die er niet meer is en zou nu niets vinden.
+                    document.querySelectorAll('[id^="metrics-content-"]')
+                        .forEach(function (blok) { htmx.trigger(blok, 'zad-metingen-ververs'); });
+                }
+
+                setInterval(ververs, TUSSENPOOS);
+                document.addEventListener('visibilitychange', function () {
+                    if (!document.hidden) ververs();
+                });
+            })();
+            </script>
+        {% endif %}
+
+    {% elif active_tab == 'backups' %}
+        {# ---- De backups van EEN deployment ------------------------------------------
+
+           Dit blok stond op het tabblad Deployments, als een van de blokken die de
+           diensten per deployment leveren. Het is groot genoeg voor een eigen aanzicht -
+           een schema, twee knoppen en de hele snapshotlijst - en het is waar je heen gaat
+           als je iets komt terugzetten, niet iets dat je en passant onder een deployment
+           tegenkomt.
+
+           BACKUPS STAAT HIER MET NAAM, net als Metrics. Dat is een uitzondering op het
+           mechanisme dat juist bedoeld is om geen dienstnaam in dit sjabloon te hoeven
+           zetten, en dus een keuze: van de twee diensten die een deploymentblok leveren is
+           dit de enige kandidaat voor een eigen tabblad (de andere, de metrics-scraper,
+           toont dezelfde grafieken die het tabblad Metrics al voor elk project toont). De
+           afweging staat voluit in opi/services/catalog/shared/backups.py.
+
+           EEN DEPLOYMENT PER PAGINA, zoals op Deployments en Metrics: de naam staat in het
+           PAD (/projects/<project>/backups/<naam>), de server rendert dat ene blok,
+           dezelfde kiezer wisselt van deployment, en de keuze blijft staan bij het
+           wisselen van tabblad omdat de tabbalk hem meeneemt.
+
+           Het blok laadt zijn snapshots nog steeds LUI (hx-trigger="intersect once" in
+           shared/section-backups.html.j2). De reden om het te verbergen is met een
+           deployment per pagina vervallen, de reden om het lui te laden niet: een
+           snapshotlijst opent een Kopia-repository over S3, en dat kostte gemeten 2,5
+           seconde die anders elke bezoeker van deze pagina betaalt. #}
+        {% include "bg/_deployment-selector.html.j2" %}
+
+        <c-stack gap="md">
+            {% if not project.deployments %}
+                <c-alert type="info" heading="Nog geen deployments">
+                    Backups horen bij een deployment. Maak er eerst een op het tabblad Deployments.
+                </c-alert>
+            {% elif backups_sections %}
+                <div data-deployment="{{ deployment_geopend.name }}">
+                    <c-stack gap="md">
+                        {% with sections = backups_sections %}
+                            {% include "bg/_deployment-service-sections.html.j2" %}
+                        {% endwith %}
+                    </c-stack>
+                </div>
+            {% else %}
+                {# Geen enkele dienst van dit project kan iets backuppen, of deze deployment
+                   draait op een ander cluster dan deze instantie beheert. Zwijgen zou hier
+                   lezen als "de backups zijn weg". #}
+                <c-alert type="info" heading="Geen backups voor deze deployment">
+                    Backups horen bij een dienst die iets bewaart - opslag, een database of MinIO -
+                    en bij een deployment op het cluster dat dit portaal beheert.
+                </c-alert>
+            {% endif %}
+        </c-stack>
+
+    {% elif active_tab == 'taken' %}
+        {# Zelfde aanpak als de bestaande pagina: het fragment haalt zichzelf op en ververst
+           zichzelf elke vijf seconden zolang deze tab open staat. #}
+        <div hx-get="/projects/{{ project.name }}/tasks" hx-trigger="load" hx-swap="innerHTML">
+            <c-paragraph>Taken worden opgehaald...</c-paragraph>
+        </div>
+    {% endif %}
+
+    </c-stack>
+
+    {# De gedeelde dialoog hoort onderaan de pagina, buiten de tabs: hij wordt vanuit elke
+       tab geopend en mag niet met de inhoud meeverdwijnen. #}
+    {% include "bg/_modals.html.j2" %}
+{% endblock %}

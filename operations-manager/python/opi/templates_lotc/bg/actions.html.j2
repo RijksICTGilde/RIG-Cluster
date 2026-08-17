@@ -1,0 +1,97 @@
+{#
+  De ZAD Actions.
+
+  Een wegwijzer, geen handleiding - zie bg/cli.html.j2 voor dezelfde afweging. De
+  voorbeelden komen letterlijk uit de README van de repository.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}ZAD Actions - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "ZAD Actions",
+        "Vanuit je eigen GitHub-pijplijn naar ZAD deployen."
+    ) }}
+
+    <c-cluster gap="sm" align="center" class="repo-verwijzing">
+        <c-icon icon="chevron-left-forward-slash-chevron-right" size="md" color="hemelblauw" />
+        <c-link href="https://github.com/RijksICTGilde/zad-actions"
+                label="Alle invoerwaarden en voorbeelden: zad-actions op GitHub"
+                weight="bold" target="_blank" />
+    </c-cluster>
+
+    {% call panel("Wat het is", "chevron-left-forward-slash-chevron-right") %}
+        <c-paragraph>
+            Herbruikbare GitHub Actions die met dezelfde API praten als de CLI. Je zet ze in
+            je workflow, en dan rolt een merge of een pull request zichzelf uit - zonder dat
+            iemand hier iets aanklikt.
+        </c-paragraph>
+        <c-paragraph>
+            Daar zit ook het verschil met de CLI: die draai je zelf, deze draaien in je
+            pijplijn. Het meest gebruikte patroon is een omgeving per pull request, die
+            weer verdwijnt zodra de pull request sluit.
+        </c-paragraph>
+
+        <c-detail-list>
+            <c-detail-item label="deploy" value="Zet een container image op ZAD; ook meerdere componenten in een keer" />
+            <c-detail-item label="cleanup" value="Verwijdert een deployment, en desgewenst de GitHub-omgeving en de container-image erbij" />
+            <c-detail-item label="scheduled-cleanup" value="Ruimt periodiek de PR-omgevingen op die zijn blijven staan" />
+        </c-detail-list>
+    {% endcall %}
+
+    {% call panel("Uitrollen", "arrow-up-arrow-down") %}
+        <c-code-viewer language="yaml">- name: Deploy to ZAD
+  uses: RijksICTGilde/zad-actions/deploy@v4
+  with:
+    api-key: ${{ '{{' }} secrets.ZAD_API_KEY {{ '}}' }}
+    project-id: my-project
+    deployment-name: my-deployment
+    component: web
+    image: ghcr.io/org/app:latest</c-code-viewer>
+
+        <c-paragraph size="sm">
+            De API-sleutel hoort in de secrets van je CI/CD, niet in de workflow zelf.
+            Je vindt de API-sleutel op de projectpagina onder Configuratie &amp; Secrets.
+        </c-paragraph>
+
+        <c-heading type="h3" size="6" label="Meerdere componenten in een keer" />
+        <c-paragraph size="sm">
+            Werk je meer dan een image bij, gebruik dan <c-code>components</c-code> in plaats
+            van <c-code>component</c-code> en <c-code>image</c-code>. Dat wordt een uitrol,
+            niet een per component, en de deployment is dus in een keer op zijn nieuwe stand.
+        </c-paragraph>
+        <c-code-viewer language="yaml">- name: Deploy to ZAD
+  uses: RijksICTGilde/zad-actions/deploy@v4
+  with:
+    api-key: ${{ '{{' }} secrets.ZAD_API_KEY {{ '}}' }}
+    project-id: my-project
+    deployment-name: my-deployment
+    components: |
+      [
+        {"name": "web", "image": "ghcr.io/org/web:latest"},
+        {"name": "api", "image": "ghcr.io/org/api:latest"}
+      ]</c-code-viewer>
+        <c-paragraph size="sm">
+            Zet je <c-code>components</c-code>, dan worden <c-code>component</c-code> en
+            <c-code>image</c-code> genegeerd; je hoeft ze dus niet allebei op te geven.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("Opruimen", "trash") %}
+        <c-paragraph size="sm">
+            Bij het sluiten van een pull request. Naast de deployment kan hij ook de
+            GitHub-omgeving en de gepubliceerde image opruimen, zodat er niets achterblijft.
+        </c-paragraph>
+        <c-code-viewer language="yaml">- name: Cleanup ZAD deployment
+  uses: RijksICTGilde/zad-actions/cleanup@v4
+  with:
+    api-key: ${{ '{{' }} secrets.ZAD_API_KEY {{ '}}' }}
+    project-id: my-project
+    deployment-name: my-deployment
+    delete-github-env: true
+    delete-container: true</c-code-viewer>
+
+    {% endcall %}
+{% endblock %}

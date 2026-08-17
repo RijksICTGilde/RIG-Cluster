@@ -1,0 +1,69 @@
+{#
+  Generic task progress fragment - server-rendered progress with HTMX polling.
+
+  Replaces itself every 2s until the task completes or fails.
+  Can be used inline (e.g. inside a deployment card) or in a modal.
+
+  Required context:
+    - task_id: str
+    - progress_url: str (the HTMX poll endpoint URL)
+    - progress: int (0-100)
+    - current_step: str
+    - status: str ("running", "completed", "failed")
+  Optional:
+    - tasks: list of task dicts (name, status, subtasks)
+    - error: str | None
+    - component_failures: list of failure dicts (component, deployment, failure_type, message, logs) | None
+    - project_name: str | None (for linking to detail page)
+    - container_id: str (default: "task-progress-{{ task_id }}")
+    - success_message: str (default: "Wijzigingen succesvol verwerkt!")
+    - on_complete: str | None (JavaScript to run on Ok click, e.g. "location.reload()")
+    - on_complete_label: str (label of that button, default "Ok" / "Sluiten")
+#}
+{% from "widgets/_macros.html.j2" import progress_bar, progress_task_list %}
+{% set _container_id = container_id | default("task-progress-" ~ task_id) %}
+{% set _success_msg = success_message | default("Wijzigingen succesvol verwerkt!") %}
+{# ``edit-progress-view`` while the task runs is what makes a modal hosting this
+   fragment refuse Escape and backdrop clicks, so an action cannot be clicked away
+   mid-flight. It is dropped once the task ends, and the finish button below carries
+   ``edit-progress-actions``, which releases the modal again. #}
+<div id="{{ _container_id }}"
+     {% if status not in ("completed", "failed") %}
+     class="edit-progress-view"
+     hx-get="{{ progress_url }}"
+     hx-trigger="every 2s"
+     hx-target="#{{ _container_id }}"
+     hx-swap="outerHTML"
+     {% endif %}>
+
+    {{ progress_bar(progress) }}
+
+    {% if status == "completed" %}
+    <p class="edit-progress-step">{{ _success_msg }}</p>
+    {% elif status == "failed" %}
+    {# bg/_component-failures.html.j2 en niet de tegenhanger in deze map: die is de
+       eerste automatische omzetting en toont de suggestie niet en heeft een lege,
+       dode logboeklink. De bg-versie is de nageschreven versie en doet allebei wel. #}
+    {% include "bg/_component-failures.html.j2" %}
+    {% else %}
+    <p class="edit-progress-step">{{ current_step }} <span class="edit-progress-percentage">{{ progress }}%</span></p>
+    {% endif %}
+
+    {{ progress_task_list(tasks) }}
+
+    {# De aanroep gaat via :attrs; <c-button> laat geen onclick als los attribuut toe. De
+       vorm hiervoor zette de variabele wel en hing hem nergens aan, dus de knop kwam
+       zonder klikafhandeling op het scherm: de dialoog ging niet dicht en de pagina
+       herlaadde niet. Zelfde vorm als bg/_modal-wizard-progress-fragment.html.j2. #}
+    {% if status == "completed" and on_complete is defined and on_complete %}
+    <div class="edit-progress-actions">
+        {% set afronden_js %}{{ on_complete }}{% endset %}
+        <c-button type="primary" label="{{ on_complete_label | default('Ok') }}" :attrs="{'onclick': afronden_js}" />
+    </div>
+    {% elif status == "failed" and on_complete is defined and on_complete %}
+    <div class="edit-progress-actions">
+        {% set sluiten_js %}{{ on_complete }}{% endset %}
+        <c-button type="primary" label="{{ on_complete_label | default('Sluiten') }}" :attrs="{'onclick': sluiten_js}" />
+    </div>
+    {% endif %}
+</div>

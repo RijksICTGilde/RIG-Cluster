@@ -1,0 +1,390 @@
+{
+  "edit_sections": {
+    "auth-wall-config": {
+      "editables": [
+        "services/authorization-wall/config/banner"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "auth-wall-config",
+      "title": "Authorization wall configuratie"
+    },
+    "components-edit": {
+      "editables": [
+        "components"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "components-edit",
+      "title": "Components beheren"
+    },
+    "cross-domain-access-config": {
+      "editables": [
+        "services/cross-domain-access/config/inbound",
+        "services/cross-domain-access/config/outbound"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "cross-domain-access-config",
+      "title": "Cross-domain toegang"
+    },
+    "identity-edit": {
+      "editables": [
+        "display-name",
+        "description"
+      ],
+      "post_save_action": "save_only",
+      "section_id": "identity-edit",
+      "title": "Projectgegevens bewerken"
+    },
+    "invite-config": {
+      "editables": [
+        "services/invite/config/default-language",
+        "services/invite/config/active"
+      ],
+      "post_save_action": "save_only",
+      "section_id": "invite-config",
+      "title": "Uitnodigingen"
+    },
+    "keycloak-config": {
+      "editables": [
+        "services/keycloak/config/template",
+        "services/keycloak/config/additional_redirect_uris",
+        "services/keycloak/config/restrict-access/enabled",
+        "services/keycloak/config/restrict-access/realm-role",
+        "services/keycloak/config/restrict-access/role",
+        "services/keycloak/config/restrict-access/error-message",
+        "services/keycloak/config/additional-clients",
+        "services/keycloak/config/account-link"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "keycloak-config",
+      "title": "Keycloak configuratie"
+    },
+    "minio-config": {
+      "editables": [
+        "services/minio-storage/config/enable-versioning"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "minio-config",
+      "title": "Objectopslag configuratie"
+    },
+    "postgresql-config": {
+      "editables": [
+        "services/namespace-postgresql-database/config/instances",
+        "services/namespace-postgresql-database/config/storage"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "postgresql-config",
+      "title": "Database configuratie"
+    },
+    "postgresql-schemas-config": {
+      "editables": [
+        "services/postgresql-database/config/schemas"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "postgresql-schemas-config",
+      "title": "Database-schema's"
+    },
+    "redis-config": {
+      "editables": [
+        "services/redis/config/acl-key-prefix"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "redis-config",
+      "title": "Redis configuratie"
+    },
+    "services-edit": {
+      "editables": [
+        "services"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "services-edit",
+      "title": "Services beheren"
+    },
+    "sleep-mode-config": {
+      "editables": [
+        "services/sleep-mode/config/enabled",
+        "services/sleep-mode/config/wake-mode",
+        "services/sleep-mode/config/match",
+        "services/sleep-mode/config/sleep-after-deploy",
+        "services/sleep-mode/config/sleep-after-wake",
+        "services/sleep-mode/config/waker",
+        "services/sleep-mode/config/waker-component",
+        "services/sleep-mode/config/title",
+        "services/sleep-mode/config/description"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "sleep-mode-config",
+      "title": "Slaapstand configuratie"
+    },
+    "team-edit": {
+      "editables": [
+        "users"
+      ],
+      "post_save_action": "save_only",
+      "section_id": "team",
+      "title": "Projectleden"
+    }
+  },
+  "flow_registry": {
+    "create-project": {
+      "flow_id": "create-project",
+      "mode": "wizard",
+      "sections": [
+        "identity",
+        "services",
+        "keycloak-config",
+        "invite-config",
+        "postgresql-config",
+        "postgresql-schemas-config",
+        "auth-wall-config",
+        "team",
+        "attachments",
+        "components",
+        "sleep-mode-config",
+        "cross-domain-access-config",
+        "redis-config",
+        "minio-config",
+        "deployment",
+        "domains"
+      ]
+    },
+    "edit-project": {
+      "flow_id": "edit-project",
+      "mode": "wizard",
+      "sections": [
+        "identity",
+        "services",
+        "keycloak-config",
+        "invite-config",
+        "postgresql-config",
+        "postgresql-schemas-config",
+        "auth-wall-config",
+        "team",
+        "components",
+        "sleep-mode-config",
+        "cross-domain-access-config",
+        "redis-config",
+        "minio-config",
+        "deployments",
+        "config"
+      ]
+    },
+    "modal-backup": {
+      "flow_id": "modal-backup",
+      "mode": "wizard",
+      "sections": [
+        "backup-select"
+      ]
+    },
+    "modal-edit-attachments": {
+      "flow_id": "modal-edit-attachments",
+      "mode": "wizard",
+      "sections": [
+        "attachments"
+      ]
+    },
+    "modal-edit-auth-wall-config": {
+      "flow_id": "modal-edit-auth-wall-config",
+      "mode": "wizard",
+      "sections": [
+        "auth-wall-config"
+      ]
+    },
+    "modal-edit-components": {
+      "flow_id": "modal-edit-components",
+      "mode": "wizard",
+      "sections": [
+        "components-edit"
+      ]
+    },
+    "modal-edit-cross-domain-config": {
+      "flow_id": "modal-edit-cross-domain-config",
+      "mode": "wizard",
+      "sections": [
+        "cross-domain-access-config"
+      ]
+    },
+    "modal-edit-identity": {
+      "flow_id": "modal-edit-identity",
+      "mode": "wizard",
+      "sections": [
+        "identity-edit"
+      ]
+    },
+    "modal-edit-invite-config": {
+      "flow_id": "modal-edit-invite-config",
+      "mode": "wizard",
+      "sections": [
+        "invite-config"
+      ]
+    },
+    "modal-edit-keycloak-config": {
+      "flow_id": "modal-edit-keycloak-config",
+      "mode": "wizard",
+      "sections": [
+        "keycloak-config"
+      ]
+    },
+    "modal-edit-minio-config": {
+      "flow_id": "modal-edit-minio-config",
+      "mode": "wizard",
+      "sections": [
+        "minio-config"
+      ]
+    },
+    "modal-edit-postgresql-config": {
+      "flow_id": "modal-edit-postgresql-config",
+      "mode": "wizard",
+      "sections": [
+        "postgresql-config"
+      ]
+    },
+    "modal-edit-postgresql-schemas": {
+      "flow_id": "modal-edit-postgresql-schemas",
+      "mode": "wizard",
+      "sections": [
+        "postgresql-schemas-config"
+      ]
+    },
+    "modal-edit-redis-config": {
+      "flow_id": "modal-edit-redis-config",
+      "mode": "wizard",
+      "sections": [
+        "redis-config"
+      ]
+    },
+    "modal-edit-services": {
+      "flow_id": "modal-edit-services",
+      "mode": "wizard",
+      "sections": [
+        "services-edit",
+        "keycloak-config",
+        "invite-config",
+        "postgresql-config",
+        "postgresql-schemas-config",
+        "auth-wall-config",
+        "sleep-mode-config",
+        "cross-domain-access-config",
+        "redis-config",
+        "minio-config",
+        "attachments"
+      ]
+    },
+    "modal-edit-sleep-mode-config": {
+      "flow_id": "modal-edit-sleep-mode-config",
+      "mode": "wizard",
+      "sections": [
+        "sleep-mode-config"
+      ]
+    },
+    "modal-edit-team": {
+      "flow_id": "modal-edit-team",
+      "mode": "wizard",
+      "sections": [
+        "team"
+      ]
+    }
+  },
+  "service_config_modal_flows": {
+    "authorization-wall": "modal-edit-auth-wall-config",
+    "cross-domain-access": "modal-edit-cross-domain-config",
+    "invite": "modal-edit-invite-config",
+    "keycloak": "modal-edit-keycloak-config",
+    "minio-storage": "modal-edit-minio-config",
+    "namespace-postgresql-database": "modal-edit-postgresql-config",
+    "postgresql-database": "modal-edit-postgresql-schemas",
+    "redis": "modal-edit-redis-config",
+    "sleep-mode": "modal-edit-sleep-mode-config"
+  },
+  "service_config_sections": {
+    "authorization-wall": {
+      "editables": [
+        "services/authorization-wall/config/banner"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "auth-wall-config",
+      "title": "Authorization wall configuratie"
+    },
+    "cross-domain-access": {
+      "editables": [
+        "services/cross-domain-access/config/inbound",
+        "services/cross-domain-access/config/outbound"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "cross-domain-access-config",
+      "title": "Cross-domain toegang"
+    },
+    "invite": {
+      "editables": [
+        "services/invite/config/default-language",
+        "services/invite/config/active"
+      ],
+      "post_save_action": "save_only",
+      "section_id": "invite-config",
+      "title": "Uitnodigingen"
+    },
+    "keycloak": {
+      "editables": [
+        "services/keycloak/config/template",
+        "services/keycloak/config/additional_redirect_uris",
+        "services/keycloak/config/restrict-access/enabled",
+        "services/keycloak/config/restrict-access/realm-role",
+        "services/keycloak/config/restrict-access/role",
+        "services/keycloak/config/restrict-access/error-message",
+        "services/keycloak/config/additional-clients",
+        "services/keycloak/config/account-link"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "keycloak-config",
+      "title": "Keycloak configuratie"
+    },
+    "minio-storage": {
+      "editables": [
+        "services/minio-storage/config/enable-versioning"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "minio-config",
+      "title": "Objectopslag configuratie"
+    },
+    "namespace-postgresql-database": {
+      "editables": [
+        "services/namespace-postgresql-database/config/instances",
+        "services/namespace-postgresql-database/config/storage"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "postgresql-config",
+      "title": "Database configuratie"
+    },
+    "postgresql-database": {
+      "editables": [
+        "services/postgresql-database/config/schemas"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "postgresql-schemas-config",
+      "title": "Database-schema's"
+    },
+    "redis": {
+      "editables": [
+        "services/redis/config/acl-key-prefix"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "redis-config",
+      "title": "Redis configuratie"
+    },
+    "sleep-mode": {
+      "editables": [
+        "services/sleep-mode/config/enabled",
+        "services/sleep-mode/config/wake-mode",
+        "services/sleep-mode/config/match",
+        "services/sleep-mode/config/sleep-after-deploy",
+        "services/sleep-mode/config/sleep-after-wake",
+        "services/sleep-mode/config/waker",
+        "services/sleep-mode/config/waker-component",
+        "services/sleep-mode/config/title",
+        "services/sleep-mode/config/description"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "sleep-mode-config",
+      "title": "Slaapstand configuratie"
+    }
+  }
+}

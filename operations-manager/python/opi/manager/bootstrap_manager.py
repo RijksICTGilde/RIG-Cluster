@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from opi.handlers.bootstrap_api_handler import BootstrapApiHandler
+from opi.services import ServiceType
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.project import Project
+from opi.services.services import service_entry_name
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
@@ -48,7 +52,7 @@ class BootstrapManager:
         progress_manager = self.project_manager.get_progress_manager()
         bootstrap_task = None
         if progress_manager:
-            bootstrap_task = progress_manager.add_task("Executing bootstrap API actions")
+            bootstrap_task = progress_manager.add_task("Bootstrap-acties uitvoeren", subject=deployment_name)
 
         try:
             # Build context for variable substitution
@@ -129,16 +133,28 @@ class BootstrapManager:
         Returns:
             Context dictionary with variables
         """
-        from opi.core.cluster_config import get_ingress_postfix, get_keycloak_discovery_url
-        from opi.utils.naming import generate_project_realm_name, generate_public_url
+        from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled, get_keycloak_discovery_url
+        from opi.utils.naming import generate_external_hostname, generate_project_realm_name, generate_public_url
 
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
-        subdomain = deployment.get("subdomain")
+        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
-        # Build context similar to deployment environment variables
+        # Build context similar to deployment environment variables.
+        # This used to call generate_public_url(deployment_name, project_name,
+        # ingress_postfix, subdomain), a signature that function has not had in a long
+        # time: it takes (hostname, use_https, path), so every bootstrap action raised
+        # TypeError before it could run. Derive the hostname the same way the deployment
+        # env vars do, then turn it into a URL.
         ingress_postfix = get_ingress_postfix(cluster)
-        public_host = generate_public_url(deployment_name, project_name, ingress_postfix, subdomain)
+        if base_domain and subdomain:
+            hostname = generate_external_hostname(subdomain, base_domain)
+        elif subdomain:
+            hostname = f"{subdomain}.{ingress_postfix}"
+        else:
+            hostname = f"{deployment_name}.{ingress_postfix}"
+        public_host = generate_public_url(hostname, get_ingress_tls_enabled(cluster))
 
         # Get Keycloak info if available
         oidc_url = None
@@ -148,12 +164,17 @@ class BootstrapManager:
         # Check if keycloak service is used
         services = project_data.get("services", [])
         for service in services:
-            if isinstance(service, dict) and "keycloak" in service:
+            # Format-agnostic: a bare string, the legacy single-key dict, or the uniform
+            # record. The old `isinstance(dict) and "keycloak" in service` matched only
+            # the legacy form, so a plain "keycloak" selection or a record with config
+            # left oidc_url/oidc_realm unset even though the service was in use.
+            if service_entry_name(service) == ServiceType.KEYCLOAK.value:
                 oidc_url = get_keycloak_discovery_url(cluster)
                 oidc_realm = generate_project_realm_name(project_name, cluster)
 
-                # Try to get service client secret from project config
-                keycloak_configs = project_data.get("config", {}).get("keycloak", [])
+                # Try to get service client secret from the keycloak service config
+                # (RC-5 B: relocated from the old project-level config.keycloak).
+                keycloak_configs = Project(project_data).get("services/keycloak/config/realms") or []
                 for kc_config in keycloak_configs:
                     if isinstance(kc_config, dict):
                         host = kc_config.get("host", "")

@@ -29,9 +29,18 @@ resources:
   - https://raw.githubusercontent.com/kubernetes-csi/external-health-monitor/v0.16.0/deploy/kubernetes/external-health-monitor-controller/rbac.yaml
 
   # CSI Hostpath Driver (for Kind clusters)
-  - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/master/deploy/kubernetes-1.30/hostpath/csi-hostpath-driverinfo.yaml
-  - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/master/deploy/kubernetes-1.30/hostpath/csi-hostpath-plugin.yaml
-  - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/master/deploy/kubernetes-1.30/hostpath/csi-hostpath-snapshotclass.yaml
+  #
+  # Gepind op v1.17.1, niet op master: upstream houdt op master alleen de twee nieuwste
+  # Kubernetes-versies plus 'latest'. Toen die opschoof naar 1.34/1.35 verdween
+  # deploy/kubernetes-1.30/ en gaven deze drie URLs een 404 — kustomize probeert zo'n URL
+  # dan als git-repo te klonen en faalt met een misleidende 'repository not found'.
+  # v1.17.1 is de laatste release waar dit pad bestaat. De kind-node draait v1.32.0
+  # (kind-config.yaml); manifests voor een oudere Kubernetes draaien daar prima op, andersom
+  # niet, dus bij het ophogen van de node-versie kan dit blijven staan. Verplaats je naar
+  # een nieuwere driver, kies dan een deploy-map <= de node-versie.
+  - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/v1.17.1/deploy/kubernetes-1.30/hostpath/csi-hostpath-driverinfo.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/v1.17.1/deploy/kubernetes-1.30/hostpath/csi-hostpath-plugin.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/v1.17.1/deploy/kubernetes-1.30/hostpath/csi-hostpath-snapshotclass.yaml
 
   # Local StorageClass for CSI hostpath
   - storageclass.yaml

@@ -1,0 +1,15 @@
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}Nieuw Project Aanmaken{% endblock %}
+
+{% block content %}
+    <c-layout-flow gap="lg" size="lg">
+        {% include "wizard/wizard_start/_kruimelpad.html.j2" %}
+
+        {% include "wizard/wizard_start/_uitleg.html.j2" %}
+
+        {% include "wizard/wizard_start/_stappen.html.j2" %}
+
+        {% include "wizard/wizard_start/_startknop.html.j2" %}
+    </c-layout-flow>
+{% endblock %}

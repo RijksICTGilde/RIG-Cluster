@@ -13,7 +13,29 @@ users:
 
 services:
   - publish-on-web
-  - keycloak
+  # De realm-adminverbinding die OPI zelf schrijft. Hij staat hier omdat de twee geheimen
+  # erop uit de wizardsessie worden geredigeerd en bij het opslaan terug moeten komen: zonder
+  # realms in dit bestand liep die weg in geen enkele test. `totp_secret` is de optionele van
+  # de twee, en dus degene die stil zou verdwijnen.
+  - name: keycloak
+    config:
+      template: sso-only
+      realms:
+        - host: https://keycloak.local
+          realm: test-project-detail-local
+          username: test_project_detail_local_admin
+          password: |-
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB6ZWFyeFdFcW5mNmNlU2FY
+            -----END AGE ENCRYPTED FILE-----
+          totp_secret: |-
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB0b3RwLXNlZWQtZm9yLXRlc3Q=
+            -----END AGE ENCRYPTED FILE-----
+  # Gives the project a database, so the service-contributed deployment buttons
+  # (Databaseconsole, Job uitvoeren) apply here -- they no longer render for every
+  # project (RC-24).
+  - postgresql-database
 
 config:
   age-public-key: "age1drxwupvn5eg8wd9cdf05nrxp6usrpk7tarc09yzk4c3m7jzzaups8757zy"
@@ -69,3 +91,38 @@ deployments:
         image: "nginx:latest"
       - reference: worker
         image: "python:3.14-slim"
+
+  # Een tweede deployment, want alles wat het tabblad Deployments per deployment toont,
+  # verbergt de tweede en verder bij het laden ({% if not loop.first %}). Met een enkele
+  # deployment wordt die tak nooit waar en ziet geen enkele test of het verbergen werkt.
+  # Sorteert achter 'default', zodat 'default' de zichtbare blijft.
+  - name: tweede
+    cluster: local
+    # De namespace moet gelijk zijn aan de projectnaam; dat wordt afgedwongen.
+    namespace: test-project-detail
+    components:
+      - reference: web-app
+        image: "nginx:latest"
+
+# Helm-charts en helmfile op projectniveau. Ze staan hier omdat de bijbehorende secties
+# ANDERS NIET TE METEN ZIJN: zowel de bestaande als de hertekende pagina zetten er
+# `{% if project.helm_charts %}` omheen, dus zonder gegevens rendert er aan beide kanten
+# niets en zegt een vergelijking niets.
+helm-charts:
+  - name: redis-cache
+    repository: https://charts.bitnami.com/bitnami
+    chart: redis
+    version: "18.1.5"
+    helm-values:
+      architecture: standalone
+      auth:
+        enabled: true
+
+helmfile:
+  - name: monitoring-stack
+    repository: https://github.com/example/monitoring
+    path: helmfile.d/monitoring.yaml
+    branch: main
+    helm-values:
+      grafana:
+        enabled: true

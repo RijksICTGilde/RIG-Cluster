@@ -1,0 +1,56 @@
+{# De LOTC-tegenhanger van section-detail.html.j2 (RC-64).
+
+   Waarom een tweede bestand en niet een gedeeld sjabloon: zie de kop van
+   attachments/section-detail.html.j2. Kort: twee componentsystemen kunnen niet in
+   een Jinja-omgeving, en dit blok kwam daardoor met render_roos() als roos-HTML de
+   LOTC-pagina binnen - inclusief rvo-klassen die daar door niets opgemaakt worden.
+
+   Dezelfde gegevens uit dezelfde ``section.context``, dezelfde teksten, dezelfde knop met
+   dezelfde aanroep. De volledige uitnodigingslink wordt net als in het buurbestand met
+   ``url_for`` opgebouwd (absoluut, uit het verzoek) en niet uit een ingestelde basis-URL.
+
+   De klassen config-item / config-code / copy-btn zijn GEEN vormgeving: copyToClipboard()
+   zoekt vanaf de aangeklikte knop de dichtstbijzijnde .config-item en pakt daarbinnen de
+   .config-code. Ze staan hier dus letterlijk, net als op de rest van deze pagina.
+
+   De aanroep gaat via :attrs; <c-button> laat geen onclick als los attribuut toe. #}
+{% set kopieer = "copyToClipboard('.config-code', event, '.config-item')" %}
+<c-card outline padding="lg">
+    <c-stack gap="md">
+        <c-section-head title="Uitnodigingen" icon="envelope" />
+        <c-paragraph size="sm">Deel een link om gebruikers toegang te geven tot het Keycloak-realm. De link is de enige toegangsdrempel.</c-paragraph>
+
+        {% for invite in section.context.invites %}
+            <c-card outline padding="md">
+                <c-stack gap="sm">
+                    <c-heading type="h3" size="6" label="Sleutel: {{ invite.key }}" />
+
+                    <div class="config-item">
+                        <c-stack gap="xs">
+                            <strong>Uitnodigingslink</strong>
+                            <c-cluster gap="sm" align="center">
+                                <c-code class="config-code">{{ url_for('invite_landing', key=invite.key) }}</c-code>
+                                <c-button type="tertiary" size="sm" label="Kopieer" show-icon="before" icon="file-text"
+                                          class="copy-btn" :attrs="{'onclick': kopieer}" />
+                            </c-cluster>
+                        </c-stack>
+                    </div>
+
+                    {% if invite.realm_roles %}
+                        <c-stack gap="xs">
+                            <strong>Toegekende rollen</strong>
+                            <c-code>{{ invite.realm_roles | join(', ') }}</c-code>
+                        </c-stack>
+                    {% endif %}
+
+                    {% if invite.contact_email %}
+                        <c-stack gap="xs">
+                            <strong>Contact</strong>
+                            <c-code>{{ invite.contact_email }}</c-code>
+                        </c-stack>
+                    {% endif %}
+                </c-stack>
+            </c-card>
+        {% endfor %}
+    </c-stack>
+</c-card>

@@ -1,6 +1,12 @@
 """Tests for _pad_sparse_submission in router_detail_edit."""
 
-from opi.web.router_detail_edit import _pad_sparse_submission
+from opi.forms.visualizers.flows import get_flow
+from opi.web.router_detail_edit import _pad_sparse_submission as _pad_for_flow_id
+
+
+def _pad_sparse_submission(body: dict, flow_id: str, section_id: str = "") -> dict:
+    """Pad as the router does: through the flow the id resolves to."""
+    return _pad_for_flow_id(body, get_flow(flow_id), section_id)
 
 
 class TestPadSparseSubmission:

@@ -16,6 +16,7 @@ import yaml
 
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
+from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
 from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
 from opi.extensions.pipeline import load_extensions
@@ -88,6 +89,9 @@ class SnapshotInfo:
     component_name: str | None = None
     storage_name: str | None = None
     generation: int | None = None
+    #: For database snapshots: the database the dump was taken from, as tagged by the
+    #: backup pod. None on snapshots taken before that tag existed.
+    source_database: str | None = None
     backup_run_id: str | None = None  # Groups PVCs from same backup run
     # Resource type for filtering (pvc, database, bucket)
     resource_type: str | None = None
@@ -130,6 +134,11 @@ class RestoreResult:
     snapshot_id: str | None = None
     error: str | None = None
     duration_seconds: float = 0
+    # True when the restore pod reported that the destination itself was unusable
+    # (RESTORE_TARGET_UNUSABLE_EXIT_CODE). Anything else -- our repository, the
+    # snapshot, the cluster -- leaves this False, so "your input" stays separable
+    # from "our platform" without reading the pod's log text (RC-82).
+    target_unusable: bool = False
 
 
 class BackupLock:
@@ -793,6 +802,33 @@ class BaseBackupManager:
                 logger.warning("Failed to parse pod status JSON")
 
             await asyncio.sleep(10)
+
+    async def _restore_target_was_unusable(self, namespace: str, pod_name: str) -> bool:
+        """Whether the restore pod stopped on its destination gate.
+
+        Reads the container's terminated exit code from the pod status. Only the
+        dedicated ``RESTORE_TARGET_UNUSABLE_EXIT_CODE`` counts; every other exit
+        code, and every pod that never got far enough to have one (image pull,
+        timeout, deleted pod), answers False. Deliberately not a search through
+        the logs: the wording of a psql or mc error is not ours to depend on.
+        """
+        args = ["get", "pod", pod_name, "-n", namespace, "-o", "json"]
+        stdout, stderr, code = await self.kubectl.run_command(args)
+        if code != 0:
+            logger.warning(f"Could not read exit code of pod {pod_name}: {stderr}")
+            return False
+
+        try:
+            pod_data = json.loads(stdout)
+        except json.JSONDecodeError:
+            logger.warning(f"Could not parse pod status JSON for {pod_name}")
+            return False
+
+        for cs in pod_data.get("status", {}).get("containerStatuses", []):
+            terminated = cs.get("state", {}).get("terminated", {})
+            if terminated.get("exitCode") == RESTORE_TARGET_UNUSABLE_EXIT_CODE:
+                return True
+        return False
 
     async def _get_pod_logs(self, namespace: str, pod_name: str) -> str:
         """Get logs from a pod."""

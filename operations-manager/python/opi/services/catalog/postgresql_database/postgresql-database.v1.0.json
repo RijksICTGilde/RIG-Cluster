@@ -1,0 +1,244 @@
+{
+  "$defs": {
+    "DatabasePrivilege": {
+      "description": "PostgreSQL role privileges accepted for the dedicated database user.\n\nMatches the allow-list previously enforced inline in DatabaseManager.",
+      "enum": [
+        "SUPERUSER",
+        "NOSUPERUSER",
+        "CREATEDB",
+        "NOCREATEDB",
+        "CREATEROLE",
+        "NOCREATEROLE",
+        "LOGIN",
+        "NOLOGIN",
+        "REPLICATION",
+        "NOREPLICATION",
+        "BYPASSRLS",
+        "NOBYPASSRLS"
+      ],
+      "title": "DatabasePrivilege",
+      "type": "string"
+    },
+    "DatabaseResources": {
+      "additionalProperties": false,
+      "description": "requests/limits pair, mirroring DEFAULT_CONFIG['resources'].",
+      "properties": {
+        "limits": {
+          "$ref": "#/$defs/LimitsQuantities",
+          "default": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          },
+          "description": "What the database pod may use at most; exceeding memory kills it."
+        },
+        "requests": {
+          "$ref": "#/$defs/RequestsQuantities",
+          "default": {
+            "cpu": "100m",
+            "memory": "256Mi"
+          },
+          "description": "What the database pod asks for; used for scheduling."
+        }
+      },
+      "title": "DatabaseResources",
+      "type": "object"
+    },
+    "LimitsQuantities": {
+      "additionalProperties": false,
+      "description": "CPU/memory *limits* (defaults differ from requests, as in DEFAULT_CONFIG).",
+      "properties": {
+        "cpu": {
+          "default": "500m",
+          "description": "CPU ceiling for the database pod, e.g. 500m.",
+          "title": "Cpu",
+          "type": "string"
+        },
+        "memory": {
+          "default": "512Mi",
+          "description": "Memory ceiling for the database pod, e.g. 512Mi.",
+          "title": "Memory",
+          "type": "string"
+        }
+      },
+      "title": "LimitsQuantities",
+      "type": "object"
+    },
+    "ProjectScopeConfig": {
+      "additionalProperties": false,
+      "description": "``scope: project`` -- one dedicated CNPG cluster per project, shared by all its\ndeployments. Carries the same CNPG-cluster fields as\n``namespace-postgresql-database``.",
+      "properties": {
+        "image": {
+          "default": "ghcr.io/cloudnative-pg/postgresql:17",
+          "description": "PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26).",
+          "title": "Image",
+          "type": "string"
+        },
+        "instances": {
+          "default": 1,
+          "description": "Number of PostgreSQL instances; more than one gives a replicated cluster.",
+          "minimum": 1,
+          "title": "Instances",
+          "type": "integer"
+        },
+        "postInitSQL": {
+          "description": "SQL statements run once, when the database is first created (extensions, dictionaries).",
+          "items": {
+            "type": "string"
+          },
+          "title": "Postinitsql",
+          "type": "array"
+        },
+        "privileges": {
+          "description": "Extra PostgreSQL role privileges for the project's database user, from the allowed set.",
+          "items": {
+            "$ref": "#/$defs/DatabasePrivilege"
+          },
+          "title": "Privileges",
+          "type": "array"
+        },
+        "registry": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Named registry from the project's 'registries' list to pull the image from; none means public.",
+          "title": "Registry"
+        },
+        "resources": {
+          "$ref": "#/$defs/DatabaseResources",
+          "default": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          },
+          "description": "CPU and memory requests and limits for the database pods."
+        },
+        "schemas": {
+          "description": "Extra schemas alongside the default one, shared by every deployment.",
+          "items": {
+            "$ref": "#/$defs/SchemaEntry"
+          },
+          "title": "Schemas",
+          "type": "array"
+        },
+        "scope": {
+          "const": "project",
+          "description": "One dedicated PostgreSQL cluster for this project, shared by all its deployments.",
+          "title": "Scope",
+          "type": "string"
+        },
+        "storage": {
+          "default": "1Gi",
+          "description": "Size of the database volume as a Kubernetes quantity, e.g. 1Gi.",
+          "title": "Storage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope"
+      ],
+      "title": "ProjectScopeConfig",
+      "type": "object"
+    },
+    "RequestsQuantities": {
+      "additionalProperties": false,
+      "description": "CPU/memory *requests*. Per-field defaults preserve the old deep-merge: a\nconfig overriding only ``requests.memory`` keeps the default ``cpu``.",
+      "properties": {
+        "cpu": {
+          "default": "100m",
+          "description": "CPU the database pod requests, e.g. 100m.",
+          "title": "Cpu",
+          "type": "string"
+        },
+        "memory": {
+          "default": "256Mi",
+          "description": "Memory the database pod requests, e.g. 256Mi.",
+          "title": "Memory",
+          "type": "string"
+        }
+      },
+      "title": "RequestsQuantities",
+      "type": "object"
+    },
+    "SchemaEntry": {
+      "additionalProperties": false,
+      "description": "One extra schema, project-wide (RC-17 decision 10.5).\n\n``postfix`` is the user-chosen short name; the full schema becomes\n``{project}_{deployment}_{postfix}`` per deployment and an env variable\n``DATABASE_SCHEMA_{POSTFIX}`` is exposed. The pattern keeps the postfix a valid\nidentifier fragment; uniqueness within the list, the 63-char full-name limit and\nvariable-name collisions are enforced at save time (they need the project and\ndeployment names, which this model does not have).",
+      "properties": {
+        "description": {
+          "default": "",
+          "description": "What this schema is for, for whoever reads the project file.",
+          "title": "Description",
+          "type": "string"
+        },
+        "marked-for-deletion": {
+          "default": false,
+          "description": "Marks the schema as no longer wanted instead of dropping it: the schema and its data stay, and its variable is no longer exposed.",
+          "title": "Marked-For-Deletion",
+          "type": "boolean"
+        },
+        "postfix": {
+          "description": "Short name of the extra schema, at most 32 characters. The full name becomes {project}_{deployment}_{postfix} and its connection details are exposed as DATABASE_SCHEMA_{POSTFIX}. The full name must also stay under PostgreSQL's 63-character limit for every deployment, which depends on the project and deployment names and is therefore checked when the change is saved.",
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Postfix",
+          "type": "string"
+        }
+      },
+      "required": [
+        "postfix"
+      ],
+      "title": "SchemaEntry",
+      "type": "object"
+    },
+    "SharedScopeConfig": {
+      "additionalProperties": false,
+      "description": "``scope: shared`` -- a database on the shared cluster instance (the default).\n\nCarries no CNPG-cluster fields: ``extra=\"forbid\"`` means putting ``storage`` or\n``instances`` here fails validation with a message that names the offending key.",
+      "properties": {
+        "schemas": {
+          "description": "Extra schemas alongside the default one, shared by every deployment.",
+          "items": {
+            "$ref": "#/$defs/SchemaEntry"
+          },
+          "title": "Schemas",
+          "type": "array"
+        },
+        "scope": {
+          "const": "shared",
+          "default": "shared",
+          "description": "A database on the shared cluster instance; the default.",
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "title": "SharedScopeConfig",
+      "type": "object"
+    }
+  },
+  "description": "Project-layer config: a ``scope``-discriminated union of the two shapes above.\n\n``scope`` defaults to ``shared`` when absent, so an existing project that sets no\nscope validates as a shared database and its behaviour is unchanged.",
+  "discriminator": {
+    "mapping": {
+      "project": "#/$defs/ProjectScopeConfig",
+      "shared": "#/$defs/SharedScopeConfig"
+    },
+    "propertyName": "scope"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SharedScopeConfig"
+    },
+    {
+      "$ref": "#/$defs/ProjectScopeConfig"
+    }
+  ],
+  "title": "PostgresqlDatabaseProjectConfig"
+}

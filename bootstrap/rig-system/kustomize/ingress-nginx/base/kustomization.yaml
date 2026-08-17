@@ -1,9 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Use upstream ingress-nginx manifest for KIND
+# Use upstream ingress-nginx manifest for KIND.
+#
+# Gepind op een release-tag, niet op main: `task install-ingress-nginx` bouwt deze base bij
+# elke verse sandbox, dus met `main` haalde elke setup binnen wat er die dag toevallig
+# stond. Dan verandert de controllerversie zonder dat iemand iets wijzigt, en verdwijnt het
+# pad zodra upstream opruimt -- precies wat de hostpath-driver in csi-snapshot/base overkwam.
+# Ophogen is een bewuste stap: check de patches hieronder tegen de nieuwe versie.
 resources:
-- https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+- https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
 
 patches:
 # Enable configuration-snippet annotations (disabled by default since v1.9.0)
@@ -21,6 +27,14 @@ patches:
     data:
       allow-snippet-annotations: "true"
       annotations-risk-level: "Critical"
+      # OPI praat met Keycloak via deze ingress, en zijn admin-token draagt een
+      # resource_access-entry per realm (~337 bytes). Bij 15 realms was de
+      # Authorization-header 8446 bytes en gaf nginx "400 Request Header Or Cookie
+      # Too Large" op de standaard 8k, waardoor een verse OPI-pod niet meer kon
+      # opstarten. Dit is een noodverband: het token blijft groeien met het aantal
+      # projecten (~19KB bij 47), dus de echte oplossing is dat admin-verkeer niet
+      # door deze ingress loopt of dat het token kleiner wordt.
+      large-client-header-buffers: "4 16k"
 
 # Ensure ingress controller runs on control-plane node with ingress-ready=true label
 # KIND clusters have port mappings (80/443) only on the control-plane node

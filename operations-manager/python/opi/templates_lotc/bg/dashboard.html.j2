@@ -1,0 +1,121 @@
+{#
+  Dashboard.
+
+  Een OVERNAME van de bestaande dashboard.html.j2 met de nieuwe componenten, niet een
+  herontwerp. Dezelfde zes blokken in dezelfde volgorde, dezelfde gegevens, hetzelfde
+  gedrag - alleen de vormgeving komt nu uit het thema in plaats van uit dashboard.css.
+
+    _kop                 -> page_head()
+    _gezondheidsmelding  -> c-alert, met dezelfde drie standen en dezelfde links
+    _kerncijfers         -> c-metric in plaats van vier kaarten met een eigen stat-grid
+    _resourcegebruik     -> dezelfde canvas-meters, in een apart opgehaald blok
+    _resourceverdeling   -> c-progress-bar met segmenten in plaats van een eigen balk
+
+  EEN BLOK IS ER OP VERZOEK UIT: de lijst met projecten. Die staat op /projects, en twee
+  plekken met dezelfde lijst lopen vroeg of laat uiteen. Wat het dashboard hoort te doen is
+  samenvatten - de kerncijfers en het resourcegebruik - met een ingang naar de lijst zelf.
+  De gezondheidsmelding bovenaan blijft wel: die vat samen en somt niet op.
+
+  DE METERS
+
+  Hier stonden een tijd voortgangsbalken in plaats van de canvas-meters. Dat is
+  teruggedraaid - zie bg/_dashboard-usage.html.j2. De tekencode en de stylesheet die ze
+  nodig hebben worden hieronder geladen, in de PAGINA en niet in het fragment: het
+  fragment komt via htmx binnen en een stylesheet die pas dan arriveert laat de meters
+  eerst verkeerd staan.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Dashboard - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Dashboard", "Hier vind je een overzicht van al je projecten, deployments en resourcegebruik.") }}
+
+    {# De gezondheidsmelding. Dezelfde volgorde als de bestaande pagina: problemen gaan
+       voor bijwerken, en bijwerken voor "niets aan de hand". #}
+    {% if health_counts is defined %}
+        {% if health_counts.Degraded > 0 %}
+            <c-alert type="error" heading="{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen">
+                <c-stack gap="xs">
+                    {% for project in projects if project.health == 'Degraded' %}
+                        <c-link href="/projects/{{ project.name }}/details#deployment-status">{{ project.display_name }} - bekijk de deploymentstatus</c-link>
+                    {% endfor %}
+                </c-stack>
+            </c-alert>
+        {% elif health_counts.Progressing > 0 %}
+            <c-alert type="warning" heading="{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt">
+                <c-stack gap="xs">
+                    {% for project in projects if project.health == 'Progressing' %}
+                        <c-link href="/projects/{{ project.name }}/details#deployment-status">{{ project.display_name }} - bekijk de deploymentstatus</c-link>
+                    {% endfor %}
+                </c-stack>
+            </c-alert>
+        {% elif health_banner %}
+            {# health_banner is een DICT met kind, heading en lines - zie
+               _dashboard_health_banner in router.py. Hier stond {{ health_banner }} in het
+               heading-attribuut, en dan drukt Jinja de hele dict af: de gebruiker kreeg
+               letterlijk {'kind': 'info', 'heading': ...} op zijn scherm te zien.
+
+               De woordkeuze wordt in Python bepaald en niet hier: "Alle N projecten zijn
+               gezond" hield op waar te zijn zodra er een met opzet niets draaide (RC-31). #}
+            <c-alert type="{{ health_banner.kind | default('info', true) }}" heading="{{ health_banner.heading }}">
+                {% if health_banner.lines %}
+                    <c-stack gap="xs">
+                        {% for line in health_banner.lines %}
+                            <c-paragraph size="sm">{{ line }}</c-paragraph>
+                        {% endfor %}
+                    </c-stack>
+                {% endif %}
+            </c-alert>
+        {% endif %}
+    {% endif %}
+
+    {# De vier kerncijfers, met dezelfde bijschriften als de bestaande pagina. #}
+    <c-auto-grid min="200px" gap="md">
+        <c-metric icon="rectangle-stack" value="{{ active_projects }}" label="Actieve Projecten" sub="{{ total_deployments }} deployments" href="/projects" />
+        <c-metric icon="arrow-up-arrow-down" value="{{ total_deployments }}" label="Deployments" />
+        <c-metric icon="person-2" value="{{ total_users }}" label="Gebruikers" />
+        {# Het aantal pods komt uit Prometheus, en die queries staan in het fragment
+           hieronder. Deze pagina kent het dus nog niet: het fragment schuift de kaart er
+           via een out-of-band swap overheen zodra het antwoord binnen is. Zonder die
+           swap stond hier altijd 0, ook met draaiende pods. #}
+        <div id="kerncijfer-pods">
+            <c-metric icon="cylinder-split" value="{{ pod_count }}" label="Pods" />
+        </div>
+    </c-auto-grid>
+
+    {# Het resourcegebruik wordt APART opgehaald. Zes Prometheus-queries plus een per
+       project duren te lang om de pagina op te laten wachten, en dat is precies waarom de
+       RVO-pagina hier lazy loading voor had. Zo staat de pagina er meteen en houdt een
+       trage of afwezige Prometheus hem niet op. #}
+    <div hx-get="/dashboard/resource-usage" hx-trigger="load" hx-swap="innerHTML">
+        <c-paragraph>Resourcegebruik wordt opgehaald...</c-paragraph>
+    </div>
+
+    {# De LIJST met projecten stond hier ook, en die is eruit: hij staat op /projects, en
+       twee plekken met dezelfde lijst lopen vroeg of laat uiteen. Wat het dashboard hoort
+       te doen is samenvatten - de kerncijfers hierboven en het resourcegebruik - met een
+       ingang naar de lijst zelf. #}
+    <c-cluster gap="sm">
+        {# GEEN size: dit zijn de hoofdacties van deze pagina, en de regel in
+           opi/core/buttons.py zegt dat `sm` alleen voor een herhaalde, dichte context is
+           (een rij in een tabel, een kaart in een raster). Alles daarbuiten krijgt de
+           standaard, en die schrijf je niet op. Ze stonden hier op `sm` en waren daardoor
+           kleiner dan dezelfde soort knop op elke andere pagina. #}
+        <c-button type="primary" label="Nieuw Project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
+        <c-button type="secondary" label="Alle projecten" icon="rectangle-stack" show-icon="before" href="/projects" />
+    </c-cluster>
+
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/dashboard.css') }}">
+{% endblock %}
+
+{% block additional_scripts %}
+{# Dezelfde bron en versie als de bestaande pagina; dit is een overname, geen nieuwe
+   keuze. Chart.js zelf in beheer nemen is een aparte afweging. #}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{{ static_url('js/dashboard_gauges.js') }}"></script>
+{% endblock %}

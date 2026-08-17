@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING
 
 from opi.core.task_manager import (
     ProjectInfo,
+    TaskProgressManager,
     TaskStatus,
     _projects,
+    format_step_line,
 )
 
 if TYPE_CHECKING:
@@ -43,6 +45,7 @@ class PersistentTaskProgressManager:
         self._events: list[dict[str, str]] = []
         self._web_addresses: dict[str, str] = {}
         self._namespace: str | None = None
+        self._project_failure: str | None = None
         self._dirty: bool = False
         self._background_tasks: set[asyncio.Task] = set()
         self._flush_task: asyncio.Task | None = None
@@ -109,6 +112,7 @@ class PersistentTaskProgressManager:
                 "status": info["status"],
                 "error": info.get("error"),
                 "parent_id": info.get("parent_id"),
+                "subject": info.get("subject"),
             }
             for subtask_id, info in self._subtasks.items()
         ]
@@ -172,20 +176,26 @@ class PersistentTaskProgressManager:
     # Public interface -- mirrors TaskProgressManager
     # ------------------------------------------------------------------
 
-    def add_task(self, name: str) -> str:
-        """Add a task and start it immediately. Returns task ID."""
+    def add_task(self, name: str, subject: str | None = None) -> str:
+        """Add a task and start it immediately. Returns task ID.
+
+        ``subject`` says what the step runs for -- a deployment, component or service
+        name -- for steps that run more than once per project. It is kept next to the
+        name instead of inside it, so the page can show and group them separately.
+        """
         task_id = str(uuid.uuid4())
         self._subtasks[task_id] = {
             "name": name,
             "status": TaskStatus.RUNNING.value,
             "error": None,
             "parent_id": None,
+            "subject": subject,
         }
         logger.info("Task %s: Added task: %s (%s)", self._task_id, name, task_id)
-        self.update_current_step(name)
+        self.update_current_step(format_step_line(name, subject))
         return task_id
 
-    def add_subtask(self, parent_task_id: str, name: str) -> str:
+    def add_subtask(self, parent_task_id: str, name: str, subject: str | None = None) -> str:
         """Add a subtask under a parent task. Returns subtask ID."""
         subtask_id = str(uuid.uuid4())
         self._subtasks[subtask_id] = {
@@ -193,6 +203,7 @@ class PersistentTaskProgressManager:
             "status": TaskStatus.RUNNING.value,
             "error": None,
             "parent_id": parent_task_id,
+            "subject": subject,
         }
         logger.info(
             "Task %s: Added subtask: %s (%s) under %s",
@@ -201,7 +212,7 @@ class PersistentTaskProgressManager:
             subtask_id,
             parent_task_id,
         )
-        self.update_current_step(name)
+        self.update_current_step(format_step_line(name, subject))
         return subtask_id
 
     def update_task(self, task_id: str, message: str) -> None:
@@ -301,11 +312,24 @@ class PersistentTaskProgressManager:
         except Exception:
             logger.exception("Failed to mark task %s as completed in DB", self._task_id)
 
+    @property
+    def project_failure(self) -> str | None:
+        """De reden waarom deze taak als mislukt is gemarkeerd, of ``None``.
+
+        De worker leest dit als de handler zelf iets teruggeeft dat op succes lijkt: dan
+        wint wat de handler hier meldde, en eindigt de taak op ``failed`` in plaats van op
+        ``completed`` (zie :func:`opi.core.task_worker.reported_failure`). Zonder dit
+        schreef de worker ``completed`` over de fire-and-forget schrijfactie van
+        :meth:`fail_project` heen, en dat is een wedloop met de fout als verliezer.
+        """
+        return self._project_failure
+
     def fail_project(self, error: str) -> None:
         """Mark the entire project as failed.
 
         Schedules the DB failure call as a fire-and-forget task.
         """
+        self._project_failure = error
         self.mark_legacy_failed(error)
 
         self._current_step = f"Failed: {error}"
@@ -433,3 +457,9 @@ class PersistentTaskProgressManager:
         if self._task_id in _projects:
             _projects[self._task_id].events = self._events
         self._mark_dirty()
+
+
+#: Either progress manager. They are unrelated classes with the same synchronous
+#: interface (this module is the drop-in replacement for the in-memory one), so a
+#: signature naming only one of them rejects half its real callers.
+AnyTaskProgressManager = TaskProgressManager | PersistentTaskProgressManager

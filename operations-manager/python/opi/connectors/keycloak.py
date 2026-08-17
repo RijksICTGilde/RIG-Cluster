@@ -13,10 +13,12 @@ import string
 from enum import Enum
 from typing import Any
 
-from keycloak import KeycloakAdmin
+import aiohttp
+from keycloak import KeycloakAdmin, KeycloakOpenIDConnection
 from keycloak.exceptions import KeycloakError, KeycloakGetError, KeycloakPostError
 
 from opi.core.config import settings
+from opi.utils.totp import build_credential_representation
 
 logger = logging.getLogger(__name__)
 
@@ -41,32 +43,78 @@ class KeycloakConnector:
         keycloak_url: str,
         admin_username: str | None = None,
         admin_password: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
     ):
         """
         Initialize the Keycloak connector.
+
+        Authenticates against the master realm using either a client-credentials
+        service account (client_id + client_secret) or, as a fallback, an admin
+        username + password (direct grant).
 
         Args:
             keycloak_url: Base URL of the Keycloak server
             admin_username: Admin username for Keycloak API access
             admin_password: Admin password for Keycloak API access
+            client_id: Service-account client id (client-credentials mode)
+            client_secret: Service-account client secret (client-credentials mode)
         """
         self.keycloak_url = keycloak_url.rstrip("/")
         self.admin_username = admin_username
         self.admin_password = admin_password
 
-        # Initialize KeycloakAdmin instance
-        self.admin = KeycloakAdmin(
-            server_url=self.keycloak_url,
-            username=self.admin_username,
-            password=self.admin_password,
-            realm_name="master",
-            user_realm_name="master",  # Always authenticate against master realm
-            verify=True,
-        )
-
-        logger.debug(f"Initialized KeycloakConnector for {keycloak_url}")
+        if client_secret:
+            if not client_id:
+                msg = "client_id is required alongside client_secret for client-credentials auth"
+                raise ValueError(msg)
+            # Client-credentials mode: OPI's own service account, independent of
+            # any human-admin OTP policy.
+            connection = KeycloakOpenIDConnection(
+                server_url=self.keycloak_url,
+                realm_name="master",
+                # Always authenticate against master, exactly like the admin-password path
+                # below. Without this python-keycloak takes the token realm from
+                # ``realm_name`` (openid_connection: ``user_realm_name or realm_name``), and
+                # ``change_current_realm()`` -- which OPI calls for every project realm --
+                # reassigns it. The next token refresh then asks a PROJECT realm for
+                # ``opi-admin-service``, which only exists in master, and Keycloak answers
+                # client_not_found. The first token always succeeds, so the failure only
+                # appears after a realm switch plus a token expiry.
+                user_realm_name="master",
+                client_id=client_id,
+                client_secret_key=client_secret,
+                grant_type="client_credentials",
+                verify=True,
+            )
+            self.admin = KeycloakAdmin(connection=connection)
+            logger.debug(f"Initialized KeycloakConnector for {keycloak_url} (client-credentials: {client_id})")
+        else:
+            # Admin username/password mode (bootstrap/break-glass fallback).
+            self.admin = KeycloakAdmin(
+                server_url=self.keycloak_url,
+                username=self.admin_username,
+                password=self.admin_password,
+                realm_name="master",
+                user_realm_name="master",  # Always authenticate against master realm
+                verify=True,
+            )
+            logger.debug(f"Initialized KeycloakConnector for {keycloak_url} (admin user: {admin_username})")
 
     # ==================== Realm Operations ====================
+
+    def _refresh_admin_token(self) -> None:
+        """Mint a fresh admin access token on the underlying connection.
+
+        Needed after creating a realm: see the call site in :meth:`create_realm` for why a
+        token issued earlier cannot administer a realm created later. Best-effort -- if the
+        refresh itself fails, the caller carries on with the existing token and the
+        operation surfaces its own error rather than this one masking it.
+        """
+        try:
+            self.admin.connection.get_token()
+        except KeycloakError as e:
+            logger.warning(f"Could not refresh the Keycloak admin token: {e}")
 
     async def create_realm(
         self,
@@ -163,6 +211,22 @@ class KeycloakConnector:
                 else:
                     raise
 
+            # A token minted before this realm existed cannot administer it. Keycloak
+            # creates a ``<realm>-realm`` client in master alongside every new realm and
+            # carries its admin roles in ``resource_access``; an access token issued
+            # earlier simply does not have them, so every follow-up call on the fresh
+            # realm answers 403. Measured on the sandbox: same service account, same
+            # master 'admin' role, POST /admin/realms -> 201 but
+            # GET /admin/realms/<new>/users/profile -> 403 with the token that created it,
+            # and 200 with a token minted one second later.
+            #
+            # This bites service accounts only -- an admin USER with the master 'admin'
+            # role is a super-admin over realms that did not exist when its token was
+            # issued, which is why this never showed before OPI moved to a
+            # client-credentials service account. Refreshing unconditionally keeps the two
+            # auth paths behaving the same and costs one token request per realm created.
+            self._refresh_admin_token()
+
             # Get the realm details
             realm_info = self.admin.get_realm(realm_name=realm_name)
 
@@ -238,6 +302,79 @@ class KeycloakConnector:
         finally:
             self.admin.change_current_realm("master")
 
+    async def set_required_action_enabled(self, realm_name: str, alias: str, enabled: bool) -> None:
+        """Enable or disable a required action provider in a realm.
+
+        Disabling UPDATE_PASSWORD is how self-service password setting is closed off: Keycloak
+        hides the account console's password button (CredentialTypeMetadata drops createAction /
+        updateAction for providers that are not enabled) and rejects the hand-crafted
+        ``kc_action=UPDATE_PASSWORD`` application-initiated action on the login endpoint. Both
+        entry points are needed, since removing manage-account only takes away the first.
+
+        Fails closed for the same reason as :meth:`_lock_identity_fields`: a realm that silently
+        keeps self-service password setting lets a federated user set a local password and log in
+        without SSO Rijk, so an API failure aborts realm provisioning.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            action = self.admin.get_required_action_by_alias(alias)
+            if action is None:
+                logger.warning(f"Required action {alias} not found in realm {realm_name}, nothing to change")
+                return
+            if action.get("enabled") == enabled:
+                return
+            action["enabled"] = enabled
+            self.admin.update_required_action(alias, payload=action)
+            logger.info(f"Set required action {alias} to enabled={enabled} in realm {realm_name}")
+        except KeycloakError as e:
+            logger.error(f"Could not set required action {alias} in realm {realm_name}: {e}")
+            raise
+        finally:
+            self.admin.change_current_realm("master")
+
+    async def remove_default_role(self, realm_name: str, client_id: str, role_name: str) -> None:
+        """Remove a client role from the realm's ``default-roles-<realm>`` composite.
+
+        Removing ``account:manage-account`` is what stops a user from linking or unlinking an
+        identity provider themselves: LinkedAccountsResource requires that role for both add and
+        remove. Measured in the sandbox, the effect is broader than "read-only console": without
+        the role the access token carries no account client roles at all, so it lacks the
+        ``account`` audience and every account REST endpoint answers 401, ``view-profile``
+        notwithstanding. The account console is inert rather than read-only. Nothing in the ZAD
+        portal links to it, so that is acceptable, but it is more than it looks.
+
+        Idempotent: the role is looked up in the composite first and nothing is written when it is
+        already gone. Fails closed, as above.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            client_uuid = self.admin.get_client_id(client_id)
+            if client_uuid is None:
+                logger.warning(f"Client {client_id} not found in realm {realm_name}, cannot remove role {role_name}")
+                return
+
+            default_role_id = self.admin.get_default_realm_role_id()
+            composites = self.admin.get_role_composites_by_id(default_role_id)
+            # Match on the owning client too: a realm role may carry the same name.
+            target = next(
+                (
+                    role
+                    for role in composites
+                    if role.get("name") == role_name and role.get("containerId") == client_uuid
+                ),
+                None,
+            )
+            if target is None:
+                return
+
+            self.admin.remove_realm_default_roles(payload=[target])
+            logger.info(f"Removed default role {client_id}:{role_name} from realm {realm_name}")
+        except KeycloakError as e:
+            logger.error(f"Could not remove default role {client_id}:{role_name} from realm {realm_name}: {e}")
+            raise
+        finally:
+            self.admin.change_current_realm("master")
+
     async def delete_realm(self, realm_name: str) -> bool:
         """
         Delete a realm from Keycloak.
@@ -277,6 +414,32 @@ class KeycloakConnector:
             if e.response_code == 404:
                 return False
             raise
+
+    async def realm_discovery_available(self, realm_name: str) -> bool:
+        """Second opinion on whether a realm exists, independent of the admin API.
+
+        Every realm serves its own OIDC discovery document, and that document needs
+        no token, no master-realm session and no role: a 200 there proves the realm
+        is up and serving, whatever the admin API just said about it. Callers use
+        this to confirm a negative before anything acts on "the realm is gone" -
+        re-creating a realm that is in fact healthy is the expensive mistake.
+
+        Returns False when the endpoint answers 404 AND when it cannot be reached
+        at all: this only ever overrules a negative, never a positive, so an
+        unreachable endpoint simply leaves the earlier answer standing.
+        """
+        discovery_url = self.get_discovery_url(realm_name)
+        timeout = aiohttp.ClientTimeout(total=10)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session, session.get(discovery_url) as response:
+                if response.status == 200:
+                    logger.debug(f"Realm '{realm_name}' serves its OIDC discovery document")
+                    return True
+                logger.debug(f"Discovery document for realm '{realm_name}' returned HTTP {response.status}")
+                return False
+        except aiohttp.ClientError as e:
+            logger.warning(f"Could not reach the discovery document for realm '{realm_name}': {e}")
+            return False
 
     async def get_realm(self, realm_name: str) -> dict[str, Any] | None:
         """
@@ -3415,6 +3578,7 @@ class KeycloakConnector:
         first_name: str | None = None,
         last_name: str | None = None,
         enabled: bool = True,
+        totp_secret: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a user in the specified realm.
@@ -3427,6 +3591,11 @@ class KeycloakConnector:
             first_name: Optional first name
             last_name: Optional last name
             enabled: Whether the user is enabled (default: True)
+            totp_secret: Optional raw TOTP secret. When set, an OTP credential is
+                imported alongside the password so Keycloak's conditional-OTP
+                browser step requires it at login. Note: Keycloak only imports
+                credentials on user creation - if the user already exists (409
+                below) the OTP credential is not added.
 
         Returns:
             User information dictionary including user ID
@@ -3439,6 +3608,9 @@ class KeycloakConnector:
             "emailVerified": False,
             "credentials": [{"type": "password", "value": password, "temporary": False}],
         }
+
+        if totp_secret:
+            user_data["credentials"].append(build_credential_representation(totp_secret))
 
         if email:
             user_data["email"] = email
@@ -3896,26 +4068,145 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             raise
 
+    async def connection_works(self) -> bool:
+        """Return True if this connector can authenticate and reach the master realm.
+
+        Used to decide whether OPI's client-credentials service account is already
+        functional, or whether a first-boot admin-password bootstrap is needed.
+        """
+        try:
+            self.admin.change_current_realm("master")
+            self.admin.get_realm("master")
+            return True
+        except KeycloakError as e:
+            logger.info(f"Keycloak connection check failed: {e}")
+            return False
+
+    async def ensure_master_service_account_client(self, client_id: str, client_secret: str) -> None:
+        """Ensure a confidential service-account client exists in the master realm.
+
+        Creates (or repairs) a client with the given id and secret, service
+        accounts enabled and interactive flows disabled, then grants its service
+        account user the master realm 'admin' role (full multi-realm admin). This
+        lets OPI authenticate via client-credentials instead of the shared admin
+        password.
+        """
+        self.admin.change_current_realm("master")
+
+        payload = {
+            "clientId": client_id,
+            "name": "OPI Admin Service Account",
+            "protocol": "openid-connect",
+            "enabled": True,
+            "publicClient": False,
+            "secret": client_secret,
+            "standardFlowEnabled": False,
+            "implicitFlowEnabled": False,
+            "directAccessGrantsEnabled": False,
+            "serviceAccountsEnabled": True,
+        }
+
+        existing = next((c for c in self.admin.get_clients() if c.get("clientId") == client_id), None)
+        if existing is None:
+            self.admin.create_client(payload=payload)
+            logger.info(f"Created master service-account client '{client_id}'")
+            client = next((c for c in self.admin.get_clients() if c.get("clientId") == client_id), None)
+        else:
+            self.admin.update_client(client_id=existing["id"], payload=payload)
+            logger.info(f"Updated master service-account client '{client_id}'")
+            client = existing
+
+        if not client:
+            raise KeycloakError(f"Failed to retrieve master service-account client '{client_id}'")
+
+        service_account_user = self.admin.get_client_service_account_user(client["id"])
+        await self.assign_realm_roles_to_user("master", service_account_user["id"], ["admin"])
+        logger.info(f"Granted master 'admin' role to service account of client '{client_id}'")
+
 
 # ==================== Factory Function ====================
 
 
 async def create_keycloak_connector(
-    keycloak_url: str | None = None, admin_username: str | None = None, admin_password: str | None = None
+    keycloak_url: str | None = None,
+    admin_username: str | None = None,
+    admin_password: str | None = None,
+    use_client_credentials: bool | None = None,
 ) -> KeycloakConnector:
     """
     Factory function to create a KeycloakConnector instance.
+
+    By default OPI authenticates with its client-credentials service account when
+    KEYCLOAK_ADMIN_CLIENT_SECRET is configured, otherwise it falls back to the
+    admin username/password. Pass use_client_credentials=False to force the
+    admin-password path (used during first-boot self-bootstrap of the service
+    account client).
 
     Args:
         keycloak_url: Base URL of the Keycloak server (uses config default if None)
         admin_username: Admin username for Keycloak API access (uses config default if None)
         admin_password: Admin password for Keycloak API access (uses config default if None)
+        use_client_credentials: Force client-credentials (True) or admin password
+            (False); None auto-selects based on whether a client secret is set.
 
     Returns:
         KeycloakConnector instance
     """
+    if use_client_credentials is None:
+        use_client_credentials = bool(settings.KEYCLOAK_ADMIN_CLIENT_SECRET)
+
+    if use_client_credentials and settings.KEYCLOAK_ADMIN_CLIENT_SECRET:
+        return KeycloakConnector(
+            keycloak_url=keycloak_url or settings.KEYCLOAK_URL,
+            client_id=settings.KEYCLOAK_ADMIN_CLIENT_ID,
+            client_secret=settings.KEYCLOAK_ADMIN_CLIENT_SECRET,
+        )
+
     return KeycloakConnector(
         keycloak_url=keycloak_url or settings.KEYCLOAK_URL,
         admin_username=admin_username or settings.KEYCLOAK_ADMIN_USERNAME,
         admin_password=admin_password or settings.KEYCLOAK_ADMIN_PASSWORD,
     )
+
+
+async def fetch_oidc_metadata(discovery_url: str) -> dict[str, Any]:
+    """Fetch an OIDC provider's discovery document.
+
+    The document is the authoritative source for the issuer and the JWKS URI, so
+    token verification never has to assemble those URLs itself.
+
+    Args:
+        discovery_url: The .well-known/openid-configuration URL of the realm
+
+    Returns:
+        The parsed discovery document
+
+    Raises:
+        aiohttp.ClientError: When the document cannot be retrieved
+    """
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session, session.get(discovery_url) as response:
+        response.raise_for_status()
+        metadata: dict[str, Any] = await response.json()
+    logger.debug("Fetched OIDC metadata from %s", discovery_url)
+    return metadata
+
+
+async def fetch_jwks(jwks_uri: str) -> dict[str, Any]:
+    """Fetch a realm's JSON Web Key Set.
+
+    Args:
+        jwks_uri: The jwks_uri from the realm's discovery document
+
+    Returns:
+        The parsed JWKS
+
+    Raises:
+        aiohttp.ClientError: When the key set cannot be retrieved
+    """
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session, session.get(jwks_uri) as response:
+        response.raise_for_status()
+        jwks: dict[str, Any] = await response.json()
+    logger.debug("Fetched JWKS from %s", jwks_uri)
+    return jwks

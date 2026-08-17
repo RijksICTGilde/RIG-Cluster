@@ -1,7 +1,7 @@
 """
 End-to-end integration tests for the editables package.
 
-Tests the full pipeline: EditableVisualizer -> editable_to_form_field() -> FormField -> ROOSWidgetAdapter.
+Tests the full pipeline: EditableVisualizer -> editable_to_form_field() -> FormField -> LOTCWidgetAdapter.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from opi.forms.visualizers.bridge import (
 from opi.forms.visualizers.flows import FlowMode, FormFlow
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
-from opi.forms.widgets.roos import ROOSWidgetAdapter
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
 
 class TestFullRenderPipeline:
@@ -41,9 +41,9 @@ class TestFullRenderPipeline:
         )
         yaml_data = {"name": "test-project"}
         field = editable_to_form_field(editable, yaml_data)
-        adapter = ROOSWidgetAdapter()
+        adapter = LOTCWidgetAdapter()
         html = adapter.render_field(field)
-        assert "c-text-input-field" in html
+        assert 'data-lotc-component="text-input-field"' in html
         assert "test-project" in html
 
     def test_display_card_encrypted_field(self):
@@ -58,9 +58,9 @@ class TestFullRenderPipeline:
         )
         yaml_data = {"config": {"api-key": "-----BEGIN AGE ENCRYPTED FILE-----\ndata..."}}
         field = editable_to_form_field(editable, yaml_data)
-        adapter = ROOSWidgetAdapter()
+        adapter = LOTCWidgetAdapter()
         html = adapter.render_field(field)
-        assert "c-card" in html
+        assert 'data-lotc-component="card"' in html
         assert "Versleuteld opgeslagen" in html
         # Must NOT contain actual encrypted data
         assert "BEGIN AGE" not in html

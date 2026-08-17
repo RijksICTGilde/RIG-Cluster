@@ -1,7 +1,13 @@
-"""Test privileges configuration support."""
+"""Test privileges configuration support.
+
+Validation moved from hand-rolled checks in DatabaseManager to the typed config
+model (NamespacePostgresConfig) in RC-5 Phase 2, so invalid config now surfaces as
+pydantic.ValidationError instead of bespoke ValueError/TypeError messages.
+"""
 
 import pytest
 from opi.manager.database_manager import DatabaseManager
+from pydantic import ValidationError
 
 
 def test_get_database_service_config_with_superuser_privilege(mocker):
@@ -98,7 +104,7 @@ def test_get_database_service_config_invalid_privilege(mocker):
     mock_pm = mocker.Mock()
     db_manager = DatabaseManager(mock_pm, db_host="localhost", admin_username="admin", admin_password="password")
 
-    with pytest.raises(ValueError, match="Invalid database privilege"):
+    with pytest.raises(ValidationError, match="privileges"):
         db_manager._get_database_service_config(project_data)
 
 
@@ -120,7 +126,7 @@ def test_get_database_service_config_privileges_not_list(mocker):
     mock_pm = mocker.Mock()
     db_manager = DatabaseManager(mock_pm, db_host="localhost", admin_username="admin", admin_password="password")
 
-    with pytest.raises(ValueError, match=r"privileges.*must be a list"):
+    with pytest.raises(ValidationError, match="privileges"):
         db_manager._get_database_service_config(project_data)
 
 
@@ -142,5 +148,5 @@ def test_get_database_service_config_privilege_not_string(mocker):
     mock_pm = mocker.Mock()
     db_manager = DatabaseManager(mock_pm, db_host="localhost", admin_username="admin", admin_password="password")
 
-    with pytest.raises(TypeError, match="Database privilege must be a string"):
+    with pytest.raises(ValidationError, match="privileges"):
         db_manager._get_database_service_config(project_data)

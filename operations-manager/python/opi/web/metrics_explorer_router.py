@@ -11,10 +11,11 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.config import settings
-from opi.core.templates import get_templates
+from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
+from opi.web.navigation_lotc import get_navigation
 
 logger = logging.getLogger(__name__)
 
@@ -77,16 +78,24 @@ def _get_prometheus_external_url() -> str:
 @metrics_explorer_router.get("/metrics-explorer", response_class=HTMLResponse)
 @requires_sso
 async def metrics_explorer_page(request: Request):
-    """Serve the metrics explorer page."""
-    templates = get_templates()
-    user = get_current_user(request)
+    """Serve the metrics explorer page.
 
-    return templates.TemplateResponse(
-        "metrics-explorer.html.j2",
-        {
+    Admins only. The verkenner queries across every project, so it is not a page a
+    project member should reach. Taking it out of the menu hides the door; this closes
+    it, which is the part that counts.
+    """
+    user = require_platform_admin(request)
+
+    return render(
+        request,
+        template="bg/metrics-explorer.html.j2",
+        context={
             "request": request,
             "title": "Metrics Explorer",
             "menu_items": get_menu_items(user),
+            # De navigatie van de nieuwe schil. Kost niets als de bestaande weergave
+            # gekozen is: dat sjabloon leest hem niet.
+            "navigation": get_navigation(user, current_path="/metrics-explorer"),
             "user": user,
             "services": MONITORED_SERVICES,
             "prometheus_url": _get_prometheus_external_url(),
@@ -102,7 +111,12 @@ async def get_service_metrics(request: Request, service_id: str):
 
     Queries Prometheus /api/v1/series with the service's match selector,
     then extracts unique __name__ values.
+
+    Admins only, like the page it feeds. Closing the page and leaving the endpoint that
+    serves its data open would move the door rather than shut it.
     """
+    require_platform_admin(request)
+
     # Find the service definition
     service = next((s for s in MONITORED_SERVICES if s["id"] == service_id), None)
     if not service:

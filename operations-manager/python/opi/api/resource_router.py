@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.params import ProjectNamePath
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_prefixed_namespace
@@ -65,7 +66,7 @@ def _get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
 @validate_api_token
 async def tune_resources(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment: str | None = Query(None, description="Specific deployment to tune (optional)"),
 ) -> JSONResponse:
     """
@@ -100,14 +101,19 @@ async def tune_resources(
 @validate_api_token
 async def sanitize_deployment(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment: str | None = Query(None, description="Specific deployment to sanitize (optional)"),
 ) -> JSONResponse:
     """
-    Detect broken deployments (crash loops, missing images, OOM kills) and disable them.
+    Detect broken deployments (crash loops, missing images) and disable them.
 
     Sets disabled=true on broken components in the project YAML, which renders replicas: 0
     in the deployment template.
+
+    An OOM kill on its own is not a reason to disable: it is what the resource tuner
+    repairs, and disabling removes the pods whose OOM metric is the only signal the
+    tuner has, turning a memory that is set too low into a permanent outage. A
+    component that keeps dying for it still trips the restart threshold below.
 
     Args:
         project_name: Name of the project
@@ -126,7 +132,7 @@ async def sanitize_deployment(
 
 async def _run_sanitize(
     project_manager: ProjectManager,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment: str | None,
     filename: str,
 ) -> JSONResponse:
@@ -212,20 +218,9 @@ async def _run_sanitize(
             if restart_count > restart_threshold:
                 reasons.append(f"{restart_count} restarts (threshold: {restart_threshold})")
 
-            # Check for OOM kills
-            if connector:
-                try:
-                    oom_query = (
-                        f"kube_pod_container_status_last_terminated_reason{{"
-                        f'reason="OOMKilled", '
-                        f'namespace="{namespace}", '
-                        f'pod=~"{unique_name}.*"}}'
-                    )
-                    oom_results = await connector.custom_query(oom_query)
-                    if oom_results:
-                        reasons.append("OOMKilled detected")
-                except Exception as e:
-                    logger.warning(f"Failed to query OOM kills for {unique_name}: {e}")
+            # No OOM check here on purpose: see the endpoint docstring. OOM belongs to
+            # the resource tuner, which raises the memory; disabling the component takes
+            # away the pods that produce the very metric the tuner reads.
 
             # Check for image pull errors
             try:

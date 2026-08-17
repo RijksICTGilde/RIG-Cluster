@@ -17,9 +17,9 @@ from opi.forms.visualizers.wizard_sections import (
     SERVICES_EDIT_SECTION,
     SERVICES_SECTION,
     TEAM_SECTION,
-    _service_entry_name,
     _strip_removed_services_from_components,
 )
+from opi.services.services import service_entry_name
 
 
 class TestSectionDefinitions:
@@ -44,7 +44,8 @@ class TestSectionDefinitions:
         assert len(ids) == len(set(ids)), f"Duplicate section IDs: {ids}"
 
     def test_total_section_count(self):
-        assert len(ALL_SECTIONS) == 11
+        # +1 for the postgresql-database schema-list section (RC-17).
+        assert len(ALL_SECTIONS) == 12
 
 
 class TestCoreSections:
@@ -118,22 +119,39 @@ class TestServiceConfigSectionsLookup:
     def test_auth_wall_in_lookup(self):
         assert "authorization-wall" in SERVICE_CONFIG_SECTIONS
 
+    def test_sleep_mode_present(self):
+        assert "sleep-mode" in SERVICE_CONFIG_SECTIONS
+
     def test_lookup_count(self):
-        assert len(SERVICE_CONFIG_SECTIONS) == 3
+        # +1 for postgresql-database's schema-list section (RC-17), +2 for the redis /
+        # minio-storage project-level sections (RC-25).
+        assert len(SERVICE_CONFIG_SECTIONS) == 9
 
 
 class TestFlowDefinitions:
     def test_create_flow(self):
         assert CREATE_FLOW.flow_id == "create-project"
         assert CREATE_FLOW.show_review is True
-        assert len(CREATE_FLOW.sections) == 10
+        # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
+        # minio-storage (RC-25).
+        assert len(CREATE_FLOW.sections) == 16
         assert "attachments" in [s.section_id for s in CREATE_FLOW.sections]
+        # invite-config sits after the keycloak step so its realm-role picker reads the
+        # keycloak config already entered in the draft.
+        create_ids = [s.section_id for s in CREATE_FLOW.sections]
+        assert create_ids.index("invite-config") > create_ids.index("keycloak-config")
+        # sleep-mode-config sits after the components step so its waker-component select
+        # is populated from the components already in the draft project.
+        section_ids = [s.section_id for s in CREATE_FLOW.sections]
+        assert section_ids.index("sleep-mode-config") > section_ids.index("components")
 
     def test_edit_flow(self):
         assert EDIT_FLOW.flow_id == "edit-project"
         assert EDIT_FLOW.show_review is False
         assert EDIT_FLOW.save_per_section is True
-        assert len(EDIT_FLOW.sections) == 9
+        # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
+        # minio-storage (RC-25).
+        assert len(EDIT_FLOW.sections) == 15
         # Attachments are edited via a modal/service-edit flow in edit mode,
         # so the edit wizard has no dedicated attachments section (unlike create).
         assert "attachments" not in [s.section_id for s in EDIT_FLOW.sections]
@@ -170,20 +188,26 @@ class TestFlowRegistry:
 
 
 class TestServiceEntryName:
+    """The component-service reconciliation now uses the canonical helper (which also
+    resolves the ``{reference: X}`` record the old local reader ignored)."""
+
     def test_string_entry(self):
-        assert _service_entry_name("keycloak") == "keycloak"
+        assert service_entry_name("keycloak") == "keycloak"
 
     def test_dict_with_name(self):
-        assert _service_entry_name({"name": "keycloak"}) == "keycloak"
+        assert service_entry_name({"name": "keycloak"}) == "keycloak"
+
+    def test_dict_with_reference(self):
+        assert service_entry_name({"reference": "persistent-storage", "config": []}) == "persistent-storage"
 
     def test_single_key_dict(self):
-        assert _service_entry_name({"persistent-storage": {"config": []}}) == "persistent-storage"
+        assert service_entry_name({"persistent-storage": {"config": []}}) == "persistent-storage"
 
     def test_none_for_invalid(self):
-        assert _service_entry_name(42) is None
+        assert service_entry_name(42) is None
 
     def test_none_for_multi_key_dict(self):
-        assert _service_entry_name({"a": 1, "b": 2}) is None
+        assert service_entry_name({"a": 1, "b": 2}) is None
 
 
 class TestStripRemovedServicesFromComponents:

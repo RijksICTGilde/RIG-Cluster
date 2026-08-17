@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 from opi.core.cluster_config import get_redis_server
 from opi.core.config import settings
 from opi.services import ServiceType
+from opi.services.services import service_entry_name
 from opi.utils.naming import generate_redis_key_prefix, generate_redis_username
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import RedisSecret
@@ -67,7 +68,7 @@ class RedisManager:
         progress_manager = self.project_manager.get_progress_manager()
         redis_task = None
         if progress_manager:
-            redis_task = progress_manager.add_task("Creating Redis cache resources")
+            redis_task = progress_manager.add_task("Redis-cache klaarmaken", subject=deployment_name)
 
         try:
             uses_namespace_redis = self._project_uses_namespace_redis(project_data)
@@ -100,7 +101,10 @@ class RedisManager:
             key_prefix = generate_redis_key_prefix(project_name, deployment_name) if use_key_prefix else ""
 
             if not use_key_prefix:
-                logger.info(
+                # WARNING, not INFO: this widens the ACL user to every key in the SHARED
+                # Redis, so it is the one Redis setting a platform admin wants to be able
+                # to find back in the central log.
+                logger.warning(
                     f"ACL key prefix disabled for {project_name}/{deployment_name}, user will have access to all keys"
                 )
 
@@ -327,17 +331,10 @@ class RedisManager:
     def _project_uses_namespace_redis(self, project_data: dict[str, Any]) -> bool:
         """Check if project uses namespace-specific Redis service."""
         project_services = project_data.get("services", [])
-        if not project_services:
-            return False
-
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item == ServiceType.NAMESPACE_REDIS.value:
-                    return True
-            elif isinstance(service_item, dict) and ServiceType.NAMESPACE_REDIS.value in service_item:
-                return True
-
-        return False
+        # Format-agnostic (bare string / legacy name-as-key / new {name, config} record).
+        return any(
+            service_entry_name(service_item) == ServiceType.NAMESPACE_REDIS.value for service_item in project_services
+        )
 
     @staticmethod
     def _get_redis_service_config(project_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -354,20 +351,21 @@ class RedisManager:
         Returns:
             Config dict or None if service not configured or no config block
         """
+        from opi.services.services import service_entry_config, service_entry_name
+
         services = project_data.get("services", [])
 
+        # Format-agnostic: the redis entry may be a bare string, a legacy single-key
+        # dict, or a uniform record ({name, config}). ``next(iter(keys))`` returned
+        # "name"/"reference" for a record, so a configured redis was read as unconfigured.
         for service in services:
-            if isinstance(service, str):
-                if service in (ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value):
-                    return None
-            elif isinstance(service, dict):
-                service_name = next(iter(service.keys())) if service else None
-                if service_name in (ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value):
-                    config = service.get(service_name, {}).get("config")
-                    if config:
-                        logger.debug(f"Found redis config: {config}")
-                        return config
-                    return None
+            if service_entry_name(service) not in (ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value):
+                continue
+            config = service_entry_config(service)
+            if config:
+                logger.debug(f"Found redis config with keys: {sorted(config)}")
+                return config
+            return None
 
         return None
 

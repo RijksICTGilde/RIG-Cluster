@@ -16,11 +16,13 @@ def test_tools_page_renders(app_server: str, auth_page: Page) -> None:
     assert response is not None
     assert response.ok, f"Tools page returned {response.status}"
 
-    # Verify key form fields are present
-    expect(auth_page.locator("[name='public_key']")).to_be_visible()
-    expect(auth_page.locator("[name='private_key']")).to_be_visible()
-    expect(auth_page.locator("[name='operation']")).to_be_visible()
-    expect(auth_page.locator("[name='input_text']")).to_be_visible()
+    # Verify key form fields are present.
+    #
+    # ``.first`` omdat een veld een webcomponent is met het echte besturingselement
+    # erbinnen: [name='...'] vindt er dan twee, en Playwright weigert in strict mode te
+    # kiezen. Welke van de twee zichtbaar is doet er niet toe - dat ze er zijn wel.
+    for veld in ("public_key", "private_key", "operation", "input_text"):
+        expect(auth_page.locator(f"[name='{veld}']").first).to_be_visible()
 
     # Verify heading
     expect(auth_page.locator("text=Configuration")).to_be_visible()

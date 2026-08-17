@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from opi.handlers.project_file_handler import is_transient_registry_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +39,11 @@ class InterpretedEvent:
 
 # --- Translation table for K8s event reasons ---
 
+# De melding voor een container die uit zichzelf stopt en opnieuw wordt gestart. Een
+# constante, omdat de probe-oorzaak hieronder hem gericht moet kunnen vervangen: de
+# kubelet meldt namelijk hetzelfde als hij een container kilt op een falende probe.
+_CRASH_TITLE = "Applicatie crasht herhaaldelijk"
+
 _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
     # (title, suggestion, severity)
     #
@@ -49,12 +56,12 @@ _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
     ),
     # Crash / restart
     "BackOff": (
-        "Applicatie crasht herhaaldelijk",
+        _CRASH_TITLE,
         "De container start steeds opnieuw op en crasht. Bekijk de logs voor de oorzaak.",
         EventSeverity.ACTIONABLE,
     ),
     "CrashLoopBackOff": (
-        "Applicatie crasht herhaaldelijk",
+        _CRASH_TITLE,
         "De container start steeds opnieuw op en crasht. Bekijk de logs voor de oorzaak.",
         EventSeverity.ACTIONABLE,
     ),
@@ -86,7 +93,9 @@ _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
         "Controleer of de storage-configuratie correct is.",
         EventSeverity.ACTIONABLE,
     ),
-    # Health probes
+    # Health probes. Alleen de READINESS-probe komt hier terecht: een falende liveness-
+    # of startup-probe is een eigen oorzaak en wordt eerder afgevangen (zie
+    # _LIVENESS_PROBE_RE en _probe_kill_translation).
     "Unhealthy": (
         "Health-check gefaald",
         "De applicatie reageert niet op health-checks. Controleer of de applicatie correct opstart en luistert op de juiste poort.",
@@ -171,7 +180,7 @@ _MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
     ),
     (
         re.compile(r"back-off.*restarting failed container", re.IGNORECASE),
-        "Applicatie crasht herhaaldelijk",
+        _CRASH_TITLE,
         "De container start steeds opnieuw op en crasht. Bekijk de logs voor de oorzaak.",
         EventSeverity.ACTIONABLE,
     ),
@@ -213,11 +222,22 @@ def _source_image(rewritten: str) -> str:
 def _image_pull_suggestion(message: str) -> str:
     """Short suggestion for an image-pull failure, naming the source-registry image.
 
-    No per-HTTP-status wording: the status is unreliable (a 500 from the proxy can
-    really be an auth problem), so a single check covers the common causes, plus an
-    anonymous ``docker pull`` the user can run to test public access.
+    Only two outcomes are distinguished, and only on wording the registry is explicit
+    about (see ``is_transient_registry_error``): a 5xx or a rate limit means the
+    registry could not answer, anything else is treated as a problem with the image
+    reference. Deliberately no finer than that -- the exact status is unreliable, an
+    auth problem can surface as more than one code -- so the second branch stays one
+    check of the common causes plus an anonymous ``docker pull`` to test public access.
     """
     match = _IMAGE_IN_MSG_RE.search(message)
+    if is_transient_registry_error(message):
+        subject = f"De image {_source_image(match.group(1))}" if match else "De image"
+        return (
+            f"{subject} kon niet worden opgehaald omdat de registry zelf geen antwoord gaf. Dat zegt niets "
+            "over de image: die kan prima bestaan. Hier is niets voor je te doen, het ophalen wordt vanzelf "
+            "opnieuw geprobeerd en herstelt zodra de registry weer werkt. Houdt het uren aan, meld het dan "
+            "bij het platformteam."
+        )
     if not match:
         return "Controleer of de image publiek toegankelijk is en of de naam en tag kloppen."
     image = _source_image(match.group(1))
@@ -229,6 +249,114 @@ def _image_pull_suggestion(message: str) -> str:
     )
 
 
+def _image_pull_translation(message: str) -> tuple[str, str, EventSeverity]:
+    """Title, suggestion and severity for an image-pull failure.
+
+    A registry that could not answer is INFORMATIONAL: the user cannot fix it and the
+    pull retries by itself, so presenting it as something to act on sends them looking
+    for a broken image that is fine. A missing or unreachable image stays ACTIONABLE.
+    """
+    if is_transient_registry_error(message):
+        return (
+            "Registry kon de container image niet leveren",
+            _image_pull_suggestion(message),
+            EventSeverity.INFORMATIONAL,
+        )
+    return "Container image kan niet worden opgehaald", _image_pull_suggestion(message), EventSeverity.ACTIONABLE
+
+
+# --- Een container die de kubelet kilt omdat de probe faalt -------------------------
+#
+# Dit is GEEN crash, en het onderscheid is voor de gebruiker het hele verschil: bij
+# "crasht" ga je je applicatie debuggen, bij "de probe komt er niet doorheen" pas je je
+# health-instelling aan.
+#
+# Gemeten op de sandbox met twee pods naast elkaar - een die draait maar een liveness-
+# probe op een dichte poort heeft, en een die echt met exit 1 stopt:
+#
+#   probefail   Running, ready=true   lastState.terminated: reason=Error exitCode=137
+#               events: [Unhealthy] Liveness probe failed: dial tcp 10.244.0.85:9999: ...
+#                       [Killing]   Container app failed liveness probe, will be restarted
+#   echtcrash   CrashLoopBackOff      lastState.terminated: reason=Error exitCode=1
+#               events: [BackOff]    Back-off restarting failed container app in pod ...
+#
+# lastState.terminated.reason is dus in BEIDE gevallen "Error" en draagt het onderscheid
+# niet. Blijft de probe lang genoeg falen, dan gaat de kubelet ook op de probe-kill
+# backoffen en meldt hij daar hetzelfde "Back-off restarting failed container" - en dat
+# is precies de tekst die hieronder als "Applicatie crasht herhaaldelijk" vertaald wordt.
+# Vandaar de verkeerde melding.
+#
+# Wat het onderscheid WEL draagt is het Unhealthy-event: de kubelet schrijft "Liveness
+# probe failed" alleen als hij een DRAAIENDE container aan het killen is. Een container
+# die uit zichzelf stopt haalt dat event niet.
+_LIVENESS_PROBE_RE = re.compile(r"\b(liveness|startup) probe failed", re.IGNORECASE)
+_PROBE_KILL_TITLE = "Health-check faalt, de container wordt herstart"
+
+# De poort uit de probe-foutmelding, zodat de melding zegt WAAR het misgaat. Twee vormen,
+# beide gemeten: een tcp-probe meldt "dial tcp <ip>:<poort>", een http(s)-probe meldt
+# 'Get "http://<ip>:<poort>/<pad>"'.
+_PROBE_TCP_PORT_RE = re.compile(r"dial tcp \S*?:(\d{1,5})\b")
+_PROBE_HTTP_PORT_RE = re.compile(r"https?://[^/\s\"]*:(\d{1,5})")
+
+
+def _probe_port(message: str) -> str | None:
+    """De poort waarop de probe strandde, of ``None`` als de melding hem niet noemt."""
+    for pattern in (_PROBE_TCP_PORT_RE, _PROBE_HTTP_PORT_RE):
+        match = pattern.search(message)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _probe_kill_translation(message: str) -> tuple[str, str, EventSeverity]:
+    """Vertaling voor een container die op een falende liveness-/startup-probe wordt gekild."""
+    port = _probe_port(message)
+    waar = f"De health-check op poort {port} krijgt geen antwoord" if port else "De health-check krijgt geen antwoord"
+    return (
+        _PROBE_KILL_TITLE,
+        f"{waar}, daarom herstart Kubernetes de container. De applicatie zelf draait wel. "
+        "Controleer of de health-check op de poort en het pad staat waar je component echt "
+        "luistert - niet of je applicatie crasht.",
+        EventSeverity.ACTIONABLE,
+    )
+
+
+def condense_render_error(message: str) -> str:
+    """Reduce a verbose ArgoCD generation-error message to its meaningful tail.
+
+    Measured against the sandbox: ArgoCD echoes the whole failed ``/bin/bash -c "<script>"``
+    command, so a CMP render failure produces a multi-kB message dominated by the plugin
+    script source, with the real error (the plugin stderr) at the very end after
+    ``exit status N:``. This extracts that tail so the user sees the actual cause instead of
+    the 14 kB script dump. Falls back to the cached-generation marker (for errors without an
+    exec wrapper, e.g. "app path does not exist"), then to the original message (length
+    capped so a giant message never floods logs or the UI).
+    """
+    if not message:
+        return message
+    # Real plugin stderr sits after the last "exit status N:"; fall back to the whole message.
+    exec_matches = list(re.finditer(r"exit status \d+:\s*", message))
+    tail = message[exec_matches[-1].end() :].strip() if exec_matches else message
+
+    # The stderr still leads with the CMP script's DEBUG noise; the real error is the last
+    # explicit error line - kustomize prints "Error:", the CMP script prints "ERROR:".
+    # (Measured on the sandbox for a duplicate-identity and a missing-namespace failure.)
+    best = max(tail.rfind("Error:"), tail.rfind("ERROR:"))
+    if best != -1:
+        return tail[best:].strip()
+
+    if exec_matches and tail:
+        return tail
+    # No exec wrapper: take what follows the cached-generation marker.
+    marker = "Manifest generation error (cached):"
+    idx = message.rfind(marker)
+    if idx != -1:
+        cached_tail = message[idx + len(marker) :].strip()
+        if cached_tail:
+            return cached_tail
+    return message if len(message) <= 800 else message[:800] + " ...(truncated)"
+
+
 def _interpret_by_reason(reason: str, message: str) -> tuple[str, str, EventSeverity] | None:
     """Look up translation by event reason, then fall back to message patterns."""
     if reason in _NOISE_REASONS:
@@ -236,7 +364,15 @@ def _interpret_by_reason(reason: str, message: str) -> tuple[str, str, EventSeve
 
     # Image-pull failures get a dynamic, solution-oriented suggestion.
     if reason in _IMAGE_PULL_REASONS or _IMAGE_PULL_RE.search(message):
-        return "Container image kan niet worden opgehaald", _image_pull_suggestion(message), EventSeverity.ACTIONABLE
+        return _image_pull_translation(message)
+
+    # Voor de reason-tabel: het Unhealthy-event zou anders als het algemene
+    # "Health-check gefaald" landen, en dat is een SYMPTOOM dat verderop wordt
+    # weggefilterd zodra er een crashmelding naast staat - precies de melding die deze
+    # oorzaak moet vervangen. Alleen liveness en startup: die killen de container, een
+    # falende readiness-probe doet dat niet en blijft dus wel een symptoom.
+    if _LIVENESS_PROBE_RE.search(message):
+        return _probe_kill_translation(message)
 
     # Checked before the reason table: a FailedScheduling on an unbound PVC would
     # otherwise be mistranslated as a cluster resource shortage.
@@ -271,7 +407,8 @@ _SYMPTOM_TITLES: set[str] = {
 
 # Titles considered root causes that suppress symptoms.
 _ROOT_CAUSE_TITLES: set[str] = {
-    "Applicatie crasht herhaaldelijk",
+    _CRASH_TITLE,
+    _PROBE_KILL_TITLE,
     "Container image kan niet worden opgehaald",
     "Ongeldige image-naam",
     "Applicatie gestopt wegens geheugengebrek",
@@ -290,12 +427,22 @@ def _resource_base_name(resource: str) -> str:
 
 
 def _suppress_symptoms(errors: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Remove symptom errors when a root cause exists for the same component."""
+    """Remove symptom errors when a root cause exists for the same component.
+
+    Bovenop de symptoomregel geldt er een tussen twee OORZAKEN: staat er voor hetzelfde
+    component een probe-kill, dan is de crashmelding onwaar en verdwijnt hij. Beide
+    komen namelijk van dezelfde kubelet-backoff, maar alleen de probe-kill weet WAAROM
+    de container omging. Andersom - een component dat echt crasht - is er geen
+    probe-kill, en dan blijft de crashmelding gewoon staan.
+    """
     root_cause_components: set[str] = set()
+    probe_kill_components: set[str] = set()
     for error in errors:
         title = error.get("message", "")
         if title in _ROOT_CAUSE_TITLES:
             root_cause_components.add(_resource_base_name(error.get("resource", "")))
+        if title == _PROBE_KILL_TITLE:
+            probe_kill_components.add(_resource_base_name(error.get("resource", "")))
 
     if not root_cause_components:
         return errors
@@ -303,7 +450,10 @@ def _suppress_symptoms(errors: list[dict[str, str]]) -> list[dict[str, str]]:
     result: list[dict[str, str]] = []
     for error in errors:
         title = error.get("message", "")
-        if title in _SYMPTOM_TITLES and _resource_base_name(error.get("resource", "")) in root_cause_components:
+        component = _resource_base_name(error.get("resource", ""))
+        if title in _SYMPTOM_TITLES and component in root_cause_components:
+            continue
+        if title == _CRASH_TITLE and component in probe_kill_components:
             continue
         result.append(error)
     return result
@@ -497,11 +647,31 @@ def interpret_argocd_errors(
 def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
     """Enrich an ArgoCD error with pattern-matched translation if possible."""
     message = error.get("message", "")
-    if _IMAGE_PULL_RE.search(message):
+    # A ComparisonError is ArgoCD saying it could not generate or compare the manifests -
+    # the render/CMP failure this whole feature is about. Give it a readable heading with the
+    # raw kustomize/CMP message underneath, so it does not read as a cryptic condition name.
+    if error.get("resource") == "ComparisonError":
         enriched = dict(error)
-        enriched["message"] = "Container image kan niet worden opgehaald"
-        enriched["suggestion"] = _image_pull_suggestion(message)
+        # No "/" in the label: interpret_argocd_errors later strips a Kind/ prefix on "/".
+        enriched["resource"] = "Configuratiefout (kustomize CMP)"
+        # ArgoCD dumps the whole failed CMP command (kBs of script source) into the message;
+        # show only the meaningful tail, keep the raw under "Origineel bericht".
+        condensed = condense_render_error(message)
+        enriched["message"] = condensed
+        if condensed != message:
+            enriched["original_message"] = message
+        enriched["suggestion"] = (
+            "De manifesten konden niet worden gegenereerd of vergeleken. Vaak staan er twee "
+            "resources met dezelfde naam in de deployment, of is een manifest ongeldig."
+        )
         enriched["severity"] = EventSeverity.ACTIONABLE.value
+        return enriched
+    if _IMAGE_PULL_RE.search(message):
+        title, suggestion, severity = _image_pull_translation(message)
+        enriched = dict(error)
+        enriched["message"] = title
+        enriched["suggestion"] = suggestion
+        enriched["severity"] = severity.value
         enriched["original_message"] = message
         return enriched
     for pattern, title, suggestion, severity in _MESSAGE_PATTERNS:

@@ -1,0 +1,55 @@
+# VOORBEELDPROJECT voor de LOTC-bouwlijn. Geen echt project. Zie voorbeeld-volledig.yaml.
+#
+# Het kleinst mogelijke project: een component, een deployment, een dienst. Bedoeld om te
+# zien hoe de pagina eruitziet als er weinig is - lege secties en enkelvoudige lijsten
+# vallen anders pas op als een echt project ze tegenkomt.
+schema-version: 2
+name: voorbeeld-klein
+display-name: Voorbeeldproject (klein)
+description: Het kleinst mogelijke project, om de lege standen te kunnen zien.
+
+users:
+  - email: beheerder@voorbeeld.nl
+    role: admin
+
+clusters:
+  - odcn-production
+
+services:
+  - publish-on-web
+
+repositories:
+  - name: hoofdrepo
+    url: https://github.com/voorbeeld/klein.git
+    branch: main
+    path: .
+
+components:
+  - name: applicatie
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    path: /
+    uses-components: []
+    resources:
+      requests:
+        memory: 64Mi
+      limits:
+        memory: 64Mi
+    services:
+      - publish-on-web
+
+deployments:
+  - name: productie
+    cluster: odcn-production
+    namespace: voorbeeld-klein
+    repository: hoofdrepo
+    subdomain: klein
+    components:
+      - reference: applicatie
+        image: ghcr.io/voorbeeld/klein:1.0.0
+
+config:
+  age-public-key: age1voorbeeld0000000000000000000000000000000000000000000000000
+  api-key: VOORBEELDWAARDE-geen-echte-sleutel

@@ -55,3 +55,8 @@ data:
     REGISTRY_USERNAME=rig+zad
     REGISTRY_VERIFY_TLS=True
     IMAGE_UPLOAD_MAX_SIZE_MB=1024
+
+    # Sleep-mode waker image via the production ghcr mirror (same path as the OPI image).
+    # Sleep-mode itself stays off in production (cluster default) until validated; this is
+    # declared so the waker pulls correctly once a project opts in.
+    SLEEP_MODE_WAKER_IMAGE=rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/zad-waker:latest

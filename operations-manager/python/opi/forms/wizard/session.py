@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -53,6 +54,52 @@ def _get_store_dir() -> str:
 def _is_valid_token(token: object) -> bool:
     """Token must match the uuid4 hex format we generate in save_wizard_state."""
     return isinstance(token, str) and bool(_TOKEN_RE.fullmatch(token))
+
+
+SESSION_MAX_AGE_SECONDS = 24 * 60 * 60
+"""How long an untouched session file may survive. A wizard is filled in within minutes;
+a day is generous and still bounds what an abandoned session leaves behind."""
+
+_SWEEP_INTERVAL_SECONDS = 60 * 60
+_last_sweep_at: float | None = None
+
+
+def purge_expired_states(max_age_seconds: float = SESSION_MAX_AGE_SECONDS) -> int:
+    """Delete session files not modified for *max_age_seconds*. Returns the count.
+
+    State files are removed when a wizard is submitted or cancelled, but a user who
+    closes the tab leaves one behind, and TEMP_DIR is a persistent volume -- so they
+    accumulated for the lifetime of the volume, each holding a copy of a project file.
+    """
+    cutoff = time.time() - max_age_seconds
+    removed = 0
+    for path in Path(_get_store_dir()).glob("*.json"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            # Raced with another worker's cleanup, or unreadable; the next sweep retries.
+            continue
+    if removed:
+        logger.info("Removed %d abandoned wizard session file(s)", removed)
+    return removed
+
+
+def _sweep_if_due() -> None:
+    """Run the purge at most once per interval.
+
+    Hooked to session *creation* rather than a scheduler: that is exactly when the store
+    is in use, and a store nobody writes to cannot grow. It keeps the cleanup local to
+    this module instead of adding another background task to the app lifespan.
+    """
+    global _last_sweep_at
+
+    now = time.monotonic()
+    if _last_sweep_at is not None and now - _last_sweep_at < _SWEEP_INTERVAL_SECONDS:
+        return
+    _last_sweep_at = now
+    purge_expired_states()
 
 
 def _store_path(token: str) -> Path:
@@ -130,6 +177,7 @@ def init_wizard_state(
     """
     # Clear any existing wizard state first
     clear_wizard_state(request)
+    _sweep_if_due()
 
     state = WizardState(
         flow_id=flow_id,
@@ -204,6 +252,7 @@ def init_modal_state_tokenized(
     No session cookie involvement — the caller is responsible for
     passing the token to the client (e.g. as a hidden form field).
     """
+    _sweep_if_due()
     token = uuid.uuid4().hex
     state = WizardState(
         flow_id=flow_id,

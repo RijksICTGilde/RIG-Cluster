@@ -6,6 +6,7 @@ the allowed-domains entry on PRE_SAVE.
 """
 
 import pytest
+from opi.connectors.subdomain import ensure_domain_requests, get_domains_config
 from opi.forms.editables.conditions import DomainNeedsRequestCondition
 from opi.forms.editables.editable import FormState
 from opi.forms.editables.hooks import DomainRequestHook
@@ -88,8 +89,9 @@ class TestDomainRequestHook:
         }
         await hook.execute(yaml_data, {})
 
-        assert "domains" in yaml_data
-        allowed = yaml_data["domains"]["allowed-domains"]
+        domains = get_domains_config(yaml_data)
+        assert domains is not None
+        allowed = domains["allowed-domains"]
         assert len(allowed) == 1
         assert allowed[0]["domain"] == "rijks.app"
         assert allowed[0]["status"] == "requested"
@@ -138,3 +140,47 @@ class TestDomainHookInWizardFlow:
         hook_names = [h[1].__class__.__name__ for h in hooks]
         assert "DomainRequestHook" in hook_names
         assert "SubdomainRequestHook" in hook_names
+
+
+class TestSubdomainRequestOnClusterDefaultDomain:
+    """A subdomain on the cluster's own domain must still need approval.
+
+    ``_resolve_missing_base_domains`` deliberately does not persist
+    ``base-domain`` when it equals the cluster default, so the field stays
+    absent. ``ensure_domain_requests`` then read that empty value as "nothing
+    to do" and skipped the whole deployment, including the subdomain branch
+    that is explicitly written for the cluster-default case (the domain-level
+    request is skipped via ``is_cluster_default``, the subdomain one is not).
+    Result: every subdomain request on the cluster domain vanished silently.
+    """
+
+    def test_creates_subdomain_request_without_base_domain(self) -> None:
+        project_data = {
+            "deployments": [
+                {"name": "productie", "domain-format": "subdomain", "subdomain": "vlam"},
+            ],
+        }
+        ensure_domain_requests(project_data, "sandboxed-local")
+
+        domains = get_domains_config(project_data)
+        assert domains is not None, "no domains section was created"
+        entries = domains["allowed-subdomains"]
+        assert len(entries) == 1
+        assert entries[0]["domain"] == "sandbox.rijksapp.dev"
+        subdomains = entries[0]["subdomains"]
+        assert len(subdomains) == 1
+        assert subdomains[0]["name"] == "vlam"
+        assert subdomains[0]["status"] == "requested"
+
+    def test_does_not_create_a_domain_request_for_the_cluster_domain(self) -> None:
+        """The cluster's own domain needs no approval; only the subdomain does."""
+        project_data = {
+            "deployments": [
+                {"name": "productie", "domain-format": "subdomain", "subdomain": "vlam"},
+            ],
+        }
+        ensure_domain_requests(project_data, "sandboxed-local")
+
+        domains = get_domains_config(project_data)
+        assert domains is not None
+        assert domains.get("allowed-domains", []) == []

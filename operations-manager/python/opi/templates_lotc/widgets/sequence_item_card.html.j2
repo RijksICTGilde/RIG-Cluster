@@ -1,0 +1,62 @@
+{#
+  Een item in een herhaalbare reeks, als kaart. Zie sequence.html.j2 voor waarom de
+  eigen klassen blijven staan.
+
+  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
+  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
+  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+#}
+{% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
+{% set max_items = field.max_items or field.attributes.get('max_items') %}
+{% set fixed_size = max_items is not none and min_items == max_items|int %}
+{% set remove_disabled = (field.children|length if field.children else 0) <= min_items %}
+{% set remove_label = field.attributes.get('remove_label', 'Verwijderen') %}
+{# De kaart komt van het COMPONENT en niet van rvo-card-klassen. Die stonden hier nog,
+   en onder het nieuwe thema doen ze niets: een item van een reeks - een component in de
+   wizard bijvoorbeeld - had daardoor geen kader en geen eigen achtergrond, en de items
+   liepen visueel in elkaar over.
+
+   De klasse rvo-sequence__item is weg: geen enkele geladen stylesheet maakte hem op en
+   wizard.js zoekt er niet naar - dat doet hij met data-index en de id van de lijst, en
+   die blijven dus staan. #}
+<div data-index="{{ index }}">
+<c-card outline padding="md">
+    {% if not fixed_size and field.add_remove %}
+    {# KOP MET ACTIE, uit het thema, in plaats van met de hand rechts uitgelijnd.
+
+       Hier stond een eigen <div class="lotc-sequence__item-header"> met een LEGE <span>
+       ernaast, puur om de knop met justify-content: space-between naar rechts te duwen.
+       Dat is een blokkop-met-actie nabouwen, en het resultaat was ook precies wat je van
+       nabouwen krijgt: een verwijderknop die los rechtsboven het item zweefde, zonder
+       zichtbare band met waar hij bij hoorde.
+
+       <c-section-head> IS dat patroon: een titel links, de actie rechts, als een geheel.
+       De titel is niet alleen vormgeving maar het antwoord op de vraag die dit item
+       opriep: bij een reeks IN een reeks (extra Keycloak-clients, elk met hun eigen
+       redirect-URI's) stonden er twee verwijderknoppen onder elkaar met verschillende
+       betekenis, en niets zei welke welke was. Nu staat erbij WAT je verwijdert.
+
+       @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
+       @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
+       stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
+    {% set verwijder_js = "sequenceRemove('" ~ field.path ~ "', " ~ index|string ~ ")" %}
+    {% set item_titel = (field.attributes.get('item_label') or field.label or 'Item') ~ ' ' ~ (index + 1)|string %}
+    {# De tooltiptekst BOVEN de tag samenstellen: een ~ binnen :attrs laat de
+       uitdrukkingslezer struikelen ("Invalid expression in ':attrs'"). #}
+    {% set verwijder_titel = remove_label ~ ': ' ~ item_titel %}
+    <c-section-head title="{{ item_titel|e }}">
+        <c-button label="{{ remove_label|e }}" type="warning-subtle" size="sm"
+                  show-icon="before" icon="trash"
+                  :attrs="{'onclick': verwijder_js, 'title': verwijder_titel}"
+                  :disabled="remove_disabled" />
+    </c-section-head>
+    {% endif %}
+    {# c-stack en geen c-layout-flow: die laatste wordt een <nldd-container> zonder gap,
+       en dan plakken de velden binnen een item aan elkaar. #}
+    <div>
+        <c-stack gap="md">
+            {{ item_html }}
+        </c-stack>
+    </div>
+</c-card>
+</div>

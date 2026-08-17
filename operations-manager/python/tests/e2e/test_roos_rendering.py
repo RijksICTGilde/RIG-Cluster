@@ -18,7 +18,7 @@ pytestmark = pytest.mark.e2e
 
 RAW_ROOS_PATTERN = re.compile(r"<c-[a-z][a-z-]+")
 
-DETAIL_URL = "/projects/details/test-project-detail"
+DETAIL_URL = "/projects/test-project-detail/details"
 TOOLS_URL = "/tools"
 WIZARD_URL = "/forms/wizard/create-project"
 DASHBOARD_URL = "/dashboard"

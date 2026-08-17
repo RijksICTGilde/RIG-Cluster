@@ -427,14 +427,20 @@ class TestRestoreEndpointsEnforceOwnership:
         )
         assert response.status_code == 403
 
-    def test_restore_pvc_missing_project_name_is_unauthorized(self, test_client, mock_project_service) -> None:
-        """Without project_name the API key cannot be validated: 401."""
+    def test_restore_pvc_missing_project_name_is_rejected(self, test_client, mock_project_service) -> None:
+        """project_name is declared required, so FastAPI rejects the call with 422.
+
+        It used to reach validate_api_token and come back as 401 ("Missing
+        project_name parameter"). Declaring it required moves the rejection into
+        schema validation, which is both a clearer error and visible to clients
+        generated from the OpenAPI spec.
+        """
         namespace = get_prefixed_namespace("local", "test-project")
         response = test_client.post(
             f"/api/v1/restore/pvc/local/{namespace}/app-data",
             headers=self.AUTH,
         )
-        assert response.status_code == 401
+        assert response.status_code == 422
 
     def test_restore_pvc_owned_namespace_reaches_manager(self, test_client, mock_project_service, monkeypatch) -> None:
         """With a valid key and the project's own namespace the restore is executed."""
@@ -456,6 +462,26 @@ class TestRestoreEndpointsEnforceOwnership:
         )
         assert response.status_code == 200
         manager.restore_pvc.assert_awaited_once()
+
+    def test_openapi_declares_project_name_required(self, test_client) -> None:
+        """The published schema must state that project_name is required.
+
+        The runtime has always demanded it, but the spec advertised it as optional.
+        Generated clients therefore omitted it and diff tools saw no breaking change
+        when the requirement was tightened. Keep schema and runtime in agreement.
+        """
+        paths = test_client.get("/openapi.json").json()["paths"]
+        endpoints = [
+            ("/api/v1/restore/snapshots/{cluster}/{namespace}", "get"),
+            ("/api/v1/restore/snapshots/{cluster}/{namespace}/{pvc_name}", "get"),
+            ("/api/v1/restore/pvc/{cluster}/{namespace}/{pvc_name}", "post"),
+            ("/api/v1/restore/database/{cluster}/{namespace}/{reference_name}", "post"),
+            ("/api/v1/restore/bucket/{cluster}/{namespace}/{reference_name}", "post"),
+        ]
+        for path, method in endpoints:
+            params = paths[path][method]["parameters"]
+            project_param = next(p for p in params if p["name"] == "project_name")
+            assert project_param["required"] is True, f"{method.upper()} {path} still declares project_name optional"
 
     def test_restore_database_foreign_namespace_is_rejected(self, test_client, mock_project_service) -> None:
         """Database restore into another tenant's namespace is rejected with 403."""

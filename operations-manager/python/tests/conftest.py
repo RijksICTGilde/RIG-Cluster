@@ -4,6 +4,8 @@ Shared pytest fixtures for all tests.
 This module provides common fixtures used across unit and integration tests.
 """
 
+import os
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -131,6 +133,13 @@ def mock_settings() -> Any:
         # Real int, not a bare MagicMock: create_app() reads this to wire SessionMiddleware,
         # and numeric comparisons on it must work even when this mock is in effect.
         mock_settings.SESSION_MAX_AGE_SECONDS = 28800
+        # Om dezelfde reden een echte string. validate_master_api_key doet eerst
+        # `if not settings.MASTER_API_KEY` (een kale MagicMock is waar-achtig, dus daar komt
+        # hij doorheen) en daarna secrets.compare_digest, en die weigert een MagicMock met
+        # een TypeError. Het endpoint gaf dan 500 in plaats van 401, en de test die juist
+        # toetst dat een PROJECTsleutel geweigerd wordt viel om op de vorm van de weigering.
+        # De waarde is expres een andere dan de projectsleutels in de fixtures.
+        mock_settings.MASTER_API_KEY = "test-master-api-key-not-a-project-key"
         yield mock_settings
 
 
@@ -235,3 +244,159 @@ def reset_readiness_state() -> Any:
     yield
     # Clean up after test
     readiness_module._state = None
+
+
+# --- Real Postgres for ORM-backed repository tests (RC-5 persistence phase 2) --------
+# A throwaway Postgres (testcontainers) so service-owned ORM repositories are tested
+# against real SQL -- ON CONFLICT uniqueness, transactions -- not mocks. Session-scoped
+# container; each `orm_db` test starts from a truncated schema.
+
+
+#: Ons eigen etiket op de wegwerp-Postgres. Testcontainers zet er zelf ook een op
+#: (``org.testcontainers``), maar dat draagt elk project dat deze bibliotheek gebruikt, en
+#: op deze machine draaien er meer. Wij ruimen alleen op wat van ons is.
+ORM_CONTAINER_LABEL = "nl.rijksapp.zad.orm-test"
+
+
+def _ruim_achtergebleven_containers_op() -> None:
+    """Weg met wat een vorige run heeft laten staan.
+
+    Wie ze maakt, ruimt ze op, en dat moet ook gelden als de vorige run NIET netjes
+    eindigde. De context manager hieronder stopt de container bij een normale afloop, maar
+    bij een harde onderbreking (ctrl-c, een gekilde sessie, een timeout) loopt hij niet af
+    en blijft er een Postgres draaien. Er stonden er zo vier tegelijk, waarvan de oudste
+    drie dagen.
+
+    Normaal is dat het werk van Ryuk, de opruimsidecar van testcontainers. Die kan hier
+    niet: hij mount de dockersocket, en op Docker Desktop staat die onder
+    ``~/.docker/run/docker.sock``, wat de daemon weigert te mounten ("operation not
+    supported"). Met ``TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`` start hij wel, maar dan is
+    zijn poort niet te bereiken. Dus doen we het zelf, en dan ook echt zelf: bij het
+    STARTEN van een run, want dat is het enige moment waarop we zeker weten dat we draaien.
+
+    Faalt Docker of ontbreekt hij, dan gebeurt er niets. Opruimen mag nooit de reden zijn
+    dat een suite niet start.
+    """
+    import subprocess
+
+    try:
+        # ALLEEN gestopte containers. Een draaiende is van een run die NU bezig is: op deze
+        # machine draaien meerdere suites tegelijk (agents in eigen worktrees), en die met
+        # hetzelfde etiket weghalen trekt een collega zijn database onder de voeten weg.
+        # Dat gebeurde ook echt: veertig fouten in een run die verder niets mankeerde.
+        #
+        # Een achtergebleven container is na afloop altijd gestopt (de context manager stopt
+        # hem, of het proces sterft en Docker laat hem in 'exited' achter), dus dit filter
+        # kost geen enkele opruiming die we wel willen.
+        gevonden = subprocess.run(
+            ["docker", "ps", "-aq", "--filter", f"label={ORM_CONTAINER_LABEL}", "--filter", "status=exited"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        containers = gevonden.stdout.split()
+        if containers:
+            subprocess.run(["docker", "rm", "-f", *containers], capture_output=True, timeout=60, check=False)
+    except OSError, subprocess.SubprocessError:
+        return
+
+
+@pytest.fixture(scope="session")
+def _orm_pg_container():
+    # Ryuk is testcontainers' reaper sidecar; op Docker Desktop komt hij niet overeind (zie
+    # _ruim_achtergebleven_containers_op voor het waarom, gemeten en niet aangenomen).
+    # ``setdefault`` zodat CI hem terug kan zetten, want daar werkt hij wel.
+    os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+
+    from testcontainers.postgres import PostgresContainer
+
+    _ruim_achtergebleven_containers_op()
+
+    # Het etiket is wat het opruimen mogelijk maakt: zonder dat weten we bij de volgende
+    # run niet welke van deze containers van ons was.
+    container = PostgresContainer("postgres:16-alpine").with_kwargs(labels={ORM_CONTAINER_LABEL: "true"})
+    with container:
+        yield container
+
+
+@pytest.fixture
+async def orm_db(_orm_pg_container):
+    from opi.core.db import Base, configure_engine, create_all_orm_tables, dispose_engine, session_scope
+    from sqlalchemy import text
+
+    url = _orm_pg_container.get_connection_url().replace("+psycopg2", "+asyncpg")
+    configure_engine(url)
+    await create_all_orm_tables()
+    tables = ", ".join(Base.metadata.tables)
+    async with session_scope() as session:
+        await session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+    yield
+    await dispose_engine()
+
+
+# --- Live voortgang van een lange run ------------------------------------------------
+#
+# Een sandboxrun duurt bijna een uur en pytest zegt tot het EIND niets bruikbaars: met -q
+# krijg je punten, met -v een regel zonder tijd, en de samenvatting pas na afloop. Wie de
+# run niet zelf voor zich heeft (een dispatchte sessie, een collega die meekijkt) ziet dus
+# niets en kan niet beoordelen of het loopt, hoe snel, of waar het strandde. Dat kostte in
+# RC-108 meerdere keren de verkeerde conclusie: een suite die gewoon vorderde werd voor
+# vastgelopen aangezien, en een afgebroken run liet geen enkele oorzaak achter.
+#
+# Dit schrijft per afgeronde test EEN regel weg, met de gegevens die pytest zelf levert:
+# ``report.outcome``, ``report.duration`` en ``report.nodeid``. Geen tekst uit de uitvoer
+# raden - dat is precies de onbetrouwbaarheid die deze doorloop op meer plekken opleverde.
+#
+#     PYTEST_VOORTGANG=/tmp/voortgang.txt uv run pytest ...
+#     tail -f /tmp/voortgang.txt
+#
+# Zonder die variabele doet dit niets, dus een gewone run verandert er niet van.
+
+_VOORTGANG_PAD = os.environ.get("PYTEST_VOORTGANG")
+_voortgang_stand = {"klaar": 0, "totaal": 0, "rood": 0}
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items: list) -> None:
+    """Onthoud hoeveel tests er gaan draaien, zodat elke regel 'n van totaal' kan tonen.
+
+    ``trylast``, want de deselectie op markers (``-m e2e``) gebeurt ook in deze hook: tel je
+    eerder, dan staat er 9054 als totaal terwijl er 462 tests draaien.
+    """
+    _voortgang_stand["totaal"] = len(items)
+
+
+def pytest_runtest_logreport(report: Any) -> None:
+    """Schrijf een regel zodra een test klaar is.
+
+    Alleen op de call-fase, behalve als setup of teardown faalt (dan is DAT de uitkomst en
+    zou een test anders stil ontbreken in de lijst - wat bij een module-scoped fixture de
+    hele groep onzichtbaar maakt) en behalve een skip in setup, want dat is de gewone vorm
+    van overslaan.
+
+    Alleen een echte failure telt als rood: een skip en een verwachte failure zijn een
+    groene run, en een meetinstrument dat die rood meldt is precies de faalmodus die deze
+    tak opruimt.
+    """
+    if not _VOORTGANG_PAD:
+        return
+    if report.when != "call" and not (report.failed or report.skipped):
+        return
+    _voortgang_stand["klaar"] += 1
+    if report.skipped:
+        uitslag = "XFAIL" if hasattr(report, "wasxfail") else "SKIP"
+    elif report.passed:
+        uitslag = "XPASS" if hasattr(report, "wasxfail") else "PASSED"
+    else:
+        uitslag = "FAILED" if report.when == "call" else "ERROR"
+        _voortgang_stand["rood"] += 1
+    regel = (
+        f"{datetime.now(UTC).strftime('%H:%M:%S')}  "
+        f"{_voortgang_stand['klaar']:3d}/{_voortgang_stand['totaal']:<3d}  "
+        f"{report.duration:6.1f}s  "
+        f"rood={_voortgang_stand['rood']:<2d} "
+        f"{uitslag:<6} {report.nodeid}\n"
+    )
+    with open(_VOORTGANG_PAD, "a", encoding="utf-8") as bestand:
+        bestand.write(regel)

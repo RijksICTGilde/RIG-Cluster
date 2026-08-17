@@ -1,0 +1,233 @@
+{#
+  Shared macros for widget templates.
+
+  Usage: {% from "widgets/_macros.html.j2" import helper_text, render_examples, bool_attr, optional_attr, render_errors, htmx_attrs, extra_attrs, format_value, combined_helper, description_text %}
+#}
+
+{# --- Attribute helpers --- #}
+
+{% macro bool_attr(name, value) %}{% if value %}:{{ name }}="true"{% endif %}{% endmacro %}
+
+{% macro optional_attr(name, value) %}{% if value is not none and value != '' %}{{ name }}="{{ value|attr_escape }}"{% endif %}{% endmacro %}
+
+{% macro htmx_attrs(field) %}{% if field.htmx_attrs %}{% for k, v in field.htmx_attrs.items() %}{{ k|e }}="{{ v|e }}" {% endfor %}{% endif %}{% endmacro %}
+
+{% macro extra_attrs(field, handled) %}
+{%- set skip = handled|default(['rows','min','max','step','accept','multiple','min_items','max_items','add_label','remove_label','options_provider','converter','validator','kv_format','icon','icon_color']) -%}
+{%- for k, v in field.attributes.items() if k not in skip %}{{ k|e }}="{{ v|e }}" {% endfor -%}
+{% endmacro %}
+
+{% macro html_attributes(attrs) %}{% for k, v in attrs.items() %}{{ k|e }}="{{ v|e }}" {% endfor %}{% endmacro %}
+
+{# --- Text helpers --- #}
+
+{% macro combined_helper(field) %}
+{%- if field.help_text -%}{{ field.help_text }}
+{%- elif field.description -%}{{ field.description }}
+{%- endif -%}
+{% endmacro %}
+
+{% macro description_text(field) %}
+{%- if field.description and field.help_text -%}
+<span>{{ field.description }}<br><br></span>
+{%- endif -%}
+{% endmacro %}
+
+{% macro helper_text(field) %}
+{% if field.description and field.help_text %}
+<div class="lotc-form-field__helper-group">
+<span>{{ field.description }}</span>
+<span>{{ field.help_text }}</span>
+</div>
+{% elif field.description %}
+<span>{{ field.description }}</span>
+{% elif field.help_text %}
+<span>{{ field.help_text }}</span>
+{% endif %}
+{% endmacro %}
+
+{% macro render_examples(field) %}
+{% if field.examples %}
+<div>
+Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{# --- Service block --- #}
+
+{#
+  One service, rendered the same everywhere: icon, name, help button, description.
+  Used by the service picker (widgets/service_cards.html.j2) and the service
+  overview page (services-overview.html.j2). Both used to build this themselves
+  and drifted apart -- the overview lost the help button. Keep it here.
+
+  The help button only appears when the service has a help_template, and needs
+  openServiceHelp() (static/js/wizard.js) plus the help modal
+  (widgets/service_help_modal.html.j2) on the page.
+#}
+{% macro service_block(name, description, icon, color, help_template=None, icon_size="lg") %}
+<div class="service-card__header">
+    {# Door het nldd_icon-filter: de kaartgegevens dragen de ROOS-naam, want dezelfde
+       gegevens voeden ook de oude weergave. Zonder vertaling rendert het icoon leeg -
+       zo misten de dienstkaarten in de wizard hun iconen, op PostgreSQL na. #}
+    <c-icon icon="{{ icon|nldd_icon|e }}" color="{{ color|e }}" size="{{ icon_size|e }}"/>
+    <span class="service-card__title">{{ name|e }}</span>
+    {% if help_template %}
+    {# De vraagtekenknop opent de hulpdialoog van deze dienst. De aanroep gaat via een
+       {% raw %}{% set %}{% endraw %}-blok en :attrs: <c-icon-button> laat geen onclick toe, en een genest
+       aanhalingsteken binnen :attrs leest de voorbewerker als het einde van het attribuut.
+       stopPropagation staat er omdat de kaart eronder zelf ook een klik afhandelt. #}
+    {% set hulp_js %}event.stopPropagation(); openServiceHelp('{{ help_template|e }}'){% endset %}
+    {# question-MARK-circle: zo heet hij in de NLDD-woordenschat. Hier stond
+       "question-circle", en die naam bestaat daar niet - dan rendert de knop wel maar
+       blijft hij leeg. Precies het stille gat waar de servicekaarten op het overzicht
+       eerder ook in vielen. #}
+    <c-icon-button
+        icon="question-mark-circle"
+        accessible-label="Uitleg over deze dienst"
+        variant="neutral-transparent"
+        size="sm"
+        :attrs="{'onclick': hulp_js, 'class': 'service-card__help-btn'}" />
+    {% endif %}
+</div>
+<p class="service-card__description">{{ description|e }}</p>
+{% endmacro %}
+
+{# --- Task progress --- #}
+
+{#
+  De voortgang van een taak, gedeeld door de twee fragmenten die hem tonen:
+  partials/task_progress_fragment.html.j2 (inline en in de bewerkmodal) en
+  wizard/modal_wizard_progress_fragment.html.j2 (de wizardmodal). Die twee hadden
+  zeventien identieke blokken van zes regels of meer; wat hieronder staat is precies
+  dat gedeelte.
+
+  progress_bar is de enige plek in de templates waar nog een style= staat: de breedte
+  is de waarde zelf en kan niet in een CSS-bestand. De vormgeving eromheen zit in
+  static/css/modal.css (.edit-progress-*).
+#}
+{% macro progress_bar(progress) %}
+<div class="edit-progress-bar-wrapper">
+    <div class="edit-progress-bar" style="width: {{ progress }}%"></div>
+</div>
+{% endmacro %}
+
+{#
+  De statusiconen gaan door ``nldd_icon``. De ROOS-namen (vinkje, kruis) staan niet in de
+  NLDD-woordenschat en renderen daar leeg - stil, want een onbekende naam levert geen
+  fout op. De kleuren zijn weg: dat is de ROOS-woordenschat (groen, hemelblauw) en NLDD
+  doet er niets mee. Zie tests/test_lotc_icon_mapping.py voor de vertaaltabel.
+
+  Dit levert de NAAM en niet een <c-icon>: de naam gaat als attribuut een cel in.
+#}
+{% macro task_status_icon_name(status) %}
+{%- if status == "completed" -%}{{ 'vinkje' | nldd_icon }}
+{%- elif status == "failed" -%}{{ 'kruis' | nldd_icon }}
+{%- elif status == "running" -%}{{ 'pijl-naar-rechts' | nldd_icon }}
+{%- else -%}{{ 'klok' | nldd_icon }}
+{%- endif -%}
+{% endmacro %}
+
+{#
+  De takenlijst met per taak een icoon en per taak zijn subtaken. ``show_errors`` staat
+  uit voor de wizardmodal, die de foutregels van een taak bewust niet toont.
+
+  DIT IS EEN LIJST MET EEN STATUS PER REGEL, en het thema heeft daar componenten voor:
+  ``c-list`` met per regel een ``c-list-item``, daarin een ``c-icon-cell`` en een
+  ``c-text-cell``. Een cel is wat een regel naast elkaar zet; dat hoeft geen stijlblad
+  meer te doen.
+
+  Hier stond het met de hand: een ``div.edit-progress-task-item`` waarvan de
+  ``display: flex`` in static/css/modal.css stond. Gemeten in een browser: op elke pagina
+  die dat stijlblad NIET laadt viel het pictogram boven de tekst, en dat waren de
+  voortgangspagina en de wizardmodal. Er stond ook een tweede, met de hand gemaakte versie
+  van dezelfde lijst in de bg-fragmenten (``c-cluster`` + ``c-paragraph``); die viel om
+  omdat een ``<c-paragraph>`` een blok is en in een cluster op de volgende regel breekt.
+  Alle vier de sjablonen roepen nu deze macro aan.
+
+  De inspringing van een subtaak en de ruimte tussen het pictogram en de naam zijn allebei
+  een ``c-spacer-cell``: het thema levert die juist om binnen een regel ruimte te maken.
+  Een lijstregel zet zijn cellen tegen elkaar aan, dus zonder die van 8 raakt de naam het
+  pictogram. Het onderwerp en de fout van een taak zijn de ``supporting-text`` van de
+  cel - de tweede regel onder de naam, waar ze horen. Zie ``progress_step_detail``.
+
+  ``dividers`` staat er NIET bij. Gemeten: ``dividers="never"`` tekent dezelfde lijnen
+  tussen de regels als ``always``, dus het attribuut zou hier iets beloven wat niet
+  gebeurt. Staat als bevinding in request_for_components.md.
+#}
+{#
+  De tweede regel van een stap: waarvoor hij loopt, en zijn fout.
+
+  Een stap die per deployment draait (de database, de opslag, de cache) staat anders
+  net zo vaak identiek in de lijst als er deployments zijn, en dan zegt de lijst niet
+  meer waar de verwerking is. Het onderwerp staat daarom NAAST de naam in de gegevens
+  (``subject``) en niet erin, zodat de weergave kan kiezen; hier is dat de regel onder
+  de naam. Loopt een stap een keer per project, dan heeft hij geen onderwerp en blijft
+  de regel weg.
+
+  Fout en onderwerp delen die tweede regel. Ze sluiten elkaar niet uit -- een mislukte
+  stap hoort nog steeds te zeggen voor welke deployment hij mislukte -- dus staan ze
+  achter elkaar in plaats van dat de een de ander verdringt.
+#}
+{% macro progress_step_detail(step, show_errors=True) %}
+{%- set parts = [] -%}
+{%- if step.subject %}{% set _ = parts.append(step.subject) %}{% endif -%}
+{%- if show_errors and step.error %}{% set _ = parts.append(step.error) %}{% endif -%}
+{{- parts | join(' - ') -}}
+{% endmacro %}
+
+{% macro progress_task_list(tasks, show_errors=True) %}
+{% if tasks %}
+<c-list variant="simple" accessible-label="Voortgang per taak">
+    {% for task in tasks %}
+    <c-list-item size="sm">
+        <c-icon-cell size="20" icon="{{ task_status_icon_name(task.status) | trim }}"/>
+        <c-spacer-cell size="8"/>
+        <c-text-cell size="sm" supporting-text="{{ progress_step_detail(task, show_errors) | trim }}">{{ task.name }}</c-text-cell>
+    </c-list-item>
+    {% for subtask in task.subtasks or [] %}
+    <c-list-item size="sm">
+        <c-spacer-cell size="24"/>
+        <c-icon-cell size="20" icon="{{ task_status_icon_name(subtask.status) | trim }}"/>
+        <c-spacer-cell size="8"/>
+        <c-text-cell size="sm" supporting-text="{{ progress_step_detail(subtask, show_errors) | trim }}">{{ subtask.name }}</c-text-cell>
+    </c-list-item>
+    {% endfor %}
+    {% endfor %}
+</c-list>
+{% endif %}
+{% endmacro %}
+
+{# --- Error helpers --- #}
+
+{% macro render_errors(errors) %}
+{% if errors %}
+<div>
+{% for error in errors %}
+<span class="lotc-form-field__error-text">{{ error }}</span>
+{% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{# --- Warning helpers --- #}
+
+{% macro render_warnings(warnings) %}
+{% if warnings %}
+{% for warning in warnings %}
+<c-alert>{{ warning }}</c-alert>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{# --- Value formatting --- #}
+
+{% macro format_value(value) %}
+{%- if value is none -%}
+{%- elif value is iterable and value is not string -%}
+{{ value|join(', ') }}
+{%- else -%}
+{{ value }}
+{%- endif -%}
+{% endmacro %}

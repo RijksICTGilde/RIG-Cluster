@@ -2,7 +2,8 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from opi.services.catalog.approval import ApprovalStatus
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DeploymentStatus(StrEnum):
@@ -13,9 +14,15 @@ class DeploymentStatus(StrEnum):
     worst-of-both priority: Degraded/Suspended/Missing > OutOfSync >
     Progressing > Healthy. Pending and Unavailable are *our* states for
     "we have no data," distinct from Argo's own Unknown.
+
+    ``Disabled`` is ours too, and it is not an Argo verdict at all: a deployment
+    whose components are all switched off runs zero replicas, which Argo reports as
+    Healthy because nothing is failing. Reporting that as Healthy is untrue, so the
+    intent recorded in the project file replaces it -- and only it (RC-31).
     """
 
     Healthy = "Healthy"
+    Disabled = "Disabled"  # every component switched off on purpose (replicas: 0)
     Degraded = "Degraded"
     Progressing = "Progressing"
     OutOfSync = "OutOfSync"  # cluster is running, but drifted from git
@@ -37,11 +44,70 @@ class ErrorCategory(StrEnum):
 
     ImagePull = "ImagePull"
     CrashLoop = "CrashLoop"
+    # The destination the caller named could not be used: it did not resolve, refused
+    # the connection, or rejected the credentials. Not a cluster state at all -- it is
+    # what makes "your input" separable from "our platform" on a failed restore, so a
+    # pipeline can stop retrying a typo (RC-82). Only ever set when the caller supplied
+    # the destination; a restore into the project's own service can never be this.
+    InvalidTarget = "InvalidTarget"
+    # What the caller sent cannot be acted on: a name that does not exist, a service that
+    # needs a project-level decision first, a value the schema rejects. Retrying it changes
+    # nothing, and that is the point of separating it out (gemeld door zad-cli, punt 26):
+    # without a category a client must treat every failure as unattributable, so a plain
+    # input mistake came out of the CLI as "could not be attributed" instead of "your call
+    # was wrong". Distinct from ``InvalidTarget``, which stays what it was: the restore
+    # destination the caller supplied.
+    InvalidInput = "InvalidInput"
     OutOfMemory = "OutOfMemory"
     HealthCheck = "HealthCheck"
     SyncFailed = "SyncFailed"
     ComparisonError = "ComparisonError"
     Unknown = "Unknown"
+
+
+#: ``error_type`` values that mean "the request itself was wrong". The field is a free
+#: string written at a couple of dozen call sites, so this is the translation into the
+#: closed set a client can switch on. Everything not in here stays ``Unknown``: a category
+#: is a promise about attribution, and guessing one is worse than admitting we do not know.
+#: Deliberately absent: ``conflict`` (two writers raced, which is nobody's mistake and may
+#: well succeed on a retry), ``internal_error`` (ours, but there is no member that says so
+#: yet) and ``processing_failed`` (the rollout itself did not come up healthy, which can be
+#: the user's image or the cluster; ``component_failures`` carries which one, so a category
+#: here would be a guess).
+_CALLER_ERROR_TYPES: frozenset[str] = frozenset(
+    {
+        "already_exists",
+        "ambiguous_cluster",
+        "ambiguous_repository",
+        "component_not_found",
+        "deployment_not_found",
+        "domain_validation",
+        "duplicate_component",
+        "duplicate_component_in_deployment",
+        "in_use",
+        "invalid_component_references",
+        "invalid_deployments",
+        "invalid_project_name",
+        "invalid_request",
+        "invalid_services",
+        "invalid_values",
+        "not_found",
+        "validation_error",
+    }
+)
+
+
+def error_category_for(error_type: str | None) -> ErrorCategory:
+    """Translate a task's free-form ``error_type`` into a category a client can act on.
+
+    ``invalid_target`` maps to the member that already exists for it, the caller-supplied
+    restore destination; the rest of the caller's mistakes land on ``InvalidInput``.
+    """
+    if not error_type:
+        return ErrorCategory.Unknown
+    if error_type == "invalid_target":
+        return ErrorCategory.InvalidTarget
+    return ErrorCategory.InvalidInput if error_type in _CALLER_ERROR_TYPES else ErrorCategory.Unknown
 
 
 class AsyncTaskAcceptedResponse(BaseModel):
@@ -64,6 +130,125 @@ class AsyncTaskAcceptedResponse(BaseModel):
     }
 
 
+class CreateProjectRequest(BaseModel):
+    """Everything needed to create a project from outside the browser.
+
+    **The technical name is not an input.** It is derived from the display name,
+    by the same function the portal uses: initials or the first few characters,
+    plus a random suffix. This request used to require it and to make the display
+    name optional, which had the two fields exactly the wrong way around -- the
+    generated one mandatory, the human one an afterthought that defaulted to a
+    technical string.
+
+    Letting a caller choose the technical name costs more than it looks. The
+    random suffix is what makes the name unique by construction; without it,
+    uniqueness becomes first-come-first-served and short names can be squatted.
+    It also makes the two roads produce differently shaped names, so a name no
+    longer tells you it came from ZAD.
+
+    The generated name is in the response, as ``project_name``.
+    """
+
+    display_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        description=(
+            "Human-readable name of the project, as shown in the portal. The technical name is "
+            "derived from it and returned in the response; it cannot be chosen."
+        ),
+        examples=["Mijn Project"],
+    )
+    description: str = Field(..., max_length=1024, description="What this project is for", examples=["Nog een test"])
+
+
+class CreateProjectAcceptedResponse(BaseModel):
+    """202 Accepted response for project creation.
+
+    Carries the project's API key, which exists nowhere else in plaintext: every
+    later call for this project authenticates with it. It is returned in the
+    response body and never in a URL.
+    """
+
+    status: str = Field(default="accepted", description="Always 'accepted' for async operations")
+    task_id: str = Field(..., description="Unique task identifier (UUID)")
+    task_type: str = Field(default="create_project", description="Type of operation being performed")
+    poll_url: str = Field(..., description="URL to poll for task status, e.g. /api/tasks/{task_id}")
+    project_name: str = Field(..., description="The technical name of the created project")
+    api_key: str = Field(..., description="The project's API key, for the X-API-Key header on every later call")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "status": "accepted",
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "task_type": "create_project",
+                "poll_url": "/api/tasks/550e8400-e29b-41d4-a716-446655440000",
+                "project_name": "mijn-project",
+                "api_key": "Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ",
+            }
+        }
+    }
+
+
+class ProjectListItem(BaseModel):
+    """One project a caller may see, with what they need to act on it.
+
+    Carries the project's API key only when the caller's role in the project is
+    ``admin`` or ``owner``. That is the same gate the project detail page puts in
+    front of the same secret, and the same gate the web UI puts in front of every
+    project mutation -- the key itself knows no roles, so a ``developer`` holding
+    it could do through the API what the UI refuses them. A caller holds a secret
+    after reading this and should treat the response accordingly.
+    """
+
+    name: str = Field(..., description="The technical project name", examples=["mijn-project"])
+    description: str = Field(default="", description="What this project is for", examples=["Nog een test"])
+    role: str | None = Field(
+        default=None,
+        description="The caller's role in this project ('admin' or 'developer'); 'admin' for platform admins",
+        examples=["admin"],
+    )
+    api_key: str | None = Field(
+        default=None,
+        description=(
+            "SECRET. The project's API key, for the X-API-Key header on every per-project call. "
+            "Only present for the roles 'admin' and 'owner'; null for a 'developer', who may not "
+            "change the project through the web UI either"
+        ),
+        examples=["Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ"],
+    )
+
+
+class ProjectListResponse(BaseModel):
+    """The projects this caller may see."""
+
+    projects: list[ProjectListItem] = Field(
+        default_factory=list, description="Projects the caller is a member of, sorted by name"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "projects": [
+                    {
+                        "name": "mijn-project",
+                        "description": "Nog een test",
+                        "role": "admin",
+                        "api_key": "Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ",
+                    },
+                    {
+                        "name": "project-van-het-team",
+                        "description": "Waar ik in meewerk",
+                        "role": "developer",
+                        "api_key": None,
+                    },
+                ]
+            }
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # Read-only deployment detail models
 # ---------------------------------------------------------------------------
@@ -80,7 +265,7 @@ class StatusError(BaseModel):
     """A single error or warning entry surfaced from the cluster."""
 
     resource: str = Field(..., description="Kind/name (e.g. 'Pod/frontend-abc') or 'Event/<obj>' for events")
-    message: str = Field(..., description="Raw cluster message — for automation, regex matching, correlation")
+    message: str = Field(..., description="Raw cluster message, for automation, regex matching, correlation")
     category: ErrorCategory = Field(..., description="Programmatic category for filtering, grouping, colorizing")
     explanation: str | None = Field(
         default=None,
@@ -90,6 +275,116 @@ class StatusError(BaseModel):
         ),
     )
     timestamp: str | None = Field(default=None, description="ISO timestamp if known")
+
+
+class PendingRolloutResponse(BaseModel):
+    """Changes that were saved but deliberately not rolled out."""
+
+    project: str = Field(..., description="Technical name of the project.")
+    count: int = Field(..., description="Number of saved changes that have not been rolled out yet. 0 means in sync.")
+    since: str | None = Field(
+        default=None,
+        description=(
+            "ISO timestamp of the OLDEST change still waiting, so a caller can tell a change "
+            "made minutes ago from one that has been waiting a week. Null when count is 0."
+        ),
+    )
+    task_types: list[str] = Field(
+        default_factory=list,
+        description="Which kinds of change are waiting (e.g. 'configure_service'), deduplicated and sorted.",
+    )
+    rollout_in_progress: bool = Field(
+        default=False,
+        description=(
+            "True when a rollout that reconciles the WHOLE project is queued or running right "
+            "now. 'count' only drops once that task completes, so a non-zero count with this "
+            "flag set means the changes are being rolled out at this moment, not that they are "
+            "sitting untouched. Defaults to false, so an older caller reads it as before."
+        ),
+    )
+
+
+class ApprovalNoticeStatus(StrEnum):
+    """De stand van een goedkeuring die deze deployment nog NIET heeft.
+
+    Een echte enum en geen kale string, want dit veld is bedoeld om op te vertakken: een
+    pijplijn hoort te falen op een AFGEWEZEN aanvraag en te wachten op een LOPENDE. Op
+    drie woorden vertakken die de spec niet belooft is stil kapotgaan zodra er een vierde
+    bijkomt, dus staat de verzameling nu in ``/openapi.json``.
+
+    Wat elke waarde betekent, en wat een client ermee moet:
+
+    * ``requested`` -- de aanvraag staat open en wacht op een beheerder. Er is niets mis;
+      wachten of zwijgen is het juiste gedrag. De aanvraag kan dagen lopen.
+    * ``denied`` -- een beheerder heeft de aanvraag afgewezen. Dit gaat vanzelf niet meer
+      goed komen: hier hoort een pijplijn op te falen. ``by``, ``date`` en ``message``
+      dragen het oordeel.
+    * ``none`` -- er staat nog geen aanvraag op naam van deze waarde. Ook dit is niet
+      goedgekeurd, dus het gevolg in ``text`` geldt onverkort, maar er is nog niemand die
+      erop zit te wachten.
+
+    ``approved`` ontbreekt met opzet: deze lijst bevat alleen wat een deployment nog niet
+    heeft, dus wat is goedgekeurd staat er niet in. De leden zijn afgeleid van
+    :class:`ApprovalStatus`, de levenscyclus die in het projectbestand staat, zodat de
+    spelling hier niet los kan raken van de opgeslagen waarde.
+    """
+
+    NONE = ApprovalStatus.NONE
+    REQUESTED = ApprovalStatus.REQUESTED
+    DENIED = ApprovalStatus.DENIED
+
+
+class ApprovalNoticeResponse(BaseModel):
+    """Een goedkeuring die deze deployment nodig heeft en (nog) niet heeft.
+
+    Het tegenhangertje van ``pending_rollout``: dat zegt dat een opgeslagen wijziging nog
+    niet op de cluster staat, dit zegt dat een deployment op een oordeel van een beheerder
+    wacht. Domeinen en subdomeinen zijn op aanvraag, dus een schrijfactie die er een claimt
+    maakt de aanvraag aan en meldt hem hier terug -- anders is "er verschijnt geen ingress"
+    het eerste dat een client ervan merkt.
+
+    De lijst is leeg wanneer alles wat de deployment vraagt is goedgekeurd.
+    """
+
+    service: str = Field(
+        ...,
+        description="De dienst die deze goedkeuring bezit, zoals in de servicecatalogus.",
+        examples=["publish-on-web"],
+    )
+    type: str = Field(..., description="Wat er goedgekeurd moet worden binnen die dienst.", examples=["domain"])
+    label: str = Field(..., description="Hoe de portal dit soort goedkeuring noemt.", examples=["Domein"])
+    subject: str = Field(..., description="Wat er is aangevraagd.", examples=["mijn-app.nl"])
+    status: ApprovalNoticeStatus = Field(
+        ...,
+        description=(
+            "De stand van de aanvraag, om op te vertakken: 'requested' (aangevraagd, wacht op een "
+            "beheerder -- wachten of zwijgen), 'denied' (afgewezen door een beheerder -- dit komt "
+            "vanzelf niet goed, hier hoort een pijplijn op te falen) of 'none' (nog niets "
+            "aangevraagd). 'approved' komt hier niet voor: wat is goedgekeurd staat niet in deze "
+            "lijst."
+        ),
+        examples=["requested"],
+    )
+    text: str = Field(
+        ...,
+        description="Wat dit betekent voor deze deployment, inclusief het gevolg, in gewone taal.",
+        examples=[
+            "Het domein mijn-app.nl is aangevraagd en wacht op goedkeuring. Deze deployment is daarom bereikbaar op het standaard clusteradres."
+        ],
+    )
+    by: str | None = Field(default=None, description="Wie het laatste oordeel gaf; leeg zolang er geen oordeel is.")
+    date: str | None = Field(default=None, description="Wanneer dat oordeel viel, ISO 8601.")
+    message: str | None = Field(default=None, description="De toelichting die bij dat oordeel is gegeven.")
+
+
+#: Gedeelde beschrijving, zodat het veld op de leesantwoorden en op de taakantwoorden
+#: hetzelfde belooft.
+APPROVALS_DESCRIPTION = (
+    "Goedkeuringen die deze deployment nog niet heeft. Leeg wanneer alles is goedgekeurd. "
+    "Een niet-goedgekeurd domein of subdomein blokkeert de deployment niet: die publiceert "
+    "dan op het standaard clusteradres, dus dit veld is de enige plek waar je ziet dat het "
+    "gevraagde adres nog niet in gebruik is."
+)
 
 
 class DeploymentDetail(BaseModel):
@@ -129,6 +424,33 @@ class DeploymentDetail(BaseModel):
             "(Degraded, OutOfSync, Suspended, Missing). Empty otherwise."
         ),
     )
+    source: str = Field(
+        default="project-file",
+        description=(
+            "Where the DESCRIPTION comes from: always 'project-file'. Dit antwoord mengt "
+            "twee bronnen, en dat is de reden dat dit veld hier staat. 'components', "
+            "'urls' en 'subdomain' komen uit het projectbestand en zijn dus de GEWENSTE "
+            "toestand; 'status', 'sync_revision', 'last_synced_at' en 'errors' komen uit "
+            "de cluster. Een component dat met rollout=false is opgeslagen heeft daarom "
+            "meteen een URL, terwijl er nog niets draait dat hem bedient. Kijk naar "
+            "'pending_rollout' om te zien of de twee uit elkaar lopen."
+        ),
+    )
+    approvals: list[ApprovalNoticeResponse] = Field(
+        default_factory=list,
+        description=APPROVALS_DESCRIPTION,
+    )
+    pending_rollout: PendingRolloutResponse | None = Field(
+        default=None,
+        description=(
+            "Saved changes that are not on the cluster yet. Gevuld op GET "
+            "/projects/{project}/deployments/{deployment}; null in een lijst, waar het "
+            "omhullende antwoord het draagt. Het is een eigenschap van het PROJECT, dus "
+            "hem per deployment herhalen zou hetzelfde getal zo vaak neerzetten als er "
+            "deployments zijn. Ook null als de takenservice niet bereikbaar is: het etiket "
+            "ontbreekt dan, de beschrijving niet."
+        ),
+    )
 
 
 class DeploymentListResponse(BaseModel):
@@ -136,4 +458,127 @@ class DeploymentListResponse(BaseModel):
 
     project: str
     cluster: str
+    source: str = Field(
+        default="project-file",
+        description="Zie DeploymentDetail.source: de beschrijving komt uit het projectbestand.",
+    )
+    pending_rollout: PendingRolloutResponse | None = Field(
+        default=None,
+        description="Saved changes that are not on the cluster yet, voor het hele project.",
+    )
     deployments: list[DeploymentDetail] = Field(default_factory=list)
+
+
+class ClusterDomainOption(BaseModel):
+    """Een keuze voor ``base-domain`` op een deployment."""
+
+    value: str = Field(
+        description=(
+            "Wat je in base-domain zet. Leeg betekent het standaarddomein van het cluster. "
+            "Een eigen domein staat hier niet tussen: dat zet je door de domeinnaam zelf in "
+            "base-domain te schrijven (bijvoorbeeld 'mijn-app.nl')."
+        ),
+        examples=["rijksapp.nl"],
+    )
+    label: str = Field(description="Hoe de portal deze keuze toont.", examples=["rijksapp.nl"])
+    supports_dots: bool = Field(
+        default=False,
+        alias="supports-dots",
+        description=(
+            "Of dit domein losse subdomeinen met punten aankan. Dat bepaalt welke waarden van "
+            "'domain-format' hier passen: de streepjes-varianten kunnen altijd, de punt-varianten "
+            "alleen als dit waar is. Zonder dit veld was die regel wel beschreven en nergens uit "
+            "af te leiden."
+        ),
+        examples=[True],
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ClusterInfo(BaseModel):
+    """Een cluster waar dit project op kan draaien, met wat het aan domeinen aanbiedt."""
+
+    name: str = Field(description="Naam van het cluster, zoals in deployments[].cluster.", examples=["odcn-production"])
+    manager: bool = Field(description="Of deze OPI-instantie dit cluster beheert.", examples=[True])
+    default_domain: str = Field(
+        default="",
+        alias="default-domain",
+        description=(
+            "Het eigen domein van dit cluster. Dit is het ENIGE domein dat zonder goedkeuring "
+            "in gebruik gaat: een deployment met base-domain leeg of met precies deze waarde "
+            "krijgt meteen het adres dat hij vraagt. Elke andere waarde in base-domain -- ook "
+            "een domein dat gewoon in 'base-domains' staat -- levert een goedkeuringsaanvraag "
+            "op, en tot iemand die toekent draait de deployment op dit domein. De twee gevallen "
+            "zien er in 'base-domains' identiek uit, dus dit veld is waarop je ze uit elkaar houdt."
+        ),
+        examples=["apps.odcn-production.nl"],
+    )
+    base_domains: list[ClusterDomainOption] = Field(
+        default_factory=list,
+        alias="base-domains",
+        description=(
+            "De domeinen die dit cluster zelf aanbiedt voor base-domain op een deployment. Dit "
+            "is geen gesloten verzameling: een eigen domein schrijf je als domeinnaam in "
+            "base-domain, en 'custom-domain-certificates' zegt wat dat hier oplevert."
+        ),
+    )
+    custom_domain_certificates: bool = Field(
+        default=True,
+        alias="custom-domain-certificates",
+        description=(
+            "Of dit cluster een certificaat kan aanvragen voor een eigen domein, dus voor een "
+            "base-domain dat niet in 'base-domains' staat. Is dit false, dan wordt de deployment "
+            "gewoon aangemaakt en bereikbaar, maar krijgt hij geen geldig certificaat en ziet een "
+            "bezoeker een certificaatfout: lever dan een eigen certificaat mee (tls: provided met "
+            "het certificaat als attachment) of kies een domein uit 'base-domains'. Dit zegt niets "
+            "over DNS of eigendom, alleen over wat het platform hier kan uitgeven."
+        ),
+        examples=[True],
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class SubdomainCheckResponse(BaseModel):
+    """Response for GET /projects/{project_name}/subdomains/check/{subdomain}."""
+
+    subdomain: str = Field(description="The subdomain that was checked", examples=["myapp"])
+    base_domain: str = Field(description="The base domain it was checked under", examples=["rijksapp.nl"])
+    available: bool = Field(
+        description=(
+            "Whether this subdomain is still free WITHIN ZAD, under the given base domain. "
+            "It says nothing about who owns that base domain or whether DNS for it exists: "
+            "any syntactically valid domain is accepted here, because a project may bring "
+            "its own. Read 'cluster_domain' alongside it to know whether the address can go "
+            "live without a domain request."
+        ),
+        examples=[True],
+    )
+    cluster_domain: bool = Field(
+        default=False,
+        description=(
+            "Whether the base domain is one this cluster serves itself. True means a free "
+            "name here is an address you can use straight away; false means it is a domain "
+            "of your own, so claiming the name is only the first half and the domain still "
+            "has to be requested and approved."
+        ),
+        examples=[True],
+    )
+    validation_error: str | None = Field(
+        default=None,
+        description="Why the answer is 'not available' when it is the value itself that is wrong.",
+        examples=[None],
+    )
+
+
+class ClusterListResponse(BaseModel):
+    """Response for GET /projects/{project_name}/clusters.
+
+    Bestaat omdat ``base-domain`` een keuzelijst heeft die per cluster verschilt: het
+    OpenAPI-document kan die niet opsommen (dat zou een momentopname van een willekeurig
+    cluster zijn) en verwees daarom naar een endpoint dat er niet was.
+    """
+
+    project: str
+    clusters: list[ClusterInfo] = Field(default_factory=list)

@@ -1,0 +1,64 @@
+{#
+  Uitnodiging: het is gelukt.
+
+  Een OVERNAME van opi/templates/invite-success.html.j2. Dezelfde drie blokken in dezelfde
+  volgorde: de waarschuwing als er rechten niet toegekend konden worden, de bevestiging,
+  en de kaart met het e-mailadres en de knop naar de applicatie.
+
+  DIT IS EEN PUBLIEKE PAGINA: geen navigatie, geen ingelogde gebruiker, dus een eigen
+  <c-page> met alleen een header.
+
+  Wat de route niet meelevert wordt niet getoond: geen e-mailadres, geen regel; geen
+  applicatie-URL, geen knop. Dat was zo en dat blijft zo.
+
+  De kaart met de toegangsgegevens is panel() uit bg/_patterns.html.j2, dezelfde vorm als
+  op de andere pagina's, en het e-mailadres staat in een c-detail-list in plaats van in
+  een alinea met een vet stukje ervoor.
+#}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% set page_title = success_title ~ " - " ~ display_name %}
+
+{% set is_nl = language == 'nl' %}
+{% set warning_heading = "Let op: sommige rechten konden niet worden toegewezen" if is_nl else "Warning: some permissions could not be assigned" %}
+{% set warning_text = "Neem contact op met de beheerder." if is_nl else "Please contact the administrator." %}
+{% set success_text = ("Je hebt nu toegang tot " ~ display_name ~ ".") if is_nl else ("You now have access to " ~ display_name ~ ".") %}
+{% set access_heading = "Je toegang" if is_nl else "Your access" %}
+{% set email_label = "E-mailadres" if is_nl else "Email address" %}
+{% set app_button_label = "Ga naar applicatie" if is_nl else "Go to application" %}
+
+<c-page title="{{ page_title }}" lang="{{ language }}">
+    <c-header
+        text="RIG Cluster"
+        subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+        link="/" />
+
+    <c-center max="46rem">
+        <c-stack gap="lg">
+            {% if assigned and assigned.errors %}
+                <c-alert type="warning" heading="{{ warning_heading }}">{{ warning_text }}</c-alert>
+            {% endif %}
+
+            <c-alert type="success" heading="{{ success_title }}">{{ success_text }}</c-alert>
+
+            {% call panel(access_heading, "key") %}
+                {% if email %}
+                    <c-detail-list>
+                        <c-detail-item label="{{ email_label }}" value="{{ email }}" />
+                    </c-detail-list>
+                {% endif %}
+
+                {% if application_url %}
+                    <c-action-group align="start">
+                        <c-button
+                            type="primary"
+                            label="{{ app_button_label }}"
+                            icon="chevron-right"
+                            show-icon="after"
+                            href="{{ application_url }}" />
+                    </c-action-group>
+                {% endif %}
+            {% endcall %}
+        </c-stack>
+    </c-center>
+</c-page>

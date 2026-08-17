@@ -10,6 +10,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from playwright.sync_api import Error as PlaywrightError
+from tests.e2e.helpers.htmx import wait_for_htmx_quiet
+from tests.e2e.helpers.tekst import veld
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -32,7 +36,7 @@ class EditModalHelper:
 
     @property
     def detail_url(self) -> str:
-        return f"{self.base_url}/projects/details/{self.project_name}"
+        return f"{self.base_url}/projects/{self.project_name}/details"
 
     def open_detail_page(self) -> None:
         """Navigate to the project detail page."""
@@ -51,18 +55,31 @@ class EditModalHelper:
 
     def fill_field(self, name: str, value: str) -> None:
         """Fill a text input or textarea by name attribute."""
-        field = self.page.locator(f"[name='{name}']")
-        field.fill(value)
+        veld(self.page, name).fill(value)
 
     def clear_field(self, name: str) -> None:
         """Clear a text input or textarea by name attribute."""
-        field = self.page.locator(f"[name='{name}']")
-        field.fill("")
+        veld(self.page, name).fill("")
 
-    def submit_step(self) -> None:
-        """Click the submit button and wait for HTMX swap to complete."""
+    def submit_step(self, timeout: float | None = None) -> None:
+        """Click the submit button and wait for the step response to come back.
+
+        Waits on the response itself rather than on network-idle: idle can already be
+        true at the moment of the click, so the wait returns before the save has even
+        left the browser and the caller then races the server. Same pattern as
+        ``select_with_rerender``.
+        """
+        timeout = timeout or self.action_timeout_ms
+        # Eerst laten uitrazen wat er nog hangt. Een dienst aanvinken laat de stap
+        # server-side hertekenen; landt die swap terwijl we klikken, dan wordt de knop
+        # eronder vandaan vervangen, vertrekt er geen verzoek, en verloopt het wachten
+        # hieronder op iets dat nooit komt. In de praktijk zie je dan dat je na het
+        # aanvinken van een dienst niet op zijn configscherm belandt.
+        wait_for_htmx_quiet(self.page)
         submit_btn = self.page.locator("#modal-wizard-form button[type='submit']")
-        self._click_and_wait(submit_btn)
+        with self.page.expect_response(lambda r: "/step/" in r.url or "/submit" in r.url, timeout=timeout):
+            submit_btn.click()
+        self.page.wait_for_load_state("networkidle", timeout=timeout)
 
     def submit_step_expect_progress(self, timeout: float | None = None) -> None:
         """Submit a process_project step and wait for the progress panel to appear.
@@ -70,10 +87,23 @@ class EditModalHelper:
         These steps return a progress panel that polls every 2s (hx-trigger
         "every 2s"), so the page never reaches network-idle - the swap wait used
         by submit_step() would hang. Wait for the panel element instead.
+
+        Blijft de voortgangsweergave weg, dan gaat de tekst van de modal mee in de
+        fout. De gewone tijdsoverschrijding zegt alleen dat ``.edit-progress-view``
+        er niet kwam; komt de stap terug met een veldfout, dan staat de oorzaak in
+        de modal en anders nergens.
         """
         submit_btn = self.page.locator("#modal-wizard-form button[type='submit']")
         submit_btn.click()
-        self.page.locator(".edit-progress-view").wait_for(state="visible", timeout=timeout or self.action_timeout_ms)
+        try:
+            self.page.locator(".edit-progress-view").wait_for(
+                state="visible", timeout=timeout or self.action_timeout_ms
+            )
+        except PlaywrightError as fout:
+            raise AssertionError(
+                "De voortgangsweergave kwam niet na het opslaan. Wat de modal toont:\n"
+                + " ".join(self.get_body_text().split())[:2000]
+            ) from fout
 
     def fill_codemirror_kv(self, field_name: str, text: str) -> None:
         """Set a CodeMirror-backed key-value textarea (data-cm-kv).
@@ -105,6 +135,29 @@ class EditModalHelper:
     def wait_for_review(self, timeout: float | None = None) -> None:
         """Wait for the review screen to appear (multi-step flows)."""
         self.page.locator(".wizard-review").wait_for(state="visible", timeout=timeout or self.action_timeout_ms)
+
+    def advance_to_review(self, max_steps: int = 10) -> None:
+        """Submit each remaining step until the review screen appears.
+
+        How many config steps a flow has depends on which services are selected,
+        and that number grows whenever a service gains a config step. Counting
+        submits therefore goes stale silently: the walk stops short of the review,
+        and the test then fails on a missing review instead of on its own subject.
+        Walking until the review appears is what such a test actually means.
+        """
+        for _ in range(max_steps):
+            review = self.page.locator(".wizard-review")
+            submit = self.page.locator("#modal-wizard-form button[type='submit']")
+            # The review can swap in a moment after network-idle, so wait for
+            # whichever of the two lands instead of sampling the DOM instantly:
+            # sampling raced the swap and clicked a button that was already gone.
+            review.or_(submit).first.wait_for(state="visible", timeout=self.action_timeout_ms)
+            if review.count() > 0:
+                return
+            self.submit_step()
+        raise AssertionError(
+            f"review screen not reached within {max_steps} steps; last step labels: {self.get_step_labels()}"
+        )
 
     def confirm_review(self) -> None:
         """Click the confirm button on the review page and wait for result."""
@@ -144,8 +197,17 @@ class EditModalHelper:
 
     def get_step_labels(self) -> list[str]:
         """Return the visible step labels from the wizard step indicator."""
-        labels = self.page.locator("#modal-wizard-steps .wizard-steps__label")
-        return [labels.nth(i).text_content() or "" for i in range(labels.count())]
+        # Twee vormen. De bestaande wizard tekent zijn stappen zelf en zet het opschrift
+        # in .wizard-steps__label; het nieuwe thema gebruikt <nldd-step-indicator-item>,
+        # dat zijn opschrift in het attribuut text draagt. Een selector op de eerste vindt
+        # de tweede niet, en dan komt hier een LEGE lijst terug - waarna een test meldt dat
+        # een stap ontbreekt terwijl hij gewoon op het scherm staat.
+        oud = self.page.locator("#modal-wizard-steps .wizard-steps__label")
+        if oud.count():
+            return [oud.nth(i).text_content() or "" for i in range(oud.count())]
+
+        nieuw = self.page.locator("#modal-wizard-steps nldd-step-indicator-item")
+        return [nieuw.nth(i).get_attribute("text") or "" for i in range(nieuw.count())]
 
     def select_with_rerender(self, select_locator, value: str, timeout: float = 10000) -> None:
         """Select an option on a data-rerender field and wait for the HTMX swap.
@@ -156,6 +218,7 @@ class EditModalHelper:
         with self.page.expect_response(lambda r: "/step/" in r.url, timeout=timeout):
             select_locator.select_option(value)
         self.page.wait_for_load_state("networkidle", timeout=timeout)
+        self._wait_htmx_idle(timeout)
 
     def sequence_add(self, path: str, timeout: float | None = None) -> None:
         """Add an item to a sequence field (e.g. 'users', 'components') in the modal.
@@ -168,6 +231,20 @@ class EditModalHelper:
     def sequence_remove(self, path: str, index: int, timeout: float | None = None) -> None:
         """Remove item `index` from a sequence field in the modal."""
         self._do_and_wait(lambda: self.page.evaluate(f"sequenceRemove('{path}', {index})"), timeout=timeout)
+
+    def _wait_htmx_idle(self, timeout: float | None = None) -> None:
+        """Wait until the modal form has no htmx request in flight.
+
+        htmx drops a second request issued on an element that is still busy, so a click
+        that lands in that window produces no request at all and the caller waits for a
+        response that will never come. Network-idle is not the same signal: it goes true
+        before htmx has finished settling its own bookkeeping.
+        """
+        self.page.wait_for_function(
+            "() => { const f = document.querySelector('#modal-wizard-form');"
+            " return !f || !f.classList.contains('htmx-request'); }",
+            timeout=timeout or self.action_timeout_ms,
+        )
 
     def _click_and_wait(self, locator, timeout: float | None = None) -> None:
         """Click a button and wait for the HTMX swap to complete."""

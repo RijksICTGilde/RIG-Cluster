@@ -37,11 +37,15 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
 
     menu_items = [
         {"label": "Dashboard", "link": "/dashboard", "icon": "home"},
-        {"label": "Projecten", "link": "/projects", "icon": "applicatie"},
+        {"label": "Mijn projecten", "link": "/projects", "icon": "applicatie"},
         {"label": "Nieuw Project", "link": "/forms/wizard/restart", "icon": "plus"},
-        {"label": "Services", "link": "/services", "icon": "server"},
-        {"label": "Metrics", "link": "/metrics-explorer", "icon": "grafiek"},
-        {"label": "Architecture", "link": "/architecture", "icon": "info"},
+        {"label": "Services overzicht", "link": "/services", "icon": "server"},
+        # Ook in het hoofdmenu en niet alleen in de voettekst: wie ingelogd is komt
+        # nooit meer langs "/" (dat gaat dan naar het dashboard), en dan was de
+        # voettekst de enige weg naar de uitleg over het platform.
+        {"label": "Introductie", "link": "/introductie", "icon": "puzzel"},
+        {"label": "CLI", "link": "/cli", "icon": "computercode"},
+        {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
     ]
 
@@ -54,9 +58,10 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
             logger.debug("Could not check admin status for menu", exc_info=True)
 
     if is_admin:
+        menu_items.append({"label": "Metrics", "link": "/metrics-explorer", "icon": "grafiek"})
         menu_items.append({"label": "Gebruikersbeheer", "link": "/admin/users", "icon": "user"})
         menu_items.append({"label": "Gebruik & Kosten", "link": "/admin/usage", "icon": "grafiek"})
-        menu_items.append({"label": "Domeinen", "link": "/admin/subdomains", "icon": "link"})
+        menu_items.append({"label": "Domeinen", "link": "/admin/approvals", "icon": "wereldbol"})
 
     # Add user-specific menu items
     if user:

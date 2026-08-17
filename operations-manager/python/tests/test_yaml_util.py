@@ -167,3 +167,53 @@ class TestSaveYamlToPath:
                 assert os.path.exists(os.path.join(tmpdir, "bare_file.yaml"))
             finally:
                 os.chdir(original_cwd)
+
+
+AGE_BLOCK = (
+    "-----BEGIN AGE ENCRYPTED FILE-----\n"
+    "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBQd3RVbm85emtqV1ZJRnJ0\n"
+    "ZklzVEpmbmFvWTRFbzhCQ1FOUEVBak1Rd1h3CkFKd0xxa0IyUFBwUmFpKzZRV0ho\n"
+    "-----END AGE ENCRYPTED FILE-----"
+)
+
+
+class TestMultilineScalarStyle:
+    """Multi-line values must be written as literal blocks by the canonical writer.
+
+    Regression: a keycloak realm password went through the modal-edit wizard, whose
+    session round-trips the project dict through JSON. That strips ruamel's
+    LiteralScalarString, and the value landed in the project file as one quoted line
+    full of ``\\n`` escapes.
+    """
+
+    def test_plain_multiline_string_becomes_literal_block(self):
+        output = dump_yaml_to_string({"password": AGE_BLOCK})
+        assert "password: |-" in output
+        assert "\\n" not in output
+
+    def test_survives_a_json_round_trip(self):
+        import json
+
+        from ruamel.yaml.scalarstring import LiteralScalarString
+
+        data = {"password": LiteralScalarString(AGE_BLOCK)}
+        output = dump_yaml_to_string(json.loads(json.dumps(data)))
+        assert "password: |-" in output
+        assert load_yaml_from_string(output)["password"] == AGE_BLOCK
+
+    def test_committed_quoted_block_is_repaired_on_rewrite(self):
+        escaped = AGE_BLOCK.replace("\n", "\\n")
+        broken = load_yaml_from_string(f'password: "{escaped}"\n')
+        output = dump_yaml_to_string(broken)
+        assert "password: |-" in output
+        assert load_yaml_from_string(output)["password"] == AGE_BLOCK
+
+    def test_single_line_quoting_is_still_preserved(self):
+        source = "status: 'requested'\nname: plain\n"
+        assert dump_yaml_to_string(load_yaml_from_string(source)) == source
+
+    def test_carriage_returns_stay_quoted_so_the_value_survives(self):
+        # A block scalar writes the \r out raw and YAML normalizes line breaks on
+        # read, which would silently turn "a\r\nb" into "a\nb".
+        output = dump_yaml_to_string({"text": "a\r\nb"})
+        assert load_yaml_from_string(output)["text"] == "a\r\nb"

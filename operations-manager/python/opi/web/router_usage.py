@@ -7,15 +7,14 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
+from starlette.responses import Response
 
-from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.cluster_config import get_cluster_config, get_namespace_prefix
 from opi.core.config import settings
-from opi.core.templates import get_templates
 from opi.services.project_store import get_project_store
-from opi.services.user_service import get_user_service
 from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
@@ -69,17 +68,6 @@ MEMORY_USAGE_QUERY = """round(
     ) * 3600
   ) / ({days} * 86400) / 1024^3)
 , 0.01) or on() vector(0)"""
-
-
-def _require_admin(request: Request) -> dict[str, Any]:
-    """Return the current user dict or raise 403 if not an admin."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Niet ingelogd")
-    email = user.get("email", "").lower()
-    if not get_user_service().is_platform_admin(email):
-        raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
-    return user
 
 
 def _get_months_for_year(year: int) -> list[dict[str, Any]]:
@@ -166,9 +154,9 @@ async def _query_month_usage(
 
 @usage_router.get("", response_class=HTMLResponse)
 @requires_sso
-async def usage_overview(request: Request) -> HTMLResponse:
+async def usage_overview(request: Request) -> Response:
     """Show the usage and cost overview page."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
 
     year = int(request.query_params.get("year", datetime.now(UTC).year))
     namespace = request.query_params.get("namespace", "all")
@@ -194,10 +182,13 @@ async def usage_overview(request: Request) -> HTMLResponse:
     total_gib = round(sum(m["gib"] for m in month_data), 2)
     total_cost = round(sum(m["cost"] for m in month_data), 2)
 
-    templates = get_templates()
-    return templates.TemplateResponse(
-        "admin/usage.html.j2",
-        {
+    # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py.
+    from opi.web.lotc_switch import build_lotc_admin, render
+
+    return render(
+        request,
+        template="bg/admin-usage.html.j2",
+        context={
             "request": request,
             "menu_items": get_menu_items(user),
             "year": year,
@@ -209,5 +200,6 @@ async def usage_overview(request: Request) -> HTMLResponse:
             + [{"value": ns, "label": ns} for ns in available_namespaces],
             "price_per_gib": price_per_gib,
             "has_billing_datasource": datasource_uid is not None,
+            **build_lotc_admin(user=user, current_path="/admin/usage"),
         },
     )

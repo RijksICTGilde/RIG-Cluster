@@ -1,0 +1,29 @@
+{#
+  "Wijzigingen opgeslagen" - het slot van een flow die alleen opslaat en niets verwerkt.
+
+  Een OVERNAME van wizard/modal_wizard_success.html.j2: hetzelfde vinkje, dezelfde tekst,
+  dezelfde knop met dezelfde aanroep.
+
+  DE KLASSEN BLIJVEN. ``edit-section-actions`` is wat static/js/edit_modal.js gebruikt om
+  de dialoog weer vrij te geven nadat een taak klaar is; ``edit-section-success`` en
+  ``wizard-modal-success__actions`` staan in project-details.css.
+
+  <c-button> laat geen onclick toe, en closeEditModalAndReload() is precies wat deze knop
+  moet doen: het venster sluiten en de pagina eronder verversen zodat de opgeslagen
+  wijziging er staat. Er is geen href die hetzelfde doet - een href zou navigeren en het
+  venster laten staan. Dus via :attrs, opgebouwd met {% raw %}{% set %}{% endraw %} boven de tag.
+#}
+<div class="edit-section-success">
+    <c-stack gap="md">
+        <c-cluster gap="sm" align="center">
+            <c-icon icon="check-mark-circle" size="xl" color="groen" />
+            <c-span>Wijzigingen opgeslagen</c-span>
+        </c-cluster>
+        <div class="edit-section-actions wizard-modal-success__actions">
+            {% set sluiten_js %}closeEditModalAndReload(){% endset %}
+            <c-action-group align="end">
+                <c-button type="primary" label="Sluiten" :attrs="{'onclick': sluiten_js}" />
+            </c-action-group>
+        </div>
+    </c-stack>
+</div>

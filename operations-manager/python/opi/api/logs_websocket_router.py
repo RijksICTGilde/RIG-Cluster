@@ -331,14 +331,14 @@ async def stream_logs(
         # Extract session from cookies (same session as web UI)
         session = _get_session_from_cookie(websocket)
         user = _get_user_from_session(session)
+        user_email = user.get("email") if user else None
 
-        if not user or not user.get("email"):
+        if not user_email:
             # Generic error to prevent information leakage
             logger.warning(f"WebSocket auth failed: no valid session for {project_name}")
             await websocket.close(code=4001, reason="Authentication required")
             return
 
-        user_email = user["email"]
         logger.info(f"WebSocket auth: user {user_email} requesting logs for {project_name}/{deployment}/{component}")
 
         # Check if user is in allowed list

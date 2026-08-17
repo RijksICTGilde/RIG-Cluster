@@ -13,13 +13,11 @@ from typing import Any
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.enforcers import (
     ComponentServicesEnforcer,
-    DomainConfigEnforcer,
     UniqueDeploymentNameEnforcer,
     UniqueReferencesEnforcer,
     extract_service_names,
 )
-from opi.forms.layout import DisplayBlock, Fieldset, Sequence, TemplatePartial
-from opi.forms.visualizers.display_blocks import compute_url_preview as _compute_url_preview
+from opi.forms.layout import Fieldset, LayoutElement, Sequence, TemplatePartial
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
 from opi.forms.visualizers.fields.deployments import (
@@ -35,31 +33,25 @@ from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE,
     DEPLOYMENT_COMP_IMAGE,
     DEPLOYMENT_COMP_REFERENCE,
-    DEPLOYMENT_COMP_USER_ENV_VARS,
     DEPLOYMENT_COMPONENTS_SEQ,
     DEPLOYMENT_NAME,
     DEPLOYMENTS_SEQUENCE,
 )
 from opi.forms.visualizers.fields.domains import (
-    DOMAIN_CONFIG,
     WIZARD_DEPLOYMENT_NAME,
 )
 from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME
 from opi.forms.visualizers.fields.services import (
-    AUTH_WALL_BANNER,
-    KEYCLOAK_ADDITIONAL_CLIENTS,
-    KEYCLOAK_REDIRECT_URIS,
-    KEYCLOAK_RESTRICT_ACCESS,
-    KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
-    KEYCLOAK_RESTRICT_ACCESS_ROLE,
-    KEYCLOAK_TEMPLATE,
-    POSTGRESQL_INSTANCES,
-    POSTGRESQL_STORAGE,
     SERVICES,
 )
 from opi.forms.visualizers.fields.team import USERS_SEQUENCE
-from opi.forms.visualizers.sections import FormSection
+from opi.forms.visualizers.sections import FormSection, SummaryItem
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services import RestoreMode
+from opi.services.catalog.base import ConfigLayer
+from opi.services.registry import deployment_component_service_visualizers, get_service
+from opi.services.services import ServiceAdapter, service_entry_name
+from opi.services.services_enums import ServiceType
 
 
 def _extract_services(data: dict[str, Any]) -> list[str]:
@@ -72,6 +64,51 @@ def _extract_services(data: dict[str, Any]) -> list[str]:
     return []
 
 
+def _service_component_layouts() -> list[Any]:
+    """Collect the per-component layout nodes each service hooks into the component
+    form (RC-5 'service owns its fields'), in registry order. A component-level service
+    (metrics-scraper, ...) owns its fieldset via ``config_component_layout()`` instead
+    of it living hand-authored in COMPONENTS_SECTION."""
+    contributors = sorted(
+        (get_service(service_type) for service_type in ServiceType),
+        key=lambda s: s.config_component_order,
+    )
+    nodes: list[Any] = []
+    for service in contributors:
+        nodes.extend(service.config_component_layout())
+    return nodes
+
+
+def _service_component_notices() -> list[Any]:
+    """De layoutplekken van de informatieblokken uit ``component_service_notices()``.
+
+    Afgeleid van het pad van het blok zelf (het laatste segment), zodat het formulier geen
+    enkele dienstnaam kent: een dienst die zo'n blok toevoegt, verschijnt vanzelf, en een
+    dienst die het weghaalt verdwijnt vanzelf. Los van ``_service_component_layouts()``
+    omdat dat de haak voor CONFIGURATIE is, en die telt mee in ``config_layers()``.
+    """
+    from opi.services.registry import component_service_notices
+
+    return [notice.editable.yaml_path.rsplit("/", 1)[-1] for notice in component_service_notices()]
+
+
+def _service_deployment_component_layouts() -> list[Any]:
+    """Collect the per-deployment-component layout nodes each service hooks into the
+    deployment-edit form (RC-25), in ``config_component_order``.
+
+    The deployment-component counterpart of ``_service_component_layouts``. Before RC-25
+    this layer had no service-owned hook, so its one fieldset was hand-authored here.
+    """
+    contributors = sorted(
+        (get_service(service_type) for service_type in ServiceType),
+        key=lambda s: s.config_component_order,
+    )
+    nodes: list[Any] = []
+    for service in contributors:
+        nodes.extend(service.config_deployment_component_layout())
+    return nodes
+
+
 # ---------------------------------------------------------------------------
 # Core sections (always visible)
 # ---------------------------------------------------------------------------
@@ -80,7 +117,7 @@ IDENTITY_SECTION = FormSection(
     section_id="identity",
     title="Projectgegevens",
     icon="document-blanco",
-    description="Basisinformatie over uw project",
+    description="Basisinformatie over je project",
     editables=[DISPLAY_NAME, DESCRIPTION, CLUSTERS],
     layout=[
         "display-name",
@@ -93,7 +130,7 @@ SERVICES_SECTION = FormSection(
     section_id="services",
     title="Services",
     icon="applicatie",
-    description="Selecteer de services die u wilt activeren",
+    description="Selecteer de services die je wilt activeren",
     editables=[SERVICES],
     layout=["services"],
 )
@@ -123,6 +160,9 @@ COMPONENTS_SECTION = FormSection(
                     children=[
                         "name",
                         "image",
+                        # Het startcommando hoort bij het image: het vervangt de entrypoint
+                        # daarvan, dus je beoordeelt de twee samen.
+                        "command",
                     ],
                 ),
                 Fieldset(
@@ -146,6 +186,12 @@ COMPONENTS_SECTION = FormSection(
                     description="Selecteer welke services dit component gebruikt.",
                     children=["services"],
                 ),
+                # Wat de gekozen diensten te MELDEN hebben, elk als eigen kaart, direct na
+                # de keuze waar het over gaat. Binnen de fieldset hierboven oogde zo'n blok
+                # als onderdeel van het keuzevak terwijl het een mededeling is over wat je
+                # zojuist aanzette. Welke blokken dit zijn bepaalt de dienst zelf; zie
+                # Service.component_form_notices.
+                *_service_component_notices(),
                 Fieldset(
                     legend="Publicatie",
                     description=(
@@ -156,35 +202,11 @@ COMPONENTS_SECTION = FormSection(
                         Sequence(field_name="path"),
                     ],
                 ),
-                Fieldset(
-                    legend="Variabelen",
-                    description="Omgevingsvariabelen en aliassen voor dit component.",
-                    children=[
-                        "aliases",
-                        "user-env-vars",
-                    ],
-                ),
-                Sequence(field_name="services{persistent-storage}/config"),
-                Sequence(field_name="services{temp-storage}/config"),
-                Sequence(field_name="services{attachments}/config"),
-                Fieldset(
-                    legend="Publicatie op het web",
-                    depends_on="services",
-                    show_when={"contains": "publish-on-web"},
-                    children=[
-                        "services{publish-on-web}/config/tls",
-                        "services{publish-on-web}/config/attachment",
-                    ],
-                ),
-                Fieldset(
-                    legend="Prometheus metrics scraper configuratie",
-                    depends_on="services",
-                    show_when={"contains": "metrics-scraper"},
-                    children=[
-                        "services{metrics-scraper}/port",
-                        "services{metrics-scraper}/path",
-                    ],
-                ),
+                # Component-level services hook their fieldsets/sequences in here,
+                # collected from the service catalog in config_component_order. The
+                # aliases + user-env-vars system services sort first (RC-25), so they
+                # land exactly where the hand-authored "Variabelen" fieldset used to sit.
+                *_service_component_layouts(),
             ],
         ),
     ],
@@ -217,100 +239,55 @@ CONFIG_DISPLAY_SECTION = FormSection(
 # Conditional sections (visible based on selected services)
 # ---------------------------------------------------------------------------
 
-KEYCLOAK_CONFIG_SECTION = FormSection(
-    section_id="keycloak-config",
-    title="Keycloak configuratie",
-    icon="sleutel",
-    description="SSO en authenticatie-instellingen",
-    visible=lambda data: "keycloak" in _extract_services(data),
-    post_save_action="process_project",
-    editables=[
-        KEYCLOAK_TEMPLATE,
-        KEYCLOAK_REDIRECT_URIS,
-        KEYCLOAK_RESTRICT_ACCESS,
-        KEYCLOAK_RESTRICT_ACCESS_ROLE,
-        KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
-        KEYCLOAK_ADDITIONAL_CLIENTS,
-    ],
-    layout=[
-        Fieldset(
-            legend="Template",
-            children=["services/keycloak/config/template"],
-        ),
-        # Hidden: redirect URIs are managed via additional clients instead.
-        # Fieldset(
-        #     legend="Extra redirect-URI\u2019s",
-        #     ...
-        #     children=[Sequence(field_name="services/keycloak/config/additional_redirect_uris")],
-        # ),
-        Fieldset(
-            legend="Toegangsbeperking",
-            description="Beperk toegang tot de applicatie op basis van Keycloak realm-rollen.",
-            children=[
-                "services/keycloak/config/restrict-access/enabled",
-                "services/keycloak/config/restrict-access/realm-role",
-                "services/keycloak/config/restrict-access/error-message",
-            ],
-        ),
-        Fieldset(
-            legend="Extra Keycloak clients",
-            description=(
-                "Voeg extra clients toe als er externe applicaties zijn "
-                "die het Keycloak realm van dit project gebruiken. Elke client krijgt een eigen client-ID "
-                "en redirect URI's."
-            ),
-            children=[
-                Sequence(field_name="services/keycloak/config/additional-clients"),
-            ],
-        ),
-    ],
+# RC-5: the keycloak service owns its config section (built by
+# KeycloakService.config_form_section); re-exported here so flows / EDIT_SECTIONS /
+# tests keep referring to it. The nested additional-clients editables stay in the
+# forms layer; the service references them.
+
+
+def _with_service_help(section: FormSection | None, service_type: ServiceType) -> FormSection:
+    """Stamp the service's own explanation onto its config section.
+
+    The question mark that opens it already exists on the service card and in the
+    overview; the config screen is where someone actually has to decide something, and
+    it was the one place without it. Done here, where the sections are collected, so a
+    service declares its help once on its ServiceDefinition and every surface picks it up.
+
+    ``config_form_section`` may legitimately answer None (a service with no fields at
+    that layer), but every section that goes through here is listed as a step in a flow.
+    A None would travel into ``FormFlow.sections`` and surface as an AttributeError
+    halfway through the wizard; refusing it here says so at import time instead.
+    """
+    if section is None:
+        msg = f"Dienst {service_type.value} heeft geen configuratiesectie op projectniveau"
+        raise ValueError(msg)
+    if section.help_template is None:
+        section.help_template = ServiceAdapter.get_service_definition(service_type).help_template
+    return section
+
+
+KEYCLOAK_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.KEYCLOAK).config_form_section(ConfigLayer.PROJECT), ServiceType.KEYCLOAK
 )
 
-POSTGRESQL_CONFIG_SECTION = FormSection(
-    section_id="postgresql-config",
-    title="Database configuratie",
-    icon="database",
-    description="PostgreSQL database-instellingen",
-    visible=lambda data: "namespace-postgresql-database" in _extract_services(data),
-    post_save_action="process_project",
-    editables=[POSTGRESQL_INSTANCES, POSTGRESQL_STORAGE],
-    layout=[
-        "services/namespace-postgresql-database/config/instances",
-        "services/namespace-postgresql-database/config/storage",
-    ],
+# RC-5: the namespace-postgres service owns its config section (built by
+# NamespacePostgresqlDatabaseService.config_form_section); re-exported here under the
+# familiar name so flows / EDIT_SECTIONS / tests keep referring to it.
+POSTGRESQL_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE).config_form_section(ConfigLayer.PROJECT),
+    ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
 )
 
-DOMAIN_SECTION = FormSection(
-    section_id="domains",
-    title="Webadres",
-    icon="wereldbol",
-    description="Configureer hoe uw applicatie bereikbaar wordt",
-    enforcer=DomainConfigEnforcer(),
-    editables=[DOMAIN_CONFIG],
-    layout=[
-        TemplatePartial(template="wizard/partials/domain_info.html.j2"),
-        "deployments[*]/base-domain",
-        "deployments[*]/_request-domain",
-        "deployments[*]/base-domain:custom",
-        "deployments[*]/domain-format",
-        "deployments[*]/subdomain",
-        "deployments[*]/_request-subdomain",
-        "deployments[*]/root-component",
-        "deployments[*]/expose-component-on-bare-domain",
-        DisplayBlock(
-            display_id="url-preview",
-            compute=_compute_url_preview,
-            template="wizard/partials/url_preview.html.j2",
-            context={"deployment_index": 0},
-        ),
-    ],
-)
+#: The "Webadres" step, built by the service that owns the fields (RC-60). Kept under the
+#: familiar name so flows, EDIT_SECTIONS and tests keep one place to refer to; the wildcard
+#: form (no deployment index) is the layer description.
+DOMAIN_SECTION = get_service(ServiceType.PUBLISH_ON_WEB).deployment_form_section()
 
 WIZARD_DEPLOYMENT_SECTION = FormSection(
     section_id="deployment",
     title="Deployment",
     icon="server",
-    description="Configureer de deployment voor uw applicatie",
+    description="Configureer de deployment voor je applicatie",
     editables=[WIZARD_DEPLOYMENT_NAME],
     layout=[
         TemplatePartial(template="wizard/partials/deployment_info.html.j2"),
@@ -341,25 +318,80 @@ def build_deployment_wizard_section(deployment_index: int) -> FormSection:
     )
 
 
-AUTH_WALL_CONFIG_SECTION = FormSection(
-    section_id="auth-wall-config",
-    title="Authorization wall configuratie",
-    icon="sleutel",
-    description="Instellingen voor de toegangspagina",
-    visible=lambda data: "authorization-wall" in _extract_services(data),
-    post_save_action="process_project",
-    editables=[AUTH_WALL_BANNER],
-    layout=["services/authorization-wall/config/banner"],
+# RC-5 prototype: the authorization-wall service now OWNS its config section - it is
+# built by AuthorizationWallProvider.config_form_section() and merely re-exported here
+# under the familiar name, so flows.py / EDIT_SECTIONS / tests keep referring to it.
+# (keycloak / postgres sections still live hand-authored above until they follow.)
+AUTH_WALL_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.AUTHORIZATION_WALL).config_form_section(ConfigLayer.PROJECT), ServiceType.AUTHORIZATION_WALL
+)
+
+# sleep-mode owns its project-level config section (SleepModeService.config_form_section),
+# re-exported here so the derived SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
+SLEEP_MODE_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.SLEEP_MODE).config_form_section(ConfigLayer.PROJECT), ServiceType.SLEEP_MODE
+)
+
+# postgresql-database owns its project-level schema-list section
+# (PostgresqlDatabaseService.config_form_section), re-exported so the derived
+# SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
+POSTGRESQL_SCHEMAS_SECTION = _with_service_help(
+    get_service(ServiceType.POSTGRESQL_DATABASE).config_form_section(ConfigLayer.PROJECT),
+    ServiceType.POSTGRESQL_DATABASE,
+)
+
+# invite owns its project-level config section (InviteService.config_form_section),
+# re-exported here so the derived SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
+INVITE_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.INVITE).config_form_section(ConfigLayer.PROJECT), ServiceType.INVITE
+)
+
+# cross-domain-access owns its project-level config section
+# (CrossDomainAccessService.config_form_section), re-exported here so the derived
+# SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
+CROSS_DOMAIN_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.CROSS_DOMAIN_ACCESS).config_form_section(ConfigLayer.PROJECT),
+    ServiceType.CROSS_DOMAIN_ACCESS,
+)
+
+# redis and minio-storage own project-level settings that had a model and an API route but
+# no form field anywhere (RC-25); their sections are built by the services and re-exported
+# here so the derived SERVICE_CONFIG_SECTIONS picks them up by config_section_id.
+REDIS_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.REDIS).config_form_section(ConfigLayer.PROJECT), ServiceType.REDIS
+)
+MINIO_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.MINIO_STORAGE).config_form_section(ConfigLayer.PROJECT), ServiceType.MINIO_STORAGE
 )
 
 # ---------------------------------------------------------------------------
 # Lookup for conditional sections keyed by service name
 # ---------------------------------------------------------------------------
 
+# Per-service config sections indexed by section_id, so the four service dicts can be
+# DERIVED from the provider registry (config_section_id) instead of hand-synced
+# (RC-5 Phase 3). Adding a service's config section = define it here + declare
+# config_section_id on its provider.
+_CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
+    section.section_id: section
+    for section in (
+        KEYCLOAK_CONFIG_SECTION,
+        POSTGRESQL_CONFIG_SECTION,
+        POSTGRESQL_SCHEMAS_SECTION,
+        AUTH_WALL_CONFIG_SECTION,
+        SLEEP_MODE_CONFIG_SECTION,
+        INVITE_CONFIG_SECTION,
+        CROSS_DOMAIN_CONFIG_SECTION,
+        REDIS_CONFIG_SECTION,
+        MINIO_CONFIG_SECTION,
+    )
+}
+
+# service name -> config FormSection, derived by iterating the provider registry.
 SERVICE_CONFIG_SECTIONS: dict[str, FormSection] = {
-    "keycloak": KEYCLOAK_CONFIG_SECTION,
-    "namespace-postgresql-database": POSTGRESQL_CONFIG_SECTION,
-    "authorization-wall": AUTH_WALL_CONFIG_SECTION,
+    service_type.value: _CONFIG_SECTIONS_BY_ID[provider.config_section_id]
+    for service_type in ServiceType
+    if (provider := get_service(service_type)).config_section_id in _CONFIG_SECTIONS_BY_ID
 }
 
 # ---------------------------------------------------------------------------
@@ -411,26 +443,10 @@ def _strip_removed_services_from_components(
         comp_services = comp.get("services")
         if not isinstance(comp_services, list):
             continue
-        comp["services"] = [svc for svc in comp_services if _service_entry_name(svc) in project_services]
-
-
-def _service_entry_name(entry: Any) -> str | None:
-    """Return the service name from a component services entry.
-
-    Handles plain strings (``"keycloak"``), service-keyed dicts
-    (``{"persistent-storage": {...}}``), and legacy name dicts
-    (``{"name": "keycloak"}``).
-    """
-    if isinstance(entry, str):
-        return entry
-    if isinstance(entry, dict):
-        if "name" in entry:
-            return entry["name"]
-        # Single-key service dict
-        keys = list(entry.keys())
-        if len(keys) == 1:
-            return keys[0]
-    return None
+        # Use the canonical helper: the previous local reader ignored the component
+        # ``{reference: X, config: Y}`` two-key record and returned None for it, so a
+        # storage/config-carrying entry was stripped out as "not a project service".
+        comp["services"] = [svc for svc in comp_services if service_entry_name(svc) in project_services]
 
 
 # Wire the same component-reconciliation hook onto the create-wizard services
@@ -445,7 +461,7 @@ SERVICES_EDIT_SECTION = FormSection(
     section_id="services-edit",
     title="Services beheren",
     icon="applicatie",
-    description="Voeg services toe aan uw project",
+    description="Voeg services toe aan je project",
     editables=[SERVICES],
     layout=["services"],
     post_save_action="process_project",
@@ -459,9 +475,8 @@ EDIT_SECTIONS: dict[str, FormSection] = {
     "team-edit": TEAM_SECTION,
     "components-edit": COMPONENTS_EDIT_SECTION,
     "services-edit": SERVICES_EDIT_SECTION,
-    "keycloak-config": KEYCLOAK_CONFIG_SECTION,
-    "postgresql-config": POSTGRESQL_CONFIG_SECTION,
-    "auth-wall-config": AUTH_WALL_CONFIG_SECTION,
+    # Per-service config sections, derived from the registry (keyed by section_id).
+    **{section.section_id: section for section in SERVICE_CONFIG_SECTIONS.values()},
 }
 
 # ---------------------------------------------------------------------------
@@ -470,42 +485,13 @@ EDIT_SECTIONS: dict[str, FormSection] = {
 
 
 def build_domain_section(deployment_index: int, *, edit_mode: bool = False) -> FormSection:
-    """Build a domain section targeting a specific deployment.
+    """The "Webadres" section for one deployment.
 
-    Materializes the DOMAIN_SECTION wildcards (``[*]``) to
-    ``[deployment_index]``, so the form reads/writes to the correct
-    deployment in the YAML data.
-
-    In edit mode the section triggers a project reprocess on save;
-    in create mode the wizard handles submission as a whole.
+    Delegates to the service, which owns the fields, their display and the step they sit in
+    (RC-60). In edit mode the section triggers a project reprocess on save; in create mode
+    the wizard handles submission as a whole.
     """
-    from opi.forms.editables.reindex import materialize_wildcard_layout, materialize_wildcard_visualizer
-
-    editables = [materialize_wildcard_visualizer(e, deployment_index) for e in DOMAIN_SECTION.editables]
-    base_layout = DOMAIN_SECTION.layout if isinstance(DOMAIN_SECTION.layout, list) else []
-    layout = materialize_wildcard_layout(list(base_layout), deployment_index)
-
-    if edit_mode:
-        section_id = f"domain-edit-{deployment_index}"
-        title = "Webadres bewerken"
-        description = "Wijzig het webadres voor deze deployment"
-        post_save_action = "process_project"
-    else:
-        section_id = "domains"
-        title = DOMAIN_SECTION.title
-        description = DOMAIN_SECTION.description
-        post_save_action = "save_only"
-
-    return FormSection(
-        section_id=section_id,
-        title=title,
-        icon=DOMAIN_SECTION.icon,
-        description=description,
-        enforcer=DomainConfigEnforcer(deployment_index=deployment_index),
-        editables=editables,
-        layout=layout,
-        post_save_action=post_save_action,
-    )
+    return get_service(ServiceType.PUBLISH_ON_WEB).deployment_form_section(deployment_index, edit_mode=edit_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -601,8 +587,6 @@ def build_component_deployment_select_section(component_index: int) -> FormSecti
     selected deployment using ``ListDistributor``.
     """
     from opi.forms.editables.distributors import ListDistributor
-    from opi.forms.editables.editable import Editable, WidgetType
-    from opi.forms.visualizers.visualizer import EditableVisualizer
 
     target_deployments_editable = Editable(
         yaml_path="_target_deployments",
@@ -684,7 +668,11 @@ def build_deployment_edit_section(
     # Build a focused sequence with only the fields we want editable
     ref_vis = replace_segment_visualizer(DEPLOYMENT_COMP_REFERENCE, old_seg, new_seg)
     image_vis = replace_segment_visualizer(DEPLOYMENT_COMP_IMAGE, old_seg, new_seg)
-    env_vis = replace_segment_visualizer(DEPLOYMENT_COMP_USER_ENV_VARS, old_seg, new_seg)
+    # Deployment-component fields the services own (RC-25: user-env-vars), instead of
+    # this function naming them one by one.
+    service_vis = [
+        replace_segment_visualizer(vis, old_seg, new_seg) for vis in deployment_component_service_visualizers()
+    ]
     attach_vis = replace_segment_visualizer(DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE, old_seg, new_seg)
 
     seq_vis = replace_segment_visualizer(DEPLOYMENT_COMPONENTS_SEQ, old_seg, new_seg)
@@ -694,7 +682,7 @@ def build_deployment_edit_section(
         seq_ed = dataclasses.replace(seq_vis.editable, max_items=component_count)
         seq_vis = dataclasses.replace(seq_vis, editable=seq_ed)
 
-    seq_vis = dataclasses.replace(seq_vis, children=[ref_vis, image_vis, env_vis, attach_vis])
+    seq_vis = dataclasses.replace(seq_vis, children=[ref_vis, image_vis, *service_vis, attach_vis])
 
     return FormSection(
         section_id=f"deployment-edit-{deployment_index}",
@@ -709,11 +697,7 @@ def build_deployment_edit_section(
                 child_layout=[
                     "reference",
                     "image",
-                    Fieldset(
-                        legend="Omgevingsvariabelen",
-                        description="Deployment-specifieke omgevingsvariabelen voor dit component.",
-                        children=["user-env-vars"],
-                    ),
+                    *_service_deployment_component_layouts(),
                     Sequence(field_name="services/attachments/config"),
                 ],
             ),
@@ -766,38 +750,36 @@ def build_domain_cert_section(deployment_index: int) -> FormSection:
 # ---------------------------------------------------------------------------
 
 
-def _backup_summary(data: dict[str, Any]) -> str:
+def _backup_summary(data: dict[str, Any]) -> list[SummaryItem]:
     """Build review summary for backup wizard."""
     dep = data.get("deployment_name", "-")
     types = data.get("resource_types", [])
     if isinstance(types, str):
         types = [types]
-    types_str = ", ".join(t.upper() for t in types) if types else "alle"
-    return f"<p><strong>Deployment:</strong> {dep}</p><p><strong>Resource types:</strong> {types_str}</p>"
+    types_str = ", ".join(str(t).upper() for t in types) if types else "alle"
+    return [("Deployment", str(dep)), ("Resource types", types_str)]
 
 
-def _restore_select_summary(data: dict[str, Any]) -> str:
+def _restore_select_summary(data: dict[str, Any]) -> list[SummaryItem]:
     """Build review summary for backup run selection."""
     run_id = data.get("backup_run_id", "-")
-    return f"<p><strong>Backup run:</strong> <code>{run_id}</code></p>"
+    return [("Backup run", str(run_id))]
 
 
-def _restore_target_summary(data: dict[str, Any]) -> str:
+def _restore_target_summary(data: dict[str, Any]) -> list[SummaryItem]:
     """Build review summary for restore target selection."""
-    from opi.services import RestoreMode
-
     restore_mode = data.get("restore_mode", RestoreMode.EXISTING.value)
     if restore_mode == RestoreMode.NEW.value:
-        return "<p><strong>Modus:</strong> Nieuwe deployment</p>"
+        return [("Modus", "Nieuwe deployment")]
     target = data.get("target_deployment", "-")
-    return f"<p><strong>Doel deployment:</strong> {target}</p>"
+    return [("Doel deployment", str(target))]
 
 
 BACKUP_SELECT_SECTION = FormSection(
     section_id="backup-select",
     title="Backup configuratie",
     icon="database",
-    description="Selecteer een deployment en welke resources u wilt back-uppen",
+    description="Selecteer een deployment en welke resources je wilt back-uppen",
     editables=[BACKUP_DEPLOYMENT_NAME, BACKUP_RESOURCE_TYPES],
     layout=["deployment_name", "resource_types"],
     post_save_action="trigger_backup",
@@ -825,32 +807,19 @@ RESTORE_TARGET_SECTION = FormSection(
     summary_fn=_restore_target_summary,
 )
 
-# Read-only carrier so ``services`` (and thus the attachments catalog) reaches the partial
-# for display, even when this section runs standalone (modal-edit-attachments) without the
-# services-selection section. ``readonly`` => skipped on save, so it never rewrites services.
-_ATTACHMENTS_SERVICES_CARRIER = EditableVisualizer(
-    editable=Editable(yaml_path="services"),
-    widget=WidgetType.HIDDEN,
-    label="",
-    readonly=True,
-)
-
-ATTACHMENTS_SECTION = FormSection(
-    section_id="attachments",
-    title="Bijlagen",
-    icon="map",
-    description="Upload bestanden (bijv. certificaten) om per component als bestand of env-var te koppelen",
-    visible=lambda data: "attachments" in _extract_services(data),
-    editables=[_ATTACHMENTS_SERVICES_CARRIER],
-    layout=[TemplatePartial(template="wizard/partials/attachments_upload.html.j2")],
+# RC-5: the attachments service owns its "Bijlagen" upload section (built by
+# AttachmentsService.config_form_section, incl. the hidden read-only services carrier);
+# re-exported here so flows / tests keep referring to it.
+ATTACHMENTS_SECTION = _with_service_help(
+    get_service(ServiceType.ATTACHMENTS).config_form_section(ConfigLayer.PROJECT), ServiceType.ATTACHMENTS
 )
 
 
-def _new_deployment_summary(data: dict[str, Any], deployment_index: int = 0) -> str:
+def _new_deployment_summary(data: dict[str, Any], deployment_index: int = 0) -> list[SummaryItem]:
     """Build review summary for new deployment configuration."""
     deployments = data.get("deployments", [])
     name = deployments[deployment_index].get("name", "-") if deployment_index < len(deployments) else "-"
-    return f"<p><strong>Deployment:</strong> {name}</p>"
+    return [("Deployment", str(name))]
 
 
 def _materialize_new_deployment_fields(
@@ -924,7 +893,7 @@ def build_deployment_add_info_section(
     name_vis = editables[0]
     editables[0] = dataclasses.replace(name_vis, readonly_on_edit=False)
 
-    layout = [f"deployments[{deployment_index}]/name"]
+    layout: list[LayoutElement | str] = [f"deployments[{deployment_index}]/name"]
     if include_clone_from:
         layout.append(f"deployments[{deployment_index}]/clone-from")
 
@@ -977,57 +946,18 @@ def _apply_approval_to_project(
     project_data: dict[str, Any],
     wizard_data: dict[str, Any],
 ) -> None:
-    """Map approval items back into the project's domains structure.
+    """Apply the submitted approval verdicts back onto the project (catalog-driven).
 
-    For each item where status != "skip", updates the status in the
-    correct location and appends a history entry.
+    Delegates to the generic approver interface, which routes each item to the service
+    spec that owns it (``record``) instead of a hard-coded domain/subdomain switch.
     """
-    from datetime import UTC, datetime
+    from opi.services.approvals import apply_approval_verdicts
 
     items = wizard_data.get("_approval_items", [])
     if not items:
         return
-
     admin_email = wizard_data.get("_admin_email", "admin")
-    domains = project_data.setdefault("domains", {})
-
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        new_status = item.get("status", "skip")
-        if new_status == "skip":
-            continue
-
-        item_type = item.get("type")
-        domain = item.get("domain", "")
-        name = item.get("name", "")
-        message = item.get("message") or None
-
-        history_entry: dict[str, str] = {
-            "date": datetime.now(UTC).isoformat(),
-            "status": new_status,
-        }
-        if admin_email:
-            history_entry["by"] = admin_email
-        if message:
-            history_entry["message"] = message
-
-        if item_type == "subdomain":
-            for entry in domains.get("allowed-subdomains", []):
-                if not isinstance(entry, dict) or entry.get("domain") != domain:
-                    continue
-                for sub in entry.get("subdomains", []):
-                    if isinstance(sub, dict) and sub.get("name") == name:
-                        sub["status"] = new_status
-                        sub.setdefault("history", []).append(history_entry)
-                        break
-
-        elif item_type == "domain":
-            for entry in domains.get("allowed-domains", []):
-                if isinstance(entry, dict) and entry.get("domain") == domain:
-                    entry["status"] = new_status
-                    entry.setdefault("history", []).append(history_entry)
-                    break
+    apply_approval_verdicts(project_data, items, admin_email)
 
 
 def build_domain_approval_section() -> FormSection:
@@ -1112,6 +1042,7 @@ ALL_SECTIONS: list[FormSection] = [
     SERVICES_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
+    POSTGRESQL_SCHEMAS_SECTION,
     AUTH_WALL_CONFIG_SECTION,
     TEAM_SECTION,
     COMPONENTS_SECTION,

@@ -8,6 +8,18 @@ vars:
   KIND_CLUSTER_NAME: '{{default "gitops-fluxcd" .KIND_CLUSTER_NAME}}'
   CLUSTER_TYPE: '{{default "local" .CLUSTER_TYPE}}'
   RIG_NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
+  # Sandbox-builds draaien vaak op een gedeelde server naast andere sessies en het
+  # kind-cluster. Een aparte builder met een geheugengrens houdt de build binnen zijn
+  # eigen ruimte en houdt tegelijk de buildcache vast. Zie sandbox:build-builder.
+  SANDBOX_BUILDER_NAME: '{{default "rig-sandbox-builder" .SANDBOX_BUILDER_NAME}}'
+  # 2 GiB. Gemeten, niet geschat: een KOUDE build (alle drie de apt-rondes, uv sync,
+  # skopeo en de tarball-export) piekt op 427 MB in de buildkit-container, een warme op
+  # 108 MB. 2 GiB is dus bijna vijf keer de gemeten piek - genoeg marge voor een zwaardere
+  # dependency-ronde, en klein genoeg om de machine nooit leeg te trekken.
+  SANDBOX_BUILD_MEMORY: '{{default "2g" .SANDBOX_BUILD_MEMORY}}'
+  # Optionele registry-cache, dezelfde vorm als publish-operations-manager. Leeg = alleen
+  # de cache van de builder zelf, wat op een dev-server het geval is.
+  SANDBOX_CACHE_IMAGE: '{{default "" .SANDBOX_CACHE_IMAGE}}'
 
 #set: ['e', 'x']  # equivalent to set -ex
 
@@ -97,6 +109,16 @@ tasks:
       - sh: command -v yq
         msg: |
           🚨 yq is not installed! Install with 'brew install yq' on MacOS or 'apt-get install yq' on Linux.
+      # jq en numfmt worden gebruikt door sandbox:build-builder om de geheugengrens van de
+      # bestaande builder uit te lezen en te vergelijken. Zonder ze leest de taak een lege
+      # staat en maakt hij de builder elke keer opnieuw aan - inclusief het verlies van de
+      # buildcache die dit hele bouwpad bij elkaar houdt.
+      - sh: command -v jq
+        msg: |
+          🚨 jq is not installed! Install with 'brew install jq' on MacOS or 'apt-get install jq' on Linux.
+      - sh: command -v numfmt
+        msg: |
+          🚨 numfmt is not installed! It ships with GNU coreutils: 'brew install coreutils' on MacOS (as gnumfmt) or 'apt-get install coreutils' on Linux.
     cmds:
       - echo -e "\n✅  All preconditions have been met.\n"
     silent: true
@@ -608,11 +630,14 @@ tasks:
           kubectl rollout restart deployment/argocd-repo-server -n {{.RIG_NAMESPACE}}
           kubectl rollout restart deployment/argocd-server -n {{.RIG_NAMESPACE}}
 
+          # 300s, niet 120s: op een verse cluster moeten de argocd-image en de cmp-sidecar
+          # nog gepulld worden. Gemeten op de dev-server duurde alleen dat al ~2,5 minuut,
+          # waardoor sandbox:setup afbrak op een rollout die daarna gewoon slaagde.
           echo "Waiting for ArgoCD repo server (incl. CMP sidecar) to be ready..."
-          kubectl rollout status deployment/argocd-repo-server -n {{.RIG_NAMESPACE}} --timeout=120s
+          kubectl rollout status deployment/argocd-repo-server -n {{.RIG_NAMESPACE}} --timeout=300s
 
           echo "Waiting for ArgoCD server to be ready..."
-          kubectl rollout status deployment/argocd-server -n {{.RIG_NAMESPACE}} --timeout=120s
+          kubectl rollout status deployment/argocd-server -n {{.RIG_NAMESPACE}} --timeout=300s
 
           echo "Waiting for ArgoCD application controller to be ready..."
           kubectl rollout status statefulset/argocd-application-controller -n {{.RIG_NAMESPACE}} --timeout=120s
@@ -899,6 +924,9 @@ tasks:
       KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
+      # Zie sandbox:build-operations-manager-image: zonder dit bakt de build de
+      # version.json in die er toevallig lag, en meldt de pod een andere commit.
+      - task: version:generate
       - |
         echo "Building operations-manager Docker image with BuildKit optimizations..."
         docker buildx build \
@@ -924,7 +952,7 @@ tasks:
     cmds:
       - echo "Starting Skaffold in hot-reload mode..."
       - echo "Files will sync automatically and uvicorn will auto-reload"
-      - SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" skaffold dev --port-forward -f operations-manager/skaffold.yaml
+      - SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" skaffold dev --kube-context kind-{{.KIND_CLUSTER_NAME}} --port-forward -f operations-manager/skaffold.yaml
 
   skaffold-debug:
     desc: "Instructions for running Skaffold in debug mode"
@@ -949,7 +977,17 @@ tasks:
       - |
         echo "Updating operations-manager deployment..."
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        # On odcn-production the image is a CalVer tag that changes every deploy, so the
+        # apply above already rolls the deployment. A `rollout restart` on top of that is
+        # a SECOND change to the pod template, so two rollouts start at once and you
+        # briefly see three pods. Only restart where the tag does NOT change: local and
+        # sandbox load the image into kind under a fixed `:latest`, so apply sees nothing
+        # new and the restart is what actually picks up the rebuilt image.
+        if [ "{{.CLUSTER}}" = "odcn-production" ]; then
+          echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
+        else
+          kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        fi
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
 
@@ -1187,6 +1225,10 @@ tasks:
             echo "    tag you can trace back."
             ;;
         esac
+      # Zie sandbox:build-operations-manager-image. Hier weegt het het zwaarst: dit is de
+      # image die uitgerold wordt, en de CalVer-tag zou dan een andere commit noemen dan
+      # de image over zichzelf meldt.
+      - task: version:generate
       - task: docker-build-and-push
         vars:
           BUILD_CONTEXT: .
@@ -1295,6 +1337,39 @@ tasks:
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           PLATFORMS: linux/amd64,linux/arm64
 
+  generate-probe-spec:
+    desc: "Regenerate the e2e-allservices probe spec from OPI's service registry"
+    dir: operations-manager/python
+    cmds:
+      - uv run python ../../scripts/generate_probe_spec.py
+    silent: true
+
+  publish-e2e-allservices:
+    desc: "Build and publish the e2e-allservices test workload to GitHub Container Registry"
+    deps: [requirements-check]
+    cmds:
+      # Embed the current probe spec (scan of the service registry) before building.
+      - task: generate-probe-spec
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/e2e-allservices
+          DOCKERFILE_PATH: Dockerfile
+          IMAGE_NAME: e2e-allservices
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          PLATFORMS: linux/amd64,linux/arm64
+
+  publish-waker:
+    desc: "Build and publish the zad-waker (sleep-mode) image to GitHub Container Registry"
+    deps: [requirements-check]
+    cmds:
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/zad-waker
+          DOCKERFILE_PATH: Dockerfile
+          IMAGE_NAME: zad-waker
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          PLATFORMS: linux/amd64,linux/arm64
+
   build-job-test-image:
     desc: "Build and load the tiny job-test image into kind (for testing the job runner)"
     cmds:
@@ -1373,6 +1448,17 @@ tasks:
       - |
         if [ ! -f ".env-taskfile-current" ]; then
           echo "❌ No cluster selected. Please run 'task select-cluster' first."
+          exit 1
+        fi
+        # Bestaan is niet genoeg: als .env-taskfile-current pas tijdens deze run is
+        # aangemaakt, zijn de dotenv-waarden al leeg ingelezen. Zonder deze check schrijft
+        # de generatie naar OUTPUT_DIR/ zelf in plaats van OUTPUT_DIR/<cluster>, ziet daar
+        # de .sops.yaml van een andere cluster, en slaat stilzwijgend alles over.
+        if [ -z "{{.CLUSTER_FOLDER}}" ]; then
+          echo "❌ CLUSTER_FOLDER is leeg — de cluster-variabelen zijn niet geladen."
+          echo "   .env-taskfile-current wordt bij het parsen gelezen, dus hij moet er"
+          echo "   staan vóór je task start:"
+          echo "     cp .env-taskfile-sandboxed-local .env-taskfile-current"
           exit 1
         fi
         if [ ! -f "{{.KEY_FILE}}" ]; then
@@ -1837,6 +1923,54 @@ tasks:
       - uv run pytest tests/ --ignore=tests/integration/ -v
     silent: false
 
+  test-upgrade-safety:
+    desc: "RC-19 Layer 1: replay every project file through migrate + validate (offline, no cluster/key)"
+    summary: |
+      Runs the offline upgrade-safety replay. Always exercises the committed
+      sanitized fixtures; set RIG_PROJECTS_DIR to a zad-projects checkout to
+      replay the real production files too.
+
+        RIG_PROJECTS_DIR=/path/to/zad-projects/projects task test-upgrade-safety
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest tests/test_upgrade_safety_replay.py -v
+    silent: false
+
+  upgrade-safety-diff:
+    desc: "RC-19 Layer 2: summarize what a zad-deployments upgrade removed, per project"
+    summary: |
+      Diffs a zad-deployments checkout against the baseline recorded before the
+      OPI image swap, and summarizes disappeared keys (env vars, secrets, ingress,
+      mounts, schemas) per project. The output is a report to judge, not a pass/fail.
+
+        REPO=/path/to/zad-deployments BASELINE=<sha> task upgrade-safety-diff
+    dir: operations-manager/python
+    requires:
+      vars: [REPO, BASELINE]
+    cmds:
+      - uv run python scripts/compare_deployments_diff.py "{{.REPO}}" "{{.BASELINE}}" "{{.TARGET | default \"HEAD\"}}"
+    silent: true
+
+  upgrade-safety-identity:
+    desc: "RC-19 Layer 2: assert every service still resolves to the SAME thing after the upgrade"
+    summary: |
+      Decrypts the generated secrets in a baseline zad-deployments worktree and the
+      upgraded tree, and compares the resolved identity of each service per deployment
+      (database host/name/user/schema, OIDC url/realm/client-id, bucket name, published
+      Ingress host). Unlike upgrade-safety-diff this is a pass/fail: a same-key but
+      different-VALUE identity change (e.g. a deployment now pointing at another database)
+      is a finding. Needs the AGE key the secrets are encrypted with (the sandbox key).
+
+        git -C /path/to/zad-deployments worktree add /tmp/zad-baseline <baseline-sha>
+        BASELINE_DIR=/tmp/zad-baseline TARGET_DIR=/path/to/zad-deployments \
+          KEY_FILE=../../security/sandbox-key.txt task upgrade-safety-identity
+    dir: operations-manager/python
+    requires:
+      vars: [BASELINE_DIR, TARGET_DIR, KEY_FILE]
+    cmds:
+      - uv run python scripts/compare_service_identity.py "{{.BASELINE_DIR}}" "{{.TARGET_DIR}}" --key-file "{{.KEY_FILE}}"
+    silent: true
+
   test-integration:
     desc: "Run integration tests (mock-based, no infrastructure required)"
     dir: operations-manager/python
@@ -1866,8 +2000,28 @@ tasks:
     desc: "Run Playwright E2E browser tests (local app server, no sandbox needed)"
     dir: operations-manager/python
     cmds:
-      - uv run playwright install chromium --with-deps
+      # Ook firefox: tests/e2e/test_lotc_domeinbeheer.py meet daarin een fout die in
+      # Chromium NIET te zien is (een tabelcel die alleen daar tot niets krimpt).
+      - uv run playwright install chromium firefox --with-deps
       - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
+    silent: false
+
+  test-e2e-random:
+    desc: "Run the local E2E suite in a shuffled order (the isolation check that counts)"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium firefox --with-deps
+      # The plan's own acceptance criterion: order-independence is only proven by
+      # actually changing the order. A reversed file order is not enough -- it still
+      # keeps every file's tests together and in sequence, which is exactly the
+      # assumption a leaking test makes. pytest-randomly shuffles files AND the tests
+      # inside them.
+      # SEED=<n> reproduces a specific shuffle; without it every run picks a new one,
+      # which is the point: repeated runs sample different orders.
+      # No -q: the addopts are already at verbosity 0 (-v -q), so an extra -q lands on
+      # -1 and pytest drops the report header -- the line where pytest-randomly prints
+      # `Using --randomly-seed=<n>`. Without it the shuffle cannot be replayed.
+      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly {{if .SEED}}--randomly-seed={{.SEED}}{{end}} --timeout=300
     silent: false
 
   test-e2e-sandbox:
@@ -2008,8 +2162,16 @@ tasks:
       - task: sandbox:generate-bootstrap-secrets
       - task: sandbox:apply-sso
       - task: sandbox:generate-env-secrets
+      # Overlays op lokale images zetten als dit een dev-build is. Moet vóór
+      # sandbox:sync en bootstrap-argo-system, want die pushen/appliceren de overlays.
+      # Zonder deze stap deed .sandbox-mode=dev niets: ask-build-mode schreef het bestand
+      # wel, maar niemand las het tijdens setup.
+      - task: sandbox:configure-local-images
       # Phase 1: Create cluster and install operators/CRDs
       - task: sandbox:create-cluster
+      # De images moeten in de cluster staan vóórdat de deployments ze proberen te
+      # pullen (imagePullPolicy: Never in dev-mode). No-op in demo-mode.
+      - task: sandbox:build-local-images-if-dev
       - task: install-ingress-nginx
       - task: install-cnpg-operator
       - task: sandbox:install-csi-snapshot
@@ -2254,11 +2416,17 @@ tasks:
         fi
     silent: true
 
+  # Let op bij het aanpassen: `sed -i ''` is BSD/macOS-syntax. GNU sed (Linux, en dus
+  # de dev-server) leest die lege string als bestandsnaam en faalt, waardoor de
+  # dev-mode daar stil niets deed en de sandbox alsnog de gepubliceerde images pakte.
+  # `sed -i.bak` werkt op allebei; de .bak-bestanden ruimen we onderaan op.
   sandbox:configure-local-images:
     desc: "Patch overlay files to use locally built images with imagePullPolicy: Never"
     cmds:
       - |
-        MODE=$(cat .sandbox-mode 2>/dev/null || echo "demo")
+        # SANDBOX_MODE uit de omgeving wint, zodat een onbewaakte installatie dev-mode
+        # kan kiezen zonder ask-build-mode (dat is interactief).
+        MODE="${SANDBOX_MODE:-$(cat .sandbox-mode 2>/dev/null || echo demo)}"
         if [ "$MODE" != "dev" ]; then
           exit 0
         fi
@@ -2267,22 +2435,25 @@ tasks:
 
         # Operations Manager: use local image + Never
         OM_PATCH="bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml"
-        sed -i '' 's|image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest|image: operations-manager:latest|' "$OM_PATCH"
-        sed -i '' 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$OM_PATCH"
+        sed -i.bak 's|image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest|image: operations-manager:latest|' "$OM_PATCH"
+        sed -i.bak 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$OM_PATCH"
 
         # CMP sidecar in ArgoCD deployment: use local image + Never
         ARGO_DEPLOY="bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml"
-        sed -i '' 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$ARGO_DEPLOY"
-        sed -i '' 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$ARGO_DEPLOY"
+        sed -i.bak 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$ARGO_DEPLOY"
+        sed -i.bak 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$ARGO_DEPLOY"
 
         # CMP sidecar kustomize patch: Always -> Never
         KUST="bootstrap/rig-system/kustomize/overlays/sandboxed-local/kustomization.yaml"
-        sed -i '' 's|value: Always|value: Never|' "$KUST"
+        sed -i.bak 's|value: Always|value: Never|' "$KUST"
 
         # CMP sidecar in shared sops-plugin component: use local image + Never
         CMP_COMPONENT="bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml"
-        sed -i '' 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$CMP_COMPONENT"
-        sed -i '' 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$CMP_COMPONENT"
+        sed -i.bak 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$CMP_COMPONENT"
+        sed -i.bak 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$CMP_COMPONENT"
+
+        # .bak-bestanden van de portable sed-aanroepen opruimen.
+        find bootstrap infrastructure -name "*.yaml.bak" -delete 2>/dev/null || true
 
         echo "Overlays configured for local images"
     silent: true
@@ -2354,6 +2525,14 @@ tasks:
         echo "Public key: $PUBLIC_KEY"
     silent: true
 
+  # CLUSTER_TYPE/CLUSTER_FOLDER staan hier letterlijk en komen bewust NIET uit
+  # .env-taskfile-current. Dat bestand wordt via `dotenv:` ingelezen bij het *parsen* van
+  # de Taskfile, terwijl sandbox:setup het pas in zijn eigen eerste stap aanmaakt. Op een
+  # verse checkout draaide de hele run daardoor met lege waarden: de secrets belandden in
+  # de bovenliggende overlays/-map, de "bestaat al"-check zag daar de .sops.yaml van een
+  # andere cluster, sloeg het genereren over, en setup struikelde later over een
+  # ontbrekend postgres-admin-secret. Deze taken zijn per definitie sandboxed-local, dus
+  # hoeven ze dat niet uit de omgeving te halen.
   sandbox:generate-infrastructure-secrets:
     desc: "Generate SOPS-encrypted infrastructure secrets for sandboxed-local cluster"
     cmds:
@@ -2362,8 +2541,8 @@ tasks:
           MODE: "infrastructure"
           TEMPLATES_DIR: "infrastructure/bootstrap/infrastructure/secrets/templates"
           OUTPUT_DIR: "infrastructure/bootstrap/infrastructure/secrets/config/overlays"
-          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
-          CLUSTER_FOLDER: "{{.INFRASTRUCTURE_CLUSTER_FOLDER}}"
+          CLUSTER_TYPE: "sandboxed-local"
+          CLUSTER_FOLDER: "sandboxed-local"
           KEY_FILE: "security/sandbox-key.txt"
           FIXED_PASSWORD: "admin1234"
 
@@ -2375,8 +2554,8 @@ tasks:
           MODE: "bootstrap"
           TEMPLATES_DIR: "bootstrap/rig-system/kustomize/secrets/templates"
           OUTPUT_DIR: "bootstrap/rig-system/kustomize/overlays"
-          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
-          CLUSTER_FOLDER: "{{.BOOTSTRAP_CLUSTER_FOLDER}}"
+          CLUSTER_TYPE: "sandboxed-local"
+          CLUSTER_FOLDER: "sandboxed-local"
           KEY_FILE: "security/sandbox-key.txt"
           FIXED_PASSWORD: "admin1234"
 
@@ -2462,10 +2641,15 @@ tasks:
         echo "Without SSO, the sandbox still works using a local Keycloak admin user."
         echo "Applications deployed in the sandbox will use Keycloak but cannot use SSO."
         echo ""
-        # SANDBOX_SSO from the env answers this non-interactively (e.g. SANDBOX_SSO=no)
+        # SANDBOX_SSO from the env answers this non-interactively (e.g. SANDBOX_SSO=no).
+        # SANDBOX_NONINTERACTIVE implies "no": an unattended run that sets only that flag
+        # would otherwise still block here, waiting for an answer nobody is there to give.
         if [ -n "${SANDBOX_SSO:-}" ]; then
           CONFIGURE_SSO="$SANDBOX_SSO"
           echo "Do you want to configure SSO? [y/N]: ${CONFIGURE_SSO} (from SANDBOX_SSO)"
+        elif [ "${SANDBOX_NONINTERACTIVE:-}" = "true" ]; then
+          CONFIGURE_SSO="n"
+          echo "Do you want to configure SSO? [y/N]: n (SANDBOX_NONINTERACTIVE)"
         else
           printf "Do you want to configure SSO? [y/N]: "
           read -r CONFIGURE_SSO
@@ -2791,9 +2975,17 @@ tasks:
         # Run migration script
         echo "Transforming project files..."
         cd operations-manager/python
+        # --probe-image staat er expliciet in en niet als kale vlag. Hij heeft een
+        # OPTIONELE waarde (nargs="?"), dus een kale --probe-image gevolgd door
+        # projectnamen slikt de eerste naam op als waarde: elk image wordt dan die
+        # projectnaam en dat project verdwijnt uit de uitvoer. Zonder de vlag blijven
+        # de productie-images EN de productie-resources staan, en dan past het niet
+        # op een kind-cluster.
         uv run python -m scripts.migrate_project_to_sandbox \
           --source-dir "{{.IMPORT_SOURCE_DIR}}" \
           --output-dir "$OUTPUT_DIR" \
+          --probe-image "{{.PROBE_IMAGE}}" \
+          {{if .SANDBOX_PUBLIC_KEY}}--sandbox-public-key "{{.SANDBOX_PUBLIC_KEY}}"{{end}} \
           {{.CLI_ARGS}}
 
         if [ $? -ne 0 ]; then
@@ -2847,6 +3039,15 @@ tasks:
     silent: true
     vars:
       IMPORT_SOURCE_DIR: '{{.IMPORT_SOURCE_DIR | default "/Users/robbertuittenbroek/IdeaProjects/rig-cluster-test-git-repositories/rig-cluster-projects-github/projects"}}'
+      # Elk component krijgt deze image en het probe-resourceprofiel; productiewaarden
+      # passen niet op een kind-cluster.
+      PROBE_IMAGE: '{{.PROBE_IMAGE | default "ghcr.io/minbzk/base-images/e2e-allservices:latest"}}'
+      # Leeg = hersleutel naar security/sandbox-key.txt (de sandbox op deze machine).
+      # Gevuld met de PUBLIEKE sleutel van een ander cluster = hersleutel daarheen, en
+      # de private helft blijft daar. Ophalen met:
+      #   kubectl --context <ctx> -n rig-system get secret sops-age-key \
+      #     -o jsonpath='{.data.key}' | base64 -d | grep 'public key'
+      SANDBOX_PUBLIC_KEY: '{{.SANDBOX_PUBLIC_KEY | default ""}}'
 
   sandbox:update-dns:
     desc: "Configure dnsmasq to resolve *.sandbox.rijksapp.dev to 127.0.0.1"
@@ -2894,12 +3095,99 @@ tasks:
         echo "*.${DOMAIN} now resolves to 127.0.0.1"
     silent: true
 
+  sandbox:build-local-images-if-dev:
+    desc: "Build+load de images die dev-mode lokaal verwacht (no-op in demo-mode)"
+    internal: true
+    cmds:
+      - |
+        # SANDBOX_MODE uit de omgeving wint, zodat een onbewaakte installatie dev-mode
+        # kan kiezen zonder ask-build-mode (dat is interactief).
+        MODE="${SANDBOX_MODE:-$(cat .sandbox-mode 2>/dev/null || echo demo)}"
+        if [ "$MODE" != "dev" ]; then
+          echo "Demo-mode: images komen uit de registry, niet lokaal gebouwd."
+          exit 0
+        fi
+        # Beide, niet alleen operations-manager: configure-local-images zet ook de
+        # CMP-sidecar op een lokale tag met imagePullPolicy Never. Ontbreekt die, dan
+        # blijft argocd-repo-server op ErrImageNeverPull staan en komt ArgoCD niet op.
+        task sandbox:build-cmp-image
+        task sandbox:build-operations-manager-image
+    silent: true
+
+  sandbox:build-builder:
+    desc: "Zorg voor een buildx-builder met een geheugengrens (gedeelde server)"
+    summary: |
+      Een build zonder grens kan het hele werkgeheugen pakken en trekt dan de andere
+      sessies en het kind-cluster mee om. De standaard-builder (driver `docker`) draait
+      in de docker-daemon en kent geen grens; een `docker-container`-builder wel.
+
+      Die builder houdt daarnaast zijn eigen buildcache vast tussen builds door. Dat is
+      wat de drie apt-rondes uit operations-manager/Dockerfile na de eerste build
+      overslaat, ook wanneer de pakketspiegels slecht bereikbaar zijn.
+
+      SANDBOX_BUILD_MEMORY overschrijft de grens (standaard {{.SANDBOX_BUILD_MEMORY}}).
+    vars:
+      BUILDER_CONTAINER: 'buildx_buildkit_{{.SANDBOX_BUILDER_NAME}}0'
+    cmds:
+      - |
+        # numfmt wil hoofdletters (4G), docker accepteert beide - vandaar de tr.
+        WANT="$(echo "{{.SANDBOX_BUILD_MEMORY}}" | tr '[:lower:]' '[:upper:]' | numfmt --from=iec)"
+        STATE="$(docker inspect {{.BUILDER_CONTAINER}} 2>/dev/null | jq -r '"\(.[0].HostConfig.Memory) \(.[0].HostConfig.NetworkMode)"' 2>/dev/null || echo "")"
+        # De container in de daemon is niet waar `docker buildx build --builder` kijkt: die
+        # leest de buildx-store van de SESSIE (~/.docker/buildx). Op de gedeelde server heeft
+        # elke sessie een eigen store bij dezelfde daemon, dus een container die er staat kan
+        # in deze sessie onbekend zijn - en dan valt de build om met 'no builder found' nadat
+        # deze taak "staat klaar" meldde. Daarom beide voorwaarden.
+        if ! docker buildx inspect {{.SANDBOX_BUILDER_NAME}} >/dev/null 2>&1 || [ "$STATE" != "$WANT host" ]; then
+          # Bestaat hij met een andere (of geen) grens, dan is opnieuw aanmaken de enige
+          # manier: een draaiende buildkit-container krijgt geen nieuwe limiet. Staat hij
+          # goed maar kent deze sessie hem niet, dan neemt `create --bootstrap` de bestaande
+          # container met dezelfde naam over (exit 0) en blijft de buildcache staan.
+          if [ -n "$STATE" ] && [ "$STATE" != "$WANT host" ]; then
+            echo "Builder {{.SANDBOX_BUILDER_NAME}} staat op '$STATE', gewenst '$WANT host' - opnieuw aanmaken..."
+          elif [ -n "$STATE" ]; then
+            echo "Builder {{.SANDBOX_BUILDER_NAME}} draait wel, maar staat niet in de buildx-store van deze sessie - overnemen..."
+          fi
+          docker buildx rm {{.SANDBOX_BUILDER_NAME}} >/dev/null 2>&1 || true
+          # network=host om dezelfde reden als --network=host in sandbox-deploy: zonder
+          # host-netwerk komt de builder niet bij de DNS van de server en strandt de
+          # eerste regel van de Dockerfile al op "no route to host".
+          docker buildx create \
+            --name {{.SANDBOX_BUILDER_NAME}} \
+            --driver docker-container \
+            --driver-opt memory={{.SANDBOX_BUILD_MEMORY}} \
+            --driver-opt network=host \
+            --bootstrap >/dev/null
+          echo "Builder {{.SANDBOX_BUILDER_NAME}} klaargezet met geheugengrens {{.SANDBOX_BUILD_MEMORY}}"
+        else
+          echo "Builder {{.SANDBOX_BUILDER_NAME}} staat klaar met geheugengrens {{.SANDBOX_BUILD_MEMORY}}"
+        fi
+    silent: true
+
   sandbox:build-operations-manager-image:
     desc: "Build operations-manager image and load into Kind (no deploy)"
     cmds:
+      # Niet beginnen als er te weinig vrij is: dat was vooraf te zien toen een build de
+      # server bijna omver trok. Zie docs/uitrol-op-de-dev-server.md.
+      - scripts/build-preflight.sh
+      # Eerst de versie schrijven, anders bakt de build in wat er toevallig op schijf ligt:
+      # opi/version.json staat in .gitignore en dus niet in `git status`, maar wel in de
+      # buildcontext, en opi/core/version.py laat dat bestand voorgaan op de ingebakken
+      # build-args. Een image kon zo een commit van dagen eerder over zichzelf melden.
+      - task: version:generate
+      - task: sandbox:build-builder
       - |
         echo "Building operations-manager Docker image..."
+        # --cache-from: dezelfde vorm als publish-operations-manager (docker-build-and-push).
+        # Leeg gelaten pakt hij alleen de cache van de builder zelf; met SANDBOX_CACHE_IMAGE
+        # kun je er een registry-cache naast zetten.
+        CACHE_FLAGS=""
+        if [ -n "{{.SANDBOX_CACHE_IMAGE}}" ]; then
+          CACHE_FLAGS="--cache-from type=registry,ref={{.SANDBOX_CACHE_IMAGE}}"
+        fi
         docker buildx build \
+          --builder {{.SANDBOX_BUILDER_NAME}} \
+          $CACHE_FLAGS \
           --target application \
           --load \
           -t operations-manager \
@@ -2913,16 +3201,9 @@ tasks:
   sandbox:update-operations-manager:
     desc: "Build and deploy the operations-manager to the sandbox cluster"
     cmds:
-      - |
-        echo "Building operations-manager Docker image..."
-        docker buildx build \
-          --target application \
-          --load \
-          -t operations-manager \
-          -f operations-manager/Dockerfile .
-      - |
-        echo "Loading image into kind cluster..."
-        kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
+      # Bouwen en in Kind laden staat in één taak, zodat de preflight, de geheugengrens
+      # en de cache hier niet uit de pas kunnen lopen met de bouwtaak.
+      - task: sandbox:build-operations-manager-image
       - |
         echo "Updating operations-manager deployment..."
         SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local --load-restrictor LoadRestrictionsNone | kubectl apply -f -
@@ -2945,19 +3226,38 @@ tasks:
     cmds:
       - while true; do uv run python scripts/write_version_file.py; sleep 5; done
 
+  sandbox:forward:
+    desc: "Stuur lokaal 80/443 door naar de sandbox op de server (on|off|status)"
+    summary: |
+      Alle sandboxdomeinen resolven hier al naar 127.0.0.1, dus deze forward maakt ze in
+      een klap bruikbaar tegen de sandbox op de server in plaats van een lokaal cluster.
+
+        task sandbox:forward -- on       aanzetten (vraagt sudo, 80/443 zijn root-poorten)
+        task sandbox:forward -- status   staat hij aan, en antwoordt hij
+        task sandbox:forward -- off      uitzetten
+
+      Draait je LOKALE kind-sandbox, dan houdt die 80/443 al bezet en kan de forward niet
+      binden; het script meldt dat in plaats van half te starten.
+    cmds:
+      - scripts/sandbox-forward.sh {{.CLI_ARGS | default "status"}}
+    silent: true
+
   sandbox:skaffold-dev:
     desc: "Start Skaffold with hot-reload for sandbox development"
     cmds:
       - echo "Starting Skaffold in hot-reload mode (sandboxed-local)..."
       - task: version:generate
-      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local.yaml
+      # Vastgepind, niet afgeleid van de huidige context: skaffold rolt anders uit naar
+      # waar kubectl toevallig staat. Dat is een keer op het integratietest-cluster
+      # geland en levert een muur van "namespaces rig-system not found" op.
+      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --kube-context kind-rig-sandbox --port-forward -f operations-manager/skaffold-sandboxed-local.yaml
 
   sandbox:skaffold-debug:
     desc: "Start Skaffold in debug mode for sandbox development (debugpy on port 5678)"
     cmds:
       - echo "Starting Skaffold in debug mode (sandboxed-local)..."
       - 'echo "Attach IntelliJ debugger: Run → Debug Remote Debug - Operations Manager (localhost:5678)"'
-      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local-debug.yaml
+      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --kube-context kind-rig-sandbox --port-forward -f operations-manager/skaffold-sandboxed-local-debug.yaml
 
   sandbox:build-cmp-image:
     desc: "Build CMP kustomize-sops image and load into Kind (no ArgoCD restart)"

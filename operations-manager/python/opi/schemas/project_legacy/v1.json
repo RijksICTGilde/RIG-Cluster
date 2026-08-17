@@ -1,0 +1,76 @@
+{
+  "$comment": "v1 -> v2 replaced `uses-services` (plus the separate component `storage` block) with a single `services` list, and dropped the v0 boolean `publish-on-web: true` on a component. A v1 file declares `schema-version: 1` (or nothing at all, which the gate rejects); no production file is in this shape today, but the migration still exists so its schema must too.",
+  "$defs": {
+    "component": {
+      "properties": {
+        "uses-services": {
+          "description": "Legacy v1 field — should be migrated to services.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/service-entry"
+          }
+        },
+        "storage": {
+          "description": "Legacy v1 field — should be migrated to services.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/storage-entry"
+          }
+        },
+        "publish-on-web": {
+          "comment": "v0 shape, deleted by _fixup_v2_data. It lived in the latest schema until RC-32 because git_monitor validates a file straight from git BEFORE any migration runs; now that the gate validates against the declared version, only a file that declares v1 may still carry it. Not a service contract: that lives in the service's config_model.",
+          "type": "boolean"
+        }
+      }
+    },
+    "storage-entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "size": {
+          "type": "string"
+        },
+        "mount-path": {
+          "type": "string",
+          "pattern": "^(?!.*\\.\\.)/[\\w./-]+\\Z"
+        }
+      }
+    },
+    "helm-chart": {
+      "properties": {
+        "uses-services": {
+          "description": "Legacy v1 field.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/service-entry"
+          }
+        }
+      }
+    },
+    "helmfile-entry": {
+      "properties": {
+        "uses-services": {
+          "description": "Legacy v1 field.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/service-entry"
+          }
+        }
+      }
+    },
+    "deployment": {
+      "properties": {
+        "uses-services": {
+          "description": "Legacy v1 field - migrated into services by _merge_uses_services_into_services.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/service-entry"
+          }
+        }
+      }
+    }
+  }
+}

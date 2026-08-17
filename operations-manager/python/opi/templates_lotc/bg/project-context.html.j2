@@ -1,0 +1,80 @@
+{#
+  VARIANT B: de ZIJKOLOM wisselt mee met het geselecteerde project.
+
+  Het tweede prototype naast project-tabs.html.j2. Zelfde vraag, ander antwoord: dit is
+  geen tabwissel maar een CONTEXTwissel. Je hebt een project gekozen, en zolang je daarin
+  zit gaat de hele linkerkolom over dat project.
+
+  Waarvoor het goed werkt:
+    - veel aanzichten; de kolom kan er twintig dragen waar een tabbalk bij zes vol is
+    - aanzichten die zelf onderdelen hebben, want daar is ruimte voor een kopje
+    - waar je bent is steeds zichtbaar, ook na doorklikken
+    - het schaalt mee als er later Statistieken, Features of Logboek bij komen
+
+  Waar het gaat wringen:
+    - de hoofdnavigatie is weg zolang je in een project zit, dus er moet een duidelijke
+      weg terug zijn. Vandaar het kruimelpad boven de pagina en "Alle projecten" bovenaan
+      de kolom.
+    - het is een grotere ingreep: elke projectpagina moet weten dat hij in deze context
+      staat.
+
+  Technisch leunt dit op het sidenav-blok in base_lotc.html.j2. Dat blok bestaat precies
+  hiervoor: een tweede niveau ONDER "Projecten" kan namelijk niet - c-sidenav-group is een
+  kopje en geen uitklapbare ouder, het is een broer van de items eronder. Vervangen kan
+  wel.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}{{ project.display_name }} - projectcontext{% endblock %}
+
+{% block sidenav %}
+    <c-sidenav>
+        {# De weg terug staat bovenaan en niet onderaan: wie de hoofdnavigatie kwijt is,
+           zoekt hem daar.
+
+           Zonder icoon, met opzet: NLDD heeft geen chevron naar links, en een pijl die de
+           verkeerde kant op wijst is misleidender dan geen pijl. Het icoon "terug" staat
+           op de lijst die bij het LOTC-project ligt. #}
+        <c-sidenav-item label="Alle projecten" href="/lotc/bg/projects" />
+        <c-sidenav-group label="{{ project.display_name }}" />
+        <c-sidenav-item icon="house" label="Overzicht" href="#" :active="true" />
+        <c-sidenav-item icon="chart-x-y-axis-line" label="Statistieken" href="#" />
+        <c-sidenav-item icon="rectangle-stack" label="Componenten" href="#" />
+        <c-sidenav-item icon="cylinder-split" label="Services" href="#" />
+        <c-sidenav-item icon="arrow-up-arrow-down" label="Deployments" href="#" />
+        <c-sidenav-group label="Beheer" />
+        <c-sidenav-item icon="person-2" label="Team" href="#" />
+        <c-sidenav-item icon="lock-closed" label="Sleutels" href="#" />
+        <c-sidenav-item icon="chevron-left-forward-slash-chevron-right" label="Repositories" href="#" />
+        <c-sidenav-item icon="gear" label="Instellingen" href="#" />
+    </c-sidenav>
+{% endblock %}
+
+{% block content %}
+    <c-breadcrumbs aria-label="Kruimelpad">
+        <c-breadcrumbs-item label="Projecten" href="/lotc/bg/projects" />
+        <c-breadcrumbs-item label="{{ project.display_name }}" />
+    </c-breadcrumbs>
+
+    {{ page_head(project.display_name, project.description) }}
+
+    <c-auto-grid min="200px" gap="md">
+        <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
+        <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" />
+        <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
+        <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Services" />
+    </c-auto-grid>
+
+    {% call panel("Overzicht", "house") %}
+        <c-detail-list>
+            <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
+            <c-detail-item label="Services" value="{{ project.services | map(attribute='value') | join(', ') }}" />
+            <c-detail-item label="Repositories" value="{{ project.repositories | length }}" />
+        </c-detail-list>
+        <c-paragraph size="sm">
+            De andere aanzichten staan in de kolom links. In deze proef heeft alleen
+            Overzicht inhoud.
+        </c-paragraph>
+    {% endcall %}
+{% endblock %}

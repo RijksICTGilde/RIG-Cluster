@@ -85,6 +85,23 @@ bestand als geheel; een losse `-k`-selectie werkt niet, want latere tests bouwen
 toestand die eerdere achterlaten. De fixture ruimt aan het eind alle vijf projecten op via de API,
 ook als een test faalde.
 
+Die volgorde is hier het onderwerp en geen omissie: de slotronde kan alleen een verloren wijziging
+uit een eerdere ronde zien als die ronde er echt voor liep. `pytest-randomly` schudt standaard wel
+binnen een module, en dan valt de suite om op zijn eigen opzet in plaats van op het product. De
+module draagt daarom `pytest.mark.serial`, en de hook `pytest_collection_modifyitems` in
+`tests/e2e/conftest.py` zet modules met die marker na het schudden terug op hun bestandsvolgorde.
+Andere modules blijven gewoon geschud - daar is een volgorde-afhankelijkheid wel een fout.
+
+## Wat er als xfail in staat
+
+`test_ui_removal_while_api_patches_same_file` staat als `xfail(strict=True)`. Een component uit de
+componenten-modal halen laat zijn verwijzing in `deployments[*].components` staan, waarna het
+opslaan afketst op "Invalid component references in deployment". De API-route
+(`project_manager.delete_component`) haalt die verwijzingen wel weg, de modal niet - dus via het
+scherm is een component dat in een deployment zit niet te verwijderen. Dat is een productfout met
+een eigen doorloop. `strict` betekent dat deze test omvalt zodra het verwijderen wel werkt, zodat
+de xfail dan weg moet. De slotronde verwacht `beta` daarom nog.
+
 ## Herbruikbare onderdelen
 
 - `tests/e2e/helpers/lifecycle.py` - `create_project_via_wizard()` doorloopt de wizard en levert de

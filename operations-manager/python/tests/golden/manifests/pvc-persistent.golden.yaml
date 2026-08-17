@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: "prod-web-data"
+  namespace: "rig-myproject"
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=false
+  labels:
+    backup.rig.nl/enabled: "true"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi

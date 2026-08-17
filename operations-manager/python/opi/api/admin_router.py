@@ -17,7 +17,6 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_admin_api_key
 from opi.core.config import settings
-from opi.core.database_pools import get_database_pool
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.services.project_store import get_project_store
 
@@ -36,9 +35,8 @@ admin_router: APIRouter = APIRouter(
 
 
 def _get_marked_for_deletion_service() -> MarkedForDeletionService:
-    """Get a MarkedForDeletionService instance using the main database pool."""
-    pool = get_database_pool("main")
-    return MarkedForDeletionService(pool)
+    """Get a MarkedForDeletionService instance (ORM-backed)."""
+    return MarkedForDeletionService()
 
 
 @admin_router.get("/marked-for-deletion")
@@ -96,9 +94,7 @@ async def trigger_cleanup(
     """
     from opi.jobs.reconciliation import cleanup_project
 
-    pool = get_database_pool("main")
     results = await cleanup_project(
-        pool=pool,
         project_name=project_name,
         grace_period_days=grace_period_days,
         dry_run=dry_run,
@@ -134,14 +130,11 @@ async def trigger_reconciliation(
     """
     from opi.jobs.reconciliation import reconcile
 
-    pool = get_database_pool("main")
-
     # Build project YAML list from all loaded projects
     all_projects = get_project_store().get_all()
     project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
 
     results = await reconcile(
-        pool=pool,
         project_yamls=project_yamls,
         grace_period_days=grace_period_days,
         dry_run=dry_run,
@@ -205,11 +198,10 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
     """
     from opi.jobs.service_orphan_sweep import sweep
 
-    pool = get_database_pool("main")
     all_projects = get_project_store().get_all()
     project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
 
-    report = await sweep(pool, project_yamls, cluster=settings.CLUSTER_MANAGER)
+    report = await sweep(project_yamls, cluster=settings.CLUSTER_MANAGER)
     return JSONResponse(content=report, status_code=200)
 
 
@@ -240,12 +232,11 @@ async def confirm_orphans(request: Request) -> JSONResponse:
     if not isinstance(items, list) or not items:
         raise HTTPException(status_code=400, detail="Body must contain a non-empty 'items' list")
 
-    pool = get_database_pool("main")
     all_projects = get_project_store().get_all()
     project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
     cluster = settings.CLUSTER_MANAGER
 
-    report = await sweep(pool, project_yamls, cluster=cluster)
+    report = await sweep(project_yamls, cluster=cluster)
 
     # Index the fresh report by (type, name[, realm]) -> classification
     candidates: dict[tuple, dict[str, Any]] = {}
@@ -296,6 +287,41 @@ async def confirm_orphans(request: Request) -> JSONResponse:
             "grace_period_days": settings.DELETION_GRACE_PERIOD_DAYS,
             "accepted": accepted,
             "rejected": rejected,
+        },
+        status_code=200,
+    )
+
+
+@admin_router.post("/projects/:reconcile")
+@validate_admin_api_key
+async def reconcile_projects(request: Request) -> JSONResponse:
+    """Pull the projects repo into the store now, instead of waiting for the poll.
+
+    The store re-reads ``zad-projects`` on a timer, so a file committed to that repo by
+    something other than ZAD -- an import, a hand edit, another cluster -- is invisible
+    until the next tick. Anything asking for it before then gets "project not found".
+    This endpoint does that read on demand.
+
+    It is the same operation the poll performs, so it is safe to call at any time and a
+    no-op when nothing changed (one ``ls-remote``, no object transfer).
+
+    Example:
+        curl -X POST "http://localhost:9595/api/v2/admin/projects/:reconcile" \\
+          -H "X-API-Key: your-admin-api-key"
+    """
+    store = get_project_store()
+
+    head_before = store.cache_head()
+    await store.reconcile()
+    head_after = store.cache_head()
+
+    logger.info(f"Admin reconcile of the projects repo: {head_before} -> {head_after}")
+    return JSONResponse(
+        content={
+            "message": "Projects repository reconciled",
+            "head_before": head_before,
+            "head_after": head_after,
+            "changed": head_before != head_after,
         },
         status_code=200,
     )

@@ -13,6 +13,7 @@ import threading
 
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto_sync
+from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +115,50 @@ class SkopeoConnector:
                 f"Invalid tag '{tag}': must start with alphanumeric and contain only letters, digits, dots, hyphens, underscores"
             )
 
-    def _build_destination(self, image_name: str, tag: str) -> str:
+    @staticmethod
+    def _validate_project_name(project_name: str) -> None:
+        """Validate the owning project name.
+
+        The project name becomes the owner prefix of the registry tag, and that
+        prefix is only unambiguous because a project name cannot contain the
+        separator. Rejecting anything else here keeps that guarantee local.
+        """
+        if not project_name:
+            raise SkopeoValidationError("Project name cannot be empty")
+        if not REGISTRY_TAG_OWNER_RE.match(project_name):
+            raise SkopeoValidationError(
+                f"Invalid project name '{project_name}': must start with a lowercase letter and contain only "
+                f"lowercase letters, digits and hyphens"
+            )
+
+    def validate_push_target(self, project_name: str, image_name: str, tag: str) -> str:
+        """Validate a push target and return the registry tag it resolves to.
+
+        Raises:
+            SkopeoValidationError: If any part is invalid, or if the resulting tag
+                does not fit the 128 characters a registry tag may have.
+        """
+        self._validate_project_name(project_name)
+        self._validate_image_name(image_name)
+        self._validate_tag(tag)
+
+        combined_tag = build_registry_tag(project_name, image_name, tag)
+        if not _TAG_RE.match(combined_tag):
+            raise SkopeoValidationError(
+                f"Image name and tag are too long: they resolve to registry tag '{combined_tag}' "
+                f"({len(combined_tag)} characters), and a registry tag may be at most 128"
+            )
+        return combined_tag
+
+    def _build_destination(self, project_name: str, image_name: str, tag: str) -> str:
         """Build the full destination registry URL.
 
-        Image name is encoded into the tag (e.g. mink-latest) because Quay does not
-        support nested repos under a single robot-account-scoped repository.
+        Owner, image name and tag are all encoded into the tag (e.g. mink_app-latest)
+        because Quay does not support nested repos under a single robot-account-scoped
+        repository. The owning project comes first, so one project can never write to
+        the tag of another.
         """
-        combined_tag = f"{image_name}-{tag}"
+        combined_tag = build_registry_tag(project_name, image_name, tag)
         return f"docker://{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}:{combined_tag}"
 
     def _build_command(self, tarball_path: str, destination: str) -> list[str]:
@@ -146,20 +184,23 @@ class SkopeoConnector:
                 masked[i + 1] = f"{parts[0]}:***" if len(parts) == 2 else "***"
         return masked
 
-    async def push_image(self, tarball_path: str, image_name: str, tag: str) -> str:
+    async def push_image(self, tarball_path: str, project_name: str, image_name: str, tag: str) -> str:
         """
         Push a Docker image tarball to the configured registry.
 
-        Image name is encoded into the tag (e.g. rig/zad:mink-latest) because Quay
-        does not support nested repos under a single robot-account-scoped repository.
+        Owner, image name and tag are encoded into the registry tag (e.g.
+        rig/zad:mink_app-latest) because Quay does not support nested repos under a
+        single robot-account-scoped repository. The owning project is the first part,
+        which makes the destination of one project unreachable for another.
 
         Args:
             tarball_path: Path to the Docker image tarball (from docker save)
+            project_name: Project that owns the image (the API key's project)
             image_name: Name of the image
             tag: Image tag
 
         Returns:
-            The full image reference that was pushed (e.g. rcr.rijksapps.nl/rig/zad:mink-latest)
+            The full image reference that was pushed (e.g. rcr.rijksapps.nl/rig/zad:mink_app-latest)
 
         Raises:
             SkopeoConnectionError: If skopeo is not available
@@ -172,10 +213,9 @@ class SkopeoConnector:
         if not settings.REGISTRY_URL:
             raise SkopeoValidationError("REGISTRY_URL is not configured")
 
-        self._validate_image_name(image_name)
-        self._validate_tag(tag)
+        combined_tag = self.validate_push_target(project_name, image_name, tag)
 
-        destination = self._build_destination(image_name, tag)
+        destination = self._build_destination(project_name, image_name, tag)
         cmd = self._build_command(tarball_path, destination)
 
         masked_cmd = self._mask_credentials(cmd)
@@ -195,7 +235,6 @@ class SkopeoConnector:
             logger.error(f"Skopeo push failed (exit {process.returncode}): {stderr}")
             raise SkopeoExecutionError(f"Failed to push image: {stderr.strip()}")
 
-        combined_tag = f"{image_name}-{tag}"
         image_ref = f"{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}:{combined_tag}"
         logger.info(f"Successfully pushed image to {image_ref}")
         if stdout:

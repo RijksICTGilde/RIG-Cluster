@@ -14,7 +14,7 @@ DISPLAY_NAME = EditableVisualizer(
     editable=DISPLAY_NAME_EDITABLE,
     widget=WidgetType.TEXT,
     label="Weergavenaam",
-    description="Een beschrijvende naam voor uw project",
+    description="Een beschrijvende naam voor je project",
 )
 
 DESCRIPTION = EditableVisualizer(

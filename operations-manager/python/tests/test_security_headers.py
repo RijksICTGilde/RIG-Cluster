@@ -54,11 +54,15 @@ class TestSecurityHeadersMiddleware:
         csp = mw._build_csp()
         assert "https://cdn.jsdelivr.net" in csp
 
-    def test_csp_includes_unpkg(self):
-        """CSP script-src includes unpkg.com for HTMX (loaded by jinja-roos-components)."""
+    def test_csp_does_not_include_unpkg(self):
+        """unpkg.com stond in de CSP voor de HTMX die de oude schil van een CDN haalde.
+
+        HTMX komt uit static/js/, dus die herkomst hoort niet meer toegestaan te zijn: een
+        toestemming die niemand gebruikt is alleen nog een openstaande deur.
+        """
         mw = self._make_mw()
         csp = mw._build_csp()
-        assert "https://unpkg.com" in csp
+        assert "https://unpkg.com" not in csp
 
     def test_csp_img_src_includes_keycloak(self):
         """CSP img-src includes Keycloak origin for auth redirects."""
@@ -121,7 +125,7 @@ class TestSecurityHeadersIntegration:
         response = client.get("/test")
         csp = response.headers["Content-Security-Policy"]
         assert "default-src 'self'" in csp
-        assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com" in csp
+        assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net" in csp
         assert "https://keycloak.test" in csp
 
     def test_no_hsts_on_http(self, client: TestClient):

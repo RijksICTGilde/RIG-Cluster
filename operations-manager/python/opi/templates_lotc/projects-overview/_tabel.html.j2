@@ -1,0 +1,102 @@
+{# De tabel met projecten.
+
+   Was een kale <table class="projects-table"> met een eigen kopregel, celranden,
+   kolombreedtes (.col-*) en een hover-regel - het grootste blok van
+   projects-overview.css. Dat is <c-table> met <c-table-head>/<c-th>/<c-table-row>/<c-td>.
+   De percentages van de .col-klassen (35/12/15/25/13) staan nu als columns=; NLDD maakt
+   van een tabel een CSS-grid en zonder columns stapelen de cellen.
+
+   Verder is er per blok een component gevonden:
+
+   - .environment-badge met .env-production/.env-staging/.env-development was drie keer
+     dezelfde pil met een andere kleur. Dat is <c-tag>, waar het TYPE de kleur bepaalt:
+     productie is error (rood), staging warning (oranje), de rest info (blauw). Precies
+     de kleuren die de eigen klassen hadden, maar nu volgt de kleur de betekenis.
+   - .service-tag is ook <c-tag>, kleurloos (default), en .services-list is <c-cluster>.
+   - .avatar is <c-avatar>, in een <c-cluster>. NIET in een <c-avatar-group>: zie de
+     uitleg bij de teamcel hieronder.
+   - .actions is <c-cluster gap="xs">.
+   - .details-link was een <a> met de opmaak van een tertiaire knop, met als reden dat je
+     hem met de middelste muisknop in een nieuw tabblad wilt kunnen openen. <c-link> is
+     precies dat: een echt anker, opgemaakt door het thema. De knoplook gaat daarmee weg
+     en het wordt een link - wat het altijd al was.
+   - De lege toestand staat nu naast de tabel als <c-alert type="info">. Een grid-tabel
+     kent geen colspan, en een mededeling is geen tabelrij. #}
+<c-card outline="true" padding="none" background-color="wit">
+    {% if projects %}
+        <c-table columns="3.5fr 1.2fr 1.5fr 2.5fr 1.3fr">
+            <c-table-head>
+                <c-th>Project</c-th>
+                <c-th>Omgeving</c-th>
+                <c-th>Team</c-th>
+                <c-th>Services</c-th>
+                <c-th>Acties</c-th>
+            </c-table-head>
+            {% for project in projects %}
+            <c-table-row>
+                <c-td>
+                    <div class="project-info">
+                        <div class="project-name">
+                            <a href="/projects/{{ project.name }}/details" class="project-name-link">{{ project.display_name or project.name }}</a>
+                        </div>
+                        <div class="project-id">{{ project.name }}</div>
+                        <div class="project-description">{{ project.description or "Geen beschrijving beschikbaar" }}</div>
+                    </div>
+                </c-td>
+                <c-td>
+                    {% if project.clusters %}
+                        {% set cluster = project.clusters[0] %}
+                        {% if cluster == 'production' %}
+                            <c-tag type="error" label="Production"/>
+                        {% elif cluster == 'staging' %}
+                            <c-tag type="warning" label="Staging"/>
+                        {% else %}
+                            <c-tag type="info" label="{{ cluster|title }}"/>
+                        {% endif %}
+                    {% else %}
+                        <c-tag type="info" label="Unknown"/>
+                    {% endif %}
+                </c-td>
+                <c-td>
+                    <div class="team-info">
+                        <div class="team-count">{{ project.users|length }} {% if project.users|length == 1 %}lid{% else %}leden{% endif %}</div>
+                        {# <c-avatar> voor de bolletjes, in een <c-cluster> - en NIET in
+                           een <c-avatar-group>, hoe goed dat ook past. Dat component
+                           rendert wel <nldd-avatar-group>, maar deze NLDD-bouw kent dat
+                           element niet: in de browser bleef het bij
+                           ':not(:defined)' staan. Een niet-gedefinieerd custom element
+                           geeft geen fout, het doet alleen niets - dus de groepering en
+                           het "+N" dat het component zelf zou tellen kwamen er nooit.
+                           Vandaar dat het aftellen hieronder met de hand blijft. #}
+                        <c-cluster gap="xs">
+                            {% for user in (project.users | sort(attribute='email'))[:3] %}
+                                <c-avatar size="24" initials="{{ user.email[:2]|upper }}" name="{{ user.email }}"/>
+                            {% endfor %}
+                            {% if project.users|length > 3 %}
+                                <c-avatar size="24" initials="+{{ project.users|length - 3 }}" decorative/>
+                            {% endif %}
+                        </c-cluster>
+                    </div>
+                </c-td>
+                <c-td>
+                    <c-cluster gap="xs">
+                        {% for service in project.services[:4] %}
+                            <c-tag type="default" label="{{ service|service_name|replace('-', ' ')|title }}"/>
+                        {% endfor %}
+                        {% if project.services|length > 4 %}
+                            <c-tag type="default" label="+{{ project.services|length - 4 }}"/>
+                        {% endif %}
+                    </c-cluster>
+                </c-td>
+                <c-td>
+                    <c-cluster gap="xs">
+                        <c-link href="/projects/{{ project.name }}/details" label="Details"/>
+                    </c-cluster>
+                </c-td>
+            </c-table-row>
+            {% endfor %}
+        </c-table>
+    {% else %}
+        <c-alert type="info" heading="Geen projecten gevonden waar je toegang toe hebt."/>
+    {% endif %}
+</c-card>

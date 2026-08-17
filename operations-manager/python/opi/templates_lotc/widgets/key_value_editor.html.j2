@@ -1,0 +1,38 @@
+{% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, bool_attr, optional_attr, htmx_attrs, extra_attrs %}
+{% set initial_format = field.attributes.get('kv_format', 'env') %}
+{% set editor_id = 'kv-editor-' ~ field.path %}
+<div class="kv-editor{% if field.errors %} kv-editor--error{% endif %}" id="{{ editor_id|e }}" data-format="{{ initial_format }}">
+    {# De hulpknop naast het label. Een sectie had er al een (zie
+       bg/_modal-wizard-step.html.j2), een VELD niet, terwijl juist dit veld uitleg nodig
+       heeft: bij de aliassen wist niemand welke variabelen er te gebruiken zijn. Zelfde
+       functie, zelfde dialoog, dus geen tweede manier om hulp te tonen.
+
+       Geen <c-icon>: dit sjabloon rendert in de formulierlaag, die kale HTML uitstuurt.
+       Vandaar dezelfde <nldd-icon> als copy_value_box in components/_forms.j2. #}
+    <span class="utrecht-form-label kv-editor__label">
+        {{ field.label|e }}
+        {% if field.help_template %}
+            <button type="button" class="kv-editor__help-btn" aria-label="Uitleg bij {{ field.label|e }}"
+                    title="Uitleg" onclick="openServiceHelp('{{ field.help_template|e }}')">
+                <nldd-icon name="question-mark-circle" size="20"></nldd-icon>
+            </button>
+        {% endif %}
+    </span>
+    {{ helper_text(field) }}
+    <div class="kv-toggle">
+        <button type="button" class="kv-toggle__btn{% if initial_format == 'env' %} kv-toggle__btn--active{% endif %}" data-format="env"
+                onclick="kvToggleFormat('{{ editor_id|e }}', 'env')">ENV</button>
+        <button type="button" class="kv-toggle__btn{% if initial_format == 'yaml' %} kv-toggle__btn--active{% endif %}" data-format="yaml"
+                onclick="kvToggleFormat('{{ editor_id|e }}', 'yaml')">YAML</button>
+    </div>
+    <textarea
+        id="{{ field.path|e }}"
+        name="{{ field.path|e }}"
+        data-cm-kv="true"
+        rows="5"
+        {{ optional_attr("placeholder", "KEY=value" if initial_format == "env" else "KEY: value") }}
+        {{ bool_attr("disabled", field.readonly) }}
+    >{{ (field.value|string if field.value else '')|e }}</textarea>
+    {{ render_examples(field) }}
+    {{ render_errors(field.errors) }}
+</div>

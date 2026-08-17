@@ -1,452 +1,454 @@
-"""Unit tests for AsyncTaskService."""
+"""Real-Postgres tests for the ORM-backed AsyncTaskService (RC-5 persistence)."""
 
-import json
 import uuid
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-from opi.core.async_task_service import AsyncTaskService, _row_to_dict
-
-
-@pytest.fixture
-def mock_pool() -> MagicMock:
-    pool = MagicMock()
-    pool.acquire = AsyncMock()
-    pool.release = AsyncMock()
-    return pool
+from opi.core.async_task_service import MAX_ERROR_MESSAGE_CHARS, AsyncTaskService
+from opi.core.db import session_scope
+from opi.services.persistence.async_tasks import AsyncTask
+from sqlalchemy import func, update
 
 
-@pytest.fixture
-def mock_connection() -> AsyncMock:
-    conn = AsyncMock()
-    return conn
+def _svc(cluster: str = "c1") -> AsyncTaskService:
+    return AsyncTaskService(cluster=cluster)
 
 
-@pytest.fixture
-def task_service(mock_pool: MagicMock) -> AsyncTaskService:
-    return AsyncTaskService(pool=mock_pool, cluster="test-cluster")
-
-
-def _make_task_row(
-    task_id: uuid.UUID | None = None,
-    task_type: str = "upsert_deployment",
-    project_name: str = "test-project",
-    deployment_name: str = "main",
-    cluster: str = "test-cluster",
-    status: str = "pending",
-    payload: dict | None = None,
-    created_by: str | None = None,
-) -> dict:
-    """Build a dict that mimics an asyncpg Record for a task row."""
-    if task_id is None:
-        task_id = uuid.uuid4()
-    return {
-        "id": task_id,
-        "task_type": task_type,
-        "project_name": project_name,
-        "deployment_name": deployment_name,
-        "cluster": cluster,
-        "status": status,
-        "payload": payload or {},
-        "created_by": created_by,
-        "created_at": datetime.now(UTC),
-        "claimed_by": None,
-        "claimed_at": None,
-        "started_at": None,
-        "completed_at": None,
-        "heartbeat_at": None,
-        "error_message": None,
-        "current_step": None,
-        "progress_percent": 0,
-        "attempt_count": 0,
-        "max_attempts": 3,
-        "result": None,
-        "subtasks": None,
-        "logs": None,
-        "events": None,
-        "web_addresses": None,
-    }
-
-
-async def test_create_task(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """create_task inserts a new row and returns it as a dict."""
-    mock_pool.acquire.return_value = mock_connection
-    # No existing task (dedup returns None)
-    mock_connection.fetchrow = AsyncMock()
-    row = _make_task_row()
-    mock_connection.fetchrow.side_effect = [None, row]
-
-    result = await task_service.create_task(
-        task_type="upsert_deployment",
-        project_name="test-project",
-        deployment_name="main",
-        cluster="test-cluster",
-        payload={"image": "nginx:latest"},
-        created_by="user-1",
+async def _create(svc, *, project="p1", deployment="d1", task_type="upsert_deployment", payload=None, cluster="c1"):
+    return await svc.create_task(
+        task_type=task_type,
+        project_name=project,
+        deployment_name=deployment,
+        cluster=cluster,
+        payload=payload if payload is not None else {"image": "nginx:1"},
     )
 
-    assert result is not None
-    assert result["task_id"] == str(row["id"])
-    assert result["task_type"] == "upsert_deployment"
-    assert result["project_name"] == "test-project"
-    assert mock_connection.fetchrow.call_count == 2
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+
+async def _backdate_heartbeat(task_id: str, seconds: int) -> None:
+    async with session_scope() as session:
+        await session.execute(
+            update(AsyncTask)
+            .where(AsyncTask.id == uuid.UUID(task_id))
+            .values(heartbeat_at=func.now() - func.make_interval(0, 0, 0, 0, 0, 0, float(seconds)))
+        )
 
 
-async def test_create_task_dedup_identical_payload(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """When an active task with identical payload exists, return the existing one."""
-    mock_pool.acquire.return_value = mock_connection
-    payload = {"image": "nginx:latest"}
-    existing_row = _make_task_row(status="running", payload=payload)
-    mock_connection.fetchrow = AsyncMock(return_value=existing_row)
+async def test_create_defaults_and_roundtrip(orm_db):
+    svc = _svc()
+    row = await _create(svc)
+    assert row["status"] == "pending"
+    assert row["task_id"] == row["id"]
+    assert row["payload"] == {"image": "nginx:1"}
+    assert row["max_attempts"] == 3
+    assert row["attempt_count"] == 0
+    assert row["created_at"]
 
-    result = await task_service.create_task(
-        task_type="upsert_deployment",
-        project_name="test-project",
-        deployment_name="main",
-        cluster="test-cluster",
-        payload=payload,
+
+async def test_create_custom_max_attempts(orm_db):
+    svc = _svc()
+    row = await _create(svc, payload={"a": 1})
+    assert row["max_attempts"] == 3
+    row2 = await svc.create_task(
+        task_type="backup", project_name="p2", deployment_name=None, cluster="c1", payload={}, max_attempts=5
     )
-
-    assert result["task_id"] == str(existing_row["id"])
-    assert result["status"] == "running"
-    # Only the dedup SELECT should have been called, no INSERT
-    mock_connection.fetchrow.assert_awaited_once()
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+    assert row2["max_attempts"] == 5
 
 
-async def test_create_task_dedup_different_payload(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """When an active task with different payload exists, create a new queued task."""
-    mock_pool.acquire.return_value = mock_connection
-    existing_row = _make_task_row(status="running", payload={"image": "nginx:1.0"})
-    new_row = _make_task_row(status="pending", payload={"image": "nginx:2.0"})
-    # First fetchrow: dedup check returns existing task
-    # Second fetchrow: INSERT returns new task
-    mock_connection.fetchrow = AsyncMock(side_effect=[existing_row, new_row])
+async def test_create_dedup_identical_payload_returns_existing(orm_db):
+    svc = _svc()
+    first = await _create(svc, payload={"image": "nginx:1"})
+    again = await _create(svc, payload={"image": "nginx:1"})
+    assert again["task_id"] == first["task_id"]
 
-    result = await task_service.create_task(
-        task_type="upsert_deployment",
-        project_name="test-project",
-        deployment_name="main",
-        cluster="test-cluster",
-        payload={"image": "nginx:2.0"},
+
+async def test_create_different_payload_queues_new(orm_db):
+    svc = _svc()
+    first = await _create(svc, payload={"image": "nginx:1"})
+    second = await _create(svc, payload={"image": "nginx:2"})
+    assert second["task_id"] != first["task_id"]
+    assert second["status"] == "pending"
+
+
+async def test_claim_marks_claimed_and_sets_claimer(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    claimed = await svc.claim_next_task(cluster="c1")
+    assert claimed["task_id"] == created["task_id"]
+    assert claimed["status"] == "claimed"
+    assert claimed["claimed_by"]
+    assert claimed["claimed_at"]
+
+
+async def test_claim_empty_returns_none(orm_db):
+    assert await _svc().claim_next_task(cluster="c1") is None
+
+
+async def test_claim_skips_other_cluster(orm_db):
+    svc = _svc()
+    await _create(svc, cluster="c2")
+    assert await svc.claim_next_task(cluster="c1") is None
+
+
+async def test_claim_skips_inflight_same_deployment(orm_db):
+    svc = _svc()
+    await _create(svc, payload={"image": "nginx:1"})
+    await _create(svc, payload={"image": "nginx:2"})  # queued behind, same project/deployment
+    first = await svc.claim_next_task(cluster="c1")
+    assert first is not None
+    # Second task must not be claimed while the first is in-flight for the same deployment.
+    assert await svc.claim_next_task(cluster="c1") is None
+
+
+async def test_claim_respects_type_concurrency_limit(orm_db):
+    svc = _svc()
+    await _create(svc, project="pa", deployment="d", task_type="backup", payload={"n": 1})
+    await _create(svc, project="pb", deployment="d", task_type="backup", payload={"n": 2})
+    first = await svc.claim_next_task(cluster="c1", type_concurrency_limits={"backup": 1})
+    assert first is not None
+    # backup limit of 1 is reached by the claimed task -> the second is skipped.
+    assert await svc.claim_next_task(cluster="c1", type_concurrency_limits={"backup": 1}) is None
+    # Without the limit it can be claimed (different project, so no in-flight block).
+    assert await svc.claim_next_task(cluster="c1") is not None
+
+
+async def test_start_sets_running(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.claim_next_task(cluster="c1")
+    await svc.start_task(created["task_id"])
+    assert (await svc.get_task(created["task_id"]))["status"] == "running"
+
+
+async def test_update_progress_partial(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.update_progress(created["task_id"], current_step="Building", progress_percent=42, logs=["a", "b"])
+    task = await svc.get_task(created["task_id"])
+    assert task["current_step"] == "Building"
+    assert task["progress_percent"] == 42
+    assert task["logs"] == ["a", "b"]
+    assert task["heartbeat_at"]
+
+
+async def test_update_progress_truncates_step(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.update_progress(created["task_id"], current_step="x" * 300)
+    assert len((await svc.get_task(created["task_id"]))["current_step"]) == 255
+
+
+async def test_complete_sets_result_and_done(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.complete_task(created["task_id"], result={"url": "https://x/"})
+    task = await svc.get_task(created["task_id"])
+    assert task["status"] == "completed"
+    assert task["result"] == {"url": "https://x/"}
+    assert task["progress_percent"] == 100
+    assert task["current_step"] == "Done"
+    assert task["completed_at"]
+
+
+async def test_fail_retry_requeues(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.fail_task(created["task_id"], error_message="boom", attempt_count=1, max_attempts=3)
+    task = await svc.get_task(created["task_id"])
+    assert task["status"] == "pending"
+    assert task["attempt_count"] == 1  # incremented from 0
+    assert task["claimed_by"] is None
+    assert task["error_message"] == "boom"
+
+
+async def test_fail_permanent(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.fail_task(created["task_id"], error_message="fatal", attempt_count=3, max_attempts=3)
+    task = await svc.get_task(created["task_id"])
+    assert task["status"] == "failed"
+    assert task["completed_at"]
+
+
+async def test_een_gewone_foutzin_blijft_heel(orm_db):
+    """Een foutmelding van 300 tekens werd afgeknipt op 255, midden in een woord, terwijl
+    de subtaak dezelfde zin voluit droeg. De kolom is TEXT, dus die 255 hoorde nergens bij
+    (zad-cli, punt 26)."""
+    svc = _svc()
+    created = await _create(svc)
+    lange_zin = "e" * 300
+    await svc.fail_task(created["task_id"], error_message=lange_zin, attempt_count=3, max_attempts=3)
+    assert (await svc.get_task(created["task_id"]))["error_message"] == lange_zin
+
+
+async def test_een_dump_wordt_alsnog_begrensd(orm_db):
+    """Het vangnet blijft bestaan voor een exceptie die een dump meesleept."""
+    svc = _svc()
+    created = await _create(svc)
+    await svc.fail_task(
+        created["task_id"], error_message="e" * (MAX_ERROR_MESSAGE_CHARS + 100), attempt_count=3, max_attempts=3
     )
-
-    # Should have created a new task, not returned the existing one
-    assert result["task_id"] == str(new_row["id"])
-    assert result["status"] == "pending"
-    # Both dedup SELECT and INSERT should have been called
-    assert mock_connection.fetchrow.await_count == 2
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+    msg = (await svc.get_task(created["task_id"]))["error_message"]
+    assert len(msg) == MAX_ERROR_MESSAGE_CHARS
+    assert msg.endswith("...")
 
 
-async def test_claim_next_task(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """claim_next_task returns a task and sets claimed_by."""
-    mock_pool.acquire.return_value = mock_connection
-    task_id = uuid.uuid4()
+async def test_get_task_not_found(orm_db):
+    assert await _svc().get_task(str(uuid.uuid4())) is None
 
-    # First fetchrow returns the pending task id, second returns the updated row
-    select_row = {"id": task_id}
-    claimed_row = _make_task_row(
-        task_id=task_id,
-        status="claimed",
+
+async def test_update_task_status_stamps_completed(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.update_task_status(created["task_id"], status="cancelled")
+    task = await svc.get_task(created["task_id"])
+    assert task["status"] == "cancelled"
+    assert task["completed_at"]
+
+
+async def test_update_task_status_non_terminal_no_completed(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.update_task_status(created["task_id"], status="running")
+    assert (await svc.get_task(created["task_id"]))["completed_at"] is None
+
+
+async def test_list_tasks_filters_and_total(orm_db):
+    svc = _svc()
+    await _create(svc, project="p1", payload={"n": 1})
+    await _create(svc, project="p2", deployment="d2", payload={"n": 2})
+    all_res = await svc.list_tasks()
+    assert all_res["total"] == 2
+    only_p1 = await svc.list_tasks(project_name="p1")
+    assert only_p1["total"] == 1
+    assert only_p1["tasks"][0]["project_name"] == "p1"
+
+
+async def test_recover_stale_requeues_and_fails(orm_db):
+    svc = _svc()
+    # A stale task with retries left -> requeued.
+    a = await _create(svc, project="pa", deployment="da", payload={"n": 1})
+    await svc.claim_next_task(cluster="c1")
+    await _backdate_heartbeat(a["task_id"], 600)
+    # A stale task with no retries left -> failed.
+    b = await _create(svc, project="pb", deployment="db", payload={"n": 2})
+    await svc.claim_next_task(cluster="c1")
+    async with session_scope() as session:
+        await session.execute(
+            update(AsyncTask).where(AsyncTask.id == uuid.UUID(b["task_id"])).values(attempt_count=3, max_attempts=3)
+        )
+    await _backdate_heartbeat(b["task_id"], 600)
+
+    requeued = await svc.recover_stale_tasks(stale_threshold_seconds=300)
+    assert requeued == 1
+    assert (await svc.get_task(a["task_id"]))["status"] == "pending"
+    assert (await svc.get_task(b["task_id"]))["status"] == "failed"
+
+
+async def test_find_conflicting_task(orm_db):
+    svc = _svc()
+    a = await _create(svc, project="p1", task_type="backup", payload={"n": 1})
+    await svc.claim_next_task(cluster="c1")  # claim a -> in-flight
+    conflict = await svc.find_conflicting_task(
+        task_id=str(uuid.uuid4()), task_type="backup", project_name="p1", deployment_name="d1"
     )
-    claimed_row["claimed_by"] = "test-host"
-    mock_connection.fetchrow = AsyncMock(side_effect=[select_row, claimed_row])
-
-    # transaction() must return a synchronous object that supports async with
-    tx_ctx = MagicMock()
-    tx_ctx.__aenter__ = AsyncMock()
-    tx_ctx.__aexit__ = AsyncMock(return_value=False)
-    mock_connection.transaction = MagicMock(return_value=tx_ctx)
-
-    result = await task_service.claim_next_task(cluster="test-cluster")
-
-    assert result is not None
-    assert result["task_id"] == str(task_id)
-    assert result["status"] == "claimed"
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+    assert conflict is not None
+    assert conflict["task_id"] == a["task_id"]
 
 
-async def test_claim_next_task_empty(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """Returns None when no pending tasks are available."""
-    mock_pool.acquire.return_value = mock_connection
-    mock_connection.fetchrow = AsyncMock(return_value=None)
-    tx_ctx = MagicMock()
-    tx_ctx.__aenter__ = AsyncMock()
-    tx_ctx.__aexit__ = AsyncMock(return_value=False)
-    mock_connection.transaction = MagicMock(return_value=tx_ctx)
-
-    result = await task_service.claim_next_task(cluster="test-cluster")
-
-    assert result is None
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+async def test_find_conflicting_task_none(orm_db):
+    svc = _svc()
+    assert await svc.find_conflicting_task(task_id=str(uuid.uuid4()), task_type="backup", project_name="nope") is None
 
 
-async def test_start_task(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """start_task updates status to running."""
-    mock_pool.acquire.return_value = mock_connection
-    task_id = str(uuid.uuid4())
-
-    await task_service.start_task(task_id)
-
-    mock_connection.execute.assert_awaited_once()
-    call_args = mock_connection.execute.call_args
-    query = call_args[0][0]
-    assert "status = 'running'" in query
-    assert "started_at = NOW()" in query
-    assert call_args[0][1] == uuid.UUID(task_id)
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+async def test_find_newer_active_tasks(orm_db):
+    svc = _svc()
+    first = await _create(svc, payload={"n": 1})
+    second = await _create(svc, payload={"n": 2})
+    newer = await svc.find_newer_active_tasks(task_id=first["task_id"], project_name="p1")
+    assert [t["task_id"] for t in newer] == [second["task_id"]]
 
 
-async def test_complete_task(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """complete_task sets status to completed, stores result, and sets completed_at."""
-    mock_pool.acquire.return_value = mock_connection
-    task_id = str(uuid.uuid4())
-    result_data = {"url": "https://example.com"}
-
-    await task_service.complete_task(task_id, result=result_data)
-
-    mock_connection.execute.assert_awaited_once()
-    call_args = mock_connection.execute.call_args
-    query = call_args[0][0]
-    assert "status = 'completed'" in query
-    assert "completed_at = NOW()" in query
-    assert "progress_percent = 100" in query
-    assert call_args[0][1] == uuid.UUID(task_id)
-    assert call_args[0][2] == json.dumps(result_data)
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+async def test_get_last_completed_task(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.complete_task(created["task_id"])
+    got = await svc.get_last_completed_task(task_type="upsert_deployment", project_name="p1", deployment_name="d1")
+    assert got["task_id"] == created["task_id"]
 
 
-async def test_fail_task_retry(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """When attempt_count < max_attempts, the task goes back to pending for retry."""
-    mock_pool.acquire.return_value = mock_connection
-    task_id = str(uuid.uuid4())
-
-    await task_service.fail_task(
-        task_id=task_id,
-        error_message="Connection timeout",
-        attempt_count=1,
-        max_attempts=3,
+async def test_get_last_completed_task_excludes_manual_when_scheduled(orm_db):
+    svc = _svc()
+    created = await _create(svc, payload={"trigger": "manual"})
+    await svc.complete_task(created["task_id"])
+    assert (
+        await svc.get_last_completed_task(
+            task_type="upsert_deployment", project_name="p1", deployment_name="d1", only_scheduled=True
+        )
+        is None
     )
-
-    mock_connection.execute.assert_awaited_once()
-    call_args = mock_connection.execute.call_args
-    query = call_args[0][0]
-    assert "status = 'pending'" in query
-    assert "claimed_by = NULL" in query
-    assert "attempt_count = attempt_count + 1" in query
-    assert call_args[0][1] == uuid.UUID(task_id)
-    assert call_args[0][2] == "Connection timeout"
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+    # Without the scheduled filter it is returned.
+    assert (await svc.get_last_completed_task(task_type="upsert_deployment", project_name="p1", deployment_name="d1"))[
+        "task_id"
+    ] == created["task_id"]
 
 
-async def test_fail_task_permanent(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """When attempt_count >= max_attempts, the task is marked as permanently failed."""
-    mock_pool.acquire.return_value = mock_connection
-    task_id = str(uuid.uuid4())
-
-    await task_service.fail_task(
-        task_id=task_id,
-        error_message="Fatal error",
-        attempt_count=3,
-        max_attempts=3,
-    )
-
-    mock_connection.execute.assert_awaited_once()
-    call_args = mock_connection.execute.call_args
-    query = call_args[0][0]
-    assert "status = 'failed'" in query
-    assert "completed_at = NOW()" in query
-    assert call_args[0][1] == uuid.UUID(task_id)
-    assert call_args[0][2] == "Fatal error"
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+async def test_cleanup_old_tasks(orm_db):
+    svc = _svc()
+    created = await _create(svc)
+    await svc.complete_task(created["task_id"])
+    async with session_scope() as session:
+        await session.execute(
+            update(AsyncTask)
+            .where(AsyncTask.id == uuid.UUID(created["task_id"]))
+            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 200))
+        )
+    deleted = await svc.cleanup_old_tasks(retention_hours=168)
+    assert deleted == 1
+    assert await svc.get_task(created["task_id"]) is None
 
 
-async def test_get_task(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """get_task returns a task dict when found."""
-    mock_pool.acquire.return_value = mock_connection
-    task_id = str(uuid.uuid4())
-    row = _make_task_row(task_id=uuid.UUID(task_id))
-    mock_connection.fetchrow = AsyncMock(return_value=row)
-
-    result = await task_service.get_task(task_id)
-
-    assert result is not None
-    assert result["task_id"] == task_id
-    assert result["project_name"] == "test-project"
-    mock_connection.fetchrow.assert_awaited_once()
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+# ---------------------------------------------------------------------------
+# Deferred rollouts (RC-46): the drift the UI shows must be measured, not guessed.
+# ---------------------------------------------------------------------------
 
 
-async def test_get_task_not_found(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """get_task returns None when the task does not exist."""
-    mock_pool.acquire.return_value = mock_connection
-    mock_connection.fetchrow = AsyncMock(return_value=None)
-
-    result = await task_service.get_task(str(uuid.uuid4()))
-
-    assert result is None
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+async def _completed(svc, *, project, task_type, payload):
+    row = await _create(svc, project=project, deployment=None, task_type=task_type, payload=payload)
+    await svc.complete_task(row["task_id"])
+    return row
 
 
-async def test_update_progress(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """update_progress builds a dynamic UPDATE query with only the provided fields."""
-    mock_pool.acquire.return_value = mock_connection
-    task_id = str(uuid.uuid4())
+async def test_no_deferred_rollouts_when_nothing_was_deferred(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web"})
 
-    await task_service.update_progress(
-        task_id=task_id,
-        current_step="Building image",
-        progress_percent=42,
-    )
-
-    mock_connection.execute.assert_awaited_once()
-    call_args = mock_connection.execute.call_args
-    query = call_args[0][0]
-    assert "heartbeat_at = NOW()" in query
-    assert "current_step = $2" in query
-    assert "progress_percent = $3" in query
-    # subtasks, logs, events, web_addresses should NOT appear
-    assert "subtasks" not in query
-    assert "logs" not in query
-    assert "events" not in query
-    assert "web_addresses" not in query
-    # Verify positional params
-    assert call_args[0][1] == uuid.UUID(task_id)
-    assert call_args[0][2] == "Building image"
-    assert call_args[0][3] == 42
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending == {"count": 0, "since": None, "task_types": [], "rollout_in_progress": False}
 
 
-async def test_update_progress_heartbeat_only(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """When no optional fields are given, only heartbeat_at is updated."""
-    mock_pool.acquire.return_value = mock_connection
-    task_id = str(uuid.uuid4())
+async def test_deferred_rollouts_are_counted_and_dated(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _completed(svc, project="p1", task_type="configure_service", payload={"svc": "keycloak", "rollout": False})
 
-    await task_service.update_progress(task_id=task_id)
-
-    call_args = mock_connection.execute.call_args
-    query = call_args[0][0]
-    assert "heartbeat_at = NOW()" in query
-    assert "current_step" not in query
-    assert "progress_percent" not in query
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == 2
+    assert pending["since"] is not None
+    assert pending["task_types"] == ["add_component", "configure_service"]
 
 
-async def test_recover_stale_tasks(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """recover_stale_tasks re-queues stale tasks and returns the requeued count."""
-    mock_pool.acquire.return_value = mock_connection
-    # asyncpg execute returns a status string like "UPDATE 2"
-    mock_connection.execute = AsyncMock(side_effect=["UPDATE 2", "UPDATE 1"])
+async def test_deferred_rollouts_are_scoped_to_one_project(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
 
-    count = await task_service.recover_stale_tasks(stale_threshold_seconds=300)
-
-    assert count == 2
-    assert mock_connection.execute.await_count == 2
-    # First call: re-queue tasks with retries left
-    first_query = mock_connection.execute.call_args_list[0][0][0]
-    assert "status = 'pending'" in first_query
-    assert "attempt_count < max_attempts" in first_query
-    # Second call: mark exhausted tasks as failed
-    second_query = mock_connection.execute.call_args_list[1][0][0]
-    assert "status = 'failed'" in second_query
-    assert "attempt_count >= max_attempts" in second_query
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+    assert (await svc.get_deferred_rollouts("p2"))["count"] == 0
 
 
-async def test_update_task_status(
-    task_service: AsyncTaskService,
-    mock_pool: MagicMock,
-    mock_connection: AsyncMock,
-) -> None:
-    """update_task_status updates the status field (e.g. for cancellation)."""
-    mock_pool.acquire.return_value = mock_connection
-    task_id = str(uuid.uuid4())
+async def test_a_refresh_clears_everything_before_it(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
 
-    await task_service.update_task_status(task_id, status="cancelled")
-
-    mock_connection.execute.assert_awaited_once()
-    call_args = mock_connection.execute.call_args
-    query = call_args[0][0]
-    assert "status = $2" in query
-    assert "completed_at" in query
-    assert call_args[0][1] == uuid.UUID(task_id)
-    assert call_args[0][2] == "cancelled"
-    mock_pool.release.assert_awaited_once_with(mock_connection)
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 0
 
 
-def test_row_to_dict_none() -> None:
-    """_row_to_dict returns None for a None input."""
-    assert _row_to_dict(None) is None
+async def test_a_change_deferred_after_the_refresh_still_counts(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == 1
+    assert pending["task_types"] == ["add_component"]
 
 
-def test_row_to_dict_serialization() -> None:
-    """_row_to_dict converts UUIDs and datetimes, and adds task_id alias."""
-    task_id = uuid.uuid4()
-    now = datetime.now(UTC)
-    row = {"id": task_id, "created_at": now, "name": "test"}
+async def test_a_partial_rollout_does_not_clear_the_drift(orm_db):
+    """refresh_deployment reconciles ONE deployment, so the rest of the file stays ahead."""
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _completed(svc, project="p1", task_type="refresh_deployment", payload={"deployment_name": "dev"})
 
-    result = _row_to_dict(row)
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
 
-    assert result["id"] == str(task_id)
-    assert result["task_id"] == str(task_id)
-    assert result["created_at"] == now.isoformat()
-    assert result["name"] == "test"
+
+async def test_a_running_rollout_is_reported_while_the_count_still_stands(orm_db):
+    """De teller loopt pas terug als de uitrol klaar is, dus de melding moet het weten."""
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    refresh = await _create(svc, project="p1", deployment=None, task_type="refresh_project", payload={"f": False})
+    await svc.start_task(refresh["task_id"])
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == 1
+    assert pending["rollout_in_progress"] is True
+
+
+async def test_a_queued_rollout_already_counts_as_in_progress(orm_db):
+    """Nog niet opgepakt is voor de lezer net zo goed onderweg."""
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _create(svc, project="p1", deployment=None, task_type="refresh_project", payload={"f": False})
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is True
+
+
+async def test_no_rollout_in_progress_once_it_finished(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == 0
+    assert pending["rollout_in_progress"] is False
+
+
+async def test_a_running_task_that_rolls_nothing_out_is_not_reported(orm_db):
+    """Anders zou een slaapstand of een kloon een uitrol aankondigen die niet gebeurt."""
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    other = await _create(svc, project="p1", deployment="d1", task_type="sleep_deployment", payload={"a": 1})
+    await svc.start_task(other["task_id"])
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is False
+
+
+async def test_a_running_rollout_in_another_project_is_not_reported(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    refresh = await _create(svc, project="p2", deployment=None, task_type="refresh_project", payload={"f": False})
+    await svc.start_task(refresh["task_id"])
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is False
+
+
+async def test_cleanup_keeps_a_deferred_rollout_that_was_never_rolled_out(orm_db):
+    """Drift that disappears after a week is exactly the silent drift this must surface."""
+    svc = _svc()
+    row = await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    async with session_scope() as session:
+        await session.execute(
+            update(AsyncTask)
+            .where(AsyncTask.id == uuid.UUID(row["task_id"]))
+            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 200))
+        )
+
+    assert await svc.cleanup_old_tasks(retention_hours=168) == 0
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
+
+
+async def test_cleanup_removes_a_deferred_rollout_once_it_was_rolled_out(orm_db):
+    svc = _svc()
+    deferred = await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    rolled = await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+    # Both beyond the retention window, but the refresh strictly after the deferred change.
+    async with session_scope() as session:
+        await session.execute(
+            update(AsyncTask)
+            .where(AsyncTask.id == uuid.UUID(deferred["task_id"]))
+            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 200))
+        )
+        await session.execute(
+            update(AsyncTask)
+            .where(AsyncTask.id == uuid.UUID(rolled["task_id"]))
+            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 190))
+        )
+
+    assert await svc.cleanup_old_tasks(retention_hours=168) == 2

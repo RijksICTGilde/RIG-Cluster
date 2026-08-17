@@ -1,5 +1,11 @@
 # External Domains with Let's Encrypt
 
+> **Waar dit wordt opgeslagen (schemaversie 2.7):** de velden hieronder staan in het
+> projectbestand onder `deployments[].services[publish-on-web].config`, niet meer los in de
+> wortel van de deployment. Zie [webadres-onder-de-dienst.md](webadres-onder-de-dienst.md).
+> De YAML-fragmenten in dit document tonen de velden zonder dat omhulsel, om over hun
+> betekenis te gaan en niet over hun plek.
+
 ## What it is
 
 Enables projects to use custom external domains (e.g., `myapp.rijksapp.com`) with automatic TLS certificate provisioning via Let's Encrypt. Each project can specify its own base domain and subdomain, with certificates managed through namespace-scoped cert-manager Issuers.

@@ -1,0 +1,89 @@
+{#
+  De projectenlijst, plus de telling erboven.
+
+  Een APART bestand omdat dit het stuk is dat htmx vervangt als je zoekt of sorteert: de
+  pagina eromheen (kop, knoppen, het zoekveld) blijft staan, alleen dit blok komt opnieuw
+  van de server. Vandaar de id: #projects-lijst is het doel.
+
+  KAARTEN, EN WAT ER OP EEN KAART STAAT
+
+  Het origineel is een tabel met vijf kolommen: project, omgeving, team, services en een
+  link Details. Die tabel heeft hier een tijd gestaan, precies zo overgezet. Op verzoek
+  van de gebruiker is het weer een kaartenoverzicht, en dan met opzet KAAL: alleen de
+  naam en de omschrijving.
+
+  Dat is een bewuste afwijking van het origineel, geen omissie. De redenering: wat je
+  hier komt doen is een project zoeken en openen. Omgeving, teamgrootte en de lijst
+  services helpen daar niet bij - die staan op de projectpagina zelf, en die is een klik
+  weg. Het zoekveld erboven vervangt het naar-beneden-scannen waar die kolommen voor
+  bedoeld waren.
+
+  De totalen ONDER de lijst (projecten, teamleden, services, je rol) blijven wel staan:
+  die vatten samen en dringen zich niet op.
+
+  c-layer en geen c-catalog-card: die laatste heeft open-label nodig om zijn href te
+  gebruiken, en dan staat er een losse "Openen"-link in de kaart. Een layer is in zijn
+  geheel klikbaar en toont dat met een pijl.
+
+  DE KORTE NAAM EN DE BEWERKDATUM
+
+  Op verzoek van de eigenaar: naast de weergavenaam staat de korte, unieke projectnaam
+  (bijvoorbeeld vr3ed-r0l). De weergavenaam is niet uniek en is niet wat je in de CLI of
+  de API intypt; zonder de korte naam erbij kun je hier dus wel een project HERKENNEN
+  maar er niet mee verder.
+
+  Hij heeft in `count` gestaan. Dat leest raar: `count` is bedoeld voor een TELLING
+  ("123 apps", zo staat het ook in de registry), en een projectcode is dat niet - hij
+  kwam daar terecht als kleine tekst naast de titel, niet omdat hij daar hoort.
+
+  Nu staat hij in de kindsleuf van c-layer, die het component zelf `lotc-layer-chips`
+  noemt en waarvoor c-chip bestaat: een inline span, geldig binnen de <a> die een layer
+  is, met de opmaak van het component en dus geen eigen CSS. Daar past de bewerkdatum
+  naast, en dat is meteen de reden dat de chips een betere plek zijn dan `count`: er is
+  ruimte voor meer dan een ding.
+
+  De korte naam staat er alleen als hij iets TOEVOEGT: heeft een project geen
+  weergavenaam, dan vult lotc_project_rows() display_name met de naam zelf, en dan zou
+  hij er twee keer staan.
+
+  De bewerkdatum draagt de datum EN hoe lang geleden dat was; het precieze tijdstip
+  staat in de tooltip. Voorbij een maand valt het relatieve deel weg (zie
+  laatst_bewerkt() in lotc_switch.py). Ontbreekt het tijdstempel, dan staat er niets:
+  een streepje zou om uitleg vragen die we niet hebben.
+#}
+
+<c-paragraph size="sm" color="grijs-500">
+    Totaal: {{ projects | length }} project{{ 'en' if projects | length != 1 else '' }}
+    {%- if project_query %} van {{ projects_all | length }}{% endif %}
+</c-paragraph>
+
+{% if projects %}
+    <c-stack gap="sm">
+        {% for project in projects %}
+            {% set korte_naam = project.name if project.display_name != project.name else none %}
+            <c-layer
+                icon="rectangle-stack"
+                title="{{ project.display_name or project.name }}"
+                sub="{{ project.description or 'Geen beschrijving beschikbaar' }}"
+                href="/projects/{{ project.name }}/details">
+                {% if korte_naam %}<c-chip><c-code>{{ korte_naam }}</c-code></c-chip>{% endif %}
+                {% if project.last_modified %}
+                    <c-chip :attrs="{'title': project.last_modified.titel}">
+                        Bewerkt {{ project.last_modified.label }}
+                    </c-chip>
+                {% endif %}
+            </c-layer>
+        {% endfor %}
+    </c-stack>
+{% else %}
+    <c-cluster gap="sm" align="center">
+        <c-icon icon="info" size="lg" />
+        <c-span>
+            {%- if project_query -%}
+                Geen projecten gevonden voor "{{ project_query }}".
+            {%- else -%}
+                Geen projecten gevonden waar je toegang toe hebt.
+            {%- endif -%}
+        </c-span>
+    </c-cluster>
+{% endif %}

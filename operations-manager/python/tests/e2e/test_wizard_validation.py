@@ -29,7 +29,10 @@ def test_wizard_shows_identity_step_first(app_server: str, auth_page: Page) -> N
     wizard = WizardHelper(auth_page, app_server)
     wizard.open_create_wizard()
     # Should show the display-name field on the first step
-    name_field = auth_page.locator("[name='display-name']")
+    # Via de helper: [name='display-name'] vindt in de LOTC-weergave zowel het custom
+    # element als de input in zijn shadow root, en Playwright weigert zo'n dubbele
+    # treffer. wizard.field() wijst in beide vormgevingen precies de besturing aan.
+    name_field = wizard.field("display-name")
     assert name_field.count() > 0 or auth_page.locator("input[type='text']").count() > 0
 
 
@@ -41,7 +44,7 @@ def test_wizard_identity_requires_display_name(app_server: str, auth_page: Page)
     wizard.click_next()
     # Should still be on the same step (not advanced) or show errors
     # The page should still contain the identity form fields
-    name_field = auth_page.locator("[name='display-name']")
+    name_field = wizard.field("display-name")
     if name_field.count() > 0:
         assert name_field.is_visible()
 

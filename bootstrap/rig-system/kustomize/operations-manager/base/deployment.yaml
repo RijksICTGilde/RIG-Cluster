@@ -46,25 +46,37 @@ spec:
         ports:
         - containerPort: 8000
           name: http
+        # De probepoort. De health-checks draaien op een eigen draad in het proces
+        # (opi/core/probe_server.py) en niet op de asyncio-eventloop, zodat ze antwoorden
+        # ongeacht hoe druk de applicatie het heeft. Gemeten: de loop stond 8 seconden vast
+        # en de probe antwoordde in 0,01 seconde.
+        - containerPort: 8001
+          name: probe
         startupProbe:
           httpGet:
             path: /healthz
-            port: 8000
+            port: probe
           initialDelaySeconds: 5
           periodSeconds: 5
           failureThreshold: 60
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8000
-          periodSeconds: 10
+            port: probe
+          # Elke 30 seconden, en pas na drie missers uit de service. Stond op elke 10
+          # seconden met failureThreshold 1, en daardoor haalde EEN trage meting de pod
+          # meteen uit de endpoints: bij een replica betekent dat een 503 van nginx op elke
+          # lopende aanroep, ook op aanroepen die niets met de drukte te maken hebben.
+          # Zo snel gaan we niet stuk, en een echte storing wordt binnen anderhalve minuut
+          # nog steeds gezien.
+          periodSeconds: 30
           timeoutSeconds: 5
-          failureThreshold: 1
+          failureThreshold: 3
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8000
-          periodSeconds: 20
+            port: probe
+          periodSeconds: 30
           timeoutSeconds: 5
           failureThreshold: 3
         resources:
@@ -83,6 +95,17 @@ spec:
         - name: tmp
           mountPath: /var/tmp
         env:
+        # Who is answering /version. During a rolling update two pods serve the same
+        # Service, so an answer without a pod name reads as version drift instead of
+        # as "a rollout is running".
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         - name: TMPDIR
           value: "/tmp"
         - name: ENVIRONMENT

@@ -1,0 +1,84 @@
+{#
+  Dienstkaarten voor de LOTC-bouwlijn.
+
+  Zelfde afweging als bij preset_cards: de eigen kaartklassen blijven, de componenttags
+  gaan om. aria-disabled blijft bewust naast disabled bestaan - een vergrendelde dienst
+  moet mee de POST in, alleen aanpassen mag niet.
+
+  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
+  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
+  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+#}
+{% from "widgets/_macros.html.j2" import helper_text, render_errors, service_block %}
+<div>
+    <span class="utrecht-form-label">{{ field.label|e }}</span>
+    {{ helper_text(field) }}
+    {# .service-cards-grid was repeat(auto-fill, minmax(300px, 1fr)): dat is
+       <c-auto-grid min="300px">. De KLASSE blijft erop staan, want hij is ook een haak -
+       static/js/wizard.js zoekt de rasters ermee op en een e2e-test ook. #}
+    <c-auto-grid min="300px" gap="md" class="service-cards-grid" id="{{ field.path|e }}-grid">
+        {% for card in cards %}
+        <div class="service-card{% if card.checked %} service-card--selected{% endif %}{% if card.is_locked %} service-card--locked-checked{% endif %}" data-service="{{ card.value|e }}"{% if card.data_requires %} data-requires='{{ card.data_requires }}'{% endif %}{% if card.server_locked %} data-locked="true"{% endif %}>
+            {# EEN GEWOON <input>, EN DAT IS HIER GEEN LUIHEID.
+
+               Onder NLDD wordt <c-checkbox> een <nldd-checkbox-field>, en dat element
+               heeft geen <input> in de LICHTE boom: die zit twee schaduwbomen diep, en
+               de waarde loopt via ElementInternals (gemeten, zie
+               features/aanvinkvakje.md). static/js/wizard.js zoekt het besturingselement
+               met card.querySelector('input[type="checkbox"]') en vindt dan dus niets.
+               Gevolg, in de browser gemeten: een klik op een kaart vinkte NIETS aan, en
+               het formulier verstuurde vervolgens ALLE veertien diensten in plaats van
+               geen enkele. Precies omgekeerd aan wat de gebruiker aanwees, en volkomen
+               onzichtbaar in de HTML.
+
+               De kaart is bovendien ons eigen onderdeel met onze eigen CSS
+               (static/css/wizard.css, .service-card): het vakje wordt daar opgemaakt, niet
+               door het thema. Een component eromheen voegt hier dus niets toe en neemt het
+               enige weg wat telt - een besturingselement dat JavaScript kan vinden en dat
+               met het formulier meegaat.
+
+               OPNIEUW GEPROBEERD MET EEN COMPONENT, EN GEMETEN DAT HET NIET KAN.
+               Het element is form-associated en stuurt zijn waarde netjes mee (sinds
+               RC-71 ook via htmx) - dat alleen is dus niet genoeg. Met de kaart op
+               <c-checkbox> en wizard.js aangepast om ook nldd-checkbox-field te vinden:
+
+                   oude vormgeving : 9 van de 9 tests groen
+                   nieuwe vormgeving: 7 van de 9 GEFAALD
+
+               Wat er stukgaat zit in de samenhang eromheen: het slot dat een dienst
+               vastzet, het terugdraaien van een uitvinkactie, het bewaren van een
+               presetkeuze. Die leunen op de gebeurtenissen en de disabled-stand van een
+               echte <input>, en die gedragen zich bij het component net anders.
+
+               Als dit ooit een component wordt, dan door die samenhang eerst op te lossen
+               - niet door het vakje te vervangen. De opmaak is intussen geen reden meer:
+               die staat in static/css/wizard.css (accent-color uit onze kleurvariabele).
+
+               Vergrendeld is aria-disabled, niet disabled: de waarde moet mee de POST in,
+               alleen aanpassen mag niet. Server-side gezet zodat het klopt vanaf het eerste
+               beeld; wizard.js houdt het bij zodra een keuze het slot verplaatst. #}
+            <input
+                type="checkbox"
+                id="{{ field.path|e }}-{{ card.value|e }}"
+                name="{{ field.path|e }}[]"
+                value="{{ card.value|e }}"
+                {% if card.checked %}checked{% endif %}
+                {% if card.disabled %}disabled{% endif %}
+                aria-disabled="{{ 'true' if card.is_locked else 'false' }}"
+            />
+            <div class="service-card__content">
+                {{ service_block(card.label, card.description, card.icon, card.color, card.help_template) }}
+                {% if card.is_locked and card.dependents_labels %}
+                <p class="service-card__hint service-card__hint--depends">Vereist door: {{ card.dependents_labels|join(', ')|e }}</p>
+                {% endif %}
+                {% if card.config_hint %}
+                {# Shown only while the card is selected (see .service-card__hint--config
+                   in wizard.css): before ticking there is nothing to explain. #}
+                <p class="service-card__hint service-card__hint--config">{{ card.config_hint|e }}</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </c-auto-grid>
+    {{ render_errors(field.errors) }}
+</div>

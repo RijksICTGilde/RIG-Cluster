@@ -30,6 +30,19 @@ page. Run it with `task test-e2e-sandbox`.
 | **Local (in-process)** | `pytest.mark.e2e` | pre-signed cookie for `test@example.com` (`auth_page`) | mocked (no DB/Keycloak/git/k8s) | `task test-e2e` | UI/form/wizard *flow* logic - fast, deterministic, no sandbox |
 | **Sandbox (live)** | `pytest.mark.e2e` + `pytest.mark.sandbox` | pre-signed cookie for `admin@sandbox.rijksapp.dev` (`sandbox_page`) | the real running sandbox | `task test-e2e-sandbox` | proving a change actually works end-to-end + lands in Forgejo |
 
+Twee sandboxsuites staan daarnaast nog een marker verder weg, omdat ze te lang duren voor
+een gewone sandboxrun:
+
+| Marker | Bestand | Wat het doet | Duur |
+|---|---|---|---|
+| `reallife` | `test_sandbox_reallife.py` | vijf projecten, semi-gelijktijdige mutaties via UI en API op hetzelfde projectbestand | ~15 min |
+| `punt14` | `test_sandbox_punt14.py` | gerichte jacht op de intermitterende `deployment_not_found` uit de zad-cli (punt 14) | 9-25 min |
+
+De punt-14-jacht is regelbaar met `PUNT14_RONDES` (rondes met `rollout=false`),
+`PUNT14_RONDES_UITROL` (rondes met uitrol aan, minuten per stuk) en `PUNT14_METINGEN` (een
+bestand waarin hij per ronde een meetregel schrijft -- pytest toont die van een geslaagde
+test niet). Uitkomst van de laatste doorloop: `docs/reallife-run-2026-08-14-rc112.md`.
+
 Both are excluded from the default `pytest` run (`addopts = ... -m 'not ... and not e2e'`), so they
 only run when you select the marker. Prefer **local** unless you specifically need the live cluster.
 
@@ -66,7 +79,11 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
 - `sandbox_api.py` - `read_api_key` (scrapes the per-project key from the details page),
   `add_component` (calls the v2 endpoint + polls the task, surfacing real failures),
   `delete_project_via_api` (force teardown / cleanup safety net).
-- `cleanup.py::ProjectCleanup` - registers projects for teardown.
+
+There is deliberately no separate cleanup registry: a suite that creates projects owns
+their teardown in a module fixture's `finally`, calling `delete_project_via_api`. That
+keeps the cleanup next to the thing that created it, and it runs even when the test
+fails halfway.
 
 ## Do / Don't
 
@@ -76,6 +93,14 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
   truth. **Don't** assert on deployment/pod health unless that's the point of the test.
 - **Do** reuse `WizardHelper` / helpers. **Don't** hard-code DOM selectors in the test if a helper
   already encapsulates them.
+- **Do** reach a form control with `veldbesturing(page, pad)` (or `veldbesturing_eindigend_op`
+  for a service-config field, whose path carries a `_services-config/...` prefix).
+  **Don't** write `page.locator("[name='...']")` and `fill()` it: under NLDD that resolves to
+  the custom element (`<nldd-text-field>`), and `fill()`/`input_value()` on it is a hard error
+  ("Element is not an `<input>`"), not an empty field. This cost a whole suite its setup.
+- **Don't** wait for `networkidle` after an action that lands on a page which polls itself
+  (the progress page after creating a project polls with htmx, so the network never goes
+  idle and the wait always times out). Wait for the landing itself - `submit_wizard()` does.
 - **Do** name projects with `_unique_project_name()` and register cleanup. **Don't** leave test
   projects on the sandbox.
 - **Do** keep new tests behind the right marker(s) so they never run in the default suite.
@@ -84,6 +109,67 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
 
 `tests/e2e/test_sandbox_flows.py` is the canonical lifecycle: create via UI -> add component via
 API -> delete via UI, each verified against Forgejo, plus `test_version_endpoint`. Copy its shape.
+
+### When the project file is not the whole answer
+
+`tests/e2e/test_sandbox_repetitie.py` covers the two things the second dress rehearsal
+(`docs/generale-repetitie-2026-08-13.md`) had to prove, and both need an assertion that Forgejo
+cannot give:
+
+- **A refused action must report itself in the task's own `status`.** The refusal happens in the
+  work, not in the HTTP response (that is a plain `202`), so the outcome is only readable from
+  `GET /api/tasks/{id}`. Polling the *file* would show nothing changed and call that success -
+  which is exactly how the fault this guards against stayed invisible.
+- **A setting that only exists once it is rendered.** The TLS override per deployment-component
+  is stored on the deployment-component layer *and* has to come out as an annotation on one
+  deployment's ingress and not the other's. The file proves where it is stored; only
+  `kubectl get ingress` proves what it produced. The helper there degrades to a `skip` when
+  kubectl is absent, so the file-level assertions still run.
+
+The rule of thumb: assert against Forgejo for *what was stored*, against the task endpoint for
+*how it ended*, and against the cluster for *what it rendered*. Reaching for a `sleep` in place
+of any of the three is what makes a test green through a broken run.
+
+### When the cluster object is still not the answer
+
+`tests/e2e/test_sandbox_tls_override.py` (RC-96) goes one step further than the ingress
+annotation above: for a *certificate*, neither the project file nor the ingress is the
+proof -- the proof is the certificate a client is handed on the connection. It walks the
+whole chain per deployment (file -> ingress -> `kubernetes.io/tls` secret -> a real TLS
+handshake with SNI via `openssl s_client`) and compares a self-signed certificate against
+the platform's Let's Encrypt wildcard.
+
+The trap it encodes: **pick the port the ingress listens on**. On the dev server Caddy owns
+443 and Kind publishes the ingress on 8843, and Caddy terminates TLS with that same
+wildcard -- so a handshake on 443 reports the platform certificate for every host, and the
+first run of that suite failed on a deployment whose file, ingress and secret were all
+correct. The module probes the Kind ports first (`E2E_TLS_ENDPOINT` overrides).
+
+### When only an outside caller can see the fault
+
+`tests/e2e/test_sandbox_restore_van_buiten.py` walks the whole restore road the way the
+zad-cli walks it: create a project with a database and a bucket, back it up, take the
+reference name **out of the read endpoint**, and restore with it. Two rounds of fixes
+(RC-81, RC-82) were unit-tested green while the road stayed impassable, because the
+read side and the write side were each tested against their own idea of the name and
+never against each other. The suite asserts the handover: the name a caller can read is
+a name the restore route accepts, for both kinds, plus the failure classification
+(`InvalidTarget`) that only appears once the restore gets far enough to reach the
+destination gate.
+
+### When the same wall stands on three roads
+
+`tests/e2e/test_sandbox_publish_on_web.py` (RC-103) guards the regression that stopped the
+zad-cli: `publish-on-web` could not be enabled through any of the three write routes
+(`PUT .../services/publish-on-web/config/component/{name}`, `PATCH .../components/{name}`,
+`POST .../components`), because the gate for implicit service selection sent the caller to a
+project layer the service does not have.
+
+The shape worth copying: **one fresh project per route.** All three roads pass through the
+same gate, and the first one that succeeds enrols the service at project level - after which
+the other two never reach the gate again and would be green on the broken build too. Three
+projects cost three creates (~6 minutes for the module), and that is the price of measuring
+what the test claims to measure.
 
 ## How to run
 

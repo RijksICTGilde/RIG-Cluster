@@ -1,0 +1,33 @@
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}{{ page_heading }} - Self Service Portal{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+
+    <div>
+        <c-heading type="h1" label="{{ page_heading }}"/>
+    </div>
+
+    <c-card outline="true" padding="xl" background-color="wit">
+        <form autocomplete="off" method="post" action="{{ form_action }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+            <c-layout-flow gap="lg">
+                {{ form_html|safe }}
+
+                {# .user-form-actions uit admin.css was een eigen flexregel voor de twee
+                   knoppen onder een formulier. Daar heeft de formulierlaag een plek
+                   voor: <c-action-group>. Die zet de knoppen naast elkaar met de
+                   afstand van het thema en geeft ze role="group". bg/admin-user-form
+                   doet het al zo. #}
+                <c-action-group align="start">
+                    <c-button label="Opslaan" html-type="submit" type="primary"/>
+                    {% set lotc_onclick_1 %}window.location.href='/admin/users'{% endset %}<c-button label="Annuleren"/>
+                </c-action-group>
+            </c-layout-flow>
+        </form>
+    </c-card>
+
+</c-layout-flow>
+{% endblock %}

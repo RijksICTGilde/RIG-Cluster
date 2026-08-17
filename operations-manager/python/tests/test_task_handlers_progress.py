@@ -55,8 +55,8 @@ class TestHandleUpdateImage:
             result = await handle_update_image(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Initializing project")
-        progress.add_task.assert_any_call("Updating component image")
+        progress.add_task.assert_any_call("Projectgegevens ophalen")
+        progress.add_task.assert_any_call("Image van web bijwerken naar registry.example.com/web:v2")
         assert progress.complete_task.call_count == 2
         assert result["component"] == "web"
 
@@ -104,8 +104,8 @@ class TestHandleDeleteDeployment:
             result = await handle_delete_deployment(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Initializing project manager")
-        progress.add_task.assert_any_call("Deleting deployment resources")
+        progress.add_task.assert_any_call("Projectgegevens ophalen")
+        progress.add_task.assert_any_call("Deployment-resources verwijderen")
         assert progress.complete_task.call_count == 2
         assert result["deletion_results"]["namespace"]["success"] is True
 
@@ -184,8 +184,8 @@ class TestHandleCloneDatabase:
             result = await handle_clone_database(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Initializing project manager")
-        progress.add_task.assert_any_call("Cloning database via direct connection")
+        progress.add_task.assert_any_call("Projectgegevens ophalen")
+        progress.add_task.assert_any_call("Database kopiëren van mydb via een directe verbinding")
         assert progress.complete_task.call_count == 2
         assert result["rows_copied"] == 100
 
@@ -258,7 +258,7 @@ class TestHandleCloneDatabase:
         with patch(PM_PATH, return_value=mock_pm):
             await handle_clone_database(payload, progress)
 
-        progress.add_task.assert_any_call("Cloning database via Chisel tunnel")
+        progress.add_task.assert_any_call("Database kopiëren van mydb via een Chisel-tunnel")
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +300,8 @@ class TestHandleCloneBucket:
             result = await handle_clone_bucket(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Initializing project manager")
-        progress.add_task.assert_any_call("Cloning bucket")
+        progress.add_task.assert_any_call("Projectgegevens ophalen")
+        progress.add_task.assert_any_call("Bucket mybucket kopiëren")
         assert progress.complete_task.call_count == 2
         assert result["objects_copied"] == 42
 
@@ -381,8 +381,8 @@ class TestHandleRefreshDeployment:
         )
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Looking up project")
-        progress.add_task.assert_any_call("Processing deployment")
+        progress.add_task.assert_any_call("Project opzoeken")
+        progress.add_task.assert_any_call("Deployment dev opnieuw verwerken")
         assert progress.complete_task.call_count == 2
 
         # Web addresses reported
@@ -697,6 +697,63 @@ class TestHandleCreateProject:
         mock_pm.process_project_from_git.assert_called_once_with(
             "projects/test-project.yaml", progress, deployment_name=None, deployment_names=[]
         )
+
+    @pytest.mark.asyncio
+    async def test_rollout_false_writes_the_file_and_stops(self):
+        """A project with nothing to deploy must not be reported as failed.
+
+        process_project treats "no deployments for this cluster" as a failure, so a
+        base project created from the CLI would land as a failed task while its file
+        was written and committed. rollout=false stops after the commit instead.
+        """
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {
+            "project_name": "test-project",
+            "yaml_content": "name: test-project\n",
+            "rollout": False,
+        }
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            result = await handle_create_project(payload, progress)
+
+        mock_pm.save_and_commit_project.assert_called_once()
+        mock_pm.process_project_from_git.assert_not_called()
+        mock_pm.close.assert_awaited()
+        assert result["status"] == "success"
+        assert result["processing"]["status"] == "skipped"
+        progress.complete_project.assert_called_once()
+        progress.fail_project.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rollout_defaults_to_processing(self):
+        """Absent flag means roll out; only an explicit false may skip the cluster."""
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {"project_name": "test-project", "yaml_content": "name: test-project\n"}
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            await handle_create_project(payload, progress)
+
+        mock_pm.process_project_from_git.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

@@ -91,7 +91,12 @@ class TestEditSectionDefinitions:
         assert "auth-wall-config" in EDIT_SECTIONS
 
     def test_edit_sections_registry_count(self):
-        assert len(EDIT_SECTIONS) == 7
+        # +1 for the postgresql-database schema-list section (RC-17), +2 for the
+        # redis / minio-storage project-level config sections (RC-25).
+        assert len(EDIT_SECTIONS) == 13
+
+    def test_sleep_mode_config_section_present(self):
+        assert "sleep-mode-config" in EDIT_SECTIONS
 
     def test_edit_sections_reference_same_config_section_objects(self):
         assert EDIT_SECTIONS["keycloak-config"] is KEYCLOAK_CONFIG_SECTION
@@ -157,6 +162,35 @@ class TestRenderSectionHtml:
     def test_returns_empty_for_no_layout(self):
         section = FormSection(section_id="test", title="Test", layout=None)
         assert _render_section_html(section, yaml_data={}) == ""
+
+    def test_a_blocking_guard_renders_its_message(self):
+        """Een sectie met een guard die weigert, toont de reden in plaats van velden.
+
+        Deze tak had geen enkele toets, en hij is de enige die een ANDER sjabloon rendert
+        dan de rest van de functie. Bij de omzetting stond hier een tekstuele
+        ``<c-alert>``-string die het oude systeem later omzette; nu is het een render, en
+        een render kan omvallen op iets wat de rest van de module niet raakt.
+        """
+        section = FormSection(
+            section_id="test-guard",
+            title="Test",
+            editables=[
+                EditableVisualizer(
+                    editable=Editable(yaml_path="description"),
+                    widget=WidgetType.TEXTAREA,
+                    label="Omschrijving",
+                )
+            ],
+            layout=["description"],
+            guard=lambda _data: False,
+            guard_message="Eerst een deployment aanmaken",
+        )
+
+        html = _render_section_html(section, yaml_data={"description": "Hello world"})
+
+        assert "Eerst een deployment aanmaken" in html
+        assert "Hello world" not in html, "de velden horen NIET gerenderd te worden"
+        assert "<c-" not in html, "onvervangen componenttag: dit rendert in de verkeerde omgeving"
 
     def test_renders_with_errors(self):
         editable = EditableVisualizer(

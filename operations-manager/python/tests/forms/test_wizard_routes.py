@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from opi.forms.editables.editable import Editable, WidgetType
@@ -16,6 +17,16 @@ from opi.web.router_wizard import (
     _render_step_html,
     _section_has_errors,
 )
+
+
+def _roos_request() -> SimpleNamespace:
+    """Een verzoek dat om de bestaande weergave vraagt.
+
+    _render_step_html leest alleen de weergavekeuze uit het verzoek: dezelfde velden,
+    dezelfde waarden, maar door de roos-adapter of door de LOTC-adapter. Deze tests
+    toetsen de roos-uitvoer, dus die keuze staat hier expliciet.
+    """
+    return SimpleNamespace(query_params={"layout": "roos"}, cookies={})
 
 
 class TestGetSectionFromFlow:
@@ -48,7 +59,7 @@ class TestRenderStepHtml:
             editables=[editable],
             layout=Fieldset(legend="Test", children=["name"]),
         )
-        html = _render_step_html(section, yaml_data={"name": "my-project"})
+        html = _render_step_html(_roos_request(), section, yaml_data={"name": "my-project"})
         assert html  # Non-empty HTML
         assert "my-project" in html or "name" in html
 
@@ -58,7 +69,7 @@ class TestRenderStepHtml:
             title="Test",
             layout=None,
         )
-        assert _render_step_html(section, yaml_data={}) == ""
+        assert _render_step_html(_roos_request(), section, yaml_data={}) == ""
 
 
 class TestBuildSectionSummary:
@@ -142,10 +153,11 @@ class TestBuildSectionSummary:
         section = FormSection(
             section_id="test",
             title="Test",
-            summary_fn=lambda data: f"<p>Custom: {data.get('name', 'n/a')}</p>",
+            summary_fn=lambda data: [("Custom", str(data.get("name", "n/a")))],
         )
         html = _build_section_summary(section, {"name": "proj"})
-        assert "Custom: proj" in html
+        assert "Custom" in html
+        assert "proj" in html
 
 
 class TestSectionHasErrors:
@@ -174,7 +186,7 @@ class TestRenderStepHtmlWithRealSections:
     def test_identity_section_renders_all_fields(self):
         from opi.forms.visualizers.wizard_sections import IDENTITY_SECTION
 
-        html = _render_step_html(IDENTITY_SECTION, yaml_data={})
+        html = _render_step_html(_roos_request(), IDENTITY_SECTION, yaml_data={})
         assert html, "Identity section should produce non-empty HTML"
         # Should contain ROOS component tags (pre-processing)
         assert "display-name" in html
@@ -190,33 +202,33 @@ class TestRenderStepHtmlWithRealSections:
             "description": "A description",
             "clusters": ["local"],
         }
-        html = _render_step_html(IDENTITY_SECTION, yaml_data=data)
+        html = _render_step_html(_roos_request(), IDENTITY_SECTION, yaml_data=data)
         assert "Test Project" in html
         assert "A description" in html
 
     def test_services_section_renders(self):
         from opi.forms.visualizers.wizard_sections import SERVICES_SECTION
 
-        html = _render_step_html(SERVICES_SECTION, yaml_data={})
+        html = _render_step_html(_roos_request(), SERVICES_SECTION, yaml_data={})
         assert html, "Services section should produce non-empty HTML"
 
     def test_team_section_renders(self):
         from opi.forms.visualizers.wizard_sections import TEAM_SECTION
 
-        html = _render_step_html(TEAM_SECTION, yaml_data={})
+        html = _render_step_html(_roos_request(), TEAM_SECTION, yaml_data={})
         assert html, "Team section should produce non-empty HTML"
 
     def test_components_section_renders(self):
         from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
 
-        html = _render_step_html(COMPONENTS_SECTION, yaml_data={})
+        html = _render_step_html(_roos_request(), COMPONENTS_SECTION, yaml_data={})
         assert html, "Components section should produce non-empty HTML"
 
 
 class TestTemplateProcessComponents:
     """Verify templates use process_components filter for form HTML."""
 
-    TEMPLATES_DIR = Path(__file__).parent.parent.parent / "opi" / "templates" / "wizard"
+    TEMPLATES_DIR = Path(__file__).parent.parent.parent / "opi" / "templates_lotc" / "wizard"
 
     def test_wizard_step_uses_process_components(self):
         content = (self.TEMPLATES_DIR / "wizard_step.html.j2").read_text()

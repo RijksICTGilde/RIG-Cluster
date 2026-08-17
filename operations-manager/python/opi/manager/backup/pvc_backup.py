@@ -558,7 +558,10 @@ class PVCBackupManager(BaseBackupManager):
             # Convert to SnapshotInfo format and optionally filter by PVC name
             snapshots: list[SnapshotInfo] = []
             for ks in kopia_snapshots:
-                snapshot_pvc_name = ks.pvc_name
+                # Both read endpoints (backup runs and the snapshot listing) end up here,
+                # so this is the one place that decides which name a caller gets to see.
+                # It has to be the name the restore route accepts -- see restore_reference.
+                snapshot_pvc_name = ks.restore_reference
 
                 # Apply filter if specified
                 if pvc_name and snapshot_pvc_name != pvc_name:

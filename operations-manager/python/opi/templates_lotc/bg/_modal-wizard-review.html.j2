@@ -1,0 +1,168 @@
+{#
+  De samenvatting van de wizard IN de gedeelde dialoog, als los fragment.
+
+  Een OVERNAME van wizard/modal_wizard_review.html.j2: dezelfde kop, dezelfde
+  waarschuwingen, per stap een kaart met een bewerkknop, en onderaan annuleren, vorige en
+  de bevestigknop. Dezelfde htmx-bedrading, dezelfde id's.
+
+  DE ID'S BLIJVEN. #modal-wizard-steps, #modal-wizard-step-inner,
+  #modal-wizard-confirm-token en #modal-wizard-confirm-saving zitten in de bedrading van
+  het bevestigen: het token gaat via hx-include mee met de POST, en de melding "Bezig" is
+  het doelwit van hx-indicator.
+
+  De kaarten gaan via panel() uit bg/_patterns.html.j2. Een <c-card> is geen stack: zet je
+  er een kop en een blok inhoud in zonder stack ertussen, dan plakken die aan elkaar.
+
+  DE INHOUD VAN EEN VELD BLIJFT KALE HTML, net als in bg/_wizard-review.html.j2. Een veld
+  is of een (label, waarde)-paar of een stuk HTML dat router_wizard zelf opbouwt
+  (_build_sequence_summary), en dat laatste is bewust geen componentmarkup: het wordt daar
+  al geescaped (_summary_text) en gaat er met | safe in. Het door process_components halen
+  zou een TWEEDE Jinja-render zijn over ingevulde waarden. De paren eromheen krijgen
+  daarom dezelfde <dl>-vorm, zodat de twee soorten velden er niet naast elkaar uit gaan
+  zien als twee verschillende systemen.
+
+  De knoppen met JSON in een attribuut (hx-headers, hx-vals) gaan via :attrs. Een los
+  attribuut waar een expressie in staat komt ongeescaped naar buiten, en dan sluit het
+  eerste aanhalingsteken in de JSON het attribuut en is de tag stuk.
+
+  "Vorige" krijgt geen icoon: de NLDD-woordenschat heeft geen pijl naar links. Zie de
+  KNOWN_GAPS in tests/test_lotc_icon_mapping.py.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+
+{# De dialoog leeft op de projectpagina (bg/project-tabs.html.j2), en die laadt
+   css/modal.css maar niet css/wizard.css. Toch hangt het gedrag van dit fragment eraan:
+   #modal-wizard-form .wizard-step__saving en #modal-wizard-confirm-saving zijn daar
+   verborgen tot htmx aan het werk is, en de dienstkaarten in de servicestap dragen de
+   service-card__*-klassen. Zonder deze regel staat "Bezig met opslaan" er altijd.
+
+   Het stylesheet reist daarom MET het fragment mee, in plaats van in de kop van de
+   pagina te staan. Dat is bewust: bg/project-tabs.html.j2 is niet van deze omzetting, en
+   een <link> in een htmx-antwoord wordt gewoon toegepast. Hoort hij liever in de kop, dan
+   staat het voorstel daarvoor in het verslag bij deze omzetting. #}
+<link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+
+{# Stappenbalk, alleen bij een flow met meer dan een stap - net als in het origineel. #}
+{% if steps.count > 1 %}
+<div class="edit-step-indicator" id="modal-wizard-steps">
+    {% include "bg/_wizard-steps.html.j2" %}
+</div>
+{% endif %}
+
+<div class="wizard-review" id="modal-wizard-step-inner">
+    <c-stack gap="lg">
+        <c-stack gap="xs">
+            <c-cluster gap="sm" align="center">
+                <c-icon icon="check-mark-circle" size="md" />
+                <c-heading type="h2" size="4" label="Controleer je wijzigingen" />
+            </c-cluster>
+            <c-paragraph>Controleer de wijzigingen hieronder voordat je verdergaat.</c-paragraph>
+        </c-stack>
+
+        {% if warnings %}
+            <c-stack gap="sm">
+                {% for warning in warnings %}
+                    <c-alert type="warning" heading="Let op">{{ warning }}</c-alert>
+                {% endfor %}
+            </c-stack>
+        {% endif %}
+
+        {% if global_errors %}
+            <c-alert type="error" heading="Fouten">
+                <c-stack gap="xs">
+                    {% for err in global_errors %}
+                        <c-paragraph>{{ err }}</c-paragraph>
+                    {% endfor %}
+                </c-stack>
+            </c-alert>
+        {% endif %}
+
+        {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
+        {% for section in section_summaries %}
+            {% set bewerk_attrs = {
+                'hx-get': "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" ~ section.section_id ~ _token_qs,
+                'hx-target': '#edit-section-inner',
+                'hx-swap': 'innerHTML',
+            } %}
+            {% if wizard_token %}
+                {% set bewerk_attrs = dict(bewerk_attrs, **{'hx-vals': '{"_wizard_token": "' ~ wizard_token ~ '"}'}) %}
+            {% endif %}
+            {% set bewerken %}<c-button
+                type="tertiary"
+                size="sm"
+                label="Bewerken"
+                icon="pencil-on-square"
+                show-icon="before"
+                :attrs="bewerk_attrs" />{% endset %}
+            {% call panel(section.title, nldd_icon(section.icon or ''), aside=bewerken) %}
+                <div class="wizard-review__section-content">
+                    {% for field in section.fields %}
+                        {% if field.html is defined %}
+                            {{ field.html | safe }}
+                        {% elif field.is_list %}
+                            <dl>
+                                <dt>{{ field.label }}</dt>
+                                <dd>
+                                    <ul>
+                                        {% for item in field.value %}
+                                        <li>{{ item }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                </dd>
+                            </dl>
+                        {% else %}
+                            <dl><dt>{{ field.label }}</dt><dd>{{ field.value }}</dd></dl>
+                        {% endif %}
+                    {% else %}
+                        <p><em>Geen gegevens ingevuld</em></p>
+                    {% endfor %}
+                </div>
+            {% endcall %}
+        {% endfor %}
+
+        <c-cluster justify="between" align="center" class="wizard-step__actions">
+            <c-action-group align="between">
+                {% set annuleren_js %}closeEditModal(){% endset %}
+                <c-button
+                    html-type="button"
+                    type="tertiary"
+                    label="Annuleren"
+                    :attrs="{'onclick': annuleren_js}" />
+
+                <c-cluster gap="sm" align="center">
+                    {% set vorige_attrs = {
+                        'hx-get': "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" ~ steps.last ~ _token_qs,
+                        'hx-target': '#edit-section-inner',
+                        'hx-swap': 'innerHTML',
+                    } %}
+                    {% if wizard_token %}
+                        {% set vorige_attrs = dict(vorige_attrs, **{'hx-vals': '{"_wizard_token": "' ~ wizard_token ~ '"}'}) %}
+                    {% endif %}
+                    <c-button type="secondary" label="Vorige" :attrs="vorige_attrs" />
+
+                    {% if wizard_token %}<input type="hidden" id="modal-wizard-confirm-token" name="_wizard_token" value="{{ wizard_token }}" />{% endif %}
+
+                    <span id="modal-wizard-confirm-saving" aria-hidden="true">Bezig…</span>
+
+                    {% set bevestig_attrs = {
+                        'hx-post': "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/confirm" ~ _token_qs,
+                        'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
+                        'hx-target': '#edit-section-inner',
+                        'hx-swap': 'innerHTML',
+                        'hx-disabled-elt': 'this',
+                        'hx-indicator': '#modal-wizard-confirm-saving',
+                    } %}
+                    {% if wizard_token %}
+                        {% set bevestig_attrs = dict(bevestig_attrs, **{'hx-include': '#modal-wizard-confirm-token'}) %}
+                    {% endif %}
+                    <c-button
+                        type="primary"
+                        label="{{ action_label }}"
+                        icon="file-text"
+                        show-icon="before"
+                        :attrs="bevestig_attrs" />
+                </c-cluster>
+            </c-action-group>
+        </c-cluster>
+    </c-stack>
+</div>

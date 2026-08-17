@@ -9,6 +9,7 @@ the select, so the default domain was never stored).
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.connectors.subdomain import get_domains_config
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import StripTransientsHook
 from opi.forms.editables.lifecycle import collect_hooks, run_hooks
@@ -45,7 +46,7 @@ class TestWizardSubdomainFlow:
     @pytest.mark.asyncio
     async def test_flow_with_explicit_base_domain(self, monkeypatch):
         """When base-domain is explicitly set, the hook creates the domains entry."""
-        from opi.connectors.subdomain import SubdomainConnector
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
         monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))
@@ -66,8 +67,8 @@ class TestWizardSubdomainFlow:
         context = {"resolvers": build_resolver_map(materialized)}
         await run_hooks(FormState.PRE_SAVE, all_editables, yaml_data, context)
 
-        assert "domains" in yaml_data
-        assert yaml_data["domains"]["allowed-subdomains"][0]["subdomains"][0]["name"] == "mijn-test"
+        assert get_domains_config(yaml_data) is not None
+        assert get_domains_config(yaml_data)["allowed-subdomains"][0]["subdomains"][0]["name"] == "mijn-test"
         assert "_request-subdomain" not in yaml_data["deployments"][0]
 
     @pytest.mark.asyncio
@@ -82,7 +83,7 @@ class TestWizardSubdomainFlow:
         rijks.app), wrote it into the project file plus a phantom request, and
         deployed to a domain the user never chose.
         """
-        from opi.connectors.subdomain import SubdomainConnector
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
         monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))

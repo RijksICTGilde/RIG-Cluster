@@ -4,9 +4,13 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.enums import OperationStatus
+from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath
+from opi.api.v2.models import ErrorCategory
+from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
@@ -38,9 +42,19 @@ from opi.utils.naming import (
     generate_storage_name,
     generate_unique_name,
 )
-from pydantic import BaseModel, Field
+from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
+
+# ``project_name`` gates tenant isolation on every restore endpoint: it is what
+# ``validate_api_token`` matches the API key against, and it determines the only
+# namespace the caller may address (see ``_require_namespace_owned_by_project``).
+# It has always been required at runtime -- a call without it is rejected before
+# reaching the handler. Declaring it required here makes the OpenAPI spec say so,
+# so downstream clients see the requirement in the schema instead of discovering
+# it through a rejected request.
+_PROJECT_NAME_QUERY = Query(..., description="Project name matching the API key")
 
 
 def _require_namespace_owned_by_project(project_name: str, cluster: str, namespace: str) -> None:
@@ -145,7 +159,7 @@ class RestoreResultModel(BaseModel):
 class RestoreResponse(BaseModel):
     """Response for restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: RestoreResultModel
 
@@ -170,12 +184,19 @@ class RestoreResponse(BaseModel):
 class ProjectRestoreResponse(BaseModel):
     """Response for project-based restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: RestoreResultModel | None = None
     new_generation: int | None = Field(default=None, description="New PVC generation number")
     project_updated: bool = Field(default=False, description="Whether the project file was updated")
     refresh_triggered: bool = Field(default=False, description="Whether project refresh was triggered")
+    refresh_succeeded: bool | None = Field(
+        default=None,
+        description=(
+            "Whether that refresh actually completed. False means the data was restored but the "
+            "deployment was not updated to use it; null means no refresh was triggered."
+        ),
+    )
 
 
 class PVCRestoreDetail(BaseModel):
@@ -195,12 +216,19 @@ class PVCRestoreDetail(BaseModel):
 class BackupRunRestoreResponse(BaseModel):
     """Response for restoring all PVCs from a backup run."""
 
-    status: str = Field(..., description="Operation status: success, partial, or failed")
+    status: OperationStatus = Field(..., description="Operation status: success, partial, or failed")
     message: str = Field(..., description="Human-readable message")
     backup_run_id: str = Field(..., description="The backup run ID that was restored")
     pvcs_restored: list[PVCRestoreDetail] = Field(default_factory=list)
     project_updated: bool = Field(default=False, description="Whether the project file was updated")
     refresh_triggered: bool = Field(default=False, description="Whether project refresh was triggered")
+    refresh_succeeded: bool | None = Field(
+        default=None,
+        description=(
+            "Whether that refresh actually completed. False means the data was restored but the "
+            "deployment was not updated to use it; null means no refresh was triggered."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -225,15 +253,60 @@ class BackupRunRestoreResponse(BaseModel):
 # Database Restore Models
 
 
+def _require_all_or_no_target(fields: dict[str, str | None]) -> None:
+    """Reject a half-filled target: either every field is given, or none of them is.
+
+    A request that names three of the four connection fields is a mistake on the caller's
+    side, and guessing the fourth would silently restore somewhere the caller did not
+    ask for. The error names the fields that are missing so the caller can see which one
+    it forgot. Only field NAMES are reported, never the values that were supplied.
+    """
+    missing = sorted(name for name, value in fields.items() if value is None)
+    if missing and len(missing) != len(fields):
+        given = sorted(name for name, value in fields.items() if value is not None)
+        raise ValueError(
+            "Specify all target fields or none of them (omit them all to restore into the "
+            f"project's own service). Given: {', '.join(given)}. Missing: {', '.join(missing)}"
+        )
+
+
 class DatabaseRestoreRequest(BaseModel):
-    """Request body for database restore operations."""
+    """Request body for database restore operations.
+
+    The four target fields describe an EXTERNAL destination and are optional. Leave them
+    all out and the platform restores into the database of the project the API key belongs
+    to -- the credentials for that database are injected into the project's pods and are
+    not retrievable by the caller, so requiring them would make the normal restore
+    impossible to perform (RC-81). Supplying a SUBSET is a mistake, not a request to fill
+    in the rest: it is rejected naming the fields that are missing.
+    """
 
     snapshot_id: str | None = Field(default=None, description="Specific snapshot ID to restore (default: latest)")
-    target_database_host: str = Field(..., description="Target database host address")
+    target_database_host: str | None = Field(
+        default=None, description="Target database host address (omit to restore into the project's own database)"
+    )
     target_database_port: int = Field(default=5432, description="Target database port")
-    target_database_name: str = Field(..., description="Target database name")
-    target_database_user: str = Field(..., description="Target database username")
-    target_database_password: str = Field(..., description="Target database password")
+    target_database_name: str | None = Field(
+        default=None, description="Target database name (omit to restore into the project's own database)"
+    )
+    target_database_user: str | None = Field(
+        default=None, description="Target database username (omit to restore into the project's own database)"
+    )
+    target_database_password: str | None = Field(
+        default=None, description="Target database password (omit to restore into the project's own database)"
+    )
+
+    @model_validator(mode="after")
+    def check_target_is_all_or_nothing(self) -> DatabaseRestoreRequest:
+        _require_all_or_no_target(
+            {
+                "target_database_host": self.target_database_host,
+                "target_database_name": self.target_database_name,
+                "target_database_user": self.target_database_user,
+                "target_database_password": self.target_database_password,
+            }
+        )
+        return self
 
     model_config = {
         "json_schema_extra": {
@@ -264,23 +337,59 @@ class DatabaseRestoreResultModel(BaseModel):
 class DatabaseRestoreResponse(BaseModel):
     """Response for database restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: DatabaseRestoreResultModel
+    error_category: ErrorCategory | None = Field(
+        default=None,
+        description=(
+            "Present when the restore failed. 'InvalidTarget' means the destination you "
+            "supplied could not be used (it did not resolve, refused the connection, or "
+            "rejected the credentials) -- retrying the same request will not help. Any "
+            "other value means the failure was on the platform side. Never set for a "
+            "restore into the project's own service, because then you did not choose the "
+            "destination."
+        ),
+    )
 
 
 # Bucket Restore Models
 
 
 class BucketRestoreRequest(BaseModel):
-    """Request body for bucket restore operations."""
+    """Request body for bucket restore operations.
+
+    Same rule as ``DatabaseRestoreRequest``: the four target fields are optional and
+    describe an external destination; omit them all to restore into the bucket of the
+    project the API key belongs to. A subset is rejected naming what is missing.
+    """
 
     snapshot_id: str | None = Field(default=None, description="Specific snapshot ID to restore (default: latest)")
-    target_minio_endpoint: str = Field(..., description="Target MinIO endpoint URL")
-    target_bucket_name: str = Field(..., description="Target bucket name")
-    target_access_key: str = Field(..., description="Target MinIO access key")
-    target_secret_key: str = Field(..., description="Target MinIO secret key")
+    target_minio_endpoint: str | None = Field(
+        default=None, description="Target MinIO endpoint URL (omit to restore into the project's own bucket)"
+    )
+    target_bucket_name: str | None = Field(
+        default=None, description="Target bucket name (omit to restore into the project's own bucket)"
+    )
+    target_access_key: str | None = Field(
+        default=None, description="Target MinIO access key (omit to restore into the project's own bucket)"
+    )
+    target_secret_key: str | None = Field(
+        default=None, description="Target MinIO secret key (omit to restore into the project's own bucket)"
+    )
     clear_target: bool = Field(default=False, description="Clear target bucket before restore")
+
+    @model_validator(mode="after")
+    def check_target_is_all_or_nothing(self) -> BucketRestoreRequest:
+        _require_all_or_no_target(
+            {
+                "target_minio_endpoint": self.target_minio_endpoint,
+                "target_bucket_name": self.target_bucket_name,
+                "target_access_key": self.target_access_key,
+                "target_secret_key": self.target_secret_key,
+            }
+        )
+        return self
 
     model_config = {
         "json_schema_extra": {
@@ -311,9 +420,20 @@ class BucketRestoreResultModel(BaseModel):
 class BucketRestoreResponse(BaseModel):
     """Response for bucket restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: BucketRestoreResultModel
+    error_category: ErrorCategory | None = Field(
+        default=None,
+        description=(
+            "Present when the restore failed. 'InvalidTarget' means the destination you "
+            "supplied could not be used (it did not resolve, refused the connection, or "
+            "rejected the credentials) -- retrying the same request will not help. Any "
+            "other value means the failure was on the platform side. Never set for a "
+            "restore into the project's own service, because then you did not choose the "
+            "destination."
+        ),
+    )
 
 
 # Deployment Restore Models (supports PVC, database, and bucket with versioning)
@@ -349,7 +469,7 @@ class DeploymentRestoreRequest(BaseModel):
 class DeploymentRestoreResponse(BaseModel):
     """Response for deployment resource restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     resource_type: str = Field(..., description="Type of resource restored")
     reference_name: str = Field(..., description="Reference name of the resource")
@@ -359,6 +479,13 @@ class DeploymentRestoreResponse(BaseModel):
     new_resource_name: str | None = Field(default=None, description="New versioned resource name")
     project_updated: bool = Field(default=False, description="Whether the project file was updated")
     refresh_triggered: bool = Field(default=False, description="Whether project refresh was triggered")
+    refresh_succeeded: bool | None = Field(
+        default=None,
+        description=(
+            "Whether that refresh actually completed. False means the data was restored but the "
+            "deployment was not updated to use it; null means no refresh was triggered."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -411,6 +538,43 @@ def _result_to_model(result: RestoreResult) -> RestoreResultModel:
     )
 
 
+#: Appended to the message of a restore whose follow-up refresh failed. The restore
+#: itself did land, so this is not a failure -- but the deployment is still running on
+#: the pre-restore manifests, and the caller cannot see the OPI log to find that out.
+_REFRESH_FAILED_SUFFIX = (
+    ", but updating the deployment afterwards failed. The restored data is in place; the "
+    "deployment has not been switched over to it. Check the platform logs and retry the "
+    "restore or trigger a project refresh."
+)
+
+
+def _restore_outcome(
+    message: str, refresh_triggered: bool, refresh_succeeded: bool
+) -> tuple[OperationStatus, str, int]:
+    """The status, message and HTTP code for a restore that succeeded on the cluster.
+
+    A restore whose follow-up refresh failed is reported as ``partial`` with a 207, not
+    as ``success``. The refresh is what regenerates the manifests and secrets, so
+    without it the deployment is left on the old ones -- and the response was the only
+    place a caller could ever learn that.
+    """
+    if refresh_triggered and not refresh_succeeded:
+        return OperationStatus.PARTIAL, message + _REFRESH_FAILED_SUFFIX, 207
+    return OperationStatus.SUCCESS, message, 200
+
+
+def _failed_restore_status(target_unusable: bool, caller_named_target: bool) -> tuple[int, ErrorCategory]:
+    """Status code and category for a failed restore.
+
+    A destination fault is only ever the caller's when the caller chose the destination.
+    Omit the target fields and the platform picks the project's own service (RC-81); a
+    failure there is ours no matter what the pod reported, so it stays a 500/Unknown.
+    """
+    if target_unusable and caller_named_target:
+        return 400, ErrorCategory.InvalidTarget
+    return 500, ErrorCategory.Unknown
+
+
 def _database_result_to_model(result: DatabaseRestoreResult) -> DatabaseRestoreResultModel:
     """Convert DatabaseRestoreResult dataclass to Pydantic model."""
     return DatabaseRestoreResultModel(
@@ -440,7 +604,7 @@ def _bucket_result_to_model(result: BucketRestoreResult) -> BucketRestoreResultM
 @restore_router.get("/snapshots/{cluster}/{namespace}", response_model=ListSnapshotsResponse)
 @validate_api_token
 async def list_snapshots(
-    request: Request, cluster: str, namespace: str, project_name: str | None = None
+    request: Request, cluster: ClusterPath, namespace: str, project_name: str = _PROJECT_NAME_QUERY
 ) -> ListSnapshotsResponse:
     """
     List all available Kopia snapshots for a namespace.
@@ -483,7 +647,7 @@ async def list_snapshots(
 @restore_router.get("/snapshots/{cluster}/{namespace}/{pvc_name}", response_model=ListSnapshotsResponse)
 @validate_api_token
 async def list_pvc_snapshots(
-    request: Request, cluster: str, namespace: str, pvc_name: str, project_name: str | None = None
+    request: Request, cluster: ClusterPath, namespace: str, pvc_name: str, project_name: str = _PROJECT_NAME_QUERY
 ) -> ListSnapshotsResponse:
     """
     List available Kopia snapshots for a specific PVC.
@@ -525,11 +689,11 @@ async def list_pvc_snapshots(
 @validate_api_token
 async def restore_pvc(
     request: Request,
-    cluster: str,
-    namespace: str,
+    cluster: ClusterPath,
+    namespace: NamespacePath,
     pvc_name: str,
     body: RestoreRequest | None = None,
-    project_name: str | None = None,
+    project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
     """
     Restore a PVC from a Kopia backup.
@@ -633,7 +797,7 @@ async def restore_pvc(
 @validate_api_token
 async def restore_project_pvc(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     body: ProjectRestoreRequest,
 ) -> JSONResponse:
     """
@@ -829,23 +993,28 @@ async def restore_project_pvc(
         # 12. Trigger project refresh for the specific deployment
         logger.info(f"Triggering project refresh for {project_name}, deployment: {body.deployment_name}")
         project_manager = ProjectManager()
-        refresh_result = await project_manager.process_project_from_git(
+        refresh_succeeded = await project_manager.process_project_from_git(
             f"projects/{project.filename}",
             deployment_name=body.deployment_name,
             force_clone=True,
         )
-        refresh_triggered = refresh_result is not None
 
+        status, message, status_code = _restore_outcome(
+            f"Restored {source_pvc_name} to {target_pvc_name}",
+            refresh_triggered=True,
+            refresh_succeeded=refresh_succeeded,
+        )
         return JSONResponse(
             content={
-                "status": "success",
-                "message": f"Restored {source_pvc_name} to {target_pvc_name}",
+                "status": status,
+                "message": message,
                 "result": _result_to_model(result).model_dump(),
                 "new_generation": next_generation,
                 "project_updated": True,
-                "refresh_triggered": refresh_triggered,
+                "refresh_triggered": True,
+                "refresh_succeeded": refresh_succeeded,
             },
-            status_code=200,
+            status_code=status_code,
         )
 
     except HTTPException:
@@ -879,7 +1048,7 @@ class GenerationUpdate:
 
 async def _restore_snapshot(
     snapshot: SnapshotInfo,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment_name: str,
     deployment_cluster: str,
     namespace: str,
@@ -1032,7 +1201,7 @@ async def _restore_database(
     snapshot: SnapshotInfo,
     component_name: str,
     reference_name: str,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment_name: str,
     deployment_cluster: str,
     namespace: str,
@@ -1083,7 +1252,7 @@ async def _restore_bucket(
     snapshot: SnapshotInfo,
     component_name: str,
     reference_name: str,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment_name: str,
     deployment_cluster: str,
     namespace: str,
@@ -1143,27 +1312,12 @@ def _set_generation(
                 project_data, update.deployment, update.component, update.reference, update.new_generation
             )
         case ResourceType.DATABASE:
-            # Database is deployment-level - determine service type from project config
-            project_services = project_data.get("services", [])
-            uses_namespace_postgresql = any(
-                service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if isinstance(service_item, str)
-                else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
-                for service_item in (project_services or [])
-            )
-            service_type = (
-                ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if uses_namespace_postgresql
-                else ServiceType.POSTGRESQL_DATABASE.value
-            )
-            project_file_handler.set_deployment_service_generation(
-                project_data, update.deployment, service_type, update.new_generation
-            )
+            # Database is deployment-level; the handler resolves which PostgreSQL service
+            # name the project declares, so the write and the read cannot disagree.
+            project_file_handler.set_database_generation(project_data, update.deployment, update.new_generation)
         case ResourceType.BUCKET:
             # Bucket is deployment-level
-            project_file_handler.set_deployment_service_generation(
-                project_data, update.deployment, ServiceType.MINIO_STORAGE.value, update.new_generation
-            )
+            project_file_handler.set_bucket_generation(project_data, update.deployment, update.new_generation)
 
 
 @restore_router.post(
@@ -1173,7 +1327,7 @@ def _set_generation(
 @validate_api_token
 async def restore_backup_run(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment_name: str,
     backup_run_id: str,
 ) -> JSONResponse:
@@ -1267,26 +1421,37 @@ async def restore_backup_run(
 
         # Trigger project refresh
         refresh_triggered = False
+        refresh_succeeded = False
         if project_updated:
             logger.info(f"Triggering project refresh for {project_name}")
             project_manager = ProjectManager()
-            refresh_result = await project_manager.process_project_from_git(
+            refresh_succeeded = await project_manager.process_project_from_git(
                 f"projects/{project.filename}",
                 deployment_name=deployment_name,
                 force_clone=True,
             )
-            refresh_triggered = refresh_result is not None
+            refresh_triggered = True
 
         # Build response
         success_count = sum(1 for d in restore_details if d.success)
         total_count = len(restore_details)
 
         if success_count == total_count:
-            status, message = "success", f"Restored all {total_count} resource(s)"
+            status, message, status_code = _restore_outcome(
+                f"Restored all {total_count} resource(s)",
+                refresh_triggered=refresh_triggered,
+                refresh_succeeded=refresh_succeeded,
+            )
         elif success_count > 0:
-            status, message = "partial", f"Restored {success_count}/{total_count} resource(s)"
+            status, message, status_code = (
+                OperationStatus.PARTIAL,
+                f"Restored {success_count}/{total_count} resource(s)",
+                207,
+            )
+            if refresh_triggered and not refresh_succeeded:
+                message += _REFRESH_FAILED_SUFFIX
         else:
-            status, message = "failed", "Failed to restore any resources"
+            status, message, status_code = OperationStatus.FAILED, "Failed to restore any resources", 500
 
         return JSONResponse(
             content={
@@ -1296,8 +1461,9 @@ async def restore_backup_run(
                 "pvcs_restored": [d.model_dump() for d in restore_details],
                 "project_updated": project_updated,
                 "refresh_triggered": refresh_triggered,
+                "refresh_succeeded": refresh_succeeded if refresh_triggered else None,
             },
-            status_code=200 if status == "success" else (207 if status == "partial" else 500),
+            status_code=status_code,
         )
 
     except HTTPException:
@@ -1313,6 +1479,263 @@ async def restore_backup_run(
         raise HTTPException(status_code=500, detail=f"Error restoring backup run: {e}") from e
 
 
+# Resolving the project's own service as restore target
+#
+# The normal restore puts a backup back into the project's OWN database or bucket. Those
+# credentials are platform-managed: they are injected into the project's pods and are not
+# published through any API, so a caller cannot name them (RC-81). When the request omits
+# the target fields, the platform resolves them here, from the deployment secret in the
+# project's own namespace -- the same secret the backup side reads. This can only ever
+# reach the authenticated project's own namespace: ``_require_namespace_owned_by_project``
+# has already pinned ``namespace`` to ``get_prefixed_namespace(cluster, project_name)``.
+# The resolved credentials stay inside the request; they are never logged and never
+# repeated in an error message.
+
+_DATABASE_SERVICE_TYPES = [
+    ServiceType.POSTGRESQL_DATABASE.value,
+    ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
+]
+_MINIO_SERVICE_TYPES = [ServiceType.MINIO_STORAGE.value]
+
+
+@dataclass
+class _DatabaseTarget:
+    """Connection details of the database a restore writes into."""
+
+    host: str
+    port: int
+    database: str
+    username: str
+    password: str
+
+
+@dataclass
+class _BucketTarget:
+    """Connection details of the bucket a restore writes into."""
+
+    endpoint: str
+    bucket_name: str
+    access_key: str
+    secret_key: str
+
+
+def _explicit_database_target(body: DatabaseRestoreRequest) -> _DatabaseTarget | None:
+    """Return the external target the caller named, or None when it named none."""
+    if (
+        body.target_database_host is None
+        or body.target_database_name is None
+        or body.target_database_user is None
+        or body.target_database_password is None
+    ):
+        return None
+    return _DatabaseTarget(
+        host=body.target_database_host,
+        port=body.target_database_port,
+        database=body.target_database_name,
+        username=body.target_database_user,
+        password=body.target_database_password,
+    )
+
+
+def _explicit_bucket_target(body: BucketRestoreRequest) -> _BucketTarget | None:
+    """Return the external target the caller named, or None when it named none."""
+    if (
+        body.target_minio_endpoint is None
+        or body.target_bucket_name is None
+        or body.target_access_key is None
+        or body.target_secret_key is None
+    ):
+        return None
+    return _BucketTarget(
+        endpoint=body.target_minio_endpoint,
+        bucket_name=body.target_bucket_name,
+        access_key=body.target_access_key,
+        secret_key=body.target_secret_key,
+    )
+
+
+def _require_project_data(project_name: str) -> dict[str, Any]:
+    """Return the project definition, or a 404 that says which part is missing."""
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    if not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' has no data loaded")
+    return project.data
+
+
+def _find_deployment_for_reference(
+    project_data: dict[str, Any], reference_name: str, service_types: list[str], default_suffix: str
+) -> str | None:
+    """Find the deployment whose backup of this kind is named ``reference_name``.
+
+    A backup is registered either under the reference of the component service or, when no
+    component carries one, under the deployment-level fallback ``{deployment}-{suffix}``
+    (see ``backup_router``). Both are checked, component references first.
+    """
+    project_file_handler = create_project_file_handler()
+    deployment_names = [
+        str(deployment["name"])
+        for deployment in (project_data.get("deployments") or [])
+        if isinstance(deployment, dict) and deployment.get("name")
+    ]
+
+    for deployment_name in deployment_names:
+        for component_info in project_file_handler.get_components_using_service(
+            project_data, deployment_name, service_types
+        ):
+            if component_info.get("reference_name") == reference_name:
+                return deployment_name
+
+    for deployment_name in deployment_names:
+        if reference_name in _fallback_reference_names(deployment_name, service_types, default_suffix):
+            return deployment_name
+
+    return None
+
+
+def _fallback_reference_names(deployment_name: str, service_types: list[str], default_suffix: str) -> list[str]:
+    """De namen die een backup KAN dragen als geen component de dienst voert.
+
+    Gemeld door de zad-cli (punt 10b): ``backup list`` gaf ``productie-postgresql``, maar
+    de 404 suggereerde ``productie-database`` -- en die naam draagt geen enkele snapshot,
+    dus de suggestie stuurde precies de verkeerde kant op. Erger nog: hij werd hier ook
+    geaccepteerd, waardoor de restore startte en pas daarna strandde op een snapshot die
+    niet bestaat.
+
+    De oorzaak was een tweede naamconventie. De schrijver leidt de naam af als
+    ``{deployment}-{dienstnaam tot het eerste streepje}`` (zie
+    ``ProjectFileHandler.get_components_using_service``), dus ``postgresql-database`` wordt
+    ``productie-postgresql``. Hier stond ``{deployment}-database``. Bij buckets viel dat
+    toevallig samen, want ``minio-storage`` begint ook met ``minio``; bij databases niet.
+
+    Deze functie volgt de regel van de SCHRIJVER, voor elke dienst die hier in aanmerking
+    komt. Het oude achtervoegsel blijft erbij staan: een backup die onder de oude naam is
+    weggeschreven moet terug te zetten blijven.
+    """
+    namen = [f"{deployment_name}-{service_type.split('-')[0]}" for service_type in service_types]
+    namen.append(f"{deployment_name}-{default_suffix}")
+    return list(dict.fromkeys(namen))
+
+
+def _known_reference_names(project_data: dict[str, Any], service_types: list[str], default_suffix: str) -> list[str]:
+    """Every reference of this kind the project has, in the order they are accepted.
+
+    Feeds the 404: a caller who guessed wrong gets the names that do exist instead of
+    only the one that does not, which is the difference between one more request and
+    six (RC-95). Same two sources as ``_find_deployment_for_reference``.
+    """
+    project_file_handler = create_project_file_handler()
+    names: list[str] = []
+    for deployment in project_data.get("deployments") or []:
+        if not isinstance(deployment, dict) or not deployment.get("name"):
+            continue
+        deployment_name = str(deployment["name"])
+        component_refs = [
+            str(component_info["reference_name"])
+            for component_info in project_file_handler.get_components_using_service(
+                project_data, deployment_name, service_types
+            )
+            if component_info.get("reference_name")
+        ]
+        names.extend(component_refs)
+        if not component_refs:
+            # Dezelfde namen als hierboven geaccepteerd worden. Ze liepen uiteen, en dan
+            # noemt de 404 een naam die de restore vervolgens weigert of, erger, aanneemt.
+            names.extend(_fallback_reference_names(deployment_name, service_types, default_suffix))
+
+    # Preserve order, drop duplicates (two components can share one service reference).
+    return list(dict.fromkeys(names))
+
+
+def _no_such_reference_detail(
+    project_name: str, reference_name: str, kind: str, known: list[str], target_fields: str
+) -> str:
+    """The 404 body for a reference no deployment carries."""
+    if known:
+        available = "This project has: " + ", ".join(f"'{name}'" for name in known) + "."
+    else:
+        available = f"This project has no {kind} backups registered."
+    return (
+        f"No deployment of project '{project_name}' has a {kind} backup named "
+        f"'{reference_name}'. {available} Supply the {target_fields} fields to restore "
+        "into an external destination."
+    )
+
+
+async def _resolve_own_database_target(project_name: str, namespace: str, reference_name: str) -> _DatabaseTarget:
+    """Resolve the project's own database as the restore target."""
+    project_data = _require_project_data(project_name)
+    deployment_name = _find_deployment_for_reference(project_data, reference_name, _DATABASE_SERVICE_TYPES, "database")
+    if not deployment_name:
+        raise HTTPException(
+            status_code=404,
+            detail=_no_such_reference_detail(
+                project_name,
+                reference_name,
+                "database",
+                _known_reference_names(project_data, _DATABASE_SERVICE_TYPES, "database"),
+                "target_database_*",
+            ),
+        )
+
+    secret = await DatabaseSecret.get_data(
+        kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
+    )
+    if secret is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Deployment '{deployment_name}' has no database credentials in namespace "
+                f"'{namespace}'; the database may not be provisioned yet."
+            ),
+        )
+
+    return _DatabaseTarget(
+        host=secret.host,
+        port=secret.port,
+        database=secret.database,
+        username=secret.username,
+        password=secret.password,
+    )
+
+
+async def _resolve_own_bucket_target(project_name: str, namespace: str, reference_name: str) -> _BucketTarget:
+    """Resolve the project's own bucket as the restore target."""
+    project_data = _require_project_data(project_name)
+    deployment_name = _find_deployment_for_reference(project_data, reference_name, _MINIO_SERVICE_TYPES, "minio")
+    if not deployment_name:
+        raise HTTPException(
+            status_code=404,
+            detail=_no_such_reference_detail(
+                project_name,
+                reference_name,
+                "bucket",
+                _known_reference_names(project_data, _MINIO_SERVICE_TYPES, "minio"),
+                "target_minio_endpoint, target_bucket_name, target_access_key and target_secret_key",
+            ),
+        )
+
+    secret = await MinIOSecret.get_data(
+        kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
+    )
+    if secret is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Deployment '{deployment_name}' has no storage credentials in namespace "
+                f"'{namespace}'; the bucket may not be provisioned yet."
+            ),
+        )
+
+    return _BucketTarget(
+        endpoint=secret.endpoint_url,
+        bucket_name=secret.bucket_name,
+        access_key=secret.access_key,
+        secret_key=secret.secret_key,
+    )
+
+
 # Database Restore Endpoints
 
 
@@ -1320,11 +1743,11 @@ async def restore_backup_run(
 @validate_api_token
 async def restore_database(
     request: Request,
-    cluster: str,
-    namespace: str,
+    cluster: ClusterPath,
+    namespace: NamespacePath,
     reference_name: str,
-    body: DatabaseRestoreRequest,
-    project_name: str | None = None,
+    body: DatabaseRestoreRequest | None = None,
+    project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
     """
     Restore a PostgreSQL database from a Kopia backup.
@@ -1346,16 +1769,41 @@ async def restore_database(
     Args:
         cluster: Cluster name where backup was made
         namespace: Kubernetes namespace for the restore pod (must be the authenticated project's own namespace)
-        reference_name: Logical name of the database backup to restore
-        body: Target database connection parameters
+        reference_name: Logical name of the database backup to restore. This is the
+            ``reference_name`` of the backup as listed by
+            ``GET /api/v1/backup/runs/{project}/{deployment}``; the snapshot listing
+            (``GET /api/v1/restore/snapshots/...``) reports the same value in its
+            ``pvc_name`` field, which carries every backed-up resource regardless of kind.
+        body: Target database connection parameters. Optional as a whole: omit the four
+            target_database_* fields and the restore goes into the database of the project
+            the API key belongs to (the platform reads those credentials itself; they are
+            not retrievable through the API). Supply all four to restore into an external
+            database. A request that supplies only some of them is answered with 422
+            naming the fields that are missing.
         project_name: Project name matching the API key (required)
+
+    Failure codes:
+        400 with ``error_category: InvalidTarget`` -- the destination you supplied could
+            not be used: the host did not resolve, the port refused, or the database name,
+            user or password was rejected. Your input; retrying is pointless. Only possible
+            when you supplied the target yourself.
+        500 with ``error_category: Unknown`` -- the failure was on the platform side (the
+            backup repository, the snapshot, the cluster). Retrying may help.
+        The category is machine-readable on purpose: there is no need to read the pod log
+            text in ``message`` to tell the two apart.
 
     Headers:
         X-API-Key: The API key (required)
 
     Example:
     ```bash
-    # Restore latest snapshot
+    # Restore the latest snapshot into the project's own database (no credentials needed)
+    curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \\
+      -H "X-API-Key: your-api-key" \\
+      -H "Content-Type: application/json" \\
+      -d '{}'
+
+    # Restore latest snapshot into an external database
     curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
@@ -1384,6 +1832,12 @@ async def restore_database(
     # and would otherwise be swallowed by the generic 500 handler below.
     _require_namespace_owned_by_project(project_name, cluster, namespace)
 
+    # No body at all means the same as a body without target fields: restore into the
+    # project's own database.
+    body = body or DatabaseRestoreRequest()
+    explicit_target = _explicit_database_target(body)
+    target = explicit_target or await _resolve_own_database_target(project_name, namespace, reference_name)
+
     try:
         logger.info(f"Database restore request for {cluster}/{namespace}/{reference_name}")
 
@@ -1392,28 +1846,33 @@ async def restore_database(
             cluster=cluster,
             namespace=namespace,
             reference_name=reference_name,
-            target_database_host=body.target_database_host,
-            target_database_port=body.target_database_port,
-            target_database_name=body.target_database_name,
-            target_database_user=body.target_database_user,
-            target_database_password=body.target_database_password,
+            target_database_host=target.host,
+            target_database_port=target.port,
+            target_database_name=target.database,
+            target_database_user=target.username,
+            target_database_password=target.password,
             snapshot_id=body.snapshot_id,
             project_name=project_name,
         )
 
         status = "success" if result.success else "failed"
         if result.success:
-            message = f"Restored database {reference_name} to {body.target_database_name}"
+            message = f"Restored database {reference_name} to {target.database}"
         else:
             message = f"Failed to restore database {reference_name}: {result.error}"
 
-        content = {
+        content: dict[str, Any] = {
             "status": status,
             "message": message,
             "result": _database_result_to_model(result).model_dump(),
         }
 
-        status_code = 200 if result.success else 500
+        if result.success:
+            status_code = 200
+        else:
+            status_code, category = _failed_restore_status(result.target_unusable, explicit_target is not None)
+            content["error_category"] = category.value
+
         return JSONResponse(content=content, status_code=status_code)
 
     except RuntimeError as e:
@@ -1434,11 +1893,11 @@ async def restore_database(
 @validate_api_token
 async def restore_bucket(
     request: Request,
-    cluster: str,
-    namespace: str,
+    cluster: ClusterPath,
+    namespace: NamespacePath,
     reference_name: str,
-    body: BucketRestoreRequest,
-    project_name: str | None = None,
+    body: BucketRestoreRequest | None = None,
+    project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
     """
     Restore a MinIO bucket from a Kopia backup.
@@ -1459,16 +1918,33 @@ async def restore_bucket(
     Args:
         cluster: Cluster name where backup was made
         namespace: Kubernetes namespace for the restore pod (must be the authenticated project's own namespace)
-        reference_name: Logical name of the bucket backup to restore
-        body: Target MinIO connection parameters
+        reference_name: Logical name of the bucket backup to restore. Same value as the
+            ``reference_name`` of the backup run, reported as ``pvc_name`` in the snapshot listing.
+        body: Target MinIO connection parameters. Optional as a whole: omit the four target
+            fields and the restore goes into the bucket of the project the API key belongs
+            to. Supply all four to restore into an external bucket. A request that supplies
+            only some of them is answered with 422 naming the fields that are missing.
         project_name: Project name matching the API key (required)
+
+    Failure codes:
+        400 with ``error_category: InvalidTarget`` -- the destination you supplied could
+            not be used: the endpoint was unreachable or the access key or secret key was
+            rejected. Your input; retrying is pointless. Only possible when you supplied
+            the target yourself.
+        500 with ``error_category: Unknown`` -- the failure was on the platform side.
 
     Headers:
         X-API-Key: The API key (required)
 
     Example:
     ```bash
-    # Restore latest snapshot
+    # Restore the latest snapshot into the project's own bucket (no credentials needed)
+    curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \\
+      -H "X-API-Key: your-api-key" \\
+      -H "Content-Type: application/json" \\
+      -d '{}'
+
+    # Restore latest snapshot into an external bucket
     curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
@@ -1497,6 +1973,11 @@ async def restore_bucket(
     # and would otherwise be swallowed by the generic 500 handler below.
     _require_namespace_owned_by_project(project_name, cluster, namespace)
 
+    # No body at all means the same as a body without target fields.
+    body = body or BucketRestoreRequest()
+    explicit_target = _explicit_bucket_target(body)
+    target = explicit_target or await _resolve_own_bucket_target(project_name, namespace, reference_name)
+
     try:
         logger.info(f"Bucket restore request for {cluster}/{namespace}/{reference_name}")
 
@@ -1505,10 +1986,10 @@ async def restore_bucket(
             cluster=cluster,
             namespace=namespace,
             reference_name=reference_name,
-            target_minio_endpoint=body.target_minio_endpoint,
-            target_bucket_name=body.target_bucket_name,
-            target_access_key=body.target_access_key,
-            target_secret_key=body.target_secret_key,
+            target_minio_endpoint=target.endpoint,
+            target_bucket_name=target.bucket_name,
+            target_access_key=target.access_key,
+            target_secret_key=target.secret_key,
             snapshot_id=body.snapshot_id,
             clear_target=body.clear_target,
             project_name=project_name,
@@ -1516,17 +1997,22 @@ async def restore_bucket(
 
         status = "success" if result.success else "failed"
         if result.success:
-            message = f"Restored bucket {reference_name} to {body.target_bucket_name}"
+            message = f"Restored bucket {reference_name} to {target.bucket_name}"
         else:
             message = f"Failed to restore bucket {reference_name}: {result.error}"
 
-        content = {
+        content: dict[str, Any] = {
             "status": status,
             "message": message,
             "result": _bucket_result_to_model(result).model_dump(),
         }
 
-        status_code = 200 if result.success else 500
+        if result.success:
+            status_code = 200
+        else:
+            status_code, category = _failed_restore_status(result.target_unusable, explicit_target is not None)
+            content["error_category"] = category.value
+
         return JSONResponse(content=content, status_code=status_code)
 
     except RuntimeError as e:
@@ -1713,27 +2199,12 @@ async def restore_deployment_resource(
                 project_data, deployment_name, body.component_name, body.reference_name, result["new_generation"]
             )
         elif body.resource_type == "database":
-            # Database is deployment-level - determine service type from project config
-            project_services = project_data.get("services", [])
-            uses_namespace_postgresql = any(
-                service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if isinstance(service_item, str)
-                else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
-                for service_item in (project_services or [])
-            )
-            service_type = (
-                ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if uses_namespace_postgresql
-                else ServiceType.POSTGRESQL_DATABASE.value
-            )
-            project_file_handler.set_deployment_service_generation(
-                project_data, deployment_name, service_type, result["new_generation"]
-            )
+            # Database is deployment-level; the handler resolves which PostgreSQL service
+            # name the project declares, so the write and the read cannot disagree.
+            project_file_handler.set_database_generation(project_data, deployment_name, result["new_generation"])
         else:  # minio
             # Bucket is deployment-level
-            project_file_handler.set_deployment_service_generation(
-                project_data, deployment_name, ServiceType.MINIO_STORAGE.value, result["new_generation"]
-            )
+            project_file_handler.set_bucket_generation(project_data, deployment_name, result["new_generation"])
         # 5. Commit and push the change
         commit_message = (
             f"Restore {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}\n\n"
@@ -1749,20 +2220,26 @@ async def restore_deployment_resource(
 
         # 6. Trigger project refresh if requested
         refresh_triggered = False
+        refresh_succeeded = False
         if body.update_deployment:
             logger.info(f"Triggering project refresh for {project_name}, deployment: {deployment_name}")
             project_manager = ProjectManager()
-            refresh_result = await project_manager.process_project_from_git(
+            refresh_succeeded = await project_manager.process_project_from_git(
                 f"projects/{project.filename}",
                 deployment_name=deployment_name,
                 force_clone=True,
             )
-            refresh_triggered = refresh_result is not None
+            refresh_triggered = True
 
+        status, message, status_code = _restore_outcome(
+            f"Restored {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}",
+            refresh_triggered=refresh_triggered,
+            refresh_succeeded=refresh_succeeded,
+        )
         return JSONResponse(
             content={
-                "status": "success",
-                "message": f"Restored {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}",
+                "status": status,
+                "message": message,
                 "resource_type": body.resource_type,
                 "reference_name": body.reference_name,
                 "old_generation": result["old_generation"],
@@ -1771,8 +2248,9 @@ async def restore_deployment_resource(
                 "new_resource_name": result["new_resource_name"],
                 "project_updated": True,
                 "refresh_triggered": refresh_triggered,
+                "refresh_succeeded": refresh_succeeded if refresh_triggered else None,
             },
-            status_code=200,
+            status_code=status_code,
         )
 
     except HTTPException:
@@ -1797,7 +2275,7 @@ async def _restore_pvc_with_versioning(
     storage_name: str,
     snapshot_id: str,
     deployment_cluster: str,
-    namespace: str,
+    namespace: NamespacePath,
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
@@ -1888,7 +2366,7 @@ async def _restore_database_with_versioning(
     reference_name: str,
     snapshot_id: str,
     deployment_cluster: str,
-    namespace: str,
+    namespace: NamespacePath,
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
@@ -1904,9 +2382,7 @@ async def _restore_database_with_versioning(
     from opi.utils.passwords import generate_secure_password
 
     # Get current generation
-    current_generation = project_file_handler.get_database_generation(
-        project_data, deployment_name, component_name, reference_name
-    )
+    current_generation = project_file_handler.get_database_generation(project_data, deployment_name)
     if current_generation is None:
         current_generation = 0
     next_generation = current_generation + 1
@@ -1933,24 +2409,66 @@ async def _restore_database_with_versioning(
             admin_password=admin_password,
         )
 
-        # Generate credentials for new database
-        db_password = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
-
-        # Create new user if needed (or reuse existing user from old database)
-        # For versioned databases, we use the same username (no generation suffix)
+        # The versioned database is owned by the SAME user as every other generation --
+        # the username carries no generation suffix.
         db_username = generate_database_username(project_name, deployment_name)
 
-        # Create user (will update password if exists)
+        # Keep the password the deployment already has. Rotating it here left the whole
+        # project on a lock: that password lives in a secret that ArgoCD owns (the
+        # manifest is in zad-deployments, syncPolicy selfHeal), so a new one cannot be
+        # written into the running namespace -- ArgoCD reverts a direct patch within
+        # milliseconds. The only route into that secret is the project refresh, and the
+        # refresh reads the secret first and refuses to run when its credentials no
+        # longer work. So the restore reported success, the refresh aborted before
+        # writing any manifest, and every later change to the project hit the same wall.
+        #
+        # There is nothing a new password buys here: the user already exists and simply
+        # becomes the owner of the new generation as well. Only when there is no secret
+        # to read from is a password generated (and then set on the user), because the
+        # restore pod needs one to connect with.
+        existing_secret = await DatabaseSecret.get_data(
+            kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
+        )
+        reuse_password = bool(existing_secret and existing_secret.password)
+        db_password = (
+            existing_secret.password  # type: ignore[union-attr]
+            if reuse_password
+            else generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
+        )
+
         user_result = await postgres_connector.create_user(username=db_username, password=db_password)
-        if user_result["status"] == "exists":
+        if user_result["status"] == "exists" and not reuse_password:
             await postgres_connector.update_user_password(username=db_username, new_password=db_password)
 
         # Create new versioned database
         db_result = await postgres_connector.create_database(database_name=new_database_name, owner=db_username)
         if db_result["status"] not in ["created", "exists"]:
+            await postgres_connector.close()
             return {
                 "success": False,
                 "error": f"Failed to create new database {new_database_name}: {db_result.get('message')}",
+                "old_generation": current_generation,
+                "new_generation": next_generation,
+                "old_resource_name": old_database_name,
+                "new_resource_name": new_database_name,
+            }
+
+        # The target must be EMPTY. pg_restore adds rows, it does not replace them, so a
+        # restore into a database that already holds the application's tables lands the
+        # backup on top of the rows already there and doubles them. That is what a wrong
+        # generation caused (RC-123), but the damage is not the wrong number, it is this
+        # write -- so the refusal sits here, where the data is, and not only at the number.
+        # A database that exists but is empty is a half-finished earlier attempt and is
+        # fine to continue into.
+        if db_result["status"] == "exists" and await postgres_connector.database_has_user_data(new_database_name):
+            await postgres_connector.close()
+            return {
+                "success": False,
+                "error": (
+                    f"Target database {new_database_name} already exists and is not empty. "
+                    f"Restoring into it would add the backup on top of the rows already there. "
+                    f"Remove that database or raise the generation before retrying."
+                ),
                 "old_generation": current_generation,
                 "new_generation": next_generation,
                 "old_resource_name": old_database_name,
@@ -1983,6 +2501,10 @@ async def _restore_database_with_versioning(
             target_database_password=db_password,
             snapshot_id=snapshot_id,
             project_name=project_name,
+            # The dump comes from the previous generation, whose database name is also
+            # its default schema name. Naming it here is what keeps the restore pod from
+            # having to guess which of the database's schemas is the application's own.
+            source_database_name=old_database_name,
         )
 
         if not restore_result.success:
@@ -2023,7 +2545,7 @@ async def _restore_bucket_with_versioning(
     reference_name: str,
     snapshot_id: str,
     deployment_cluster: str,
-    namespace: str,
+    namespace: NamespacePath,
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
@@ -2038,9 +2560,7 @@ async def _restore_bucket_with_versioning(
     from opi.utils.passwords import generate_secure_password
 
     # Get current generation
-    current_generation = project_file_handler.get_bucket_generation(
-        project_data, deployment_name, component_name, reference_name
-    )
+    current_generation = project_file_handler.get_bucket_generation(project_data, deployment_name)
     if current_generation is None:
         current_generation = 0
     next_generation = current_generation + 1
@@ -2084,6 +2604,25 @@ async def _restore_bucket_with_versioning(
             return {
                 "success": False,
                 "error": f"Failed to create new bucket {new_bucket_name}: {bucket_result.get('message')}",
+                "old_generation": current_generation,
+                "new_generation": next_generation,
+                "old_resource_name": old_bucket_name,
+                "new_resource_name": new_bucket_name,
+            }
+
+        # Same bottom as the database path: a restore into a bucket that already holds
+        # objects merges the backup with what is there instead of replacing it, and
+        # ``clear_target=False`` below assumes a fresh bucket.
+        if bucket_result["status"] == "exists" and await minio_connector.bucket_has_objects(
+            alias_name, new_bucket_name
+        ):
+            return {
+                "success": False,
+                "error": (
+                    f"Target bucket {new_bucket_name} already exists and is not empty. "
+                    f"Restoring into it would merge the backup with the objects already there. "
+                    f"Remove that bucket or raise the generation before retrying."
+                ),
                 "old_generation": current_generation,
                 "new_generation": next_generation,
                 "old_resource_name": old_bucket_name,

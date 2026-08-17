@@ -23,7 +23,11 @@ spec:
     namespace: "rig-prd-operations"
   syncPolicy:
     automated:
-      allowEmpty: true
+      # OPI is the only writer of this repo. An empty render is always a bug
+      # (bad commit, kustomize yielding nothing), never a desired state, and
+      # combined with prune it would delete every tenant Application, whose
+      # finalizers then cascade into their workloads and PVCs.
+      allowEmpty: false
       prune: true
       selfHeal: true
     syncOptions:

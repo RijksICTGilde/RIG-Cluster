@@ -1,0 +1,7 @@
+{% if errors %}
+<div>
+{% for error in errors %}
+<span class="lotc-form-field__error-text">{{ error }}</span>
+{% endfor %}
+</div>
+{% endif %}

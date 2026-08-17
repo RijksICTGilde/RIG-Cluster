@@ -21,9 +21,11 @@ Classifications:
 """
 
 import logging
+import os
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from opi.connectors.git import create_git_connector_for_argocd
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.postgres import create_postgres_connector
@@ -37,9 +39,6 @@ from opi.utils.naming import (
     generate_project_platform_client_id,
     generate_project_realm_name,
 )
-
-if TYPE_CHECKING:
-    from opi.core.database_pool import DatabasePool
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +126,6 @@ def _classify_project_realm_client(
 
 
 async def sweep(
-    pool: DatabasePool,
     project_yamls: list[dict[str, Any]],
     cluster: str,
     keycloak_url: str | None = None,
@@ -147,6 +145,7 @@ async def sweep(
         "keycloak_realms": [],
         "keycloak_clients": [],
         "minio_buckets": [],
+        "gitops_folders": [],
         "stale_marks": [],
         "errors": [],
     }
@@ -300,9 +299,52 @@ async def sweep(
         logger.exception("Orphan sweep: MinIO inventory failed")
         report["errors"].append(f"minio inventory failed: {e}")
 
+    # --- ArgoCD GitOps folders ---
+    #
+    # Deze categorie ontbrak, en dat is duur geweest. Vijf verwijderde projecten lieten hun
+    # map in zad-argo-user-applications staan; de root-application maakte hun Application
+    # daardoor telkens opnieuw aan, die faalde op "app path does not exist", en met
+    # retry limit -1 gebeurde dat elke 30 seconden opnieuw - eindeloos, ook zonder dat er
+    # iemand iets deed. Ze waren met kubectl niet weg te krijgen (de app-of-apps zette ze
+    # meteen terug) en er was niets dat ze meldde: het opruimrapport keek naar databases,
+    # realms, clients en buckets, maar niet naar de GitOps-repo zelf.
+    #
+    # Een map hier is een wees zodra er geen project met die naam meer bestaat. Dat is een
+    # goedkope en eenduidige controle, want beide kanten komen uit dezelfde bron.
+    try:
+        gitops = await create_git_connector_for_argocd("orphan-sweep")
+        await gitops.refresh_working_tree()
+        working_dir = await gitops.get_working_dir()
+        cluster_dir = os.path.join(working_dir, cluster)
+
+        bekende_projecten = {p.get("name") for p in project_yamls if p.get("name")}
+        if os.path.isdir(cluster_dir):
+            for map_naam in sorted(os.listdir(cluster_dir)):
+                if not os.path.isdir(os.path.join(cluster_dir, map_naam)):
+                    continue
+                if map_naam in bekende_projecten:
+                    classification, reason = "expected", "belongs to an existing project"
+                else:
+                    classification, reason = (
+                        CONFIRMABLE,
+                        "no project with this name exists; the root application keeps recreating "
+                        "an Application that fails on 'app path does not exist'",
+                    )
+                report["gitops_folders"].append(
+                    {
+                        "path": f"{cluster}/{map_naam}",
+                        "project": map_naam,
+                        "classification": classification,
+                        "reason": reason,
+                    }
+                )
+    except Exception as e:
+        logger.exception("Orphan sweep: GitOps folder inventory failed")
+        report["errors"].append(f"gitops folder inventory failed: {e}")
+
     # --- Stale / wrong marks ---
     try:
-        service = MarkedForDeletionService(pool)
+        service = MarkedForDeletionService()
         for mark in await service.get_all_marks():
             rtype = mark["resource_type"]
             rname = mark["resource_name"]

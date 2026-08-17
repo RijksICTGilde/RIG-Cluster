@@ -9,6 +9,38 @@ import pytest
 from opi.manager.project_manager import ProjectManager
 
 
+class TestLooksLikeRenderFailure:
+    """The manifests-endpoint body classifier that decides whether to block the deploy."""
+
+    def test_generation_error_is_render_failure(self):
+        from opi.manager.project_manager import _looks_like_render_failure
+
+        body = (
+            "Failed to load target state: failed to generate manifests in 'x': rpc error: "
+            "code = Unknown desc = kustomize build failed exit status 1: may not add resource ..."
+        )
+        assert _looks_like_render_failure(body) is True
+
+    def test_real_manifests_endpoint_body_is_render_failure(self):
+        # Exact shape from a live sandbox 500 manifests-endpoint response.
+        from opi.manager.project_manager import _looks_like_render_failure
+
+        body = (
+            '{"error":"plugin sidecar failed. error generating manifests in cmp: rpc error: '
+            "code = Unknown desc = error generating manifests: `/bin/bash -c ...` failed exit status 1: "
+            "ERROR: Namespace 'rig-x' does not exist\"}"
+        )
+        assert _looks_like_render_failure(body) is True
+
+    def test_auth_or_network_error_is_not_render_failure(self):
+        from opi.manager.project_manager import _looks_like_render_failure
+
+        assert _looks_like_render_failure("401 Unauthorized") is False
+        assert _looks_like_render_failure("connection refused") is False
+        assert _looks_like_render_failure("") is False
+        assert _looks_like_render_failure(None) is False
+
+
 class TestAsyncCorrectness:
     """All calls to async functions must use await - missing await silently returns a coroutine object."""
 
@@ -172,7 +204,14 @@ def _valid_project_for_save() -> dict:
                 "name": "frontend",
                 "type": "deployment",
                 "ports": {"inbound": [8080], "outbound": [443]},
-                "storage": [{"type": "persistent", "size": "10Gi", "mount-path": "/data"}],
+                # No v1 `storage:` block: that form only lives in the v1 schema now
+                # (RC-32), and this fixture is meant to be valid at the latest version.
+                "services": [
+                    {
+                        "reference": "persistent-storage",
+                        "config": [{"name": "data", "mount-path": "/data", "size": "10Gi"}],
+                    }
+                ],
             }
         ],
         "deployments": [

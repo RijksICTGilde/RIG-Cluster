@@ -10,6 +10,10 @@ from pathlib import Path
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
     "local": {
+        # Development offers a choice of target clusters in the create wizard; production
+        # (odcn-production) omits this key and so offers only itself. See
+        # get_selectable_clusters().
+        "create_wizard_clusters": ["local", "sandboxed-local", "odcn-production"],
         "ingress_postfix": ".kind",
         "namespace_prefix": "rig-",
         "argo_namespace": "rig-system",
@@ -20,6 +24,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        # Namespace of the CloudNativePG operator, which must reach the dedicated
+        # CNPG cluster's pods to extract instance status; the infra-namespace
+        # NetworkPolicy allows ingress from here.
+        "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
             "pod_labels": {},
@@ -45,6 +53,10 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": False,
+        # Geen supports_custom_domain_certificates hier: dit cluster draait een eigen CA
+        # (cluster_issuer kind-ca-issuer) en of die ook een eigen domein tekent is niet
+        # nagemeten. Afwezig betekent zwijgen, en dat is het eerlijke antwoord bij een
+        # cluster waarvan we het niet weten.
         "ca_certificate": {
             "enabled": True,
             "node_path": "/etc/ssl/certs/kind-local-ca.crt",
@@ -76,6 +88,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        # Namespace of the CloudNativePG operator, which must reach the dedicated
+        # CNPG cluster's pods to extract instance status; the infra-namespace
+        # NetworkPolicy allows ingress from here.
+        "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
             "pod_labels": {},
@@ -100,6 +116,10 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": False,
+        # The sandbox serves *.sandbox.rijksapp.dev from a pre-installed wildcard
+        # certificate and runs a fake cert-manager CRD with no controller, so nothing is
+        # ever issued here. See supports_custom_domain_certificates().
+        "supports_custom_domain_certificates": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
@@ -126,6 +146,8 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
+        # Namespace of the CloudNativePG operator (see the note in the other clusters).
+        "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
             "namespace": "openshift-ingress",
             "pod_labels": {
@@ -153,6 +175,9 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": True,
+        # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
+        # challenge for a domain of the user's own can complete here.
+        "supports_custom_domain_certificates": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
@@ -203,6 +228,22 @@ def get_cluster_config(cluster_name: str) -> dict:
         raise ValueError(f"Cluster '{cluster_name}' not found in configuration")
 
     return CLUSTER_CONFIG[cluster_name]
+
+
+def get_selectable_clusters() -> list[str]:
+    """Clusters offered as a target in the create-project wizard.
+
+    Driven by the managing cluster's own config key ``create_wizard_clusters``, and it
+    defaults to just the managing cluster. So production (CLUSTER_MANAGER =
+    odcn-production) offers only odcn-production and can never list a dev cluster by
+    accident, while a development overlay sets the key to offer several. Unknown names
+    are dropped, so a typo in the config cannot surface a non-existent cluster.
+    """
+    from opi.core.config import settings
+
+    manager = settings.CLUSTER_MANAGER
+    configured = get_cluster_config(manager).get("create_wizard_clusters", [manager])
+    return [c for c in configured if c in CLUSTER_CONFIG]
 
 
 def get_ingress_postfix(cluster_name: str) -> str:
@@ -560,6 +601,29 @@ def get_backup_namespace(cluster_name: str) -> str:
     return cluster_config["backup_namespace"]
 
 
+def get_database_operator_namespace(cluster_name: str) -> str:
+    """Namespace of the CloudNativePG operator for a cluster.
+
+    A dedicated (project-scoped) PostgreSQL cluster lives in the project's
+    infrastructure namespace, but the CNPG operator that manages it runs in its own
+    namespace and must reach the cluster's pods to extract their instance status.
+    Without an ingress allowance for this namespace the operator reports
+    "Instance Status Extraction Error", the Cluster never becomes Ready and its ArgoCD
+    health stays Unknown. The infra-namespace NetworkPolicy uses this as an allowed peer.
+
+    Defaults to ``cnpg-system`` (the CloudNativePG default install namespace) for
+    clusters that predate this setting.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        CloudNativePG operator namespace name
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("database_operator_namespace", "cnpg-system")
+
+
 def get_ingress_controller_selector(cluster_name: str) -> dict:
     """
     Return de selector voor de ingress-controller pods van een cluster.
@@ -736,6 +800,29 @@ def supports_vpa(cluster_name: str) -> bool:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("supports_vpa", False)
+
+
+def supports_custom_domain_certificates(cluster_name: str) -> bool:
+    """Whether this cluster can obtain a certificate for a domain of the user's own.
+
+    A domain outside the cluster's ``nice_url.supported_domains`` gets no certificate for
+    free: the platform certificate covers the supported domains only, so cert-manager has
+    to issue one, over an ACME HTTP-01 challenge that the outside world must be able to
+    reach. On production that works. On the two Kind clusters it cannot: they are not
+    reachable from the internet, and ``task sandbox:setup`` even installs a FAKE
+    cert-manager CRD (``bootstrap/crd/cert-manager/fake-cert-manager.yaml``) with no
+    controller behind it, so the Issuer applies, reports Ready, and nothing is ever
+    issued. Everything stays green and the site serves the wrong certificate -- which is
+    exactly how this was discovered (zad-cli, bevinding 22).
+
+    So this is a capability of the cluster and not a property of the domain, and it says
+    only what the platform will do, never whether the DNS or the ownership is in order.
+
+    Absent means True: silence is the right answer for a cluster that has not declared
+    this, since a warning nobody configured would be a guess about someone else's cluster.
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("supports_custom_domain_certificates", True)
 
 
 def get_min_cpu_m(cluster_name: str) -> int:

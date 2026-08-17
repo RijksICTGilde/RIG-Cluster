@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "prod-web"
+  namespace: "rig-myproject"
+  labels:
+    app: "prod-web"
+    deployment: "prod"
+    project: "myproject"
+    component: application
+spec:
+  strategy:
+    type: RollingUpdate
+  replicas: 1
+  revisionHistoryLimit: 3
+  # Cap how long Kubernetes reports a stalled rollout as "Progressing" before
+  # flipping it to ProgressDeadlineExceeded (default is 600s). ArgoCD's health
+  # gate waits out this window, so a broken rollout (e.g. ImagePullBackOff) would
+  # otherwise hang the sync for 10 minutes. 300s leaves room for genuinely slow
+  # starts while failing visibly faster.
+  progressDeadlineSeconds: 300
+  selector:
+    matchLabels:
+      app: "prod-web"
+      component: application
+  template:
+    metadata:
+      labels:
+        app: "prod-web"
+        deployment: "prod"
+        project: "myproject"
+        component: application
+        network-policy: allow-db-access
+    spec:
+      # Pod-level security context (OpenShift compatible)
+      securityContext:
+        # For OpenShift, let SCCs assign user/group IDs automatically.
+        # Per-component security overrides are intentionally ignored here:
+        # SCC admission injects a UID per namespace and would conflict.
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: "ghcr.io/org/web:1.2.3"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          # Container-level security context (OpenShift compatible)
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          envFrom:
+            - secretRef:
+                name: prod-web-platform
+          volumeMounts:
+            - name: "data"
+              mountPath: "/data"
+            - name: "temp"
+              mountPath: "/tmp"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 36  # 5 + (36 × 5) = 185 seconds max startup time
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: "data"
+          persistentVolumeClaim:
+            claimName: "prod-web-data"
+        - name: "temp"
+          emptyDir:
+            sizeLimit: "500Mi"

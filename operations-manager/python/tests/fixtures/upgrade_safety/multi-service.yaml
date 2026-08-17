@@ -1,0 +1,100 @@
+# Sanitized broad-coverage project: publish-on-web, keycloak, a namespace
+# PostgreSQL, MinIO, Redis and a persistent-storage mount across two components
+# and two deployments. Exercises the interesting service-config validation paths
+# that the sample projects (wies, regelrecht, moza, amt) hit on a live upgrade.
+schema-version: 2
+name: moza
+display-name: Monitoring Zaken
+description: Project created via self-service portal
+
+users:
+  - email: team@rijksoverheid.nl
+    role: admin
+  - email: dev@rijksoverheid.nl
+    role: developer
+
+clusters:
+  - odcn-production
+
+services:
+  - publish-on-web
+  - keycloak:
+      config:
+        template: standard
+  - minio-storage
+  - redis
+  - persistent-storage
+  - namespace-postgresql-database:
+      config:
+        instances: 1
+        storage: 2Gi
+
+registries: []
+
+repositories:
+  - name: main-repo
+    url: https://github.com/RijksICTGilde/moza.git
+    username: git
+    password: base64+age:UExBQ0VIT0xERVJfUkVQT19QQVNTV09SRA==
+    branch: main
+    path: .
+    project_name: moza
+
+components:
+  - name: api
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [80, 443, 5432]
+    path:
+      - match: /api
+    uses-components: []
+    resources:
+      requests:
+        memory: 256Mi
+      limits:
+        memory: 256Mi
+    services:
+      - publish-on-web
+      - keycloak
+      - namespace-postgresql-database
+      - redis
+      - minio-storage
+      - name: persistent-storage
+        config:
+          - name: data
+            size: 5Gi
+            mount-path: /data
+
+  - name: frontend
+    type: frontend
+    ports:
+      inbound: [3000]
+      outbound: [80, 443]
+    path: /
+    uses-components: []
+    resources:
+      requests:
+        memory: 128Mi
+      limits:
+        memory: 128Mi
+    services:
+      - publish-on-web
+      - keycloak
+
+deployments:
+  - name: deployment-1
+    cluster: odcn-production
+    namespace: moza
+    repository: main-repo
+    subdomain: deployment-1
+    components:
+      - reference: api
+        image: ghcr.io/rijksictgilde/moza/api:2025.02.01
+      - reference: frontend
+        image: ghcr.io/rijksictgilde/moza/frontend:2025.02.01
+
+config:
+  age-public-key: age1d489e9c48pmwam6603vecp7y29zz9fx5cgpe9uk6cu9l7asfzg9sx5s0tq
+  age-private-key: base64+age:UExBQ0VIT0xERVJfQUdFX1BSSVZBVEVfS0VZ
+  api-key: base64+age:UExBQ0VIT0xERVJfQVBJX0tFWQ==

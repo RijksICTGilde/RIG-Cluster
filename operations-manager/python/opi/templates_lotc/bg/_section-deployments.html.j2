@@ -1,0 +1,220 @@
+{#
+  De deploymentlijst van een project.
+
+  Overname van project-details/section-deployments.html.j2. Dezelfde blokken in dezelfde
+  volgorde: goedkeuringsmeldingen, componenten, Helm Charts, Helmfile, publieke links en de
+  gebruikersconfiguratie per component.
+
+  WAAROM DIT EEN MACRO IS EN NIET ALLEEN EEN LOOP
+
+  De Deployments-tab zet onder elke deployment de ArgoCD-statuskaart, die apart wordt
+  ingeladen. Dat interleaven kan niet met een {% include %} van een template dat zelf de
+  hele lus draait. Vandaar deployment_panel(): de tab loopt over de deployments en zet per
+  deployment het paneel en daaronder de lazy statuskaart. Wie dit bestand rechtstreeks
+  rendert (als los fragment) krijgt gewoon de hele lijst - dat is de body onderaan.
+
+  WAT ER ANDERS IS DAN DE BESTAANDE PAGINA, en waarom
+
+  - De knoppen "Bewerken", "Webadres" en "Verwijderen" openen de gedeelde dialoog, net als
+    op de bestaande pagina, met dezelfde flow-id en dezelfde bevestigings-URL. <c-button>
+    laat geen onclick toe, maar :attrs zet het attribuut wel door; de aanroep wordt boven
+    de tag opgebouwd omdat een genest aanhalingsteken binnen :attrs als het einde van het
+    attribuut gelezen wordt. De volgorde is alfabetisch en de index in het projectbestand
+    telt door, want die index IS de flow-id - sorteren zonder dat zou de knop "Bewerken"
+    stilletjes op een andere deployment richten.
+  - De publieke links waren knoppen met @click="window.open(this.dataset.url)". Nu gewoon
+    <c-button href=... target="_blank">: zelfde bestemming, zelfde nieuw venster, zonder
+    tekst als JavaScript uit te voeren.
+  - De wikkel <div class="deployment-section is-hidden"> is weg. Die verborg alle
+    deployments behalve een, waarna JavaScript er een zichtbaar maakte. De tab rendert er
+    nog maar EEN (die uit het pad), dus er is niets te verbergen.
+#}
+{% from "bg/_patterns.html.j2" import panel, approval_alerts %}
+
+{% macro deployment_panel(deployment, project, approval_notices={}, user_role='') %}
+{% call panel("Deployment: " ~ deployment.name, "arrow-up-arrow-down") %}
+    {# ---- De stand van deze deployment ------------------------------------------
+
+       Hier stonden twee blokken boven dit paneel: een statuskaart (naam, cluster, de rode
+       melding over uitgeschakelde componenten, Uitgeschakeld/Synced, laatste sync) en dan
+       pas "Deployment: <naam>" met de acties en de inhoud. Dezelfde deployment, twee keer
+       onder elkaar, met de naam er twee keer boven. Ze zijn samengevoegd, met DIT paneel
+       als uitgangspunt omdat het de acties en de inhoud draagt; de statusgegevens staan er
+       nu bovenin.
+
+       De ArgoCD-kant laadt zichzelf, net als voorheen: de volledige diagnose kost een
+       bevraging bij ArgoCD plus een bij kubectl, en die hoort de pagina niet op te houden.
+       Er staat er precies EEN op de pagina (de deployment uit het pad), dus dit is geen
+       bevraging per rij - de tabel op Overzicht heeft zijn eigen, gebundelde bron.
+       hx-trigger="intersect once" en niet "load": de kaart staat onder de acties, dus je
+       betaalt de bevraging pas als je zover scrolt.
+
+       De prefix is de KALE deploymentnaam; die houdt de id's van de foutenlijst in de
+       kaart uniek.
+
+       Het cluster stond in de kop van de weggevallen kaart en hoort bij de stand: het
+       zegt WAAR dit draait, en de kaart hieronder meldt alleen iets als dat het cluster
+       van deze instantie is. #}
+    <c-cluster gap="sm" align="center">
+        <c-tag type="default" label="{{ deployment.cluster }}" />
+    </c-cluster>
+
+    {% if argocd_available | default(false) %}
+        <div id="argocd-{{ deployment.name }}"
+             hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
+             hx-trigger="intersect once"
+             hx-swap="innerHTML">
+            {% include "bg/_argocd-status-skeleton.html.j2" %}
+        </div>
+    {% endif %}
+
+    {# Goedkeuringen die nog niet verleend zijn, zoals de eigenaardienst ze meldt. Dezelfde
+       vorm als naast de publieke links, want het is dezelfde melding: zie approval_alerts
+       in bg/_patterns.html.j2. #}
+    {{ approval_alerts(approval_notices.get(deployment.name, [])) }}
+
+    {% if deployment.components %}
+        <c-heading type="h4" size="5" label="Componenten" />
+        <c-stack gap="sm">
+            {% for component in deployment.components | sort(attribute='reference') %}
+                {# De rij droeg een chevron maar deed niets: een pijl die nergens heen wijst
+                   belooft iets dat er niet is. Hij opent nu het bewerkscherm van DEZE
+                   deployment, want daar staan sinds RC-78 de instellingen per component
+                   binnen deze deployment (het certificaat, de bijlage). Een eigen scherm
+                   voor alleen dit component binnen deze deployment bestaat nog niet; de
+                   titel zegt daarom waar je terechtkomt in plaats van iets anders te
+                   beloven. Alleen klikbaar voor wie mag bewerken. #}
+                {% if user_role in ['admin', 'owner'] %}
+                    {% set comp_index = project.deployments.index(deployment) %}
+                    {% set comp_bewerken = "openEditModal('modal-edit-deployment-" ~ comp_index ~ "', 'Deployment bewerken - " ~ deployment.name ~ " (" ~ component.reference ~ ")')" %}
+                    <c-layer
+                        icon="puzzle-piece"
+                        title="{{ component.reference }}"
+                        sub="{{ component.image or 'Geen container image geconfigureerd - dit component wordt niet gedeployd' }}"
+                        :attrs="{'onclick': comp_bewerken, 'style': 'cursor: pointer'}" />
+                {% else %}
+                    <c-layer
+                        icon="puzzle-piece"
+                        title="{{ component.reference }}"
+                        sub="{{ component.image or 'Geen container image geconfigureerd - dit component wordt niet gedeployd' }}" />
+                {% endif %}
+            {% endfor %}
+        </c-stack>
+    {% endif %}
+
+    {% if deployment.get('helm-charts') %}
+        <c-heading type="h4" size="5" label="Helm Charts" />
+        <c-stack gap="md">
+            {% for helm_chart in deployment.get('helm-charts', []) %}
+                <c-card outline padding="md">
+                    <c-stack gap="sm">
+                        <c-cluster gap="sm" align="center">
+                            <c-icon icon="rectangle-stack" size="sm" />
+                            <c-code>{{ helm_chart.reference }}</c-code>
+                        </c-cluster>
+                        {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping %}
+                            {% set waarden = helm_chart['helm-values'] | length %}
+                            <c-cluster gap="sm" align="center">
+                                <c-icon icon="lock-closed" size="sm" />
+                                <c-span>Helm Values</c-span>
+                                <c-tag type="default" label="{{ waarden }} waarde{{ 'n' if waarden != 1 else '' }}" />
+                            </c-cluster>
+                            <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) | forceescape }}" value-type="json" />
+                        {% endif %}
+                    </c-stack>
+                </c-card>
+            {% endfor %}
+        </c-stack>
+    {% endif %}
+
+    {% if deployment.get('helmfile') %}
+        <c-heading type="h4" size="5" label="Helmfile" />
+        <c-stack gap="md">
+            {% for helmfile in deployment.get('helmfile', []) %}
+                <c-card outline padding="md">
+                    <c-stack gap="sm">
+                        <c-cluster gap="sm" align="center">
+                            <c-icon icon="rectangle-stack" size="sm" />
+                            <c-code>{{ helmfile.reference }}</c-code>
+                        </c-cluster>
+                        {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping %}
+                            {% set waarden = helmfile['helm-values'] | length %}
+                            <c-cluster gap="sm" align="center">
+                                <c-icon icon="lock-closed" size="sm" />
+                                <c-span>Helm Values</c-span>
+                                <c-tag type="default" label="{{ waarden }} waarde{{ 'n' if waarden != 1 else '' }}" />
+                            </c-cluster>
+                            <c-secret-field
+                                value="{{ helmfile['helm-values'] | tojson(indent=2) | forceescape }}"
+                                value-type="json"
+                                content-width="lg" />
+                        {% endif %}
+                    </c-stack>
+                </c-card>
+            {% endfor %}
+        </c-stack>
+    {% endif %}
+
+    {# De configuratievariabelen van de deployment zelf staan hier bewust niet; dat besluit
+       (hoe geheimen getoond worden) staat nog open, net als op de bestaande pagina. #}
+
+    {# Alleen wat DEZE deployment zelf zet, niet wat het component al draagt.
+
+       Hier stond `project_component['user-env-vars']`: de variabelen van het PROJECT-
+       component, opgezocht via de referentie. Daardoor toonde dit blok de standaardwaarden
+       onder een kop die zegt dat het om deze deployment gaat, en stond elke variabele twee
+       keer op de pagina - een keer bij Componenten en een keer hier, met dezelfde waarde.
+
+       De deployment-componentregel draagt zijn eigen `user-env-vars`; dat zijn de
+       overschrijvingen, en dat is wat hier hoort. #}
+    {% set deployment_components = deployment.components | sort(attribute='reference') if deployment.components else [] %}
+    {% set eigen_vars = [] %}
+    {% for component in deployment_components %}
+        {% if component.get('user-env-vars') %}
+            {% set _ = eigen_vars.append((component.reference, component['user-env-vars'])) %}
+        {% endif %}
+    {% endfor %}
+
+    {% if eigen_vars %}
+        {# Heet hetzelfde als op het tabblad Componenten, want het IS hetzelfde: de
+           omgevingsvariabelen van een component. Hier stond "Gebruikers configuratie", en
+           twee namen voor een ding laten de lezer zoeken naar het verschil. Het onderscheid
+           zit in de uitleg eronder, niet in de kop. #}
+        <c-heading type="h4" size="5" label="Omgevingsvariabelen" />
+        <c-paragraph size="sm">Wat deze deployment anders instelt dan het component. De standaardwaarden staan bij Componenten.</c-paragraph>
+        <c-stack gap="md">
+            {% for reference, variabelen in eigen_vars %}
+                <c-card outline padding="md">
+                    <c-stack gap="sm">
+                        <c-cluster gap="sm" align="center">
+                            <c-icon icon="puzzle-piece" size="sm" />
+                            <c-heading type="h5" size="6" label="Component: {{ reference }}" />
+                        </c-cluster>
+                        {% for key, value in variabelen.items() %}
+                            <c-cluster gap="sm" align="center">
+                                <c-icon icon="lock-closed" size="sm" />
+                                <c-span>{{ key }}</c-span>
+                            </c-cluster>
+                            <c-secret-field value="{{ value }}" />
+                        {% endfor %}
+                    </c-stack>
+                </c-card>
+            {% endfor %}
+        </c-stack>
+    {% endif %}
+{% endcall %}
+{% endmacro %}
+
+{# De hele lijst, voor wie dit bestand rechtstreeks rendert. Alfabetisch, net als de
+   bestaande pagina. #}
+{% if project is defined %}
+    {% if project.deployments %}
+        <c-stack gap="md">
+            {% for deployment in project.deployments | sort(attribute='name') %}
+                {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
+            {% endfor %}
+        </c-stack>
+    {% else %}
+        <c-alert type="info" heading="Geen deployments geconfigureerd" />
+    {% endif %}
+{% endif %}

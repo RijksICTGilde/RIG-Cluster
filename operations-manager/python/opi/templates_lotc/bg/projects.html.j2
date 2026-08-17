@@ -1,0 +1,183 @@
+{#
+  Projectenoverzicht.
+
+  MAATSTAF: projects-overview.html.j2 met zijn vier onderdelen - kop, actiebalk, lijst,
+  samenvatting. Alle vier staan hier, in dezelfde volgorde.
+
+  EEN BEWUSTE AFWIJKING, en het is de moeite hem uit te schrijven omdat hij twee kanten
+  op is gegaan. Het origineel toont een TABEL met vijf kolommen. Die stond hier eerst
+  niet - er was een sobere kaartenlijst voor in de plaats bedacht, en dat kostte drie
+  kolommen, de knop Vernieuwen, de telling en de vier totalen zonder dat iemand dat
+  besloten had. Daarna is de tabel er precies zo neergezet als in het origineel.
+
+  Op dat beeld heeft de gebruiker gekozen: de kaarten terug, en dan met alleen de naam en
+  de omschrijving. Wat je hier komt doen is een project zoeken en openen; omgeving,
+  teamgrootte en services staan op de projectpagina zelf, een klik verderop. Het verschil
+  met de eerste ronde is dat dit nu een KEUZE is op grond van beide beelden, in plaats
+  van iets dat bij het omzetten stilletjes wegviel.
+
+  De knop Vernieuwen, de telling en de vier totalen blijven staan: die waren echt
+  verdwenen en niemand heeft gevraagd ze weg te doen.
+
+  NIEUW zijn het zoekveld en de sorteerknop. Die zijn gevraagd, en ze werken
+  SERVER-SIDE via htmx: het formulier haalt /projects opnieuw op en vervangt daarmee
+  alleen #projects-zoekgebied. Zo werkt het ook zonder JavaScript (het is een gewoon formulier
+  met GET), is een gefilterde lijst deelbaar als URL, en kan de telling niet uit de pas
+  lopen met wat eronder staat.
+
+  Het zoekveld MAG hier een component zijn, en dat is niet vanzelfsprekend: elders in dit
+  project staan gewone <input>-elementen omdat een webcomponent zijn invoerveld in de
+  schaduwboom zet en onze JavaScript daar niet bij kan. Voor een FORMULIER geldt dat niet
+  - nldd-search-field is form-associated (gemeten: customElements.get('nldd-search-field')
+  .formAssociated is true), dus hij doet gewoon mee in de serialisatie van het formulier.
+  Die grens loopt dus niet langs "component of niet" maar langs "leest onze eigen
+  JavaScript het uit, of het formulier".
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Projecten - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "Mijn projecten",
+        "Overzicht van alle projecten waar je rechten op hebt in het platform."
+    ) }}
+
+    {# ---- Actiebalk (projects-overview/_actiebalk.html.j2) ------------------- #}
+    <c-cluster gap="sm" align="center">
+        <c-button type="primary" label="Nieuw Project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
+        <c-button type="tertiary" label="Vernieuwen" icon="refresh" show-icon="before" href="/projects?refresh=true" />
+    </c-cluster>
+
+    {# ---- Zoeken en sorteren -------------------------------------------------
+       Een <form method="get"> eromheen: zonder JavaScript is dit een gewone zoekopdracht
+       die de hele pagina herlaadt, met htmx wordt alleen de lijst vervangen. De
+       sorteerkeuze reist mee in een verborgen veld, zodat zoeken de sortering niet
+       wegvaagt.
+
+       De vertraging op de trigger scheelt een verzoek per toetsaanslag. Hier stond ook
+       "changed" bij; dat is eruit, want een <form> heeft geen waarde om mee te
+       vergelijken en daardoor werd de voorwaarde nooit waar - er ging simpelweg nooit een
+       verzoek uit. #}
+    {% set huidige_sortering = project_sorteringen | selectattr('0', 'equalto', project_sort) | map(attribute='1') | first | default('Naam (A-Z)') %}
+    {# htmx haalt de PAGINA op en pakt daar #projects-zoekgebied uit (hx-select), in plaats van
+       een apart fragmentadres. Twee redenen, allebei uit meten:
+
+       1. Met een eigen fragmentadres zette hx-push-url dat adres in de adresbalk. Wie dan
+          verversde of de link deelde kreeg een kale lijst zonder navigatie of voettekst.
+          Nu staat er /projects?q=... - precies wat je wilt delen.
+       2. Een tweede adres met dezelfde gegevens is een tweede plek die kan gaan afwijken.
+
+       Dit kost een pagina in plaats van een fragment over de lijn; dat is het waard. #}
+    {# EEN gebied: zoekveld, sorteerknop en resultaten samen.
+       Eerst werd alleen #projects-lijst geswapt. De werkbalk lag daarbuiten en werd dus
+       nooit ververst: de gekozen sortering bleef op de oude optie staan, en je zoekterm
+       sprong terug omdat het veld uit de oude render bleef staan. Een tweede swap erbij
+       (hx-select-oob) loste het vinkje op maar hield twee stukken die uit de pas kunnen
+       lopen. Ze horen bij elkaar, dus vervangen we ze samen: wat je zocht, waarop je
+       sorteerde en wat dat opleverde zijn een antwoord. #}
+    <c-stack id="projects-zoekgebied" gap="lg">
+    <form autocomplete="off" method="get" action="/projects"
+          hx-get="/projects"
+          hx-select="#projects-zoekgebied"
+          hx-target="#projects-zoekgebied"
+          hx-swap="outerHTML"
+          hx-trigger="input delay:300ms, search, submit"
+          hx-push-url="true">
+        <input type="hidden" name="sort" value="{{ project_sort }}">
+
+        {# De toolbar staat er als nldd-markup en niet als <c-toolbar>. Dat is gemeten en
+           niet uit gemak: c-toolbar gooit ELK kind weg, ook een kind met een slot, want
+           het component heeft geen standaard-slot. Zo verdween het hele zoekveld.
+           De inhoud van de slots zijn wel gewone componenten. #}
+        <nldd-toolbar label="Projecten" size="md">
+            <nldd-toolbar-item slot="start" size="md">
+                {# De id is nodig voor het focusherstel in htmx-formgedrag.js: dat
+                   onthoudt bij een swap welk veld de focus had en geeft hem daarna terug,
+                   met de cursorpositie erbij.
+
+                   hx-preserve stond hier eerst en werkte niet: de echte <input> zit in de
+                   schaduwboom van nldd-search-field, en al verplaatst htmx de huls
+                   ongewijzigd, de browser geeft de focus niet terug bij zo'n verplaatsing. #}
+                <c-search-field name="q"
+                                :attrs="{'id': 'projects-zoekveld'}"
+                                value="{{ project_query }}"
+                                placeholder="Zoek op naam of omschrijving"
+                                accessible-label="Zoek een project"
+                                show-search-button
+                                width="26rem" />
+            </nldd-toolbar-item>
+
+            {# De sorteerknop met zijn uitklapmenu, als kale nldd-markup. <c-button> heeft
+               geen standaard-slot, dus het menu in slot="popup" zou weggegooid worden.
+
+               En ook het MENU staat als nldd-markup, en ook dat is gemeten: <c-menu> rendert
+               altijd een <nldd-menu-bar> en <c-menu-item> een <nldd-menu-bar-item>. Een
+               menubalk is een horizontale navigatiebalk, geen uitklapmenu - in de
+               popup-slot van een knop leverde dat een menu op dat leeg bleef. Er is in deze
+               versie geen componentvorm die een gewone <nldd-menu> geeft.
+
+               De items dragen hun bestemming TWEE keer, en dat is geen dubbelop:
+
+                 - href, zodat de bestemming in de markup staat en een gesorteerde lijst
+                   een gewone deelbare URL is;
+                 - hx-get, want een <nldd-menu-item> navigeert NIET uit zichzelf op zijn
+                   href. Gemeten op de sandbox: het menu ging open, de optie was
+                   aanklikbaar, en er gebeurde niets. Het NLDD-voorbeeld van de gebruiker
+                   hangt daarom ook een eigen adres aan zijn items.
+
+               Met hx-get doet htmx de navigatie - hetzelfde gereedschap dat de rest van
+               deze pagina al gebruikt, dus geen eigen script erbij. #}
+            <nldd-toolbar-item slot="end" size="md">
+                <nldd-button variant="secondary" expandable start-icon="sort"
+                             text="Sorteren: {{ huidige_sortering }}" type="button"
+                             popup-type="menu" size="md">
+                    <nldd-menu slot="popup" placement="bottom-end">
+                        {% for sleutel, label in project_sorteringen %}
+                            {% set sorteer_url = "/projects?sort=" ~ sleutel ~ ("&q=" ~ project_query if project_query else "") %}
+                            <nldd-menu-item type="radio" text="{{ label }}"
+                                            href="{{ sorteer_url }}"
+                                            hx-get="{{ sorteer_url }}"
+                                            hx-select="#projects-zoekgebied"
+                                            hx-target="#projects-zoekgebied"
+                                            hx-swap="outerHTML"
+                                            hx-push-url="true"
+                                            {% if sleutel == project_sort %}selected{% endif %}></nldd-menu-item>
+                        {% endfor %}
+                    </nldd-menu>
+                </nldd-button>
+            </nldd-toolbar-item>
+
+            {# GEEN eigen overloopgroep (nldd-menu-group met slot=overflow). Die stond hier, voor een smal
+               scherm, en veroorzaakte allebei de klachten van de eigenaar: het sorteren
+               stond DUBBEL op het scherm, en de hamburgerversie sorteerde niet.
+
+               Gemeten in Chromium op /projects, met de sorteerknop en de "Meer"-knop uit de
+               schaduwboom van de toolbar:
+
+                 mét de groep    1440: sorteerknop zichtbaar, Meer OOK zichtbaar
+                                 1024: sorteerknop verborgen,  Meer zichtbaar
+                                  800: sorteerknop zichtbaar, Meer OOK zichtbaar
+                 zonder          1440: sorteerknop zichtbaar, Meer verborgen
+
+               De aanwezigheid van de groep laat de toolbar dus permanent een "Meer"-knop
+               tonen, ook als alles past. En de items erin worden nooit klikbaar: na een klik
+               op "Meer" blijven ze 0x0 en loopt een klik erop af op een timeout.
+
+               Het is geen ruil waarbij we iets opgeven: de overloop van deze toolbar werkt
+               sowieso niet. Zonder de groep verschijnt op 1024 wel een "Meer"-knop maar is
+               zijn menu leeg, dus sorteren is op die breedte hoe dan ook onbereikbaar. Dat
+               is een defect in het component en staat als zodanig in
+               request_for_components.md; weghalen is intussen strikt beter, want het scheelt
+               een dubbeling en een dode knop op de breedtes waar het wel werkt. #}
+        </nldd-toolbar>
+    </form>
+
+    {# ---- De lijst (projects-overview/_tabel.html.j2) ------------------------ #}
+    <div id="projects-lijst">
+        {% include "bg/_projects-lijst.html.j2" %}
+    </div>
+    </c-stack>
+
+{% endblock %}

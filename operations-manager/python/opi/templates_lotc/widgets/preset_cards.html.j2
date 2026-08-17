@@ -1,0 +1,50 @@
+{#
+  Voorinstellingskaarten voor de LOTC-bouwlijn.
+
+  De service-card-klassen blijven staan: dat is applicatie-CSS (wizard.css) en geen
+  design-systeem-markup. Alleen de componenttags zijn omgezet.
+
+  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
+  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
+  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+#}
+{% if preset_states %}
+{# Zelfde raster als bij de dienstkaarten: <c-auto-grid min="300px">, met de klasse
+   erop als haak voor wizard.js. #}
+<c-auto-grid min="300px" gap="md" class="service-cards-grid">
+    {% for state in preset_states %}
+    {% set preset = state.preset %}
+    {% set applied = state.applied %}
+    {% set locked = state.locked %}
+    <div class="service-card{% if applied %} service-card--selected{% endif %}{% if locked %} service-card--locked-checked{% endif %}"
+         {% if not locked %}
+         hx-post="/forms/wizard/{{ flow_id|e }}/preset/{{ section_id|e }}/{{ preset.id|e }}"
+         hx-headers='{"X-CSRF-Token": "{{ csrf_token|e }}"}'
+         hx-target="#wizard-step-content"
+         hx-swap="innerHTML"
+         {% endif %}>
+        {# Een gewoon <input>, om dezelfde reden als bij de servicekaarten: <c-checkbox>
+           zet zijn invoerveld onder NLDD in de schaduwboom, en zowel wizard.js als het
+           formulier kijken daar niet. De kaart is bovendien onze eigen markup met onze
+           eigen CSS. #}
+        <input
+            type="checkbox"
+            id="preset-{{ preset.id|e }}"
+            name="_preset_{{ preset.id|e }}"
+            {% if applied %}checked{% endif %}
+            {% if locked %}disabled{% endif %}
+        />
+        <div class="service-card__content">
+            <div class="service-card__header">
+                <c-icon icon="{{ preset.icon|nldd_icon|e }}" color="{{ preset.color|e }}" size="lg" />
+                <span class="service-card__title">{{ preset.label|e }}</span>
+            </div>
+            <p class="service-card__description">{{ preset.description|e }}</p>
+            {% if locked and state.locked_hint %}
+            <p class="service-card__hint">{{ state.locked_hint|e }}</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</c-auto-grid>
+{% endif %}

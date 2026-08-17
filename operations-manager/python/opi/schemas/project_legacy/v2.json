@@ -1,0 +1,21 @@
+{
+  "$comment": "v2 -> v2.1 lifted the root marker from a component-level `root: true` to a deployment-level `root-component`. Until v2.1 a file carried the flag on the component itself, both in the project-level catalog and on a deployment component reference.",
+  "$defs": {
+    "component": {
+      "properties": {
+        "root": {
+          "description": "Legacy pre-v2.1 root marker; replaced by deployment.root-component.",
+          "type": "boolean"
+        }
+      }
+    },
+    "deployment-component": {
+      "properties": {
+        "root": {
+          "description": "Legacy pre-v2.1 root marker; replaced by deployment.root-component.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{% extends "base_lotc.html.j2" %}
+
+{#
+  Projects Overview - Self Service Portal
+
+  Table overview van alle projecten met status, team, services en acties.
+  Geïntegreerd met het Self Service Portal design systeem.
+#}
+
+{% block page_title %}Projecten - Self Service Portal{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+
+    {% include "projects-overview/_kop.html.j2" %}
+
+    {% include "projects-overview/_actiebalk.html.j2" %}
+
+    {% include "projects-overview/_tabel.html.j2" %}
+
+    {% include "projects-overview/_samenvatting.html.j2" %}
+
+</c-layout-flow>
+{% endblock %}
+
+{% block additional_styles %}
+    <link rel="stylesheet" href="{{ static_url('css/projects-overview.css') }}">
+{% endblock %}
