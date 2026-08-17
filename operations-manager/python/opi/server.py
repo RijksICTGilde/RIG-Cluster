@@ -238,6 +238,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 except Exception as e:
                     logger.error("Failed to start resource tuning scheduler: %s", e)
 
+            # Start reconciliation scheduler if enabled
+            if settings.RECONCILIATION_SCHEDULER_ENABLED:
+                try:
+                    from opi.core.reconciliation_scheduler import ReconciliationScheduler
+
+                    _reconciliation_scheduler = ReconciliationScheduler(cluster=settings.CLUSTER_MANAGER)
+                    await _reconciliation_scheduler.start()
+                    app.state.reconciliation_scheduler = _reconciliation_scheduler
+                except Exception as e:
+                    logger.error("Failed to start reconciliation scheduler: %s", e)
+
         except Exception as e:
             logger.error("Failed to start task worker: %s", e)
     else:
@@ -325,6 +336,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     resource_tuning_scheduler = getattr(app.state, "resource_tuning_scheduler", None)
     if resource_tuning_scheduler is not None:
         await resource_tuning_scheduler.stop()
+
+    # Stop reconciliation scheduler
+    reconciliation_scheduler = getattr(app.state, "reconciliation_scheduler", None)
+    if reconciliation_scheduler is not None:
+        await reconciliation_scheduler.stop()
 
     # Stop database console reaper
     db_console_reaper = getattr(app.state, "db_console_reaper", None)
