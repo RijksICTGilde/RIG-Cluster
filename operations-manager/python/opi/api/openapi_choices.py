@@ -51,6 +51,25 @@ CHOICES_KEY = "x-choices"
 CHOICES_SOURCE_KEY = "x-choices-source"
 """Waar de waarden vandaan komen als ze per project verschillen."""
 
+CHOICES_PROVIDER_KEY = "x-choices-provider"
+"""Declaratie OP een modelveld: welke provider de keuzes van dit veld levert.
+
+Voor de serviceconfig komt die koppeling uit de editables van de dienst, en die route dekt
+alles wat via ``/services/{service}/config/...`` binnenkomt. Maar hetzelfde veld bestaat ook
+buiten die routes: ``base-domain`` staat zowel op de publish-on-web-config als op het
+verzoek om een deployment te maken, en daar wist het document er niets van. Een client leest
+dan bij de ene vlag wel waar de waarden vandaan komen en bij de andere niet, terwijl het
+dezelfde vraag is (zad-cli, punt 23).
+
+Dit is de generieke vorm van dat antwoord: een veld noemt zijn provider in
+``json_schema_extra``, en de annotatie hieronder maakt er dezelfde ``x-choices`` of
+``x-choices-source`` van als bij een configveld. Eén regel per veld, geen tweede
+lijst, en een nieuw request-model krijgt het door hem te declareren.
+
+De declaratie is intern en wordt na het annoteren weer verwijderd: een client heeft niets
+aan de naam van een Python-klasse.
+"""
+
 API_DESCRIPTION = """\
 GitOps Operations and Project Infrastructure API for self-service Kubernetes environments.
 
@@ -138,6 +157,28 @@ def annotate_config_choices(openapi_schema: dict[str, Any]) -> None:
             logger.debug("Keuzelijst overgeslagen: twee lagen delen dit schema en bieden verschillende waarden")
             continue
         node.update(first)
+
+    _annotate_declared_providers(schemas)
+
+
+def _annotate_declared_providers(schemas: dict[str, Any]) -> None:
+    """Annoteer elk veld dat zijn provider zelf declareert, waar het ook staat.
+
+    De lus hierboven loopt over de configroutes; deze loopt over het hele document, zodat
+    een veld buiten die routes (een request-model) dezelfde keuzelijst krijgt door er één
+    regel bij te zetten. De marker gaat er daarna af, want die is voor ons en niet voor de
+    lezer.
+    """
+    for schema in schemas.values():
+        for node in (schema.get("properties") or {}).values():
+            if not isinstance(node, dict):
+                continue
+            provider_name = node.pop(CHOICES_PROVIDER_KEY, None)
+            if not provider_name:
+                continue
+            annotation = _annotation(str(provider_name), node)
+            if annotation is not None:
+                node.update(annotation)
 
 
 # --- voorbeelden ------------------------------------------------------------
