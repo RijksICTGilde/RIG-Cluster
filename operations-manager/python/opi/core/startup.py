@@ -32,6 +32,7 @@ from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError, create_kubectl_connector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
+from opi.core.caa_reconciler import reconcile_caa_records
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
@@ -717,6 +718,12 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # Phase 5: OAuth (requires Keycloak)
     if readiness.keycloak.ready:
         await _setup_oauth(readiness, app)
+
+    # Phase 6: CAA records on our own DNS zones (non-critical)
+    try:
+        await reconcile_caa_records()
+    except Exception as e:  # non-critical: DNS hygiene must never block boot
+        logger.error(f"CAA reconciliation failed: {e}")
 
     if readiness.is_ready:
         logger.info("All startup tasks completed successfully")
