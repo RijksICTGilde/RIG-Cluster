@@ -25,7 +25,7 @@ vars:
   BASE_TAG: '{{default "v3.5.1" .BASE_TAG}}'
 
   IMAGE_NAME: '{{default "argocd-rig" .IMAGE_NAME}}'
-  IMAGE_TAG: '{{default "v3.5.1-rig1" .IMAGE_TAG}}'
+  IMAGE_TAG: '{{default "v3.5.1-rig2" .IMAGE_TAG}}'
   REGISTRY_IMAGE: '{{default "ghcr.io/minbzk/base-images/argocd-rig" .REGISTRY_IMAGE}}'
 
   # Lokaal bouwen we voor de host-arch (kind draait op dezelfde arch als de Mac),

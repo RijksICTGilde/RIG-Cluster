@@ -1,9 +1,15 @@
 # argocd-rig — eigen Argo CD image met namespace-sync en health-fixes
 
-Upstream Argo CD **v3.5.1** plus patches: twee die voorkomen dat de cluster-cache stukloopt
-(en namespaces uit de cache verdwijnen) als één namespace weggaat of RBAC-restricted is, en
-één die `status.health` in de Application CR direct bijwerkt bij cluster-events, zodat de
-API dezelfde (verse) gezondheid rapporteert als de UI-tree.
+Upstream Argo CD **v3.5.1** plus patches, in drie groepen:
+- **correctheid**: de cluster-cache loopt niet stuk (en verliest geen namespaces) als één
+  namespace weggaat of RBAC-restricted is (0001/0002);
+- **verse status**: `status.health` in de Application CR wordt direct bijgewerkt bij
+  cluster-events, zodat de API dezelfde gezondheid rapporteert als de UI-tree (0003/0004);
+- **incremental namespace sync** (0005–0007, sinds `v3.5.1-rig2`): een project
+  aanmaken/verwijderen synct alleen de betreffende namespace bij in plaats van de complete
+  clustercache te invalideren. Dít was de minutenlange hang van `user-applications` na elke
+  projectaanmaak. Staat in deze image **standaard aan**;
+  `ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC=false` op de controller is de nooduitknop.
 
 De vorige iteratie van deze image (`v3.3.12-rig1`, branch `rig/ns-sync`) was gebaseerd op
 v3.3.12, gelijk aan de Red Hat build die productie draait
@@ -21,14 +27,12 @@ we draaien in **namespace-mode**, precies het pad dat de cache-bug raakt.
 | `0002-fix-drop-stranded-GVK-on-error-and-cap-sync-warnings.patch` | Twee fixes uit onze review op die PR, met regressietests (groen onder `-race`): (1) GVK wordt uit `apisMeta` verwijderd bij een error in `startMissingWatches`, anders blijft die tot de volgende full resync ongewatcht; (2) cap op sync-warnings (max 50 + "... and N more"), anders groeit `ConnectionState.Message` bij 47 namespaces naar honderden KB's. |
 | `0003-fix-refresh-app-health-from-cluster-cache-on-tree-on.patch` | Eigen fix: het tree-only refreshpad van de application-controller (cluster-events op child-resources, zoals pods die Ready worden) herberekent nu ook `status.health`, via dezelfde `setApplicationHealth` als het volledige vergelijkingspad. Daarvoor bleef de health in de CR — wat de API serveert — achterlopen op de resource tree die de UI toont, tot de volgende volledige comparison. Met regressietest (`TestTreeOnlyRefreshUpdatesHealth`). Kandidaat om te upstreamen (issue nodig). |
 | `0004-test-adapt-carried-cache-tests-to-release-3.5-base.patch` | Aanpassing van de meegenomen tests aan de v3.5-basis (kubetest-importpad, `strings`-import in `cluster_test.go`). |
-
-Niet meegenomen: PR [#25229](https://github.com/argoproj/argo-cd/pull/25229) (incremental namespace
-sync, achter feature flag `ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC`). Die botst qua ontwerp met
-27528 — beide introduceren dezelfde helper onder een andere naam met tegengestelde `respectRBAC`-
-semantiek. Wachten tot de auteur 25229 op 27528 rebaset. De bugfix kan wel al, de performance-feature nog niet.
+| `0005-cherry-pick-PR-25229-incremental-namespace-sync.patch` | Upstream PR [argoproj/argo-cd#25229](https://github.com/argoproj/argo-cd/pull/25229) (incremental namespace sync; nog open en upstream conflicterend), gesquasht en zelf verzoend met onze 27528-carry — het wachten op de auteur ("rebaset op 27528") duurde sinds juli en de minutenhang bij elke projectaanmaak was het bestaansrecht van deze image. Verzoening: één per-namespace-SSAR-helper (`checkNamespacePermission`, mét API-group) en het incrementele pad volgt exact dezelfde skip/warn-semantiek als de volledige sync (`handleNamespacedListError`). Bevat ook twee eigen fixes: een lock op de `namespaceCancels`-write en initialisatie van `watchCtx`/`namespaceCancels` in `startMissingWatches` (upstream zou panieken bij een incrementele add voor een ná de full sync verschenen CRD). |
+| `0006-chore-enable-incremental-namespace-sync-by-default.patch` | Zet de feature default aan; `ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC=false` blijft werken als nooduitknop. |
+| `0007-test-pass-incremental-namespace-sync-flag-at-release.patch` | Vijf `NewApplicationController`-callsites die alleen op release-3.5 bestaan krijgen het nieuwe ctor-argument. |
 
 De patches zijn de bron van waarheid: `task src:verify` bewijst dat de build-worktree exact
-`v3.3.12` + deze patches is.
+`v3.5.1` + deze patches is.
 
 ## Gebruik
 
