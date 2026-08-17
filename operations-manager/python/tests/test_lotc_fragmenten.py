@@ -25,9 +25,10 @@ tests/e2e/test_lotc_pariteit.py er met een browser op de pixels naar kijkt.
 from __future__ import annotations
 
 import re
-from types import SimpleNamespace
+from pathlib import Path
 from typing import Any
 
+import opi
 import pytest
 
 
@@ -257,11 +258,15 @@ def test_de_tijdvakknoppen_wijzen_naar_een_id_dat_bestaat() -> None:
     assert len(re.findall(r'hx-target="#metrics-content-dep1"', html)) == 5
 
     # En het blok dat dat id neerzet, zet het ook echt neer.
-    opnemer = _render(
-        "metrics_scraper/section-deployment.html.j2",
-        {"section": SimpleNamespace(context={"available": True, "project_name": "proj", "deployment_name": "dep1"})},
+    # En het blok dat dat id neerzet, zet het ook echt neer. Dat was het dienstblok van de
+    # metrics-scraper; dat is weg omdat het exact dezelfde grafieken toonde als het tabblad
+    # Metrics, dus het tabblad is nu de enige opnemer. De bron wordt hier als TEKST gelezen
+    # en niet gerenderd: dat sjabloon is de hele projectpagina en heeft een halve
+    # applicatie aan context nodig, terwijl de vraag alleen over dit ene id gaat.
+    tabblad = (Path(opi.__file__).parent / "templates_lotc" / "bg" / "project-tabs.html.j2").read_text()
+    assert 'id="metrics-content-{{ deployment_geopend.name }}"' in tabblad, (
+        "het tabblad Metrics zet het id niet meer neer waar de tijdvakknoppen op mikken"
     )
-    assert 'id="metrics-content-dep1"' in opnemer
 
 
 @pytest.mark.parametrize(("naam", "context"), BACKUP_GEVALLEN, ids=[naam for naam, _ in BACKUP_GEVALLEN])
