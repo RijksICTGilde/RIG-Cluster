@@ -319,21 +319,13 @@
                                 </nldd-button>
                             </nldd-toolbar-item>
 
-                            {# Op een smal scherm schuift de toolbar zijn inhoud naar een
-                               overloopmenu; deze groep is wat daar van sorteren te zien is. #}
-                            <nldd-menu-group slot="overflow" text="Sorteren">
-                                {% for sleutel, label in deployment_sorteringen %}
-                                    {% set sorteer_url = tabblad_url ~ "?dsort=" ~ sleutel ~ ("&q=" ~ deployment_query | urlencode if deployment_query else "") %}
-                                    <nldd-menu-item type="radio" text="{{ label }}"
-                                                    href="{{ sorteer_url }}"
-                                                    hx-get="{{ sorteer_url }}"
-                                                    hx-select="#deployments-lijst"
-                                                    hx-target="#deployments-lijst"
-                                                    hx-swap="outerHTML"
-                                                    hx-push-url="true"
-                                                    {% if sleutel == deployment_sort %}selected{% endif %}></nldd-menu-item>
-                                {% endfor %}
-                            </nldd-menu-group>
+                            {# Hier stond een eigen overloopgroep voor een smal scherm. Weg,
+                               om dezelfde gemeten reden als op /projects: de aanwezigheid
+                               ervan laat de toolbar permanent een "Meer"-knop tonen, zodat
+                               het sorteren dubbel op het scherm staat, en de items erin
+                               worden nooit klikbaar. Zie de uitleg in bg/projects.html.j2,
+                               de meting in request_for_components.md, en
+                               tests/test_lotc_toolbar_overloop.py. #}
                         </nldd-toolbar>
                     </form>
 

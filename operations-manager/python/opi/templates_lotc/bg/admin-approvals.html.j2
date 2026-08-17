@@ -49,46 +49,63 @@
     {% endif %}
 
     {# ---- Filteren op status --------------------------------------------------
-       SERVER-SIDE, net als het zoeken en sorteren op /projects, en om dezelfde drie
-       redenen: het werkt zonder JavaScript, een gefilterde lijst is deelbaar als URL, en
-       de gekozen waarde staat na een swap nog steeds in de lijst omdat de server hem
-       meerendert (`selected` hieronder) in plaats van dat de browser hem onthoudt.
+       DEZELFDE VORM ALS HET SORTEREN OP /projects, en dat is geen smaakkwestie: hier
+       stond eerst een kaal <c-select> in een <c-cluster>, en dat staat naast de
+       toolbar-knop van de projectenpagina als iets uit een andere applicatie.
 
-       Een echte <c-select> en niet <c-filter-select>: die laatste rendert een <div> met
-       een pijltje - een WEERGAVE van een filter, waar je niets in kunt kiezen.
+       Wat die vorm inhoudt, en waarom hij zo is (gemeten, zie bg/projects.html.j2):
+
+       - de toolbar staat als kale nldd-markup en niet als <c-toolbar>: dat component
+         gooit ELK kind weg, ook een kind met een slot, want het heeft geen standaard-slot;
+       - de knop met zijn menu ook, want <c-button> heeft geen standaard-slot en zou het
+         menu in slot="popup" weggooien;
+       - het menu ook, want <c-menu> rendert altijd een <nldd-menu-bar> - een horizontale
+         navigatiebalk, geen uitklapmenu - en dat blijft in een popup-slot leeg.
+
+       De items dragen hun bestemming twee keer: href zodat een gefilterde lijst een
+       deelbare URL is, en hx-get omdat een <nldd-menu-item> niet uit zichzelf op zijn href
+       navigeert (gemeten op de sandbox: menu open, optie klikbaar, en er gebeurde niets).
+
+       SERVER-SIDE, om dezelfde drie redenen als daar: het werkt zonder JavaScript, de URL
+       is deelbaar, en de gekozen waarde staat na een swap nog in het menu omdat de server
+       hem meerendert (`selected` op het item) in plaats van dat de browser hem onthoudt.
 
        Het filter staat BINNEN het geswapte gebied. Stond het erbuiten, dan hertekende de
-       lijst wel en de keuzelijst niet, en dan raakt de getoonde waarde uit de pas met wat
-       je ziet. Dezelfde les als bij de werkbalk van /projects.
-
-       Geen knop: hx-trigger="change" stuurt bij het kiezen. De <form method="get"> eromheen
-       is wat het zonder JavaScript laat werken (dan is er een verzendknop nodig, en die
-       hoort er dus te staan voor wie geen JS heeft - vandaar de noscript-knop). #}
+       lijst wel en de knop niet, en raakte het label uit de pas met wat je ziet. #}
     <c-stack id="approvals-gebied" gap="lg">
-    <form method="get" action="/admin/approvals"
-          hx-get="/admin/approvals"
-          hx-select="#approvals-gebied"
-          hx-target="#approvals-gebied"
-          hx-swap="outerHTML"
-          hx-trigger="change"
-          hx-push-url="true">
-        <c-cluster gap="sm" align="center">
-            <c-select name="status" :attrs="{'aria-label': 'Filter op status'}">
-                {# :selected= en niet {% if %} tussen de attributen: de componentparser leest
-                   de attributenlijst zelf en struikelt over Jinja daarbinnen
-                   ("Unknown attribute '{%' on component 'c-option'"). De dubbelepunt bindt
-                   een gewone Python-uitdrukking. #}
-                {% for sleutel, label in approval_statussen %}
-                    <c-option value="{{ sleutel }}" :selected="sleutel == approval_status">{{ label }}</c-option>
-                {% endfor %}
-            </c-select>
-            <noscript><c-button type="secondary" label="Filter" /></noscript>
-            <c-paragraph size="sm" color="grijs-500" no-spacing>
-                {{ approvals_getoond }} van {{ approvals_totaal }}
-                aanvra{{ 'gen' if approvals_totaal != 1 else 'ag' }}
-            </c-paragraph>
-        </c-cluster>
-    </form>
+    {% set huidige_status = (approval_statussen | selectattr('0', 'equalto', approval_status) | map(attribute='1') | first) | default('Alle statussen') %}
+    <nldd-toolbar label="Domeinaanvragen" size="md">
+        <nldd-toolbar-item slot="start" size="md">
+            <nldd-button variant="secondary" expandable start-icon="filter"
+                         text="Status: {{ huidige_status }}" type="button"
+                         popup-type="menu" size="md">
+                <nldd-menu slot="popup" placement="bottom-start">
+                    {% for sleutel, label in approval_statussen %}
+                        {% set filter_url = "/admin/approvals" ~ ("?status=" ~ sleutel if sleutel else "") %}
+                        <nldd-menu-item type="radio" text="{{ label }}"
+                                        href="{{ filter_url }}"
+                                        hx-get="{{ filter_url }}"
+                                        hx-select="#approvals-gebied"
+                                        hx-target="#approvals-gebied"
+                                        hx-swap="outerHTML"
+                                        hx-push-url="true"
+                                        {% if sleutel == approval_status %}selected{% endif %}></nldd-menu-item>
+                    {% endfor %}
+                </nldd-menu>
+            </nldd-button>
+        </nldd-toolbar-item>
+
+        {# GEEN eigen overloopgroep (nldd-menu-group met slot=overflow). Die stond op /projects
+           bedoeld voor een smal scherm, maar hier kwam hij ERNAAST te staan in plaats van
+           ervoor in de plaats: het filter stond dubbel op het scherm, als knop en als
+           hamburgermenu. Deze toolbar draagt maar een ding, dus er valt ook niets over te
+           laten lopen. #}
+    </nldd-toolbar>
+
+    <c-paragraph size="sm" color="grijs-500">
+        {{ approvals_getoond }} van {{ approvals_totaal }}
+        aanvra{{ 'gen' if approvals_totaal != 1 else 'ag' }}
+    </c-paragraph>
 
     {% if projects_data %}
         {% for project in projects_data %}
