@@ -152,6 +152,33 @@ class TestSleepModeOn:
         assert result["sleep_state"] == "disabled"
 
 
+class TestWakeUsesTheSameWord:
+    """``/wake`` has to say ``disabled`` where ``/status`` says it, or the word splits again."""
+
+    @pytest.mark.asyncio
+    async def test_a_deployment_the_config_does_not_match_is_disabled(self) -> None:
+        # It reported the stored state (``awake``) here, while /status called the very
+        # same situation ``disabled`` -- one word, two meanings, on the pair of endpoints
+        # this field exists to keep aligned.
+        deployment = {"name": DEPLOYMENT, "cluster": "odcn-production", "sleep": {"state": "awake"}}
+        project = _project(deployment)
+        manager = AsyncMock()
+        manager.get_contents = AsyncMock(return_value=project.data)
+        config = MagicMock()
+        config.matches.return_value = False
+        with (
+            patch("opi.services.project_store.get_project_store", return_value=_store(project)),
+            patch("opi.manager.project_manager.ProjectManager", lambda **kwargs: manager),
+            patch("opi.services.catalog.sleep_mode.config.load", return_value=config),
+        ):
+            result = await flow.wake(PROJECT, DEPLOYMENT)
+
+        assert result.changed is False
+        assert result.state == "disabled"
+        # A no-op writes nothing, exactly as before.
+        manager.save_and_commit_project.assert_not_awaited()
+
+
 # --- the endpoints and the document --------------------------------------------------
 
 

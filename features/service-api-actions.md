@@ -65,6 +65,7 @@ One declaration carries everything the endpoint needs:
 | `combinations` | which fields go together, plus a dotted path to where that rule is *already* enforced |
 | `disjunctions` | which fields are an either/or ("send A or B"), plus that same dotted path |
 | `example` | a curl line that works |
+| `rollout_task_type` | that the action's change has to reach the cluster, and which task type does the processing |
 | `handler` | the async function that does the work |
 
 Route, multipart signature, per-field documentation and the OpenAPI description are
@@ -113,6 +114,30 @@ Replacing on id without warning is only ever what an upsert does, and the caller
 ask for it. A `POST` that quietly overwrote would lie about what it did, and the owner
 would find out when the old file was gone. Whether replacing was intended is the caller's
 business -- which is why the caller states it.
+
+### An action that rolls out
+
+`rollout_task_type` says the change has to reach the cluster. Without it an action only
+writes the project file, and whether that ever becomes a manifest is a coincidence -- the
+attachments bug: a replaced certificate was committed and no pod ever saw it.
+
+Declaring it changes the route's contract:
+
+- the route gains the same `rollout` query parameter (default `true`) every other mutating
+  endpoint has;
+- on success it answers **`202`** instead of `201`/`200`, with `task_id` and a `Location:
+  /api/tasks/{task_id}` header, so the caller follows it like any other task;
+- the handler's own body travels along inside the 202 body, so nothing the synchronous
+  answer said is lost;
+- the **write stays synchronous**: it is validated and committed in the request (an upload
+  does not belong in a task payload). Only the processing is deferred;
+- **refusals stay synchronous** -- 404, 409, 413 and 422 are still the immediate answer and
+  create no task;
+- `rollout=false` saves without processing and counts as a pending rollout, exactly as
+  elsewhere.
+
+`_enqueue_action_rollout` in `opi/api/v2/router.py` does this for every action that
+declares it; the router still names no service.
 
 ## The attachment endpoints
 
@@ -173,7 +198,12 @@ curl -X PUT -H "X-API-Key: $KEY" -F file=@server-2027.pem \
   https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/attachment/server-cert
 ```
 
-Responses: `201` created, `200` replaced, `409` id taken (or the project has no encryption
+Responses: all four routes declare `rollout_task_type` (see "An action that rolls out"), so
+a successful call answers **`202`** with a `task_id` and a `Location: /api/tasks/{task_id}`
+header -- the attachment is written and validated in the request, the processing that puts
+it in the running pod is the task. The old body travels along in the 202: `attachment`,
+`replaced` (was the `201` / `200` distinction), and on a component route `component` too.
+Refusals are unchanged and synchronous: `409` id taken (or the project has no encryption
 key), `404` unknown attachment or component, `413` file too large, `422` a field or field
 combination the rules refuse.
 
