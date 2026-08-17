@@ -97,3 +97,59 @@ class TestDeSpec:
         schema = model.model_json_schema()
         assert "ErrorCategory" in schema.get("$defs", {})
         assert "InvalidInput" in schema["$defs"]["ErrorCategory"]["enum"]
+
+
+class TestElkeTaakVertelt:
+    """26b: het veld declareren is niet genoeg als de runtime het niet invult.
+
+    Drie lagen, en ze moesten alle drie mee. Deze klasse bewaakt de eerste twee; de derde
+    (een handler die gooit) staat in tests/test_task_worker_failure_result.py.
+    """
+
+    def test_elk_resultaatmodel_kent_type_en_categorie(self) -> None:
+        """Ook de taaktypen die vroeger geen faalvelden hadden. Een client die op één
+        taaktype op het veld kan rekenen, moet dat op alle kunnen."""
+        zonder = [
+            model.__name__
+            for model in TASK_RESULT_MODELS.values()
+            if not {"error_type", "error_category", "error"} <= set(model.model_fields)
+        ]
+        assert not zonder, f"resultaatmodellen zonder de faalvelden: {zonder}"
+
+    def test_bijna_elke_faaldict_noemt_een_reden(self) -> None:
+        """De tweede laag: een handler die 'failed' teruggeeft moet zeggen waarom.
+
+        De vier uitzonderingen zijn de geneste ``processing``-blokken, die de reden een
+        niveau hoger al dragen.
+        """
+        import re
+        from pathlib import Path
+
+        bron = "".join(
+            (Path(__file__).parent.parent / "opi" / "core" / naam).read_text()
+            for naam in (
+                "task_handlers_components.py",
+                "task_handlers_project.py",
+                "task_handlers_operations.py",
+                "task_handlers_deployment.py",
+            )
+        )
+        blokken = re.findall(r'\{[^{}]*"status": "failed"[^{}]*\}', bron, re.DOTALL)
+        zonder = [" ".join(b.split()) for b in blokken if "error_type" not in b]
+        assert all(b == '{"status": "failed"}' for b in zonder), (
+            f"faal-dicts zonder error_type die geen genest processing-blok zijn: {zonder}"
+        )
+
+    @pytest.mark.parametrize(
+        ("error_type", "verwacht"),
+        [
+            ("invalid_project_name", ErrorCategory.InvalidInput),
+            ("already_exists", ErrorCategory.InvalidInput),
+            ("component_not_found", ErrorCategory.InvalidInput),
+            ("deployment_not_found", ErrorCategory.InvalidInput),
+            ("processing_failed", ErrorCategory.Unknown),
+            ("internal_error", ErrorCategory.Unknown),
+        ],
+    )
+    def test_de_nieuwe_redenen_vallen_waar_ze_horen(self, error_type: str, verwacht: ErrorCategory) -> None:
+        assert error_category_for(error_type) == verwacht
