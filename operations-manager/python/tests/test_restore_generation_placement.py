@@ -383,6 +383,79 @@ class TestGenerationRelocation:
         assert services[1]["config"]["generation"] == 2
         assert len(services) == 2
 
+    def test_a_namespace_postgres_project_gets_the_value_under_its_own_service_name(self) -> None:
+        """The old component-level writer always used the fixed ``postgresql-database`` key.
+
+        Moving it up under the key it was FOUND under leaves it where nobody reads it: the
+        reader asks for the service the project declares, so the generation falls back to 0
+        and the restore aims at ``{db}_v1`` again -- a database that already exists.
+        """
+        data = _with_component_generation("postgresql-database", 3)
+        data["services"] = ["namespace-postgresql-database", "minio-storage"]
+        data["components"][0]["services"] = ["namespace-postgresql-database", "minio-storage"]
+
+        assert relocate_resource_generations_to_deployment(data) is True
+
+        assert create_project_file_handler().get_database_generation(data, DEPLOYMENT) == 3
+        references = [entry.get("reference") for entry in data["deployments"][0]["services"]]
+        assert references == ["namespace-postgresql-database"]
+
+    def test_the_two_postgres_names_merge_into_one_value_without_a_shadow_entry(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A second entry next to the real one is worse than a wrong number.
+
+        ``reconciliation`` resolves ``postgresql-database`` FIRST and only then falls back to
+        the namespace variant, so a shadow entry makes it expect ``_v3`` while ``_v5`` runs --
+        the live database is then marked an orphan and purged.
+        """
+        data = _with_component_generation("postgresql-database", 3)
+        data["services"] = ["namespace-postgresql-database", "minio-storage"]
+        data["components"][0]["services"] = ["namespace-postgresql-database", "minio-storage"]
+        data["deployments"][0]["services"] = [
+            {"reference": "namespace-postgresql-database", "config": {"generation": 5}}
+        ]
+
+        with caplog.at_level("WARNING"):
+            assert relocate_resource_generations_to_deployment(data) is True
+
+        handler = create_project_file_handler()
+        assert handler.get_database_generation(data, DEPLOYMENT) == 5
+        assert handler.get_deployment_service_generation(data, DEPLOYMENT, "postgresql-database") is None
+        assert "component-level 3" in caplog.text
+        assert "deployment-level 5" in caplog.text
+
+    def test_a_value_under_the_undeclared_postgres_name_is_merged_in_and_cleared(self) -> None:
+        """Even without a component-level value, the shadow entry must not stay behind."""
+        data = _project_file()
+        data["services"] = ["namespace-postgresql-database", "minio-storage"]
+        data["components"][0]["services"] = ["namespace-postgresql-database", "minio-storage"]
+        data["deployments"][0]["services"] = [{"reference": "postgresql-database", "config": {"generation": 4}}]
+
+        assert relocate_resource_generations_to_deployment(data) is True
+
+        handler = create_project_file_handler()
+        assert handler.get_database_generation(data, DEPLOYMENT) == 4
+        assert handler.get_deployment_service_generation(data, DEPLOYMENT, "postgresql-database") is None
+        # Idempotent: nothing left to merge on a second pass.
+        assert relocate_resource_generations_to_deployment(data) is False
+
+    def test_a_preexisting_entry_without_a_generation_survives_the_move(self) -> None:
+        """The cleanup may only drop entries the move itself hollowed out."""
+        data = _project_file()
+        data["deployments"][0]["components"][0]["services"] = {
+            "postgresql-database": [
+                {"reference": "other"},
+                {"reference": "db", "config": {"generation": 2}},
+            ]
+        }
+
+        assert relocate_resource_generations_to_deployment(data) is True
+
+        remaining = data["deployments"][0]["components"][0]["services"]["postgresql-database"]
+        assert remaining == [{"reference": "other"}]
+        assert create_project_file_handler().get_database_generation(data, DEPLOYMENT) == 2
+
     def test_storage_generations_are_left_alone(self) -> None:
         """A PVC name carries the component, so its generation stays component-level."""
         data = _project_file()
