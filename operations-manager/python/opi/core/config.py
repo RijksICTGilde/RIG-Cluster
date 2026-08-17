@@ -347,6 +347,18 @@ class Settings(BaseSettings):
     # Deletion grace period (days before marked resources are purged by reconciliation)
     DELETION_GRACE_PERIOD_DAYS: int = 7
 
+    # Nightly reconciliation. Without this the job only ever ran when an admin called
+    # POST /api/v2/admin/reconciliation/trigger by hand, so marked resources were never
+    # actually purged. Runs after the resource tuner's window.
+    #
+    # Dry-run is the DEFAULT on purpose: the first thing this scheduler must earn is
+    # trust. It logs what it would purge without touching anything, so a night or two of
+    # logs shows exactly which marks are in play before unattended deletion is switched
+    # on with RECONCILIATION_DRY_RUN=false in the cluster overlay.
+    RECONCILIATION_SCHEDULER_ENABLED: bool = True
+    RECONCILIATION_HOUR: int = 3  # local time (Europe/Amsterdam)
+    RECONCILIATION_DRY_RUN: bool = True
+
     # Async task worker settings
     TASK_WORKER_ENABLED: bool = True
     TASK_WORKER_POLL_INTERVAL: float = 2.0
