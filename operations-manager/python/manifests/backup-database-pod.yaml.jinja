@@ -93,6 +93,13 @@ spec:
               --tags="deployment:{{ deployment_name | default('unknown') }}" \
               --tags="component:{{ component_name | default('unknown') }}" \
               --tags="database:{{ reference_name }}" \
+              # The database this dump was taken FROM. Its name is also the name of its
+              # default schema, which a restore into a differently named database has to
+              # rename. Composing that name afterwards from project/deployment/generation
+              # is a reconstruction and was measured wrong (RC-121): the generation in the
+              # project file lagged behind the database the backup actually read. This tag
+              # is the dump itself talking.
+              --tags="source_database:{{ db_name }}" \
               --tags="source_host:{{ db_host }}" \
               --tags="source_type:{{ source_type }}" \
               --tags="generation:{{ generation | default('0') }}" \

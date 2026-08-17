@@ -171,6 +171,8 @@ def _manager() -> DatabaseBackupManager:
     manager._wait_for_pod = AsyncMock(return_value=True)  # type: ignore[method-assign]
     manager._cleanup_pod = AsyncMock()  # type: ignore[method-assign]
     manager.lock = MagicMock()
+    # No snapshot metadata unless a test provides it.
+    manager.list_database_snapshots = AsyncMock(return_value=[])  # type: ignore[method-assign]
     return manager
 
 
@@ -180,6 +182,18 @@ def _applied_pod(manager: DatabaseBackupManager) -> dict[str, Any]:
 
 
 _SNAPSHOT = SnapshotInfo(
+    snapshot_id="k1",
+    pvc_name="amt-db",
+    timestamp="2026-08-01T10:00:00Z",
+    project_name="amt",
+    deployment_name="prod",
+    generation=2,
+    resource_type="database",
+    source_database="amt_prod_v2",
+)
+
+#: A snapshot from before the source_database tag existed: only the metadata to compose from.
+_SNAPSHOT_WITHOUT_TAG = SnapshotInfo(
     snapshot_id="k1",
     pvc_name="amt-db",
     timestamp="2026-08-01T10:00:00Z",
@@ -213,10 +227,37 @@ class TestTheManagerNamesTheSourceSchema:
         assert _env_value(_applied_pod(manager), "SOURCE_SCHEMA") == "amt_prod_v2"
 
     @pytest.mark.asyncio
-    async def test_without_a_supplied_name_it_is_composed_from_the_snapshot(self) -> None:
-        """The dump's own metadata says which project, deployment and generation it holds."""
+    async def test_the_snapshots_own_tag_beats_what_the_caller_says(self) -> None:
+        """Measured on the cluster: the caller's idea of the previous generation can lag.
+
+        A second generation restore passed ``amt_prod`` while the backup had dumped
+        ``amt_prod_v2``. The backup pod tags the database it really dumped, so that tag
+        wins.
+        """
         manager = _manager()
         manager.list_database_snapshots = AsyncMock(return_value=[_SNAPSHOT])  # type: ignore[method-assign]
+
+        await manager._restore_database(
+            cluster="local",
+            namespace="rig-amt",
+            reference_name="amt-db",
+            target_database_host="postgres.example",
+            target_database_port=5432,
+            target_database_name="amt_prod_v3",
+            target_database_user="amt_prod",
+            target_database_password="pw",
+            snapshot_id="k1",
+            project_name="amt",
+            source_database_name="amt_prod",
+        )
+
+        assert _env_value(_applied_pod(manager), "SOURCE_SCHEMA") == "amt_prod_v2"
+
+    @pytest.mark.asyncio
+    async def test_without_a_tag_or_a_supplied_name_it_is_composed_from_the_snapshot(self) -> None:
+        """Snapshots from before the tag existed still have project, deployment and generation."""
+        manager = _manager()
+        manager.list_database_snapshots = AsyncMock(return_value=[_SNAPSHOT_WITHOUT_TAG])  # type: ignore[method-assign]
 
         await manager._restore_database(
             cluster="local",
@@ -237,7 +278,6 @@ class TestTheManagerNamesTheSourceSchema:
     async def test_an_unresolvable_source_leaves_the_name_empty(self) -> None:
         """Nothing is invented: the pod then refuses unless there is nothing to rename."""
         manager = _manager()
-        manager.list_database_snapshots = AsyncMock(return_value=[])  # type: ignore[method-assign]
 
         await manager._restore_database(
             cluster="local",

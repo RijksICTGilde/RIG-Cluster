@@ -94,6 +94,11 @@ class KopiaSnapshot:
         return self._get_tag("storage")
 
     @property
+    def source_database(self) -> str | None:
+        """The database this snapshot was dumped from (database backups only)."""
+        return self._get_tag("source_database")
+
+    @property
     def generation(self) -> int | None:
         """Extract generation from tags."""
         value = self._get_tag("generation")
