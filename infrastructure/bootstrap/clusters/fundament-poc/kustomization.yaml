@@ -12,8 +12,6 @@ kind: Kustomization
 #
 # Nog niet opgenomen, wachtend op een beslissing:
 #
-# - external-dns: vraagt de DNS-zone en TransIP-credentials. Zodra het A-record
-#   router.fundament-poc.rijksapp.dev staat, kan dit erbij.
 # - backup-destination: staat ook op ODCN buiten de clusterlijst en gaat via
 #   `task bootstrap-backup-destination`. Let op punt 2.2o: die overlay selecteert
 #   tenant-namespaces op het Capsule-tenantlabel, en Capsule draait hier niet.
@@ -31,3 +29,10 @@ resources:
   - ../../infrastructure/minio/config/overlays/fundament-poc
   - ../../infrastructure/prometheus/controller/overlays/fundament-poc
   - ../../infrastructure/redis/controller/overlays/fundament-poc
+  # external-dns staat klaar maar is uitgeschakeld tot zijn secret bestaat. De deployment
+  # verwacht `transip-credentials` in deze namespace, en dat secret zit alleen in de
+  # odcn-overlay (transip-secret.yaml.sops.yaml), versleuteld met de ODCN-sleutel.
+  # Aanzetten: ontsleutel dat bestand met security/key.txt, herversleutel het met
+  # security/fundament-poc-key.txt naar de secrets/config/overlays/fundament-poc map,
+  # en haal het commentaarteken hieronder weg.
+  # - ../../infrastructure/external-dns/controller/overlays/fundament-poc

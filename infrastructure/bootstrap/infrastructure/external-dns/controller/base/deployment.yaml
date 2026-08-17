@@ -25,7 +25,7 @@ spec:
               cpu: 100m
               memory: 256Mi
           name: external-dns
-          image: rcr.rijksapps.nl/k8s-rig/external-dns/external-dns:v0.15.0
+          image: registry.k8s.io/external-dns/external-dns:v0.15.0
           args:
             - --source=ingress
             - --provider=transip

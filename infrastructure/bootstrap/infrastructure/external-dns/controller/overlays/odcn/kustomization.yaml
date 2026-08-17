@@ -11,6 +11,11 @@ patches:
       kind: Deployment
       name: external-dns
     patch: |-
+      # De RCR-mirror hoort hier en niet in de base: ghcr en registry.k8s.io zijn op
+      # ODCN geblokkeerd, maar op andere clusters is rcr.rijksapps.nl juist onbereikbaar.
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: rcr.rijksapps.nl/k8s-rig/external-dns/external-dns:v0.15.0
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --domain-filter=rijks.app
