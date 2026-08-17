@@ -1,18 +1,20 @@
-"""ProjectManager.add_service: wanneer er wél en wanneer er niet opgeslagen wordt.
+"""Aanvulling op ``test_add_service_binds_existing.py``: de andere kanten van de opslagpoort.
 
-De poort die dit bewaakt keek alleen naar ``services_added``. Dat is niet hetzelfde als
-"er is iets veranderd": staat de dienst al op PROJECTniveau maar nog niet op het gevraagde
-component, dan is ``services_added`` leeg terwijl de componentlijst wel gemuteerd is. De
-mutatie werd dan zonder commit weggegooid, terwijl het antwoord hem als
-``components_updated`` meldde. De API zei dus dat het component bijgewerkt was en er
-veranderde niets -- gemeten op de sandbox tijdens de doorloop van RC-118, waar
-``POST /api/projects/{p}/services`` met ``components: ["web"]`` ``success`` gaf, geen
-commit in ``zad-projects`` achterliet en de serviceslijst van het component leeg hield.
+De breuk zelf -- een component binden aan een al geselecteerde dienst werd gemeld maar niet
+opgeslagen -- staat vast in ``test_add_service_binds_existing.py``, samen met de uitrolpoort
+en de eerlijkheid van ``components_updated``. Dit bestand herhaalt dat niet en dekt wat daar
+niet in zit:
 
-Git is gemockt op ``save_and_commit_project``: het onderwerp is de OPSLAGBESLISSING, niet
-de git-weg. Daarom controleert elke test of er opgeslagen is EN wat er dan in
-``project_data`` staat -- zonder die tweede helft blijft een save die het verkeerde
-bewaart onzichtbaar.
+* de COMMITBOODSCHAP noemt wat er werkelijk gebeurde. Zonder die poort mag de boodschap
+  "add service(s)  in project 'demo'" worden zodra ``services_added`` leeg is, en dan is in
+  de git-geschiedenis niet meer te zien dat er een binding was;
+* ``component_names=None`` op een dienst die al staat -- de "niets veranderd"-test hiernaast
+  geeft wel een component mee, dus dit pad kwam er niet langs;
+* de weg die altijd al werkte: een NIEUWE dienst, met en zonder componenten. De poort werd
+  verruimd, en die verruiming mag de gewone toevoeging niet omgooien.
+
+Git is gemockt op ``save_and_commit_project``: het onderwerp is de opslagbeslissing, niet de
+git-weg.
 """
 
 from __future__ import annotations
@@ -63,34 +65,11 @@ def _component_service_names(project_data: dict) -> list[str]:
     return [e if isinstance(e, str) else e.get("reference") for e in entries]
 
 
-class TestDienstStaatAlOpHetProject:
-    """De breuk: niets toe te voegen op projectniveau, wel op het component."""
+class TestDeCommitboodschap:
+    """Wat er in de git-geschiedenis komt te staan, moet de binding noemen."""
 
     @pytest.mark.asyncio
-    async def test_component_koppeling_wordt_opgeslagen(self):
-        project_data = _project(["publish-on-web"], [])
-        manager, save = _wire(project_data)
-
-        result = await manager.add_service("publish-on-web", ["web"])
-
-        assert result["success"] is True
-        assert result["services_added"] == []
-        assert result["components_updated"] == ["web"]
-        assert save.await_count == 1, "de component-mutatie is niet opgeslagen"
-
-    @pytest.mark.asyncio
-    async def test_de_dienst_staat_daarna_echt_op_het_component(self):
-        project_data = _project(["publish-on-web"], [])
-        manager, save = _wire(project_data)
-
-        await manager.add_service("publish-on-web", ["web"])
-
-        assert "publish-on-web" in _component_service_names(project_data)
-        opgeslagen = save.await_args.args[0]
-        assert "publish-on-web" in _component_service_names(opgeslagen)
-
-    @pytest.mark.asyncio
-    async def test_de_commitboodschap_noemt_het_component(self):
+    async def test_de_boodschap_noemt_het_component_en_de_dienst(self):
         manager, save = _wire(_project(["publish-on-web"], []))
 
         await manager.add_service("publish-on-web", ["web"])
@@ -99,19 +78,19 @@ class TestDienstStaatAlOpHetProject:
         assert "web" in boodschap
         assert "publish-on-web" in boodschap
 
+    @pytest.mark.asyncio
+    async def test_bij_een_nieuwe_dienst_noemt_de_boodschap_de_toevoeging(self):
+        manager, save = _wire(_project([], []))
+
+        await manager.add_service("publish-on-web", ["web"])
+
+        boodschap = save.await_args.args[1]
+        assert "publish-on-web" in boodschap
+        assert "demo" in boodschap
+
 
 class TestNietsVeranderd:
-    """Geen mutatie, geen commit -- die kant mag de fix niet omgooien."""
-
-    @pytest.mark.asyncio
-    async def test_dienst_staat_al_op_project_en_component(self):
-        manager, save = _wire(_project(["publish-on-web"], ["publish-on-web"]))
-
-        result = await manager.add_service("publish-on-web", ["web"])
-
-        assert result["services_added"] == []
-        assert result["components_updated"] == []
-        assert save.await_count == 0, "er is opgeslagen terwijl er niets veranderde"
+    """Geen mutatie, geen commit -- die kant mag de verruimde poort niet omgooien."""
 
     @pytest.mark.asyncio
     async def test_zonder_componenten_en_dienst_bestaat_al(self):

@@ -250,6 +250,14 @@ Each cluster defines which domains it supports for nice URLs in `CLUSTER_CONFIG`
 
 The cluster's `ingress_postfix` (e.g., `.kind`, `.rig.prd1.gn2.quattro.rijksapps.nl`) is used as the default domain when no `base-domain` is specified.
 
+### Wat een client hiervan te zien krijgt
+
+`GET /api/v2/projects/{p}/clusters` geeft per cluster `base-domains` (de lijst hierboven), `custom-domain-certificates` (wat een domein buiten die lijst hier oplevert) en `default-domain`.
+
+`default-domain` is de `ingress_postfix` zonder de punt ervoor, en het staat er omdat de lijst zelf niet verraadt welke keuze meteen in gebruik gaat. De regel zit in `is_deployment_domain_approved`: een leeg `base-domain` en het domein van het cluster zelf gaan zonder goedkeuring, elke andere waarde vraagt er een aan en draait tot dat moment op het clusteradres. En dat clusterdomein kan gewoon als gewone entry in `base-domains` staan -- op `sandboxed-local` is `sandbox.rijksapp.dev` allebei -- dus "alleen de lege waarde is gratis" is aantoonbaar fout. Zonder dit veld moest een client het clusterdomein uit het label van de lege optie parsen.
+
+Bewust het feit en niet het oordeel. Een veld dat per optie zegt of er goedkeuring nodig is, kan ook de stand van dit project meewegen (een domein dat dit project al goedgekeurd heeft vraagt niets meer), en dat is een keuze die nog niet gemaakt is; `default-domain` kan niet verkeerd zijn en sluit die rijkere variant niet uit.
+
 ## Complete YAML Reference
 
 ```yaml
