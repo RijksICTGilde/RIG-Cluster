@@ -31,3 +31,21 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+    # De mailrelay. Twee poorten met twee doelen: 587 om zelf post aan te bieden (ZAD
+    # verstuurt uitnodigingen en meldingen als gewoon account), 8080 om via de management-API
+    # accounts voor projecten aan te maken en in te trekken.
+    #
+    # De relaykant laat OPI al binnen (mail-relay-networkpolicy in rig-prd-ron); zonder deze
+    # regel blokkeert OPI's eigen beleid het alsnog aan de uitgaande kant, want die kent
+    # alleen 443, 53 en backup:9000. Dat het vandaag toch zou werken komt door de
+    # emergency-restore-allow-all die live over de namespace ligt, en daar mag niets op
+    # leunen.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-ron
+      ports:
+        - protocol: TCP
+          port: 587
+        - protocol: TCP
+          port: 8080

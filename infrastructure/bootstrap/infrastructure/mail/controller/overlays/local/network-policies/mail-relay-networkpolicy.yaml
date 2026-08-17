@@ -58,13 +58,16 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # De upstream mailserver. Alleen submission; verder heeft de relay buiten het cluster
-    # niets te zoeken. Anders dan op ODCN staat hier wel 0.0.0.0/0: welke testupstream een
-    # ontwikkelaar gebruikt ligt niet vast, en er hangt hier geen RON-koppeling aan. Op
-    # ODCN is het adres wel bekend en staat het er als /32 in.
+    # De upstream mailserver. Alleen de twee poorten waarop een upstream post aanneemt;
+    # verder heeft de relay buiten het cluster niets te zoeken. Anders dan op ODCN staat
+    # hier wel 0.0.0.0/0: welke testupstream een ontwikkelaar gebruikt ligt niet vast, en er
+    # hangt hier geen RON-koppeling aan. Op ODCN is het adres wel bekend en staat het er als
+    # /32 in, en daar is het alleen 25 omdat dat de enige poort is die daar open staat.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
       ports:
+        - protocol: TCP
+          port: 25
         - protocol: TCP
           port: 587
