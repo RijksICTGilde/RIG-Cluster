@@ -6,12 +6,16 @@ afhankelijke velden ``<select>`` zijn. De fix hangt aan een document-brede
 voor ELK afhankelijk veld. Niet elk afhankelijk veld is een select, en dat is wat hier
 getoetst wordt.
 
-Geteld op de bron (elke ``data-rerender`` per visualizer, met zijn ``widget=``):
+Geteld op de bron met een AST-telling over ``opi/`` (elke ``EditableVisualizer`` met
+``data-rerender`` in zijn ``attributes``, met zijn ``widget=``) - 23 velden in totaal:
 
-    11x SELECT          cross-domain, TLS-modus, URL-formaat, Basisdomein, Root component, ...
+    19x SELECT          cross-domain (8), publish-on-web (6), deployments (4), bijlagen (1)
      2x TEXT            Subdomein, Eigen domein
      1x CHECKBOX        keycloak "Toegang beperken"
      1x CHECKBOX_GROUP  de componentstap, "Gebruikte services"
+
+Tel niet met een grep: de acht cross-domain-velden delen een ``_CASCADE``-constante als
+``attributes``, dus een grep op ``data-rerender`` telt ze als een en komt uit op 15/11.
 
 Twee dingen maken de laatste twee anders dan een select, en beide zijn hier gemeten:
 
