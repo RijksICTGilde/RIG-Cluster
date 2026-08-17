@@ -4,7 +4,7 @@
 
 Automatic detection of ImagePullBackOff errors on deployments, with auto-disable of the affected component to prevent continuous registry slamming. When a new image is pushed for the component, the disabled state is automatically reset.
 
-This extends the existing sanitize endpoint (which already handles OOM kills and crash loops) with image pull error detection.
+This extends the existing sanitize endpoint (which already handles crash loops) with image pull error detection. Sanitize does not disable for OOM kills: those belong to the resource tuner, see `auto-resource-tuning.md`.
 
 ## How it works
 
