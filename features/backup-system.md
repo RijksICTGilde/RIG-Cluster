@@ -602,7 +602,11 @@ generation: 2     -> myproject-staging-v2
 
 ### Project File Structure
 
-Generation is stored at different levels depending on resource type:
+Generation is stored at the level the resource's NAME is scoped to. That is not a
+convention you have to remember separately — read the naming table above: a PVC name
+carries the component, a database and a bucket name carry only the project and the
+deployment. So a PVC has one generation per component, a database and a bucket have one
+per deployment, shared by every component in it.
 
 **PVC Generation** (component-level):
 ```yaml
@@ -610,9 +614,11 @@ deployments:
   - name: production
     components:
       - reference: my-app
-        storage:
-          - mount-path: /data
-            generation: 2  # PVC generation
+        services:
+          persistent-storage:
+            - reference: data
+              config:
+                generation: 2  # PVC generation
 ```
 
 **Database/Bucket Generation** (deployment-level):
@@ -623,10 +629,40 @@ deployments:
       - reference: minio-storage
         config:
           generation: 1  # Bucket generation
-      - reference: database
-        config:
+      - reference: postgresql-database   # or namespace-postgresql-database,
+        config:                          # whichever the project declares
           generation: 1  # Database generation
 ```
+
+This is the block the provisioning (`database_manager`, `minio_manager`) and the
+reconciliation read to decide which database or bucket the running deployment points at,
+so it is also the block the restore writes.
+
+**Files written under the old placement are repaired on load.** A restore used to write
+the database/bucket generation deployment-level while reading it back component-level, so
+the number never travelled and every restore round recomputed `0 -> 1` (RC-123).
+`schema_migration.relocate_resource_generations_to_deployment` moves any component-level
+database/bucket generation up to the deployment on every project load; it is idempotent
+and leaves storage generations alone. When both placements hold a value and they disagree
+it keeps the **higher** one and logs a warning naming both, because a generation lower
+than reality resolves to a resource that already exists.
+
+### A restore never writes into a target that already holds data
+
+`pg_restore` adds rows, it does not replace them, and a bucket restore merges. So a
+restore whose target already exists AND is not empty is refused with a 500 naming the
+resource, instead of landing the backup on top of what is there:
+
+```
+Target database myproject_prod_v1 already exists and is not empty.
+Restoring into it would add the backup on top of the rows already there.
+Remove that database or raise the generation before retrying.
+```
+
+An existing but **empty** target is allowed through — that is what a retry after a restore
+that failed halfway looks like. The checks are
+`PostgresConnector.database_has_user_data` (any table, view, sequence or foreign table
+outside the system schemas) and `MinioConnector.bucket_has_objects`.
 
 ### Benefits
 
