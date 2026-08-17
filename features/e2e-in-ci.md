@@ -73,6 +73,26 @@ die hem opzettelijk uitlokt en slaagt. `log_cli` drukt live af, dus in een gesch
 staat hij naast een willekeurige buur. Kijk in welk `live log call`-blok hij valt voordat
 je hem als oorzaak aanmerkt.
 
+**3. Een `xfail`-reden is geen meting.** Gemeten geval (RC-125), en het patroon herhaalt
+zich: de twee tests in `test_wizard_cross_domain_policy.py` droegen de reden "ze delen een
+browsersessie, en de eerste vult er een regel in waar de tweede mee begint". Drie dingen
+spraken dat tegen zodra iemand het natrok. `auth_page` en `authenticated_context` staan
+**per test**, dus elke test krijgt een verse context met een eigen koekjespot en daarmee een
+eigen wizardtoken. De serverkant was tussen de twee tests ongewijzigd (projectregister,
+e-mailtoelating, wizardstaatbestanden), want de create-taak is in deze opzet nagemaakt en
+het "aangemaakte" project bereikt de gedeelde opslag nooit. En met de besmetting bewust
+aangezet -- twee wizardgangen achter elkaar op dezelfde pagina in dezelfde context --
+begon de tweede gang alsnog leeg, omdat `open_create_wizard` eerst
+`/forms/wizard/restart` ophaalt en dat de wizardstaat wist.
+
+Wat er wel aan de hand was, staat onder punt 1 hierboven: korte vangnetten (10 s) op
+wachtregels die een **volledige** ronde langs de server moeten dekken, plus een vaste
+`wait_for_timeout(600)` die volgens de meting nooit iets afdekte. Zulk rood treft de test
+die op dat moment loopt, dus het springt heen en weer tussen twee tests -- en dat lijkt op
+besmetting terwijl het belasting is. De les: markeer een test pas als bekend-rood met een
+reden die je hebt **gemeten**, en leg de bewering die je aanneemt vast als test. Dat is nu
+`test_a_second_wizard_in_the_same_browser_session_starts_without_a_rule`.
+
 ## Configuratie
 
 | Onderdeel | Waar |
