@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from opi.services import CloneFromType
+from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE
 from opi.utils.naming import generate_manifest_name, generate_pvc_manifest_type
 
 logger = logging.getLogger(__name__)
@@ -215,11 +216,25 @@ class PVCManager:
                 if deleted_files:
                     logger.info(f"Deleted {len(deleted_files)} old PVC manifest(s) for {component_name}/{storage_name}")
 
+            # An entry without a size cannot come from a validated write: ``size`` is a
+            # required field on the storage config model, so this only fires for a file
+            # that reached the repo another way. It used to fall back to 10Gi, ten times
+            # the largest size the platform offers and a volume nobody asked for. The
+            # starting size is the honest answer instead: it is what enabling the service
+            # gives you, and a volume that turns out too small can still grow.
+            size = storage.get("size")
+            if not size:
+                logger.warning(
+                    f"Storage '{storage_name}' of component '{component_name}' has no size; "
+                    f"falling back to {DEFAULT_STORAGE_SIZE}"
+                )
+                size = DEFAULT_STORAGE_SIZE
+
             # Prepare PVC variables using centralized naming utility with generation
             pvc_variables = {
                 "name": generate_pvc_name(unique_name, storage_name, generation),
                 "namespace": namespace,
-                "size": storage.get("size", "10Gi"),
+                "size": size,
                 "storage_class_name": storage_class_name,
                 "access_modes": access_modes,
                 "backup_enabled": backup_enabled,

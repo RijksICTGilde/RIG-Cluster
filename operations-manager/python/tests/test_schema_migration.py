@@ -4,6 +4,7 @@ import copy
 
 from opi.connectors.subdomain import get_domains_config
 from opi.core.project_schema import validate_declared_project_schema, validate_project_schema
+from opi.manager.project_validation import STORED_PROJECT_CONTEXT
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
@@ -402,9 +403,14 @@ class TestMigrateV1ToV2:
         temp = next(s for s in services if isinstance(s, dict) and s["reference"] == "temp-storage")
         assert temp["config"][0]["name"] == "tmp"  # from /tmp
 
-        # The migrated config must pass the per-service typed-config gate.
-        get_service(ServiceType.PERSISTENT_STORAGE).validate_config(persistent["config"])
-        get_service(ServiceType.TEMP_STORAGE).validate_config(temp["config"])
+        # The migrated config must pass the per-service typed-config gate. With the same
+        # context production uses there: this is a file that already exists, so the size
+        # ceiling (which applies to what a client submits) does not judge its mounts --
+        # this fixture carries the 10Gi a v1-era project really could have.
+        get_service(ServiceType.PERSISTENT_STORAGE).validate_config(
+            persistent["config"], context=STORED_PROJECT_CONTEXT
+        )
+        get_service(ServiceType.TEMP_STORAGE).validate_config(temp["config"], context=STORED_PROJECT_CONTEXT)
 
     def test_component_without_uses_services_preserved(self):
         """Component without uses-services should not have services wiped."""
