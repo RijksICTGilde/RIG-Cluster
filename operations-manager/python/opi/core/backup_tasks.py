@@ -488,13 +488,12 @@ async def _restore_single_resource(
                         project_data, deployment_name, component_name, reference_name, new_generation
                     )
                 elif resource_type == "database":
-                    project_file_handler.set_database_generation(
-                        project_data, deployment_name, component_name, reference_name, new_generation
-                    )
+                    # Deployment-level: this task used to write it component-level while the
+                    # restore router wrote it deployment-level, so neither path could read
+                    # back what the other had written.
+                    project_file_handler.set_database_generation(project_data, deployment_name, new_generation)
                 elif resource_type == "bucket":
-                    project_file_handler.set_bucket_generation(
-                        project_data, deployment_name, component_name, reference_name, new_generation
-                    )
+                    project_file_handler.set_bucket_generation(project_data, deployment_name, new_generation)
 
                 await project_manager.save_and_commit_project(
                     project_data,

@@ -495,11 +495,163 @@ def _fixup_v2_data(project_data: dict[str, Any]) -> bool:
     if _fixup_duplicate_service_entries(project_data):
         cleaned = True
 
+    if relocate_resource_generations_to_deployment(project_data):
+        cleaned = True
+
     if cleaned:
         project_name = project_data.get("name", "unknown")
         logger.info(f"Cleaned up stale data in project '{project_name}'")
 
     return cleaned
+
+
+#: Services whose generation belongs to the DEPLOYMENT, because the resource they name is
+#: one per deployment (``{project}_{deployment}_v{gen}`` / ``{project}-{deployment}-v{gen}``).
+#: ``persistent-storage`` is deliberately absent: a PVC name carries the component, so its
+#: generation stays component-level.
+_DEPLOYMENT_WIDE_GENERATION_SERVICES = (
+    ServiceType.POSTGRESQL_DATABASE.value,
+    ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
+    ServiceType.MINIO_STORAGE.value,
+)
+
+
+def _take_component_generations(component: dict[str, Any], service_type: str) -> list[int]:
+    """Pull every generation this component recorded for ``service_type``, removing them.
+
+    Only the shape the buggy writer produced is understood:
+    ``component["services"][service_type] = [{"reference": ..., "config": {"generation": N}}]``.
+    Empties left behind (config, entry, list, services) are cleaned up so the file does not
+    keep a hollow record of a value that has moved.
+    """
+    services = component.get("services")
+    if not isinstance(services, dict):
+        return []
+    entries = services.get(service_type)
+    if not isinstance(entries, list):
+        return []
+
+    found: list[int] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        config = entry.get("config")
+        if not isinstance(config, dict) or config.get("generation") is None:
+            continue
+        found.append(int(config.pop("generation")))
+        if not config:
+            del entry["config"]
+
+    if not found:
+        return []
+
+    remaining = [entry for entry in entries if not (isinstance(entry, dict) and set(entry) <= {"reference"})]
+    if remaining:
+        services[service_type] = remaining
+    else:
+        del services[service_type]
+    if not services:
+        del component["services"]
+    return found
+
+
+def relocate_resource_generations_to_deployment(project_data: dict[str, Any]) -> bool:
+    """Move a database/bucket generation from the component up to the deployment (RC-123).
+
+    A database and a bucket are named after the project and the deployment only, so their
+    generation describes the deployment. Two write paths disagreed about that: the restore
+    router wrote it deployment-level while the async restore task wrote it component-level,
+    and the restore read it back component-level -- so a restore saw generation 0 every time,
+    computed the SAME target database name twice, and the second restore dumped the backup
+    into the live database on top of the rows already there.
+
+    This is a repair, not a schema change: both placements are shape-valid YAML, the value is
+    simply in the wrong one. It therefore runs unconditionally on every load (like
+    ``_fixup_catalog_root``) rather than behind a version gate, so a file written by an older
+    pod mid-rollout is repaired too, and it is idempotent.
+
+    Conflict handling is deliberately explicit. When both placements carry a value and they
+    disagree, the HIGHER one wins and the choice is logged at warning level with both numbers.
+    Higher is the only safe direction: a generation lower than reality resolves to a database
+    name that already exists, which is precisely the collision this task exists to stop. The
+    restore refuses to write into a non-empty target anyway, so a wrong guess here cannot
+    destroy data on its own.
+
+    Returns True if any deployment changed.
+    """
+    changed = False
+    project_name = project_data.get("name", "unknown")
+
+    for deployment in project_data.get("deployments") or []:
+        if not isinstance(deployment, dict):
+            continue
+        deployment_name = deployment.get("name", "unknown")
+        components = [c for c in deployment.get("components") or [] if isinstance(c, dict)]
+
+        for service_type in _DEPLOYMENT_WIDE_GENERATION_SERVICES:
+            component_generations: list[int] = []
+            for component in components:
+                component_generations.extend(_take_component_generations(component, service_type))
+            if not component_generations:
+                continue
+
+            changed = True
+            from_component = max(component_generations)
+            on_deployment = _read_deployment_generation(deployment, service_type)
+
+            if on_deployment is None:
+                winner = from_component
+                logger.info(
+                    f"Moved {service_type} generation {winner} from component to deployment "
+                    f"'{deployment_name}' in project '{project_name}'"
+                )
+            elif on_deployment == from_component:
+                winner = on_deployment
+            else:
+                winner = max(on_deployment, from_component)
+                logger.warning(
+                    f"Conflicting {service_type} generations for deployment '{deployment_name}' in project "
+                    f"'{project_name}': deployment-level {on_deployment}, component-level {from_component}. "
+                    f"Keeping {winner}, because a lower generation names a resource that already exists."
+                )
+
+            _write_deployment_generation(deployment, service_type, winner)
+
+    return changed
+
+
+def _read_deployment_generation(deployment: dict[str, Any], service_type: str) -> int | None:
+    """The generation on a deployment's own services entry, or None."""
+    for entry in deployment.get("services") or []:
+        if service_entry_name(entry) != service_type or not isinstance(entry, dict):
+            continue
+        config = entry.get("config")
+        if isinstance(config, dict) and config.get("generation") is not None:
+            return int(config["generation"])
+        return None
+    return None
+
+
+def _write_deployment_generation(deployment: dict[str, Any], service_type: str, generation: int) -> None:
+    """Set the generation on a deployment's own services entry, creating what is missing."""
+    services = deployment.get("services")
+    if not isinstance(services, list):
+        services = []
+        deployment["services"] = services
+
+    for index, entry in enumerate(services):
+        if service_entry_name(entry) != service_type:
+            continue
+        record: dict[str, Any] = entry if isinstance(entry, dict) else {"reference": service_type}
+        services[index] = record
+        config = record.get("config")
+        if not isinstance(config, dict):
+            config = {}
+            record["config"] = config
+        config["generation"] = generation
+        return
+
+    services.append({"reference": service_type, "config": {"generation": generation}})
 
 
 def _fixup_duplicate_service_entries(project_data: dict[str, Any]) -> bool:
