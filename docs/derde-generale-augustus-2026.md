@@ -222,6 +222,59 @@ go test -v ./...
 
 ## 2. De 47 projecten uit de sandboxrepository
 
+### Het aantal, zelf geteld
+
+De opdrachtgever zei 47. Nageteld in `rig-cluster-projects-sandbox`, branch `main`, map
+`projects/`: **47 bestanden**, en alle 47 declareren `sandboxed-local` als enige cluster. Er is
+dus geen bestand stil overgeslagen.
+
+Wat er in die 47 zit, ook nageteld uit de YAML:
+
+| | Aantal |
+|---|---|
+| Projecten | **47** |
+| Deployments | **137** |
+| Componentdefinities | 90 |
+| Component-instanties in deployments (~pods bij 1 replica) | **261** |
+
+De grootste vier: `wies` (18 deployments), `regel-k4c` (17), `asses-k2n` en `pm-5sj` (15 elk).
+Twee projecten hebben nul componenten (`mb-docs-helmfile`, `mb-grist-helmfile`).
+
+Zes van de 47 stonden al op de sandbox (`algor-odc`, `amt-odc-prd`, `amtbz-2m9`, `cot-zaq`,
+`jc-77j`, `mzs-3ik`). Van die zes zijn er twee byte-identiek aan de bron (`cot-zaq`,
+`mzs-3ik`); de andere vier zijn op de sandbox sinds de export door OPI zelf bijgewerkt. Bij de
+import gaat de **bronversie** erover, want dat is wat de taak vraagt.
+
+Dat de bestanden bij deze sandbox horen is ook echt vastgesteld en niet aangenomen: alle
+**47** API-sleutels uit `config.api-key` zijn te ontsleutelen met de platformsleutel van dit
+cluster (twee lagen AGE, zoals `ProjectService._resolve_plaintext_api_key` het doet). Nul
+mislukkingen.
+
+### Waarom in blokken, en niet in een keer
+
+**261 pods op een node die er 110 aankan.** Zie de sandboxsuite hierboven voor wat er gebeurt
+als je dat toch probeert. Daarom per blok: importeren in `zad-projects`, reconcile, de
+**asynchrone** refresh afvuren (die geeft direct een task-id terug), wachten tot het cluster
+zelf zegt dat het stil is (geen app meer `Progressing`, geen pod meer `Pending` of
+`ContainerCreating`), meten, en opruimen zodat het volgende blok ruimte heeft.
+
+Nooit wachten op een synchrone `:refresh` - dat is de les die RC-118 een factor twintig
+scheelde.
+
+Blokindeling op een podbudget van 34 (surge en infrastructuur meegerekend):
+
+| Blok | Pods | Projecten |
+|---|---|---|
+| 6 | 27 | 24 |
+| 5 | 34 | 13 |
+| 4 | 34 | 4 |
+| 3 | 34 | 2 |
+| 2 | 34 | 2 |
+| 1 | 35 | 1 (`wies`) |
+| 0 | 65 | 1 (`regel-k4c`) - past ook alleen niet |
+
+### De metingen per project
+
 *(volgt)*
 
 ## 3. Wat er sinds de tweede generale bij is gekomen
