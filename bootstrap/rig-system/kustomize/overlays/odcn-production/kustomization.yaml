@@ -9,6 +9,7 @@ generators:
 resources:
 - namespace.yaml
 - argocd-deployment.yaml
+- argocd-pull-secrets.yaml
 - network-policies/argocd-network-policy.yaml
 - network-policies/emergency-restore-allow-all.yaml
 - ../../operations-manager/overlays/odcn-production
