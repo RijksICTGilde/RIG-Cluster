@@ -233,6 +233,7 @@ REDESIGNED_PAGES = [
     "invite-register",
     "invite-success",
     "invite-error",
+    "introductie",
 ]
 
 

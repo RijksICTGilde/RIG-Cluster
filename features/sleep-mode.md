@@ -125,6 +125,30 @@ POST /projects/{project}/deployments/{deployment}/sleep # sessie + CSRF, voor de
   `/openapi.json`, zodat een gegenereerde client ze kan vinden. Het endpoint accepteert
   alleen `sleeping -> waking`; al het andere is een no-op.
 
+### Wat de twee endpoints antwoorden
+
+Beide antwoorden hebben sinds RC-119 een responsemodel, dus de velden en hun toegestane
+waarden staan met een omschrijving per waarde in `/openapi.json` (als `enum` plus
+`x-choices`, dezelfde sleutel die de configvelden gebruiken).
+
+Er staan twee velden in, want één woord kan geen twee dingen betekenen:
+
+| Veld | Waarden | Wat het is |
+|---|---|---|
+| `state` (op `/status`) | `starting` \| `ready` | Het pollcontract van de wekker en verder niets: `ready` betekent dat de app achter de wekker een ready pod heeft. **Bevroren** — de wekker-image komt los uit de registry en kan ouder zijn dan deze code. |
+| `state` (op `/wake`) | `awake` \| `sleeping` \| `waking` \| `disabled` | De slaaptoestand na de aanroep, dezelfde waarde als `sleep_state`. Blijft bestaan voor bestaande aanroepers; nieuwe code leest `sleep_state`. |
+| `sleep_state` (op allebei) | `awake` \| `sleeping` \| `waking` \| `disabled` | De echte slaaptoestand, hetzelfde woord op beide endpoints. `disabled` = slaapstand geldt niet voor deze deployment. |
+
+`disabled` is het antwoord dat er niet was. Stond slaapstand uit, dan gaf `/status` een
+hardgecodeerde `starting` terug zonder naar een pod of naar de opgeslagen toestand te
+kijken — een client zag dus altijd "start op". Nu zegt `sleep_state` wat er aan de hand is,
+en er wordt geen pod voor bevraagd: er valt niets ready te zijn.
+
+Ook `/wake` zegt `disabled` voor een deployment die niet onder `match` valt. Dat was de
+opgeslagen toestand (`awake`), terwijl `/status` diezelfde situatie al `disabled` noemde —
+precies de splitsing die dit veld moest opheffen. De aanroep blijft een no-op met een 200
+en er wordt niets weggeschreven.
+
 ## Beveiliging van de wek-call
 
 Per deployment wordt een wektoken gemunt, AGE-versleuteld op

@@ -119,6 +119,12 @@ def _render_modal_step(
         "step_target": "#edit-section-inner",
         "step_push_url": False,
         "step_query_params": "",
+        # Deze dialoog draagt zijn eigen titel ("Domeingoedkeuring - <project>", gezet door
+        # openApprovalDialog in bg/admin-approvals.html.j2), en die zegt hetzelfde als de
+        # kop van de sectie plus de projectnaam. Met allebei stonden er twee koppen boven
+        # elkaar. De flow heeft hier maar EEN stap, dus de sectiekop vertelt ook niet waar
+        # je bent. Alleen hier uit; de bewerkdialogen van een project houden hem.
+        "show_section_head": False,
         # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-sjablonen hebben de
         # NLDD-woordenschat nodig.
         "nldd_icon": to_nldd_icon,
@@ -127,6 +133,25 @@ def _render_modal_step(
         request,
         template="bg/_modal-wizard-step.html.j2",
         context=context,
+    )
+
+
+def _modal_error(request: Request, melding: str, status_code: int) -> HTMLResponse:
+    """Een weigering van de dialoog als leesbaar fragment, met de echte statuscode.
+
+    De dialoog wordt door htmx gevuld, dus wat de route antwoordt is wat de gebruiker
+    ziet. Een ``HTTPException`` levert hier JSON op en htmx wisselt bij een foutcode
+    standaard niets in: samen is dat een venster dat opengaat en leeg blijft. Vandaar een
+    fragment. De statuscode blijft staan - dat htmx hem toch toont, staat als
+    ``htmx:beforeSwap``-haak in bg/admin-approvals.html.j2.
+    """
+    return HTMLResponse(
+        content=render_fragment(
+            request,
+            template="bg/_modal-fout.html.j2",
+            context={"request": request, "melding": melding},
+        ),
+        status_code=status_code,
     )
 
 
@@ -154,6 +179,44 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+#: De statussen waarop gefilterd kan worden. De sleutel staat in de URL (``?status=``), het
+#: label in de keuzelijst. Als lijst en niet als dict, omdat de VOLGORDE de volgorde in de
+#: lijst is; ``""`` is alles en staat daarom vooraan.
+#:
+#: De sleutels zijn dezelfde als die in het projectbestand staan (``current_status``), en de
+#: labels dezelfde als de badges in de tabel (``status_labels`` in het sjabloon). Twee lijsten
+#: die hetzelfde zeggen zouden uit elkaar lopen; dat is hier nog niet opgelost, maar
+#: tests/test_approvals_statusfilter.py legt vast dat ze gelijk blijven.
+APPROVAL_STATUSSEN: list[tuple[str, str]] = [
+    ("", "Alle statussen"),
+    ("requested", "Aangevraagd"),
+    ("approved", "Goedgekeurd"),
+    ("denied", "Afgewezen"),
+]
+
+
+def filter_op_status(projects_data: list[dict[str, Any]], status: str) -> list[dict[str, Any]]:
+    """Houd alleen de aanvragen met deze status over, en de projecten die er nog hebben.
+
+    Een project waarvan geen enkele aanvraag overblijft valt weg: een projectpaneel met een
+    lege tabel eronder leest als "dit project heeft niets", terwijl het er wel iets heeft dat
+    je nu even niet ziet.
+
+    Een lege of onbekende status filtert niet. Onbekend is bewust hetzelfde als leeg en niet
+    "niets gevonden": ``?status=onzin`` in een gedeelde link hoort de lijst te tonen, niet een
+    lege pagina die als een storing leest.
+    """
+    if not status or status not in {sleutel for sleutel, _ in APPROVAL_STATUSSEN if sleutel}:
+        return projects_data
+
+    gefilterd: list[dict[str, Any]] = []
+    for project in projects_data:
+        items = [item for item in project["approval_items"] if item.get("current_status") == status]
+        if items:
+            gefilterd.append({**project, "approval_items": items})
+    return gefilterd
+
+
 @approvals_router.get("", response_class=HTMLResponse)
 @requires_sso
 async def list_subdomains(request: Request) -> Response:
@@ -165,7 +228,14 @@ async def list_subdomains(request: Request) -> Response:
     # (manual yaml edit + push, or a request created elsewhere) shows up
     # on the admin overview instead of returning a stale in-memory cache.
 
-    projects_data = _collect_all_projects_approval_data()
+    alle_projecten = _collect_all_projects_approval_data()
+
+    # Filteren gebeurt HIER en niet in de browser: dan werkt het ook zonder JavaScript, is
+    # een gefilterde lijst deelbaar als URL, en staat de gekozen waarde na een swap nog
+    # steeds in de keuzelijst omdat de server hem meerendert. Zelfde opzet als het zoeken
+    # en sorteren op /projects (opi/web/lotc_switch.py).
+    status = (request.query_params.get("status") or "").strip()
+    projects_data = filter_op_status(alle_projecten, status)
 
     # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py. Alleen de LIJST gaat
     # mee: het beoordelingsvenster erin haalt zijn inhoud op bij de modal-wizard hieronder,
@@ -179,6 +249,13 @@ async def list_subdomains(request: Request) -> Response:
             "request": request,
             "menu_items": get_menu_items(user),
             "projects_data": projects_data,
+            # De ONGEFILTERDE telling gaat mee, zodat de lege lijst kan zeggen of er niets
+            # is of alleen niets met deze status. Dat verschil is het enige dat een
+            # gefilterde lege pagina bruikbaar maakt.
+            "approvals_totaal": sum(len(p["approval_items"]) for p in alle_projecten),
+            "approvals_getoond": sum(len(p["approval_items"]) for p in projects_data),
+            "approval_status": status,
+            "approval_statussen": APPROVAL_STATUSSEN,
             "success_message": request.query_params.get("success"),
             **build_lotc_admin(user=user, current_path="/admin/approvals"),
         },
@@ -191,17 +268,20 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     """Initialize the domain approval modal wizard for a project."""
     user = require_platform_admin(request)
 
+    # Deze drie weigeringen komen IN de dialoog terecht, dus ze gaan als fragment terug en
+    # niet als HTTPException: de gebruiker heeft net op "Beheren" geklikt en het venster
+    # staat al open.
     if flow_id != FLOW_ID:
-        raise HTTPException(status_code=404, detail="Onbekende flow")
+        return _modal_error(request, f"Onbekende flow '{flow_id}'.", 404)
 
     project = get_project_store().get(project_name)
     if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
+        return _modal_error(request, f"Project '{project_name}' is niet gevonden.", 404)
 
     project_data = project.data or {}
     approval_items = collect_approval_items(project_data)
     if not approval_items:
-        raise HTTPException(status_code=400, detail="Geen domein- of subdomeinaanvragen voor dit project")
+        return _modal_error(request, "Er zijn geen domein- of subdomeinaanvragen voor dit project.", 400)
 
     flow = get_flow(flow_id)
     first_section = flow.sections[0]

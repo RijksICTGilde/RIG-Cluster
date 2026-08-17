@@ -8,9 +8,9 @@ including deployments, services, PVCs, and other manifest resources.
 import logging
 import re
 from enum import Enum
-from typing import Any, Literal, get_args
+from typing import Any, get_args
 
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
 
 logger = logging.getLogger(__name__)
 
@@ -71,23 +71,11 @@ DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
 # Used when the requested domain+subdomain is not yet approved.
 SAFE_FALLBACK_FORMAT = "component-deployment-project"
 
-# Type alias derived from the template keys so OpenAPI exposes an enum.
-# The Literal must be written explicitly (Python cannot construct Literal from
-# runtime values), but a runtime assertion below guarantees the two stay in sync.
-DomainFormatId = Literal[
-    "component-deployment-project",
-    "deployment-project",
-    "component-deployment-subdomain",
-    "deployment-subdomain",
-    "component-subdomain",
-    "subdomain",
-    "component.deployment.project",
-    "deployment.project",
-    "component.deployment.subdomain",
-    "deployment.subdomain",
-    "component.subdomain",
-]
-
+# The type alias lives in the service package (``publish_on_web/domain_config.py``) because
+# that service's ``config_model`` types its ``domain-format`` field with it, and this module
+# already imports that one -- taking it from here would be an import cycle. It is re-exported
+# here so every existing reader keeps its import, and the assertion that it matches the
+# templates stays where the templates are.
 assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101
     "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
 )
@@ -1832,21 +1820,28 @@ def find_root_component(deployment: dict) -> str | None:
 
 
 def apply_domain_approval_fallback(
-    domain_format: str,
+    domain_format: str | None,
     base_domain: str | None,
     subdomain: str | None,
     ingress_postfix: str,
     project_data: dict[str, Any],
     cluster: str,
-) -> tuple[str, str | None]:
+) -> tuple[str | None, str | None]:
     """Check domain approval and return the effective format + domain.
 
     If the requested domain+subdomain combination is approved, returns
     them unchanged. If not approved, falls back to the safe format
     (component-deployment-project) on the cluster domain.
 
+    ``domain_format`` may be None: a deployment that names no format composes its
+    hostname through the legacy dispatch in :func:`get_component_ingress_map`, and that
+    shape needs the very same verdict. An approved domain is handed back untouched
+    (None stays None, so the caller keeps its own dispatch); an unapproved one gets the
+    safe format regardless of what was asked for, because "no format named" is not a
+    reason to publish on a domain nobody approved.
+
     Args:
-        domain_format: Requested domain format ID
+        domain_format: Requested domain format ID, or None when none is named
         base_domain: Requested base domain
         subdomain: Requested subdomain
         ingress_postfix: Cluster ingress postfix (for fallback domain)
@@ -1940,11 +1935,20 @@ def get_component_ingress_map(
     """
     base_name = generate_unique_name(deployment_name, component_name)
 
-    # When domain_format is explicitly set, use the template-based generation
-    if domain_format and domain_format in DOMAIN_FORMAT_TEMPLATES:
-        effective_format, effective_domain = apply_domain_approval_fallback(
-            domain_format, base_domain, subdomain, ingress_postfix, project_data, cluster
-        )
+    # The approval gate runs BEFORE a shape is chosen, so it covers every shape. It used
+    # to sit inside the branch below, which meant a deployment that names no
+    # domain-format -- an older file on ``domain-mode: nice-url``, or a write that only
+    # set base-domain and subdomain -- composed its hostname in the legacy dispatch with
+    # nobody having checked whether the domain was approved. That published an
+    # unapproved domain AND showed it as the component's address, because this function
+    # is also what the portal and the API read (RC-104).
+    effective_format, effective_domain = apply_domain_approval_fallback(
+        domain_format, base_domain, subdomain, ingress_postfix, project_data, cluster
+    )
+
+    # A named format, or the safe one an unapproved domain fell back to, resolves through
+    # the template.
+    if effective_format and effective_format in DOMAIN_FORMAT_TEMPLATES:
         domain = resolve_domain_tail(effective_domain, ingress_postfix)
         hostname = generate_hostname_from_format(
             domain_format=effective_format,
@@ -1956,7 +1960,7 @@ def get_component_ingress_map(
         )
         return {base_name: hostname}
 
-    # --- Legacy dispatch (domain_format not set) ---
+    # --- Legacy dispatch (no domain_format, and the domain it names IS approved) ---
 
     # Nice URL format (DOTS): component.subdomain.base_domain
     if hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
@@ -2006,6 +2010,10 @@ def get_deployment_hostnames(
     Returns:
         List of unique hostnames for the deployment
     """
+    # Local, like in apply_domain_approval_fallback: connectors.subdomain imports this
+    # module, so a module-scope import would be a cycle.
+    from opi.connectors.subdomain import is_deployment_domain_approved
+
     hostnames: list[str] = []
 
     for component_name in component_names:
@@ -2025,10 +2033,16 @@ def get_deployment_hostnames(
         if hostname not in hostnames:
             hostnames.append(hostname)
 
+    # The root hostname is the one address here that is NOT composed by
+    # get_component_ingress_map, so the approval verdict that function applies does not
+    # reach it. Without this the components of an unapproved domain move to the cluster
+    # address while ``subdomain.base-domain`` is still handed out as a hostname.
+    domain_approved = is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
+
     # For DOTS format (nice URLs) without explicit domain_format, add root hostname
     # When domain_format is set, the template already defines the hostname shape;
     # root hostname is only relevant for legacy nice-url with component prefix.
-    if not domain_format and hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
+    if domain_approved and not domain_format and hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)

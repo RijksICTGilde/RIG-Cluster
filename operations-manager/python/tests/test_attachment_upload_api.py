@@ -13,6 +13,11 @@ What is measured here is the behaviour the plan promised and the API did not hav
 The ProjectManager is mocked at the write boundary: what belongs to this layer is the
 verb, the validation and the status code. The write itself (encrypt, catalog, coupling,
 commit) is exercised in tests/test_attachment_upsert_manager.py.
+
+Since RC-119 a successful write answers 202 with a task id instead of 200/201: the write
+and its validation still happen in the request, and the processing that puts the change
+on the cluster is the task. Refusals stay synchronous, which is why every 409/422/404
+below is unchanged.
 """
 
 from __future__ import annotations
@@ -49,6 +54,13 @@ def _authorised_project():
         yield store
 
 
+@pytest.fixture(autouse=True)
+def created_task():
+    """The rollout enqueue boundary: a written change becomes a task to follow."""
+    with patch("opi.api.v2.router.create_async_task", new=AsyncMock(return_value={"task_id": "t-1"})) as mock:
+        yield mock
+
+
 @pytest.fixture
 def manager():
     """The ProjectManager the handler reaches for, with its write mocked out."""
@@ -68,7 +80,7 @@ def _file(content: bytes = b"cert-bytes", name: str = "server.pem"):
 class TestDefiningAnAttachment:
     def test_upload_creates_it(self, client, manager) -> None:
         response = client.post(PROJECT_URL, headers=HEADERS, data={"attachment_id": "server-cert"}, files=_file())
-        assert response.status_code == 201
+        assert response.status_code == 202
         assert response.json()["attachment"] == "server-cert"
         call = manager.upsert_attachment.call_args
         assert call.args[0] == "server-cert"
@@ -100,7 +112,7 @@ class TestDefiningAnAttachment:
             "component": None,
         }
         response = client.put(f"{PROJECT_URL}/server-cert", headers=HEADERS, files=_file())
-        assert response.status_code == 200
+        assert response.status_code == 202
         assert response.json()["replaced"] is True
         assert manager.upsert_attachment.call_args.kwargs["on_absent"] == "reject"
 
@@ -128,7 +140,7 @@ class TestDefiningAndBindingInOneRequest:
             data={"attachment_id": "server-cert", "provide-as": "file", "path": "/etc/ssl/server.pem"},
             files=_file(),
         )
-        assert response.status_code == 201
+        assert response.status_code == 202
         assert manager.upsert_attachment.call_args.kwargs["component_name"] == "backend"
         assert manager.upsert_attachment.call_args.kwargs["binding"] == {
             "provide-as": "file",
@@ -142,7 +154,7 @@ class TestDefiningAndBindingInOneRequest:
             data={"attachment_id": "server-cert", "provide-as": "env-var", "env-name": "SERVER_CERT"},
             files=_file(),
         )
-        assert response.status_code == 201
+        assert response.status_code == 202
         assert manager.upsert_attachment.call_args.kwargs["binding"] == {
             "provide-as": "env-var",
             "env-name": "SERVER_CERT",
@@ -227,7 +239,7 @@ class TestTheSharedRules:
             data={"attachment_id": "server-cert"},
             files=_file(b"x" * MAX_ATTACHMENT_BYTES),
         )
-        assert response.status_code == 201
+        assert response.status_code == 202
 
     def test_an_empty_file_is_refused(self, client, manager) -> None:
         response = client.post(PROJECT_URL, headers=HEADERS, data={"attachment_id": "server-cert"}, files=_file(b""))
@@ -270,7 +282,7 @@ class TestContentOrReference:
             headers=HEADERS,
             data={"reference": "server-cert", "provide-as": "file", "path": "/etc/ssl/certs/server.pem"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 202
         call = manager.upsert_attachment.call_args
         assert call.args[0] == "server-cert"
         assert call.args[1] is None  # no filename
@@ -307,7 +319,7 @@ class TestContentOrReference:
             data={"attachment_id": "server-cert", "provide-as": "file", "path": "/etc/cert.pem"},
             files=_file(),
         )
-        assert response.status_code == 201
+        assert response.status_code == 202
         call = manager.upsert_attachment.call_args
         assert call.args[2] == b"cert-bytes"
 
@@ -317,7 +329,7 @@ class TestContentOrReference:
         response = client.put(
             f"{COMPONENT_URL}/server-cert", headers=HEADERS, data={"provide-as": "file", "path": "/etc/cert.pem"}
         )
-        assert response.status_code == 200
+        assert response.status_code == 202
         call = manager.upsert_attachment.call_args
         assert call.args[0] == "server-cert"
         assert call.args[2] is None

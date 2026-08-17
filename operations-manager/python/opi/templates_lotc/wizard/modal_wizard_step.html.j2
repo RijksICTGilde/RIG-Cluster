@@ -25,16 +25,16 @@
 {# Step content #}
 <div class="wizard-step" id="modal-wizard-step-inner">
     <div class="wizard-step__header">
-        <c-heading type="h2">
+        <c-cluster gap="sm" align="center">
             {% if section.icon %}<c-icon icon="{{ section.icon | nldd_icon }}" size="xl"/>{% endif %}
-            {{ section.title }}
+            <c-heading type="h2" label="{{ section.title }}"/>
             {# The service's own explanation, same question mark as on its card. This is
                where someone has to decide something, so it is the place that needed it
                most and was the only surface without it. #}
             {% if section.help_template %}
             {% set lotc_onclick_1 %}openServiceHelp('{{ section.help_template|e }}'){% endset %}<c-icon icon="question-mark-circle" size="xl" color="hemelblauw" class="service-card__help-btn"/>
             {% endif %}
-        </c-heading>
+        </c-cluster>
         {% if section.description %}
         <p class="wizard-step__description">{{ section.description }}</p>
         {% endif %}

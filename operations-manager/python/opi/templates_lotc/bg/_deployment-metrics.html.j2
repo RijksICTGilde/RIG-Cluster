@@ -99,7 +99,16 @@
   De grafieken blijven staan. Ze horen bij het tijdvak dat je kiest, en dit gaat over de
   MELDING erboven, niet over de grafieken zelf.
 #}
-{% if prometheus_bereikbaar is defined and not prometheus_bereikbaar %}
+{% if ander_cluster | default('') %}
+    {# Voor de "nog geen metingen"-tak, want dat is hier de verkeerde verklaring: er valt
+       hier niets te meten omdat de deployment ergens anders draait, niet omdat hij net
+       gestart is. Deze melding kwam van het dienstblok van de metrics-scraper, dat de
+       grafieken dubbel toonde en daarom weg is. #}
+    <c-alert type="info" heading="Deze deployment draait op een ander cluster">
+        Hij draait op {{ ander_cluster }} en deze omgeving meet {{ eigen_cluster | default('dit cluster') }}.
+        Metingen worden per cluster verzameld, dus ze zijn hier niet op te vragen.
+    </c-alert>
+{% elif prometheus_bereikbaar is defined and not prometheus_bereikbaar %}
     <c-alert type="warning" heading="Metingen zijn niet op te halen">
         Prometheus antwoordt niet, dus er zijn op dit moment geen metingen op te vragen.
         Dat zegt niets over deze deployment: die kan gewoon draaien.

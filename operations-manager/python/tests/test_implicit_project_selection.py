@@ -29,6 +29,11 @@ from pydantic import BaseModel
 #: that may enrol itself is a deliberate entry in this set; everything else is the safe
 #: default, so a new service can never join it by accident.
 IMPLICIT_SERVICES = {
+    # De auth wall mag dit sinds bevinding 21 van de zad-cli: zijn projectniveau draagt
+    # alleen een OPTIONELE bannertekst, dus er valt niets te beslissen dat wij anders voor
+    # de gebruiker zouden invullen. Zijn eisen (keycloak, publish-on-web) blijven wel
+    # gelden en worden gemeld; dat is een feit en geen keuze.
+    ServiceType.AUTHORIZATION_WALL,
     ServiceType.POSTGRESQL_DATABASE,
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
     ServiceType.MINIO_STORAGE,

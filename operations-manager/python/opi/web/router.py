@@ -50,6 +50,7 @@ from opi.web.lotc_switch import (
     TABS_MET_VOORWAARDE,
     build_deployment_status_column,
     build_lotc_dashboard,
+    build_lotc_introductie,
     build_lotc_project_details,
     build_lotc_projects,
     deployment_pagina_adres,
@@ -103,14 +104,44 @@ for _service_router in collect_service_routers():
 
 
 @web_router.get("/")
-async def root():
-    """
-    Root route that redirects to the dashboard.
+async def root(request: Request):
+    """De voordeur: het dashboard als je ingelogd bent, anders de introductie.
 
-    Returns:
-        Redirect response to /dashboard
+    Wie hier zonder sessie binnenkwam werd naar ``/dashboard`` gestuurd, en die vraagt SSO,
+    dus eindigde elke bezoeker zonder rechten op het inlogscherm - zonder ooit gelezen te
+    hebben WAT dit is. Sinds de architectuurpagina weg is, was dat de enige uitkomst.
+
+    Doorverwijzen en niet hier renderen, zodat de introductie een eigen adres houdt dat je
+    kunt delen en dat ook werkt voor iemand die al ingelogd is.
     """
+    if get_current_user(request) is None:
+        return RedirectResponse(url="/introductie", status_code=302)
     return RedirectResponse(url="/dashboard", status_code=302)
+
+
+@web_router.get("/introductie", response_class=HTMLResponse)
+async def introductie(request: Request):
+    """Wat ZAD is, voor wie hier voor het eerst komt.
+
+    BEWUST ZONDER ``@requires_sso``. Dit is de pagina voor iemand die nog geen rechten
+    heeft - de enige groep die hem echt nodig heeft - dus een inlogmuur ervoor maakt hem
+    precies voor zijn eigen publiek onbereikbaar. Publiek zijn is hier de hele opzet en
+    geen omissie; ``tests/test_introductiepagina.py`` bewaakt dat de decorator er niet
+    alsnog opkomt.
+
+    De schil verdraagt ``user=None``: ``get_navigation(None, ...)`` levert de basisitems
+    plus "Inloggen" rechtsboven in plaats van account en uitloggen.
+    """
+    user = get_current_user(request)
+    return render(
+        request,
+        template="bg/introductie.html.j2",
+        context={
+            "request": request,
+            "menu_items": get_menu_items(user),
+            **build_lotc_introductie(user),
+        },
+    )
 
 
 @web_router.get("/permission-denied", response_class=HTMLResponse)
@@ -2356,6 +2387,16 @@ async def deployment_metrics_fragment(
 
     deployment_ctx = DeploymentContext(deployment_name, components)
 
+    # Een deployment op een ANDER cluster levert hier geen metingen op, want deze OPI
+    # bevraagt alleen de Prometheus van zijn eigen cluster. Zonder deze vlag zou dat als
+    # "geen data" lezen, en dan zoekt de lezer de fout bij zijn applicatie. Deze melding
+    # stond in het dienstblok van de metrics-scraper op het tabblad Deployments; dat blok
+    # is weg omdat het dezelfde grafieken dubbel toonde, en de melding hoort thuis waar de
+    # grafieken staan.
+    from opi.core.config import settings
+
+    ander_cluster = cluster if cluster and cluster != settings.CLUSTER_MANAGER else ""
+
     return render(
         request,
         template="bg/_deployment-metrics.html.j2",
@@ -2368,6 +2409,8 @@ async def deployment_metrics_fragment(
             "pvc_storage": pvc_storage,
             "duration": duration,
             "prometheus_bereikbaar": prometheus_bereikbaar,
+            "ander_cluster": ander_cluster,
+            "eigen_cluster": settings.CLUSTER_MANAGER,
             "metingen_leeg": not _heeft_metingen(metrics, pvc_storage),
         },
     )
@@ -3112,6 +3155,7 @@ async def projects_overview(request: Request):
         # volledig. Dezelfde vorm als de andere aanroepers van get_current_user.
         user = get_current_user(request) or {}
         user_projects = _projects_for_user(user)
+        laatst_gewijzigd = await get_project_store().last_modified_all()
 
         return render(
             request,
@@ -3121,7 +3165,7 @@ async def projects_overview(request: Request):
                 "menu_items": get_menu_items(user),
                 "projects": user_projects,
                 "user": user,
-                **build_lotc_projects(request, user=user, projects=user_projects),
+                **build_lotc_projects(request, user=user, projects=user_projects, laatst_gewijzigd=laatst_gewijzigd),
             },
         )
 

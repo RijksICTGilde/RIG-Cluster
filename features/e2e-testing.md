@@ -34,7 +34,7 @@ cd operations-manager/python
 
 # Install dependencies (first time only)
 uv sync
-uv run playwright install chromium --with-deps
+uv run playwright install chromium firefox --with-deps
 
 # Layer 1: Local tests (no sandbox needed, ~15s)
 uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
@@ -158,4 +158,7 @@ def test_my_sandbox_test(sandbox_url: str, sandbox_page: Page) -> None:
 - Python 3.13+
 - `playwright` and `pytest-playwright` (included in test dependencies)
 - Chromium browser (`uv run playwright install chromium --with-deps`)
+- Firefox browser (`uv run playwright install firefox`) for `tests/e2e/test_lotc_domeinbeheer.py`:
+  dat bestand meet een fout die alleen Firefox laat zien (een tabelcel die daar tot niets
+  krimpt). Zonder Firefox slaat die ene test zichzelf over; de rest draait gewoon.
 - For sandbox tests: running Kind cluster with `task sandbox:setup`

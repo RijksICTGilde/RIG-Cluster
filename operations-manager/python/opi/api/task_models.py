@@ -227,9 +227,18 @@ class AddServiceResult(BaseModel):
 
     status: str
     message: str = ""
-    services_added: list[str] = Field(default_factory=list)
-    services_skipped: list[str] = Field(default_factory=list)
-    components_updated: list[str] = Field(default_factory=list)
+    services_added: list[str] = Field(
+        default_factory=list,
+        description="Services newly selected at project level. Empty when the service was already selected.",
+    )
+    services_skipped: list[str] = Field(
+        default_factory=list,
+        description="Services that were already selected at project level. The components in the request are bound to them anyway.",
+    )
+    components_updated: list[str] = Field(
+        default_factory=list,
+        description="Components whose services list actually changed. A component that already had the service is absent, so this is never an echo of the request.",
+    )
     processing: ProcessingStatus | None = None
     warnings: list[str] | None = None
     # Failure fields
@@ -245,7 +254,37 @@ class ConfigureServiceResult(BaseModel):
     service: str | None = None
     target: str | None = None
     removed: bool | None = None
+    generated: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Waarden die het platform invulde omdat u ze leeg liet, per yaml-pad in het projectbestand. "
+            "Leeg wanneer u alles zelf meegaf, wat het normale geval is. Vandaag is er een: een "
+            "uitnodigingssleutel ('services/invite/config/active[0]/key'), de code in de "
+            "uitnodigingslink. Dit is de enige plek waar u een gegenereerde code te zien krijgt op het "
+            "moment dat hij ontstaat; daarna is hij op te vragen met een gewone lezing van de "
+            "invite-config."
+        ),
+        examples=[{"services/invite/config/active[0]/key": "Xk3pQ7rL2mNvB8dTfW1aYz"}],
+    )
     approvals: list[ApprovalNoticeResponse] = Field(default_factory=list, description=APPROVALS_DESCRIPTION)
+    warnings: list[str] | None = Field(
+        default=None,
+        description=(
+            "Wat dit project nu verwacht maar niet heeft. Anders dan 'approvals' wacht dit op "
+            "niemand, en anders dan een fout is de configuratie geldig: een veld is door een "
+            "instelling elders nodig geworden en is leeg gebleven. Elke regel begint met het "
+            "yaml-pad van het veld, zodat duidelijk is om welke entry het gaat. Vandaag is er "
+            "een: staat 'restrict-access' van keycloak aan, dan laat het realm alleen rolhouders "
+            "binnen en geeft een uitnodiging zonder realm-rol dus geen toegang. Het hele project "
+            "wordt beoordeeld, niet alleen het blok dat u zojuist schreef."
+        ),
+        examples=[
+            [
+                "services/invite/config/active[0]/realm-roles: Keycloak beperkt de toegang tot "
+                "houders van een rol; een uitnodiging zonder realm-rol geeft dus geen toegang."
+            ]
+        ],
+    )
     processing: ProcessingStatus | None = None
     # Failure fields
     error: str | None = None

@@ -2012,7 +2012,9 @@ tasks:
     desc: "Run Playwright E2E browser tests (local app server, no sandbox needed)"
     dir: operations-manager/python
     cmds:
-      - uv run playwright install chromium --with-deps
+      # Ook firefox: tests/e2e/test_lotc_domeinbeheer.py meet daarin een fout die in
+      # Chromium NIET te zien is (een tabelcel die alleen daar tot niets krimpt).
+      - uv run playwright install chromium firefox --with-deps
       - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
     silent: false
 
@@ -2020,7 +2022,7 @@ tasks:
     desc: "Run the local E2E suite in a shuffled order (the isolation check that counts)"
     dir: operations-manager/python
     cmds:
-      - uv run playwright install chromium --with-deps
+      - uv run playwright install chromium firefox --with-deps
       # The plan's own acceptance criterion: order-independence is only proven by
       # actually changing the order. A reversed file order is not enough -- it still
       # keeps every file's tests together and in sequence, which is exactly the

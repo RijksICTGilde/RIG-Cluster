@@ -116,7 +116,9 @@ ROOS_TO_NLDD_ICONS = {
 # niet stilzwijgend weg maar staat het meteen ergens.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Bouwen & draaien", ["/forms/wizard/restart", "/services"]),
-    ("Platform", ["/cli", "/actions", "/docs"]),
+    # /introductie als eerste van Platform: het is de uitleg OVER het platform, en zonder
+    # groep viel hij bovenaan bij Dashboard en Mijn projecten, waar hij niet hoort.
+    ("Platform", ["/introductie", "/cli", "/actions", "/docs"]),
     # /metrics-explorer stond onder "Bouwen & draaien" en hoort hier: het is een
     # beheerpagina over het hele platform, niet iets dat je gebruikt om je eigen project
     # te bouwen. Het menu-item zelf is al alleen voor een platformbeheerder zichtbaar

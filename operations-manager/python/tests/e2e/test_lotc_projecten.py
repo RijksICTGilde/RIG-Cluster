@@ -132,6 +132,50 @@ def test_de_pagina_toont_de_kaarten_en_wat_daar_omheen_hoort(client: httpx.Clien
         assert weg not in antwoord, f"{weg} staat er nog; de tabelkolommen zijn niet weg"
 
 
+def test_de_korte_projectnaam_staat_naast_de_weergavenaam(client: httpx.Client) -> None:
+    """De unieke korte naam hoort in het overzicht, klein en naast de weergavenaam.
+
+    De weergavenaam is niet uniek en is niet wat je in de CLI of de API intypt. Zonder de
+    korte naam kun je hier dus wel een project herkennen maar er niet mee verder.
+
+    Hij heeft in de count-plek van de kaart gestaan. Dat is de plek voor een TELLING
+    ("123 apps", zo staat het in de registry van het component) en een projectcode is dat
+    niet; hij kwam daar terecht omdat het toevallig kleine tekst naast de titel is. Nu
+    staat hij in de chipsleuf, waar ook de bewerkdatum staat.
+
+    De vorm wordt meegetoetst en niet alleen de aanwezigheid: niet in de titel en niet in
+    de omschrijvingsregel. Zou iemand hem in de titel zetten, dan is het geen
+    identificatie meer maar een tweede naam.
+    """
+    antwoord = client.get("/projects").text
+
+    kaart = antwoord.split('href="/projects/test-project-detail/details"', 1)[1].split("</a>", 1)[0]
+    assert 'class="lotc-layer-chips"' in kaart, "de kaart heeft geen chipsleuf"
+    assert "test-project-detail" in kaart.split('class="lotc-layer-chips"', 1)[1], (
+        "de korte naam staat niet als chip op de kaart"
+    )
+
+    # De titel blijft de WEERGAVEnaam.
+    assert '<span class="lotc-layer-title">Detail Test Project</span>' in antwoord, (
+        "de weergavenaam is niet meer de titel van de kaart"
+    )
+
+
+def test_een_project_zonder_weergavenaam_toont_zijn_naam_niet_twee_keer(client: httpx.Client) -> None:
+    """Zonder weergavenaam is de titel al de korte naam; er hoeft er dan niet nog een bij.
+
+    ``lotc_project_rows()`` vult ``display_name`` met de naam zelf als het project er geen
+    heeft, dus zonder deze uitzondering zou dezelfde tekst twee keer op de kaart staan.
+    """
+    antwoord = client.get("/projects?q=test-project&sort=naam").text
+
+    # test-project heeft geen display-name in zijn fixture.
+    assert '<span class="lotc-layer-title">test-project</span>' in antwoord, "de fixture is veranderd"
+    assert "<code>\n    test-project\n</code>" not in antwoord, (
+        "de korte naam staat er dubbel op een project zonder weergavenaam"
+    )
+
+
 def test_zoeken_en_sorteren_staan_in_de_toolbar(client: httpx.Client) -> None:
     """De vorm die de gebruiker aanleverde: zoekveld links, sorteerknop met menu rechts.
 

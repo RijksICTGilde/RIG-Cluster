@@ -50,6 +50,21 @@ class AuthorizationWallService(Service):
     )
     config_model = AuthorizationWallConfig
     config_schema_version = "1.0"
+
+    # Hem aan een component hangen schrijft hem ook op projectniveau bij. Mag hier, want dat
+    # projectniveau draagt geen BESLISSING: er staat een optionele bannertekst en verder
+    # niets, dus er valt voor de gebruiker niets te kiezen dat wij anders voor hem zouden
+    # invullen. Vergelijk keycloak, waar het projectniveau een blueprint en een realm kiest;
+    # daar moet de gebruiker eerst zelf iets zeggen en blijft impliciet inschrijven uit.
+    #
+    # De startconfiguratie blijft bewust leeg (``implicit_project_config`` niet overschreven,
+    # dus een kale selectie): een leeg ``config``-blok zou suggereren dat er iets ingesteld
+    # is. Wie een banner wil, zet hem daarna.
+    #
+    # Wat dit NIET wegneemt is de eis dat publish-on-web en keycloak er zijn (zie
+    # ``requires``). Dat is geen keuze maar een feit: zonder die twee kan een auth wall niet
+    # werken, en dat hoort de aanroeper te horen in plaats van het zelf te ontdekken.
+    allows_implicit_project_selection = True
     config_section_id = "auth-wall-config"
     modal_flow_id = "modal-edit-auth-wall-config"
     # After the secret services (10-50); an auth wall fronts the pod, so its
