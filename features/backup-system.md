@@ -647,6 +647,14 @@ and leaves storage generations alone. When both placements hold a value and they
 it keeps the **higher** one and logs a warning naming both, because a generation lower
 than reality resolves to a resource that already exists.
 
+The old component-level writer always used the fixed key `postgresql-database`, also for a
+project that declares `namespace-postgresql-database`. The repair therefore writes the
+value under the name the project actually declares and merges the two PostgreSQL names
+into one value, rather than leaving it under the key it was found. Under the other key it
+would not be read back at all, and next to a real entry it would shadow it: the
+reconciliation resolves `postgresql-database` first, so it would expect the older name and
+mark the running `_vN` database an orphan.
+
 ### A restore never writes into a target that already holds data
 
 `pg_restore` adds rows, it does not replace them, and a bucket restore merges. So a
