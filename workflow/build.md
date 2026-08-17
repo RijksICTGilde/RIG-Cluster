@@ -51,6 +51,41 @@
   Draai je zo'n run voor iemand anders, deel die regels dan ook echt: een run op de
   achtergrond met de uitvoer in een bestand is voor de ander hetzelfde als stilte.
 
+- **En wacht niet op je eigen achtergrondrun.** Dit is de fout die in RC-128 uren kostte en
+  waar de opdrachtgever op corrigeerde. Start je een suite op de achtergrond, dan **meldt de
+  harnas zelf** dat hij klaar is, met exitcode. Er daarna in blijven hangen met
+
+  ```bash
+  until [ -s $S/tasks/<id>.output ]; do sleep 45; done   # FOUT
+  ```
+
+  is dubbelop en puur verlies: elke ronde kost een tool-call, de pauze is latentie boven op
+  de echte looptijd, en de Bash-timeout is **maximaal 10 minuten** - bij een suite van een uur
+  tuig je die lus dus zes keer op en levert hij zes keer niets op.
+
+  De werkwijze die wel loopt:
+
+  1. **Achtergrond + de notificatie als signaal.** Niet erop wachten; er ander werk bij doen.
+  2. **Eén `Monitor` op het voortgangsbestand voor vroeg rood**, met een filter dat ook falen
+     dekt: `tail -f voortgang.txt | grep -E --line-buffered ' (FAILED|ERROR) '`. Zo weet je
+     binnen seconden van een rode test in plaats van pas na een uur.
+  3. **Kies werk dat niet botst.** Metingen die alleen LEZEN (schermen bekijken, `kubectl`,
+     greps op de bron) kunnen naast een suite. Alleen wat dezelfde staat MUTEERT - hetzelfde
+     cluster, dezelfde `zad-projects` - moet wachten.
+  4. **Moet je het antwoord hebben voor je verder kunt?** Dan in de voorgrond met een timeout.
+     Kan het langer dan tien minuten duren, dan kan dat niet, en is achtergrond de enige
+     juiste keuze.
+
+- **Meet eerst of de run kán slagen.** Een sandboxsuite die op capaciteit vastloopt kost uren
+  en levert een omgevingsartefact op, geen oordeel. De node is **één** node met `4 cpu` en
+  **max 110 pods**; `kubectl describe node` geeft de cpu-requests. Doet een test veel langer
+  dan in een vorige gang (en `PYTEST_VOORTGANG` maakt dat zichtbaar), kijk dan eerst naar
+  `FailedScheduling` in de events voordat je de code verdenkt.
+
+- **Na een bulkverwijdering: laat het cluster eerst tot rust komen.** Een suite starten terwijl
+  namespaces en CNPG-clusters nog aan het opruimen zijn laat de eerste test die opruiming
+  meten. In RC-128 gaf dat vijf ERRORs die losstaand meteen groen waren.
+
 - **Ask the thing that knows, not the clock.** Sleeping until something is "probably done" is guessing twice: about the time, and about the outcome. Every state you might sleep on has an owner that will tell you:
   - a task → the task endpoint (`wait_for_task()` in the test helpers wraps it, and returns the *outcome*, not just "finished");
   - a deployment's health and sync → ArgoCD, via `opi/services/argocd_overview.py` for a whole project in one query;

@@ -524,7 +524,16 @@ def test_doorloop_van_de_tls_override(
             data={"attachment_id": BIJLAGE_ID},
             files={"file": (f"{BIJLAGE_ID}.pem", pem, "application/x-pem-file")},
         )
-    assert upload.status_code in (200, 201), f"het certificaat kwam niet in de catalogus: {upload.text}"
+    # 202 EN een task-id, want deze weg is asynchroon geworden (RC-119: een bijlage die je
+    # plaatst of vervangt rolt zichzelf uit). Deze assertie stond op (200, 201) en viel dus om
+    # op een BEDOELDE verandering: het antwoord was al 'accepted' met een poll_url, en de
+    # catalogus werd daarna gelezen voordat de taak had gelopen. 200/201 blijft toegestaan
+    # zodat de test niet omslaat als deze weg ooit weer synchroon wordt.
+    assert upload.status_code in (200, 201, 202), f"het certificaat kwam niet in de catalogus: {upload.text}"
+    if upload.status_code == 202:
+        taak = upload.json().get("task_id")
+        assert taak, f"202 zonder task_id is niet te volgen: {upload.text}"
+        sandbox_api.wait_for_task(sandbox_url, taak, api_key, verify_ssl=_API_VERIFY_SSL, timeout=300)
 
     # --- 2. een eigen certificaat op de ene deployment, het platform op de andere ---------
     _zet_override_via_de_modal(
