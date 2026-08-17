@@ -119,9 +119,8 @@ async def handle_backup(
                 component_info = db_components[0]
                 component_name = component_info["component_name"]
                 reference_name = component_info["reference_name"]
-                generation = project_file_handler.get_database_generation(
-                    project_data, deployment_name, component_name, reference_name
-                )
+                # One database per deployment, so the generation is read per deployment.
+                generation = project_file_handler.get_database_generation(project_data, deployment_name)
                 # Dedicated placement (a project-owned cluster) is a project-wide
                 # decision: namespace-postgresql-database or postgresql-database with
                 # scope: project (RC-17).
@@ -179,9 +178,8 @@ async def handle_backup(
                 component_info = minio_components[0]
                 component_name = component_info["component_name"]
                 reference_name = component_info["reference_name"]
-                generation = project_file_handler.get_bucket_generation(
-                    project_data, deployment_name, component_name, reference_name
-                )
+                # One bucket per deployment, so the generation is read per deployment.
+                generation = project_file_handler.get_bucket_generation(project_data, deployment_name)
 
                 bucket_result = await bucket_backup_manager.backup_bucket(
                     namespace=app_namespace,
