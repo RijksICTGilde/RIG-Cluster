@@ -30,7 +30,7 @@ import yaml
 from opi.services.catalog.base import DeploymentManifestContext
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
-from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from tests.e2e.helpers.htmx import wait_for_htmx_quiet
 from tests.e2e.helpers.tekst import veld
 from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
@@ -154,10 +154,15 @@ def _wacht(page: Page, expressie: str, field: str, value: str, waarop: str) -> N
     JS-bron eronder: geen veld, geen waarde, geen richting. Precies die melding stond
     onder de wisselvallige runs van deze suite, en daardoor was er niet uit af te lezen
     of de lijst leeg bleef of de waarde weer verdween.
+
+    Alleen de TIME-OUT wordt hier vertaald. Een andere ``PlaywrightError`` -- een echte
+    JS-fout in de expressie, een gesloten pagina, een navigatie eronder -- gaat ongemoeid
+    door: die als "niet gebeurd binnen 30000 ms" melden verstopt de oorzaak achter een
+    wachtverhaal, en dan zoek je in de verkeerde hoek.
     """
     try:
         page.wait_for_function(expressie, arg=[field, value], timeout=_SELECT_TIMEOUT_MS)
-    except PlaywrightError as exc:
+    except PlaywrightTimeoutError as exc:
         opties = page.evaluate(
             "(name) => { const el = document.querySelector(`select[name='${name}']`);"
             " return el ? [...el.options].map(o => o.value) : null; }",
@@ -214,14 +219,20 @@ def _select_when_offered(page: Page, field: str, value: str) -> None:
     wait_for_htmx_quiet(page)
 
 
-def _project_from_wizard(app_server: str, page: Page, captured: list[str], rule_name: str) -> dict[str, Any]:
-    """Run the create wizard with one cross-domain rule and return the project it produced."""
+def _open_wizard_at_the_rule_step(page: Page, app_server: str, description: str) -> WizardHelper:
+    """Open a fresh create wizard and click through to the cross-domain step."""
     wizard = WizardHelper(page, app_server)
     wizard.open_create_wizard()
-    wizard.fill_identity(display_name=unique_project_name("cda"), description="cross-domain chain")
+    wizard.fill_identity(display_name=unique_project_name("cda"), description=description)
     wizard.click_next()
     wizard.fill_services([SERVICE])
     _walk(wizard, page, until=STEP)
+    return wizard
+
+
+def _project_from_wizard(app_server: str, page: Page, captured: list[str], rule_name: str) -> dict[str, Any]:
+    """Run the create wizard with one cross-domain rule and return the project it produced."""
+    wizard = _open_wizard_at_the_rule_step(page, app_server, description="cross-domain chain")
 
     _fill_inbound_rule(page, rule_name)
     wizard.click_next()
@@ -327,35 +338,33 @@ class TestTheWizardProducesANetworkPolicy:
         ]
 
 
-def test_a_second_wizard_in_the_same_browser_session_starts_without_a_rule(
-    app_server: str, auth_page: Page, captured_yaml: list[str]
-) -> None:
+def test_a_second_wizard_in_the_same_browser_session_starts_without_a_rule(app_server: str, auth_page: Page) -> None:
     """De isolatiebewering van dit bestand, in een test in plaats van in een xfail-reden.
 
     De twee tests hierboven stonden onder de aanname dat ze elkaar besmetten: "ze delen
     een browsersessie, en de eerste vult er een regel in waar de tweede mee begint".
-    Gemeten (RC-125) klopt dat niet, en dit is de meting:
+    Gemeten (RC-125) klopt dat niet, en dit is de meting.
 
-    Deze test doet de besmetting BEWUST -- twee volledige wizardgangen achter elkaar op
-    DEZELFDE pagina, dezelfde context, dezelfde koekjespot, dus een strengere opzet dan
-    de twee tests hierboven ooit hebben (die krijgen elk een verse context, want
-    ``auth_page`` en ``authenticated_context`` staan per test). En de tweede gang begint
-    toch met een lege regellijst.
+    De eerste gang hier dient NIET in. Dat is met opzet: de indiening roept zelf
+    ``clear_wizard_state`` aan (``opi/web/router_wizard.py``), dus na een indiening is de
+    wizardstaat sowieso weg en toetst een tweede gang niets meer -- zo bleef deze test
+    groen met de restart eruit. Door te stoppen zodra de regel staat, is de wizardstaat
+    aantoonbaar AANWEZIG (de eerste assertie hieronder) en is de restart bij het openen
+    van de tweede gang het enige dat hem nog kan wissen. Haal die restart uit
+    ``open_create_wizard`` en deze test valt om.
 
-    Dat komt niet vanzelf: de wizardstaat staat server-side onder een token in het
-    sessiekoekje, en ``open_create_wizard`` haalt eerst ``/forms/wizard/restart`` op, wat
-    die staat wist. Dat is de weg waarlangs de isolatie loopt, en die weg is nergens
-    getoetst -- vandaar deze test: gaat de restart eruit, dan valt hij om, en niet een
-    van de twee tests hierboven op een raadselachtige waardefout.
+    De opzet is bovendien strenger dan wat de twee tests hierboven ooit doen: twee gangen
+    achter elkaar op DEZELFDE pagina, dezelfde context, dezelfde koekjespot, terwijl die
+    twee elk een verse context krijgen (``auth_page`` en ``authenticated_context`` staan
+    per test).
     """
-    _project_from_wizard(app_server, auth_page, captured_yaml, "eerste-gang")
+    _open_wizard_at_the_rule_step(auth_page, app_server, description="eerste gang")
+    _fill_inbound_rule(auth_page, "eerste-gang")
+    assert _inbound_field_names(auth_page), (
+        "de eerste gang heeft geen regel achtergelaten om te wissen; dan toetst de tweede gang niets"
+    )
 
-    wizard = WizardHelper(auth_page, app_server)
-    wizard.open_create_wizard()
-    wizard.fill_identity(display_name=unique_project_name("cda"), description="tweede gang")
-    wizard.click_next()
-    wizard.fill_services([SERVICE])
-    _walk(wizard, auth_page, until=STEP)
+    _open_wizard_at_the_rule_step(auth_page, app_server, description="tweede gang")
 
     assert _inbound_field_names(auth_page) == [], (
         "de tweede wizardgang begint met de regel van de eerste; de wizardstaat wordt niet gewist"
