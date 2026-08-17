@@ -21,6 +21,7 @@ from opi.handlers.project_file_handler import validate_attachment_couplings, val
 from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
 from opi.services.registry import SERVICES, get_service, property_owning_services
@@ -38,6 +39,15 @@ if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
 
 logger = logging.getLogger(__name__)
+
+#: This module validates a project file that ALREADY EXISTS -- on every save, and on
+#: every reprocess and replay of a file nobody touched. A rule about how large a new
+#: volume may be does not belong here: applying it to stored data would turn an older
+#: project with a larger mount into a file that can no longer be saved at all, and a
+#: PVC cannot shrink, so its owner could not comply either. Ceilings are enforced where
+#: the value ARRIVES (the config API's request bodies and the form field); here the
+#: shape is checked and the value is taken as it stands.
+STORED_PROJECT_CONTEXT: dict[str, Any] = {STORED_CONTEXT_KEY: True}
 
 
 def _accepted_config_fields(provider: Service, layer: ConfigLayer) -> list[str]:
@@ -85,7 +95,7 @@ def _validate_one_config(
         return  # service takes no typed config at this layer
     try:
         if model is provider.config_model:
-            provider.validate_config(raw, from_version=from_version)
+            provider.validate_config(raw, from_version=from_version, context=STORED_PROJECT_CONTEXT)
         else:
             # A layer-specific model (per-mount clone state). OPI writes it, so there is no
             # stamped version to migrate from; validate the shape directly.

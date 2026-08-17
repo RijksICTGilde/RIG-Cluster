@@ -313,14 +313,14 @@ class TestPatchServiceConfigList:
             data,
             ServiceType.PERSISTENT_STORAGE.value,
             ConfigLayer.COMPONENT,
-            add=[{"name": "data2", "size": "2Gi", "mount-path": "/data2"}],
+            add=[{"name": "data2", "size": "500Mi", "mount-path": "/data2"}],
             remove=[],
             component_name="backend",
         )
         entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "persistent-storage")
         assert service_entry_config(entry) == [
             {"name": "data1", "size": "1Gi", "mount-path": "/data1"},
-            {"name": "data2", "size": "2Gi", "mount-path": "/data2"},
+            {"name": "data2", "size": "500Mi", "mount-path": "/data2"},
         ]
         assert counts["updated"] == 1
         assert counts["added"] == 0
@@ -376,12 +376,12 @@ class TestPatchServiceConfigList:
             data,
             ServiceType.PERSISTENT_STORAGE.value,
             ConfigLayer.COMPONENT,
-            add=[{"name": "data1", "size": "4Gi", "mount-path": "/data1"}],
+            add=[{"name": "data1", "size": "1Gi", "mount-path": "/data1"}],
             remove=["data1"],
             component_name="backend",
         )
         entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "persistent-storage")
-        assert service_entry_config(entry) == [{"name": "data1", "size": "4Gi", "mount-path": "/data1"}]
+        assert service_entry_config(entry) == [{"name": "data1", "size": "1Gi", "mount-path": "/data1"}]
         assert counts == {"added": 1, "updated": 0, "removed": 1}
 
     def test_invalid_entry_is_refused_before_anything_is_written(self) -> None:
@@ -488,7 +488,7 @@ class TestListShapedConfigOnBothComponentStates:
                         "reference": service_name,
                         "config": [
                             {"name": "oud", "size": "1Gi", "mount-path": "/oud"},
-                            {"name": "ouder", "size": "2Gi", "mount-path": "/ouder"},
+                            {"name": "ouder", "size": "500Mi", "mount-path": "/ouder"},
                         ],
                     }
                 ],

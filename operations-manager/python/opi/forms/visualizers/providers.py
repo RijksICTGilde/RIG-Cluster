@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
+from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
 
@@ -445,15 +446,21 @@ class StorageSizeOptionsProvider:
     # De lijst ligt vast: elk project krijgt deze keuzes.
     options_source: ClassVar[OptionsSource | None] = None
 
+    #: Alleen het label per maat. De maten zelf staan in ``STORAGE_SIZES``, want daar
+    #: hangt ook de bovengrens aan die het configmodel afdwingt; twee lijsten die uit
+    #: elkaar lopen is precies hoe een keuzelijst iets anders gaat beloven dan de API
+    #: accepteert.
+    LABELS: ClassVar[dict[str, str]] = {
+        "50Mi": "50 MB",
+        "100Mi": "100 MB",
+        "250Mi": "250 MB",
+        "500Mi": "500 MB",
+        "1Gi": "1 GB",
+    }
+
     def get_options(self) -> list[dict[str, Any]]:
         """Get available storage size options."""
-        return [
-            {"value": "50Mi", "label": "50 MB"},
-            {"value": "100Mi", "label": "100 MB"},
-            {"value": "250Mi", "label": "250 MB"},
-            {"value": "500Mi", "label": "500 MB"},
-            {"value": "1Gi", "label": "1 GB"},
-        ]
+        return [{"value": size, "label": self.LABELS.get(size, size)} for size in STORAGE_SIZES]
 
 
 class KeycloakTemplateOptionsProvider:

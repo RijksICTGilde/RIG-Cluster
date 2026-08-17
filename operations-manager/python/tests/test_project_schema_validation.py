@@ -50,7 +50,7 @@ def _valid_project() -> dict:
                 "services": [
                     {
                         "reference": "persistent-storage",
-                        "config": [{"name": "data", "mount-path": "/data", "size": "10Gi"}],
+                        "config": [{"name": "data", "mount-path": "/data", "size": "1Gi"}],
                     }
                 ],
             }
@@ -319,23 +319,23 @@ def test_mount_path_with_dotdot_traversal_is_rejected() -> None:
     which describes that shape.
     """
     with pytest.raises(ValidationError):
-        StorageEntry(name="data", size="10Gi", **{"mount-path": "/var/../etc/passwd"})
+        StorageEntry(name="data", size="1Gi", **{"mount-path": "/var/../etc/passwd"})
 
 
 def test_mount_path_with_double_dot_in_middle_is_rejected() -> None:
     """`..` anywhere in the path is rejected, not just at the start."""
     with pytest.raises(ValidationError):
-        StorageEntry(name="data", size="10Gi", **{"mount-path": "/data/../secrets"})
+        StorageEntry(name="data", size="1Gi", **{"mount-path": "/data/../secrets"})
 
 
 def test_mount_path_must_be_absolute() -> None:
     with pytest.raises(ValidationError):
-        StorageEntry(name="data", size="10Gi", **{"mount-path": "data/files"})
+        StorageEntry(name="data", size="1Gi", **{"mount-path": "data/files"})
 
 
 def test_mount_path_normal_value_is_accepted() -> None:
     """Sanity: normal mount paths (dots in filenames are fine) still pass."""
-    entry = StorageEntry(name="data", size="10Gi", **{"mount-path": "/data/v1.0/files"})
+    entry = StorageEntry(name="data", size="1Gi", **{"mount-path": "/data/v1.0/files"})
     assert entry.mount_path == "/data/v1.0/files"
 
 
