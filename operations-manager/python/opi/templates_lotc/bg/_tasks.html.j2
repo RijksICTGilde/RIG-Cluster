@@ -27,7 +27,23 @@
                 </c-table-head>
                 {% for item in items %}
                     <c-table-row>
-                        <c-td>{{ item.soort }}</c-td>
+                        {# De cel Soort is de INGANG naar de voortgang van die ene taak:
+                           /projects/progress/<id> toont de balk, de huidige stap, de
+                           subtaken en de fouten per component. Die pagina bestond al maar
+                           was alleen bereikbaar direct na het aanmaken van een project.
+
+                           Alleen voor een achtergrondTAAK. Deze tabel toont twee bronnen
+                           door elkaar, en een run (databaseconsole, job) heeft geen
+                           voortgangspagina; zonder deze voorwaarde zou zo'n rij naar
+                           /projects/progress/None wijzen. _normalize_run zet task_id
+                           daarom expliciet op None. #}
+                        <c-td>
+                            {% if item.task_id %}
+                                <c-link href="/projects/progress/{{ item.task_id }}">{{ item.soort }}</c-link>
+                            {% else %}
+                                {{ item.soort }}
+                            {% endif %}
+                        </c-td>
                         <c-td>{{ item.deployment or "-" }}</c-td>
                         <c-td>
                             {# GEEN <c-stack> hieromheen: een cel is zelf al een kolom-flexbox, en met

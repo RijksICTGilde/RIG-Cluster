@@ -49,3 +49,46 @@ class TestDeTabel:
         html = self._render([_normalize_run({"kind": "db-console", "status": "running"})])
         assert "/projects/progress/" not in html
         assert "Databaseconsole" in html
+
+
+class TestDeBestemmingIsGeenWizardpagina:
+    """Waar de link heen wijst moet ELKE taaksoort aankunnen, niet alleen het aanmaken.
+
+    De voortgangspagina is gebouwd voor de wizard en heette zo ook ("project creation
+    progress page"). Nu de takenlijst er backups, refreshes en verwijderacties heen
+    stuurt, is dat geen aanname meer die stil mag blijven staan: een pagina die alleen
+    een create_project begrijpt, zou vanuit deze tabel op de helft van de rijen scheef
+    lopen.
+    """
+
+    def test_een_gewone_taak_krijgt_een_eigen_afrondtekst(self) -> None:
+        from opi.web.router import _progress_page_context
+
+        context = _progress_page_context(
+            {"task_id": "abc-123", "task_type": "backup", "status": "completed", "project_name": "va-48w"},
+            "abc-123",
+        )
+
+        assert "Project succesvol aangemaakt" not in context["success_message"]
+        assert context["progress_url"] == "/projects/progress/abc-123/fragment"
+
+    def test_het_aanmaken_houdt_zijn_eigen_tekst(self) -> None:
+        from opi.web.router import _progress_page_context
+
+        context = _progress_page_context(
+            {"task_id": "abc-123", "task_type": "create_project", "status": "completed", "project_name": "va-48w"},
+            "abc-123",
+        )
+
+        assert "Project succesvol aangemaakt" in context["success_message"]
+
+    def test_de_weg_terug_gaat_naar_het_project_en_niet_naar_de_wizard(self) -> None:
+        """Ook bij een mislukking: daar is de projectpagina waar je verder repareert."""
+        from opi.web.router import _progress_page_context
+
+        context = _progress_page_context(
+            {"task_id": "abc-123", "task_type": "refresh_project", "status": "failed", "project_name": "va-48w"},
+            "abc-123",
+        )
+
+        assert "/projects/va-48w/details" in context["on_complete"]
