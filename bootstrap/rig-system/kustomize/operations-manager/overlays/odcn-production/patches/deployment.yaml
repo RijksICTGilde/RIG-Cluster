@@ -58,16 +58,23 @@ spec:
               key: token
         # TransIP DNS API, for the CAA records on rijks.app / rijksapp.nl / rijksapp.dev.
         # The secret already exists in this namespace: external-dns uses it.
+        #
+        # Optional on purpose. The CAA reconciler is non-critical by design and skips
+        # itself when the credentials are absent, but a required secretKeyRef fails the
+        # container before Python ever runs: a missing or renamed secret would hold the
+        # whole portal in CreateContainerConfigError over DNS hygiene.
         - name: TRANSIP_ACCOUNT_NAME
           valueFrom:
             secretKeyRef:
               name: transip-credentials
               key: TRANSIP_ACCOUNT_NAME
+              optional: true
         - name: TRANSIP_PRIVATE_KEY
           valueFrom:
             secretKeyRef:
               name: transip-credentials
               key: TRANSIP_PRIVATE_KEY
+              optional: true
         - name: LOG_ERRORS_TO_FILE
           value: "true"
         - name: LOG_ERRORS_FILE_PATH
