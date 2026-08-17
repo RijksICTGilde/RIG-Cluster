@@ -123,6 +123,32 @@ def config_path(layer: ConfigLayer, service: ServiceType, *segments: str) -> str
     return "/".join([prefix, *segments]) if segments else prefix
 
 
+#: The REST counterpart of ``_LAYER_PATH_PREFIX``: the path suffix of the generated
+#: config-write route, per layer. It sits here and not in the v2 router because two very
+#: different callers need the same string -- the router, which registers the route, and an
+#: error message that has to tell a caller which request to make instead. An endpoint typed
+#: out by hand in an error message is one that goes stale without anyone noticing.
+#: ``DEPLOYMENT_COMPONENT`` is absent on purpose: no write route is generated for it.
+_LAYER_ENDPOINT_SUFFIX: dict[ConfigLayer, str] = {
+    ConfigLayer.PROJECT: "/config/project",
+    ConfigLayer.COMPONENT: "/config/component/{component_name}",
+    ConfigLayer.DEPLOYMENT: "/config/deployment/{deployment_name}",
+}
+
+
+def config_endpoint_path(layer: ConfigLayer, service_name: str, project_name: str = "{project_name}") -> str:
+    """The API path that writes a service's config at ``layer``.
+
+    ``config_endpoint_path(ConfigLayer.PROJECT, "authorization-wall", "mijn-project")``
+    -> ``"/api/v2/projects/mijn-project/services/authorization-wall/config/project"``.
+
+    Takes the service as a plain name rather than a ``ServiceType``, because a caller
+    that only holds the name out of a project file should not have to rebuild the enum
+    to name the endpoint. Raises ``KeyError`` for a layer that has no write route.
+    """
+    return f"/api/v2/projects/{project_name}/services/{service_name}{_LAYER_ENDPOINT_SUFFIX[layer]}"
+
+
 #: A service's raw config as it appears in the project file: a dict for most
 #: services, or a list for sequence configs (e.g. storage mounts).
 ServiceConfigData = dict[str, Any] | list[Any]
@@ -651,10 +677,10 @@ class Service(ABC):
     #:
     #: De gevel mag alleen bestaan zolang hij waar is: staan er meer entries in het bestand,
     #: dan weigeren de lees- en schrijfroute met een 409 in plaats van de eerste te tonen en
-    #: de rest te overschrijven -- bij een invite is dat verlies onherstelbaar, want de
-    #: sleutel is het geheim in de link en komt in geen enkel leesantwoord terug. De PATCH
-    #: op de lijst blijft bestaan en is de uitweg. Alles daarvan zit op één plek,
-    #: ``opi/services/config_singular.py``.
+    #: de rest te overschrijven -- bij een invite is dat verlies onherstelbaar, want het
+    #: projectbestand is de enige plek waar die uitnodiging staat en een overschreven link
+    #: is per direct ongeldig voor wie hem al had. De PATCH op de lijst blijft bestaan en is
+    #: de uitweg. Alles daarvan zit op één plek, ``opi/services/config_singular.py``.
     api_singular_lists: ClassVar[frozenset[str]] = frozenset()
 
     #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
@@ -1139,6 +1165,25 @@ class Service(ABC):
         of which is user territory) overrides this.
         """
         return platform_managed_keys(self.config_model_for(layer))
+
+    def generate_missing_values(self, project_data: dict[str, Any]) -> dict[str, str]:
+        """Fill in the values this service generates when the writer left them empty.
+
+        The wizard has always done this for the one case there is -- an invite key left
+        blank becomes a generated 128-bit key -- through the form's ``post_merge``. The
+        API write path never ran that, so a caller who left the key empty (the portal
+        invites you to) got an invitation whose link was literally ``/invite/``. Nothing
+        was masked and nothing was cleared: no key was ever made.
+
+        Mutates ``project_data`` in place and returns ``{yaml path: generated value}``.
+        The return value is not bookkeeping: it is the ONLY place a caller learns a value
+        the platform invented for it, so the write route can hand it back. Default ``{}``
+        -- a service that generates nothing declares nothing.
+
+        Idempotent by contract, like every other pass over a project file: a value that is
+        already there is left alone and reported by nobody.
+        """
+        return {}
 
     # --- approval ownership (RC-5 "service owns what needs approving") -----------
     # A service declares, as data, which of the values it manages need approval before

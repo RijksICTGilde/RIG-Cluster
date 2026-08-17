@@ -1701,6 +1701,41 @@ class GitConnector:
             revisions.append({"ref": parts[0], "author": parts[1], "timestamp": parts[2], "message": parts[3]})
         return revisions
 
+    async def last_modified_per_file(self, subdir: str) -> dict[str, str]:
+        """When each file under ``subdir`` was last touched, as ISO 8601, newest wins.
+
+        One ``git log`` pass over the whole history rather than one per file: an
+        overview page asks this for every project it lists, and a per-file walk would
+        make the page cost a subprocess per row.
+
+        Merge commits list no files under ``--name-only`` and are therefore skipped,
+        which is what we want -- a merge is not an edit of the file. Keys are
+        repo-relative paths; a file that only ever appeared in a merge is absent, so
+        callers must treat a missing key as "unknown" and not as "never changed".
+        """
+        await self.ensure_repo_cloned()
+        prefix = self._get_full_path(subdir).strip("/")
+
+        # Record separator before each commit's timestamp, so the file list that
+        # follows can be attributed to it without counting lines.
+        stdout, stderr, code = await self._run_git_command(
+            ["log", "--pretty=format:%x1e%aI", "--name-only", "--", prefix]
+        )
+        if code != 0:
+            logger.debug(f"git log failed for {prefix}: {stderr}")
+            return {}
+
+        last_modified: dict[str, str] = {}
+        for record in stdout.split("\x1e"):
+            lines = [line.strip() for line in record.splitlines() if line.strip()]
+            if not lines:
+                continue
+            timestamp, paths = lines[0], lines[1:]
+            for path in paths:
+                # Newest first, so the first sighting of a path is its last change.
+                last_modified.setdefault(path, timestamp)
+        return last_modified
+
     async def list_changed_files(self, old_commit: str, new_commit: str) -> list[str]:
         """Return repo-relative paths changed between two commits.
 

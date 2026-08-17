@@ -37,14 +37,17 @@ Available both as an on-demand API endpoint (`POST /api/resources/{project_name}
 
 For each component in the target deployment(s):
 
-1. Skip if opted out (`auto-tune-resources: false`) or the deployment is not Available — **except on the OOM path**, where the not-Available guard is deliberately skipped (a component that just OOM'd is Available=False by definition, and that is exactly when it must be raised).
-2. Determine the recommendation source:
+1. Skip if opted out (`auto-tune-resources: false`).
+2. **Repair first**: if the current override already sits below the declared root, restore it to the root and stop there (see Root Component below). This happens before anything is measured and before the guard below, because a component starved by such an override is exactly the one that neither of them can reach.
+3. Skip if the deployment is not Available — **except on the OOM path**, where the not-Available guard is deliberately skipped (a component that just OOM'd is Available=False by definition, and that is exactly when it must be raised).
+4. Determine the recommendation source:
    - **CPU**: if the cluster has VPA and the component's `VerticalPodAutoscaler` has a populated `.status` → use its CPU `target`. (No Prometheus CPU path exists.)
-   - **Memory**: use the VPA memory `target` **only if it exceeds `VPA_MEMORY_FLOOR_MI`** (the recommender's floor). Otherwise (no VPA, empty `.status`, or target at the floor) fall back to Prometheus `max_over_time(container_memory_working_set_bytes{...})` over `RESOURCE_TUNING_WINDOW_HOURS`.
+   - **Memory**: use the VPA memory `target` **only if it exceeds `VPA_MEMORY_FLOOR_MI`** (the recommender's floor). Otherwise (no VPA, empty `.status`, or target at the floor) fall back to Prometheus `max_over_time(container_memory_working_set_bytes{...})` over `window_hours`.
    - OOM kills are always read from Prometheus (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`); when OOM kills are present the VPA target is not used (the OOM path drives the limit instead).
-3. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps.
-4. Write changed values to the **deployment-level override only**. The base (root) component is left exactly as the user declared it — it is not ratcheted by the tuner (see Root Component below).
-5. Commit once per project, then reprocess so ArgoCD redeploys.
+5. Skip if the observed max is below `min_observed_mi` (see Plausibility Floor below), unless OOM kills were detected.
+6. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps.
+7. Write changed values to the **deployment-level override only**. The base (root) component is left exactly as the user declared it — it is not ratcheted by the tuner (see Root Component below).
+8. Commit once per project, then reprocess so ArgoCD redeploys.
 
 ### Recommendation Algorithm (Memory)
 
@@ -154,6 +157,18 @@ A new deployment therefore inherits exactly the declared root. If that is too ti
 
 The root is also the **floor**: an override the tuner writes is never tuned below the memory the user declared on the component (a lower bound only — a deployment may always raise itself above it).
 
+An override that already sits below the root is **repaired** at the top of the tuning flow, before any measurement and ahead of the not-Available guard. Such an override starves the component, and that starvation blocks both routes that would otherwise correct it: there is no running pod to measure, and the deployment reports Available=False. The repair restores the declared value (only the deficient side of it), which needs neither. Deployment-level overrides are written by the tuner alone — there is no editable or API for them — so a repair can never overwrite a value someone set on purpose.
+
+If the component was auto-disabled for an OOM kill, the repair also **clears that disable**. Leaving it would make the repair invisible and permanent: a component scaled to zero has no pods, so no OOM metric, so nothing that would ever switch it back on. Same shape as the image-pull disable, which clears once the image changes. Disables for any other reason are left alone: memory says nothing about a missing image.
+
+**Veldgeval mpfpsm-lcl pr-200** (14 August 2026): a WireMock stub measured as 0Mi during the sweep, was sized to the cluster minimum of 25Mi, and was then OOM-killed before its first log line. Every route back was closed: the pod could not run, so the next sweep measured 0Mi again; `:refresh` and a new image tag did not help because the value sat in the project spec, not in the manifest. Repairing to the declared root is the way out that needs no measurement.
+
+### Plausibility Floor
+
+An observed max below `min_observed_mi` (5Mi) counts as **no data**, not as a real measurement, and the component is skipped (unless OOM kills were detected, which takes the OOM path with the current YAML values as baseline).
+
+This replaces an exact-zero test that was meant to catch the same thing and did not. A pod that existed only briefly inside the window reports a fraction of a Mi: that is not zero, so it passed, and it prints as `0Mi` in the reason line, which is what `mpfpsm-lcl/pr-200` recorded (`Request: max 0Mi + 25% = 25Mi`). Any container that really ran passes 5Mi within seconds, so nothing legitimate is lost.
+
 ### Limit/Request Margin
 
 A written memory limit always stays **at least `RESOURCE_TUNING_MIN_LIMIT_HEADROOM_MI` (64Mi) above the request**, capped by the cluster limit. A container with `limit == request` has no burst headroom and dies on the first spike — the failure mode behind the headscale OOM cascade (a 25Mi==25Mi component killed four times in two minutes). An absolute margin is used rather than a factor, because a factor on a small measurement rounds request and limit to the same value, exactly where headroom is needed most.
@@ -198,7 +213,9 @@ Response:
 POST /api/resources/{project_name}/sanitize?deployment={deployment_name}
 ```
 
-Detects broken deployments (crash loops, missing images, OOM kills) and disables them by setting `disabled: true` in the project YAML.
+Detects broken deployments (crash loops, missing images) and disables them by setting `disabled: true` in the project YAML.
+
+An OOM kill on its own is **not** a reason to disable. OOM is what this tuner repairs, and disabling takes away the pods whose OOM metric is the only signal it reads, which turns a memory set too low into a permanent outage (`mpfpsm-lcl/pr-204`). A component that keeps dying for it still trips the restart threshold.
 
 ## Configuration
 
@@ -219,6 +236,7 @@ vars in practice, and a system service owns its own config. Change a value in
 | `min_delta_mi` | `16` | Ignore memory changes smaller than this (absolute deadband) |
 | `min_delta_m` | `10` | Ignore CPU changes smaller than this in millicores (absolute deadband) |
 | `min_limit_headroom_mi` | `64` | Minimum absolute headroom the memory limit keeps above the request (so limit never equals request) |
+| `min_observed_mi` | `5.0` | Below this observed max the measurement counts as "no data" instead of as a real value |
 | `scheduler_enabled` | `true` | Run the nightly fleet-wide tuner |
 | `hour` | `1` | Hour (Europe/Amsterdam) of the nightly sweep (off-peak, before backups) |
 | `pace_seconds` | `15` | Delay after each changed project, to spread pod rollouts |

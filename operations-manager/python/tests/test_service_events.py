@@ -127,13 +127,19 @@ class TestParticipationIsDerived:
             ServiceType.ATTACHMENTS,
             ServiceType.INVITE,
         }
-        # Alleen het metrics-blok. De backupable diensten stonden hier ook, tot RC-100
-        # het backupblok een eigen tabblad gaf: de mixin declareert de haak sindsdien niet
-        # meer en het blok wordt bij naam opgevraagd (collect_backups_sections). Zie de
-        # module-docstring van opi/services/catalog/shared/backups.py voor de afweging.
-        assert {s.service_type for s in listeners(UIEvent.DEPLOYMENT_SECTIONS)} == {
-            ServiceType.METRICS_SCRAPER,
-        }
+        # LEEG, en dat is geen vergissing. Twee bewoners zijn hier vertrokken, allebei naar
+        # een eigen tabblad en allebei om dezelfde reden: het blok stond op twee plekken en
+        # twee weergaven van dezelfde gegevens lopen uit de pas.
+        #
+        #   - de backupable diensten bij RC-100; de mixin declareert de haak niet meer en
+        #     het blok wordt bij naam opgevraagd (collect_backups_sections);
+        #   - de metrics-scraper daarna; zijn blok haalde exact het fragment op dat het
+        #     tabblad Metrics ophaalt.
+        #
+        # De haak blijft bestaan voor een dienst die WEL alleen op de deploymentpagina
+        # hoort. Zie de module-docstring van opi/services/catalog/shared/backups.py en
+        # tests/test_metrics_niet_dubbel.py.
+        assert {s.service_type for s in listeners(UIEvent.DEPLOYMENT_SECTIONS)} == set()
 
     def test_a_project_narrows_the_listeners_to_the_services_it_uses(self) -> None:
         """What a page wants: a block only belongs on a project that has the service."""

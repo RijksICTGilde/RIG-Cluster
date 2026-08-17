@@ -32,7 +32,7 @@
   het thema meelevert, en het volgt een themawissel.
 #}
 {% extends "base_lotc.html.j2" %}
-{% from "bg/_patterns.html.j2" import panel, page_head, info, explainer %}
+{% from "bg/_patterns.html.j2" import panel, page_head, info, explainer, approval_alerts %}
 {# "with context": het paneel toont ook de stand die de diensten melden, en dat leest de
    dienstnaam via ServiceAdapter uit de context. Zonder deze toevoeging ziet een macro
    alleen zijn eigen argumenten. #}
@@ -519,6 +519,21 @@
                                                     :attrs="{'data-url': link.url, 'onclick': open_link}" />
                                             {% endfor %}
                                         </c-cluster>
+                                        {# Een adres hierboven is het adres dat ECHT bediend wordt, en dat is niet
+                                           altijd het adres dat het project vroeg: zolang een eigen domein niet is
+                                           goedgekeurd publiceert de deployment op het clusteradres. Dat stond
+                                           alleen op het tabblad Deployments, dus wie hier keek zag een knop naar
+                                           een adres met geen woord over de aanvraag eronder.
+
+                                           Per deployment een keer, want de knoppen hierboven zijn er een per
+                                           deployment en de melding gaat over de deployment, niet over de link. #}
+                                        {% set gemeld = namespace(deployments=[]) %}
+                                        {% for link in component.ingress_links %}
+                                            {% if link.deployment_name not in gemeld.deployments %}
+                                                {% set _ = gemeld.deployments.append(link.deployment_name) %}
+                                                {{ approval_alerts(approval_notices.get(link.deployment_name, [])) }}
+                                            {% endif %}
+                                        {% endfor %}
                                     </c-stack>
                                 {% endif %}
 

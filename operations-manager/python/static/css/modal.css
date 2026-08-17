@@ -109,6 +109,32 @@
     color: var(--rvo-color-grijs-500);
 }
 
+/* De laadtoestand van de goedkeuringsdialoog (/admin/approvals), aangestuurd door htmx.
+   ``hx-indicator="#approval-loading"`` op de knop "Beheren" zet .htmx-request op dit
+   element zolang het verzoek loopt, en haalt hem daarna weg.
+
+   Waarom hier eigen regels en niet de indicator-opmaak van htmx zelf: die werkt met
+   opacity, en een element dat alleen doorzichtig is neemt nog steeds ruimte in. Dat is
+   hetzelfde lege vak als de foutbalk die hier weg is - dus display.
+
+   De derde regel dekt de TWEEDE opening: zonder hem staat het formulier van het vorige
+   project nog in beeld terwijl het nieuwe wordt opgehaald.
+
+   Alleen deze dialoog. De bewerkdialogen van een project laden hun eerste stap nog met
+   fetch (static/js/edit_modal.js) en zetten hun laadtekst zelf in #edit-section-inner;
+   die staat er dus alleen als hij bedoeld is, en wordt door de swap vervangen. */
+#approval-loading {
+    display: none;
+}
+
+#approval-loading.htmx-request {
+    display: block;
+}
+
+#approval-loading.htmx-request ~ #edit-section-inner {
+    display: none;
+}
+
 .edit-section-error {
     /* rood-100 en rood-800 staan niet in lotc-app.css: de foutmelding kwam zonder
        achtergrond EN zonder tekstkleur op het scherm - witte doos, zwarte tekst. Vaste

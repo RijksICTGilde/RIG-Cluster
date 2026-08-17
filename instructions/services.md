@@ -483,6 +483,108 @@ Existing building blocks, so nobody writes a fifth name validator:
 model, a validator or a closed select with `AllowedValues`/`Literal`, a visualizer with a
 label and help text, and a line in the section layout.
 
+### A field that another service's setting makes necessary
+
+`ServiceDefinition.requires` is the unconditional dependency: the auth wall cannot work
+without keycloak, so binding it without keycloak is refused. Some dependencies are
+*conditional*, and for those a refusal is wrong. An invite without a `realm-roles` entry is
+a perfectly good invitation -- it hands out a bare account -- right up to the moment
+keycloak's `restrict-access` is switched on, because from then on only a role holder gets
+in. The same file is correct or useless depending on a value in another service's config,
+and nobody found out until someone tried the link.
+
+`ServiceDefinition.config_advice` declares that, as a **warning, never a refusal**:
+
+```python
+config_advice=[
+    ConfigAdvice(
+        when=config_path(ConfigLayer.PROJECT, ServiceType.KEYCLOAK, "config", "restrict-access", "enabled"),
+        expects=config_path(ConfigLayer.PROJECT, ServiceType.INVITE, "config", "active[*]", "realm-roles"),
+        message="Keycloak beperkt de toegang tot houders van een rol; een uitnodiging "
+                "zonder realm-rol geeft dus geen toegang.",
+    )
+]
+```
+
+Three properties hold it together, and none of them is optional:
+
+- **It lives on the service that owns the FIELD**, not on the one that owns the condition.
+  That is what makes the advice discoverable from the thing you are editing, and it keeps
+  keycloak from having to know that invites exist.
+- **Both halves are yaml paths**, built with `config_path` exactly as `requires` and every
+  editable are. `when` applies while the path holds a *truthy* value, so `enabled: false`
+  correctly says nothing; `expects` is the field that should then carry a value, and one
+  `[*]` per list level is expanded so the warning names the entry it is about
+  (`services/invite/config/active[0]/realm-roles`). Both are read with `smart_get_value`,
+  so they resolve against the project file and against the wizard's virtual
+  `_services-config` root alike.
+- **Generic code knows no service names.** `collect_config_advice(project_data)`
+  (`opi/services/services.py`) walks the catalog and evaluates what is declared. A service
+  the project has not selected needs no special case: its `expects` path resolves to
+  nothing.
+
+One evaluator, two existing exits -- do **not** add a third:
+
+| Exit | Where | What it looks like |
+|---|---|---|
+| Field warning | `EditableFormProcessor._add_config_advice` merges into `field_warnings` | the same dict a `FieldWarning` from an enforcer lands in, keyed by field path |
+| `warnings` on the write | `ProjectManager._config_advice_warnings`, on `configure_service` and `patch_service_config_list` | `ConfigureServiceResult.warnings`, each line prefixed with the yaml path |
+
+It sits in `process_json_submission` rather than in `enforce_sections` on purpose: the
+advice is about the whole project, not about one section, and `enforce_sections` only runs
+for a section that *has* an enforcer -- so a service without one (invite) would never be
+asked. Running it on every submission and re-render also means the warning appears while
+the user is still on the step.
+
+The API judges the whole project, not only the block just written: the two halves sit in
+two services, and either write can be the one that makes the advice true. Switching
+`restrict-access` on is as much the moment as saving a roleless invite is.
+
+Warnings are only drawn by the widgets that call `render_warnings` (`text`, `sequence`).
+If your advice names a field rendered by another widget, add the macro there too rather
+than moving the warning to a field it is not about.
+
+`tests/test_config_advice.py` covers both directions, including the one that matters most:
+without `restrict-access`, a roleless invite produces no warning at all.
+
+### A value that must exist: `values_must_exist`
+
+`config_advice` asks whether a field is *filled* and warns. Whether the value that IS
+there exists is a different question with a different verdict: a realm role no keycloak
+config defines is not a choice with a downside, it is a typo. Keycloak skips it on
+redemption (`assign_realm_roles_to_user` reports it under `not_found` and moves on), so
+the invited user arrives without the role -- and under `restrict-access`, without access.
+
+That is `Editable.values_must_exist`, set on the field next to its `values_provider`:
+
+```python
+INVITE_REALM_ROLE_ITEM_EDITABLE = Editable(
+    yaml_path=_cp("active[*]", "realm-roles[*]"),
+    values_provider="InviteRealmRoleOptionsProvider",
+    values_must_exist=True,
+    ...
+)
+```
+
+- **The valid set is never restated.** It comes from the field's own provider -- the same
+  one that fills the form's select and the same one `x-choices-source` publishes in the
+  OpenAPI document, so a caller is judged against exactly the list they were told to read.
+  The provider is instantiated **without** `current_value`: with one it deliberately keeps
+  an unknown stored value as an option flagged "(bestaat niet meer)", which is right for a
+  widget and would make every value valid here.
+- **Opt-in, and it stays opt-in.** An options list is usually a MENU rather than a closed
+  set (`sleep-after-deploy` offers 4h..168h and accepts `90m`), so turning this into a
+  default would reject values the API legitimately takes. Set it only where the value is a
+  *reference into this project*, i.e. on a provider that declares an `OptionsSource`.
+- **Enforced at the save chokepoint**, `validate_declared_choices` in
+  `opi/manager/project_validation.py`, as a `ProjectIntegrityError`. Not in the widget: a
+  select can only show what it offers, while the API and hand-written YAML never pass one.
+- **An empty source is skipped**, on purpose. It means the project's values come from
+  somewhere the provider cannot see (the four pre-service invite files name roles of a
+  realm nobody configured through ZAD), and refusing there would block the next edit of a
+  project over a value this release did not introduce. The case that matters is never
+  empty: with `restrict-access` on there is always at least the wall role.
+
 ## API (configuring via REST)
 
 A service that owns a `config_model` is configurable through the REST API for free --

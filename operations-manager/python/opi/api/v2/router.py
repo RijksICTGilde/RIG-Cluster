@@ -22,9 +22,12 @@ from opi.api.router import (
     AddServiceRequest,
     CloneBucketFromExternalRequest,
     CloneDatabaseFromExternalRequest,
+    IPRateLimiter,
     UpdateComponentRequest,
     UpdateImageRequest,
     UpsertDeploymentRequest,
+    sanitize_for_log,
+    subdomain_check_rate_limiter,
 )
 from opi.api.task_models import (
     AddComponentResult,
@@ -60,6 +63,7 @@ from opi.api.v2.models import (
     ProjectListItem,
     ProjectListResponse,
     StatusError,
+    SubdomainCheckResponse,
 )
 from opi.api.v2.project_read import (
     REDACTED as REDACTED_VALUE,
@@ -81,8 +85,9 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
+from opi.connectors.subdomain import validate_base_domain, validate_subdomain
 from opi.core.auth_decorators import get_current_user
-from opi.core.cluster_config import get_selectable_clusters
+from opi.core.cluster_config import get_ingress_postfix, get_selectable_clusters, supports_custom_domain_certificates
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
@@ -96,11 +101,12 @@ from opi.services.catalog.actions import (
     ActionContext,
     ActionField,
     ActionFieldKind,
+    ActionResult,
     ActionVerb,
     ServiceAction,
     UploadedFile,
 )
-from opi.services.catalog.base import ConfigLayer, ConfigRole, config_path
+from opi.services.catalog.base import ConfigLayer, ConfigRole, config_endpoint_path, config_path
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.postgresql_database.config_model import schema_description_field, schema_postfix_field
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
@@ -116,6 +122,7 @@ from opi.services.config_lists import PatchableList, patchable_lists
 from opi.services.config_singular import overflowing_list, singular_config_model, to_singular, to_stored
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.help_text import service_help_markdown
+from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
 from opi.services.project_authorization import (
@@ -479,11 +486,21 @@ async def list_clusters_v2(
 
     De domeinen komen uit dezelfde provider die het formulier zijn keuzelijst geeft
     (``ClusterBaseDomainOptionsProvider``), zodat portal en API niet uit elkaar kunnen lopen.
+    Op één punt wijken ze af, en met opzet: de optie ``__custom__`` is een SCHAKELAAR in het
+    formulier ("ik vul zelf een domein in") en geen waarde die je kunt opslaan, dus hier
+    hoort ze niet thuis. Ze stond er wel, en een client die haar overnam liep vast op de
+    schrijfactie. Zie ``CUSTOM_DOMAIN_SENTINEL``; een eigen domein zet je door de domeinnaam
+    zelf in ``base-domain`` te schrijven.
+
+    ``default-domain`` staat erbij omdat de lijst zelf niet verraadt welke keuze meteen in
+    gebruik gaat: alleen het domein van het cluster zelf (en een leeg ``base-domain``) gaat
+    zonder goedkeuring, en dat domein kan gewoon als gewone entry in ``base-domains`` staan.
+    Zonder dit veld moest een client het uit het label van de lege optie parsen.
 
     Headers:
         X-API-Key: The API key for the project (required)
     """
-    from opi.forms.visualizers.providers import ClusterBaseDomainOptionsProvider
+    from opi.forms.visualizers.providers import CUSTOM_DOMAIN_SENTINEL, ClusterBaseDomainOptionsProvider
 
     _project_data_or_404(project_name)
 
@@ -494,15 +511,112 @@ async def list_clusters_v2(
             {
                 "name": cluster,
                 "manager": cluster == settings.CLUSTER_MANAGER,
+                # Het domein van het cluster zelf, want dat is de enige waarde die
+                # zonder goedkeuring in gebruik gaat (is_deployment_domain_approved).
+                # Hij stond alleen als vrije tekst in het label van de lege optie, dus
+                # een client kon de twee gevallen niet uit elkaar houden zonder te parsen.
+                "default-domain": get_ingress_postfix(cluster).lstrip("."),
                 "base-domains": [
                     ClusterDomainOption(value=str(option["value"]), label=str(option["label"]))
                     for option in ClusterBaseDomainOptionsProvider(cluster=cluster).get_options()
+                    if option["value"] != CUSTOM_DOMAIN_SENTINEL
                 ],
+                # Wat een domein BUITEN die lijst hier oplevert. Zonder dit leest de
+                # __custom__-optie als een gelijkwaardige keuze, terwijl ze op een cluster
+                # zonder uitgifte een deployment zonder geldig certificaat oplevert.
+                "custom-domain-certificates": supports_custom_domain_certificates(cluster),
             }
         )
         for cluster in get_selectable_clusters()
     ]
     return JSONResponse(content=ClusterListResponse(project=project_name, clusters=clusters).model_dump(by_alias=True))
+
+
+@v2_router.get(
+    "/projects/{project_name}/subdomains/check/{subdomain}",
+    tags=["deployments"],
+    response_model=SubdomainCheckResponse,
+    responses={
+        200: {"description": "Subdomain availability check result"},
+        429: {"description": "Too many checks; wait before asking again"},
+    },
+)
+@validate_api_token
+async def check_subdomain_availability_v2(
+    request: Request,
+    project_name: ProjectNamePath,
+    subdomain: str,
+    base_domain: str,
+) -> SubdomainCheckResponse:
+    """Of *subdomain* nog vrij is onder *base_domain*, over alle projecten heen.
+
+    De projectnaam staat in het pad omdat de vraag bij een project hoort: je vraagt dit
+    omdat je het subdomein voor een deployment van dit project wilt claimen, en de
+    reservering wordt per project en deployment vastgelegd.
+
+    Hij stond er eerder niet in, en dat maakte het endpoint onbereikbaar:
+    ``validate_api_token`` legitimeert de sleutel tegen een project en las die naam uit de
+    routeparameters, dus zonder ``project_name`` was elk antwoord een 401. Zie
+    ``opi/api/endpoint_util.py``. De afscherming zelf is geen formaliteit -- zonder sleutel
+    is dit een middel om subdomeinen af te tasten.
+
+    Beperkt tot 30 aanvragen per minuut per client.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+
+    Example:
+    ```bash
+    curl "http://localhost:9595/api/v2/projects/mijn-project/subdomains/check/mijnapp?base_domain=rijksapp.nl" \\
+      -H "X-API-Key: your-api-key"
+    ```
+    """
+    client_id = IPRateLimiter.get_client_identifier(request)
+    if not subdomain_check_rate_limiter.is_allowed(client_id):
+        raise HTTPException(status_code=429, detail="Too many requests. Please wait before checking again.")
+
+    safe_subdomain = sanitize_for_log(subdomain)
+    safe_base_domain = sanitize_for_log(base_domain)
+    client_ip = sanitize_for_log(IPRateLimiter.get_client_ip(request))
+    logger.info(
+        "AUDIT: Subdomain check - project=%s, subdomain=%s, base_domain=%s, ip=%s",
+        sanitize_for_log(project_name),
+        safe_subdomain,
+        safe_base_domain,
+        client_ip,
+    )
+
+    _project_data_or_404(project_name)
+
+    is_valid, validation_error = validate_subdomain(subdomain)
+    if not is_valid:
+        return SubdomainCheckResponse(
+            subdomain=subdomain.lower(),
+            base_domain=base_domain.lower(),
+            available=False,
+            validation_error=validation_error,
+        )
+
+    # Het basisdomein moet er een zijn die het platform kent: anders is dit een manier om
+    # willekeurige domeinen af te tasten in plaats van de eigen uitgifte te bevragen.
+    is_valid_domain, domain_error = validate_base_domain(base_domain)
+    if not is_valid_domain:
+        return SubdomainCheckResponse(
+            subdomain=subdomain.lower(),
+            base_domain=base_domain.lower(),
+            available=False,
+            validation_error=domain_error,
+        )
+
+    connector = create_subdomain_connector()
+    is_available = await connector.check_availability(subdomain, base_domain)
+
+    return SubdomainCheckResponse(
+        subdomain=subdomain.lower(),
+        base_domain=base_domain.lower(),
+        available=is_available,
+        validation_error=None,
+    )
 
 
 @v2_router.get(
@@ -1702,7 +1816,9 @@ async def add_service_v2(
 
     Adds a bare selection (no config) at the project level, and appends the service to
     the services list of every component named in ``components`` -- entries already
-    there keep their config. Per-service config is set separately via
+    there keep their config. A service that is already selected at project level is
+    reported in ``services_skipped`` and its components are bound all the same, so
+    configure-then-bind works in either order. Per-service config is set separately via
     ``PUT /api/v2/projects/{project}/services/{service}/config/<target>``. Returns
     immediately with a task ID; poll /api/tasks/{task_id}.
 
@@ -2061,8 +2177,7 @@ def _layer_info(service: Any, service_type: ServiceType, layer: ConfigLayer) -> 
     """One layer of a service, out of what the service declares about that layer."""
     endpoint = None
     if _accepts_config_at(service, layer) and layer in _CONFIG_WRITE_LAYERS:
-        suffix, _ = _config_write_route(layer)
-        endpoint = f"PUT /api/v2/projects/{{project_name}}/services/{service_type.value}{suffix}"
+        endpoint = f"PUT {config_endpoint_path(layer, service_type.value)}"
     exempt_reason = service.form_exempt_layers.get(layer)
     return ServiceLayerInfo(
         target=layer,
@@ -2220,6 +2335,12 @@ async def get_service_config_v2(
     `invite.active`, see `Service.api_singular_lists`). If the file holds more than one,
     this is a 409 rather than the first entry with the rest quietly missing.
 
+    **The invite key comes back**, and that is a decision rather than an oversight: the
+    code IS the invitation, so whoever cannot read it back cannot send it on -- only
+    replace it, which invalidates a link that may already be on its way. The reasoning in
+    full is in the module docstring of `opi.services.catalog.invite`. It does not
+    generalise: `user-env-vars` values stay unreadable, for reasons of their own.
+
     Headers:
         X-API-Key: The API key for the project (required)
     """
@@ -2305,14 +2426,19 @@ async def _enqueue_config_write(
 
 
 def _config_write_route(layer: ConfigLayer) -> tuple[str, str | None]:
-    """The path suffix and the extra path-param name for a target layer."""
-    if layer is ConfigLayer.PROJECT:
-        return "/config/project", None
-    if layer is ConfigLayer.COMPONENT:
-        return "/config/component/{component_name}", "component_name"
-    if layer is ConfigLayer.DEPLOYMENT:
-        return "/config/deployment/{deployment_name}", "deployment_name"
-    raise ValueError(f"No config write route for layer {layer!r}")
+    """The path suffix and the extra path-param name for a target layer.
+
+    The suffix comes from ``config_endpoint_path`` in the catalog, so the route this
+    registers and the route an error message points a caller at are the same string.
+    """
+    name_params = {
+        ConfigLayer.PROJECT: None,
+        ConfigLayer.COMPONENT: "component_name",
+        ConfigLayer.DEPLOYMENT: "deployment_name",
+    }
+    if layer not in name_params:
+        raise ValueError(f"No config write route for layer {layer!r}")
+    return config_endpoint_path(layer, "{svc}").split("{svc}", 1)[1], name_params[layer]
 
 
 def _config_write_signature(name_param: str | None, body_model: type | None) -> Signature:
@@ -2336,7 +2462,7 @@ def _config_write_signature(name_param: str | None, body_model: type | None) -> 
     return Signature(params, return_annotation=JSONResponse)
 
 
-def _refuse_platform_managed(service_name: str, config: dict[str, Any], managed: frozenset[str]) -> None:
+def _refuse_platform_managed(service_name: str, config: Any, managed: frozenset[str]) -> None:
     """422 when a write carries a field OPI owns. The API can never change these.
 
     Refusing rather than dropping the field silently: a caller that sent it believes it
@@ -2346,7 +2472,19 @@ def _refuse_platform_managed(service_name: str, config: dict[str, Any], managed:
 
     ``exclude_unset`` on the body means a key is here only when the caller really sent
     it, so an unset optional field never trips this.
+
+    A config that is not an OBJECT has no named fields to own, so there is nothing here
+    to refuse. That is not a rare shape: the config of ``persistent-storage``,
+    ``temp-storage`` and ``attachments`` IS a list (a ``RootModel[list[...]]``), and its
+    body dumps to a ``list``. Without this guard the ``managed & config.keys()`` below
+    raised ``AttributeError`` on every such PUT -- a 500 on a documented endpoint, for a
+    check that had nothing to say about a list in the first place. The read side of the
+    same rule has carried the guard from the start (``_collect_service_config.visible``),
+    as do the mutator (``ServiceAdapter._platform_fields_of``) and the singular facade;
+    this is the write side catching up.
     """
+    if not isinstance(config, dict):
+        return
     offending = sorted(managed & config.keys())
     if not offending:
         return
@@ -2368,7 +2506,8 @@ def _refuse_singular_overflow(service_name: str, target: str, stored: Any, singu
     which is true for as long as there is one entry. It is a facade, not a fact, so the
     moment the file disagrees this layer stops pretending: showing the first entry would
     hide the rest and writing one would replace them, and for an invite that loss cannot
-    be undone -- the key is the secret in the link and no read gives it back.
+    be undone -- the project file is the only place that invitation exists, and an
+    overwritten link stops working for whoever already had it.
 
     The way out is the PATCH on the list itself, which addresses entries one at a time and
     has no singular surface to trip over. Naming it here matters: a refusal that does not
@@ -3372,6 +3511,10 @@ def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> S
         )
         for flag in action.flags_for(verbs)
     ]
+    # An action that rolls out takes the same ``rollout`` flag as every other mutating
+    # endpoint, with the same meaning: save now, process later.
+    if action.rollout_task_type:
+        params.append(Parameter("rollout", Parameter.POSITIONAL_OR_KEYWORD, annotation=RolloutQuery, default=True))
     if verbs[0].takes_fields:
         params.append(
             Parameter(
@@ -3401,12 +3544,57 @@ def _action_description(action: ServiceAction, verbs: tuple[ActionVerb, ...]) ->
     if action.disjunctions and not verbs[0].targets_existing:
         lines += ["", "Exactly one of:"]
         lines += [f"- `{'` or `'.join(d.one_of)}` -- {d.describes}" for d in action.disjunctions]
+    if action.rollout_task_type:
+        lines += [
+            "",
+            "This route answers 202 with a task id: the change is written and validated in the "
+            "request, and the processing that puts it on the cluster runs as a task you can "
+            "follow at the Location header. A refusal (409, 422) is still the immediate answer. "
+            "Pass `rollout=false` to save without processing.",
+        ]
     flags = action.flags_for(verbs)
     if flags:
         lines += ["", "Flags:"]
         lines += [f"- `{flag.name}` (default false): {flag.description}" for flag in flags]
     lines += ["", "Example:", "```", action.example_for(verbs), "```"]
     return "\n".join(lines)
+
+
+async def _enqueue_action_rollout(
+    action: ServiceAction, verb: ActionVerb, kwargs: dict[str, Any], result: ActionResult
+) -> JSONResponse:
+    """Turn a written change into a followable rollout: 202 with a task id.
+
+    The write already happened -- it is validated and committed in the request, because
+    the content arrives as an upload and a file does not belong in a task payload. What
+    is enqueued is the processing that puts it on the cluster, so the caller gets the
+    same task id, the same ``rollout=false`` deferral and the same progress view that
+    every other mutating endpoint gives, instead of a 200 that says "saved" and leaves
+    the running pod on the old content.
+
+    The handler's own body travels along, so nothing the synchronous answer said is lost.
+    """
+    task_type = action.rollout_task_type or ""  # never empty: only called for an action that declares one
+    rollout = bool(kwargs.get("rollout", True))
+    task = await create_async_task(
+        request=kwargs["request"],
+        task_type=task_type,
+        project_name=kwargs["project_name"],
+        payload={
+            "project_name": kwargs["project_name"],
+            "action": action.action_id,
+            "verb": verb.value,
+            "item_id": kwargs.get(action.id_param),
+            "component": kwargs.get("component_name"),
+            "rollout": rollout,
+        },
+    )
+    task_id = str(task["task_id"])
+    return JSONResponse(
+        content={**build_accepted_response(task_id, task_type), **result.body},
+        status_code=202,
+        headers={"Location": f"/api/tasks/{task_id}"},
+    )
 
 
 def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
@@ -3448,6 +3636,8 @@ def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
                 flags={flag.name: bool(kwargs.get(_param_name(flag.name))) for flag in action.flags_for(verbs)},
             )
         )
+        if action.rollout_task_type and 200 <= result.status_code < 300:
+            return await _enqueue_action_rollout(action, verb, kwargs, result)
         return JSONResponse(result.body, status_code=result.status_code)
 
     endpoint.__signature__ = _action_signature(action, verbs)
@@ -3467,6 +3657,9 @@ def _register_service_action_routes(router: APIRouter) -> None:
                     tags=[service_type.value],
                     summary=f"{action.summary} ({'/'.join(v.value for v in verbs)})",
                     description=_action_description(action, verbs),
+                    # An action that rolls out answers 202 on success; the refusals it
+                    # can still give synchronously keep their own status codes.
+                    status_code=202 if action.rollout_task_type else None,
                 )
 
 

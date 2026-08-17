@@ -13,7 +13,12 @@ from opi.connectors.subdomain import (
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_supports_dots
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path, get_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    custom_domain_certificate_note,
+    domain_setting_path,
+    get_domain_setting,
+)
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import service_entry_name
@@ -257,8 +262,21 @@ class DomainConfigEnforcer:
                 validate_bare_domain_allowed(actual_domain, supported, value)
             await self._check_bare_domain_availability(actual_domain, context)
 
+        # Whether this cluster can certify the domain at all, computed here for the same
+        # reason the bare-domain rule sits here: it does not depend on the domain-format,
+        # and the field is writable through PUT .../config without one. Held rather than
+        # raised, so a real FieldError further down still wins over a warning.
+        certificate_note = custom_domain_certificate_note(cluster, actual_domain)
+        certificate_field = (
+            f"deployments[{self.deployment_index}]/base-domain:custom"
+            if base_domain == "__custom__"
+            else domain_setting_path(DomainSetting.BASE_DOMAIN, self.deployment_index)
+        )
+
         domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
         if not domain_format:
+            if certificate_note:
+                raise FieldWarning(certificate_field, certificate_note)
             return value
 
         # When base-domain is "__custom__", user selected custom domain input
@@ -266,7 +284,36 @@ class DomainConfigEnforcer:
         if base_domain == "__custom__" and not custom_domain:
             raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
 
-        template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
+        # An id that is no template at all used to fall through here as ``""``, which made
+        # every check below vacuous: 'onzin' passed the entire enforcer untouched while the
+        # perfectly valid 'subdomain' was stopped for missing its subdomain. The typo was
+        # the one thing that got through, and it reached a project file.
+        #
+        # The valid set is not restated here. It comes from the field's own values provider
+        # -- the same one that fills the form's select and that the API publishes as
+        # ``x-choices-source`` -- given this deployment's base-domain, so the message names
+        # what this deployment can actually pick rather than all eleven ids. That context is
+        # exactly what the generic ``validate_declared_choices`` gate cannot supply, which is
+        # why this check lives in the enforcer (see DOMAIN_FORMAT_EDITABLE).
+        template = DOMAIN_FORMAT_TEMPLATES.get(domain_format)
+        if template is None:
+            # Imported here rather than at module scope, for the same reason
+            # ``project_validation.validate_declared_choices`` does it: this module is
+            # reached from connectors and managers, and pulling the whole visualizer
+            # package in at import time drags the form stack along with it. Measured, not
+            # assumed -- as a top-level import it turned 33 database-backed tests into
+            # errors in the full-suite run while every one of them passed in isolation.
+            from opi.forms.visualizers.providers import DomainFormatOptionsProvider
+
+            offered = [
+                str(option["value"])
+                for option in DomainFormatOptionsProvider(base_domain=base_domain, cluster=cluster).get_options()
+            ]
+            raise FieldError(
+                domain_setting_path(DomainSetting.DOMAIN_FORMAT, self.deployment_index),
+                f"'{domain_format}' is geen bestaand URL-formaat. Kies uit: {', '.join(offered)}.",
+            )
+
         if "{subdomain}" in template and not subdomain:
             # Field-level required validation only fires when the field is
             # rendered. If the user changed domain-format to one that needs a
@@ -301,12 +348,15 @@ class DomainConfigEnforcer:
         # through, "denied" hard-fails, and any other unapproved state
         # surfaces as a non-blocking warning prompting the user to tick the
         # request checkbox.
+        #
+        #
+        # The certificate note rides along on the same warning. Approval and certificate
+        # are two different obstacles on the same value: an approver can grant the first
+        # and never the second, and it is precisely AFTER approval that the certificate
+        # problem starts and the approval notice disappears. One warning is the only way
+        # the user hears both from the field they are filling in.
         if actual_domain and actual_domain.lower() not in supported:
-            domain_field = (
-                f"deployments[{self.deployment_index}]/base-domain:custom"
-                if base_domain == "__custom__"
-                else domain_setting_path(DomainSetting.BASE_DOMAIN, self.deployment_index)
-            )
+            domain_field = certificate_field
             is_allowed, error_msg = is_domain_allowed_for_project(actual_domain, value)
             if not is_allowed:
                 domain_config = get_project_allowed_domain_config(value, actual_domain)
@@ -321,10 +371,8 @@ class DomainConfigEnforcer:
                         msg = error_msg or f"Het domein '{actual_domain}' is afgewezen."
                         raise FieldError(domain_field, msg)
                 else:
-                    raise FieldWarning(
-                        domain_field,
-                        f"Gebruik van het domein '{actual_domain}' is op aanvraag.",
-                    )
+                    warning = f"Gebruik van het domein '{actual_domain}' is op aanvraag."
+                    raise FieldWarning(domain_field, f"{warning} {certificate_note}" if certificate_note else warning)
 
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:
@@ -356,6 +404,11 @@ class DomainConfigEnforcer:
                 context,
                 field_path=domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
             )
+
+        # Last, so that a FieldError from the checks above still wins: a warning that
+        # pre-empted a real failure would hide it.
+        if certificate_note:
+            raise FieldWarning(certificate_field, certificate_note)
 
         return value
 

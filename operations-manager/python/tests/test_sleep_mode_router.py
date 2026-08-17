@@ -195,7 +195,7 @@ def test_wake_transition_returns_202(client: TestClient) -> None:
     with patch.object(flow, "wake", AsyncMock(return_value=result)):
         resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers=TOKEN_HEADER)
     assert resp.status_code == 202
-    assert resp.json() == {"state": "waking"}
+    assert resp.json() == {"state": "waking", "sleep_state": "waking"}
 
 
 def test_wake_noop_returns_200(client: TestClient) -> None:
@@ -203,7 +203,7 @@ def test_wake_noop_returns_200(client: TestClient) -> None:
     with patch.object(flow, "wake", AsyncMock(return_value=result)):
         resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers=TOKEN_HEADER)
     assert resp.status_code == 200
-    assert resp.json() == {"state": "awake"}
+    assert resp.json() == {"state": "awake", "sleep_state": "awake"}
 
 
 def test_status_returns_flow_body(client: TestClient) -> None:

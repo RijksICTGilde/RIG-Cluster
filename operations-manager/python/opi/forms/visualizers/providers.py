@@ -48,6 +48,20 @@ class OptionsSource:
         return data
 
 
+#: De schakelaar "ik vul zelf een domein in" in de base-domain-select.
+#:
+#: Geen waarde maar een SCHAKELAAR: hij zet in het formulier een tweede, tijdelijk veld aan
+#: (``deployments[*]/base-domain:custom``) waar het echte domein in gaat, en wordt bij het
+#: opslaan door dat domein vervangen. Opgeslagen worden kan hij dus niet, en een schrijfactie
+#: die hem toch draagt wordt geweigerd ("Een aangepast domein is geselecteerd maar niet
+#: ingevuld", ``DomainConfigEnforcer``).
+#:
+#: Daarom staat hij hier bij naam: wat de API publiceert (``GET .../clusters``, en via
+#: ``options_source`` de ``x-choices-source`` van het veld) moet hem eruit laten, want een
+#: keuzelijst die een waarde noemt die de uitrol weigert stuurt elke client het bos in. Een
+#: eigen domein zet een API-client door de domeinnaam zelf in ``base-domain`` te schrijven.
+CUSTOM_DOMAIN_SENTINEL: Final = "__custom__"
+
 #: Een provider die nog niet heeft gezegd of zijn lijst vastligt of per project verschilt.
 #:
 #: Onderscheiden van ``options_source = None`` (de lijst ligt vast): wie het niet declareert
@@ -494,7 +508,7 @@ class BaseDomainOptionsProvider:
         return [
             {"value": "", "label": "Standaard (clusternaam)"},
             {"value": "rijksapp.nl", "label": "rijksapp.nl"},
-            {"value": "__custom__", "label": "Eigen domein..."},
+            {"value": CUSTOM_DOMAIN_SENTINEL, "label": "Eigen domein..."},
         ]
 
 
@@ -507,9 +521,11 @@ class ClusterBaseDomainOptionsProvider:
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
-            "De domeinen die het cluster van deze deployment ondersteunt (nice_url in de "
-            "clusterconfiguratie). Leeg betekent het standaarddomein van het cluster, "
-            "__custom__ betekent een eigen domein dat je zelf invult."
+            "De domeinen die het cluster van deze deployment aanbiedt (nice_url in de "
+            "clusterconfiguratie). Leeg betekent het standaarddomein van het cluster. Dit is "
+            "geen gesloten verzameling: een eigen domein zet je door de domeinnaam zelf in dit "
+            "veld te schrijven, en 'custom-domain-certificates' in hetzelfde antwoord zegt of "
+            "dit cluster daar een certificaat voor kan uitgeven."
         ),
         endpoint="GET /api/v2/projects/{project_name}/clusters",
         path="clusters[].base-domains[].value",
@@ -538,11 +554,14 @@ class ClusterBaseDomainOptionsProvider:
             raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
             domains = [_extract_domain(d) for d in raw]
             options.extend({"value": d, "label": d} for d in domains)
-            options.append({"value": "__custom__", "label": "Eigen domein..."})
+            options.append({"value": CUSTOM_DOMAIN_SENTINEL, "label": "Eigen domein..."})
             return options
 
         # Fallback: no matching cluster config - return empty with custom option
-        return [{"value": "", "label": "Cluster standaard"}, {"value": "__custom__", "label": "Eigen domein..."}]
+        return [
+            {"value": "", "label": "Cluster standaard"},
+            {"value": CUSTOM_DOMAIN_SENTINEL, "label": "Eigen domein..."},
+        ]
 
 
 class FilteredServiceOptionsProvider:

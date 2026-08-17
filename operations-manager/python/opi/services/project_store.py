@@ -82,6 +82,11 @@ MAX_MUTATION_ATTEMPTS = 5
 # rather than DEBUG/INFO, so an operator sees contention without turning on debug
 # logging. Tune from what the logs actually show.
 _LOCK_WAIT_WARN_SECONDS = 2.0
+
+# How long the "last changed" mapping stays good enough. The overview page asks for it
+# on every keystroke in its search box, and a change that lands in between is visible
+# one refresh later -- which is what the project cache itself already does.
+_LAST_MODIFIED_TTL_SECONDS = 30.0
 _PERSIST_WARN_SECONDS = 3.0
 AGE_HEADER = "-----BEGIN AGE ENCRYPTED FILE-----"
 
@@ -227,6 +232,11 @@ class GitProjectStore(ProjectStore):
         # Kept as a lower bound on purpose: if it lags, reconcile re-reads a few files
         # redundantly (safe); it is never allowed to run ahead of what the cache holds.
         self._cache_head: str | None = None
+        # "Last changed" per project, and when that mapping was built. Separate from
+        # the project cache because it is derived from history rather than from the
+        # tree, and only the overview page needs it.
+        self._last_modified_cache: dict[str, str] | None = None
+        self._last_modified_at: float = 0.0
 
     # ------------------------------------------------------------------
     # warm working copy
@@ -861,6 +871,39 @@ class GitProjectStore(ProjectStore):
         raw = await connector.list_file_revisions(self._relative_path(name))
         return [Revision(ref=r["ref"], message=r["message"], author=r["author"], timestamp=r["timestamp"]) for r in raw]
 
+    async def last_modified_all(self) -> dict[str, str]:
+        """When each project was last changed, keyed by project name, ISO 8601.
+
+        Serves the overview page, which wants this for every row at once. One git
+        log pass for the whole repository, cached for a short while: the page is
+        reloaded on every keystroke in the search box (htmx), and the answer cannot
+        meaningfully change between two of those.
+
+        A project without an entry is simply absent from the mapping. Never raises:
+        this makes the overview page do a git operation it never used to do, and a
+        decoration at the end of a row must not be able to take the page down with it.
+        The three types are what the way in can throw: OSError from the working copy,
+        ValueError when the repository password cannot be decrypted (no AGE key -- the
+        way this first went wrong), and RuntimeError from the git connector itself.
+        """
+        now = time.monotonic()
+        if self._last_modified_cache is not None and now - self._last_modified_at < _LAST_MODIFIED_TTL_SECONDS:
+            return self._last_modified_cache
+
+        try:
+            connector = await self.get_connector()
+            per_path = await connector.last_modified_per_file(PROJECTS_SUBDIR)
+        except (OSError, ValueError, RuntimeError) as exc:
+            logger.warning("Could not read project modification times: %s", exc)
+            return self._last_modified_cache or {}
+
+        # Back to project names: the store addresses projects by name, and a legacy
+        # filename resolves to the same stem as its canonical form.
+        per_project = {os.path.splitext(os.path.basename(path))[0]: stamp for path, stamp in per_path.items()}
+        self._last_modified_cache = per_project
+        self._last_modified_at = now
+        return per_project
+
     async def read_at(self, name: str, ref: str) -> dict[str, Any] | None:
         connector = await self.get_connector()
         return await self._read_committed(connector, self._relative_path(name), ref=ref)
@@ -1141,6 +1184,27 @@ class GitProjectStore(ProjectStore):
             logger.info("ProjectStore bootstrap loaded %d project(s) at %s", len(loaded), (self._cache_head or "?")[:8])
 
 
+def _as_plain(value: Any) -> Any:
+    """Dezelfde inhoud in kale Python-containers, voor een diff die over inhoud gaat.
+
+    ruamel geeft bij het laden ``CommentedMap``/``CommentedSeq`` en scalarsubklassen als
+    ``LiteralScalarString`` terug. Voor ``==`` zijn die gelijk aan hun kale evenknie, maar
+    DeepDiff rapporteert ze als typewissel en maakt de diff daarmee grover dan de
+    wijziging is. Deze functie neemt alleen de VORM weg; elke waarde blijft wat hij was.
+    """
+    if isinstance(value, dict):
+        return {key: _as_plain(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_as_plain(item) for item in value]
+    if isinstance(value, str) and type(value) is not str:
+        return str(value)
+    if isinstance(value, int) and not isinstance(value, bool) and type(value) is not int:
+        return int(value)
+    if isinstance(value, float) and type(value) is not float:
+        return float(value)
+    return value
+
+
 def _apply_our_change_to(
     *, base: dict[str, Any], ours: dict[str, Any], theirs: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -1171,6 +1235,25 @@ def _apply_our_change_to(
     would refine it.
     """
     try:
+        # De diff moet over INHOUD gaan, niet over containervormen. ``theirs`` komt uit
+        # een YAML-lees en is een ruamel ``CommentedMap``; ``base`` kan dat ook zijn;
+        # ``ours`` is doorgaans een platte ``dict`` uit een formulier of API-pad. Voor
+        # ``==`` maakt dat niets uit (CommentedMap is een dict-subklasse), maar DeepDiff
+        # ziet het als ``type_changes`` op het EERSTE knooppunt waar de vormen uiteenlopen
+        # -- in het gemeten geval de root -- en stopt daar met afdalen. De hele wijziging
+        # wordt dan een vervanging-in-zijn-geheel, en zo'n delta verifieert zijn oude
+        # waarde tegen ``theirs``: elk verschil, hoe onschuldig ook, laat hem weigeren.
+        # Gevolg (RC-118): de domeinwizard gaf een PERMANENT "gewijzigd sinds je begon
+        # met bewerken" terwijl niemand anders schreef en het bestand niet bewoog.
+        #
+        # Normaliseren verzint geen gelijkheid: alleen de vorm wordt gelijkgetrokken,
+        # de waarden niet, dus een echte botsing op hetzelfde veld blijft een conflict
+        # (de tests op de grenzen staan in test_store_merge_containervormen.py). De
+        # delta wordt op de ECHTE ``theirs`` toegepast; de verificatie daarbinnen
+        # vergelijkt met ``==`` en is dus container-blind.
+        base = _as_plain(base)
+        ours = _as_plain(ours)
+
         diff = DeepDiff(base, ours)
 
         collisions = _conflicting_added_keys(diff, ours=ours, theirs=theirs)

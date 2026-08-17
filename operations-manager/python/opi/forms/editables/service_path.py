@@ -22,7 +22,7 @@ import re
 from typing import Any
 
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE
-from opi.forms.editables.path import delete_value, get_value, set_value
+from opi.forms.editables.path import delete_value, get_value, resolve_path, set_value
 from opi.services.services import service_entry_body, service_entry_name
 
 #: The wizard keeps service SELECTION and service CONFIG apart in its state: ``services``
@@ -382,3 +382,31 @@ def smart_delete_value(data: dict[str, Any], yaml_path: str) -> None:
         body = _service_entry_body(entry, service_name)
         if isinstance(body, dict):
             delete_value(body, sub_path)
+
+
+def expand_wildcard_path(data: dict[str, Any], yaml_path: str) -> list[tuple[str, Any]]:
+    """Every concrete path *yaml_path* matches, with the value stored there.
+
+    A yaml path with ``[*]`` addresses a whole column of a list ("the realm-roles of
+    every invite"), and ``smart_get_value`` answers it as a nested list -- fine for a
+    read, useless for a message, which has to name the ONE entry that is wrong. This
+    resolves the wildcards instead, so every pair is a path a form field or an API caller
+    can act on.
+
+    Recursive rather than a single pass: ``resolve_path`` replaces the FIRST wildcard
+    only, so a path with two list levels (``active[*]/realm-roles[*]``) would otherwise
+    be read verbatim and match nothing.
+
+    A missing value comes back as ``None`` rather than being dropped -- "this entry has
+    no value" is exactly what a caller looking for an unfilled field is asking about.
+    """
+    if "[*]" not in yaml_path:
+        return [(yaml_path, smart_get_value(data, yaml_path))]
+
+    items = smart_get_value(data, yaml_path.split("[*]", 1)[0])
+    if not isinstance(items, list):
+        return []
+    found: list[tuple[str, Any]] = []
+    for index in range(len(items)):
+        found.extend(expand_wildcard_path(data, resolve_path(yaml_path, index)))
+    return found

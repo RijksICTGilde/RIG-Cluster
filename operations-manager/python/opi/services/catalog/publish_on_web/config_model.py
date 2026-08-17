@@ -32,6 +32,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opi.services.catalog.publish_on_web.domain_config import DomainFormatId
 from opi.services.config_managed import PLATFORM_MANAGED
 
 #: ``standard`` = platform certificate (Let's Encrypt); ``passthrough`` = the pod presents
@@ -121,7 +122,17 @@ class PublishOnWebDeploymentConfig(BaseModel):
     base_domain: str | None = Field(
         default=None,
         alias="base-domain",
-        description="The domain to publish on; the cluster's own domain when absent.",
+        description=(
+            "The domain to publish on; the cluster's own domain when absent. For a domain of your own, "
+            "write the domain name itself here (for example 'mijn-app.nl'); it does not have to be one "
+            "the cluster offers, and there is no separate field or marker for it. A domain of your own "
+            "needs an administrator's approval AND a certificate, and "
+            "the two are separate: not every cluster can obtain a certificate for a domain it does not "
+            "offer, and on one that cannot, the deployment is created and reachable but serves an "
+            "invalid certificate. Read `custom-domain-certificates` from "
+            "GET /api/v2/projects/{project}/clusters before setting this; where it is false, supply "
+            "your own certificate with the component's tls='provided'."
+        ),
     )
     subdomain: str | None = Field(
         default=None,
@@ -132,10 +143,15 @@ class PublishOnWebDeploymentConfig(BaseModel):
         alias="domain-mode",
         description="LEGACY hostname strategy, superseded by domain-format. Only read for files that predate it.",
     )
-    domain_format: str | None = Field(
+    domain_format: DomainFormatId | None = Field(
         default=None,
         alias="domain-format",
-        description="Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES).",
+        description=(
+            "Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES). The id set is "
+            "closed, so this field carries an enum; which of those ids you can actually use here is "
+            "narrower and depends on base-domain, because the dotted variants need a domain that supports "
+            "dot-separated hostnames. Read x-choices-source on this field for the list that fits."
+        ),
     )
     issuer: str | None = Field(
         default=None,
@@ -163,7 +179,10 @@ class PublishOnWebComponentConfig(BaseModel):
         description=(
             "How TLS is terminated: 'standard' uses the platform certificate, 'passthrough' lets the pod "
             "present its own, 'provided' terminates a certificate you supply as an attachment. Absent means "
-            "inherit (deployment > component > root > standard)."
+            "inherit (deployment > component > root > standard). 'standard' covers the domains the cluster "
+            "offers; for a domain of your own on a cluster that reports custom-domain-certificates=false "
+            "(GET /api/v2/projects/{project}/clusters) it yields no certificate at all, and 'provided' is "
+            "the way to a working address there."
         ),
     )
     attachment: str | None = Field(
