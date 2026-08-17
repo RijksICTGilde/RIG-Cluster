@@ -22,10 +22,16 @@ class TestHetIdKomtMee:
         rij = _normalize_task({"task_id": "abc-123", "task_type": "backup", "status": "running"})
         assert rij["task_id"] == "abc-123"
 
-    def test_ook_een_afgeronde_taak(self) -> None:
-        """Juist bij een mislukking wil je die pagina in: daar staat wat er misging."""
+    def test_ook_een_afgeronde_taak_draagt_zijn_id(self) -> None:
+        """Het id is een FEIT over de rij; of er een link van komt beslist de tabel.
+
+        Hier stond dat juist een mislukte taak een link verdiende, want daar staat wat er
+        misging. Dat gaat alleen op zolang de taak er nog is, en afgeronde taken worden
+        opgeruimd -- zie test_alleen_een_lopende_taak_wordt_een_link.
+        """
         rij = _normalize_task({"task_id": "abc-123", "task_type": "refresh_project", "status": "failed"})
         assert rij["task_id"] == "abc-123"
+        assert rij["active"] is False
 
     def test_een_run_heeft_er_geen(self) -> None:
         rij = _normalize_run({"kind": "db-console", "status": "running"})
@@ -44,6 +50,17 @@ class TestDeTabel:
     def test_een_taak_wordt_een_link(self) -> None:
         html = self._render([_normalize_task({"task_id": "abc-123", "task_type": "backup", "status": "running"})])
         assert "/projects/progress/abc-123" in html
+
+    def test_alleen_een_lopende_taak_wordt_een_link(self) -> None:
+        """Een afgeronde taak wordt opgeruimd, dus de link zou naar "Taak niet
+        beschikbaar" wijzen: een dode link die er levend uitziet."""
+        for status in ("completed", "failed", "cancelled"):
+            rij = _normalize_task({"task_id": "abc-123", "task_type": "backup", "status": status})
+            html = self._render([rij])
+            assert "/projects/progress/abc-123" not in html, status
+            # De rij blijft er wel staan, met zijn soort als gewone tekst. Het label komt
+            # uit de rij zelf en niet uit een tweede gok hier ("Back-up", niet "Backup").
+            assert rij["soort"] in html, status
 
     def test_een_run_blijft_tekst(self) -> None:
         html = self._render([_normalize_run({"kind": "db-console", "status": "running"})])
