@@ -92,7 +92,8 @@ data:
     # 2. De From:-header moet het adres van DIT account zijn. Een project kiest zijn
     #    weergavenaam, niet zijn adres en niet zijn domein: een From: in een vreemd domein
     #    haalt DMARC nooit, en een From: van een ander project is het misbruik waar deze
-    #    relay met een gedeeld upstream-account nu juist voor moet passen.
+    #    relay nu juist voor moet passen: de upstream authenticeert niet en vertrouwt op ons
+    #    uitgaande adres, dus alles wat hier langskomt gaat naar buiten als onze organisatie.
     #    Het adres dat OPI uitgeeft is <lokaal-deel>.<account>@<domein>; de eerste vorm
     #    hieronder laat ook <account>@<domein> toe, zodat een account zonder eigen lokaal
     #    deel blijft werken.
@@ -168,15 +169,29 @@ data:
     [queue.outbound]
     next-hop = "'upstream'"
 
+    # Poort 25 en GEEN authenticatie, en dat is geen slordigheid maar gemeten gedrag.
+    # Op 17 augustus 2026 tegen rmrmail.rijksweb.nl vanuit een pod met rig-ron-egress:
+    # poort 25 antwoordt met "220 rmrmail.rijksweb.nl ESMTP", 587 en 465 zijn dicht, en de
+    # EHLO-lijst is 8BITMIME, SIZE 31457280 en STARTTLS. Er staat GEEN "AUTH" in. De
+    # upstream vertrouwt op ons uitgaande adres 145.21.227.140, wat ook verklaart waarom
+    # het mailteam om een IP vroeg en niet om een accountnaam. Een [remote.upstream.auth]
+    # met lege waarden zou hier alleen maar een AUTH-poging opleveren die hij niet kent.
+    #
+    # LET OP het verschil met de submission-listener hierboven: die blijft 587 MET
+    # verplichte authenticatie. Alleen deze sprong naar de upstream is 25 zonder.
     [remote.upstream]
     address = "%{env:MAIL_UPSTREAM_HOST}%"
-    port = 587
+    port = 25
     protocol = "smtp"
 
-    [remote.upstream.auth]
-    username = "%{env:MAIL_UPSTREAM_USERNAME}%"
-    secret = "%{env:MAIL_UPSTREAM_PASSWORD}%"
-
+    # implicit = false betekent STARTTLS op een platte verbinding, en dat is precies wat
+    # deze upstream aanbiedt. allow-invalid-certs blijft uit, dus strikte certificaatcontrole.
+    #
+    # NIET GEVERIFIEERD, en het is de moeite waard: de documentatie zegt nergens wat er
+    # gebeurt als STARTTLS mislukt of het certificaat wordt afgekeurd. Valt Stalwart dan
+    # terug op platte tekst, of mislukt de bezorging? Dat verschil bepaalt of dit een
+    # garantie is of een voorkeur. Te meten door de upstream tijdelijk een certificaat te
+    # laten aanbieden dat niet valideert en te kijken of het bericht alsnog vertrekt.
     [remote.upstream.tls]
     implicit = false
     allow-invalid-certs = false
