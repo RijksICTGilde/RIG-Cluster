@@ -133,6 +133,13 @@ def mock_settings() -> Any:
         # Real int, not a bare MagicMock: create_app() reads this to wire SessionMiddleware,
         # and numeric comparisons on it must work even when this mock is in effect.
         mock_settings.SESSION_MAX_AGE_SECONDS = 28800
+        # Om dezelfde reden een echte string. validate_master_api_key doet eerst
+        # `if not settings.MASTER_API_KEY` (een kale MagicMock is waar-achtig, dus daar komt
+        # hij doorheen) en daarna secrets.compare_digest, en die weigert een MagicMock met
+        # een TypeError. Het endpoint gaf dan 500 in plaats van 401, en de test die juist
+        # toetst dat een PROJECTsleutel geweigerd wordt viel om op de vorm van de weigering.
+        # De waarde is expres een andere dan de projectsleutels in de fixtures.
+        mock_settings.MASTER_API_KEY = "test-master-api-key-not-a-project-key"
         yield mock_settings
 
 

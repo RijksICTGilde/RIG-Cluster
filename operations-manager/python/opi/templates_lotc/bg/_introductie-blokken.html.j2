@@ -55,8 +55,8 @@
 #}
 {% macro wat_het_is(aantal_zelf, aantal_achtergrond) %}
 <c-paragraph>
-    ZAD is een deploymentplatform voor RIG-projecten binnen ODC-Noord. Het is zelfservice:
-    je beschrijft je project, en je krijgt er een draaiende omgeving voor terug. Er zit
+    ZAD is een deploymentplatform op overheidsclouds. Het is zelfservice met extra service:
+    je beschrijft je project via click-ops of cli, en je krijgt er een draaiende omgeving voor terug. Er zit
     geen aanvraagtraject tussen en je hoeft niemand te vragen of er een database voor je
     aangemaakt kan worden.
 </c-paragraph>
@@ -93,8 +93,7 @@
 </c-paragraph>
 <c-paragraph>
     Die puzzel is hier al gelegd. Elk stukje ligt op zijn plaats, en wat jij toevoegt is je
-    applicatie. Zeg je dat je een database wilt, dan wordt die aangemaakt, staat het
-    wachtwoord versleuteld klaar en staan de gegevens als omgevingsvariabelen in je
+    applicatie. Zeg je dat je een database wilt, dan wordt die aangemaakt en staan de gegevens als omgevingsvariabelen in je
     component, zonder dat je ze ergens overtypt.
 </c-paragraph>
 {% endmacro %}
@@ -199,7 +198,6 @@
         href="https://github.com/RijksICTGilde/zad-actions" />
 </c-columns>
 {% endmacro %}
-
 
 {% macro aan_de_slag() %}
 <c-paragraph>
