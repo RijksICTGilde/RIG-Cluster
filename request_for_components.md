@@ -346,3 +346,27 @@ Dit raakt niet alleen `nldd-search-field`: hetzelfde patroon staat in `nldd.js` 
 **Wat wij intussen doen.** Na `htmx:afterSettle` het element vragen zijn eigen afleiding over te doen, met `el.requestUpdate("width", undefined)` (`static/js/htmx-formgedrag.js`). Bewust via de publieke Lit-API en bewust NIET door `--_width` van buitenaf te zetten: die naam begint met een underscore en is de keuken van het component. `tests/e2e/test_zoekveld_breedte.py` meet de breedte voor en na de swap en toetst dat `--_width` er weer staat.
 
 **Voorstel.** De afleiding niet aan `changedProperties.has("width")` hangen maar ook uitvoeren wanneer het element verbonden raakt met een attribuut dat nog niet is toegepast, zodat een element dat buiten het document is opgebouwd en daarna wordt ingevoegd zichzelf alsnog goed zet.
+
+## `nldd-toolbar`: een eigen overloopgroep maakt de "Meer"-knop permanent, en zijn items zijn niet klikbaar
+
+Gemeten in ZAD op 17 augustus 2026, op `/projects`, in Chromium. De werkbalk draagt een zoekveld en een sorteerknop met een uitklapmenu, plus - zoals het voorbeeld voorschrijft - een `<nldd-menu-group slot="overflow">` met dezelfde opties, bedoeld voor een smal scherm.
+
+Gemeten aan de sorteerknop in de lichte boom en aan de "Meer"-knop in de schaduwboom van de toolbar:
+
+| viewport | mét de overloopgroep | zonder |
+|---|---|---|
+| 1440px | sorteerknop zichtbaar, **"Meer" ook zichtbaar** | sorteerknop zichtbaar, "Meer" verborgen |
+| 1024px | sorteerknop verborgen, "Meer" zichtbaar | sorteerknop verborgen, "Meer" zichtbaar |
+| 800px | sorteerknop zichtbaar, **"Meer" ook zichtbaar** | — |
+
+**Wat je ziet.** Het sorteren staat dubbel op het scherm: als knop én als hamburger, op elke breedte. De eigenaar meldde het als "ze staan er nu dubbel" en "de hamburgerversie sorteert niet".
+
+**Welke schakel het is.** De enkele aanwezigheid van een `slot="overflow"`-groep laat de toolbar permanent zijn "Meer"-knop tonen, ook wanneer alles ruim past. Zonder die groep beslist de toolbar zelf, en dan verschijnt hij pas als het niet past.
+
+**En de overloop werkt daarnaast niet.** De items in de groep worden nooit bruikbaar: na een klik op "Meer" meten ze 0x0 en loopt een klik erop af op een timeout. Zonder de groep verschijnt op 1024px wel een "Meer"-knop, maar is zijn menu leeg. Sorteren is op die breedte dus hoe dan ook onbereikbaar - met of zonder eigen groep.
+
+De meting bij 800px is bovendien niet monotoon: de sorteerknop is daar wél zichtbaar terwijl hij dat op 1024px niet is. Wat de toolbar in de overloop stopt hangt dus niet alleen van de beschikbare ruimte af.
+
+**Wat wij intussen doen.** De eigen overloopgroep weghalen, op `/projects` en op `/admin/approvals`. Dat repareert de dubbeling en de dode knop op de breedtes waar het wel werkt, en het geeft niets op: de overloop werkte toch al niet. Bewaakt door `tests/test_lotc_toolbar_overloop.py`.
+
+**Voorstel.** De "Meer"-knop pas tonen wanneer er werkelijk iets is overgelopen, en de inhoud van `slot="overflow"` in dat menu opnemen zodat hij bruikbaar is - of, als de toolbar zijn eigen items in de overloop hoort te zetten, die weg laten vallen uit de balk én in het menu laten verschijnen. Nu gebeurt er van beide iets half.

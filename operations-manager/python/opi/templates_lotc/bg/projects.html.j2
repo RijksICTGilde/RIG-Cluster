@@ -149,21 +149,28 @@
                 </nldd-button>
             </nldd-toolbar-item>
 
-            {# Op een smal scherm schuift de toolbar zijn inhoud naar een overloopmenu; deze
-               groep is wat daar dan van sorteren te zien is. #}
-            <nldd-menu-group slot="overflow" text="Sorteren">
-                {% for sleutel, label in project_sorteringen %}
-                    {% set sorteer_url = "/projects?sort=" ~ sleutel ~ ("&q=" ~ project_query if project_query else "") %}
-                    <nldd-menu-item type="radio" text="{{ label }}"
-                                    href="{{ sorteer_url }}"
-                                    hx-get="{{ sorteer_url }}"
-                                    hx-select="#projects-zoekgebied"
-                                    hx-target="#projects-zoekgebied"
-                                    hx-swap="outerHTML"
-                                    hx-push-url="true"
-                                    {% if sleutel == project_sort %}selected{% endif %}></nldd-menu-item>
-                {% endfor %}
-            </nldd-menu-group>
+            {# GEEN eigen overloopgroep (nldd-menu-group met slot=overflow). Die stond hier, voor een smal
+               scherm, en veroorzaakte allebei de klachten van de eigenaar: het sorteren
+               stond DUBBEL op het scherm, en de hamburgerversie sorteerde niet.
+
+               Gemeten in Chromium op /projects, met de sorteerknop en de "Meer"-knop uit de
+               schaduwboom van de toolbar:
+
+                 mét de groep    1440: sorteerknop zichtbaar, Meer OOK zichtbaar
+                                 1024: sorteerknop verborgen,  Meer zichtbaar
+                                  800: sorteerknop zichtbaar, Meer OOK zichtbaar
+                 zonder          1440: sorteerknop zichtbaar, Meer verborgen
+
+               De aanwezigheid van de groep laat de toolbar dus permanent een "Meer"-knop
+               tonen, ook als alles past. En de items erin worden nooit klikbaar: na een klik
+               op "Meer" blijven ze 0x0 en loopt een klik erop af op een timeout.
+
+               Het is geen ruil waarbij we iets opgeven: de overloop van deze toolbar werkt
+               sowieso niet. Zonder de groep verschijnt op 1024 wel een "Meer"-knop maar is
+               zijn menu leeg, dus sorteren is op die breedte hoe dan ook onbereikbaar. Dat
+               is een defect in het component en staat als zodanig in
+               request_for_components.md; weghalen is intussen strikt beter, want het scheelt
+               een dubbeling en een dode knop op de breedtes waar het wel werkt. #}
         </nldd-toolbar>
     </form>
 
