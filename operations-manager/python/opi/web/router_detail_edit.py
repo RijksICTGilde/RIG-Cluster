@@ -996,7 +996,15 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     # All steps completed - show review if flow requires it
     if flow.show_review:
         save_modal_state_by_token(wizard_token, state)
-        return _render_modal_review(request, wizard_token, project_name, flow_id, active_sections, state)
+        return _render_modal_review(
+            request,
+            wizard_token,
+            project_name,
+            flow_id,
+            active_sections,
+            state,
+            field_warnings=section_warnings or None,
+        )
 
     # No review needed - do the final submit
     save_modal_state_by_token(wizard_token, state)
@@ -1135,8 +1143,15 @@ def _render_modal_review(
     active_sections,
     state,
     global_errors: list[str] | None = None,
+    field_warnings: dict[str, list[str]] | None = None,
 ) -> HTMLResponse:
-    """Render the review/confirmation page for the modal wizard."""
+    """Render the review/confirmation page for the modal wizard.
+
+    ``field_warnings`` carries the warnings raised by the step that was just submitted.
+    A warning informs and does not block, so on every intermediate step it travels along
+    to the next step -- but the LAST step has no next step, and the warning fell on the
+    floor exactly there, on the screen where the user decides to confirm.
+    """
     from opi.web.router_wizard import _build_section_fields
 
     yaml_data = state.get_merged_data()
@@ -1161,6 +1176,10 @@ def _render_modal_review(
     steps = state.get_steps(section_meta)
 
     warnings: list[str] = []
+
+    # Warnings from the final step, which has no next step to carry them to
+    for messages in (field_warnings or {}).values():
+        warnings.extend(messages)
 
     # Restore flows: warn that restoring may break the running application
     if flow_id == "modal-restore":
