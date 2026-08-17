@@ -351,11 +351,10 @@ class DatabaseBackupManager(BaseBackupManager):
             target_database_password: Target database password
             snapshot_id: Optional specific snapshot ID (defaults to latest)
             project_name: Project name for per-project backup bucket
-            source_database_name: Name of the database the dump was taken from. That name
-                is also its default schema, which the restore pod renames to the target
-                name. Callers that know it (a generation restore knows the previous
-                generation) should pass it; otherwise it is resolved from the snapshot's
-                own metadata.
+            source_database_name: Name of the database the dump was taken from, if the
+                caller knows it. That name is also its default schema, which the restore
+                pod renames to the target name. Used only when the snapshot itself does
+                not say (see _resolve_source_database_name for the order).
 
         Returns:
             DatabaseRestoreResult with operation details
@@ -401,12 +400,13 @@ class DatabaseBackupManager(BaseBackupManager):
 
         logger.info(f"Starting database restore: {reference_name} -> {target_database_name}@{target_database_host}")
 
-        source_schema = source_database_name or await self._resolve_source_database_name(
+        source_schema = await self._resolve_source_database_name(
             cluster=cluster,
             namespace=namespace,
             reference_name=reference_name,
             snapshot_id=snapshot_id,
             project_name=project_name,
+            caller_supplied=source_database_name,
         )
         if source_schema is None:
             # The pod refuses to rename anything it cannot name, unless the dump itself
@@ -516,16 +516,30 @@ class DatabaseBackupManager(BaseBackupManager):
         reference_name: str,
         snapshot_id: str | None,
         project_name: str | None,
+        caller_supplied: str | None,
     ) -> str | None:
-        """The name of the database the dump was taken from, from the snapshot's metadata.
+        """The name of the database the dump was taken from -- which is its default schema.
 
-        That name is also the name of its default schema (``db_schema = db_database`` in
-        the database manager), which is what the restore pod has to rename. Reading it
-        from the snapshot rather than from the dump matters because the dump carries the
-        extra schemas too and gives no way to tell them apart.
+        That schema is what the restore pod renames to the target name. It is established
+        here rather than read from the dump, because the dump carries the extra schemas
+        (RC-17) too and gives no way to tell them apart.
 
-        Returns None when the snapshot cannot be found or lacks the project/deployment
-        metadata to compose the name -- the pod then refuses to rename anything.
+        Three sources, best first:
+
+        1. The snapshot's ``source_database`` tag. The backup pod writes the database it
+           actually dumped, so this is the dump itself talking.
+        2. What the caller passed. A generation restore knows which generation it is
+           restoring from.
+        3. Composed from the snapshot's project/deployment/generation metadata, for
+           snapshots taken before the tag existed.
+
+        The order is what the cluster measurement forced: a second generation restore
+        passed ``{db}`` while the backup had dumped ``{db}_v1``, because the generation in
+        the project file lagged behind. Both reconstructions (2 and 3) were wrong there;
+        the tag is right by construction.
+
+        Returns None when none of the three can produce a name -- the pod then refuses to
+        rename anything rather than guessing.
         """
         snapshots = await self.list_database_snapshots(
             cluster=cluster,
@@ -539,16 +553,26 @@ class DatabaseBackupManager(BaseBackupManager):
             # Same rule the pod uses when no snapshot is named: the newest one.
             match = max(snapshots, key=lambda s: s.timestamp, default=None)
 
+        if match is not None and match.source_database:
+            return match.source_database
+
+        if caller_supplied:
+            return caller_supplied
+
         if match is None:
             logger.warning(f"No database snapshot found to read the source database name from ({reference_name})")
             return None
         if not match.project_name or not match.deployment_name:
             logger.warning(
-                f"Snapshot {match.snapshot_id} carries no project/deployment metadata, "
-                "so the source database name cannot be composed"
+                f"Snapshot {match.snapshot_id} carries neither a source_database tag nor "
+                "project/deployment metadata, so the source database name cannot be established"
             )
             return None
 
+        logger.info(
+            f"Snapshot {match.snapshot_id} predates the source_database tag; "
+            "composing the name from its project/deployment/generation metadata"
+        )
         return generate_database_name(match.project_name, match.deployment_name, match.generation)
 
     async def _create_database_restore_pod(
@@ -683,6 +707,7 @@ class DatabaseBackupManager(BaseBackupManager):
                         component_name=ks.component_name,
                         storage_name=db_ref,  # Database reference
                         generation=ks.generation,
+                        source_database=ks.source_database,
                         backup_run_id=ks.backup_run_id,
                         resource_type="database",
                         trigger=ks.trigger,
