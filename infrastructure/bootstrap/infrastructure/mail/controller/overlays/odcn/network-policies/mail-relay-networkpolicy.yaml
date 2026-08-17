@@ -58,7 +58,8 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # De upstream mailserver, via de egressgateway. Alleen submission naar DAT adres:
+    # De upstream mailserver, via de egressgateway. Alleen poort 25 naar DAT adres, want
+    # dat is de enige poort die daar open staat (587 en 465 zijn dicht, gemeten 17-08-2026):
     # rmrmail.rijksweb.nl resolvet naar 145.21.161.201 (gemeten vanuit rig-prd-vlam-wt8,
     # zie plans/mailrelay.md, aanvulling 1). Een 0.0.0.0/0 hierop zou van de relay een
     # uitgang naar elke mailserver op internet maken, en dat is precies de open relay die
@@ -71,4 +72,4 @@ spec:
             cidr: 145.21.161.201/32
       ports:
         - protocol: TCP
-          port: 587
+          port: 25
