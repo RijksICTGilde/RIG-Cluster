@@ -319,3 +319,30 @@ Gemeten in ZAD op 12 augustus 2026, op `/projects/deployments/<naam>`:
 Ter vergelijking een werkende NLDD-pagina elders: die zet `<nldd-page style="container: layout-container / inline-size;" background="inherit">` om de inhoud. Dat element bestaat in onze `lotc-nldd` niet als custom element; `<c-page>` rendert alleen `<html>/<head>/<body>` en zet geen container neer.
 
 **Verzoek:** laat het componentensysteem dit dragen, bijvoorbeeld op `<c-page>` of `<c-app-shell>`, in plaats van dat elke toepassing er eigen CSS voor schrijft. Wij hebben dat laatste bewust NIET gedaan: een eigen maximumbreedte is een ontwerpbeslissing die in het design system hoort, en het getal zou uit de huisstijl moeten komen en niet uit een toepassing.
+
+## Een `width=` overleeft geen swap: de afleiding naar `--_width` gebeurt niet opnieuw
+
+Gemeten in ZAD op 16 augustus 2026, op `/projects`, in Chromium. Het zoekveld staat er als:
+
+```html
+<nldd-search-field id="projects-zoekveld" width="26rem" ...>
+```
+
+De pagina vervangt bij het zoeken en sorteren het hele zoekgebied via htmx (`hx-swap="outerHTML"`), met **precies dezelfde markup**. De server geeft voor en na hetzelfde HTML terug; dat is nagemeten.
+
+| | huls | inline stijl | attribuut |
+|---|---|---|---|
+| eerste keer laden | 416px | `--_width: 26rem;` | `width="26rem"` |
+| na de htmx-swap | 321px | *weg* | `width="26rem"` |
+
+**Wat je ziet.** Het zoekveld wordt smaller zodra je zoekt of sorteert, en blijft dat. Bij ons was het van 26rem naar de breedte van de eigen inhoud.
+
+**Welke schakel het is.** De nldd-componenten zijn Lit-elementen die hun `width`-attribuut in `updated()` vertalen naar de CSS-variabele `--_width` (in `nldd.js`, het patroon `if(t.has("width")){...this.style.setProperty("--_width",...)}`). Na een swap staat het attribuut er nog, maar is die afleiding niet opnieuw gedaan en is de inline variabele verdwenen. Het element valt dan terug op de breedte van zijn inhoud.
+
+Dit raakt niet alleen `nldd-search-field`: hetzelfde patroon staat in `nldd.js` op meerdere componenten (knop, link, toolbar-item, dropdown), telkens met `width`, en soms ook met `min-width`/`max-width`. Elk daarvan in een htmx- of anderszins vervangen gebied heeft dus dezelfde stille versmalling.
+
+**Waarom dat pijn doet.** Het faalt alleen bij VERVANGING, niet bij het eerste laden, dus elke controle op een verse pagina staat groen terwijl het scherm na de eerste interactie stuk is. En het faalt stil: het attribuut staat er nog, dus in de opgeslagen HTML is niets te zien.
+
+**Wat wij intussen doen.** Na `htmx:afterSettle` het element vragen zijn eigen afleiding over te doen, met `el.requestUpdate("width", undefined)` (`static/js/htmx-formgedrag.js`). Bewust via de publieke Lit-API en bewust NIET door `--_width` van buitenaf te zetten: die naam begint met een underscore en is de keuken van het component. `tests/e2e/test_zoekveld_breedte.py` meet de breedte voor en na de swap en toetst dat `--_width` er weer staat.
+
+**Voorstel.** De afleiding niet aan `changedProperties.has("width")` hangen maar ook uitvoeren wanneer het element verbonden raakt met een attribuut dat nog niet is toegepast, zodat een element dat buiten het document is opgebouwd en daarna wordt ingevoegd zichzelf alsnog goed zet.

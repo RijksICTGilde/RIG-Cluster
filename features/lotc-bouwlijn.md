@@ -128,6 +128,16 @@ Bij het omzetten komen steeds dezelfde vijf dingen terug:
    werd 135px hoog, een woord per regel. Laat het script in een `<span>` BINNEN het
    component schrijven. Op de oude pagina ging dit vanzelf goed, want daar stond een kale
    `<span>`; het is dus weer iets wat bij het overzetten niet meeverhuisde.
+8. **`closest()` klimt niet over de rand van een schaduwboom.** Sta je met de focus in een
+   component, dan wijst `document.activeElement` naar de HOST en zit het echte
+   invoerveld in zijn schaduwboom. Daal je daarheen af om iets van dat veld te lezen -
+   de cursorpositie bijvoorbeeld - dan sta je in een aparte boom, en `closest()` stopt bij
+   de rand daarvan. Zoeken naar een id levert vanaf daar dus `null` op, ook al staat dat
+   id een niveau hoger op de host. Lees het id vanaf `document.activeElement` (dat staat
+   altijd in de lichte boom) en de veldeigenschappen vanaf het element in de schaduw. Dit
+   kostte het focusherstel op `/projects`: het zoekveld sprong bij elke toetsaanslag naar
+   `<body>`, dus je kon na een letter niet verder typen, terwijl het herstel er gewoon
+   stond. Gemeten in de browser, vastgelegd in `tests/e2e/test_zoekveld_focus.py`.
 
 ### De volgorde van de design systems ligt vast
 
@@ -198,6 +208,7 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | `tests/e2e/test_lotc_veldfout_zichtbaar.py` | dat die foutmelding in een browser HOOGTE heeft - "staat de tekst er" was jarenlang groen terwijl niemand hem zag |
 | `tests/e2e/test_lotc_metrics_explorer.py` | dat de twee keuzelijsten van `/metrics-explorer` in FIREFOX naast elkaar staan en geen bedieningselement over een ander heen ligt, en dat de tekst die JavaScript eronder zet op EEN regel past |
 | `tests/test_lotc_optioneel_badge.py` / `tests/e2e/test_lotc_optioneel_label.py` | dat "Optioneel" weg is waar het niets betekent, zonder het veld verplicht te noemen |
+| `tests/e2e/test_zoekveld_focus.py` | dat het zoekveld op `/projects` de focus EN de cursorpositie houdt terwijl htmx het zoekgebied vervangt - anders typ je na een letter nergens meer |
 
 Compileren is een echte poort en geen telling: LOTC valideert bij het compileren al of
 elk component bestaat en of elk attribuut bij dat component hoort.

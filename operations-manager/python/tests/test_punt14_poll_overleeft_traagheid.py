@@ -28,7 +28,8 @@ _MODULE = Path(__file__).resolve().parent / "e2e" / "test_sandbox_punt14.py"
 def _await_task():
     """Laad ``_await_task`` los, zonder de e2e-conftest of een browser op te tuigen."""
     spec = importlib.util.spec_from_file_location("punt14_onder_test", _MODULE)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module._await_task

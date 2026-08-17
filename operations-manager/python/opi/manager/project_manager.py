@@ -7977,6 +7977,16 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
+    @staticmethod
+    def _add_service_commit_message(project_name: str, service_name: str, result: dict[str, Any]) -> str:
+        """Name in the commit what actually changed, selection and binding apart."""
+        parts: list[str] = []
+        if result["services_added"]:
+            parts.append(f"add service(s) {', '.join(result['services_added'])}")
+        if result["components_updated"]:
+            parts.append(f"bind '{service_name}' to component(s) {', '.join(result['components_updated'])}")
+        return f"{'; '.join(parts).capitalize()} in project '{project_name}'"
+
     async def add_service(
         self,
         service_name: str,
@@ -8008,26 +8018,18 @@ class ProjectManager:
                 error_type = "invalid_components" if "Components not found" in str(e) else "invalid_service"
                 return {"success": False, "error": str(e), "error_type": error_type}
 
-            # Persist changes when something was actually added -- at the project level OR
-            # on a component. Deze poort keek alleen naar ``services_added``, en dat is niet
-            # hetzelfde: staat de dienst al op projectniveau maar nog niet op het gevraagde
-            # component, dan is ``services_added`` leeg terwijl de component-lijst wel
-            # gemuteerd is. Die mutatie werd dan weggegooid zonder commit, terwijl het
-            # antwoord hem als ``components_updated`` meldde -- de API zei dus dat ze
-            # bijgewerkt waren en er veranderde niets.
+            # Persist whenever the project data changed. Binding an already-selected
+            # service to a component IS a change: gating on services_added alone threw
+            # that mutation away while the response still reported the component as
+            # updated, which is the ordinary second call (configure, then bind).
             if result["services_added"] or result["components_updated"]:
-                parts = []
-                if result["services_added"]:
-                    parts.append(f"Add service(s) {', '.join(result['services_added'])}")
-                if result["components_updated"]:
-                    parts.append(f"attach '{service_name}' to component(s) {', '.join(result['components_updated'])}")
-                commit_message = f"{' and '.join(parts)} in project '{project_name}'"
+                commit_message = self._add_service_commit_message(project_name, service_name, result)
                 await self.save_and_commit_project(project_data, commit_message)
 
             logger.info(
                 f"Add service '{service_name}' to project '{project_name}': "
                 f"added={result['services_added']}, skipped={result['services_skipped']}, "
-                f"components_updated={result['components_updated']}"
+                f"components={result['components_updated']}"
             )
 
             return {"success": True, **result}
