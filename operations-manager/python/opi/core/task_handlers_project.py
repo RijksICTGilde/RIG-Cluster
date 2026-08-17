@@ -54,7 +54,12 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         error_msg = f"Invalid project name format: {project_name}"
         progress.fail_task(validate_task, error_msg)
         progress.fail_project(error_msg)
-        return {"project_name": project_name, "status": "failed", "error": error_msg}
+        return {
+            "project_name": project_name,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "invalid_project_name",
+        }
 
     progress.complete_task(validate_task)
 
@@ -92,7 +97,12 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             error_msg = f"Failed to generate YAML: {exc}"
             progress.fail_task(yaml_task, error_msg)
             progress.fail_project(error_msg)
-            return {"project_name": project_name, "status": "failed", "error": error_msg}
+            return {
+                "project_name": project_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "internal_error",
+            }
 
     # ------------------------------------------------------------------
     # Step 3: Git operations
@@ -130,14 +140,24 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             )
             progress.fail_task(git_task, error_msg)
             progress.fail_project(error_msg)
-            return {"project_name": project_name, "status": "failed", "error": error_msg}
+            return {
+                "project_name": project_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "already_exists",
+            }
 
         project_data_dict = load_yaml_from_string(yaml_content)
         if not project_data_dict:
             error_msg = f"Kon de projectconfiguratie voor '{project_name}' niet inlezen"
             progress.fail_task(git_task, error_msg)
             progress.fail_project(error_msg)
-            return {"project_name": project_name, "status": "failed", "error": error_msg}
+            return {
+                "project_name": project_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "validation_error",
+            }
 
         # Persist through the single validated save path: schema + structural
         # integrity validation, canonical dumper, commit + push, and cache
@@ -182,12 +202,12 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         )
         progress.fail_task(git_task, error_msg)
         progress.fail_project(error_msg)
-        return {"project_name": project_name, "status": "failed", "error": error_msg}
+        return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "conflict"}
     except Exception as exc:
         error_msg = f"Failed Git operations: {exc}"
         progress.fail_task(git_task, error_msg)
         progress.fail_project(error_msg)
-        return {"project_name": project_name, "status": "failed", "error": error_msg}
+        return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "internal_error"}
 
     # ------------------------------------------------------------------
     # Step 4: Project deployment
@@ -297,6 +317,12 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 "project_name": project_name,
                 "status": "failed",
                 "error": error_msg,
+                # Het uitrollen zelf mislukte. Bewust geen invoerfout en bewust niet
+                # "van ons": een component dat niet gezond wordt kan aan het image van
+                # de gebruiker liggen en aan het cluster, en welke van de twee staat in
+                # component_failures. Dit type valt daarom bij de client op "niet toe te
+                # schrijven", wat hier de eerlijke uitkomst is.
+                "error_type": "processing_failed",
                 "processing": {
                     "status": "failed",
                     "error": error_msg,
@@ -308,7 +334,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         error_msg = f"Failed deployment: {exc}"
         progress.fail_task(deploy_task, error_msg)
         progress.fail_project(error_msg)
-        return {"project_name": project_name, "status": "failed", "error": error_msg}
+        return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "internal_error"}
 
 
 async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
@@ -349,6 +375,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "deployment_name": deployment_name,
                 "status": "failed",
                 "error": error_msg,
+                "error_type": "validation_error",
             }
 
         sanitized_name = sanitize_kubernetes_name(deployment_name)
@@ -363,6 +390,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "deployment_name": deployment_name,
                 "status": "failed",
                 "error": error_msg,
+                "error_type": "validation_error",
             }
 
         progress.complete_task(validate_task)
@@ -519,6 +547,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             "deployment_name": deployment_name,
             "status": "failed",
             "error": error_msg,
+            "error_type": "internal_error",
         }
     finally:
         if project_manager:
