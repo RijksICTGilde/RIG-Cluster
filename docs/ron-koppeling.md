@@ -43,13 +43,17 @@ Waarom je dan toch een `/30` krijgt voor twee bruikbare adressen: het masker zeg
 
 **De kanttekening, en die is wezenlijk.** Bovenstaande geldt voor een echt gerouteerd subnet. Is het blok in werkelijkheid een TOEWIJZING voor NAT-pools en firewallregels, wat bij dit soort koppelingen vaak zo is, dan is `145.21.227.140/30` eerder een boekhoudkundige aanduiding voor "deze vier zijn van jullie" en kan `.140` wel degelijk als SNAT-bron dienstdoen. Twee lezingen van dezelfde notatie, allebei verdedigbaar. Alleen de logs van de tegenpartij zeggen welke hier waar is.
 
-### Wat je concreet vraagt
+### Beantwoord op 17 augustus 2026: het is de NAT-lezing
 
-Vraag om het **hele `145.21.227.140/30`** in de toelating, dus alle vier de adressen. Dat dekt beide lezingen en kost de tegenpartij niets extra's.
+ODCN heeft bevestigd dat **`145.21.227.140` het uitgaande adres is** waarmee het cluster de mailserver benadert, en dat is ook wat er in de toelating aan hun kant staat. Daarmee geldt hier de tweede lezing: het blok is een toewijzing voor NAT en firewallregels, geen gerouteerd punt-tot-puntsubnet, en `.140` doet gewoon dienst als SNAT-bron.
 
-Neemt hun proces alleen losse adressen aan, vraag dan **`.141` en `.142`**, want dat zijn de enige twee die in de strikte lezing als bron kunnen voorkomen. Alleen `.140` doorgeven is de fout die hier gemaakt is: dat adres komt in de strikte lezing nooit als bron langs, en dan valt het verkeer stil weg zonder weigering en zonder melding.
+De redenering hierboven blijft staan omdat hij bij een volgend blok weer opgaat, maar **voor dit blok is de conclusie dus omgekeerd**: `.140` doorgeven was niet de fout. Wie hier eerder las dat `.141` en `.142` gevraagd moesten worden, leest nu dit.
 
-Gaat het alsnog niet werken, vraag dan of ze in hun firewalllogs kunnen zien **welk bronadres** ze werkelijk van ons zien. Een firewall die verkeer laat vallen, logt de poging meestal wel, en daarmee is het in één blik beslist. Wij kunnen het zelf niet zien: de namespace `quattro-egress-gateway` is van ODCN en niet leesbaar met onze rechten.
+Gevolg voor de mailkoppeling: het bronadres verklaart de storing niet meer. Zie het openstaande punt onderaan.
+
+### Als een koppeling het niet doet
+
+Vraag of ze in hun firewalllogs kunnen zien **welk bronadres** ze werkelijk van ons zien, en of de poging wordt gelogd als drop. Een firewall die verkeer laat vallen, logt dat meestal wel, en daarmee is het in één blik beslist. Wij kunnen het zelf niet meten: de namespace `quattro-egress-gateway` is van ODCN en niet leesbaar met onze rechten, en met `rig-ron` is er geen internetbestemming die ons bronadres kan terugvertellen.
 
 ## Egress aanzetten: annotatie op de namespace
 
@@ -89,5 +93,47 @@ Let op het verschil met egress: dit is een **label op het Route- of Ingress-obje
 
 - ZAD kan de egress-annotatie nog niet vanuit het projectbestand zetten, dus RON-namespaces vragen een handmatige stap.
 - Het ingresscontroller-label wordt nergens door OPI gezet. Zolang dat zo is, kan een RON-ingress niet via ZAD worden opgeleverd, want achteraf labelen werkt niet.
-- Verifiëren welk adres uit `145.21.227.140/30` daadwerkelijk als SNAT-bron wordt gebruikt, en of dat per namespace verschilt. Zie hierboven: wij kunnen het niet zelf meten, dus dit komt uit hun logs of uit een bevestiging van ODCN.
+- De mailkoppeling werkt. Wat nog moet: de DNS-records voor `mail.rijksapp.nl` (SPF, DKIM, DMARC), anders komt uitgaande mail wel weg maar mogelijk niet aan.
+
+## De mailkoppeling, gemeten op 17 augustus 2026
+
+Werkt. `rmrmail.rijksweb.nl` (`145.21.161.201`) neemt op **poort 25** een bericht aan vanuit een pod met `rig-ron`-egress:
+
+```
+220 rmrmail.rijksweb.nl ESMTP
+250-8BITMIME
+250-SIZE 31457280
+250 STARTTLS
+250 sender <zad@mail.rijksapp.nl> ok
+250 recipient <...@rijksoverheid.nl> ok
+250 ok:  Message 56754911 accepted
+```
+
+Vier dingen die het ontwerp raken:
+
+1. **Poort 25, niet 587 of 465.** Die laatste twee zijn stil. Onze relay moet dus op 25 uitleveren.
+2. **Geen `AUTH` in de EHLO-lijst, dus geen credentials.** Het is een IP-gebaseerde relay: wie vanaf `145.21.227.140` verbindt mag relayen. Dat verklaart ook waarom ze om ons uitgaande IP vroegen en niet om een accountnaam.
+3. **`SIZE 31457280`, dus 30 MB.** Onze eigen berichtlimiet moet daaronder liggen.
+4. **STARTTLS wordt aangeboden** en moet door de relay gebruikt worden. De testmeting hierboven ging plat, omdat er geen openssl in die pod zit.
+
+**Beveiligingsgevolg, en dit is de belangrijkste uitkomst.** Omdat de upstream niet authenticeert, is ons eigen netwerkbeleid het enige dat de relay verplicht maakt. Elke pod die `145.21.161.201:25` kan bereiken, mailt buiten de relay om: zonder limiet, zonder From-policy, zonder DKIM en zonder log, met onze organisatie als afzender.
+
+Het goede nieuws is dat die grendel er structureel al zit. De enige egressregel richting buiten staat hardgecodeerd in `manifests/tenant-baseline-network-policy.yaml.jinja` en laat alleen 443 en 80 door. Het veld `ports.outbound` in het projectbestand suggereert anders, maar wordt nergens in de manifestgeneratie naar een egressregel vertaald; het leeft alleen in de formulieren en in cross-domain-access, dat over verkeer binnen het cluster gaat. Een project kan poort 25 dus niet zelf openzetten.
+
+Wat er dan wél moet gebeuren, is die eigenschap vastpinnen in plaats van hem te vertrouwen: **een regressietest die vastlegt dat de tenant-baseline nooit iets anders dan 443 en 80 naar `0.0.0.0/0` toestaat.** Zonder die test is dit een eigenschap die iemand er over een jaar in één regel uit haalt zonder te weten dat er een mailrelay op leunt.
+
+## De mailmeting van 15 augustus was ongeldig
+
+Op 15 augustus 2026 werd vanuit `rig-prd-vlam-wt8` gemeten dat poort 25, 587 en 465 op `rmrmail.rijksweb.nl` (`145.21.161.201`) alle drie in een timeout liepen, zonder banner en zonder weigering. Daaruit is geconcludeerd dat de upstream onbereikbaar was, met het bronadres als verdachte. Beide conclusies houden geen stand.
+
+Op 17 augustus opnieuw gemeten, met hetzelfde beeld, plus twee ijkpunten die het beslissen: `chat.rijksweb.nl:443` en de VLAM-API antwoorden meteen, maar `chat.rijksweb.nl:9999` is óók stil. Een niet-toegestane poort valt dus stil weg naar een host die verder gewoon werkt.
+
+De oorzaak zit in ons eigen netwerkbeleid. `productie-tenant-baseline-network-policy` in die namespace heeft `policyTypes: [Ingress, Egress]` en staat egress naar `0.0.0.0/0` alleen toe op poort 443 en 80. Bij Kubernetes is de rest daarmee verboden, want zodra er egressregels zijn geldt deny-by-default. **De SMTP-pakketten hebben de pod nooit verlaten.**
+
+Wat dat betekent:
+
+- Het bronadres `145.21.227.140` treft geen blaam, en de firewallregel aan hun kant evenmin. Die discussie was op een verkeerde meting gebouwd.
+- Over de werkelijke bereikbaarheid van de mailserver weten we nog **niets**. Eén meetpunt kwam wel langs het beleid, namelijk poort 443 naar dat adres, en bleef stil, maar een mailserver hoeft daar niets te hebben staan.
+
+Een geldige meting vraagt een pod die op 587 naar buiten mag. Alle drie de draaiende pods dragen het label `deployment=productie` en vallen dus onder dat beleid; de tweede policy in die namespace (`acme-http-productie-network-policy`) is `Ingress`-only en beperkt egress niet. Een pod **zonder** dat label heeft in die namespace dus vrije egress en gebruikt nog steeds de `rig-ron`-gateway, want die is een namespace-annotatie. Dat is de kortste weg naar een echt antwoord, en het is een productiewijziging, dus die vraag ligt bij de gebruiker.
 - De eerdere bevinding dat ODCN geen route had naar `145.21.0.0/16` (VLAM en SMTP gaven "Network is unreachable") gaat over precies deze route. Na oplevering van het blok opnieuw testen vanuit een pod met `rig-ron`.
