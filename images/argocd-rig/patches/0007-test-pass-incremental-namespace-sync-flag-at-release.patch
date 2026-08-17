@@ -1,0 +1,62 @@
+From 5b315a0208af96914d7a10d31899a2963192dd72 Mon Sep 17 00:00:00 2001
+From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
+Date: Tue, 18 Aug 2026 00:09:39 +0200
+Subject: [PATCH 7/7] test: pass incremental namespace sync flag at release-3.5
+ ctor call sites
+
+Five direct NewApplicationController calls exist only on release-3.5
+(namespace-indexer race tests); upstream PR 25229 could not have updated
+them.
+---
+ controller/appcontroller_test.go | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/controller/appcontroller_test.go b/controller/appcontroller_test.go
+index 6cabcfb66..a3333d274 100644
+--- a/controller/appcontroller_test.go
++++ b/controller/appcontroller_test.go
+@@ -2714,7 +2714,7 @@ func TestNamespaceIndexerDoesNotSetConditions(t *testing.T) {
+ 		time.Minute, time.Hour, time.Second, time.Minute, nil, 0, 10*time.Second,
+ 		common.DefaultPortArgoCDMetrics, 0,
+ 		[]string{}, []string{}, []string{},
+-		0, true, nil, nil, nil, false, false,
++		0, true, nil, nil, nil, false, false, false,
+ 		normalizers.IgnoreNormalizerOpts{}, testEnableEventList, false,
+ 	)
+ 	require.NoError(t, err)
+@@ -2783,7 +2783,7 @@ func TestNamespaceIndexerSetsConditionOnInvalidDestination(t *testing.T) {
+ 		time.Minute, time.Hour, time.Second, time.Minute, nil, 0, 10*time.Second,
+ 		common.DefaultPortArgoCDMetrics, 0,
+ 		[]string{}, []string{}, []string{},
+-		0, true, nil, nil, nil, false, false,
++		0, true, nil, nil, nil, false, false, false,
+ 		normalizers.IgnoreNormalizerOpts{}, testEnableEventList, false,
+ 	)
+ 	require.NoError(t, err)
+@@ -2860,7 +2860,7 @@ func TestNamespaceIndexerDoesNotPatchDuringStartupRace(t *testing.T) {
+ 		time.Minute, time.Hour, time.Second, time.Minute, nil, 0, 10*time.Second,
+ 		common.DefaultPortArgoCDMetrics, 0,
+ 		[]string{}, []string{}, []string{},
+-		0, true, nil, nil, nil, false, false,
++		0, true, nil, nil, nil, false, false, false,
+ 		normalizers.IgnoreNormalizerOpts{}, testEnableEventList, false,
+ 	)
+ 	require.NoError(t, err)
+@@ -2940,7 +2940,7 @@ func TestOrphanedIndexDoesNotQueryProjectDuringStartupRace(t *testing.T) {
+ 		time.Minute, time.Hour, time.Second, time.Minute, nil, 0, 10*time.Second,
+ 		common.DefaultPortArgoCDMetrics, 0,
+ 		[]string{}, []string{}, []string{},
+-		0, true, nil, nil, nil, false, false,
++		0, true, nil, nil, nil, false, false, false,
+ 		normalizers.IgnoreNormalizerOpts{}, testEnableEventList, false,
+ 	)
+ 	require.NoError(t, err)
+@@ -3005,7 +3005,7 @@ func TestOrphanedIndexReturnsNamespaceWhenProjectHasOrphanedResources(t *testing
+ 		time.Minute, time.Hour, time.Second, time.Minute, nil, 0, 10*time.Second,
+ 		common.DefaultPortArgoCDMetrics, 0,
+ 		[]string{}, []string{}, []string{},
+-		0, true, nil, nil, nil, false, false,
++		0, true, nil, nil, nil, false, false, false,
+ 		normalizers.IgnoreNormalizerOpts{}, testEnableEventList, false,
+ 	)
+ 	require.NoError(t, err)

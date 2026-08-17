@@ -13,7 +13,7 @@ spec:
   # via `task load-kind`; die taak blijft bestaan om een lokale build te testen voor je
   # publiceert (bouw dan met IMAGE_TAG=<iets anders> en pin die tag hier tijdelijk).
   image: ghcr.io/minbzk/base-images/argocd-rig
-  version: v3.5.1-rig1
+  version: v3.5.1-rig2
   extraConfig:
     resource.customizations.health.cert-manager.io_Issuer: |
       hs = {}
