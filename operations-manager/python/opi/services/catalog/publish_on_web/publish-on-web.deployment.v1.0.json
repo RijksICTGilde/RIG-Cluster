@@ -1,0 +1,115 @@
+{
+  "additionalProperties": false,
+  "description": "Deployment layer: how this deployment's web address is composed (RC-60).\n\nEvery field is optional because a deployment on the platform's own cluster domain\nneeds none of them: the format defaults, the base domain comes from the cluster and the\nissuer from the domain entry. ``domain-mode`` is legacy -- superseded by\n``domain-format`` and read only by ``HostnameFormat.from_domain_mode`` for old files --\nbut it describes the same subject, so it moved along rather than staying behind as a\nsecond place to look.",
+  "properties": {
+    "base-domain": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The domain to publish on; the cluster's own domain when absent. For a domain of your own, write the domain name itself here (for example 'mijn-app.nl'); it does not have to be one the cluster offers, and there is no separate field or marker for it. A domain of your own needs an administrator's approval AND a certificate, and the two are separate: not every cluster can obtain a certificate for a domain it does not offer, and on one that cannot, the deployment is created and reachable but serves an invalid certificate. Read `custom-domain-certificates` from GET /api/v2/projects/{project}/clusters before setting this; where it is false, supply your own certificate with the component's tls='provided'.",
+      "title": "Base-Domain"
+    },
+    "domain-format": {
+      "anyOf": [
+        {
+          "enum": [
+            "component-deployment-project",
+            "deployment-project",
+            "component-deployment-subdomain",
+            "deployment-subdomain",
+            "component-subdomain",
+            "subdomain",
+            "component.deployment.project",
+            "deployment.project",
+            "component.deployment.subdomain",
+            "deployment.subdomain",
+            "component.subdomain"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES). The id set is closed, so this field carries an enum; which of those ids you can actually use here is narrower and depends on base-domain, because the dotted variants need a domain that supports dot-separated hostnames. Read x-choices-source on this field for the list that fits.",
+      "title": "Domain-Format"
+    },
+    "domain-mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "LEGACY hostname strategy, superseded by domain-format. Only read for files that predate it.",
+      "title": "Domain-Mode"
+    },
+    "expose-component-on-bare-domain": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Component served on the bare custom domain, or false/absent for none.",
+      "title": "Expose-Component-On-Bare-Domain"
+    },
+    "issuer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Certificate issuer for this deployment's ingress; the platform default when absent.",
+      "title": "Issuer"
+    },
+    "root-component": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The component served on the address without a component segment, for the formats that have one.",
+      "title": "Root-Component"
+    },
+    "subdomain": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The subdomain under the base domain, for the hostname formats that use one.",
+      "title": "Subdomain"
+    }
+  },
+  "title": "PublishOnWebDeploymentConfig",
+  "type": "object"
+}

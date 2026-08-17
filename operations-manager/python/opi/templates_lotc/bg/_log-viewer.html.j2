@@ -1,0 +1,158 @@
+{#
+  Het schuifpaneel met de live logstroom van een component.
+
+  DIT PANEEL IS EEN <c-sheet>, EN DAT IS GEMETEN VOORDAT HET ER STOND.
+
+  Een sheet is wat een zijpaneel is: hij komt van rechts binnen, legt een waas over de
+  pagina, sluit op Escape en op een klik ernaast, en houdt de focus binnen. Dat is
+  allemaal het thema, en het verving zestien eigen CSS-regels (achtergrond, paneel,
+  schuifanimatie, kop en sluitknop) plus het Escape-afhandelen in log_viewer.js.
+
+  De vraag die eerst beantwoord moest worden was NIET "past het qua vorm" maar "verdraagt
+  het component het gedrag". Dit paneel vult zichzelf terwijl het openstaat: er hangt een
+  WebSocket aan en de regels komen binnendruppelen. Een dialoog die zijn inhoud bij het
+  openen OPHAALT zou dat niet kunnen.
+
+  Gemeten in de bron van nldd.js: <nldd-sheet> rendert een native <dialog> met een kale
+  <slot> erin. De inhoud die hier staat blijft dus gewoon in de light DOM van het
+  document staan - hij wordt alleen doorgegeven - en een script dat er elementen aan
+  toevoegt terwijl het paneel open is, werkt onveranderd. show() en hide() zetten de
+  <dialog> open en dicht en gooien niets weg. Er is geen enkel moment waarop het
+  component de inhoud vervangt of opnieuw opbouwt.
+
+  Dat is daarna nog een keer van de andere kant gemeten, in een browser:
+  tests/e2e/test_logviewer_gedrag.py duwt regels door een nagebootste WebSocket en toetst
+  dat ze binnenkomen, dat de filters ze verbergen, dat pauzeren een bericht terugstuurt en
+  dat sluiten de stroom sluit. Die test stond er VOOR de omzetting en is er ongewijzigd
+  doorheen gekomen; dat is de reden dat je hier durft te lezen dat het gedrag intact is.
+
+  WAT ER NIET IN PAST, EN WAAROM DAT ZO BLIJFT
+
+  - De regelbak zelf (.log-viewer-content, .log-line en zijn kleuren). Het thema heeft
+    <c-code-viewer>, maar dat is een CodeMirror-weergave van EEN tekst die je in zijn
+    geheel meegeeft. Deze bak krijgt losse regels aangeschoven, verbergt er een deel van
+    per niveau, en markeert zoektreffers binnen een regel. Dat is een andere zaak dan
+    "toon deze code". De kleuren komen nu wel uit de themavariabelen, dus het paneel
+    volgt licht en donker.
+  - De statusregel met het bolletje. Het thema heeft geen "leeft de verbinding nog"-
+    aanduiding; <c-activity-indicator> is een laadmolen en geen toestand.
+  - De rij met de bediening (.log-viewer-toolbar) is een kale flexrij en met opzet GEEN
+    <c-container>. Gemeten: de sheet zet in zijn eigen CSS ::slotted(nldd-container) op
+    flex-grow: 1 en flex-basis: 0, dus elke container die hier los in de sheet hangt gaat
+    net zo hard groeien als de regelbak en de rij wordt een halve pagina hoog. De
+    BESTURINGSELEMENTEN in die rij zijn wel allemaal van het thema.
+
+  DE ID'S ZIJN HET KOPPELVLAK
+
+  /static/js/log_viewer.js zoekt zijn hele bediening op id op. Een andere naam is hier
+  geen vormgeving maar een stille storing - de viewer opent dan en doet niets. Wat er
+  veranderd is aan die kant staat in de kop van dat bestand.
+
+  De componentkiezer blijft een KALE <select> in een <c-dropdown>: dat component is
+  bedoeld als schil om een echte <select>, precies zodat de browser zijn eigen keuzelijst
+  houdt. Het script vult hem met new Option() en leest this.value - onveranderd.
+#}
+<c-sheet id="log-viewer-panel" accessible-label="Logboek" width="62rem">
+    {# De kop van het thema. Hij levert de titel, de ondertitel en de sluitknop; die knop
+       stuurt een 'dismiss' die de sheet zelf opvangt en waarop hij dichtgaat. De titel en
+       de deploymentnaam worden door log_viewer.js gezet, op .text en .supportingText -
+       dit component heeft daar attributen voor en geen kindelementen, dus de losse
+       <span id="log-viewer-deployment"> van vroeger is er niet meer. Dat de naam er nog
+       STAAT is een assertie geworden in test_logviewer_gedrag.py. #}
+    <nldd-top-title-bar id="log-viewer-heading" text="Logs" dismiss-text="Sluiten">
+        {# Kale nldd-markup, want <c-toolbar> en <c-top-title-bar> gooien elk kind weg:
+           die componenten hebben alleen benoemde slots en geen standaard-slot. Datzelfde
+           staat in bg/projects.html.j2, waar het voor het eerst gemeten is. #}
+        <nldd-toolbar slot="toolbar" size="sm" label="Logbediening">
+            <nldd-toolbar-item slot="end">
+                {# De pauzeknop DRAAGT een toestand, en daar is een toggle-button voor:
+                   die zet aria-pressed en tekent zijn eigen aan-stand. Vroeger was dat
+                   .log-control-btn.is-active, een eigen regel die het script aanzette.
+                   Het icoon wisselt mee tussen pause en play. #}
+                <nldd-toggle-button id="log-pause-btn" type="button" size="sm"
+                                    icon="pause" accessible-label="Pauzeren"
+                                    onclick="toggleLogPause()"></nldd-toggle-button>
+            </nldd-toolbar-item>
+            <nldd-toolbar-item slot="end">
+                <nldd-icon-button size="sm" variant="neutral-transparent"
+                                  icon="trash" accessible-label="Leegmaken"
+                                  onclick="clearLogs()"></nldd-icon-button>
+            </nldd-toolbar-item>
+            <nldd-toolbar-item slot="end">
+                <nldd-icon-button size="sm" variant="neutral-transparent"
+                                  icon="square-on-square" accessible-label="Kopieren"
+                                  onclick="copyLogs()"></nldd-icon-button>
+            </nldd-toolbar-item>
+            <nldd-toolbar-item slot="end">
+                {# square-and-arrow-down, niet square-arrow-down. Die tweede naam staat wel
+                   in de iconenlijst van LOTC maar zit NIET in de nldd-bundel die de browser
+                   laadt, en rendeerde hier als een leeg vierkantje. Zie
+                   tests/test_lotc_icon_mapping.py, dat sindsdien de geleverde set meet. #}
+                <nldd-icon-button size="sm" variant="neutral-transparent"
+                                  icon="square-and-arrow-down" accessible-label="Downloaden"
+                                  onclick="downloadLogs()"></nldd-icon-button>
+            </nldd-toolbar-item>
+        </nldd-toolbar>
+    </nldd-top-title-bar>
+
+    <div class="log-viewer-toolbar">
+        {# De componentkiezer. <c-select-field> kan hier niet: dat zet zijn eigen label
+           ("Component", met "Optioneel" erachter) boven het veld en dat hoort niet in een
+           bedieningsrij. <c-dropdown> is de schil zonder label, om een echte <select>.
+
+           LET OP - een gemeten beperking van dat component: <nldd-dropdown> tekent de
+           gekozen tekst ZELF, en werkt die alleen bij op 'slotchange' en op een 'change'
+           van de select. Opties toevoegen aan een select die er al in zit, doet geen van
+           beide, dus de lijst bleef leeg terwijl er wel degelijk componenten in stonden.
+           log_viewer.js stuurt daarom na het vullen een change. Aangekaart in
+           request_for_components.md. #}
+        <c-dropdown size="sm" width="16rem">
+            <select id="log-component-selector" aria-label="Component"
+                    onchange="switchLogComponent(this.value)"></select>
+        </c-dropdown>
+
+        {# Het zoekveld van het thema, inclusief zijn eigen vergrootglas en wisknop. Dat
+           laatste verving .log-search-clear met zijn .is-visible; het wissen loopt nu via
+           het 'search'-event van het veld, dus de eigen clearSearch() is weg. #}
+        <c-search-field id="log-search-input"
+                        placeholder="Zoek in logs"
+                        accessible-label="Zoek in logs"
+                        size="sm"
+                        width="20rem"
+                        :attrs="{'oninput': 'filterLogs()', 'onsearch': 'filterLogs()'}" />
+        <span id="log-search-count" class="log-search-count"></span>
+
+        {# De vier niveaufilters. Een toggle-button-group met type=checkbox is precies wat
+           dit is: meerdere onafhankelijke aan/uit-knoppen met een gedeelde
+           toetsenbordbediening. Vroeger waren het verborgen <input type=checkbox>'en met
+           een zelfgetekend gekleurd badge ernaast, en las het script .checked; nu leest
+           het .selected. De groep stuurt een change bij elke wisseling. #}
+        <nldd-toggle-button-group type="checkbox" size="sm" accessible-label="Logniveaus"
+                                  onchange="filterLogs()">
+            <nldd-toggle-button id="filter-error" text="Error" selected></nldd-toggle-button>
+            <nldd-toggle-button id="filter-warn" text="Warn" selected></nldd-toggle-button>
+            <nldd-toggle-button id="filter-info" text="Info" selected></nldd-toggle-button>
+            <nldd-toggle-button id="filter-debug" text="Debug" selected></nldd-toggle-button>
+        </nldd-toggle-button-group>
+
+        {# De regelterugloop is een aan/uit-instelling, en daar is een switch voor. #}
+        <c-switch-field id="log-word-wrap" label="Terugloop"
+                        :attrs="{'onchange': 'toggleWordWrap()'}" />
+    </div>
+
+    <div class="log-viewer-status" id="log-viewer-status">
+        <span class="log-status-indicator" id="log-status-indicator"></span>
+        <span id="log-status-text">Verbinden...</span>
+        <span id="log-line-count" class="log-line-count"></span>
+    </div>
+
+    <div class="log-viewer-content" id="log-viewer-content">
+        {# De lege toestand is letterlijk waar <c-inline-dialog> voor is ("empty state,
+           confirmations and feedback"). Het script wisselt zijn tekst, dus die staat in
+           een kind en niet in het text-attribuut: op een attribuut zou het script een
+           property moeten zetten, en dit blijft een <p> die hij kan vullen. #}
+        <c-inline-dialog id="log-empty-state" icon="terminal">
+            <c-paragraph>Verbinden met de logstroom...</c-paragraph>
+        </c-inline-dialog>
+    </div>
+</c-sheet>

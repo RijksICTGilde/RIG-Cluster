@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -14,6 +15,8 @@ from opi.forms.visualizers.providers import get_provider
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
+
+logger = logging.getLogger(__name__)
 
 
 def editable_to_form_field(
@@ -61,10 +64,26 @@ def editable_to_form_field(
     virt = ed.virtualize or parent_virtualize
     form_path = apply_virtualize(real_path, virt) if virt else real_path
 
-    # 2. Extract value from YAML using the real path (fall back to default)
+    # 2. Extract value from YAML, real path first, then the virtual one.
+    #
+    # The virtual fallback mirrors ``_read_submitted`` in the processor, and without it a
+    # value the wizard stored was invisible when the step was rendered again: wizard state
+    # keeps service CONFIG under the virtual key while the real ``services`` key holds only
+    # the chosen names. The read then returned None, the default below took over, and the
+    # user saw the default where their own choice should have been -- indistinguishable
+    # from "my change was not saved", and it did get overwritten on the next submit.
     raw_value = smart_get_value(yaml_data, real_path)
+    if raw_value is None and virt and form_path != real_path:
+        raw_value = smart_get_value(yaml_data, form_path)
+
+    # A callable default is computed from the surrounding project data, so a field can be
+    # prefilled with something derived (the first team member's address, a text carrying the
+    # project name) instead of a constant. It runs only when the field has no stored value,
+    # so it never overwrites what a user typed, and it may return None to mean "no default
+    # after all". Errors are deliberately not caught: a broken default is a bug in our own
+    # code, and swallowing it would silently render an empty field instead.
     if raw_value is None and default is not None:
-        raw_value = default
+        raw_value = default(yaml_data) if callable(default) else default
 
     # 3. Apply converter for display
     # For editable widgets, use read() to convert stored value → form-compatible value
@@ -75,6 +94,21 @@ def editable_to_form_field(
             display_value = converter.read(raw_value, context_data=yaml_data)
         else:
             display_value = converter.view(raw_value, context_data=yaml_data)
+
+    # 3a. Een aanvinkvakje staat aan of uit, dus zijn waarde is een ECHTE boolean.
+    #
+    # Hier ging het mis: een vakje is geen select/text/textarea/radio, dus het viel in de
+    # tak hierboven die ``view()`` gebruikt - de MENSELIJKE weergave. Een BooleanConverter
+    # levert daar "Ja" of "Nee" op, en het sjabloon toetst ``:checked="field.value"``: een
+    # niet-lege tekst, dus ook "Nee" zette het vakje aan. Elk vakje stond aan, ook bij een
+    # opgeslagen ``false``. Zichtbaar bij "Markeer voor verwijdering" van een databaseschema
+    # en bij "Versiebeheer op de bucket".
+    #
+    # De waarheid staat in de opgeslagen waarde, niet in de weergave ervan; de reeks
+    # hieronder is dezelfde als die BooleanConverter.write() gebruikt, zodat tonen en
+    # opslaan het over hetzelfde eens zijn.
+    if widget == "checkbox":
+        display_value = raw_value in (True, "true", "on", "yes", "1")
 
     # 3b. Auto-detect KV format from stored value so the toggle matches
     if converter and hasattr(converter, "detect_format") and raw_value is not None:
@@ -216,6 +250,18 @@ def should_render_editable(
 
     dep_value = smart_get_value(yaml_data, depends_on)
 
+    # Same virtual fallback as the value read in editable_to_form_field. A dependency on
+    # another service's config (e.g. the invite auth methods following the keycloak
+    # template) names the real path, but in wizard state that config lives under the
+    # virtual key while the real ``services`` key holds only the chosen names. Without
+    # this the condition always saw None and the field stayed hidden for the whole wizard.
+    if dep_value is None:
+        virt = editable.editable.virtualize
+        if virt:
+            virtual_depends_on = apply_virtualize(depends_on, virt)
+            if virtual_depends_on != depends_on:
+                dep_value = smart_get_value(yaml_data, virtual_depends_on)
+
     # Apply the dependency field's converter so show_when compares against
     # the form-compatible value (e.g. "__custom__", "DAILY") rather than
     # the raw stored value (e.g. a custom domain, an RRULE string).
@@ -229,6 +275,10 @@ def should_render_editable(
     # first render (e.g. provide-as defaults to "file" -> show the path field).
     if dep_value is None and siblings:
         dep_value = _find_default_for_path(siblings, depends_on)
+        # A computed default must be resolved before comparison: comparing the function
+        # object itself against a show_when value silently evaluates to False.
+        if callable(dep_value):
+            dep_value = dep_value(yaml_data)
 
     return evaluate_show_when(dep_value, show_when)
 
@@ -296,10 +346,9 @@ def _resolve_options(
 
     kwargs = _filter_provider_kwargs(provider_name, context or {})
     try:
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.debug(f"_resolve_options: provider={provider_name!r}, filtered_kwargs={kwargs}")
+        # Key names only, never values: one of the kwargs is ``yaml_data``, the whole project
+        # dict, which carries repository passwords and every other secret in the project file.
+        logger.debug(f"_resolve_options: provider={provider_name!r}, kwargs={sorted(kwargs)}")
         provider = get_provider(provider_name, **kwargs)
         return provider.get_options()
     except KeyError:
@@ -325,14 +374,21 @@ def _filter_provider_kwargs(
 
 
 def _extract_names_from_list(items: list) -> list[str]:  # type: ignore[type-arg]
-    """Extract names from a mixed str/dict list (services format)."""
-    names: list[str] = []
-    for item in items:
-        if isinstance(item, str):
-            names.append(item)
-        elif isinstance(item, dict):
-            names.extend(item.keys())
-    return names
+    """Extract service names from a services list, in every shape it may hold.
+
+    Delegates to the shared reader instead of guessing. The local version took
+    ``item.keys()``, which is the legacy single-key form: for the modern record
+    ``{"name": "cross-domain-access", "config": {...}}`` it yielded ``["name", "config"]``
+    and the service's own name never appeared.
+
+    That is not cosmetic. A ``show_when={"contains": <service>}`` block disappears the
+    moment the list holds records rather than names, and adding a row to a service-config
+    sequence rewrites the list into exactly that shape. So the first click on "Item
+    toevoegen" hid the whole section it was supposed to extend.
+    """
+    from opi.services.services import service_entry_name
+
+    return [name for name in (service_entry_name(item) for item in items) if name]
 
 
 def _is_service_active(service_name: str, yaml_data: dict[str, Any]) -> bool:

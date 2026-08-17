@@ -1,0 +1,31 @@
+/* Vormgeving van het domeinbeheer.
+   Stond als <style>-blok in opi/templates/admin/approvals.html.j2.
+
+   RC-74 heeft dit bestand langs de componenten gelegd. Weg zijn:
+
+   - .domains-table met zijn kopregel, celranden en hover - dat is <c-table> met
+     <c-table-head>/<c-th>/<c-table-row>/<c-td>.
+   - .col-type t/m .col-date - kolombreedtes gaan als columns= mee aan <c-table>. NLDD
+     maakt van een tabel een CSS-grid; zonder columns stapelen de cellen.
+   - .type-badge, .status-badge en hun zes kleurvarianten - dat is <c-tag>, waar het type
+     (info/success/warning/error) de kleur bepaalt in plaats van een eigen klasse.
+   - .domain-row.status-requested en de hover erop - een opvallende regel is het
+     selected-attribuut van <c-table-row>.
+   - .table-container - het scrollvenster om de tabel. <c-table> is geen native tabel
+     meer maar een grid die zich naar de breedte voegt, dus er valt niets te scrollen. */
+
+/* De kopband boven elke projecttabel: naam links, knop rechts.
+
+   GEEN component, en alleen nog voor de BAND. De flexregel die hier stond (titel links,
+   knop rechts) is <c-cluster justify="between"> geworden; wat overblijft is het vlak
+   eromheen. Daar is niets voor: <c-card> kent geen kopgebied, en <c-section-head> zet
+   een h4 met een aanhangsel neer zonder achtergrond of scheidingslijn. Komt er ooit een
+   kaart-met-kopregel in het thema, dan kan dit blok weg. */
+   De grijze achtergrond die hier stond is weg. Die verwees naar --rvo-color-grijs-25, en
+   die naam staat niet in de lijst in lotc-app.css - dus hij bestond in het oude thema
+   ook al niet en de regel leverde niets op. Een lege var() invullen zou de weergave
+   ANDERS maken dan het origineel, en dat is precies wat deze omzetting niet mag. */
+.project-group-header {
+    padding: var(--rvo-space-md) var(--rvo-space-lg);
+    border-bottom: 1px solid var(--rvo-color-grijs-200);
+}

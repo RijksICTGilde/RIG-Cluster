@@ -74,13 +74,16 @@ spec:
               port: 9000
             initialDelaySeconds: 10
             periodSeconds: 30
+          # Sandbox-CPU-beleid: minimale request, geen cpu-limit — zie de toelichting in
+          # infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml. Deze base
+          # wordt alleen door de dev-overlays (sandboxed-local, local) gebruikt, dus hier
+          # rechtstreeks in plaats van via een overlay-patch.
           resources:
             requests:
               memory: "256Mi"
-              cpu: "100m"
+              cpu: "10m"
             limits:
               memory: "512Mi"
-              cpu: "500m"
       volumes:
         - name: data
           persistentVolumeClaim:

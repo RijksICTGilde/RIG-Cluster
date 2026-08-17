@@ -1,0 +1,105 @@
+schema-version: 2.7
+repositories:
+  - name: main-repo
+    url: https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-deployments.git
+    username: rig-admin
+    password: plain:admin1234
+    branch: main
+    path: .
+clusters:
+  - sandboxed-local
+display-name: e2e-62308-kgpj
+description: E2E all-services e2e-62308-kgpj
+services:
+  - publish-on-web
+  - name: keycloak
+    config:
+      template: sso-support
+      additional_redirect_uris: []
+      restrict-access:
+        enabled: true
+        realm-role: allowed-user
+        error-message: ${accessDeniedNoPermission}
+      additional-clients: []
+      realms:
+        - host: https://keycloak.sandbox.rijksapp.dev
+          realm: e2e62-glv-sandboxed-local
+          username: e2e62_glv_sandboxed_local_admin
+          password: |-
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB5TitUbDhqUUlvby80OTdy
+            WDBIekluS096aStnYWUwbTRrL25KQVFnTFRRClR6T3pWKzJjcFpmSExwZEduSnNM
+            UmFzcFIvZ2R6Z3pSeFBucVFTeHBNTkUKLS0tIFRRbGFCMll6M2pPamF0VTVxTEJH
+            RGxhaG80d0xDTWpIMUJSSjFPTGFNOUEKoHnHQ8GDwQPrLkMGZOajvg2DE0pncmTR
+            1HE3LSb/tu/d2m85BN1dsznqHatlnbpjsBavWw==
+            -----END AGE ENCRYPTED FILE-----
+          totp_secret: |-
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBwMVR2NDdvb2JuSTJtRXBQ
+            OFJqWG1KU1ZCSFhXQjd5YVNiZVRiU2JtZGtJCkd5dWlpYkFteTF1NlVRNVQxRzJQ
+            TUphNm8xMkdpbHBHYmxUR3hBUVpmSGMKLS0tIEhXc3p4Zmt5NVNleEVrdTZvMHFO
+            Vk5rMFNtUHFtalpLQjE3Skd3ZkdmTjAK6obUGd2VZ8N+inK3CPj0Ccvjqoq0J7oc
+            bSyQQjmhBTMnImZpoZ1w5jzhDP6LNoP1ljayWiJqtoJkPX2CTpQjIA==
+            -----END AGE ENCRYPTED FILE-----
+  - name: postgresql-database
+    config:
+      schemas: []
+users:
+  - email: admin@sandbox.rijksapp.dev
+    role: admin
+components:
+  - name: web
+    path:
+      - match: /
+    ports:
+      inbound:
+        - 8080
+      outbound:
+        - 80
+        - 443
+    image: ghcr.io/minbzk/base-images/e2e-allservices:latest
+    resources:
+      requests:
+        memory: 64Mi
+        cpu: 50m
+      limits:
+        memory: 256Mi
+        cpu: '1'
+    services:
+      - reference: publish-on-web
+        config:
+          tls: standard
+      - keycloak
+      - postgresql-database
+deployments:
+  - name: productie
+    services:
+      - reference: publish-on-web
+        config:
+          domain-format: component-deployment-project
+    cluster: sandboxed-local
+    namespace: e2e62-glv
+    repository: main-repo
+    components:
+      - reference: web
+        image: ghcr.io/minbzk/base-images/e2e-allservices:latest
+name: e2e62-glv
+config:
+  age-public-key: age1h4lnnwpx60jju3fpz9z9aglw09g9wk78hmnsq9ky2z8lvnmrlucq29ej3t
+  age-private-key: |-
+    -----BEGIN AGE ENCRYPTED FILE-----
+    YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA1ZnBLSHF1TkNORXkrZFYv
+    OFVQTzNmYy9DckkrUDNDOWUzUjl1QlJVNndzCmNSUTVIejRhR0liWGxldUNiVU5m
+    cEZJTEhJSzNqcUpROTYyLzVvOXVnY1kKLS0tIFBpWThKYXl6UDk1a2lLQnFxRkNQ
+    NWNmazE1TWtjelJZcCtFazZBSFUxNUEK2V5Agkeffxtms7l3Yt0mtXxqcW3Nh6o3
+    5HgXb01Yd0pXIL/P8o0+erY2MNIVo8/lG8dnp6I6Ioq23H6M/LgnRrVft9VS+ySZ
+    4TwM20xO04JarRelWi0PU+VsW+rVCwpPxMhkqaTqN2lAuA==
+    -----END AGE ENCRYPTED FILE-----
+  api-key: |-
+    -----BEGIN AGE ENCRYPTED FILE-----
+    YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAvWE8vZmEwRXR3M3NIdzQ5
+    TWh3S0hEVnI4amluUGR3ZGRLUExST1Q3TUJNCkFCbldkMERaa2ZqcGZyVHVuYWxU
+    b0FXejNwSUZoNDE5SjVBR1NUeThNL0UKLS0tIEFUVGx4aVgxa1pHYzUwYXYrRUN4
+    aUovY0xRTWhTYkVTeDBLbkFVTkptdE0KfXvb1Bv2+yE9wJM2K80vxGLesiuck28U
+    f+vSONvnYMIb+W+yHoBV9/YFX9a20xSAUaExjGGuVXaaQSOXS+9Kxw==
+    -----END AGE ENCRYPTED FILE-----

@@ -1,0 +1,10 @@
+{#
+  Modal Wizard Success - shown for save_only completion.
+#}
+<div class="edit-section-success">
+    <c-icon icon="check-mark-circle" size="xl" color="groen"/>
+    <p>Wijzigingen opgeslagen</p>
+    <div class="edit-section-actions wizard-modal-success__actions">
+        {% set lotc_onclick_1 %}closeEditModalAndReload(){% endset %}<c-button label="Sluiten"/>
+    </div>
+</div>

@@ -6,7 +6,9 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token
+from opi.api.endpoint_util import validate_api_token, validate_master_api_key
+from opi.api.enums import OperationStatus
+from opi.api.params import DeploymentNamePath, ProjectNamePath
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
@@ -22,6 +24,7 @@ from opi.manager.backup import (
     create_database_backup_manager,
 )
 from opi.services import ServiceType
+from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_backup_run_id
 from opi.utils.secrets import DatabaseSecret, MinIOSecret
@@ -47,7 +50,7 @@ class BackupResultModel(BaseModel):
 class BackupResponse(BaseModel):
     """Response for backup operations."""
 
-    status: str = Field(..., description="Operation status: success, partial, or failed")
+    status: OperationStatus = Field(..., description="Operation status: success, partial, or failed")
     message: str = Field(..., description="Human-readable message")
     results: list[BackupResultModel] = Field(
         default_factory=lambda: list[BackupResultModel](),
@@ -182,7 +185,7 @@ class DatabaseBackupResultModel(BaseModel):
 class DatabaseBackupResponse(BaseModel):
     """Response for database backup operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: DatabaseBackupResultModel
 
@@ -206,7 +209,7 @@ class BucketBackupResultModel(BaseModel):
 class BucketBackupResponse(BaseModel):
     """Response for bucket backup operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: BucketBackupResultModel
 
@@ -237,7 +240,7 @@ class DeploymentBackupRequest(BaseModel):
 class DeploymentBackupResponse(BaseModel):
     """Response for combined deployment backup operations (PVCs, databases, buckets)."""
 
-    status: str = Field(..., description="Operation status: success, partial, or failed")
+    status: OperationStatus = Field(..., description="Operation status: success, partial, or failed")
     message: str = Field(..., description="Human-readable message")
     pvc_results: list[BackupResultModel] = Field(default_factory=list, description="PVC backup results")
     database_results: list[DatabaseBackupResultModel] = Field(
@@ -297,7 +300,7 @@ def _bucket_result_to_model(result: BucketBackupResult) -> BucketBackupResultMod
 
 
 @backup_router.get("/status", response_model=BackupStatusResponse)
-@validate_api_token
+@validate_master_api_key
 async def get_backup_status(request: Request) -> BackupStatusResponse:
     """
     Get current backup status.
@@ -305,10 +308,15 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
     Returns information about whether a backup is currently running,
     which namespace/PVC is being backed up, and lock details.
 
+    The lock is one per cluster, not one per project, so there is no project to check a
+    project key against -- and ``validate_api_token`` needs one, which is why this endpoint
+    answered 401 to every caller. It takes the master key, like the other operations
+    without a project context.
+
     Example:
     ```bash
     curl -X GET "http://localhost:9595/api/v1/backup/status" \\
-      -H "X-API-Key: your-api-key"
+      -H "X-API-Key: your-master-api-key"
     ```
     """
     try:
@@ -332,8 +340,8 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
 @validate_api_token
 async def backup_project_deployment(
     request: Request,
-    project_name: str,
-    deployment_name: str,
+    project_name: ProjectNamePath,
+    deployment_name: DeploymentNamePath,
     body: DeploymentBackupRequest | None = None,
 ) -> JSONResponse:
     """
@@ -472,19 +480,19 @@ async def backup_project_deployment(
                         component_info = db_components[0]  # Take first component using database
                         component_name = component_info["component_name"]
                         reference_name = component_info["reference_name"]
-                        # Get generation from project file
-                        generation = project_file_handler.get_database_generation(
-                            project.data, deployment_name, component_name, reference_name
-                        )
+                        # Get generation from project file. The database is one per
+                        # deployment, so the generation is read per deployment, not per
+                        # component -- the component only names the backup.
+                        generation = project_file_handler.get_database_generation(project.data, deployment_name)
                     else:
                         component_name = None
                         reference_name = f"{deployment_name}-database"
                         generation = None
 
-                    # Determine source type based on which service is used
-                    uses_namespace_db = project_file_handler.deployment_uses_service(
-                        project.data, deployment_name, [ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
-                    )
+                    # Determine source type based on placement. Dedicated (a project-owned
+                    # cluster) is project-wide: namespace-postgresql-database or
+                    # postgresql-database with scope: project (RC-17).
+                    uses_namespace_db = project_uses_dedicated_postgres(project.data)
                     source_type = "namespace" if uses_namespace_db else "shared"
 
                     logger.info(
@@ -540,10 +548,9 @@ async def backup_project_deployment(
                         component_info = minio_components[0]  # Take first component using minio
                         component_name = component_info["component_name"]
                         reference_name = component_info["reference_name"]
-                        # Get generation from project file
-                        generation = project_file_handler.get_bucket_generation(
-                            project.data, deployment_name, component_name, reference_name
-                        )
+                        # Get generation from project file. The bucket is one per deployment,
+                        # so the generation is read per deployment, not per component.
+                        generation = project_file_handler.get_bucket_generation(project.data, deployment_name)
                     else:
                         component_name = None
                         reference_name = f"{deployment_name}-minio"
@@ -639,7 +646,7 @@ async def backup_project_deployment(
 
 @backup_router.get("/runs/{project_name}/{deployment_name}", response_model=BackupRunsResponse)
 @validate_api_token
-async def list_backup_runs(request: Request, project_name: str, deployment_name: str) -> BackupRunsResponse:
+async def list_backup_runs(request: Request, project_name: ProjectNamePath, deployment_name: str) -> BackupRunsResponse:
     """
     List all backup runs for a project deployment.
 
@@ -769,7 +776,7 @@ async def list_backup_runs(request: Request, project_name: str, deployment_name:
 class DeleteSnapshotResponse(BaseModel):
     """Response for delete snapshot operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     snapshot_id: str = Field(..., description="ID of the deleted snapshot")
 
@@ -781,8 +788,8 @@ class DeleteSnapshotResponse(BaseModel):
 @validate_api_token
 async def delete_snapshot(
     request: Request,
-    project_name: str,
-    deployment_name: str,
+    project_name: ProjectNamePath,
+    deployment_name: DeploymentNamePath,
     snapshot_id: str,
 ) -> JSONResponse:
     """

@@ -39,6 +39,10 @@ jobs:
           python-version: "3.14"
       - name: Install dependencies
         run: uv sync --all-groups
+      # test_create_project_api genereert een echt SOPS/AGE-sleutelpaar; dat vereist
+      # de age-keygen binary op de runner.
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
       - name: Run tests with coverage
         run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow and not e2e and not requires_infra and not sandbox" --tb=short
       - name: Coverage report

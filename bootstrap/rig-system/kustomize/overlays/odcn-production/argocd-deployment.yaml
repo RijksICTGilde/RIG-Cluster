@@ -4,6 +4,18 @@ metadata:
   name: argocd
   namespace: rig-system
 spec:
+  # RIG-eigen image: upstream v3.5.1 plus de namespace-sync en health-fixes uit
+  # images/argocd-rig. Alle componenten volgen dit, behalve repo-server (zie spec.repo
+  # verderop), die op de Red Hat build blijft -- dezelfde vorm als sandboxed-local.
+  #
+  # Via rcr.rijksapps.nl en niet via ghcr.io: ODCN kan ghcr niet bereiken, en dat pad is
+  # voor de operations-manager al zo gezet. Het image moet dus in die spiegel staan
+  # VOORDAT dit landt, anders blijft ArgoCD hangen op een pull die niet lukt.
+  #
+  # Een echte versietag en geen 'latest': dan is het uitrolbesluit een commit die je kunt
+  # terugdraaien, en weet je achteraf welke build er draait.
+  image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig
+  version: v3.5.1-rig1
   extraConfig:
     timeout.reconciliation: "15m"
     timeout.hard.reconciliation: "0s"

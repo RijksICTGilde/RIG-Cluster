@@ -8,10 +8,18 @@ processing. These tests prove that:
 - a known-good example project from projects/ PASSES.
 """
 
+import copy
 from pathlib import Path
 
 import pytest
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
+from opi.core.project_schema import (
+    ProjectSchemaError,
+    validate_declared_project_schema,
+    validate_project_schema,
+)
+from opi.services.catalog.shared.storage import StorageEntry
+from opi.services.schema_migration import LATEST_SCHEMA_VERSION, migrate_to_latest
+from pydantic import ValidationError
 from ruamel.yaml import YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -37,7 +45,14 @@ def _valid_project() -> dict:
                 "name": "frontend",
                 "type": "deployment",
                 "ports": {"inbound": [8080], "outbound": [443]},
-                "storage": [{"type": "persistent", "size": "10Gi", "mount-path": "/data"}],
+                # No v1 `storage:` block: that form only lives in the v1 schema now
+                # (RC-32), and this fixture is meant to be valid at the latest version.
+                "services": [
+                    {
+                        "reference": "persistent-storage",
+                        "config": [{"name": "data", "mount-path": "/data", "size": "1Gi"}],
+                    }
+                ],
             }
         ],
         "deployments": [
@@ -55,6 +70,37 @@ def _valid_project() -> dict:
 def test_valid_project_passes() -> None:
     """A well-formed project must pass validation without raising."""
     validate_project_schema(_valid_project())
+
+
+class TestBothAliasShapes:
+    """Aliases are ONE AGE block since RC-106, and an unencrypted mapping stays valid.
+
+    Both shapes are measured on the MIGRATED data, because that is the order production
+    uses: ``migrate_to_latest`` first, then validate. Validating the raw dict would test
+    a schema version the file no longer has by the time it is checked, and a gap between
+    the two shows up as a project that saves and then fails to reprocess.
+    """
+
+    @staticmethod
+    def _validate(aliases) -> None:
+        project = _valid_project()
+        project["schema-version"] = LATEST_SCHEMA_VERSION
+        project["components"][0]["aliases"] = aliases
+        migrated, _ = migrate_to_latest(copy.deepcopy(project))
+        validate_project_schema(migrated)
+
+    def test_one_age_block_passes(self) -> None:
+        # The stored shape a write produces: one armored block, so a plain string.
+        self._validate("-----BEGIN AGE ENCRYPTED FILE-----\nY2lwaGVydGV4dA==\n-----END AGE ENCRYPTED FILE-----")
+
+    def test_an_unencrypted_mapping_still_passes(self) -> None:
+        # Never migrated away, so a project carrying it must keep validating.
+        self._validate({"POSTGRES_HOST": "$DATABASE_SERVER_HOST"})
+
+    def test_a_shape_that_is_neither_is_refused(self) -> None:
+        # The oneOf must actually narrow: a list is not a block and not a mapping.
+        with pytest.raises(ProjectSchemaError):
+            self._validate(["POSTGRES_HOST=$DATABASE_SERVER_HOST"])
 
 
 def test_deployment_with_scheduled_backup_passes() -> None:
@@ -76,6 +122,44 @@ def test_deployment_with_scheduled_backup_passes() -> None:
     }
 
     validate_project_schema(project)
+
+
+def test_deployment_with_sleep_state_passes() -> None:
+    """Sleep-mode writes OPI-managed runtime state under deployments[].sleep.
+
+    A fail-closed schema (additionalProperties: false on the deployment) would
+    reject every deployment carrying this state on the next reprocess, so the
+    schema must model it explicitly.
+    """
+    project = _valid_project()
+    project["deployments"][0]["sleep"] = {
+        "state": "sleeping",
+        "expires-at": "2026-07-28T14:03:00+02:00",
+        "wake-token": "-----BEGIN AGE ENCRYPTED FILE-----\nabc\n-----END AGE ENCRYPTED FILE-----",
+    }
+
+    validate_project_schema(project)
+
+
+def test_sleep_mode_service_entry_passes() -> None:
+    """A project may select sleep-mode with config in the project services list.
+
+    The global schema validates only the entry envelope; the config shape itself
+    is validated by the service model, not here.
+    """
+    project = _valid_project()
+    project["services"] = [{"name": "sleep-mode", "config": {"enabled": True, "match": ["PR-*"], "wake-mode": "auto"}}]
+
+    validate_project_schema(project)
+
+
+def test_deployment_with_invalid_sleep_state_is_rejected() -> None:
+    """An unknown sleep state is rejected by the schema enum."""
+    project = _valid_project()
+    project["deployments"][0]["sleep"] = {"state": "napping"}
+
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
 
 
 def test_registry_with_secret_name_and_image_host_passes() -> None:
@@ -228,28 +312,31 @@ def test_mount_path_with_dotdot_traversal_is_rejected() -> None:
     The earlier pattern `^/[\\w./-]+$` allowed `/var/../etc/passwd` because
     `..` is not forbidden in the character class. Container-side this can
     escape the intended storage root if any tool resolves the path.
-    """
-    project = _valid_project()
-    project["components"][0]["storage"][0]["mount-path"] = "/var/../etc/passwd"
 
-    with pytest.raises(ProjectSchemaError):
-        validate_project_schema(project)
+    The guard moved (RC-32): it used to sit in the JSON schema on the v1
+    `storage:` block, which meant it only ever applied to v1 files and never to
+    the service-config shape people write today. It now lives on StorageEntry,
+    which describes that shape.
+    """
+    with pytest.raises(ValidationError):
+        StorageEntry(name="data", size="1Gi", **{"mount-path": "/var/../etc/passwd"})
 
 
 def test_mount_path_with_double_dot_in_middle_is_rejected() -> None:
     """`..` anywhere in the path is rejected, not just at the start."""
-    project = _valid_project()
-    project["components"][0]["storage"][0]["mount-path"] = "/data/../secrets"
+    with pytest.raises(ValidationError):
+        StorageEntry(name="data", size="1Gi", **{"mount-path": "/data/../secrets"})
 
-    with pytest.raises(ProjectSchemaError):
-        validate_project_schema(project)
+
+def test_mount_path_must_be_absolute() -> None:
+    with pytest.raises(ValidationError):
+        StorageEntry(name="data", size="1Gi", **{"mount-path": "data/files"})
 
 
 def test_mount_path_normal_value_is_accepted() -> None:
     """Sanity: normal mount paths (dots in filenames are fine) still pass."""
-    project = _valid_project()
-    project["components"][0]["storage"][0]["mount-path"] = "/data/v1.0/files"
-    validate_project_schema(project)
+    entry = StorageEntry(name="data", size="1Gi", **{"mount-path": "/data/v1.0/files"})
+    assert entry.mount_path == "/data/v1.0/files"
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +450,26 @@ def test_component_with_partial_security_block_is_accepted() -> None:
     validate_project_schema(project)
 
 
+def test_component_rejects_a_marking_of_non_secret_env_vars() -> None:
+    """There is no way to say an env-var value may be read back, not even in the file.
+
+    Such a list existed briefly and was withdrawn: an env-var value can hold a secret,
+    and the API must not have a road that hands one out. ``additionalProperties: false``
+    is what keeps the door shut for a hand-edited project file too.
+    """
+    project = _valid_project()
+    project["components"][0]["user-env-vars-public"] = ["APP_MODE"]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_deployment_component_rejects_a_marking_of_non_secret_env_vars() -> None:
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["user-env-vars-public"] = ["APP_MODE"]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
 def test_component_security_block_rejects_unknown_field() -> None:
     """additionalProperties:false on the security block must reject typos."""
     project = _valid_project()
@@ -426,3 +533,204 @@ def test_component_command_rejects_non_list_value() -> None:
     project["components"][0]["command"] = "sh -c 'exec /app/bin/web'"
     with pytest.raises(ProjectSchemaError):
         validate_project_schema(project)
+
+
+class TestDeploymentLevelServiceConfigIsOpen:
+    """Any service must be able to carry deployment-level config.
+
+    ``$defs/deployment-service`` and ``$defs/deployment-service-config`` were both closed:
+    the entry accepted only ``reference`` + ``config``, and the config only ``generation``
+    and ``revisions``. That is the clone-state shape, hardcoded into the global schema, so
+    no other service could ever use the deployment layer and clone state could not move to
+    another layer either. Per-service validation (``validate_service_configs``) is what
+    checks the contents now, so the envelope only has to stay an envelope.
+    """
+
+    def _with_deployment_service(self, entry: dict) -> dict:
+        project = _valid_project()
+        project["deployments"][0]["services"] = [entry]
+        return project
+
+    def test_accepts_clone_state(self):
+        # The shape that exists today must keep validating.
+        validate_project_schema(
+            self._with_deployment_service(
+                {"reference": "postgresql-database", "config": {"generation": 1, "revisions": []}}
+            )
+        )
+
+    def test_accepts_a_name_record_with_a_schema_version(self):
+        # The envelope the service contract describes: {name|reference, schema-version?, config?}.
+        validate_project_schema(
+            self._with_deployment_service(
+                {"name": "minio-storage", "schema-version": "1.0", "config": {"enable-versioning": True}}
+            )
+        )
+
+    def test_accepts_config_belonging_to_another_service(self):
+        # The global schema must not decide which keys a service may carry.
+        validate_project_schema(
+            self._with_deployment_service({"reference": "some-future-service", "config": {"whatever": "value"}})
+        )
+
+
+class TestDeploymentComponentServicesAreGeneric:
+    """The global schema hardcoded two service names at the deployment-component layer.
+
+    ``$defs/publish-on-web-config`` and ``$defs/attachment-use-entry`` existed only to
+    validate ``publish-on-web`` and ``attachments`` there, because ``validate_service_configs``
+    did not walk that layer. It does now, so the envelope only has to allow the two shapes
+    that occur: a record with a config, and a list of per-mount records.
+    """
+
+    def _with(self, services) -> dict:
+        project = _valid_project()
+        project["deployments"][0]["components"] = [{"reference": "web", "services": services}]
+        return project
+
+    def test_accepts_a_record_with_config(self):
+        validate_project_schema(self._with({"publish-on-web": {"config": {"tls": "standard"}}}))
+
+    def test_accepts_a_list_of_per_mount_records(self):
+        validate_project_schema(
+            self._with({"persistent-storage": [{"reference": "data", "config": {"revisions": []}}]})
+        )
+
+    def test_accepts_a_service_the_schema_never_heard_of(self):
+        # The whole point: the envelope must not enumerate services.
+        validate_project_schema(self._with({"some-future-service": {"config": {"whatever": 1}}}))
+
+    def test_still_rejects_a_shape_that_is_neither(self):
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(self._with({"publish-on-web": "not-a-record"}))
+
+
+class TestBareDomainComponentIsDeclared:
+    """``expose-component-on-bare-domain`` must be a declared field (RC-60 phase 0).
+
+    The wizard has written it since PR #38 (``DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE``) and
+    six places read it, but ``$defs/deployment`` never declared it while carrying
+    ``additionalProperties: false``. Every deployment that used it therefore failed schema
+    validation -- the same class as the dp-bn7 outage, where a reprocess dies silently on
+    ``validate_project_schema`` and the deploy just stops happening.
+
+    Measured at v2.6, the last version that carried it at the deployment root: phase 6
+    moved the whole web-address set under the service, so at the latest version the root
+    form is rejected on purpose (see ``TestWebAddressLeftTheDeploymentRoot``). An OLD file
+    that has the field must still validate, which is the gap this closes.
+    """
+
+    def _with_bare_domain(self, value) -> dict:
+        project = _valid_project()
+        project["schema-version"] = 2.6
+        project["deployments"][0]["expose-component-on-bare-domain"] = value
+        return project
+
+    def test_component_name_is_accepted(self) -> None:
+        validate_declared_project_schema(self._with_bare_domain("frontend"))
+
+    def test_false_is_accepted(self) -> None:
+        # keycloak_manager.py and project_manager.py both read it with a False default,
+        # so a stored False is a value the readers expect.
+        validate_declared_project_schema(self._with_bare_domain(False))
+
+    def test_empty_string_is_accepted(self) -> None:
+        # What the form posts when the select is cleared but not removed.
+        validate_declared_project_schema(self._with_bare_domain(""))
+
+    def test_the_field_is_declared_for_the_versions_that_carried_it(self) -> None:
+        # Fails as long as the field is missing from the v2.6 deployment shape: without the
+        # declaration the additionalProperties gate rejects it and nothing else notices.
+        import json
+
+        from opi.core.project_schema import LEGACY_PATCH_DIR
+
+        patch = json.loads((LEGACY_PATCH_DIR / "v2.6.json").read_text(encoding="utf-8"))
+        assert "expose-component-on-bare-domain" in patch["$defs"]["deployment"]["properties"]
+
+    def test_a_number_is_still_rejected(self) -> None:
+        # Declaring the field must not open the deployment up to anything.
+        with pytest.raises(ProjectSchemaError):
+            validate_declared_project_schema(self._with_bare_domain(7))
+
+
+class TestWebAddressLeftTheDeploymentRoot:
+    """Phase 6 of RC-60: the seven settings are gone from ``$defs/deployment``.
+
+    A migration is only finished when the old form can no longer be written. Until then
+    both shapes validate, so nothing stops a new writer from putting a value back at the
+    root -- where the readers would still find it through the fallback, and the split
+    state the relocation removed would quietly return.
+
+    An OLD file must still validate, which is what the ``v2.6`` legacy patch is for:
+    ``project_v2.json`` describes the LATEST version only, and every earlier version is
+    composed from it plus the patches (RC-32).
+    """
+
+    def _deployment(self, **extra) -> dict:
+        project = _valid_project()
+        project["deployments"][0].update(extra)
+        return project
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("base-domain", "rijksapp.nl"),
+            ("subdomain", "wies"),
+            ("domain-mode", "nice-url"),
+            ("domain-format", "component-deployment-project"),
+            ("issuer", "letsencrypt"),
+            ("root-component", "frontend"),
+            ("expose-component-on-bare-domain", "frontend"),
+        ],
+    )
+    def test_the_root_form_is_rejected_at_the_latest_version(self, field: str, value: str) -> None:
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(self._deployment(**{field: value}))
+
+    def test_the_service_form_is_accepted(self) -> None:
+        validate_project_schema(
+            self._deployment(
+                services=[
+                    {
+                        "reference": "publish-on-web",
+                        "config": {
+                            "base-domain": "rijksapp.nl",
+                            "subdomain": "wies",
+                            "domain-mode": "nice-url",
+                            "domain-format": "component-deployment-project",
+                            "issuer": "letsencrypt",
+                            "root-component": "frontend",
+                            "expose-component-on-bare-domain": "frontend",
+                        },
+                    }
+                ]
+            )
+        )
+
+    def test_an_unmigrated_v2_6_file_still_validates(self) -> None:
+        # 30/47 production files predate even v2.5, so a version that still carried these
+        # at the root must keep validating until it is loaded and migrated.
+        project = self._deployment(
+            **{
+                "base-domain": "rijksapp.nl",
+                "subdomain": "wies",
+                "domain-mode": "nice-url",
+                "domain-format": "component-deployment-project",
+                "issuer": "letsencrypt",
+                "root-component": "frontend",
+                "expose-component-on-bare-domain": "frontend",
+            }
+        )
+        project["schema-version"] = 2.6
+        validate_declared_project_schema(project)
+
+    def test_a_v2_6_file_validates_after_migration(self) -> None:
+        # The dp-bn7 order: migrate first, validate second.
+        from opi.services.schema_migration import migrate_to_latest
+
+        project = self._deployment(**{"base-domain": "rijksapp.nl", "domain-format": "subdomain"})
+        project["schema-version"] = 2.6
+        migrated, was_migrated = migrate_to_latest(project)
+        assert was_migrated is True
+        validate_project_schema(migrated)

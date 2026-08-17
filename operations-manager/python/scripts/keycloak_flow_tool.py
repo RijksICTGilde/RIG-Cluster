@@ -20,6 +20,7 @@ Usage (run from operations-manager/python, so `opi`/python-keycloak are importab
     uv run python scripts/keycloak_flow_tool.py inspect <realm>
     uv run python scripts/keycloak_flow_tool.py rebuild <realm> [--confirm-link]
     uv run python scripts/keycloak_flow_tool.py inspect-all          # scan every realm, report order
+    uv run python scripts/keycloak_flow_tool.py ensure-redirector <realm>   # unblock sso-support -> sso-only
 
 Exit code is non-zero if a realm's flow is in the wrong (broken) order.
 """
@@ -48,6 +49,8 @@ PRIO_REVIEW = 10
 PRIO_CREATE_USER = 10
 PRIO_CONFIRM_LINK = 10
 PRIO_AUTO_LINK = 20
+
+REDIRECTOR_FLOW = "External IDP Redirector"
 
 
 def connect() -> KeycloakAdmin:
@@ -168,6 +171,37 @@ def rebuild(admin: KeycloakAdmin, realm: str, confirm_link: bool) -> bool:
     return ok
 
 
+def ensure_redirector_shell(admin: KeycloakAdmin, realm: str) -> bool:
+    """Create the empty '{REDIRECTOR_FLOW}' top-level flow so OPI can switch a realm to sso-only.
+
+    OPI sets the realm's browserFlow to this alias BEFORE the call that creates the flow, and
+    Keycloak answers an unknown alias with a bare 500 {"errorMessage":"Failed to update realm"}.
+    So a realm created on sso-support cannot be moved to sso-only until the alias exists.
+
+    Only the empty shell is created here. OPI's ``_create_external_idp_redirector_flow`` is
+    409-tolerant on the flow and adds each execution only when missing, so the next project
+    processing fills in auth-cookie plus identity-provider-redirector and points browserFlow at
+    it. Drop this subcommand once the ordering fix in ``keycloak_manager`` is deployed.
+    """
+    admin.change_current_realm(realm)
+    if _find_flow_id(admin, REDIRECTOR_FLOW):
+        print(f"  '{REDIRECTOR_FLOW}' already exists in {realm}, nothing to do")
+        return True
+    admin.create_authentication_flow(
+        payload={
+            "alias": REDIRECTOR_FLOW,
+            "description": "External IDP Redirector flow for automatic SSO redirect",
+            "providerId": "basic-flow",
+            "topLevel": True,
+            "builtIn": False,
+        }
+    )
+    created = _find_flow_id(admin, REDIRECTOR_FLOW) is not None
+    print(f"  created empty '{REDIRECTOR_FLOW}' in {realm}" if created else "  creation reported no flow")
+    print("  next: run 'Project herverwerken' so OPI fills in the executions")
+    return created
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -177,6 +211,11 @@ def main() -> None:
     p_reb.add_argument("realm")
     p_reb.add_argument("--confirm-link", action="store_true", help="include the idp-confirm-link screen")
     sub.add_parser("inspect-all", help="scan every realm and report flow order")
+    p_red = sub.add_parser(
+        "ensure-redirector",
+        help="create the empty 'External IDP Redirector' flow so a realm can move to sso-only",
+    )
+    p_red.add_argument("realm")
     args = parser.parse_args()
 
     admin = connect()
@@ -188,6 +227,13 @@ def main() -> None:
             ok = rebuild(admin, args.realm, args.confirm_link)
         except KeycloakPostError as e:
             sys.exit(f"rebuild failed: {e}")
+        sys.exit(0 if ok else 1)
+    elif args.cmd == "ensure-redirector":
+        print(f"\n=== {args.realm} ===")
+        try:
+            ok = ensure_redirector_shell(admin, args.realm)
+        except KeycloakPostError as e:
+            sys.exit(f"ensure-redirector failed: {e}")
         sys.exit(0 if ok else 1)
     elif args.cmd == "inspect-all":
         broken = []

@@ -1,150 +1,34 @@
 /* Wizard CSS - extracted from wizard_page.html.j2 and roos.py */
 
 /* Helper text spacing - stack description + help_text vertically */
-.rvo-form-field__helper-group {
+.lotc-form-field__helper-group {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
 }
 
-/* Breadcrumb */
-.rvo-breadcrumb {
-    display: flex;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    gap: 0.5rem;
-}
-.rvo-breadcrumb li:not(:last-child)::after {
-    content: "/";
-    margin-left: 0.5rem;
-    color: #666;
-}
-.rvo-breadcrumb a {
-    color: #007BC7;
-    text-decoration: none;
-}
-.rvo-breadcrumb a:hover {
-    text-decoration: underline;
-}
+/* Het KRUIMELPAD stond hier (.rvo-breadcrumb / .lotc-breadcrumb met een ::after-streepje
+   als scheidingsteken). Dat is <c-breadcrumbs> met <c-breadcrumbs-item>-kinderen; beide
+   aanroepers zijn om, dus deze regels hadden geen gebruiker meer.
 
-/* Wizard Steps Indicator */
-.wizard-steps {
-    margin-bottom: 1rem;
-}
-.wizard-steps__list {
-    display: flex;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    gap: 0;
-}
-.wizard-steps__item {
-    flex: 1;
-    text-align: center;
-    position: relative;
-}
-.wizard-steps__item:not(:last-child)::after {
-    content: "";
-    position: absolute;
-    top: 1.25rem;
-    right: -50%;
-    width: 100%;
-    height: 2px;
-    background: #E0E0E0;
-    z-index: 0;
-}
-.wizard-steps__item--completed:not(:last-child)::after {
-    background: #39870C;
-}
-.wizard-steps__link {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    text-decoration: none;
-    color: inherit;
-    position: relative;
-    z-index: 1;
-    cursor: default;
-}
-a.wizard-steps__link {
-    cursor: pointer;
-}
-a.wizard-steps__link:hover .wizard-steps__label {
-    text-decoration: underline;
-}
-.wizard-steps__link--disabled .wizard-steps__label {
-    opacity: 0.5;
-}
-.wizard-steps__number {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 50%;
-    background: #E0E0E0;
-    color: #333;
-    font-weight: 600;
-    font-size: 0.875rem;
-}
-.wizard-steps__item--active .wizard-steps__number {
-    background: #007BC7;
-    color: white;
-}
-.wizard-steps__item--completed .wizard-steps__number {
-    background: #39870C;
-    color: white;
-}
-.wizard-steps__label {
-    font-size: 0.8125rem;
-    color: #333;
-    max-width: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.wizard-steps__item--active .wizard-steps__label {
-    font-weight: 600;
-    color: #007BC7;
-}
-.wizard-steps__progress {
-    height: 4px;
-    background: #E0E0E0;
-    border-radius: 2px;
-    margin-top: 1rem;
-    overflow: hidden;
-}
-.wizard-steps__progress-bar {
-    height: 100%;
-    background: #007BC7;
-    border-radius: 2px;
-    transition: width 0.3s ease;
-}
+   De STAPPENBALK stond hier ook: vijftien selectors voor een genummerde bol per stap, een
+   streep ertussen en een handgetekende voortgangsbalk. Dat is <c-step-indicator> met
+   <c-step-indicator-item>-kinderen, en die kent past/current/future zelf. Zie
+   wizard/wizard_steps_indicator.html.j2. */
 
-/* Edit modal wizard steps override */
-.edit-wizard-steps {
-    margin: 0 0 1rem 0;
-    padding: 0 1.5rem;
-}
+/* De stappenbalk in de dialoog krijgt een lijn eronder. GEEN component: dit is de scheiding
+   tussen de balk en de inhoud van het venster, en <c-step-indicator> heeft daar geen stand
+   voor. */
 .edit-step-indicator {
     border-bottom: 1px solid #E0E0E0;
     padding-bottom: 0.5rem;
 }
-.edit-step-right-actions {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
 
 /* Wizard Step Content */
-.wizard-content {
-    background: white;
-    padding: 2rem;
-    border-radius: 4px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
+/* .wizard-content was een wit vlak met padding, hoekstraal en schaduw - dat is <c-card>,
+   en zo staat het nu in wizard/wizard_page.html.j2. De klasse blijft in de markup omdat
+   #wizard-step-content het doel is van elke htmx-swap; er hangt alleen geen opmaak meer
+   aan, dus er staat hier niets meer. */
 .wizard-step__header {
     margin-bottom: 1.5rem;
 }
@@ -155,18 +39,16 @@ a.wizard-steps__link:hover .wizard-steps__label {
 .wizard-step__fields {
     margin-bottom: 2rem;
 }
+/* De knoppenbalk onder een stap. De flexregel is <c-cluster justify="between">; wat hier
+   blijft is de lijn erboven en de lucht ernaartoe.
+
+   De KLASSE blijft, en op sommige plekken staat er ook id="edit-section-actions" op: dat
+   is de haak waarmee static/js/edit_modal.js de dialoog weer vrijgeeft. */
 .wizard-step__actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
     padding-top: 1.5rem;
     border-top: 1px solid #E0E0E0;
 }
-.wizard-step__actions-right {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
+/* .wizard-step__actions-right is <c-cluster gap="xs"> geworden. */
 
 /* Nested fieldsets (sub-sections) get a card-like border */
 c-fieldset c-fieldset {
@@ -177,29 +59,25 @@ c-fieldset c-fieldset {
 }
 
 /* Sequence items */
-.rvo-sequence__item--inline {
+.lotc-sequence__item--inline {
     display: flex;
     align-items: flex-start;
     gap: 0.5rem;
     margin-bottom: 0.25rem;
 }
-.rvo-sequence__item--inline > :first-child {
+.lotc-sequence__item--inline > :first-child {
     flex: 1;
 }
-.rvo-sequence__item--inline c-button {
+.lotc-sequence__item--inline c-button {
     flex-shrink: 0;
     margin-top: 0.25rem;
 }
-.rvo-sequence__item-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.75rem;
-}
-.rvo-sequence__actions {
-    margin-top: 0.5rem;
-}
-.rvo-sequence__items {
+/* .lotc-sequence__item-header is weg: die regel duwde met de hand een knop naar rechts
+   in een zelfgebouwde blokkop. Dat is nu <c-section-head>, het component dat titel en
+   actie als EEN geheel vormgeeft. De rvo-tegenhanger ging mee - die had sinds RC-67
+   geen enkele gebruiker meer. */
+.rvo-sequence__items,
+.lotc-sequence__items {
     margin-bottom: 0.25rem;
 }
 
@@ -210,10 +88,23 @@ c-fieldset c-fieldset {
 
 /* Key-value editor */
 .kv-editor__label {
-    display: block;
+    /* flex en niet block: er staat sinds de hulpknop iets NAAST het label, en met block
+       zakt dat naar de volgende regel. */
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     font-size: 1.125rem;
     font-weight: 700;
     margin-bottom: 0.25rem;
+}
+.kv-editor__help-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--nldd-color-hemelblauw, #007bc7);
+    cursor: pointer;
 }
 .kv-toggle {
     display: inline-flex;
@@ -251,9 +142,6 @@ c-fieldset c-fieldset {
 }
 
 /* Radio option descriptions */
-.rvo-radio-description {
-    margin: -0.25rem 0 0 1.75rem;
-}
 
 /* Wizard Review */
 .wizard-review__section-header {
@@ -281,10 +169,20 @@ c-fieldset c-fieldset {
 }
 
 /* Service cards (from roos.py) */
+/* Het raster van dienstkaarten is <c-auto-grid min="300px">; hier blijft alleen de marge
+   erboven staan.
+
+   De KLASSE blijft wel in de markup - hij is geen opmaak meer maar een HAAK.
+   static/js/wizard.js zoekt de rasters ermee op (regels 88 en 458) en
+   tests/e2e/test_locked_service_survives_submit.py ook.
+
+   Een verschil om te weten: de eigen regel gebruikte auto-FILL, de auto-grid van het thema
+   gebruikt auto-FIT. Dat scheelt alleen als er MINDER kaarten zijn dan er kolommen passen:
+   auto-fill houdt de lege kolommen aan en laat een enkele kaart 300px breed, auto-fit laat
+   hem de rij vullen. Op de dienstenpagina en in de wizard staan er altijd meer dan genoeg;
+   op de detailpagina kan een component een enkele dienst hebben, en die kaart is dan
+   breder dan eerst. */
 .service-cards-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1rem;
     margin-top: 0.5rem;
 }
 .service-card {
@@ -303,12 +201,21 @@ c-fieldset c-fieldset {
 }
 .service-card--selected {
     border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: var(--rvo-color-hemelblauw-100, #E5F0F9);
+    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
 }
 .service-card--locked-checked {
     border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: var(--rvo-color-hemelblauw-100, #E5F0F9);
+    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
     opacity: 0.85;
+}
+/* Read-only card (project details): same look as the picker, but nothing to pick. */
+.service-card--static,
+.service-card--static:hover {
+    cursor: default;
+    border-color: var(--rvo-color-grijs-300, #e5e5e5);
+}
+.service-card--static .service-card__content {
+    cursor: default;
 }
 .service-card__content {
     flex: 1;
@@ -336,9 +243,20 @@ c-fieldset c-fieldset {
     margin: 0.25rem 0 0 0;
     font-style: italic;
 }
+/* "Deze dienst stelt u per component in": only meaningful once the card is ticked,
+   and it has to appear at that moment -- the user ticks and clicks Next, so a line
+   that needs a page reload to show up is never read. The selected class is kept in
+   sync client-side by updateAllVisuals() in wizard.js. */
+.service-card__hint--config {
+    display: none;
+}
+.service-card--selected .service-card__hint--config,
+.service-card--locked-checked .service-card__hint--config {
+    display: block;
+}
 
 /* Display field header (for display_card widget) */
-.rvo-display-field__header {
+.lotc-display-field__header {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -418,3 +336,352 @@ c-fieldset c-fieldset {
 .cm-kv-wrapper { border: 1px solid #ccc; border-radius: 4px; min-height: 7.5rem; }
 .cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid #007BC7; }
 .kv-editor--error .cm-kv-wrapper { border-color: #d52b1e; }
+
+/* Uit opi/templates/wizard/wizard_step.html.j2 */
+#wizard-step-form .wizard-step__saving { display: none; }
+#wizard-step-form.htmx-request .wizard-step__saving {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Uit opi/templates/wizard/wizard_review.html.j2 */
+/* htmx toggles .htmx-request on the hx-indicator target for the request's duration. */
+.wizard-review__submitting { display: none; }
+.wizard-review__submitting.htmx-request {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Uit opi/templates/wizard/modal_wizard_step.html.j2 */
+#modal-wizard-form .wizard-step__saving { display: none; }
+#modal-wizard-form.htmx-request .wizard-step__saving {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Uit opi/templates/wizard/modal_wizard_review.html.j2 */
+#modal-wizard-confirm-saving { display: none; }
+#modal-wizard-confirm-saving.htmx-request {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Uit opi/templates/wizard/partials/approval_items.html.j2 */
+.approval-item-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.approval-item-info {
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-sm);
+}
+.approval-type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.approval-type-subdomain { background: var(--rvo-color-hemelblauw-150); color: var(--rvo-color-hemelblauw-750); }
+.approval-type-domain { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
+
+
+.approval-history {
+    padding: var(--rvo-space-xs) 0;
+}
+.approval-history summary {
+    cursor: pointer;
+}
+.approval-history-entries {
+    margin-top: var(--rvo-space-xs);
+    padding-left: var(--rvo-space-md);
+}
+.approval-history-entry {
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-sm);
+    padding: var(--rvo-space-xs) 0;
+}
+.approval-history-date {
+    font-size: 0.8rem;
+    color: var(--rvo-color-grijs-600);
+    min-width: 80px;
+}
+
+.approval-action-fields {
+    display: flex;
+    gap: var(--rvo-space-md);
+    align-items: flex-end;
+}
+.approval-action-field { flex: 0 0 200px; }
+.approval-message-field { flex: 1; }
+.approval-select, .approval-message-field input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+/* Uit opi/templates/wizard/partials/attachments_upload.html.j2 */
+.att-upload-ok { display:inline-flex; align-items:center; gap:0.35rem; color:#39870c; font-weight:600; animation: attUploadOk 2.6s ease forwards; }
+@keyframes attUploadOk { 0% {opacity:0; transform:translateY(-2px) scale(0.9);} 12% {opacity:1; transform:none;} 75% {opacity:1;} 100% {opacity:0;} }
+
+/* ===================================================================
+   De backup- en herstelstappen (wizard/partials/backup_select_deployment,
+   restore_select_backup, restore_select_target). Stonden als style=-attributen
+   in die templates; de waarden zijn onveranderd overgenomen.
+   =================================================================== */
+
+.backup-step__intro {
+    margin-bottom: 8px;
+}
+
+/* Een keuze als kaartje: radioknop links, gegevens rechts. */
+.backup-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+.backup-option__radio {
+    margin-top: 4px;
+}
+
+.backup-option__body {
+    flex: 1;
+}
+
+.backup-option__title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+
+.backup-option__timestamp {
+    color: var(--rvo-color-grijs-600);
+    font-size: 0.85rem;
+}
+
+.backup-option__meta-row {
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.backup-option__deployment {
+    font-size: 0.85rem;
+}
+
+.backup-option__count {
+    color: var(--rvo-color-grijs-500);
+    font-size: 0.8rem;
+}
+
+.backup-option__types {
+    margin-top: 4px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+/* Soort resource in een backup: de kleur zegt welke. */
+
+
+
+
+.backup-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    font-size: 0.95rem;
+}
+
+.backup-checkbox-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+}
+
+.backup-checkbox-option__input {
+    margin: 0;
+}
+
+/* Herstelstap: kiezen tussen een bestaande en een nieuwe bestemming. */
+.restore-mode-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+
+.restore-mode-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.restore-mode-option--selected {
+    /* Vaste waarde, geen var(): --rvo-color-hemelblauw-100 staat niet in de lijst van
+       lotc-app.css en leverde dus NIETS op - de gekozen optie was niet te zien. Dit is de
+       lichtste tint van dezelfde hemelblauw die er wel is. */
+    background: #E5F0F9;
+    border-color: var(--rvo-color-hemelblauw);
+}
+
+.restore-target-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+.restore-target-option__namespace {
+    background: var(--rvo-color-grijs-200);
+    color: var(--rvo-color-grijs-700);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    margin-left: 4px;
+}
+
+/* Bijlagen in de wizard. */
+.attachment-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.attachment-upload__label {
+    margin-top: 0.5rem;
+}
+
+/*
+ * De bestandskiezer van een bijlage.
+ *
+ * Dit is een KAAL <input type="file"> en dat blijft het ook. Er IS een
+ * <c-file-input-field> in lotc-forms, maar die wordt onder ons thema een
+ * <nldd-file-field>, en dat element bestaat niet in de NLDD-bundel die wij vast
+ * hebben staan. Gemeten in de browser op de stap Bijlagen:
+ *
+ *     customElements.get('nldd-file-field')  -> undefined
+ *     customElements.get('nldd-text-field')  -> aanwezig
+ *
+ * Een niet-geregistreerd custom element blijft een lege huls: je zou dan helemaal
+ * geen bestandskiezer meer hebben. Er komt bovendien een tweede bezwaar achteraan.
+ * De NLDD-velden zetten hun echte <input> in een schaduwboom - document.querySelector
+ * ('#wiz-att-id') levert null - en de uploadknop haalt dit veld op met
+ * hx-include="#wiz-att-file", terwijl attachments_list.html.j2 het na een upload leegt
+ * met hx-swap-oob op diezelfde id. Allebei zijn dat gewone document-selectors, dus het
+ * veld MOET in de lichte boom blijven staan.
+ *
+ * Wat er ontbrak was dus niet het component maar de OPMAAK: hier stond de klasse
+ * rvo-file-input, uit de oude bouwlijn, en die laadt onder LOTC niet (lotc_rvo staat
+ * niet in DESIGN_SYSTEMS). Het gevolg was de standaardknop van de browser midden in
+ * een kaart die verder helemaal van het thema is - dezelfde meting als bij het
+ * aanvinkvakje van een servicekaart verderop.
+ *
+ * De waarden hieronder zijn de tokens van het thema zelf, niet nagemaakte kleuren: de
+ * omtrek is die van een invoerveld, de knop erin die van <c-button type="secondary"
+ * size="sm">. Gemeten op het echte component: achtergrond, tekstkleur en font komen
+ * exact overeen. De tokens dragen light-dark(), dus de donkere weergave klopt mee.
+ */
+.attachment-upload__file {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 32rem;
+    min-height: 44px;
+    padding: 4px 10px;
+    border: var(--semantics-input-fields-border);
+    border-radius: 8px;
+    background-color: var(--semantics-input-fields-background-color);
+    /* Een invoerveld erft zijn font niet van de pagina; zonder deze regel staat de
+       bestandsnaam ernaast in het standaardlettertype van de browser. */
+    font: var(--semantics-input-fields-md-text-font);
+}
+
+.attachment-upload__file::file-selector-button {
+    margin-right: 0.75rem;
+    min-height: 32px;
+    padding: 6px 12px;
+    border: 0;
+    border-radius: 6px;
+    background-color: var(--semantics-buttons-neutral-tinted-background-color);
+    color: var(--semantics-buttons-neutral-tinted-content-color);
+    font: var(--semantics-buttons-sm-primary-text-font);
+    cursor: pointer;
+}
+
+.attachment-upload__file::file-selector-button:hover {
+    background-color: var(--semantics-buttons-neutral-tinted-is-hovered-background-color);
+}
+
+.attachment-upload__row {
+    margin-top: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.wizard-modal-success__actions {
+    margin-top: 1rem;
+}
+
+/*
+ * Het aanvinkvakje van een servicekaart.
+ *
+ * Dit is een KAAL <input type="checkbox"> en dat blijft het ook: static/js/wizard.js
+ * zoekt het op met card.querySelector('input[type="checkbox"]'), leest .checked en zet
+ * hem. Het NLDD-component heeft helemaal geen input - het gebruikt ElementInternals -
+ * dus een selector zou hem nooit vinden. Toen dit hier ooit wel een component was,
+ * vinkte klikken niets aan en verstuurde het formulier ALLE diensten.
+ *
+ * Wat er ontbrak was niet het component maar de OPMAAK: er stond nergens een regel voor,
+ * dus tekende de browser zijn standaardvakje van 13 bij 13 midden in een kaart die verder
+ * helemaal van het thema is. Gemeten: appearance auto, accent-color auto.
+ *
+ * accent-color is precies genoeg. De browser tekent het vakje dan in onze kleur, met alle
+ * toestanden (aangevinkt, focus, uitgeschakeld) die hij zelf al kent - geen nagebouwd
+ * vakje van pseudo-elementen dat bij de volgende themawissel weer scheef staat.
+ */
+.service-card input[type="checkbox"] {
+    width: 1.15rem;
+    height: 1.15rem;
+    accent-color: var(--rvo-color-hemelblauw, #007bc7);
+    cursor: pointer;
+    flex: none;
+}
+
+.service-card input[type="checkbox"][aria-disabled="true"] {
+    cursor: not-allowed;
+}

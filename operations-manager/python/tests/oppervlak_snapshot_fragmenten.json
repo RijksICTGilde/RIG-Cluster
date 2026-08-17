@@ -1,0 +1,185 @@
+{
+  "opgeslagen": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModalAndReload"
+    ],
+    "htmx": [],
+    "ids": [],
+    "velden": []
+  },
+  "samenvatting": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal"
+    ],
+    "htmx": [
+      "hx-get=/projects/een-project/modal-wizard/modal-edit-team/step/team-edit?_wizard_token=<wisselend>",
+      "hx-post=/projects/een-project/modal-wizard/modal-edit-team/confirm?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "modal-wizard-confirm-saving",
+      "modal-wizard-confirm-token",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "stap-backup": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-post=/projects/een-project/modal-wizard/modal-backup/step/een?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "modal-wizard-steps"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "stap-eerste": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-post=/projects/een-project/modal-wizard/f/step/een?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "modal-wizard-steps"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "stap-goedkeuring": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-post=/admin/approvals/een-project/modal-wizard/admin-approval/step/een?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "modal-wizard-steps"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "stap-laatste": {
+    "bestemmingen": [
+      "/projects/een-project/modal-wizard/f/step/een",
+      "/projects/een-project/modal-wizard/f/step/twee"
+    ],
+    "functies": [
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-get=/projects/een-project/modal-wizard/f/step/twee?_wizard_token=<wisselend>",
+      "hx-post=/projects/een-project/modal-wizard/f/step/drie",
+      "hx-post=/projects/een-project/modal-wizard/f/step/drie?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "modal-wizard-steps"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "stap-midden": {
+    "bestemmingen": [
+      "/projects/een-project/modal-wizard/f/step/een"
+    ],
+    "functies": [
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-get=/projects/een-project/modal-wizard/f/step/een?_wizard_token=<wisselend>",
+      "hx-post=/projects/een-project/modal-wizard/f/step/twee",
+      "hx-post=/projects/een-project/modal-wizard/f/step/twee?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "modal-wizard-steps"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "voortgang-completed": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModalAndReload",
+      "open"
+    ],
+    "htmx": [],
+    "ids": [
+      "modal-progress-container"
+    ],
+    "velden": []
+  },
+  "voortgang-failed": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModalAndReload",
+      "if",
+      "open",
+      "openLogViewer",
+      "preventDefault"
+    ],
+    "htmx": [],
+    "ids": [
+      "modal-progress-container"
+    ],
+    "velden": []
+  },
+  "voortgang-running": {
+    "bestemmingen": [],
+    "functies": [],
+    "htmx": [
+      "hx-get=/projects/een-project/modal-wizard/progress/taak-1"
+    ],
+    "ids": [
+      "modal-progress-container"
+    ],
+    "velden": []
+  },
+  "voortgang-start": {
+    "bestemmingen": [],
+    "functies": [],
+    "htmx": [
+      "hx-get=/projects/een-project/modal-wizard/progress/taak-1"
+    ],
+    "ids": [
+      "modal-progress-container"
+    ],
+    "velden": []
+  }
+}

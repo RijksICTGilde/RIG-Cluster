@@ -1,13 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "{{ name }}"
+  name: "{{ object_name | default(name) }}"
   namespace: "{{ namespace }}"
   labels:
     app: "{{ name }}"
     deployment: "{{ deployment_name }}"
     project: "{{ project.name }}"
     component: application
+{% for k, v in (extra_selector_labels or {}).items() %}
+    {{ k }}: {{ v | tojson }}
+{% endfor %}
 spec:
   strategy:
     type: {{ pod_replacement_mode }}
@@ -23,6 +26,9 @@ spec:
     matchLabels:
       app: "{{ name }}"
       component: application
+{% for k, v in (extra_selector_labels or {}).items() %}
+      {{ k }}: {{ v | tojson }}
+{% endfor %}
   template:
     metadata:
 {% if metrics_config %}
@@ -38,6 +44,9 @@ spec:
         project: "{{ project.name }}"
         component: application
         network-policy: allow-db-access
+{% for k, v in (extra_selector_labels or {}).items() %}
+        {{ k }}: {{ v | tojson }}
+{% endfor %}
     spec:
       {% if imagePullSecretsMap and imageURL in imagePullSecretsMap %}
       imagePullSecrets:
@@ -109,11 +118,15 @@ spec:
           {% endfor %}
           {% endif %}
           {% endif %}
-          {% if env_from_secrets %}
+          {% if env_from_secrets or env_from_configmaps %}
           envFrom:
-          {% for secret_name in env_from_secrets %}
+          {% for secret_name in env_from_secrets | default([]) %}
             - secretRef:
                 name: {{ secret_name }}
+          {% endfor %}
+          {% for cm_name in env_from_configmaps | default([]) %}
+            - configMapRef:
+                name: {{ cm_name }}
           {% endfor %}
           {% endif %}
           {% if storage_configs or (ca_config and ca_config.enabled) or (attachment_secret_mounts is defined and attachment_secret_mounts) %}
@@ -154,12 +167,12 @@ spec:
           startupProbe:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
-              port: {{ application_port }}
-              path: {{ probe_liveness_path | default('/') }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
+              path: {{ probe_liveness_path | default('/') | tojson }}
               scheme: {{ probe_scheme | upper }}
             {% else %}
             tcpSocket:
-              port: {{ application_port }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
             {% endif %}
             initialDelaySeconds: 5
             periodSeconds: 5
@@ -167,12 +180,12 @@ spec:
           livenessProbe:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
-              port: {{ application_port }}
-              path: {{ probe_liveness_path | default('/') }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
+              path: {{ probe_liveness_path | default('/') | tojson }}
               scheme: {{ probe_scheme | upper }}
             {% else %}
             tcpSocket:
-              port: {{ application_port }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
             {% endif %}
             initialDelaySeconds: 5
             periodSeconds: 30
@@ -180,16 +193,19 @@ spec:
           readinessProbe:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
-              port: {{ application_port }}
-              path: {{ probe_readiness_path | default('/') }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
+              path: {{ probe_readiness_path | default('/') | tojson }}
               scheme: {{ probe_scheme | upper }}
             {% else %}
             tcpSocket:
-              port: {{ application_port }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
             {% endif %}
             initialDelaySeconds: 0
-            periodSeconds: 5
-            failureThreshold: 3
+            {# 2s: de kubelet-sampling bepaalt hoe snel een verse pod als Ready telt, en
+               daarmee hoe snel ArgoCD de app Healthy meldt. Op 5s kostte alleen dit rooster
+               al gemiddeld 2,5s extra Progressing na een feitelijk geslaagde start. #}
+            periodSeconds: 2
+            failureThreshold: {{ probe_readiness_failure_threshold | default(3) }}
           {% endif %}
 {% if sidecars is defined and sidecars %}
 {% for sidecar in sidecars %}

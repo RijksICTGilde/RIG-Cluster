@@ -1,0 +1,329 @@
+version: '3'
+
+# Eigen Argo CD image voor RIG: upstream v3.5.1 + namespace-sync fixes + snellere
+# health-updates in de Application CR. Zie README.md voor de inhoud van de patches.
+#
+# Standaard flow (lokaal testen):
+#   task src:prepare        # argo-cd worktree met de patches klaarzetten
+#   task src:verify         # bewijzen dat worktree == v3.3.12 + patches
+#   task build              # image bouwen voor de host-architectuur
+#   task test               # smoke test incl. willekeurige-UID check (OpenShift-risico)
+#   task load-kind          # image in de kind cluster laden
+#   task cr-snippet         # YAML voor de ArgoCD CR
+#
+# Naar de registry (productie-architectuur):
+#   task publish            # linux/amd64 build + push naar ghcr.io/minbzk/base-images
+
+dotenv: ['../../.env-taskfile-current']
+
+vars:
+  # Waar de argo-cd sources staan. ARGOCD_SRC is de build-worktree (branch met de
+  # patches), ARGOCD_REPO is de gewone argo-cd checkout waar die worktree uit komt.
+  ARGOCD_REPO: '{{default (printf "%s/../../../argo-cd" .ROOT_DIR) .ARGOCD_REPO}}'
+  ARGOCD_SRC: '{{default (printf "%s/../../../argo-cd-rig" .ROOT_DIR) .ARGOCD_SRC}}'
+  BRANCH: '{{default "rig/ns-sync-3.5" .BRANCH}}'
+  BASE_TAG: '{{default "v3.5.1" .BASE_TAG}}'
+
+  IMAGE_NAME: '{{default "argocd-rig" .IMAGE_NAME}}'
+  IMAGE_TAG: '{{default "v3.5.1-rig1" .IMAGE_TAG}}'
+  REGISTRY_IMAGE: '{{default "ghcr.io/minbzk/base-images/argocd-rig" .REGISTRY_IMAGE}}'
+
+  # Lokaal bouwen we voor de host-arch (kind draait op dezelfde arch als de Mac),
+  # publiceren doen we voor het productiecluster (ODCN = amd64).
+  PLATFORM: '{{default (printf "linux/%s" ARCH) .PLATFORM}}'
+  PUBLISH_PLATFORM: '{{default "linux/amd64" .PUBLISH_PLATFORM}}'
+
+  KIND_CLUSTER_NAME: '{{default "rig-sandbox" .KIND_CLUSTER_NAME}}'
+  RIG_NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
+
+  # UID uit de OpenShift namespace-range; zelfde waarde als de runAsUser van de cmp-sidecar.
+  UID_PROBE: '{{default "1001620000" .UID_PROBE}}'
+  BUILDER_NAME: '{{default "buildx-builder" .BUILDER_NAME}}'
+
+tasks:
+  default:
+    desc: "Help / toon beschikbare tasks."
+    cmds:
+      - task --list-all
+    silent: true
+
+  src:prepare:
+    desc: "Zet de argo-cd build-worktree klaar ({{.BASE_TAG}} + patches uit patches/)"
+    cmds:
+      - |
+        set -euo pipefail
+        SRC="{{.ARGOCD_SRC}}"
+        REPO="{{.ARGOCD_REPO}}"
+
+        if [ -e "$SRC/.git" ]; then
+          echo "✅ Build-worktree bestaat al: $SRC"
+          git -C "$SRC" log --oneline -3
+          exit 0
+        fi
+
+        if [ ! -d "$REPO/.git" ]; then
+          echo "❌ Geen argo-cd checkout gevonden op $REPO"
+          echo "   Geef een pad mee: task src:prepare ARGOCD_REPO=/pad/naar/argo-cd"
+          exit 1
+        fi
+
+        # Absoluut pad maken; git worktree add rekent relatieve paden af t.o.v. de repo.
+        mkdir -p "$(dirname "$SRC")"
+        SRC="$(cd "$(dirname "$SRC")" && pwd)/$(basename "$SRC")"
+
+        if git -C "$REPO" show-ref --verify --quiet "refs/heads/{{.BRANCH}}"; then
+          echo "Branch {{.BRANCH}} bestaat → worktree aanmaken op $SRC"
+          git -C "$REPO" worktree add "$SRC" "{{.BRANCH}}"
+        else
+          echo "Branch {{.BRANCH}} bestaat niet → opbouwen uit {{.BASE_TAG}} + patches/"
+          git -C "$REPO" worktree add -b "{{.BRANCH}}" "$SRC" "{{.BASE_TAG}}"
+          git -C "$SRC" am {{.ROOT_DIR}}/patches/*.patch
+        fi
+        echo "✅ Build-worktree klaar: $SRC"
+        git -C "$SRC" log --oneline -3
+    silent: true
+
+  src:verify:
+    desc: "Controleer dat de worktree exact {{.BASE_TAG}} + de patches in patches/ is"
+    deps: [src:prepare]
+    cmds:
+      - |
+        set -euo pipefail
+        SRC="{{.ARGOCD_SRC}}"
+
+        if [ -n "$(git -C "$SRC" status --porcelain)" ]; then
+          echo "⚠️  Worktree heeft ongecommitte wijzigingen — die zitten straks wél in de image:"
+          git -C "$SRC" status --short
+        fi
+
+        TMP="$(mktemp -d)"
+        trap 'git -C "$SRC" worktree remove --force "$TMP/check" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+
+        echo "Patches opnieuw toepassen op een verse {{.BASE_TAG}} checkout..."
+        git -C "$SRC" worktree add --detach "$TMP/check" "{{.BASE_TAG}}" >/dev/null 2>&1
+        git -C "$TMP/check" am {{.ROOT_DIR}}/patches/*.patch >/dev/null
+
+        DIFF="$(git -C "$TMP/check" diff HEAD "$(git -C "$SRC" rev-parse HEAD)" --stat)"
+        if [ -z "$DIFF" ]; then
+          echo "✅ patches/ reproduceert de build-worktree exact vanaf {{.BASE_TAG}}"
+        else
+          echo "❌ Verschil tussen patches/ en de build-worktree:"
+          echo "$DIFF"
+          exit 1
+        fi
+    silent: true
+
+  patches:refresh:
+    desc: "Genereer patches/ opnieuw uit de commits op {{.BRANCH}}"
+    cmds:
+      - |
+        set -euo pipefail
+        SRC="{{.ARGOCD_SRC}}"
+        rm -f {{.ROOT_DIR}}/patches/*.patch
+        git -C "$SRC" format-patch "{{.BASE_TAG}}..{{.BRANCH}}" --no-signature -o "{{.ROOT_DIR}}/patches"
+        echo "✅ patches/ bijgewerkt"
+    silent: true
+
+  build:
+    desc: "Bouw de image lokaal ({{.IMAGE_NAME}}:{{.IMAGE_TAG}}, platform {{.PLATFORM}})"
+    deps: [src:prepare]
+    cmds:
+      - |
+        set -euo pipefail
+        SRC="{{.ARGOCD_SRC}}"
+        GIT_COMMIT="$(git -C "$SRC" rev-parse HEAD)"
+        BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+        echo "Bouwen van {{.IMAGE_NAME}}:{{.IMAGE_TAG}} voor {{.PLATFORM}} uit $SRC..."
+        echo "(dit duurt lang: Go build + UI build)"
+
+        DOCKER_BUILDKIT=1 docker buildx build \
+          --platform {{.PLATFORM}} \
+          --load \
+          --build-arg GIT_TAG={{.IMAGE_TAG}} \
+          --build-arg GIT_COMMIT="$GIT_COMMIT" \
+          --build-arg GIT_TREE_STATE=clean \
+          --build-arg BUILD_DATE="$BUILD_DATE" \
+          -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} \
+          "$SRC"
+
+        echo "✅ Image gebouwd: {{.IMAGE_NAME}}:{{.IMAGE_TAG}}"
+    silent: true
+
+  test:
+    desc: "Smoke test de image: versie + draaien onder een willekeurige (OpenShift-)UID"
+    cmds:
+      - |
+        set -euo pipefail
+        IMG="{{.IMAGE_NAME}}:{{.IMAGE_TAG}}"
+
+        UID_PROBE="{{.UID_PROBE}}"
+
+        echo "1/3 versie:"
+        docker run --rm "$IMG" argocd version --client --short
+
+        echo "2/3 draait onder de eigen UID 999:"
+        docker run --rm "$IMG" id
+
+        # OpenShift kent een willekeurige UID uit de namespace-range toe (gid 0).
+        # De upstream image is daar minder op gehard dan de Red Hat build; dit is
+        # het grootste risico bij het uitrollen. Zie TODO in de argo-cd repo.
+        echo "3/3 draait onder willekeurige UID $UID_PROBE (OpenShift-simulatie):"
+
+        # `id` geeft exit 1 omdat er geen /etc/passwd-entry voor deze UID is. Dat is
+        # cosmetisch zolang HOME/USER gezet zijn (dat doet de Dockerfile), dus geen
+        # harde faal — wel tonen, want getpwuid() faalt hierdoor.
+        docker run --rm --user "$UID_PROBE:0" "$IMG" id || \
+          echo "  ℹ️  geen /etc/passwd-entry voor $UID_PROBE (getpwuid faalt; HOME/USER komen uit de env)"
+
+        docker run --rm --user "$UID_PROBE:0" "$IMG" argocd version --client --short
+        docker run --rm --user "$UID_PROBE:0" "$IMG" sh -c \
+          'touch /home/argocd/.uid-probe && echo "  ✅ /home/argocd schrijfbaar"'
+        docker run --rm --user "$UID_PROBE:0" "$IMG" sh -c \
+          'cd /tmp && git init -q probe && cd probe && git -c user.email=probe@rig.local -c user.name=probe commit -q --allow-empty -m probe && echo "  ✅ git werkt zonder passwd-entry"'
+        docker run --rm --user "$UID_PROBE:0" "$IMG" sh -c \
+          'helm version --short >/dev/null && kustomize version >/dev/null && echo "  ✅ helm + kustomize werken"'
+
+        echo "✅ Smoke test geslaagd"
+    silent: true
+
+  load-kind:
+    desc: "Bouw de image en laad hem in kind cluster {{.KIND_CLUSTER_NAME}}"
+    deps: [build]
+    cmds:
+      - |
+        set -euo pipefail
+        if ! kind get clusters | grep -qx "{{.KIND_CLUSTER_NAME}}"; then
+          echo "❌ kind cluster '{{.KIND_CLUSTER_NAME}}' bestaat niet. Beschikbaar:"
+          kind get clusters
+          exit 1
+        fi
+        kind load docker-image {{.IMAGE_NAME}}:{{.IMAGE_TAG}} --name {{.KIND_CLUSTER_NAME}}
+        echo "✅ {{.IMAGE_NAME}}:{{.IMAGE_TAG}} geladen in kind cluster {{.KIND_CLUSTER_NAME}}"
+        echo ""
+        echo "Volgende stap: zet de image in de ArgoCD CR (task cr-snippet) en laat de"
+        echo "operator uitrollen. Daarna volgen:"
+        echo "  kubectl -n {{.RIG_NAMESPACE}} get pods -l app.kubernetes.io/name=argocd-application-controller -w"
+    silent: true
+
+  publish:
+    desc: "Bouw voor {{.PUBLISH_PLATFORM}} en push naar {{.REGISTRY_IMAGE}}:{{.IMAGE_TAG}}"
+    deps: [src:prepare]
+    cmds:
+      - |
+        set -euo pipefail
+        SRC="{{.ARGOCD_SRC}}"
+        echo ""
+        echo "Publiceren van de RIG Argo CD image"
+        echo "  Registry:  {{.REGISTRY_IMAGE}}:{{.IMAGE_TAG}}"
+        echo "  Platform:  {{.PUBLISH_PLATFORM}}"
+        echo "  Bron:      $SRC ($(git -C "$SRC" describe --tags --always))"
+        echo ""
+        echo "⚠️  Een amd64 build op een arm64 Mac emuleert de laatste stages (qemu) en"
+        echo "    duurt lang. Overweeg dit in CI te doen."
+        echo ""
+        printf "Doorgaan met publiceren? [y/N]: "
+        read -r REPLY
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+          echo "Publiceren geannuleerd."
+          exit 1
+        fi
+
+        docker buildx create --name {{.BUILDER_NAME}} --use --driver docker-container 2>/dev/null \
+          || docker buildx use {{.BUILDER_NAME}}
+
+        GIT_COMMIT="$(git -C "$SRC" rev-parse HEAD)"
+        BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+        # provenance/sbom uit, anders krijgt GHCR unknown/unknown platform-entries.
+        DOCKER_BUILDKIT=1 docker buildx build \
+          --platform {{.PUBLISH_PLATFORM}} \
+          --provenance=false \
+          --sbom=false \
+          --build-arg GIT_TAG={{.IMAGE_TAG}} \
+          --build-arg GIT_COMMIT="$GIT_COMMIT" \
+          --build-arg GIT_TREE_STATE=clean \
+          --build-arg BUILD_DATE="$BUILD_DATE" \
+          -t {{.REGISTRY_IMAGE}}:{{.IMAGE_TAG}} \
+          --push \
+          "$SRC"
+
+        echo "✅ Gepubliceerd: {{.REGISTRY_IMAGE}}:{{.IMAGE_TAG}}"
+    silent: true
+
+  push-branch:
+    desc: "Push branch {{.BRANCH}} naar de RIG fork (remote REMOTE, default 'rig')"
+    vars:
+      REMOTE: '{{default "rig" .REMOTE}}'
+    cmds:
+      - |
+        set -euo pipefail
+        SRC="{{.ARGOCD_SRC}}"
+        if ! git -C "$SRC" remote get-url "{{.REMOTE}}" >/dev/null 2>&1; then
+          echo "❌ Remote '{{.REMOTE}}' bestaat niet in $SRC. Toevoegen met:"
+          echo "   git -C $SRC remote add {{.REMOTE}} git@github.com:MinBZK/argo-cd.git"
+          echo "   (of geef een andere remote mee: task push-branch REMOTE=origin)"
+          exit 1
+        fi
+        git -C "$SRC" push -u "{{.REMOTE}}" "{{.BRANCH}}"
+        echo "✅ {{.BRANCH}} gepusht naar {{.REMOTE}}"
+    silent: true
+
+  cr-snippet:
+    desc: "Toon de ArgoCD CR wijziging voor deze image"
+    cmds:
+      - |
+        cat <<'EOF'
+        # ⚠️  De sops-plugin component doet `op: replace` op /spec/repo. Alles wat je onder
+        #     spec.repo in argocd-deployment.yaml zet wordt daardoor STIL weggegooid. De
+        #     repo-pin moet dus als patch in kustomization.yaml, ná de component.
+
+        # --- 1. argocd-deployment.yaml (beide overlays) ---
+        spec:
+          image: <IMAGE>
+          version: {{.IMAGE_TAG}}
+        #   sandboxed-local : <IMAGE> = {{.IMAGE_NAME}}        (lokaal op de kind node)
+        #   odcn-production : <IMAGE> = {{.REGISTRY_IMAGE}}
+
+        # --- 2. kustomization.yaml van dezelfde overlay, onder `patches:` ---
+        patches:
+          - target:
+              kind: ArgoCD
+              name: argocd
+            patch: |-
+              - op: add
+                path: /spec/repo/image
+                value: registry.redhat.io/openshift-gitops-1/argocd-rhel9
+              - op: add
+                path: /spec/repo/version
+                value: sha256:5058a825f70f1599cf0a4b96d7557445bd54681c3c81a25dde80106caec4e4f1
+        #   (in de sandbox staat hier quay.io/argoproj/argocd + v3.3.10)
+        EOF
+        echo ""
+        echo "controller + server + applicationset volgen spec.image; repo pinnen we terug"
+        echo "op de vendor-build. De cmp-sidecar heeft een eigen image en blijft ongemoeid."
+        echo ""
+        echo "Controleer de render vóór het uitrollen:"
+        echo "  kustomize build <overlay> | grep -A2 '^  repo:'"
+        echo ""
+        echo "⚠️  Controleer na uitrol of de operator spec.image honoreert (sommige versies"
+        echo "    negeren dat veld t.g.v. eigen RELATED_IMAGE_* env vars):"
+        echo "    kubectl -n {{.RIG_NAMESPACE}} get deploy argocd-server -o jsonpath='{.spec.template.spec.containers[0].image}'"
+    silent: true
+
+  clean:
+    desc: "Verwijder de lokale image en de build-worktree"
+    cmds:
+      - |
+        set -euo pipefail
+        docker rmi {{.IMAGE_NAME}}:{{.IMAGE_TAG}} 2>/dev/null || true
+        SRC="{{.ARGOCD_SRC}}"
+        if [ -e "$SRC/.git" ]; then
+          printf "Build-worktree %s verwijderen? [y/N]: " "$SRC"
+          read -r REPLY
+          if [[ $REPLY =~ ^[Yy]$ ]]; then
+            git -C "$SRC" worktree remove --force "$SRC"
+            echo "✅ Worktree verwijderd (branch {{.BRANCH}} blijft bestaan)"
+          fi
+        fi
+    silent: true

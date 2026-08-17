@@ -397,9 +397,9 @@ class TestBackupWizardTemplate:
 
     @pytest.fixture
     def templates(self):
-        from opi.core.templates import get_templates
+        from opi.core.templates_lotc import templates_lotc
 
-        return get_templates()
+        return templates_lotc
 
     def _render(self, templates, context: dict) -> str:
         template = templates.get_template("wizard/partials/backup_select_deployment.html.j2")
@@ -615,39 +615,35 @@ class TestRestoreTargetSummary:
 
         data = {"target_deployment": "production"}
         result = _restore_target_summary(data)
-        assert "production" in result
-        assert "Doel deployment" in result
+        assert result == [("Doel deployment", "production")]
 
     def test_existing_mode_explicit(self) -> None:
         from opi.forms.visualizers.wizard_sections import _restore_target_summary
 
         data = {"restore_mode": "existing", "target_deployment": "staging"}
         result = _restore_target_summary(data)
-        assert "staging" in result
-        assert "Doel deployment" in result
+        assert result == [("Doel deployment", "staging")]
 
     def test_new_mode(self) -> None:
         from opi.forms.visualizers.wizard_sections import _restore_target_summary
 
         data = {"restore_mode": "new", "new_deployment_name": "test-copy"}
         result = _restore_target_summary(data)
-        assert "Nieuwe deployment" in result
-        assert "Modus" in result
+        assert result == [("Modus", "Nieuwe deployment")]
 
     def test_new_mode_missing_name(self) -> None:
         from opi.forms.visualizers.wizard_sections import _restore_target_summary
 
         data = {"restore_mode": "new"}
         result = _restore_target_summary(data)
-        assert "Nieuwe deployment" in result
-        assert "Modus" in result
+        assert result == [("Modus", "Nieuwe deployment")]
 
     def test_no_data_defaults_to_existing(self) -> None:
         from opi.forms.visualizers.wizard_sections import _restore_target_summary
 
         data: dict = {}
         result = _restore_target_summary(data)
-        assert "Doel deployment" in result
+        assert result == [("Doel deployment", "-")]
 
 
 # ---------------------------------------------------------------------------
@@ -752,9 +748,9 @@ class TestRestoreTargetTemplate:
 
     @pytest.fixture
     def templates(self):
-        from opi.core.templates import get_templates
+        from opi.core.templates_lotc import templates_lotc
 
-        return get_templates()
+        return templates_lotc
 
     def _render(self, templates, context: dict) -> str:
         template = templates.get_template("wizard/partials/restore_select_target.html.j2")
@@ -1024,18 +1020,18 @@ class TestRestoreNewDeploymentSummary:
 
         data: dict[str, Any] = {"deployments": [{"name": "my-staging"}]}
         result = _new_deployment_summary(data)
-        assert "my-staging" in result
+        assert result == [("Deployment", "my-staging")]
 
     def test_without_deployments(self) -> None:
         from opi.forms.visualizers.wizard_sections import _new_deployment_summary
 
         data: dict[str, Any] = {}
         result = _new_deployment_summary(data)
-        assert "-" in result
+        assert result == [("Deployment", "-")]
 
     def test_empty_deployments_list(self) -> None:
         from opi.forms.visualizers.wizard_sections import _new_deployment_summary
 
         data: dict[str, Any] = {"deployments": []}
         result = _new_deployment_summary(data)
-        assert "-" in result
+        assert result == [("Deployment", "-")]

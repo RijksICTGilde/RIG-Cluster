@@ -114,6 +114,10 @@ Manifest templates (Jinja2 for K8s YAML generation) are at: `operations-manager/
 
 ## Key Design Patterns
 
+Working on a service (keycloak, postgres, storage, ...)? Read `instructions/services.md`
+first: it holds the service/manager/connector split, the package layout, and every hook a
+service declares.
+
 1. **Connector Pattern**: ALL external system calls go through connector classes. Never call `subprocess`, `kubectl`, or external APIs directly outside connectors.
 2. **Project Manager as Orchestrator**: `project_manager.py` coordinates multi-step deployments by calling managers and connectors in sequence.
 3. **Distributed Model**: Each OPI instance manages only its `CLUSTER_MANAGER` cluster. Use `get_deployments(cluster_filter=True)` (default) for filtering.
@@ -155,7 +159,7 @@ Always specify the correct namespace when debugging. Do not assume `rig-system` 
 - **Type annotations**: Always on function parameters and return types
 - **Error handling**: Specific exceptions, no generic `except Exception`. In new methods, let exceptions bubble up.
 - **No emojis** in code, comments, or log messages
-- **Frontend**: Jinja2 + jinja-roos-components. Check `references/jinja_roos_copied.md`
+- **Frontend**: Jinja2 + lord-of-the-components (NLDD-thema). Zie `features/lotc-bouwlijn.md`
 
 ## Utility Scripts
 
@@ -171,7 +175,7 @@ a few shell utilities only.)
 - **Framework**: FastAPI, Uvicorn, Starlette
 - **Database**: SQLAlchemy 2.0, AsyncPG, Alembic
 - **Auth**: python-keycloak, authlib
-- **UI**: Jinja2, jinja-roos-components (private package)
+- **UI**: Jinja2, lord-of-the-components + lotc-nldd/lotc-layout/lotc-forms (git-dependency)
 - **Async**: aiohttp, httpx, async-lru
 - **Monitoring**: OpenTelemetry, Prometheus
 - **Testing**: pytest, pytest-asyncio, playwright (E2E), vcrpy, freezegun
@@ -185,4 +189,4 @@ uv run pytest tests/forms/ -q              # Form tests only
 uv run pytest tests/ -k "test_name" -q     # Specific test
 ```
 
-Note: Some test collection errors are pre-existing due to jinja-roos-components import chain issues in non-form tests.
+Note: templates live in `opi/templates_lotc/`; `opi/templates/` (jinja-roos) is gone since RC-67.

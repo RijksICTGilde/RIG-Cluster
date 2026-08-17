@@ -2,7 +2,6 @@
 
 import logging
 import re
-from datetime import UTC, date, datetime
 from typing import Any, cast
 
 from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector
@@ -26,15 +25,6 @@ class InviteNotFoundError(InviteError):
     def __init__(self, key: str) -> None:
         super().__init__(f"Invite '{key}' not found", "invite_not_found")
         self.key = key
-
-
-class InviteExpiredError(InviteError):
-    """Raised when an invite has expired."""
-
-    def __init__(self, key: str, expired_at: str) -> None:
-        super().__init__(f"Invite '{key}' expired on {expired_at}", "invite_expired")
-        self.key = key
-        self.expired_at = expired_at
 
 
 class InviteDomainError(InviteError):
@@ -79,46 +69,6 @@ class InviteManager:
             project_file_handler: Optional ProjectFileHandler instance
         """
         self.project_file_handler = project_file_handler or ProjectFileHandler()
-
-    def validate_invite(
-        self,
-        project_data: dict[str, Any],
-        invite: dict[str, Any],
-    ) -> bool:
-        """
-        Validate an invite is still valid (not expired).
-
-        Args:
-            project_data: The project configuration data
-            invite: The invite configuration
-
-        Returns:
-            True if invite is valid
-
-        Raises:
-            InviteExpiredError: If the invite has expired
-        """
-        expires_at = invite.get("expires_at")
-
-        if expires_at:
-            # Parse expiration date
-            if isinstance(expires_at, str):
-                try:
-                    expiry_date = datetime.strptime(expires_at, "%Y-%m-%d").replace(tzinfo=UTC).date()
-                except ValueError:
-                    logger.warning(f"Invalid expires_at format: {expires_at}, treating as not expired")
-                    return True
-            elif isinstance(expires_at, date):
-                expiry_date = expires_at
-            else:
-                logger.warning(f"Unknown expires_at type: {type(expires_at)}, treating as not expired")
-                return True
-
-            today = datetime.now(tz=UTC).date()
-            if expiry_date < today:
-                raise InviteExpiredError(invite.get("key", "unknown"), str(expires_at))
-
-        return True
 
     def validate_email_domain(self, email: str, invite: dict[str, Any]) -> bool:
         """
@@ -192,14 +142,11 @@ class InviteManager:
 
         Raises:
             InviteNotFoundError: If invite not found
-            InviteExpiredError: If invite has expired
         """
         invite = self.project_file_handler.get_invite_by_key(project_data, key)
 
         if not invite:
             raise InviteNotFoundError(key)
-
-        self.validate_invite(project_data, invite)
 
         return invite
 

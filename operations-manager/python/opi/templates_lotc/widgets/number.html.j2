@@ -1,0 +1,27 @@
+{#
+  Getalveld voor de LOTC-bouwlijn.
+
+  min, max en step staan niet op c-text-input-field, dus die gaan mee in de
+  attribuutbundel. field_attrs laat ze normaal juist WEG (het zijn velddefinitie-
+  instellingen), vandaar de expliciete samenvoeging hier: op een getalveld zijn het wel
+  degelijk HTML-attributen.
+#}
+{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples, format_value %}
+{{ description_text(field) }}
+<c-text-input-field
+    id="{{ field.path|e }}"
+    name="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    type="number"
+    :help="combined_helper(field)|trim or none"
+    :placeholder="field.placeholder or none"
+    :required="field.required"
+    :disabled="field.readonly"
+    :value="format_value(field.value) or none"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="dict(field_attrs(field), **{
+        'min': field.attributes.get('min') or none,
+        'max': field.attributes.get('max') or none,
+        'step': field.attributes.get('step') or none,
+    })"
+/>{{ render_examples(field) }}

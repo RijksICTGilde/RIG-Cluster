@@ -3,18 +3,28 @@
 from __future__ import annotations
 
 import contextlib
+import html
 import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.core.templates import get_templates
-from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
+from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.core.templates_lotc import templates_lotc
+from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.editables.service_path import (
+    find_service_in_list,
+    parse_service_path,
+    smart_get_value,
+    smart_set_value,
+)
 from opi.forms.visualizers.flows import get_flow
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.forms.wizard.mutation import apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
@@ -27,8 +37,14 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import CLEARED_FIELD
+from opi.handlers.project_file_handler import merge_staged_attachments
+from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
+from opi.services.help_text import is_markdown_help, render_service_help
+from opi.services.schema_migration import normalize_service_entries
 from opi.utils.csrf import reject_misfired_form_get
+from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
+from opi.web.navigation_lotc import get_navigation, to_nldd_icon
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -41,11 +57,29 @@ wizard_router = APIRouter(prefix="/forms/wizard", tags=["wizard"])
 
 
 def _create_renderer() -> FormRenderer:
-    """Create a configured FormRenderer for wizard forms."""
+    """Create a configured FormRenderer for wizard forms.
+
+    De VOORBEREIDING per veldtype is gedeeld - welke opties, welke waarde, hoe een reeks
+    wordt opgebouwd is bedrijfslogica en verandert niet mee met het componentensysteem.
+    Alleen de adapter wisselt, en daarmee welke templates het veld renderen.
+
+    Waarom de import hier binnen staat: de LOTC-bouwlijn is een aparte dependency-groep,
+    dus in de release-image bestaat het pakket niet. Bovenaan importeren zou deze module
+    daar onlaadbaar maken.
+    """
     return FormRenderer(
-        widget_adapter=ROOSWidgetAdapter(),
+        widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
     )
+
+
+def _lotc_page_context(request: Request, user: dict[str, Any] | None) -> dict[str, Any]:
+    """Wat een HELE wizardpagina extra nodig heeft: de navigatie.
+
+    Het pad is dat van "Nieuw project" in het menu, zodat dat item in de zijkolom
+    oplicht zolang je in de wizard zit.
+    """
+    return {"navigation": get_navigation(user, current_path="/forms/wizard/restart")}
 
 
 def _get_section_from_flow(flow_id: str, section_id: str) -> FormSection:
@@ -57,17 +91,56 @@ def _get_section_from_flow(flow_id: str, section_id: str) -> FormSection:
     raise HTTPException(status_code=404, detail=f"Stap '{section_id}' niet gevonden")
 
 
+#: Every Jinja delimiter starts with "{" and ends with "}", so spacing EVERY brace
+#: covers all of them at once. Replacing whole delimiter PAIRS instead is unsafe:
+#: those passes feed each other, and "{{{{" comes back out as "{{" ("{ {" + "{ {"),
+#: which Jinja then reads as an expression again. Single-character replacement in one
+#: translate pass cannot re-form a delimiter, no matter how many braces are nested.
+_BRACE_SPACING = str.maketrans({"{": "{ ", "}": " }"})
+
+
+def _defuse_template_syntax(messages: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
+    """Space out every brace in per-field messages before they are rendered.
+
+    Field messages end up INSIDE the HTML string this module returns, and
+    ``wizard_step.html.j2`` pipes that string through ``process_components``,
+    which compiles it as a Jinja template -- a second render. HTML-escaping does
+    not help there: ``{{ ... }}`` needs no special characters. Several validators
+    quote the rejected value in their message ("Ongeldige waarde: <value>"), so
+    without this a value typed into a form would be executed as a template.
+
+    Spacing the braces keeps the message readable while making it inert.
+    """
+    if not messages:
+        return messages
+    defused: dict[str, list[str]] = {}
+    for path, texts in messages.items():
+        defused[path] = [text.translate(_BRACE_SPACING) for text in texts]
+    return defused
+
+
 def _render_step_html(
+    request: Request,
     section: FormSection,
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
     edit_mode: bool = False,
     warnings: dict[str, list[str]] | None = None,
+    flow_id: str | None = None,
 ) -> str:
-    """Render the form fields for a single wizard step."""
+    """Render the form fields for a single wizard step.
+
+    ``request`` bepaalt alleen WELKE componenten het veld renderen: dezelfde velden,
+    dezelfde waarden, dezelfde foutmeldingen, maar door de LOTC-adapter in plaats van de
+    roos-adapter zodra de pagina eromheen de LOTC-weergave is. Het een zonder het ander
+    zou een pagina opleveren die uit twee componentsystemen bestaat, en dat rendert niet.
+    """
     import copy
 
     from opi.forms.editables.service_path import smart_get_value, smart_set_value
+
+    errors = _defuse_template_syntax(errors)
+    warnings = _defuse_template_syntax(warnings)
 
     renderer = _create_renderer()
     if not section.layout:
@@ -134,6 +207,9 @@ def _render_step_html(
         errors=errors,
         edit_mode=edit_mode,
         warnings=warnings,
+        # De wizard waarin we staan, zodat een partial met eigen endpoints (bijlagen) de
+        # goede URL opbouwt in plaats van een vaste create-project.
+        flow_id=flow_id,
     )
 
 
@@ -158,7 +234,7 @@ def _build_step_context(
     # Build preset cards HTML if presets exist for this section
     yaml_data = state.get_merged_data()
     preset_html = _render_preset_html(
-        flow_id, section.section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token
+        request, flow_id, section.section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token
     )
 
     # All steps already completed = user came back from review/submit to fix something
@@ -178,10 +254,28 @@ def _build_step_context(
         "all_steps_completed": all_steps_completed,
         "menu_items": get_menu_items(user),
         "user": user,
+        # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-templates hebben de
+        # NLDD-woordenschat nodig. De roos-templates raken dit niet aan.
+        "nldd_icon": to_nldd_icon,
     }
 
 
+def _step_response(request: Request, context: dict[str, Any]) -> Response:
+    """Het antwoord op een stap, in de weergave die dit verzoek gekozen heeft.
+
+    Een fragment en geen hele pagina: htmx wisselt hiermee de inhoud van
+    ``#wizard-step-content``. De stappenbalk gaat mee via een OOB-swap in het fragment
+    zelf, precies zoals in de bestaande wizard.
+    """
+    return render(
+        request,
+        template="bg/_wizard-step.html.j2",
+        context=context,
+    )
+
+
 def _render_preset_html(
+    request: Request,
     flow_id: str,
     section_id: str,
     yaml_data: dict[str, Any] | None = None,
@@ -189,7 +283,7 @@ def _render_preset_html(
 ) -> str:
     """Render preset cards for a section, if any presets exist."""
     from opi.forms.presets.loader import load_presets
-    from opi.forms.widgets.roos import render_preset_cards
+    from opi.forms.widgets.fields import render_preset_cards
 
     presets = load_presets(section_id)
     if not presets:
@@ -288,16 +382,17 @@ async def wizard_restart(request: Request) -> RedirectResponse:
 
 @wizard_router.get("/start", response_class=HTMLResponse)
 @requires_sso
-async def wizard_start(request: Request) -> HTMLResponse:
+async def wizard_start(request: Request) -> Response:
     """Render the wizard introduction / landing page."""
     user = get_current_user(request)
-    templates = get_templates()
-    return templates.TemplateResponse(
-        "wizard/wizard_start.html.j2",
-        {
+    return render(
+        request,
+        template="bg/wizard-start.html.j2",
+        context={
             "request": request,
             "menu_items": get_menu_items(user),
             "user": user,
+            **_lotc_page_context(request, user),
         },
     )
 
@@ -313,7 +408,6 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     """Render the full wizard page, resuming existing state if available."""
     flow = get_flow(flow_id)
     user = get_current_user(request)
-    templates = get_templates()
 
     # Check for existing wizard state for this flow
     existing_state = get_wizard_state(request)
@@ -337,10 +431,15 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         # Seed template data (repositories, base config) as the lowest-priority layer
         from opi.forms.editables.template import load_project_template
 
-        state.template_data = load_project_template()
+        state.base_data = load_project_template()
 
         # Seed the team step with the current user as administrator
         user_email = (user or {}).get("email", "")
+
+        # The same peer-project list the edit flow gets. Without it the cross-domain step had
+        # three required fields whose select was empty, so the step could not be saved at all.
+        # The project does not exist yet, hence the empty name: nothing to exclude.
+        state.base_data.update(build_cross_domain_context("", user_email))
         if user_email:
             state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
 
@@ -351,14 +450,19 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
             "components",
             {
                 "components": [
+                    # Resources stonden hier ook, met eigen waarden, en die seed won van
+                    # Editable.default -- dus een default aanpassen bij het veld had geen
+                    # effect op de create-wizard. Ze staan er niet meer in: de renderer
+                    # vult een ontbrekende waarde met de default van de editable.
+                    #
+                    # De uitgaande poorten blijven hier wel staan, ook al hebben ze een
+                    # default op hun editable: de stap toont er geen veld voor, en een
+                    # default springt alleen in als het veld gerenderd wordt. Weghalen
+                    # zou ze uit nieuwe projecten laten verdwijnen.
                     {
                         "name": "",
                         "path": "/",
                         "ports": {"inbound": [8080], "outbound": [80, 443]},
-                        "resources": {
-                            "requests": {"cpu": "50m", "memory": "256Mi"},
-                            "limits": {"cpu": "1", "memory": "512Mi"},
-                        },
                     },
                 ],
             },
@@ -383,18 +487,21 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     yaml_data = state.get_merged_data()
     section = _get_section_from_flow(flow_id, state.current_step)
     step_html = _render_step_html(
+        request,
         section,
         yaml_data=yaml_data,
-        edit_mode=state.project_name is not None,
+        edit_mode=state.is_edit,
+        flow_id=flow_id,
     )
 
     active_sections = resolve_active_sections(flow, state.step_data)
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
 
-    return templates.TemplateResponse(
-        "wizard/wizard_page.html.j2",
-        {
+    return render(
+        request,
+        template="bg/wizard-page.html.j2",
+        context={
             "request": request,
             "flow_title": flow.title,
             "flow_id": flow_id,
@@ -407,6 +514,8 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
             "show_review": flow.show_review,
             "menu_items": get_menu_items(user),
             "user": user,
+            "nldd_icon": to_nldd_icon,
+            **_lotc_page_context(request, user),
         },
     )
 
@@ -424,7 +533,6 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
 
     flow = get_flow(flow_id)
     user = get_current_user(request)
-    templates = get_templates()
 
     # Enforce admin/owner role: the wizard edit flow exposes users/role and
     # config fields as editable, so a plain member must not be able to enter
@@ -468,16 +576,17 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
 
     # Render the first step with pre-filled data
     section = _get_section_from_flow(flow_id, first_step)
-    step_html = _render_step_html(section, yaml_data=project_data, edit_mode=True)
+    step_html = _render_step_html(request, section, yaml_data=project_data, edit_mode=True, flow_id=flow_id)
 
     active_sections = resolve_active_sections(flow, state.step_data)
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
 
     display_name = project_data.get("display-name", project_name)
-    return templates.TemplateResponse(
-        "wizard/wizard_page.html.j2",
-        {
+    return render(
+        request,
+        template="bg/wizard-page.html.j2",
+        context={
             "request": request,
             "flow_title": f"{flow.title} - {display_name}",
             "flow_id": flow_id,
@@ -490,6 +599,8 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
             "show_review": flow.show_review,
             "menu_items": get_menu_items(user),
             "user": user,
+            "nldd_icon": to_nldd_icon,
+            **_lotc_page_context(request, user),
         },
     )
 
@@ -587,7 +698,6 @@ async def _navigate_to_step(
     state: WizardState,
     flow_id: str,
     target_section_id: str,
-    templates: Any,
 ) -> HTMLResponse:
     """Save state and render the target step.
 
@@ -606,7 +716,7 @@ async def _navigate_to_step(
     )
 
     yaml_data = state.get_merged_data()
-    edit_mode = state.project_name is not None
+    edit_mode = state.is_edit
 
     # Validate on load only for steps the user has explicitly completed (forward-validated).
     # Steps that merely have saved data from back-navigation should not show errors.
@@ -623,10 +733,12 @@ async def _navigate_to_step(
             errors = None
 
     step_html = _render_step_html(
+        request,
         target_section,
         yaml_data=yaml_data,
         errors=errors,
         edit_mode=edit_mode,
+        flow_id=flow_id,
     )
     context = _build_step_context(
         request,
@@ -635,7 +747,7 @@ async def _navigate_to_step(
         step_html,
         errors=errors,
     )
-    response = templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+    response = _step_response(request, context)
     response.headers["HX-Push-Url"] = f"/forms/wizard/{flow_id}/step/{target_section_id}"
     return response
 
@@ -659,11 +771,10 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
         # No session - redirect to the wizard start page which will init state
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=302)  # type: ignore[return-value]
 
-    templates = get_templates()
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if is_htmx:
-        return await _navigate_to_step(request, state, flow_id, section_id, templates)
+        return await _navigate_to_step(request, state, flow_id, section_id)
 
     # Direct browser access: return the full page with the step embedded
     section = _get_section_from_flow(flow_id, section_id)
@@ -671,7 +782,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     save_wizard_state(request, state)
 
     yaml_data = state.get_merged_data()
-    edit_mode = state.project_name is not None
+    edit_mode = state.is_edit
 
     # Validate on load only for completed steps (not just saved from back-navigation)
     errors: dict[str, list[str]] | None = None
@@ -687,10 +798,12 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
             errors = None
 
     step_html = _render_step_html(
+        request,
         section,
         yaml_data=yaml_data,
         errors=errors,
         edit_mode=edit_mode,
+        flow_id=flow_id,
     )
 
     flow = get_flow(flow_id)
@@ -699,11 +812,14 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
 
-    preset_html = _render_preset_html(flow_id, section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token)
+    preset_html = _render_preset_html(
+        request, flow_id, section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token
+    )
 
-    return templates.TemplateResponse(
-        "wizard/wizard_page.html.j2",
-        {
+    return render(
+        request,
+        template="bg/wizard-page.html.j2",
+        context={
             "request": request,
             "flow_title": flow.title,
             "flow_id": flow_id,
@@ -717,6 +833,8 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
             "show_review": flow.show_review,
             "menu_items": get_menu_items(user),
             "user": user,
+            "nldd_icon": to_nldd_icon,
+            **_lotc_page_context(request, user),
         },
     )
 
@@ -753,7 +871,6 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     section = _get_section_from_flow(flow_id, section_id)
     flow = get_flow(flow_id)
-    templates = get_templates()
 
     # Parse JSON body (submitted via HTMX json-enc extension)
     body = await request.json()
@@ -783,7 +900,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     processor = EditableFormProcessor()
     yaml_data = state.get_merged_data()
-    edit_mode = state.project_name is not None
+    edit_mode = state.is_edit
 
     # Build enforcer context with out-of-scope metadata
     enforcer_context = {"project_name": state.project_name, "edit_mode": edit_mode}
@@ -806,10 +923,15 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         save_wizard_state(request, state)
 
         step_html = _render_step_html(
-            section, yaml_data=submitted_yaml, edit_mode=edit_mode, warnings=processor.field_warnings
+            request,
+            section,
+            yaml_data=submitted_yaml,
+            edit_mode=edit_mode,
+            warnings=processor.field_warnings,
+            flow_id=flow_id,
         )
         context = _build_step_context(request, flow_id, section, step_html)
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _step_response(request, context)
 
     # Process the nested JSON: validate, convert, and write to yaml in one pass.
     submitted_yaml, errors = await processor.process_json_submission(
@@ -834,11 +956,12 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     is_forward = goto in ("next", "review")
     logger.info("[submit_step %s] goto=%r, is_forward=%s", section_id, goto, is_forward)
 
-    # Auto-add service dependencies when leaving the services step
-    if section_id == "services" and isinstance(submitted_yaml.get("services"), list):
-        from opi.services.services import ServiceAdapter
-
-        submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
+    # Verzoen de meegestuurde dienstselectie met de basis: wat het formulier niet aanbood
+    # kan de gebruiker niet hebben uitgevinkt, en een vereiste dienst vult de server aan.
+    # Beide regels wonen in apply_services_mutation, en beide flows lopen er doorheen -- de
+    # aanleiding is dat deze regel eerst aan de sectienaam "services" hing en de bewerk-flow
+    # "services-edit" heet, dus daar liep hij nooit.
+    apply_services_mutation(section.editables, yaml_data, submitted_yaml)
 
     # Forward navigation (Next / Review): block on field-level validation errors
     if is_forward and errors:
@@ -851,11 +974,13 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 group_errors.extend(msgs)
 
         step_html = _render_step_html(
+            request,
             section,
             yaml_data=submitted_yaml,
             errors=errors,
             edit_mode=edit_mode,
             warnings=processor.field_warnings,
+            flow_id=flow_id,
         )
         context = _build_step_context(
             request,
@@ -865,7 +990,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
             errors=errors,
             global_errors=group_errors or None,
         )
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _step_response(request, context)
 
     # Forward navigation: run section-level enforcer for cross-field validation
     if is_forward and section.enforcer:
@@ -881,11 +1006,13 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 global_errors,
             )
             step_html = _render_step_html(
+                request,
                 section,
                 yaml_data=submitted_yaml,
                 errors=errors,
                 edit_mode=edit_mode,
                 warnings=processor.field_warnings,
+                flow_id=flow_id,
             )
             context = _build_step_context(
                 request,
@@ -895,7 +1022,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 errors=errors,
                 global_errors=global_errors,
             )
-            return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+            return _step_response(request, context)
         else:
             logger.info("[%s validation PASSED] section-level (enforcer) validation ok", section_id)
 
@@ -936,16 +1063,16 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Review page
     if target_section_id == "review":
         save_wizard_state(request, state)
-        return await _render_review(request, flow_id, templates)
+        return await _render_review(request, flow_id)
 
     # Submit (last step, no review)
     if target_section_id is None:
         save_wizard_state(request, state)
         if flow.show_review:
-            return await _render_review(request, flow_id, templates)
-        return await _do_submit(request, flow_id, templates)
+            return await _render_review(request, flow_id)
+        return await _do_submit(request, flow_id)
 
-    return await _navigate_to_step(request, state, flow_id, target_section_id, templates)
+    return await _navigate_to_step(request, state, flow_id, target_section_id)
 
 
 # ---------------------------------------------------------------------------
@@ -963,7 +1090,7 @@ async def toggle_preset(
 ) -> HTMLResponse | RedirectResponse:
     """Toggle a preset: apply if not active, remove if active."""
     from opi.forms.presets.loader import get_preset_by_id
-    from opi.forms.widgets.roos import _is_preset_applied
+    from opi.forms.widgets.fields import _is_preset_applied
 
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
@@ -988,14 +1115,14 @@ async def toggle_preset(
 
     # Re-render the section with the new values
     step_html = _render_step_html(
+        request,
         section,
         yaml_data=yaml_data,
-        edit_mode=state.project_name is not None,
+        edit_mode=state.is_edit,
     )
 
-    templates = get_templates()
     context = _build_step_context(request, flow_id, section, step_html)
-    return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+    return _step_response(request, context)
 
 
 def _apply_preset(preset: Any, yaml_data: dict[str, Any]) -> None:
@@ -1062,20 +1189,57 @@ def _list_contains_item(items: list[Any], candidate: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@wizard_router.get("/help/{template_name}", response_model=None)
+@wizard_router.get("/help/{template_name:path}", response_model=None)
 @requires_sso
 async def service_help(request: Request, template_name: str) -> HTMLResponse:
-    """Render a help template inside a modal-friendly HTML fragment."""
+    """Render a help text inside a modal-friendly HTML fragment.
+
+    Three shapes are accepted:
+
+    * ``<service-package>/help.md`` -- a service's own explanation. It is markdown, and
+      it is the same file ``GET /api/v2/services/{name}`` returns, so the portal and an
+      API client read one source (RC-59). It is turned into the components the
+      modal always showed, with the icon taken from the service definition.
+    * ``<service-package>/help.html.j2`` -- the older Jinja form, still resolved by the
+      Jinja loader for any help that has not been converted.
+    * ``<name>.html.j2`` -- a help text that belongs to no single service (the
+      container-image note), still under ``templates/help/``.
+
+    The directory segment deliberately disallows ``.``, so no combination of these can
+    walk out of the search path.
+    """
     import re
 
-    # Restrict to safe filenames: alphanumeric, hyphens, dots (no path traversal)
-    if not re.fullmatch(r"[a-zA-Z0-9._-]+\.html\.j2", template_name):
+    if not re.fullmatch(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9._-]+\.(?:html\.j2|md)", template_name):
         raise HTTPException(status_code=400, detail="Invalid template name")
 
-    templates = get_templates()
+    if is_markdown_help(template_name):
+        try:
+            markup = render_service_help(template_name)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Help template not found") from None
+        # htmx laadt dit in een dialoog en wil het kale fragment; een browser die de URL
+        # rechtstreeks opent krijgt datzelfde fragment ZONDER <head>, dus zonder stylesheets
+        # en zonder marges. Vandaar de splitsing: dezelfde inhoud, twee omhulsels.
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(markup)
+        from opi.web.navigation_lotc import get_menu_items, get_navigation
+
+        user = request.session.get("user")
+        return templates_lotc.TemplateResponse(
+            "help_page.html.j2",
+            {
+                "request": request,
+                "help_markup": markup,
+                "menu_items": get_menu_items(user),
+                "navigation": get_navigation(user, current_path=request.url.path),
+            },
+        )
+
+    template_path = template_name if "/" in template_name else f"help/{template_name}"
     try:
-        return templates.TemplateResponse(
-            f"help/{template_name}",
+        return templates_lotc.TemplateResponse(
+            template_path,
             {"request": request},
         )
     except Exception:
@@ -1112,7 +1276,7 @@ async def _handle_sequence_action(
     # Process the submitted JSON to get current yaml with correct values/counts
     processor = EditableFormProcessor()
     yaml_data = state.get_merged_data()
-    edit_mode = state.project_name is not None
+    edit_mode = state.is_edit
     yaml_data, _errors = await processor.process_json_submission(
         submitted_data,
         section.editables,
@@ -1151,10 +1315,9 @@ async def _handle_sequence_action(
     state.store_step_data(section_id, section_data)
     save_wizard_state(request, state)
 
-    step_html = _render_step_html(section, yaml_data=yaml_data, edit_mode=edit_mode)
-    templates = get_templates()
+    step_html = _render_step_html(request, section, yaml_data=yaml_data, edit_mode=edit_mode)
     context = _build_step_context(request, flow_id, section, step_html)
-    return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+    return _step_response(request, context)
 
 
 def _prune_empty_dicts(data: Any) -> None:
@@ -1317,12 +1480,24 @@ def _empty_sequence_item(editable: Any | None) -> Any:
         rel = _relative(child_ed.yaml_path)
         if not rel:
             continue
+        if _is_service_config_child(rel):
+            # A service's config default (tls, metrics port, storage mount) belongs to a
+            # service the item HAS. Seeding it materialises that service into the item's
+            # services list, which both picks services the user never chose and -- because
+            # the list is then no longer unset -- suppresses the "select all project
+            # services" default a new component is supposed to start with.
+            continue
         if str(child.widget) == "sequence" and child_ed.min_items:
             # Seed nested sequences with min_items empty entries
             set_value(item, rel, ["" for _ in range(child_ed.min_items)])
         elif child_ed.default is not None:
             set_value(item, rel, child_ed.default)
     return item
+
+
+def _is_service_config_child(relative_path: str) -> bool:
+    """Whether a sequence child's path targets a service's config (``services{X}/...``)."""
+    return relative_path.startswith("services{")
 
 
 # ---------------------------------------------------------------------------
@@ -1334,14 +1509,12 @@ def _empty_sequence_item(editable: Any | None) -> Any:
 @requires_sso
 async def review_page(request: Request, flow_id: str) -> HTMLResponse | RedirectResponse:
     """Render the review page."""
-    templates = get_templates()
-    return await _render_review(request, flow_id, templates)
+    return await _render_review(request, flow_id)
 
 
 async def _render_review(
     request: Request,
     flow_id: str,
-    templates: Any,
 ) -> HTMLResponse | RedirectResponse:
     """Build and render the review page."""
     state = get_wizard_state(request)
@@ -1372,15 +1545,17 @@ async def _render_review(
             }
         )
 
-    return templates.TemplateResponse(
-        "wizard/wizard_review.html.j2",
-        {
+    return render(
+        request,
+        template="bg/_wizard-review.html.j2",
+        context={
             "request": request,
             "steps": steps,
             "flow_id": flow_id,
             "section_summaries": section_summaries,
             "menu_items": get_menu_items(user),
             "user": user,
+            "nldd_icon": to_nldd_icon,
         },
     )
 
@@ -1409,8 +1584,17 @@ def _extract_section_data(
 
     # Collect which top-level keys this section uses, and for indexed list
     # paths, which sub-fields it owns (e.g. deployments -> {name}).
+    from opi.forms.editables.service_path import is_service_config_path, parse_service_path
+    from opi.services.services import service_entry_name
+
     section_keys: set[str] = set()
     indexed_fields: dict[str, set[str]] = {}  # top_key -> set of owned field names
+    owned_services: dict[str, set[str]] = {}  # top_key -> service names this section configures
+    # De config-velden die deze sectie zelf schrijft, als volledige yaml_paths. Die krijgen
+    # een grafsteen als de inzending ze niet draagt - zie _tombstone_service_config.
+    service_config_leaves: list[str] = []
+    # top_key -> field name -> service names, for a service list INSIDE an indexed item
+    indexed_services: dict[str, dict[str, set[str]]] = {}
     # real_key -> virtual_key for virtualized editables
     virt_mapping: dict[str, str] = {}
 
@@ -1430,10 +1614,36 @@ def _extract_section_data(
             if ed.virtualize:
                 virt_mapping[ed.virtualize[0]] = ed.virtualize[1]
 
+            # Which service's config this section actually writes. Without this a section
+            # that configures ONE service copies the WHOLE services list, other services'
+            # config included, and then overwrites theirs on the merge because it happens
+            # to come later in the section order. Measured: the invite step carried a stale
+            # copy of the keycloak template and won over the keycloak step itself.
+            if is_service_config_path(ed.yaml_path):
+                owned_services.setdefault(top_key, set()).add(parse_service_path(ed.yaml_path)[0])
+                # Alleen losse velden. Een SEQUENCE draagt zijn eigen items en beslist
+                # zelf wat leeg betekent; die een grafsteen geven zou een lijst wissen die
+                # deze stap alleen maar niet toonde.
+                if (
+                    parse_service_path(ed.yaml_path)[1] is not None
+                    and "[*]" not in ed.yaml_path
+                    and str(vis.widget) != "sequence"
+                ):
+                    service_config_leaves.append(ed.yaml_path)
+
             if "[" in top and len(parts) >= 2:
                 # e.g. deployments[0]/base-domain -> owns "base-domain"
-                field_name = parts[1].split("[")[0]
+                field_name = parts[1].split("[")[0].split("{")[0]
                 indexed_fields.setdefault(top_key, set()).add(field_name)
+                # A field addressed through a service filter (deployments[0]/services{X}/...)
+                # is a service LIST inside the item, not a plain field. Recording only
+                # "services" would make the section replace the whole list and take other
+                # services' deployment config (clone state, cross-domain patches) with it,
+                # so remember WHICH service it configures -- the per-item counterpart of
+                # ``owned_services`` (RC-60).
+                if "{" in parts[1]:
+                    service = parts[1].split("{", 1)[1].split("}", 1)[0]
+                    indexed_services.setdefault(top_key, {}).setdefault(field_name, set()).add(service)
 
     _collect_leaf_paths(editables)
 
@@ -1451,21 +1661,147 @@ def _extract_section_data(
             # additive merge in get_merged_data() deletes the old value
             # instead of resurrecting it from the template snapshot.
             owned = indexed_fields[key]
+            per_item_services = indexed_services.get(key, {})
             pruned = []
             for item in value:
                 if isinstance(item, dict):
                     pruned_item = {k: copy.deepcopy(v) for k, v in item.items() if k in owned}
+                    for field_name, services in per_item_services.items():
+                        # Keep only this section's own service entries, and never tombstone
+                        # the list: an item without them simply says nothing about it.
+                        #
+                        # On identity, not on shape: a bare string entry of ANOTHER service
+                        # is that service's selection, which this section has no business
+                        # carrying either. Dropping it is safe because the merge is additive
+                        # by name (``merge_service_lists``), so an entry this section does
+                        # not mention keeps whatever the base data holds.
+                        entries = pruned_item.get(field_name)
+                        if isinstance(entries, list):
+                            kept = [entry for entry in entries if service_entry_name(entry) in services]
+                            pruned_item[field_name] = kept
+                        else:
+                            pruned_item.pop(field_name, None)
                     for owned_field in owned:
+                        if owned_field in per_item_services:
+                            continue
                         if owned_field not in pruned_item:
                             pruned_item[owned_field] = CLEARED_FIELD
                     pruned.append(pruned_item)
                 else:
                     pruned.append(copy.deepcopy(item))
             result[store_key] = pruned
+        elif key in owned_services and isinstance(value, list):
+            # Same reasoning as the indexed pruning above, one level up: keep only the
+            # services this section configures. A bare string entry (a chosen service
+            # without config) stays, because that is the selection and not someone
+            # else's config.
+            keep = owned_services[key]
+            result[store_key] = [
+                copy.deepcopy(entry)
+                for entry in value
+                if not isinstance(entry, dict) or service_entry_name(entry) in keep
+            ]
         else:
             result[store_key] = copy.deepcopy(value)
 
+    _tombstone_service_config(result, submitted_yaml, service_config_leaves, virt_mapping)
     return result
+
+
+def _tombstone_service_config(
+    result: dict[str, Any],
+    submitted_yaml: dict[str, Any],
+    leaves: list[str],
+    virt_mapping: dict[str, str],
+) -> None:
+    """Markeer config-velden die deze sectie schrijft maar die de inzending niet draagt.
+
+    Dezelfde regel als bij de indexlijsten hierboven, voor de tak die hem miste. De
+    stapfragmenten worden ADDITIEF over de basis gemerget (``get_merged_data``, en voor
+    diensten met ``merge_service_lists`` die de config deep-merget), dus een sleutel die
+    er simpelweg NIET is kan de oude waarde niet verwijderen. Hij komt gewoon terug.
+
+    Dat is de tweede helft van "aanvinken lukt, uitvinken niet": zodra de browser bij het
+    uitvinken niets meer meestuurt (RC-71, static/js/form-associated.js), haalt de
+    verwerker het veld netjes uit zijn resultaat - en daarna zette de merge het uit de
+    basis terug. Een grafsteen zegt wel wat afwezigheid betekent: ``get_merged_data``
+    haalt de sleutel na het mergen weg, en bij het opslaan verwijdert
+    ``apply_write_paths`` hem uit het projectbestand.
+
+    Alleen velden die de verwerker ECHT heeft leeggemaakt krijgen er een. Wat hij oversloeg
+    (readonly, of verborgen door ``show_when``) staat nog gewoon in ``submitted_yaml``,
+    want dat is een kopie van de projectgegevens - dus daar gebeurt hier niets.
+
+    De grafsteen gaat op het DIEPSTE niveau dat er nog is, niet blind op het veldpad. Een
+    veldpad dat een tussenlaag mist (``restrict-access`` is met zijn laatste sleutel
+    meegeprund, of stond er nooit) zou anders die tussenlaag aanmaken, en dan levert
+    opslaan een leeg ``restrict-access: {}`` in het projectbestand op - een wijziging die
+    de gebruiker niet maakte. Ontbreekt de tussenlaag, dan is DIE de grafsteen: het hele
+    onderdeel is weg, en een sleutel die er nooit was verdwijnt bij het strippen zonder
+    iets achter te laten.
+    """
+    for yaml_path in leaves:
+        if smart_get_value(submitted_yaml, yaml_path) is not None:
+            continue
+        top_key = yaml_path.split("/")[0]
+        store_key = virt_mapping.get(top_key, top_key)
+        entries = result.get(store_key)
+        if not isinstance(entries, list):
+            continue
+        # Alleen voor een dienst die deze sectie ook echt draagt: een grafsteen mag geen
+        # dienstvermelding aanmaken die er niet was.
+        if find_service_in_list(entries, parse_service_path(yaml_path)[0])[0] == -1:
+            continue
+        doelpad = _diepste_bestaande_pad(result, store_key + yaml_path[len(top_key) :])
+        if doelpad is not None:
+            smart_set_value(result, doelpad, CLEARED_FIELD)
+
+
+def _diepste_bestaande_pad(result: dict[str, Any], pad: str) -> str | None:
+    """Het pad waarop de grafsteen mag: het eerste stuk dat in *result* ontbreekt.
+
+    Nooit boven ``<dienst>/config``: dat is de config van de dienst als geheel, en die
+    weggooien is een andere beslissing dan een veld leegmaken. Ontbreekt ``config`` zelf,
+    dan valt er niets te wissen en geeft dit None terug.
+    """
+    segments = pad.split("/")
+    try:
+        eerste = segments.index("config") + 1
+    except ValueError:
+        return None
+    if smart_get_value(result, "/".join(segments[:eerste])) is None:
+        return None
+    for i in range(eerste, len(segments)):
+        deelpad = "/".join(segments[: i + 1])
+        waarde = smart_get_value(result, deelpad)
+        if waarde == CLEARED_FIELD:
+            # Een veld hoger is al als geheel weggestreept; er dieper in schrijven zou die
+            # grafsteen juist weer overschrijven met een gedeeltelijke.
+            return None
+        if waarde is None:
+            return deelpad
+    return pad
+
+
+def _summary_text(text: Any) -> str:
+    """Escape a piece of text that goes into summary HTML.
+
+    The functions below build an HTML string that ``wizard_review.html.j2`` renders
+    with ``| safe``, so nothing here is escaped for us. Every label and value that
+    ends up between the tags goes through this first -- values because they are
+    whatever someone typed into the form, labels because escaping a constant costs
+    nothing and a label that stops being a constant is then already covered.
+
+    Not for the nested fragments (a sequence summary, a joined list of <dt>/<dd>
+    pairs): those are HTML this module built and escaping them would print tags.
+    """
+    return html.escape(str(text))
+
+
+def _summary_pairs_html(items: list[tuple[str, str]]) -> str:
+    """Render a section's own (label, value) pairs as escaped summary HTML."""
+    parts = [f"<dl><dt>{_summary_text(label)}</dt><dd>{_summary_text(value)}</dd></dl>" for label, value in items]
+    return "\n".join(parts) if parts else "<p><em>Geen gegevens ingevuld</em></p>"
 
 
 def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> str:
@@ -1475,7 +1811,10 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
     provider label resolution), checkbox groups, and key-value editors.
     """
     if section.summary_fn:
-        return section.summary_fn(yaml_data)
+        # A summary_fn returns (label, value) pairs, not HTML: the markup and the
+        # escaping are built here, so a section that summarizes itself lands in the
+        # same gate as every other field.
+        return _summary_pairs_html(section.summary_fn(yaml_data))
 
     from opi.forms.editables.service_path import smart_get_value
 
@@ -1483,6 +1822,14 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
 
     def _collect_summary(vis_list: list[Any]) -> None:
         for editable in vis_list:
+            # Een VERBORGEN veld heeft de gebruiker nooit ingevuld, dus het hoort nooit in
+            # een samenvatting. Het gaat om dragers: de bijlagensectie draagt bijvoorbeeld
+            # de hele dienstenlijst mee zodat het uploadscherm weet welke diensten aanstaan
+            # (zie AttachmentsService.config_form_section). Die belandde hier als een rauwe
+            # Python-dump in beeld, inclusief de AGE-blokken van het realm-wachtwoord en de
+            # OTP. Versleuteld, maar het hoort niet op het scherm van een samenvatting.
+            if str(editable.widget) == "hidden":
+                continue
             if str(editable.widget) == "group":
                 _collect_summary(editable.children or [])
             elif str(editable.widget) == "sequence":
@@ -1491,7 +1838,7 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
                 value = smart_get_value(yaml_data, editable.editable.yaml_path)
                 display = _format_value(editable, value, yaml_data)
                 if display is not None:
-                    parts.append(f"<dl><dt>{editable.label}</dt><dd>{display}</dd></dl>")
+                    parts.append(f"<dl><dt>{_summary_text(editable.label)}</dt><dd>{_summary_text(display)}</dd></dl>")
 
     _collect_summary(section.editables)
 
@@ -1508,7 +1855,8 @@ def _build_section_fields(
       - label: display label
       - value: str or list[str]
       - is_list: True when value should be rendered as a bullet list
-      - html: pre-rendered HTML (for sequences / custom summary_fn)
+      - html: pre-rendered HTML (sequences only -- a section's own summary_fn
+        returns (label, value) pairs, which land in the escaped path above)
     """
     from opi.forms.editables.service_path import smart_get_value
 
@@ -1522,6 +1870,14 @@ def _build_section_fields(
                 fields.append({"html": _build_sequence_summary(editable, yaml_data)})
             elif str(editable.widget) == "service_cards":
                 value = smart_get_value(yaml_data, editable.editable.yaml_path)
+                if editable.editable.summarizer:
+                    # Same gate as every other leaf: a summarizer decides this field's
+                    # summary, including leaving it out. Only the plain case keeps the
+                    # bullet-list rendering below, which is what the cards look like.
+                    display = _format_value(editable, value, yaml_data)
+                    if display is not None:
+                        fields.append({"label": editable.label, "value": display, "is_list": False})
+                    continue
                 labels = _resolve_service_labels(editable, value, yaml_data)
                 if labels:
                     fields.append({"label": "Services", "value": labels, "is_list": True})
@@ -1532,7 +1888,10 @@ def _build_section_fields(
                     fields.append({"label": editable.label, "value": display, "is_list": False})
 
     if section.summary_fn:
-        fields.append({"html": section.summary_fn(yaml_data)})
+        # (label, value) pairs, like any other field -- the template escapes them.
+        fields.extend(
+            {"label": label, "value": value, "is_list": False} for label, value in section.summary_fn(yaml_data)
+        )
     else:
         _collect(section.editables)
 
@@ -1571,14 +1930,14 @@ def _build_sequence_summary(
     items = smart_get_value(yaml_data, base_path)
 
     if not items or not isinstance(items, list):
-        return f"<p><em>Geen {editable.label.lower()}</em></p>"
+        return f"<p><em>Geen {_summary_text(editable.label.lower())}</em></p>"
 
     children = editable.children or []
     parts: list[str] = []
 
     for i, item in enumerate(items):
         if not isinstance(item, dict):
-            parts.append(f"<div class='wizard-review__seq-item'><strong>{item}</strong></div>")
+            parts.append(f"<div class='wizard-review__seq-item'><strong>{_summary_text(item)}</strong></div>")
             continue
 
         # Find a display name for the item (first required field or "name" field)
@@ -1601,13 +1960,23 @@ def _build_sequence_summary(
                             for cc in child.children:
                                 cc_key = cc.editable.yaml_path.split("/")[-1].split("[")[0]
                                 cc_val = ci.get(cc_key)
-                                if cc_val is not None:
-                                    parts_ci.append(str(cc_val))
-                            summaries.append(" - ".join(parts_ci) if parts_ci else str(ci))
+                                # Through _format_value like every other leaf, so a
+                                # summarizer holds one level deeper too. Skipping it here
+                                # is what made a hidden field reappear inside a nested
+                                # sequence while it was hidden everywhere else.
+                                cc_display = _format_value(cc, cc_val, yaml_data)
+                                if cc_display is not None:
+                                    parts_ci.append(cc_display)
+                            # Nothing left to show for this item: leave it out. The old
+                            # fallback printed the raw dict here, which would dump exactly
+                            # the fields a summarizer just hid.
+                            if parts_ci:
+                                summaries.append(" - ".join(parts_ci))
                         else:
                             summaries.append(str(ci))
                     formatted = ", ".join(summaries)
-                    item_parts.append(f"<dt>{child.label}</dt><dd>{formatted}</dd>")
+                    if formatted:
+                        item_parts.append(f"<dt>{_summary_text(child.label)}</dt><dd>{_summary_text(formatted)}</dd>")
                 continue
 
             # Extract the child key from yaml_path (last segment without [*])
@@ -1623,22 +1992,22 @@ def _build_sequence_summary(
                 value = _nested_get(item, child_key)
             display = _format_value(child, value, yaml_data)
             if display is not None:
-                item_parts.append(f"<dt>{child.label}</dt><dd>{display}</dd>")
+                item_parts.append(f"<dt>{_summary_text(child.label)}</dt><dd>{_summary_text(display)}</dd>")
 
         if item_parts:
             parts.append(
                 f"<div class='wizard-review__seq-item'>"
-                f"<strong>{item_label}</strong>"
+                f"<strong>{_summary_text(item_label)}</strong>"
                 f"<dl>{''.join(item_parts)}</dl>"
                 f"</div>"
             )
         else:
-            parts.append(f"<div class='wizard-review__seq-item'><strong>{item_label}</strong></div>")
+            parts.append(f"<div class='wizard-review__seq-item'><strong>{_summary_text(item_label)}</strong></div>")
 
     return (
         f"<div class='wizard-review__sequence'>"
         f"<p class='wizard-review__seq-heading'>"
-        f"<strong>{editable.label}</strong> ({len(items)})"
+        f"<strong>{_summary_text(editable.label)}</strong> ({len(items)})"
         f"</p>"
         f"{''.join(parts)}"
         f"</div>"
@@ -1691,11 +2060,21 @@ def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = 
 
     Returns None if the value is empty/unset and should be omitted.
     """
+    # A summarizer decides everything about this field's summary, including what
+    # happens when it is empty -- hence before the empty check rather than after.
+    # It is the only hook that can say "do not show this at all"; a converter's
+    # view() cannot, because returning None from it lands in str() further down
+    # and prints the word "None".
+    if editable.editable.summarizer:
+        return editable.editable.summarizer.summarize(value, context_data=yaml_data) or None
+
     if value is None or value == "" or value == []:
         return None
 
     # Key-value editors (aliases, eigen omgevingsvariabelen) can contain
-    # secrets; never dump their values in the summary.
+    # secrets; never dump their values in the summary. Kept as a widget-level
+    # backstop next to the per-field summarizer above: a key_value field added
+    # later is covered without having to remember to declare anything.
     if str(editable.widget) == "key_value":
         return None
 
@@ -1754,8 +2133,7 @@ def _resolve_option_labels(editable: Any, value: Any) -> str:
 @requires_sso
 async def submit_wizard(request: Request, flow_id: str) -> HTMLResponse | RedirectResponse:
     """Final submission: validate all steps and create/update the project."""
-    templates = get_templates()
-    return await _do_submit(request, flow_id, templates)
+    return await _do_submit(request, flow_id)
 
 
 def _collect_all_editable_paths(editables) -> set[str]:
@@ -1790,10 +2168,108 @@ def _section_has_errors(
     return False
 
 
+def _schema_path_to_editable_path(field_path: str) -> str:
+    """Rewrite a schema field path as an editable yaml_path.
+
+    The schema names a list item with a path segment of its own
+    (``components/0/command``); editables index the field they hang under
+    (``components[0]/command``). Same location, two notations.
+    """
+    parts: list[str] = []
+    for part in field_path.split("/"):
+        if part.isdigit() and parts:
+            parts[-1] = f"{parts[-1]}[{part}]"
+        else:
+            parts.append(part)
+    return "/".join(parts)
+
+
+def _locate_schema_error(
+    sections: list[FormSection],
+    field_path: str,
+) -> tuple[FormSection, str] | None:
+    """Find the step and editable path a schema violation belongs to.
+
+    Returns None when no step owns the field -- the violation sits on a block
+    rather than on a field, or on something the wizard does not edit. The caller
+    shows the message at step level then; not being able to place it is no reason
+    to drop it.
+    """
+    editable_path = _schema_path_to_editable_path(field_path)
+    for section in sections:
+        if _section_has_errors(_collect_all_editable_paths(section.editables), {editable_path: []}):
+            return section, editable_path
+    return None
+
+
+def _validation_message_without_values(error: Exception) -> str:
+    """Describe a rejection to the user without repeating the rejected value.
+
+    A ``ProjectSchemaError`` message quotes the instance, because jsonschema puts it
+    there. That is fine deep in the write path but not here: the edit flow validates
+    the form data MERGED with the stored project, so the offending value can be a
+    stored secret (``config/api-key``, ``config/age-private-key``, ``user-env-vars``)
+    that this handler would then echo into the browser and into the log. Field path
+    plus reason says the same thing to a user, and is what a developer needs anyway.
+
+    A ``ProjectIntegrityError`` carries no reason and names structure (component and
+    deployment names), not values, so its own message is used as-is.
+    """
+    reason = getattr(error, "reason", None)
+    if not reason:
+        return str(error)
+    field_path = getattr(error, "field_path", None) or "(onbekend)"
+    return f"Veld '{field_path}' voldoet niet aan het projectschema: {reason}."
+
+
+#: What a field gets when the schema rejected it. A constant on purpose: this text is
+#: rendered into step_html, which is re-rendered as a Jinja template downstream, so
+#: nothing derived from user input may go here. The explanation goes in global_errors.
+SCHEMA_FIELD_MARKER = "Deze waarde is afgekeurd door het projectschema; zie de melding bovenaan deze stap."
+
+
+def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> None:
+    """Schema-check a FINISHED project file while the wizard can still show the error.
+
+    Call this at the single point where *data* is the complete file that is about to
+    be handed to the storage layer -- not earlier. Before that point the create flow
+    still adds to it (staged attachments, generated keys, the assembled deployment),
+    so an earlier check would reject a file that was merely not finished yet; after
+    it the wizard is gone and the same rejection surfaces from the git step, where
+    there is nothing left to go back to.
+
+    Validates exactly what the storage layer validates: ``validate_project_schema``
+    on the data as it will be persisted. No migration is applied first, because the
+    write path does not apply one either -- validating a migrated copy would let the
+    wizard approve a file that the store then rejects.
+
+    Reaching this with an invalid file is a bug in the form, not user error: it means
+    a field wrote something the schema forbids without a validator saying so. Hence
+    the WARNING with the field path -- that path is where the missing validation is.
+
+    Raises:
+        ProjectSchemaError: with ``field_path`` set when the violation was locatable.
+    """
+    try:
+        validate_project_schema(data)
+    except ProjectSchemaError as e:
+        # Log the reason, never the message: the message quotes the rejected value, and
+        # the edit flow validates the file MERGED with the stored project, so that value
+        # can be a secret (config/api-key, age-private-key, user-env-vars). Field path
+        # plus reason is what locates the missing validation anyway.
+        logger.warning(
+            "Wizard built an invalid project file for %s (field=%s): %s -- a form field wrote a "
+            "value the schema rejects, so validation is missing on that field",
+            project_name or "(new)",
+            e.field_path or "(unknown)",
+            e.reason or "(unknown reason)",
+        )
+        raise
+
+
 async def _do_submit(
     request: Request,
     flow_id: str,
-    templates: Any,
 ) -> HTMLResponse | RedirectResponse:
     """Execute the final wizard submission."""
     state = get_wizard_state(request)
@@ -1823,7 +2299,7 @@ async def _do_submit(
     # Compute derived values (e.g. issuer from base-domain)
     processor.apply_dependent_generators(all_editables, yaml_data)
 
-    enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
+    enforcer_context = {"project_name": state.project_name, "edit_mode": state.is_edit}
 
     # Validate and build final YAML in a single pass.
     # The merged yaml_data is both the "submitted" values and the base.
@@ -1832,7 +2308,7 @@ async def _do_submit(
         yaml_data,
         all_editables,
         yaml_data,
-        edit_mode=state.project_name is not None,
+        edit_mode=state.is_edit,
         enforcer_context=enforcer_context,
         strip_transients=False,
     )
@@ -1851,10 +2327,11 @@ async def _do_submit(
         save_wizard_state(request, state)
 
         step_html = _render_step_html(
+            request,
             error_section,
             yaml_data=yaml_data,
             errors=errors,
-            edit_mode=state.project_name is not None,
+            edit_mode=state.is_edit,
         )
         context = _build_step_context(
             request,
@@ -1864,7 +2341,7 @@ async def _do_submit(
             errors=errors,
             global_errors=["Er zijn nog validatiefouten. Controleer de gemarkeerde velden."],
         )
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _step_response(request, context)
 
     # Cross-section enforcement
     enforce_field_errors: dict[str, list[str]] = {}
@@ -1884,7 +2361,7 @@ async def _do_submit(
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
 
-        step_html = _render_step_html(error_section, yaml_data=yaml_data, errors=enforce_field_errors)
+        step_html = _render_step_html(request, error_section, yaml_data=yaml_data, errors=enforce_field_errors)
         context = _build_step_context(
             request,
             flow_id,
@@ -1893,10 +2370,21 @@ async def _do_submit(
             errors=enforce_field_errors,
             global_errors=global_errors,
         )
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _step_response(request, context)
 
     # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)
+
+    # Form context is not project data. The wizard's template layer carries keys that only
+    # exist to feed the form (``_cross_domain_projects``: the peer projects this user may
+    # pick), and the final submission is built from the whole merged view, so without this
+    # they would be written to the project file -- where the schema forbids them outright
+    # (``additionalProperties: false`` at the root). The modal-edit path never hit this
+    # because it writes only the paths its editables declare. One rule, no list to maintain:
+    # a leading underscore at the top level means "for the form", exactly as it does for
+    # transients and for the virtual services root.
+    for key in [key for key in final_data if key.startswith("_")]:
+        del final_data[key]
 
     try:
         # PRE_SAVE hooks: run while transients are still available.
@@ -1930,29 +2418,7 @@ async def _do_submit(
             # encrypts them once the AGE keypair exists).
             staged_attachments = state.staged_attachments or {}
             if staged_attachments:
-                services = final_data.setdefault("services", [])
-                data_list: list | None = None
-                for i, entry in enumerate(services):
-                    if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
-                        data_list = entry["attachments"].setdefault("data", [])
-                        break
-                    # The services picker stores an enabled service as a bare string;
-                    # upgrade "attachments" to its dict form rather than duplicating it.
-                    if entry == "attachments":
-                        upgraded: list = []
-                        services[i] = {"attachments": {"data": upgraded}}
-                        data_list = upgraded
-                        break
-                if data_list is None:
-                    data_list = []
-                    services.append({"attachments": {"data": data_list}})
-                existing_ids = {e.get("id") for e in data_list if isinstance(e, dict)}
-                for att_id, info in staged_attachments.items():
-                    if att_id in existing_ids:
-                        continue
-                    data_list.append(
-                        {"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")}
-                    )
+                merge_staged_attachments(final_data, staged_attachments)
 
             # Run generators (sets name, AGE keys, resolves staged attachments),
             # then assemble deployment (needs name for namespace).
@@ -1962,15 +2428,43 @@ async def _do_submit(
     except (ProjectSchemaError, ProjectIntegrityError) as e:
         # Re-render the wizard with the validation message instead of 500ing
         # (e.g. pre-existing structural drift surfaced by the full-project check).
-        logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", e)
-        error_section = active_sections[0]
+        field_path = getattr(e, "field_path", None)
+        message = _validation_message_without_values(e)
+        logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", message)
+        located = _locate_schema_error(active_sections, field_path) if field_path else None
+        if located is not None:
+            error_section, editable_path = located
+            # Mark the field, but keep the text out of it. Field errors are rendered into
+            # step_html and wizard_step.html.j2 pipes that through process_components,
+            # which renders it a SECOND time as a Jinja template -- so a message carrying
+            # user input there is code execution. The marker is a constant; the message
+            # itself goes in global_errors, which the template renders once, autoescaped.
+            field_errors = {editable_path: [SCHEMA_FIELD_MARKER]}
+            global_errors = [message]
+        else:
+            # Not placeable (a violation on a whole block, or a field no step owns):
+            # show it on the step the user submitted from, at step level. A
+            # message that cannot be attached to a field is still a message. Falls
+            # back to the last step when current_step names a step that is no longer
+            # active, so the message always has somewhere to land.
+            error_section = next(
+                (section for section in active_sections if section.section_id == state.current_step),
+                active_sections[-1],
+            )
+            field_errors = {}
+            global_errors = [message]
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
+        # Beide kanten: RC-47 brengt de foutafhandeling (het veld krijgt een markering,
+        # de boodschap zelf gaat autoescaped naar global_errors), RC-43 brengt state.is_edit
+        # als naam voor "het project bestaat al".
         step_html = _render_step_html(
-            error_section, yaml_data=yaml_data, errors={}, edit_mode=state.project_name is not None
+            request, error_section, yaml_data=yaml_data, errors=field_errors, edit_mode=state.is_edit
         )
-        context = _build_step_context(request, flow_id, error_section, step_html, errors={}, global_errors=[str(e)])
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        context = _build_step_context(
+            request, flow_id, error_section, step_html, errors=field_errors, global_errors=global_errors
+        )
+        return _step_response(request, context)
     except Exception:
         logger.exception("Wizard submit failed")
         raise
@@ -1996,6 +2490,11 @@ async def _save_existing_project(
         existing_data = await project_manager.get_contents()
         existing_data = apply_form_data_to_project(existing_data, data)
 
+        # The complete file only exists after the merge with the stored project -- the
+        # form itself writes a subset. Same check the store makes, one step earlier, so
+        # a rejection lands in the wizard with the field named instead of in the save.
+        _validate_finished_project(existing_data, project_name=project_name)
+
         # Persist through the single validated path: schema + structural integrity
         # validation, canonical dumper, commit + push, and cache refresh in one shot.
         await project_manager.save_and_commit_project(existing_data, f"Update project {project_name} via wizard")
@@ -2008,7 +2507,7 @@ async def _save_existing_project(
     # Use HX-Redirect so HTMX does a full-page navigation instead of
     # swapping the redirect target into the wizard frame.
     response = HTMLResponse(content="", status_code=200)
-    response.headers["HX-Redirect"] = f"/projects/details/{project_name}"
+    response.headers["HX-Redirect"] = f"/projects/{project_name}/details"
     return response
 
 
@@ -2029,16 +2528,26 @@ async def _start_project_creation(
     if not project_name:
         raise HTTPException(status_code=400, detail="Projectnaam is verplicht")
 
+    # The wizard editables still write component-level service config in the legacy
+    # name-as-key / inline shape ({persistent-storage: {config: ...}}, metrics inline);
+    # normalize to the uniform {reference, config} form so the created file is born in
+    # the current schema and needs no migration on first process. Same normalizer the
+    # v2.3->v2.4 migration uses - one canonical shape, no drift.
+    normalize_service_entries(data)
+
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)
+
+    # The file is complete here: generators ran, the deployment is assembled, staged
+    # attachments are merged and the service entries are normalized. This is the last
+    # moment the wizard still exists, so it is where the schema is checked.
+    _validate_finished_project(data, project_name=project_name)
 
     # Serialize to YAML string via the single canonical writer
     yaml_content = dump_yaml_to_string(data)
 
     # Create V2 async task — the task worker handles git commit + processing
     from opi.core.task_helpers import create_async_task
-
-    clear_wizard_state(request)
 
     task = await create_async_task(
         request=request,
@@ -2049,6 +2558,13 @@ async def _start_project_creation(
     )
     task_id = str(task["task_id"])
     logger.info("Created V2 project creation task for %s (task=%s)", project_name, task_id)
+
+    # Only now is the work handed over, so only now may the wizard session go. Clearing
+    # it before this point threw away everything the user typed while the submission
+    # could still fail -- which is why a rejected save left them with no way back into
+    # the wizard. The edit path already waited for its save to return; both paths now
+    # clear their session after the work is accepted, not before.
+    clear_wizard_state(request)
 
     # Use HX-Redirect so HTMX does a full-page navigation instead of
     # swapping the progress page into the wizard frame.
@@ -2082,6 +2598,8 @@ def _apply_literal_scalars(data: dict[str, Any]) -> None:
     for comp in data.get("components", []):
         if isinstance(comp, dict):
             _literalize(comp, "user-env-vars")
+            # One AGE block, exactly like user-env-vars above (RC-106).
+            _literalize(comp, "aliases")
 
     # Deployment-component-level user-env-vars (edit/add flows)
     for dep in data.get("deployments", []):

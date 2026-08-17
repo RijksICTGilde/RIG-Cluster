@@ -15,32 +15,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.jobs.reconciliation import _build_expected_resources, _purge_backup_data, cleanup_project, reconcile
-from opi.services.marked_for_deletion_service import MarkedForDeletionService, _row_to_dict
+from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 # --- _row_to_dict tests ---
-
-
-class TestRowToDict:
-    def test_none_returns_none(self) -> None:
-        assert _row_to_dict(None) is None
-
-    def test_converts_uuid_to_string(self) -> None:
-        test_uuid = uuid.uuid4()
-        row = {"id": test_uuid, "name": "test"}
-        result = _row_to_dict(row)
-        assert result["id"] == str(test_uuid)
-        assert result["name"] == "test"
-
-    def test_converts_datetime_to_isoformat(self) -> None:
-        now = datetime.now(tz=UTC)
-        row = {"marked_at": now, "name": "test"}
-        result = _row_to_dict(row)
-        assert result["marked_at"] == now.isoformat()
-
-    def test_passes_through_plain_values(self) -> None:
-        row = {"name": "test", "count": 42, "active": True}
-        result = _row_to_dict(row)
-        assert result == {"name": "test", "count": 42, "active": True}
 
 
 # --- _build_expected_resources tests ---
@@ -216,15 +193,6 @@ class TestBuildExpectedResources:
 # --- MarkedForDeletionService tests (mocked DB) ---
 
 
-def _make_mock_pool() -> MagicMock:
-    """Create a mock DatabasePool with acquire/release."""
-    pool = MagicMock()
-    conn = AsyncMock()
-    pool.acquire = AsyncMock(return_value=conn)
-    pool.release = AsyncMock()
-    return pool
-
-
 def _make_mark_row(
     resource_type: str = "postgresql_database",
     resource_name: str = "mydb",
@@ -247,107 +215,6 @@ def _make_mark_row(
     }
 
 
-class TestMarkedForDeletionService:
-    @pytest.mark.asyncio
-    async def test_mark_resource_calls_upsert(self) -> None:
-        pool = _make_mock_pool()
-        conn = await pool.acquire()
-        conn.fetchrow = AsyncMock(return_value={"id": uuid.uuid4(), "resource_type": "postgresql_database"})
-
-        service = MarkedForDeletionService(pool)
-        result = await service.mark_resource(
-            resource_type="postgresql_database",
-            resource_name="mydb",
-            project_name="myproject",
-            deployment_name="staging",
-            cluster="local",
-        )
-
-        conn.fetchrow.assert_called_once()
-        sql = conn.fetchrow.call_args[0][0]
-        assert "ON CONFLICT" in sql
-        assert "DO UPDATE" in sql
-
-    @pytest.mark.asyncio
-    async def test_unmark_resource_deletes_by_type_name_cluster(self) -> None:
-        pool = _make_mock_pool()
-        conn = await pool.acquire()
-        conn.execute = AsyncMock(return_value="DELETE 1")
-
-        service = MarkedForDeletionService(pool)
-        result = await service.unmark_resource("postgresql_database", "mydb", "local")
-
-        assert result is True
-        conn.execute.assert_called_once()
-        sql = conn.execute.call_args[0][0]
-        assert "resource_type = $1" in sql
-        assert "resource_name = $2" in sql
-        assert "cluster = $3" in sql
-
-    @pytest.mark.asyncio
-    async def test_unmark_returns_false_when_no_match(self) -> None:
-        pool = _make_mock_pool()
-        conn = await pool.acquire()
-        conn.execute = AsyncMock(return_value="DELETE 0")
-
-        service = MarkedForDeletionService(pool)
-        result = await service.unmark_resource("postgresql_database", "nonexistent", "local")
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_get_expired_marks_without_project_filter(self) -> None:
-        pool = _make_mock_pool()
-        conn = await pool.acquire()
-        conn.fetch = AsyncMock(return_value=[])
-
-        service = MarkedForDeletionService(pool)
-        result = await service.get_expired_marks(7)
-
-        conn.fetch.assert_called_once()
-        sql = conn.fetch.call_args[0][0]
-        assert "project_name" not in sql
-
-    @pytest.mark.asyncio
-    async def test_get_expired_marks_with_project_filter(self) -> None:
-        pool = _make_mock_pool()
-        conn = await pool.acquire()
-        conn.fetch = AsyncMock(return_value=[])
-
-        service = MarkedForDeletionService(pool)
-        result = await service.get_expired_marks(7, project_name="myproject")
-
-        conn.fetch.assert_called_once()
-        sql = conn.fetch.call_args[0][0]
-        assert "project_name = $2" in sql
-        args = conn.fetch.call_args[0]
-        assert args[1] == 7
-        assert args[2] == "myproject"
-
-    @pytest.mark.asyncio
-    async def test_delete_mark_returns_true_on_success(self) -> None:
-        pool = _make_mock_pool()
-        conn = await pool.acquire()
-        conn.execute = AsyncMock(return_value="DELETE 1")
-
-        service = MarkedForDeletionService(pool)
-        mark_id = str(uuid.uuid4())
-        result = await service.delete_mark(mark_id)
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_delete_mark_returns_false_when_not_found(self) -> None:
-        pool = _make_mock_pool()
-        conn = await pool.acquire()
-        conn.execute = AsyncMock(return_value="DELETE 0")
-
-        service = MarkedForDeletionService(pool)
-        result = await service.delete_mark(str(uuid.uuid4()))
-
-        assert result is False
-
-
 # --- reconcile() tests ---
 
 
@@ -355,7 +222,6 @@ class TestReconcile:
     @pytest.mark.asyncio
     async def test_unmarks_restored_resources(self) -> None:
         """Resources that reappear in project YAMLs should be unmarked."""
-        pool = _make_mock_pool()
         mark_id = str(uuid.uuid4())
 
         mock_service = AsyncMock(spec=MarkedForDeletionService)
@@ -386,7 +252,7 @@ class TestReconcile:
         ]
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await reconcile(pool, yamls, grace_period_days=7, dry_run=False)
+            results = await reconcile(yamls, grace_period_days=7, dry_run=False)
 
         assert len(results["unmarked"]) == 1
         assert results["unmarked"][0]["type"] == "postgresql_database"
@@ -394,8 +260,6 @@ class TestReconcile:
 
     @pytest.mark.asyncio
     async def test_dry_run_does_not_unmark(self) -> None:
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_all_marks = AsyncMock(
             return_value=[
@@ -423,7 +287,7 @@ class TestReconcile:
         ]
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await reconcile(pool, yamls, grace_period_days=7, dry_run=True)
+            results = await reconcile(yamls, grace_period_days=7, dry_run=True)
 
         assert len(results["unmarked"]) == 1
         mock_service.unmark_resource.assert_not_called()
@@ -431,8 +295,6 @@ class TestReconcile:
     @pytest.mark.asyncio
     async def test_does_not_unmark_orphaned_resources(self) -> None:
         """Marks for resources NOT in expected set should remain."""
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_all_marks = AsyncMock(
             return_value=[
@@ -446,7 +308,7 @@ class TestReconcile:
         mock_service.get_expired_marks = AsyncMock(return_value=[])
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await reconcile(pool, [], grace_period_days=7, dry_run=False)
+            results = await reconcile([], grace_period_days=7, dry_run=False)
 
         assert len(results["unmarked"]) == 0
         mock_service.unmark_resource.assert_not_called()
@@ -459,13 +321,11 @@ class TestCleanupProject:
     @pytest.mark.asyncio
     async def test_uses_sql_level_project_filter(self) -> None:
         """cleanup_project should pass project_name to get_expired_marks."""
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_expired_marks = AsyncMock(return_value=[])
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await cleanup_project(pool, "myproject", grace_period_days=7)
+            results = await cleanup_project("myproject", grace_period_days=7)
 
         mock_service.get_expired_marks.assert_called_once_with(7, project_name="myproject")
         assert results["project_name"] == "myproject"
@@ -473,21 +333,17 @@ class TestCleanupProject:
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_expired_marks(self) -> None:
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_expired_marks = AsyncMock(return_value=[])
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await cleanup_project(pool, "myproject", grace_period_days=7)
+            results = await cleanup_project("myproject", grace_period_days=7)
 
         assert results["purged"] == []
         assert results["errors"] == []
 
     @pytest.mark.asyncio
     async def test_uses_default_grace_period_from_settings(self) -> None:
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_expired_marks = AsyncMock(return_value=[])
 
@@ -496,7 +352,7 @@ class TestCleanupProject:
             patch("opi.jobs.reconciliation.settings") as mock_settings,
         ):
             mock_settings.DELETION_GRACE_PERIOD_DAYS = 14
-            results = await cleanup_project(pool, "myproject")
+            results = await cleanup_project("myproject")
 
         mock_service.get_expired_marks.assert_called_once_with(14, project_name="myproject")
 
@@ -775,13 +631,12 @@ class TestPurgeSafetyGates:
     async def test_mark_in_expected_set_is_unmarked_not_purged(self) -> None:
         from opi.jobs.reconciliation import _purge_marks
 
-        pool = _make_mock_pool()
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         results: dict = {"purged": [], "errors": []}
         expected = {"postgresql_database": {("waggl_9et_productie", "odcn-production")}}
 
         with patch("opi.jobs.reconciliation.create_postgres_connector") as mock_pg:
-            await _purge_marks([self._db_mark()], mock_service, pool, results, dry_run=False, expected=expected)
+            await _purge_marks([self._db_mark()], mock_service, results, dry_run=False, expected=expected)
 
         mock_pg.assert_not_called()
         mock_service.delete_mark.assert_awaited_once_with("mark-1")
@@ -822,3 +677,51 @@ class TestPurgeSafetyGates:
         mock_connector.delete_database.assert_awaited_once_with("regel_k4c_pr375")
         mock_service.delete_mark.assert_awaited_once()
         assert results["purged"] == [{"type": "postgresql_database", "name": "regel_k4c_pr375"}]
+
+
+# ---------------------------------------------------------------------------
+# Real-Postgres tests for the ORM-backed MarkedForDeletionService
+# ---------------------------------------------------------------------------
+
+
+class TestMarkedForDeletionServiceRealDB:
+    async def test_mark_upsert_refreshes_metadata_keeps_marked_at(self, orm_db):
+        svc = MarkedForDeletionService()
+        first = await svc.mark_resource("minio_bucket", "b1", "p1", "d1", "c1", {"namespace": "ns1"})
+        assert first["metadata"] == {"namespace": "ns1"}
+        again = await svc.mark_resource("minio_bucket", "b1", "p1-new", "d1", "c1", {"namespace": "ns2"})
+        assert again["project_name"] == "p1-new"
+        assert again["metadata"] == {"namespace": "ns2"}
+        assert again["marked_at"] == first["marked_at"]  # grace-period start preserved
+        assert len(await svc.get_all_marks()) == 1
+
+    async def test_unmark_resource(self, orm_db):
+        svc = MarkedForDeletionService()
+        await svc.mark_resource("pvc", "v1", "p1", "d1", "c1")
+        assert await svc.unmark_resource("pvc", "v1", "c1") is True
+        assert await svc.unmark_resource("pvc", "v1", "c1") is False
+
+    async def test_get_expired_marks_grace_and_project_filter(self, orm_db):
+        svc = MarkedForDeletionService()
+        await svc.mark_resource("db", "x", "p1", "d1", "c1")
+        await svc.mark_resource("db", "y", "p2", "d1", "c1")
+        assert len(await svc.get_expired_marks(0)) == 2  # grace 0 -> all past cutoff
+        assert await svc.get_expired_marks(1) == []  # fresh marks are within grace
+        assert len(await svc.get_expired_marks(0, project_name="p1")) == 1
+
+    async def test_get_marks_for_project_and_delete(self, orm_db):
+        svc = MarkedForDeletionService()
+        m = await svc.mark_resource("db", "x", "p1", "d1", "c1")
+        assert len(await svc.get_marks_for_project("p1")) == 1
+        assert await svc.delete_mark(m["id"]) is True
+        assert await svc.delete_mark(m["id"]) is False
+        assert await svc.get_marks_for_project("p1") == []
+
+    async def test_get_marks_in_namespace(self, orm_db):
+        svc = MarkedForDeletionService()
+        await svc.mark_resource("namespace", "ns1", "p1", "d1", "c1")
+        await svc.mark_resource("pvc", "v1", "p1", "d1", "c1", {"namespace": "ns1"})
+        await svc.mark_resource("pvc", "v2", "p1", "d1", "c1", {"namespace": "other"})
+        names = sorted(m["resource_name"] for m in await svc.get_marks_in_namespace("ns1", "c1"))
+        assert names == ["ns1", "v1"]
+        assert await svc.get_marks_in_namespace("ns1", "other-cluster") == []

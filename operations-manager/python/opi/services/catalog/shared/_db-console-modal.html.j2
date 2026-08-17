@@ -1,0 +1,99 @@
+{# De LOTC-tegenhanger van _db-console-modal.html.j2.
+
+   Waarom een tweede bestand en waarom het HIER staat: zie _job-modal.html.j2. Kort:
+   twee componentsystemen kunnen niet in een Jinja-omgeving, en een dienst draagt alles wat
+   hij is in zijn eigen map (RC-36).
+
+   WAT LETTERLIJK GELIJK MOET BLIJVEN, WANT ER HANGT GEDRAG AAN
+
+     - ``id="db-console-modal-body"``: elke swap vervangt dit element, dus het is het
+       BUITENSTE element en draagt het id in beide takken.
+     - Bij ``starting`` polt de wikkel zichzelf met hx-get op /status.
+     - ``db-console-form-<deployment>`` is het hx-include-doel van de startknop: verdwijnt
+       dat id, dan wordt de gekozen tool niet meegestuurd en start de console met de
+       standaardwaarde. Het blijft daarom een gewone <div> met dat id.
+     - ``db-console-tool-<deployment>`` draagt de deploymentnaam: er staat een dialoog per
+       deployment op dezelfde pagina.
+     - Het keuzeveld is ``native``: de startknop leest het met hx-include, en dat werkt op
+       een echte <select> en niet op NLDD's web-component-combobox.
+#}
+{% if state == 'starting' %}
+<div id="db-console-modal-body"
+     hx-get="/projects/{{ project_name }}/db-console/{{ deployment_name }}/status"
+     hx-trigger="load delay:2s"
+     hx-swap="outerHTML">
+{% else %}
+<div id="db-console-modal-body">
+{% endif %}
+
+{% if error %}
+    <c-alert type="error" heading="Databaseconsole" closable>{{ error }}</c-alert>
+{% endif %}
+
+{% if not enabled %}
+    <c-card outline padding="md">
+        <c-paragraph>De databaseconsole is uitgeschakeld op dit cluster.</c-paragraph>
+    </c-card>
+
+{% elif state == 'running' and session %}
+    {# De kaart droeg hier backgroundColor="groen-150". Die naam komt uit de RVO-schaal en
+       bestaat in NLDD niet; "Console actief" staat al in de kop. #}
+    {% set stoppen_attrs = {
+        'hx-post': '/projects/' ~ project_name ~ '/db-console/' ~ session.session_id ~ '/stop',
+        'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
+        'hx-vals': '{"deployment": "' ~ deployment_name ~ '"}',
+        'hx-target': '#db-console-modal-body',
+        'hx-swap': 'outerHTML',
+    } %}
+    <c-card outline padding="lg">
+        <c-stack gap="md">
+            <c-heading type="h5" label="Console actief" />
+            <c-paragraph>Tool: {{ session.tool }} &middot; Gestart door: {{ session.opened_by }}</c-paragraph>
+            <c-paragraph>Verloopt om {{ session.expires_at.strftime("%H:%M") }} UTC (max {{ (ttl_seconds // 60) }} min).</c-paragraph>
+            <c-cluster gap="md">
+                <c-link href="{{ session.url }}" target="_blank" label="Console openen" />
+                <c-button type="warning" size="sm" label="Nu stoppen" :attrs="stoppen_attrs" />
+            </c-cluster>
+        </c-stack>
+    </c-card>
+
+{% elif state == 'starting' %}
+    <c-card outline padding="md">
+        <c-stack gap="sm">
+            <c-heading type="h5" label="Console wordt opgestart..." />
+            <c-paragraph>Even geduld, de databaseconsole start op. Dit kan een halve minuut duren.</c-paragraph>
+        </c-stack>
+    </c-card>
+
+{% else %}
+    {% set starten_attrs = {
+        'hx-post': '/projects/' ~ project_name ~ '/db-console',
+        'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
+        'hx-include': '#db-console-form-' ~ deployment_name,
+        'hx-vals': '{"deployment": "' ~ deployment_name ~ '"}',
+        'hx-target': '#db-console-modal-body',
+        'hx-swap': 'outerHTML',
+        'hx-disabled-elt': 'this',
+    } %}
+    <c-card outline padding="lg">
+        <c-stack gap="md">
+            <c-heading type="h5" label="Nieuwe databaseconsole" />
+            <c-paragraph>Start tijdelijk (max {{ (ttl_seconds // 60) }} min) een webconsole voor de database van deze deployment. Alleen projectleden kunnen inloggen.</c-paragraph>
+            <div id="db-console-form-{{ deployment_name }}">
+                <c-stack gap="md">
+                    {# Voorlopig alleen pgweb. dbgate is al ondersteund in de backend; zet
+                       'm later weer als tweede <option> terug. #}
+                    <c-select-field
+                        id="db-console-tool-{{ deployment_name }}"
+                        name="tool"
+                        label="Tool"
+                        native>
+                        <option value="pgweb">pgweb</option>
+                    </c-select-field>
+                    <c-button type="primary" size="sm" label="Console starten" :attrs="starten_attrs" />
+                </c-stack>
+            </div>
+        </c-stack>
+    </c-card>
+{% endif %}
+</div>

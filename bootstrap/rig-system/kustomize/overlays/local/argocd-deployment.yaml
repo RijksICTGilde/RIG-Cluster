@@ -61,6 +61,11 @@ spec:
         value: "3"
       - name: ARGOCD_HELM_ALLOW_CONCURRENCY
         value: "true"
+      # Stream only the app's manifest-generate-paths dir to the CMP instead of
+      # tarring the whole monorepo per render (see issue #130). Previously only set
+      # on odcn-production.
+      - name: ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS
+        value: "true"
     resources:
       limits:
         cpu: 5

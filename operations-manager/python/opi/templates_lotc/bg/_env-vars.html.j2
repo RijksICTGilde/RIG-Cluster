@@ -1,0 +1,140 @@
+{#
+  Het overzicht van de omgevingsvariabelen.
+
+  Overname van project-details/section-env-vars.html.j2: dezelfde twee niveaus in dezelfde
+  volgorde (component, daarna deployment), dezelfde voorwaarden om ze te tonen, dezelfde
+  koppen, dezelfde tellers ("3 variabelen") en dezelfde lege stand. De waarden staan net
+  als daar achter een c-secret-field, dus ze komen niet ongevraagd in beeld.
+
+  Dit blok hoort NIET bij een deployment: het toont ze allemaal naast elkaar. Er zit dus
+  bewust geen deploymentwikkel omheen - net als in het origineel, waar het buiten
+  de wisselblokken staat.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+
+{% set ns = namespace(has_any_env_vars=false, has_component_env_vars=false, has_deployment_env_vars=false) %}
+{% for component in project.components %}
+    {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
+        {% set ns.has_any_env_vars = true %}
+        {% set ns.has_component_env_vars = true %}
+    {% endif %}
+{% endfor %}
+{% for deployment in project.deployments %}
+    {% for dep_component in deployment.components %}
+        {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
+            {% set ns.has_any_env_vars = true %}
+            {% set ns.has_deployment_env_vars = true %}
+        {% endif %}
+    {% endfor %}
+{% endfor %}
+
+{# WELK NIVEAU: dit blok stond in zijn geheel op het tabblad Deployments, inclusief de
+   variabelen die op COMPONENTniveau gedefinieerd zijn. Die horen bij het component, want
+   daar staan ze; op Deployments wil je alleen zien wat daar overschreven wordt.
+
+   `env_niveau` bepaalt wat er getoond wordt: "component", "deployment", of niets voor
+   allebei (zoals het was). De kop en de uitleg volgen die keuze, want "alle variabelen per
+   scope" is niet waar als je er maar een toont. #}
+{% set env_niveau = env_niveau | default('') %}
+{% set toon_component = env_niveau in ('', 'component') %}
+{% set toon_deployment = env_niveau in ('', 'deployment') %}
+{% set env_kop = "Omgevingsvariabelen" %}
+{% set env_uitleg = "Overzicht van alle gebruiker-gedefinieerde omgevingsvariabelen per scope" %}
+{% if env_niveau == 'component' %}
+    {% set env_uitleg = "Standaardvariabelen per component; ze gelden voor alle deployments." %}
+{% elif env_niveau == 'deployment' %}
+    {% set env_kop = "Omgevingsvariabelen (overschrijvingen)" %}
+    {% set env_uitleg = "Wat deze deployments anders instellen dan het component. De standaardwaarden staan bij Componenten." %}
+{% endif %}
+{% call panel(env_kop, "key", info_text=env_uitleg) %}
+    {% if ns.has_any_env_vars %}
+
+        {# Componentniveau #}
+        {% if ns.has_component_env_vars and toon_component %}
+        <c-cluster gap="sm" align="center">
+            <c-icon icon="puzzle-piece" size="lg" />
+            <c-stack gap="xs">
+                <c-heading type="h3" size="5" label="Component niveau" />
+                <c-span>Standaard variabelen per component (gelden voor alle deployments)</c-span>
+            </c-stack>
+        </c-cluster>
+
+        {% for component in project.components | sort(attribute='name') %}
+        {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
+        <c-card outline padding="md">
+            <c-stack gap="sm">
+                <c-cluster gap="sm" align="center">
+                    <c-icon icon="puzzle-piece" size="md" />
+                    <strong>{{ component.name }}</strong>
+                    <c-tag type="default" label="{{ component['user-env-vars']|length }} variabele{{ 'n' if component['user-env-vars']|length != 1 else '' }}" />
+                </c-cluster>
+                {% for key, value in component['user-env-vars'].items() %}
+                <c-cluster gap="sm" align="center">
+                    <c-icon icon="key" size="sm" />
+                    <c-code>{{ key }}</c-code>
+                </c-cluster>
+                <c-secret-field value="{{ value }}" />
+                {% endfor %}
+            </c-stack>
+        </c-card>
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+
+        {# Deploymentniveau #}
+        {% if ns.has_deployment_env_vars and toon_deployment %}
+        <c-cluster gap="sm" align="center">
+            <c-icon icon="cylinder-split" size="lg" />
+            <c-stack gap="xs">
+                <c-heading type="h3" size="5" label="Deployment niveau" />
+                <c-span>Deployment-specifieke variabelen (overschrijven component niveau)</c-span>
+            </c-stack>
+        </c-cluster>
+
+        {% for deployment in project.deployments | sort(attribute='name') %}
+        {% set dep_ns = namespace(has_env_vars=false) %}
+        {% for dep_component in deployment.components %}
+            {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
+                {% set dep_ns.has_env_vars = true %}
+            {% endif %}
+        {% endfor %}
+
+        {% if dep_ns.has_env_vars %}
+        <c-card outline padding="md">
+            <c-stack gap="md">
+                <c-cluster gap="sm" align="center">
+                    <c-icon icon="cylinder-split" size="md" />
+                    <strong>{{ deployment.name }}</strong>
+                    <c-tag type="default" label="{{ deployment.cluster|title }}" />
+                </c-cluster>
+
+                {% for dep_component in deployment.components | sort(attribute='reference') %}
+                {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
+                <c-card outline padding="sm">
+                    <c-stack gap="sm">
+                        <c-cluster gap="sm" align="center">
+                            <c-icon icon="puzzle-piece" size="sm" />
+                            <c-span>{{ dep_component.reference }}</c-span>
+                            <c-tag type="default" label="{{ dep_component['user-env-vars']|length }} variabele{{ 'n' if dep_component['user-env-vars']|length != 1 else '' }}" />
+                        </c-cluster>
+                        {% for key, value in dep_component['user-env-vars'].items() %}
+                        <c-cluster gap="sm" align="center">
+                            <c-icon icon="key" size="sm" />
+                            <c-code>{{ key }}</c-code>
+                        </c-cluster>
+                        <c-secret-field value="{{ value }}" />
+                        {% endfor %}
+                    </c-stack>
+                </c-card>
+                {% endif %}
+                {% endfor %}
+            </c-stack>
+        </c-card>
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+
+    {% else %}
+        <c-alert type="info" heading="Geen omgevingsvariabelen geconfigureerd" />
+    {% endif %}
+{% endcall %}

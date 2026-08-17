@@ -1,0 +1,72 @@
+{#
+  De gedeelde dialoog, in de nieuwe vormgeving.
+
+  Dit is een OVERNAME van project-details/modals.html.j2, en op een punt bewust GEEN
+  omzetting: de id's en de klassen blijven exact zoals ze waren.
+
+  De reden is dat deze dialoog niet door zijn markup bestuurd wordt maar door
+  static/js/edit_modal.js: het openen, de blokkade zolang er een taak loopt, de
+  waarschuwing bij niet-opgeslagen werk, Escape en de klik naast de dialoog hangen
+  allemaal aan #edit-section-modal, #edit-section-backdrop en .is-open. Een
+  c-modal-dialog laat een eigen class niet door (gemeten: die valt uit de uitvoer), dus
+  omzetten zou al dat gedrag stilzwijgend uitzetten. Wat WEL omgezet is, is alles wat
+  vormgeving is: de kop, het icoon en de sluitknop.
+
+  De inhoud komt van de server en wordt in #edit-section-inner gezet. Die inhoud rendert
+  in de ROOS-omgeving, want de modal-wizard is daar geschreven; dat is zichtbaar (een
+  ander knopje) maar het werkt, en de dialoog omzetten is pas zinnig als de wizard erin
+  ook om is.
+
+  De knop "Opslaan" uit het origineel staat hier NIET. Die riep submitEditModal() aan, en
+  die functie bestaat nergens in de codebase. Hij was ook nooit zichtbaar: zodra de
+  wizard laadt vervangt die de hele #edit-section-inner, inclusief deze knoppenbalk. Het
+  is dode markup, en die neem je niet mee bij een verhuizing.
+#}
+<div id="edit-section-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
+<div id="edit-section-modal"
+     class="edit-section-modal"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="edit-section-title"
+     data-project-name="{{ project.name }}">
+    {# .edit-section-header was flex + space-between + align-items + gap: dat is
+       <c-cluster justify="between">. De lijn eronder en de marge blijven in
+       modal.css - daar heeft het thema niets voor. #}
+    <c-cluster justify="between" align="center" class="edit-section-header">
+        {# Het icoon staat NAAST de kop en niet erin: een kop legt zijn kinderen niet
+           naast elkaar, dus een icoon binnen <c-heading> zakt uit de lijn. Een cluster
+           doet dat wel. De id blijft op de kop staan, want aria-labelledby wijst ernaar. #}
+        <c-cluster gap="sm" align="center">
+            <c-icon icon="pencil" size="lg" />
+            <c-heading type="h2" size="4" id="edit-section-title">
+                <span id="edit-section-title-text"></span>
+            </c-heading>
+        </c-cluster>
+        <c-button type="tertiary"
+                  size="sm"
+                  label="Sluiten"
+                  icon="dismiss"
+                  class="edit-modal-close-btn"
+                  :attrs="{'onclick': 'closeEditModal()'}" />
+    </c-cluster>
+    <div id="edit-section-error" class="edit-section-error is-hidden"></div>
+    <div id="edit-section-inner">
+        <div id="edit-section-content" class="edit-section-content">
+            <div class="edit-section-loading">
+                <c-paragraph>Laden...</c-paragraph>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# De hulpdialoog van een dienst. De bestaande projectpagina heeft hem ook: de
+   dienstblokken op deze pagina openen hem met openServiceHelp(). #}
+{% include "widgets/service_help_modal.html.j2" %}
+
+{# Het logpaneel, met de bediening die erbij hoort. Het script MOET na deze markup komen:
+   het pakt zijn elementen op het moment dat het draait. In de <head> zou elke verwijzing
+   null zijn en zou de viewer stilzwijgend niets doen. #}
+{% include "bg/_log-viewer.html.j2" %}
+<link rel="stylesheet" href="{{ static_url('css/project-details.css') }}">
+<script src="{{ static_url('js/wizard.js') }}"></script>
+<script src="{{ static_url('js/log_viewer.js') }}"></script>

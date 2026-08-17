@@ -24,11 +24,17 @@ from opi.handlers.project_file_handler import (
 from opi.manager.backup import create_backup_manager
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services import CloneFromType
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    get_domain_setting,
+    has_domain_setting,
+    set_domain_setting,
+)
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_pvc_name, generate_storage_name, generate_unique_name
 
 if TYPE_CHECKING:
-    from opi.core.task_manager import TaskProgressManager
+    from opi.core.persistent_task_progress import AnyTaskProgressManager
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +46,7 @@ async def restore_items_with_progress(
     project_data: dict[str, Any],
     app_namespace: str,
     current_cluster: str,
-    progress: TaskProgressManager,
+    progress: AnyTaskProgressManager,
     restore_task_id: str,
 ) -> bool:
     """Restore a list of backup items with per-item progress tracking.
@@ -175,11 +181,13 @@ async def _build_and_save_restore_deployment(
     if "components" not in new_deployment and "components" in source_dep:
         new_deployment["components"] = copy.deepcopy(source_dep["components"])
 
-    # Auto-set subdomain: if source subdomain matches source name, use target name
-    if "subdomain" not in new_deployment:
-        source_subdomain = source_dep.get("subdomain", "")
+    # Auto-set subdomain: if source subdomain matches source name, use target name.
+    # Presence, not truth: a subdomain the caller stored explicitly -- even as null -- is a
+    # decision and stays untouched, the same rule as before the fields moved (RC-60).
+    if not has_domain_setting(new_deployment, DomainSetting.SUBDOMAIN):
+        source_subdomain = get_domain_setting(source_dep, DomainSetting.SUBDOMAIN, "")
         if source_subdomain == source_deployment or source_subdomain:
-            new_deployment["subdomain"] = target_deployment
+            set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, target_deployment)
 
     # Add deployment to project data
     project_data["deployments"].append(new_deployment)
@@ -204,7 +212,7 @@ async def _pre_restore_pvcs(
     source_deployment: str,
     target_deployment: str,
     pvc_items: list[dict[str, Any]],
-    task_progress: TaskProgressManager,
+    task_progress: AnyTaskProgressManager,
     pvc_task_id: str,
 ) -> None:
     """Pre-create PVCs with backup data before infrastructure provisioning.
@@ -336,7 +344,7 @@ async def _pre_restore_pvcs(
 async def _provision_deployment_infrastructure(
     project_name: str,
     target_deployment: str,
-    task_progress: TaskProgressManager,
+    task_progress: AnyTaskProgressManager,
 ) -> None:
     """Provision infrastructure for a newly created deployment.
 
@@ -385,7 +393,7 @@ async def _resolve_deployment_info(
     raw_namespace = project_file_handler.extract_deployment_namespace(project_data, deployment_name)
     deployment_cluster = project_file_handler.extract_deployment_cluster(project_data, deployment_name)
 
-    if not raw_namespace:
+    if not raw_namespace or not deployment_cluster:
         msg = f"Deployment '{deployment_name}' niet gevonden in project '{project_name}'"
         raise ValueError(msg)
 
@@ -480,13 +488,12 @@ async def _restore_single_resource(
                         project_data, deployment_name, component_name, reference_name, new_generation
                     )
                 elif resource_type == "database":
-                    project_file_handler.set_database_generation(
-                        project_data, deployment_name, component_name, reference_name, new_generation
-                    )
+                    # Deployment-level: this task used to write it component-level while the
+                    # restore router wrote it deployment-level, so neither path could read
+                    # back what the other had written.
+                    project_file_handler.set_database_generation(project_data, deployment_name, new_generation)
                 elif resource_type == "bucket":
-                    project_file_handler.set_bucket_generation(
-                        project_data, deployment_name, component_name, reference_name, new_generation
-                    )
+                    project_file_handler.set_bucket_generation(project_data, deployment_name, new_generation)
 
                 await project_manager.save_and_commit_project(
                     project_data,

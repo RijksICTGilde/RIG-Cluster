@@ -1,0 +1,19 @@
+{# Het formulier om op maand en project te filteren. #}
+<c-card outline="true" padding="md" background-color="wit">
+    <form autocomplete="off" method="get" action="/admin/usage">
+        <c-layout-flow gap="md">
+            <c-grid columns="four">
+                <c-select-field id="namespace" name="namespace" label="Namespace" value="{{ selected_namespace }}"/>
+                <c-text-input-field id="price" name="price" label="Prijs per GiB (€)" type="number" value="{{ price_per_gib }}"/>
+                <c-text-input-field id="year" name="year" label="Jaar" type="number" value="{{ year }}"/>
+                {# .usage-filter-row uit admin.css was display:flex + align-items:flex-end,
+                   zodat de knop op de onderrand van de velden ernaast uitkomt in plaats
+                   van bovenaan zijn gridcel te blijven hangen. <c-cluster align="end">
+                   is dezelfde twee regels, met de naam van het thema erop. #}
+                <c-cluster align="end">
+                    <c-button label="Toepassen" html-type="submit" type="primary"/>
+                </c-cluster>
+            </c-grid>
+        </c-layout-flow>
+    </form>
+</c-card>

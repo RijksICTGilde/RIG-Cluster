@@ -8,8 +8,16 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from fastapi import HTTPException
+
 from opi.core.config import settings
 from opi.core.flow_id import set_flow_id
+from opi.core.task_errors import (
+    INTERNAL_ERROR_TYPE,
+    INVALID_REQUEST_ERROR_TYPE,
+    NOT_FOUND_ERROR_TYPE,
+    TaskInputError,
+)
 from opi.core.task_supersede import (
     RunningTask,
     TaskSuperseded,
@@ -24,6 +32,75 @@ if TYPE_CHECKING:
     from opi.core.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
+
+
+def failure_result(message: str, error_type: str) -> dict[str, str]:
+    """Het kleinste resultaat dat een gefaalde taak leesbaar maakt.
+
+    Een handler die gooit liet niets achter: ``result`` bleef leeg, dus een client had
+    alleen een fouttekst en kon niet zien of het aan zijn verzoek lag. Dit is wat er nu
+    minimaal staat; de categorie komt er in ``task_response_from_dict`` bij, zodat die
+    vertaling op één plek blijft.
+    """
+    return {"status": "failed", "error": message, "error_type": error_type}
+
+
+def _client_error_message(error: TaskInputError | HTTPException) -> str:
+    """De tekst van een afgewezen verzoek, zonder de klassenaam ervoor."""
+    if isinstance(error, HTTPException):
+        return str(error.detail)
+    return str(error)
+
+
+def _client_error_type(error: TaskInputError | HTTPException) -> str:
+    """Het ``error_type`` van een afgewezen verzoek.
+
+    Een ``TaskInputError`` draagt zijn eigen reden. Een ``HTTPException`` uit een manager
+    heeft alleen een statuscode, en die zegt genoeg: 404 is iets dat niet bestaat, elke
+    andere 4xx is een verzoek dat niet deugt.
+    """
+    if isinstance(error, TaskInputError):
+        return error.error_type
+    return NOT_FOUND_ERROR_TYPE if error.status_code == 404 else INVALID_REQUEST_ERROR_TYPE
+
+
+def reported_failure(result: object, progress: object = None) -> str | None:
+    """Wat de handler over zijn eigen afloop zegt: de foutmelding, of ``None``.
+
+    De taakstatus is het veld waar een aanroeper als EERSTE op kijkt, dus die moet zeggen
+    wat er gebeurde. Dat deed hij niet: gemeten in de generale repetitie
+    (``docs/generale-repetitie-2026-08-12.md``, bevinding 5) meldde een afgewezen
+    dienstselectie ``status: completed`` terwijl zijn eigen ``result`` ``failed`` droeg,
+    er een ``error_message`` stond en de subtaak "Component toevoegen" was gefaald. Wie op
+    ``status`` polt - de voor de hand liggende manier, en wat de zad-cli doet - zag een
+    afgewezen wijziging aan voor een geslaagde.
+
+    Er zijn DRIE manieren waarop een handler faalt, en alleen de eerste werd gelezen:
+
+    1. ``{"success": False, "error": ...}`` - de vorm van de backup- en herstelhandlers;
+    2. ``{"status": "failed", "error": ...}`` - de vorm van de component- en
+       dienstenhandlers, en precies de vorm uit de meting;
+    3. hij roept ``progress.fail_project(...)`` aan en geeft daarnaast iets terug dat op
+       succes lijkt. Dat markeerde de taak in de database wel als mislukt, maar
+       fire-and-forget, waarna de worker er ``completed`` overheen schreef.
+
+    Args:
+        result: wat de handler teruggaf.
+        progress: de voortgangsmanager van deze taak, voor geval 3.
+
+    Returns:
+        De foutmelding als de handler faalde, anders ``None``.
+    """
+    if isinstance(result, dict):
+        if result.get("success") is False:
+            return str(result.get("error") or "Task reported failure")
+        if result.get("status") == "failed":
+            return str(result.get("error") or result.get("message") or "Task reported failure")
+
+    reason = getattr(progress, "project_failure", None)
+    if isinstance(reason, str) and reason:
+        return reason
+    return None
 
 
 class TaskWorker:
@@ -212,15 +289,19 @@ class TaskWorker:
                 # Close progress manager (final flush)
                 await progress.close()
 
-                # Check if the handler reported failure via its return value
-                if isinstance(result, dict) and result.get("success") is False:
-                    error_msg = result.get("error", "Task reported failure")
-                    # Handler already decided this is a permanent failure — no retries
+                # Check if the handler reported failure — via its return value, or by
+                # marking the project failed while still returning a success-shaped dict.
+                error_msg = reported_failure(result, progress)
+                if error_msg is not None:
+                    # Handler already decided this is a permanent failure — no retries.
+                    # The result is kept: it carries error_type and the parts that DID
+                    # succeed, and a client that only reads `status` now sees the failure.
                     await self._task_service.fail_task(
                         task_id=task_id,
                         error_message=error_msg,
                         attempt_count=1,
                         max_attempts=0,
+                        result=result if isinstance(result, dict) else None,
                     )
                     progress.mark_legacy_failed(error_msg)
                     logger.warning(
@@ -244,6 +325,35 @@ class TaskWorker:
                 progress.mark_legacy_completed()
                 logger.info("Task %s superseded after %.1fs: %s", task_id, time.monotonic() - started, superseded)
 
+            except (TaskInputError, HTTPException) as bad_request:
+                # De aanroeper vroeg iets wat niet kan. Dat is een BLIJVENDE mislukking:
+                # opnieuw proberen maakt een component dat niet bestaat niet alsnog waar,
+                # en het kost de wachtende alleen tijd. Een handler die dit gooit komt
+                # daarmee op hetzelfde uit als een handler die een faal-dict teruggeeft.
+                #
+                # HTTPException staat erbij omdat de managers die taal al spreken: enkele
+                # geven een 404 op een deployment die er niet is, en die belandde tot nu
+                # toe in de algemene tak hieronder en dus als "onbekend" bij de client.
+                # Alleen de 4xx-en: een 5xx is van ons en hoort te blijven bestaan zoals
+                # hij is, inclusief nieuwe pogingen.
+                if isinstance(bad_request, HTTPException) and bad_request.status_code >= 500:
+                    await progress.close()
+                    progress.mark_legacy_failed(f"{type(bad_request).__name__}: {bad_request}")
+                    raise
+                await progress.close()
+                error_msg = _client_error_message(bad_request)
+                progress.mark_legacy_failed(error_msg)
+                await self._task_service.fail_task(
+                    task_id=task_id,
+                    error_message=error_msg,
+                    attempt_count=1,
+                    max_attempts=0,
+                    result=failure_result(error_msg, _client_error_type(bad_request)),
+                )
+                logger.warning(
+                    "Task %s rejected the request after %.1fs: %s", task_id, time.monotonic() - started, error_msg
+                )
+
             except TimeoutError:
                 error_msg = f"Task exceeded maximum duration of {settings.TASK_WORKER_MAX_DURATION}s"
                 logger.error("Task %s timed out after %.1fs: %s", task_id, time.monotonic() - started, error_msg)
@@ -263,11 +373,18 @@ class TaskWorker:
         except Exception as e:
             logger.exception("Task %s failed after %.1fs: %s", task_id, time.monotonic() - started, e)
 
+            error_message = f"{type(e).__name__}: {e}"
             await self._task_service.fail_task(
                 task_id=task_id,
-                error_message=f"{type(e).__name__}: {e}",
+                error_message=error_message,
                 attempt_count=task.get("attempt_count", 0),
                 max_attempts=task.get("max_attempts", settings.TASK_WORKER_MAX_ATTEMPTS),
+                # Ook een gooiende handler laat nu iets achter om te lezen. Zonder dit is
+                # ``result`` leeg en heeft een client alleen een fouttekst: geen type, geen
+                # categorie, dus niet te onderscheiden van een taaktype dat er niets over
+                # zegt. Het type is ``internal_error``, want dit is de tak waar we het niet
+                # weten, en dat komt bij de client aan als "niet toe te schrijven".
+                result=failure_result(error_message, INTERNAL_ERROR_TYPE),
             )
 
         finally:

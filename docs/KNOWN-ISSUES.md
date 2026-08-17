@@ -2,6 +2,58 @@
 
 - Removing a key from a Kubernetes Secret does not trigger an ArgoCD sync. Related: https://github.com/argoproj/argo-cd/issues/24882
 
+## Het standaardschema kapt stil af (niet gerepareerd)
+
+Genoteerd bij RC-59, bewust niet daar gerepareerd.
+
+`generate_database_schema` maakt de naam van het standaardschema als
+`{project}_{deployment}` en kapt die met een kale `name[:63]` af, zonder hash of andere
+onderscheidende staart. Twee deployments in hetzelfde project met lange namen die pas na
+teken 63 uit elkaar lopen, krijgen dus **hetzelfde standaardschema** en zitten ongemerkt in
+elkaars data.
+
+RC-17 heeft dit voor *extra* schema's juist voorkomen: `generate_extra_database_schema`
+gooit een `ValueError` in plaats van af te kappen, en sinds RC-59 wordt die controle bij
+elke opslag gedraaid, dus ook als er een deployment bijkomt. De standaardweg is daar nooit
+in meegenomen.
+
+Waarom het hier blijft staan: een naamgevingsregel wijzigen raakt **bestaande databases**.
+Elke oplossing (hard falen, een hash toevoegen, de deploymentnaam begrenzen) is een migratie
+met een eigen vraag over wat er met de al aangemaakte schema's gebeurt. Dat hoort een eigen
+taak te zijn, niet een bijvangst van een API-uitbreiding.
+
+## Versiebeheer uitzetten doet niets (niet gerepareerd)
+
+Genoteerd bij RC-99, gemeten op de sandbox (build `65c28ed1`), bewust niet daar
+gerepareerd.
+
+Het vinkje "Versiebeheer op de bucket" aanzetten werkt: het projectbestand krijgt
+`enable-versioning: true` en de bucket krijgt versiebeheer. Het weer UITvinken haalt de
+sleutel uit het bestand (`remove_when_none` op `MINIO_ENABLE_VERSIONING_EDITABLE`), en
+`MinioManager._apply_bucket_versioning` slaat een bucket zonder sleutel over. De bucket
+houdt dus versiebeheer, terwijl het scherm en het bestand zeggen dat er niets aan staat.
+
+Gemeten volgorde (elke stap terug uit het projectbestand in Forgejo gelezen):
+
+| actie | in het bestand | op de bucket |
+|---|---|---|
+| aanvinken | `enable-versioning: true` | aan |
+| uitvinken | geen sleutel | blijft aan |
+
+Waarom het hier blijft staan: de twee voor de hand liggende oplossingen zijn allebei een
+besluit dat groter is dan deze taak.
+
+* Het vinkje `false` laten wegschrijven (`remove_when_none` eraf) repareert het uitzetten,
+  maar geeft elk project dat langs de minio-configstap loopt een sleutel die niemand
+  koos - precies wat RC-99 juist wegnam.
+* Afwezig laten betekenen "volg de platformstandaard, dus uit" en dat ook echt afdwingen,
+  raakt **bestaande buckets**: buckets waar versiebeheer ooit met de hand aan is gezet,
+  worden dan bij de eerstvolgende verwerking gesuspendeerd. Dat is een datavraag met een
+  eigen afweging.
+
+Tot dat besluit valt: versiebeheer uitzetten kan met `mc version suspend` op de bucket
+zelf, en het bestand is dan al in orde.
+
 ## Sandbox Setup
 
 ### Forgejo pod restart causing sandbox:sync failure (fixed)

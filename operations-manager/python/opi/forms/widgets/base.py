@@ -3,7 +3,7 @@ Abstract base class for widget adapters.
 
 Widget adapters translate FormField instances into HTML for specific
 UI frameworks. This allows the same form definition to render with
-different component libraries (ROOS, NL Design System, Bootstrap, etc.).
+different component libraries (NL Design System, Bootstrap, etc.).
 """
 
 from abc import ABC, abstractmethod

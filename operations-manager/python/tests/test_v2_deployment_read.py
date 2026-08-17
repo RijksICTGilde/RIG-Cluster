@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.services.project_service import Project, ProjectUser
+from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
@@ -98,7 +98,7 @@ ARGO_STATUS_STAGING: dict[str, Any] = {
 def mock_project_service() -> Any:
     """Mock project service with project data for read endpoints."""
     mock_service = MagicMock(spec=GitProjectStore)
-    test_project = Project(
+    test_project = ProjectSummary(
         name="test-project",
         api_key=API_KEY,
         filename="test-project.yaml",
@@ -106,7 +106,7 @@ def mock_project_service() -> Any:
         data=SAMPLE_PROJECT_DATA,
     )
 
-    def get_project(name: str) -> Project | None:
+    def get_project(name: str) -> ProjectSummary | None:
         if name == "test-project":
             return test_project
         return None
@@ -178,8 +178,8 @@ def client(
     )
     kubectl_mock = _make_kubectl_mock()
     with (
-        patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
-        patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
+        patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
+        patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
         patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
         patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
         patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="rig-test-project"),
@@ -315,8 +315,8 @@ class TestListDeployments:
         argo_mock.get_application_resource_tree = AsyncMock(return_value=[])
 
         with (
-            patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
-            patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
             patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
             patch("opi.api.v2.router.create_kubectl_connector", return_value=_make_kubectl_mock()),
         ):
@@ -388,8 +388,8 @@ class TestGetDeployment:
         argo_mock = _make_argo_mock({})  # all apps return None (404)
         kubectl_mock = _make_kubectl_mock()
         with (
-            patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
-            patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
             patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
             patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
         ):
@@ -412,8 +412,8 @@ class TestGetDeployment:
         app: FastAPI = create_app()
         argo_mock = _make_argo_mock({}, auth_token=None)
         with (
-            patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
-            patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
             patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
         ):
             client = TestClient(app)
@@ -432,8 +432,8 @@ class TestGetDeployment:
         argo_mock.auth_token = "fake-token"
         argo_mock.get_application_status = AsyncMock(side_effect=RuntimeError("connection reset"))
         with (
-            patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
-            patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
             patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
         ):
             client = TestClient(app)
@@ -472,8 +472,8 @@ class TestGetDeployment:
         )
         kubectl_mock = _make_kubectl_mock()
         with (
-            patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
-            patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
             patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
             patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
             patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="rig-test-project"),

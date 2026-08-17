@@ -6,14 +6,14 @@ rules:
   # Tenant-namespace lifecycle: OPI creëert en label't tenant-namespaces.
   - apiGroups: [""]
     resources: [namespaces]
-    verbs: [create, get, list, patch]
+    verbs: [create, get, list, patch, delete]
   # Ground-truth existence check bij deletie (#123): de ArgoCD API antwoordt
   # 'permission denied' zodra de Application weg is, de k8s API geeft een
   # eerlijk NotFound. Op odcn-production dekt Capsule's admin-RoleBinding dit
   # al, in de sandbox geldt deze ingescopete role als enige.
   - apiGroups: [argoproj.io]
     resources: [applications]
-    verbs: [get, list]
+    verbs: [get, list, update, patch, delete]
   # Secrets cluster-breed: OPI plaatst SOPS-age-keys en Keycloak-secrets per
   # tenant-ns; per-namespace Role+RoleBinding is follow-up #90.
   - apiGroups: [""]
@@ -29,9 +29,13 @@ rules:
   # Prometheus/kubelet scrape endpoints onder dezelfde SA.
   - nonResourceURLs: [/metrics, /metrics/cadvisor]
     verbs: [get]
-  # Deploy-status + OOM watcher leest deployments.
+  # Deploy-status + OOM watcher leest deployments. De watcher leest ook replicasets:
+  # daarmee bepaalt hij de pod-template-hash van de HUIDIGE ReplicaSet, zodat een pod
+  # van een vervangen ReplicaSet niet meetelt. Zonder dat recht faalt die lookup met
+  # Forbidden en valt hij terug op "alle pods", wat een oude OOM-kill kan doorgeven
+  # aan het auto-tunen.
   - apiGroups: [apps]
-    resources: [deployments]
+    resources: [deployments, replicasets]
     verbs: [get, list]
   # Events voor deploy-progress en diagnostics.
   - apiGroups: [""]

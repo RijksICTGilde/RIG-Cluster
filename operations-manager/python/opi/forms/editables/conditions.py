@@ -19,6 +19,49 @@ from opi.connectors.subdomain import (
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_ingress_postfix, is_domain_subdomain_restricted
 from opi.forms.editables.resolvers import get_effective_value
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path, get_domain_setting
+
+#: De schakelaarwaarde van het keuzeveld "eigen domein", en de sleutel van het transiente
+#: veld waar die keuze naar deferet. Ze horen bij elkaar: de een zegt "kijk daar", de ander
+#: draagt de waarde.
+CUSTOM_DOMAIN_SENTINEL = "__custom__"
+CUSTOM_BASE_DOMAIN_KEY = "base-domain:custom"
+
+
+def _effective_base_domain(
+    yaml_data: dict[str, Any],
+    deployment: dict[str, Any],
+    deployment_index: int,
+    resolvers: dict | None,
+) -> Any:
+    """The base domain a condition should judge by: stored value, else the resolver.
+
+    Asks the service first (``get_domain_setting``), so both storage locations answer --
+    the resolver map is keyed on the editable's yaml_path, which is the service path only,
+    and a deployment that still carries its base domain at the root would otherwise read as
+    "not set" and get the cluster default (RC-60). Falls through to ``get_effective_value``
+    when nothing is stored, which is what makes "cluster default" resolvable at all.
+
+    ``__custom__`` telt hier NIET als opgeslagen waarde. Het is de schakelaar van het
+    keuzeveld, niet een domein: het echte domein staat dan in het transiente veld
+    ``base-domain:custom`` waar de keuze naar deferet. Tijdens het RENDEREN is die
+    deferral al opgelost en staat het domein er gewoon, maar tijdens het VERWERKEN nog
+    niet -- ``_resolve_deferrals`` draait pas na de veldenlus. Wie hier de sentinel
+    teruggaf liet beide aanvraag-condities op ``base_domain == "__custom__"`` afslaan,
+    dus gold het aanvraagvakje als verborgen, sloeg de verwerker het over, en werd het
+    aangevinkte vakje weggegooid. Gevolg: het vakje sprong terug op uit en de
+    PRE_SAVE-hook die de aanvraag doet liep nooit, dus een eigen domein of subdomein
+    werd stil nooit aangevraagd.
+    """
+    stored = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+    if stored is not None and stored != CUSTOM_DOMAIN_SENTINEL:
+        return stored
+    if stored == CUSTOM_DOMAIN_SENTINEL:
+        custom = deployment.get(CUSTOM_BASE_DOMAIN_KEY)
+        if custom:
+            return custom
+        return stored
+    return get_effective_value(yaml_data, domain_setting_path(DomainSetting.BASE_DOMAIN, deployment_index), resolvers)
 
 
 class SentinelValueCondition:
@@ -29,7 +72,7 @@ class SentinelValueCondition:
     text field for its final value.
     """
 
-    def __init__(self, sentinel: str = "__custom__") -> None:
+    def __init__(self, sentinel: str = CUSTOM_DOMAIN_SENTINEL) -> None:
         self.sentinel = sentinel
 
     def check(self, value: Any) -> bool:
@@ -69,9 +112,9 @@ class SubdomainNeedsRequestCondition:
         if not isinstance(dep, dict):
             return False
 
-        subdomain = dep.get("subdomain")
-        base_domain = get_effective_value(value, f"deployments[{self.deployment_index}]/base-domain", self._resolvers)
-        if not subdomain or not base_domain or base_domain == "__custom__":
+        subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN)
+        base_domain = _effective_base_domain(value, dep, self.deployment_index, self._resolvers)
+        if not subdomain or not base_domain or base_domain == CUSTOM_DOMAIN_SENTINEL:
             return False
 
         cluster = opi_config.settings.CLUSTER_MANAGER
@@ -121,8 +164,8 @@ class DomainNeedsRequestCondition:
         if not isinstance(dep, dict):
             return False
 
-        base_domain = get_effective_value(value, f"deployments[{self.deployment_index}]/base-domain", self._resolvers)
-        if not base_domain or base_domain == "__custom__":
+        base_domain = _effective_base_domain(value, dep, self.deployment_index, self._resolvers)
+        if not base_domain or base_domain == CUSTOM_DOMAIN_SENTINEL:
             return False
 
         cluster = opi_config.settings.CLUSTER_MANAGER

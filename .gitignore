@@ -51,7 +51,23 @@ secrets-overview-*.yaml
 /.claude/worktrees/
 
 # E2E test screenshots (generated artifacts)
-/operations-manager/python/tests/e2e/screenshots/
+# Let op de /* in plaats van /: git daalt niet af in een uitgesloten MAP, dus een
+# uitzondering erbinnen zou nooit werken. Op bestandsniveau uitsluiten kan dat wel.
+/operations-manager/python/tests/e2e/screenshots/*
+# Uitzondering: de screenshots van de LOTC-bouwlijn zijn geen wegwerpartefact maar het
+# resultaat waar de omzetting op beoordeeld wordt. Ze horen bij de PR, en zonder ze in
+# de repo kan niemand zien wat er gebouwd is zonder eerst de tests te draaien.
+!/operations-manager/python/tests/e2e/screenshots/lotc/
+# Om dezelfde reden de vergelijking oud-naast-nieuw uit scripts/lotc_shots.py: daar
+# staat het contactvel bij (index.html), en dat is bedoeld om over de schouder mee te
+# kijken zonder eerst iets te hoeven draaien.
+!/operations-manager/python/tests/e2e/screenshots/vergelijk/
 /operations-manager/docs/
 /operations-manager/python/tests/e2e/artifacts/
 /.env
+
+# Sleutelmateriaal hoort nooit in de repo.
+*agekey*.txt
+
+# De ingelogde sessie van scripts/kijk_sandbox.py: koekjes, hoort niet in git.
+operations-manager/python/scripts/.sandbox-sessie.json

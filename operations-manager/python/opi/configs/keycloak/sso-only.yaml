@@ -46,6 +46,16 @@ realms:
     eventsExpiration: 7776000  # 90 days
     adminEventsEnabled: true
     adminEventsDetailsEnabled: true
+    # Close off identity self-service. A user who can set their own password and unlink the
+    # IdP logs in locally afterwards, bypassing SSO Rijk entirely. Disabling the required
+    # action kills both the account console button and the hand-crafted kc_action URL;
+    # dropping manage-account takes away link/unlink and profile self-edit. Password
+    # lifecycle for local accounts is owned by OPI's invite flow, not by Keycloak.
+    # See features/futures/keycloak-sso-bypass-voorkomen.md.
+    disabledRequiredActions:
+      - UPDATE_PASSWORD
+    removeFromDefaultRoles:
+      - account:manage-account
 
 identityProviders:
   - alias: "rig-platform-oidc"
@@ -177,6 +187,7 @@ clients:
     # Explicitly set theme since browserFlowOverride may not inherit realm theme correctly
     attributes:
       login_theme: "nl-design-system"
+
 
 clientScopes:
   - name: "custom_attributes_passthrough"

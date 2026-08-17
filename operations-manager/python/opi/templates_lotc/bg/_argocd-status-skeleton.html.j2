@@ -1,0 +1,22 @@
+{#
+  De plaatshouder die in beeld staat terwijl een statuskaart wordt opgehaald.
+
+  Overname van project-details/_argocd-status-skeleton.html.j2. Die tekent het silhouet van
+  de kaart na met zes lege "botjes" (argocd-skeleton__bone), en dat silhouet zit VOLLEDIG in
+  project-details.css: zonder die stylesheet zijn het zes lege spans en zie je niets. De
+  LOTC-schil laadt die stylesheet niet en gaat dat ook niet doen - eigen CSS meeverhuizen is
+  precies wat deze omzetting kwijt wil.
+
+  Dus geen nagetekend silhouet maar een echte laadmelding: dezelfde plek, dezelfde rol
+  (role="status" met een label, zodat een schermlezer hoort dat er iets loopt), en een
+  draaiende indicator die het thema meelevert. Wat je verliest is de suggestie van de vorm
+  die straks verschijnt; wat je wint is dat er iets te zien is.
+#}
+{# De kaart eromheen is weg sinds RC-76: de plaatshouder staat nu BINNEN het deploymentblok,
+   dat zelf al een kaart is, en een kaart in een kaart tekent een rand om niets. #}
+<div role="status" aria-label="Deploymentstatus wordt geladen">
+    <c-cluster gap="sm" align="center">
+        <c-activity-indicator size="24" />
+        <c-paragraph>Deploymentstatus wordt opgehaald...</c-paragraph>
+    </c-cluster>
+</div>

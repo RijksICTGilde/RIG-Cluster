@@ -1,0 +1,23 @@
+{#
+  Een item in een herhaalbare reeks, op een regel. Zie sequence.html.j2.
+
+  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
+  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
+  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+#}
+{% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
+{% set remove_disabled = (field.children|length if field.children else 0) <= min_items %}
+<div class="lotc-sequence__item--inline" data-index="{{ index }}">
+    {{ item_html }}
+    {% if field.add_remove %}
+    {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
+       @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
+       stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
+    {% set verwijder_js = "sequenceRemove('" ~ field.path ~ "', " ~ index|string ~ ")" %}
+    <c-button type="warning-subtle" size="sm"
+              label="Verwijderen"
+              show-icon="before" icon="trash"
+              :attrs="{'onclick': verwijder_js}"
+              :disabled="remove_disabled" />
+    {% endif %}
+</div>

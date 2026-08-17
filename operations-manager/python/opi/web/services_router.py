@@ -8,7 +8,6 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.templates import get_templates
 from opi.services.services import ServiceAdapter
 from opi.web.menu import get_menu_items
 
@@ -30,7 +29,6 @@ async def services_overview(request: Request):
         HTML response with service cards showing variable information
     """
     try:
-        templates = get_templates()
         user = get_current_user(request)
 
         # Get all services and their variable information
@@ -52,14 +50,21 @@ async def services_overview(request: Request):
                 }
             )
 
-        return templates.TemplateResponse(
-            "services-overview.html.j2",
-            {
+        # Dezelfde gegevens, twee weergaven. Met ?ui=lotc rendert deze route de
+        # hertekende pagina; zonder blijft alles zoals het was. Zie opi/web/lotc_switch.py
+        # voor waarom dat een schakelaar is en geen omzetting ineens.
+        from opi.web.lotc_switch import build_lotc_services, render
+
+        return render(
+            request,
+            template="bg/services.html.j2",
+            context={
                 "request": request,
                 "title": "Services Overview",
                 "menu_items": get_menu_items(user),
                 "services": services_info,
                 "user": user,
+                **build_lotc_services(services_info, user),
             },
         )
 

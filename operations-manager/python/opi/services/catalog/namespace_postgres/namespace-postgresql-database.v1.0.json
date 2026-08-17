@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "DatabasePrivilege": {
+      "description": "PostgreSQL role privileges accepted for the dedicated database user.\n\nMatches the allow-list previously enforced inline in DatabaseManager.",
+      "enum": [
+        "SUPERUSER",
+        "NOSUPERUSER",
+        "CREATEDB",
+        "NOCREATEDB",
+        "CREATEROLE",
+        "NOCREATEROLE",
+        "LOGIN",
+        "NOLOGIN",
+        "REPLICATION",
+        "NOREPLICATION",
+        "BYPASSRLS",
+        "NOBYPASSRLS"
+      ],
+      "title": "DatabasePrivilege",
+      "type": "string"
+    },
+    "DatabaseResources": {
+      "additionalProperties": false,
+      "description": "requests/limits pair, mirroring DEFAULT_CONFIG['resources'].",
+      "properties": {
+        "limits": {
+          "$ref": "#/$defs/LimitsQuantities",
+          "default": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          },
+          "description": "What the database pod may use at most; exceeding memory kills it."
+        },
+        "requests": {
+          "$ref": "#/$defs/RequestsQuantities",
+          "default": {
+            "cpu": "100m",
+            "memory": "256Mi"
+          },
+          "description": "What the database pod asks for; used for scheduling."
+        }
+      },
+      "title": "DatabaseResources",
+      "type": "object"
+    },
+    "LimitsQuantities": {
+      "additionalProperties": false,
+      "description": "CPU/memory *limits* (defaults differ from requests, as in DEFAULT_CONFIG).",
+      "properties": {
+        "cpu": {
+          "default": "500m",
+          "description": "CPU ceiling for the database pod, e.g. 500m.",
+          "title": "Cpu",
+          "type": "string"
+        },
+        "memory": {
+          "default": "512Mi",
+          "description": "Memory ceiling for the database pod, e.g. 512Mi.",
+          "title": "Memory",
+          "type": "string"
+        }
+      },
+      "title": "LimitsQuantities",
+      "type": "object"
+    },
+    "RequestsQuantities": {
+      "additionalProperties": false,
+      "description": "CPU/memory *requests*. Per-field defaults preserve the old deep-merge: a\nconfig overriding only ``requests.memory`` keeps the default ``cpu``.",
+      "properties": {
+        "cpu": {
+          "default": "100m",
+          "description": "CPU the database pod requests, e.g. 100m.",
+          "title": "Cpu",
+          "type": "string"
+        },
+        "memory": {
+          "default": "256Mi",
+          "description": "Memory the database pod requests, e.g. 256Mi.",
+          "title": "Memory",
+          "type": "string"
+        }
+      },
+      "title": "RequestsQuantities",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Typed config for a dedicated (namespace) PostgreSQL cluster.\n\nField defaults reproduce ``DatabaseManager.DEFAULT_CONFIG`` so validating an\nexisting (untyped) config through this model yields the same merged result the\nold ``dict.get()`` merge produced.",
+  "properties": {
+    "image": {
+      "default": "ghcr.io/cloudnative-pg/postgresql:17",
+      "description": "PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26).",
+      "title": "Image",
+      "type": "string"
+    },
+    "instances": {
+      "default": 1,
+      "description": "Number of PostgreSQL instances; more than one gives a replicated cluster.",
+      "minimum": 1,
+      "title": "Instances",
+      "type": "integer"
+    },
+    "postInitSQL": {
+      "description": "SQL statements run once, when the database is first created (extensions, dictionaries).",
+      "items": {
+        "type": "string"
+      },
+      "title": "Postinitsql",
+      "type": "array"
+    },
+    "privileges": {
+      "description": "Extra PostgreSQL role privileges for the project's database user, from the allowed set.",
+      "items": {
+        "$ref": "#/$defs/DatabasePrivilege"
+      },
+      "title": "Privileges",
+      "type": "array"
+    },
+    "registry": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Named registry from the project's 'registries' list to pull the image from; none means public.",
+      "title": "Registry"
+    },
+    "resources": {
+      "$ref": "#/$defs/DatabaseResources",
+      "default": {
+        "limits": {
+          "cpu": "500m",
+          "memory": "512Mi"
+        },
+        "requests": {
+          "cpu": "100m",
+          "memory": "256Mi"
+        }
+      },
+      "description": "CPU and memory requests and limits for the database pods."
+    },
+    "storage": {
+      "default": "1Gi",
+      "description": "Size of the database volume as a Kubernetes quantity, e.g. 1Gi.",
+      "title": "Storage",
+      "type": "string"
+    }
+  },
+  "title": "NamespacePostgresConfig",
+  "type": "object"
+}

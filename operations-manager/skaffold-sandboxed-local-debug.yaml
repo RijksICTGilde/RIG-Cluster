@@ -21,33 +21,24 @@ build:
       - src: 'operations-manager/python/opi/**/*.py'
         dest: /app/opi
         strip: 'operations-manager/python/opi/'
-      - src: 'operations-manager/python/opi/templates/**/*'
-        dest: /app/opi/templates
-        strip: 'operations-manager/python/opi/templates/'
+      - src: 'operations-manager/python/opi/templates_lotc/**/*'
+        dest: /app/opi/templates_lotc
+        strip: 'operations-manager/python/opi/templates_lotc/'
       - src: 'operations-manager/python/manifests/**/*.jinja'
         dest: /app/manifests
         strip: 'operations-manager/python/manifests/'
       - src: 'operations-manager/python/static/**/*'
         dest: /app/static
         strip: 'operations-manager/python/static/'
-      # Sync local jinja-roos-components for development
-      - src: '../jinja-roos-components/src/jinja_roos_components/**/*.py'
-        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components
-        strip: '../jinja-roos-components/src/jinja_roos_components/'
-      - src: '../jinja-roos-components/src/jinja_roos_components/static/**/*'
-        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components/static
-        strip: '../jinja-roos-components/src/jinja_roos_components/static/'
-      - src: '../jinja-roos-components/src/jinja_roos_components/templates/**/*'
-        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components/templates
-        strip: '../jinja-roos-components/src/jinja_roos_components/templates/'
-      - src: '../jinja-roos-components/src/jinja_roos_components/definitions/*.json'
-        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components/definitions
-        strip: '../jinja-roos-components/src/jinja_roos_components/definitions/'
-      - src: '../jinja-roos-components/src/jinja_roos_components/*.json'
-        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components
-        strip: '../jinja-roos-components/src/jinja_roos_components/'
 
 deploy:
+  # VASTGEPIND op het kind-cluster, en niet alleen op de commandoregel van de taak.
+  # Zonder dit volgt skaffold de ACTIEVE kubectl-context, en die staat hier geregeld op
+  # productie; dan gaan de sync en de deploy daarheen terwijl je naar de sandbox zit te
+  # kijken en je wijzigingen nergens aankomen. De taak geeft --kube-context al mee, maar
+  # dat helpt niet als dit bestand vanuit de IDE of met een kale `skaffold dev -f` wordt
+  # gestart. Hier hoort het, want het is een eigenschap van deze configuratie.
+  kubeContext: kind-rig-sandbox
   statusCheckDeadlineSeconds: 0
   kustomize:
     flags:

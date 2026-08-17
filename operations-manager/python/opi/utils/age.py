@@ -243,6 +243,34 @@ def is_age_encrypted(content: str) -> bool:
     )
 
 
+#: Prefix of the single-line encrypted form. Deliberately a plain string in the YAML (it
+#: is base64, so it needs no block scalar); ``is_age_encrypted`` does not recognise it
+#: because that function answers "can I hand this to age --decrypt", which this form
+#: cannot without being decoded first.
+BASE64_AGE_PREFIX = "base64+age:"
+
+
+def carries_encrypted_value(value: object) -> bool:
+    """Whether a value holds an encrypted secret, in EITHER stored form.
+
+    The project schema declares exactly two (``$defs/age-encrypted``): the armored block
+    and the ``base64+age:`` prefix. Which one a field uses is a storage decision -- the
+    armored block is multi-line and needs a literal scalar, the prefixed form is a plain
+    one-line string -- but for the question "is this a secret" they are equal.
+
+    Use this rather than testing for one marker: real project files carry the repository
+    password, the api key and the project private key in the prefixed form, so code that
+    only looks for the armored block silently treats those as ordinary values.
+
+    ``plain:`` is NOT covered. It marks a deliberately unencrypted password, so it is not
+    an encrypted value; it is still sensitive, which is worth knowing wherever this is used
+    to decide what may be written down.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    return is_age_encrypted(value) or value.strip().startswith(BASE64_AGE_PREFIX)
+
+
 async def decrypt_if_encrypted(content: str, private_key: str | None) -> str:
     """
     Decrypt content if it's age-encrypted, otherwise return as-is.
@@ -412,6 +440,28 @@ async def get_decoded_project_private_key(project_config: dict) -> str:
     if not encoded_private_key:
         raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
     return await decrypt_age_content(encoded_private_key, cast("str", settings.SOPS_AGE_PRIVATE_KEY))
+
+
+def get_decoded_project_private_key_sync(project_config: dict) -> str:
+    """Get a project's AGE private key from inside a synchronous callback.
+
+    The async sibling above is the normal path. This one exists for callers that run
+    inside a synchronous change function (``ProjectStore.mutate``) and still have to
+    decrypt a stored value. It raises rather than returning None on every failure: it
+    is used on write paths where "no key" must stop the write, not fall back to
+    plaintext.
+    """
+    config = project_config.get("config", {})
+    encoded_private_key = config.get("age-private-key")
+    if not encoded_private_key:
+        raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
+    system_private_key = settings.SOPS_AGE_PRIVATE_KEY
+    if not system_private_key:
+        raise ValueError("Missing system AGE private key; cannot decode the project private key")
+    decoded = decrypt_age_content_sync(encoded_private_key, system_private_key)
+    if not decoded:
+        raise ValueError("Could not decrypt the project's age-private-key with the system key")
+    return decoded
 
 
 def decrypt_password_smart_auto_sync(password: str) -> str:

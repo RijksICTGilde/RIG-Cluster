@@ -1,6 +1,12 @@
 """
 Deployment health watcher: OOM, ImagePullBackOff, and CrashLoopBackOff detection.
 
+This module OBSERVES (kubectl queries, scheduling, remediation). The judgement -- what
+an observation means -- belongs to the ``deployment-health`` system service
+(``opi/services/catalog/deployment_health``), which is where the state other services
+report about the deployment is weighed in. Same split as resource-tuning: the service is
+the declarative home of the decision, this module does the work.
+
 Provides two mechanisms:
 1. **Inline detection** (``create_health_check_callback``):
    Used during the ArgoCD polling loop to detect pod health issues while
@@ -26,11 +32,15 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
-from opi.services.resource_tuning_service import get_project_data, tune_deployment_resources
+from opi.handlers.project_file_handler import is_transient_registry_error
+from opi.services.catalog.base import SERVICE_ROLE_LABEL_KEY, application_pod_selector
+from opi.services.catalog.deployment_health import deployment_health_service
+from opi.services.deployment_state import DeploymentState, collect_deployment_state
+from opi.services.resource_tuning_service import get_project_data
 from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
@@ -133,13 +143,69 @@ _CRASH_LOOP_REASONS = {"CrashLoopBackOff"}
 # which must be reported (and remediated) differently.
 MAIN_CONTAINER_NAME = "app"
 
+# Label Kubernetes puts on every ReplicaSet and its pods to identify the pod
+# template generation they belong to. Used to evaluate only the current generation.
+POD_TEMPLATE_HASH_LABEL = "pod-template-hash"
+
+# Annotation the Deployment controller stamps on each ReplicaSet; the highest
+# value is the ReplicaSet the Deployment currently rolls out (also after a
+# rollback, which re-stamps the reused ReplicaSet with a new, higher revision).
+_REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
+
+
+async def _get_current_pod_template_hash(kubectl: KubectlConnector, namespace: str, unique_name: str) -> str | None:
+    """
+    Return the ``pod-template-hash`` of the Deployment's current ReplicaSet.
+
+    Lists the ReplicaSets carrying ``app={unique_name}`` and picks the one owned
+    by the Deployment with the highest ``deployment.kubernetes.io/revision``.
+
+    Returns None when the hash cannot be determined (no Deployment-owned
+    ReplicaSet, kubectl failure, unparsable output). The caller then falls back
+    to evaluating every pod.
+    """
+    try:
+        args = ["get", "replicasets", "-n", namespace, "-l", application_pod_selector(unique_name), "-o", "json"]
+        stdout, stderr, code = await kubectl.run_command(args)
+        if code != 0:
+            logger.warning("Failed to list replicasets for %s/%s: %s", namespace, unique_name, stderr)
+            return None
+        items = json.loads(stdout).get("items", [])
+    except (KubectlConnectionError, KubectlExecutionError, json.JSONDecodeError) as e:
+        logger.warning("Error listing replicasets for %s/%s: %s", namespace, unique_name, e)
+        return None
+
+    best_revision = -1
+    best_hash: str | None = None
+    for replica_set in items:
+        metadata = replica_set.get("metadata", {})
+        owners = metadata.get("ownerReferences", [])
+        if not any(o.get("kind") == "Deployment" and o.get("name") == unique_name for o in owners):
+            continue
+        pod_template_hash = metadata.get("labels", {}).get(POD_TEMPLATE_HASH_LABEL)
+        if not pod_template_hash:
+            continue
+        try:
+            revision = int(metadata.get("annotations", {}).get(_REVISION_ANNOTATION, ""))
+        except ValueError:
+            continue
+        if revision > best_revision:
+            best_revision = revision
+            best_hash = pod_template_hash
+
+    return best_hash
+
 
 async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
     """
-    Single kubectl call to detect OOM, ImagePullBackOff, and CrashLoopBackOff.
+    Detect OOM, ImagePullBackOff, and CrashLoopBackOff for one component.
 
-    Runs ``kubectl get pods -o json`` once and inspects each container's
-    state for all three failure types:
+    Runs ``kubectl get pods -o json`` and inspects each container's state for
+    all three failure types. Only pods of the Deployment's current generation
+    are evaluated (see ``_get_current_pod_template_hash``); pods of a replaced
+    ReplicaSet report a problem that no longer exists.
+
+    Failure types:
     - OOM: ``lastState.terminated.reason == "OOMKilled"`` (the cgroup OOM-killer
       signal). A bare ``exitCode == 137`` is NOT treated as OOM: 137 is
       ``128 + SIGKILL`` and is also produced by failed startup/liveness probes,
@@ -163,15 +229,34 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
         return result
 
     try:
-        args = ["get", "pods", "-n", namespace, "-l", f"app={unique_name}", "-o", "json"]
+        # Only the application's own pods: a service running something alongside it
+        # (sleep-mode's waker) answers to the same app label, and reading ITS state as
+        # the component's reported failures for a component that was not even running.
+        args = ["get", "pods", "-n", namespace, "-l", application_pod_selector(unique_name), "-o", "json"]
         stdout, stderr, code = await kubectl.run_command(args)
 
         if code != 0:
             logger.warning("Failed to get pods for health check (%s/%s): %s", namespace, unique_name, stderr)
             return result
 
-        pods_data = json.loads(stdout)
-        for pod in pods_data.get("items", []):
+        pods = json.loads(stdout).get("items", [])
+        if not pods:
+            return result
+
+        # Only the current pod generation says anything about this rollout. Pods of a
+        # replaced ReplicaSet keep running (and keep their CrashLoop/OOM/image-pull
+        # state) until the controller reaps them, and they carry no deletionTimestamp
+        # while doing so, so the check below cannot catch them.
+        current_pod_template_hash = await _get_current_pod_template_hash(kubectl, namespace, unique_name)
+        if current_pod_template_hash is None:
+            logger.warning(
+                "Could not determine the current pod-template-hash for %s/%s; "
+                "evaluating all pods, so a pod from a replaced ReplicaSet may be reported",
+                namespace,
+                unique_name,
+            )
+
+        for pod in pods:
             metadata = pod.get("metadata", {})
             pod_name = metadata.get("name", "unknown")
             pod_created = metadata.get("creationTimestamp", "")
@@ -182,6 +267,19 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
             # OOM/CrashLoop that fails the deploy for a problem that no longer exists.
             if metadata.get("deletionTimestamp"):
                 logger.debug("Skipping terminating pod %s for health check in %s", pod_name, namespace)
+                continue
+
+            # Skip pods of a superseded generation (they outlive their ReplicaSet's
+            # replacement without ever getting a deletionTimestamp).
+            pod_template_hash = metadata.get("labels", {}).get(POD_TEMPLATE_HASH_LABEL, "")
+            if current_pod_template_hash is not None and pod_template_hash != current_pod_template_hash:
+                logger.debug(
+                    "Skipping pod %s from superseded generation %s (current %s) in %s",
+                    pod_name,
+                    pod_template_hash or "unknown",
+                    current_pod_template_hash,
+                    namespace,
+                )
                 continue
 
             for container_status in pod.get("status", {}).get("containerStatuses", []):
@@ -308,6 +406,7 @@ async def describe_components_waiting(
     namespace: str,
     component_names: list[str],
     component_refs: dict[str, str] | None = None,
+    state: DeploymentState | None = None,
 ) -> list[tuple[str, str]]:
     """Describe, in plain language, why each component is not ready yet.
 
@@ -316,6 +415,17 @@ async def describe_components_waiting(
     component whose representative pod is not yet Ready it returns a
     human-readable reason (scheduling problem, image pull, crash loop, container
     creating, readiness not passing, ...).
+
+    Two things make this honest about a deployment another service acted on:
+
+    * pods a service runs alongside the application are skipped. They carry the
+      component's ``app`` label on purpose (sleep-mode's waker takes over the
+      component's Service), so matching on that label alone reported the WAKER's
+      ``ImagePullBackOff`` as the component's reason -- the exact message the
+      original report was about, from this function.
+    * a component with no application pods is explained by whichever service says it
+      scaled the application to zero (``state``). Without such a claim the silence is
+      still reported, so a deployment that is simply not coming up stays visible.
 
     Returns a list of ``(component_reference, reason)`` for not-ready components
     only; ready components are omitted.
@@ -338,19 +448,26 @@ async def describe_components_waiting(
         logger.debug("describe_components_waiting: error for %s: %s", namespace, e)
         return []
 
-    # One representative pod per component, matched by the `app` label.
+    # One representative pod per component, matched by the `app` label -- and only the
+    # application's own pods: a pod carrying a service role is another service's
+    # workload, not this component (see SERVICE_ROLE_LABEL_KEY).
     pod_by_component: dict[str, dict] = {}
     for pod in pods_data.get("items", []):
-        app = pod.get("metadata", {}).get("labels", {}).get("app", "")
+        labels = pod.get("metadata", {}).get("labels", {})
+        if SERVICE_ROLE_LABEL_KEY in labels:
+            continue
+        app = labels.get("app", "")
         if app in wanted and app not in pod_by_component:
             pod_by_component[app] = pod
+
+    absent_pods_reason = deployment_health_service().absent_pods_are_expected(state or DeploymentState())
 
     results: list[tuple[str, str]] = []
     for unique_name in component_names:
         ref = refs.get(unique_name, unique_name)
         pod = pod_by_component.get(unique_name)
         if pod is None:
-            results.append((ref, "pods worden aangemaakt"))
+            results.append((ref, absent_pods_reason or "pods worden aangemaakt"))
             continue
         reason = _describe_pod_waiting(pod)
         if reason:
@@ -454,8 +571,23 @@ async def _run_oom_check(
 
     namespace = get_prefixed_namespace(cluster, base_namespace)
 
-    # Check each component for health issues (unified check)
-    any_oom = False
+    # What the services report about this deployment. It is weighed by the judgement
+    # below, which never lets it excuse an observed problem -- the point of collecting it
+    # here is that the remediation (disabling a component on an image-pull failure) is the
+    # most destructive thing this module does, so it must run on a complete picture.
+    state = collect_deployment_state(project_data, deployment_name)
+    if state.facts:
+        logger.info(
+            "Health watcher: services report for %s/%s: %s",
+            project_name,
+            deployment_name,
+            "; ".join(state.summaries),
+        )
+
+    # Check each component for health issues (unified check); the deployment-health
+    # service decides what an observation means.
+    health_service = deployment_health_service()
+    oom_component_refs: list[str] = []
     image_pull_errors: list[tuple[str, str]] = []  # (component_ref, error_message)
     components = target_dep.get("components", [])
     for comp in components:
@@ -467,11 +599,23 @@ async def _run_oom_check(
 
         unique_name = generate_unique_name(deployment_name, component_ref)
         health = await check_pod_health(namespace, unique_name)
+        if not health_service.counts_as_failure(health, state):
+            continue
 
         if health.oom_detected:
-            any_oom = True
+            oom_component_refs.append(component_ref)
         if health.image_pull_error:
-            image_pull_errors.append((component_ref, health.image_pull_error))
+            if is_transient_registry_error(health.image_pull_error):
+                logger.warning(
+                    "Health watcher: registry failure (not the image) for %s/%s component %s, "
+                    "leaving it enabled so kubelet retries the pull: %s",
+                    project_name,
+                    deployment_name,
+                    component_ref,
+                    health.image_pull_error,
+                )
+            else:
+                image_pull_errors.append((component_ref, health.image_pull_error))
         # CrashLoopBackOff: no remediation in fire-and-forget — only reported inline
 
     # Handle image pull errors: disable in YAML, then queue refresh task
@@ -484,7 +628,7 @@ async def _run_oom_check(
             logger.error("Failed to handle image pull errors in %s/%s: %s", project_name, deployment_name, e)
 
     # Handle OOM kills: tune resources (git-only), then queue refresh
-    if not any_oom:
+    if not oom_component_refs:
         if not image_pull_errors:
             logger.info(
                 "Health watcher: no issues detected for %s/%s (attempt %d/%d)",
@@ -503,12 +647,17 @@ async def _run_oom_check(
         max_attempts,
     )
 
+    # Route through the same after-sync hook scan the inline deploy path uses, so the
+    # OOM remediation is not hardcoded here either. The runner commits once.
+    from opi.services.catalog.base import ComponentHealth
+    from opi.services.deployment_observation import run_after_sync_observation
+
+    component_health = {ref: ComponentHealth(oom_detected=True) for ref in oom_component_refs}
     try:
-        result = await tune_deployment_resources(project_name, deployment_name, skip_reprocessing=True)
-        if result.changes:
+        observation = await run_after_sync_observation(project_name, deployment_name, component_health)
+        if observation.requeue_refresh:
             logger.info(
-                "Health watcher: auto-tune applied %d change(s) for %s/%s",
-                len(result.changes),
+                "Health watcher: auto-tune committed changes for %s/%s",
                 project_name,
                 deployment_name,
             )
@@ -521,6 +670,8 @@ async def _run_oom_check(
             )
         else:
             logger.info("Health watcher: tune found no actionable changes for %s/%s", project_name, deployment_name)
+        for msg in observation.failures:
+            logger.warning("Health watcher: %s", msg)
     except Exception as e:
         logger.error("Health watcher: auto-tune failed for %s/%s: %s", project_name, deployment_name, e)
 
@@ -609,21 +760,32 @@ def schedule_oom_check(
 async def check_all_components_health(
     namespace: str,
     component_names: list[str],
+    state: DeploymentState | None = None,
 ) -> list[PodHealthResult]:
     """
     Check multiple components for health issues via kubectl.
 
+    What counts as an issue is the ``deployment-health`` service's call, not this
+    module's: it is asked per component, with the state the other services report about
+    the deployment. It answers the same way for every observed problem today -- a problem
+    on an application pod is a failure, whatever any service says -- and that is the
+    point of routing through it: the state is available at the decision and deliberately
+    gets no vote.
+
     Args:
         namespace: Kubernetes namespace
         component_names: List of unique component names (deployment prefixes)
+        state: What the services report about this deployment; empty when unknown
 
     Returns:
         List of PodHealthResult for components that have issues
     """
+    deployment_state = state if state is not None else DeploymentState()
+    health_service = deployment_health_service()
     results: list[PodHealthResult] = []
     for name in component_names:
         health = await check_pod_health(namespace, name)
-        if health.oom_detected or health.image_pull_error or health.crash_loop_detected:
+        if health_service.counts_as_failure(health, deployment_state):
             results.append(health)
     return results
 
@@ -635,6 +797,7 @@ def create_health_check_callback(
     component_names: list[str],
     component_refs: dict[str, str] | None = None,
     grace_seconds: int = HEALTH_CHECK_GRACE_SECONDS,
+    state: DeploymentState | None = None,
 ) -> Callable[[int], Awaitable[None]] | None:
     """
     Build an ``on_progressing`` callback for ``wait_for_application_synced``.
@@ -652,6 +815,8 @@ def create_health_check_callback(
         component_refs: Mapping from unique name to component reference
             (user-facing name). If None, unique names are used as-is.
         grace_seconds: Seconds to wait before checking (default 30)
+        state: What the services report about this deployment (RC-28). Passed to the
+            judgement, which weighs it; an observed problem is a failure regardless.
 
     Returns:
         Async callback ``(elapsed_seconds) -> None``. Always non-None: even when
@@ -706,7 +871,7 @@ def create_health_check_callback(
             OOM_INLINE_MAX_ATTEMPTS,
         )
 
-        unhealthy = await check_all_components_health(namespace, component_names)
+        unhealthy = await check_all_components_health(namespace, component_names, state)
         if not unhealthy:
             logger.info("Health check: no issues detected in %s", namespace)
             return

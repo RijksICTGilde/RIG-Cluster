@@ -10,28 +10,25 @@ import hashlib
 import logging
 import re
 import secrets
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from opi.core.config import settings
-from opi.core.templates import get_templates
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.invite_manager import (
     InviteAuthMethodError,
     InviteDomainError,
     InviteError,
-    InviteExpiredError,
     InviteManager,
     UserExistsError,
 )
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_project_realm_name
-
-if TYPE_CHECKING:
-    from starlette.responses import Response
+from opi.web.lotc_switch import render
+from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +257,6 @@ def _get_error_messages(language: str) -> dict[str, str]:
     messages = {
         "nl": {
             "invite_not_found": "Uitnodiging niet gevonden",
-            "invite_expired": "Uitnodiging verlopen",
             "domain_mismatch": "E-mailadres komt niet overeen met vereiste domein",
             "auth_method_not_allowed": "Authenticatiemethode niet beschikbaar voor deze uitnodiging",
             "user_exists": "Account bestaat al. Gebruik SSO login.",
@@ -274,11 +270,11 @@ def _get_error_messages(language: str) -> dict[str, str]:
             "password_no_lowercase": "Wachtwoord moet minimaal een kleine letter bevatten",
             "password_no_digit": "Wachtwoord moet minimaal een cijfer bevatten",
             "password_mismatch": "Wachtwoorden komen niet overeen",
+            "role_not_assigned": "Account aangemaakt, maar rol niet toegekend",
             "generic_error": "Er is een fout opgetreden",
         },
         "en": {
             "invite_not_found": "Invitation not found",
-            "invite_expired": "Invitation expired",
             "domain_mismatch": "Email address does not match required domain",
             "auth_method_not_allowed": "Authentication method not available for this invitation",
             "user_exists": "Account already exists. Use SSO login.",
@@ -292,10 +288,26 @@ def _get_error_messages(language: str) -> dict[str, str]:
             "password_no_lowercase": "Password must contain at least one lowercase letter",
             "password_no_digit": "Password must contain at least one digit",
             "password_mismatch": "Passwords do not match",
+            "role_not_assigned": "Account created, but role not assigned",
             "generic_error": "An error occurred",
         },
     }
     return messages.get(language, messages["nl"])
+
+
+def _realm_roles_unassigned(assigned: dict[str, Any]) -> bool:
+    """Whether the redemption assigned a realm user but could NOT grant a NAMED realm role.
+
+    ``assign_invite_permissions`` records a ``Realm roles not found: ...`` error only when the
+    invite actually requested realm roles that Keycloak did not have; a deliberately role-less
+    invite never attempts an assignment, so it never trips this. When it is true the user has an
+    account without the intended role, hits the authorization wall, and retrying loops on
+    ``UserExistsError`` -- so the flow must show an error page (decision 11) instead of success.
+    """
+    errors = assigned.get("errors") if isinstance(assigned, dict) else None
+    if not isinstance(errors, list):
+        return False
+    return any(isinstance(msg, str) and msg.startswith("Realm roles not found") for msg in errors)
 
 
 @invite_router.get("/{key}", response_class=HTMLResponse)
@@ -313,14 +325,13 @@ async def invite_landing(request: Request, key: str) -> Response:
     Returns:
         HTML response with landing page
     """
-    templates = get_templates()
-
     # Find project and invite
     result = await _find_project_by_invite_key(key)
     if not result:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            template="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
                 "error_message": "De opgegeven uitnodiging bestaat niet of is niet meer geldig.",
@@ -331,21 +342,7 @@ async def invite_landing(request: Request, key: str) -> Response:
     project_name, project_data, invite, cluster = result
     language = _get_language(request, project_data)
 
-    # Validate invite
     invite_manager = InviteManager()
-    try:
-        invite_manager.validate_invite(project_data, invite)
-    except InviteExpiredError as e:
-        error_messages = _get_error_messages(language)
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
-                "request": request,
-                "error_title": error_messages["invite_expired"],
-                "error_message": f"Verlopen op: {e.expired_at}" if language == "nl" else f"Expired on: {e.expired_at}",
-                "language": language,
-            },
-        )
 
     # Get the project's realm name
     realm_name = generate_project_realm_name(project_name, cluster)
@@ -368,9 +365,10 @@ async def invite_landing(request: Request, key: str) -> Response:
     # Get identity provider display names for SSO buttons
     identity_providers = realm_auth.get("identity_providers", [])
 
-    return templates.TemplateResponse(
-        "invite-landing.html.j2",
-        {
+    return render(
+        request,
+        template="bg/invite-landing.html.j2",
+        context={
             "request": request,
             "project_name": project_name,
             "display_name": display_name,
@@ -409,7 +407,6 @@ async def invite_sso_start(request: Request, key: str) -> Response:
     invite_manager = InviteManager()
 
     try:
-        invite_manager.validate_invite(project_data, invite)
         invite_manager.validate_auth_method(project_data, invite, "sso")
     except InviteError as e:
         raise HTTPException(status_code=400, detail=e.message) from e
@@ -478,7 +475,6 @@ async def invite_idp_start(request: Request, key: str, idp_alias: str) -> Respon
     invite_manager = InviteManager()
 
     try:
-        invite_manager.validate_invite(project_data, invite)
         invite_manager.validate_auth_method(project_data, invite, "sso")
     except InviteError as e:
         raise HTTPException(status_code=400, detail=e.message) from e
@@ -622,6 +618,11 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
         # Clear session state
         request.session.pop("invite_flow", None)
 
+        # The account was created but a named realm role could not be granted: show an error
+        # page (decision 11), not success -- retrying loops on UserExistsError.
+        if _realm_roles_unassigned(result_data["assigned"]):
+            return RedirectResponse(url=f"/invite/{key}/error?code=role_not_assigned", status_code=302)
+
         # Store success info in session for success page
         request.session["invite_success"] = {
             "email": result_data["email"],
@@ -656,14 +657,13 @@ async def invite_register_form(request: Request, key: str) -> Response:
     Returns:
         HTML response with registration form
     """
-    templates = get_templates()
-
     # Find and validate invite
     result = await _find_project_by_invite_key(key)
     if not result:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            template="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
                 "error_message": "De opgegeven uitnodiging bestaat niet of is niet meer geldig.",
@@ -678,26 +678,16 @@ async def invite_register_form(request: Request, key: str) -> Response:
     invite_manager = InviteManager()
 
     try:
-        invite_manager.validate_invite(project_data, invite)
         invite_manager.validate_auth_method(project_data, invite, "local")
-    except InviteExpiredError as e:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
-                "request": request,
-                "error_title": error_messages["invite_expired"],
-                "error_message": f"Verlopen op: {e.expired_at}" if language == "nl" else f"Expired on: {e.expired_at}",
-                "language": language,
-            },
-        )
     except InviteAuthMethodError:
         if language == "nl":
             auth_error_msg = "Account aanmaken is niet beschikbaar voor deze uitnodiging."
         else:
             auth_error_msg = "Account creation is not available for this invitation."
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            template="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": error_messages["auth_method_not_allowed"],
                 "error_message": auth_error_msg,
@@ -709,9 +699,10 @@ async def invite_register_form(request: Request, key: str) -> Response:
     message = invite_manager.project_file_handler.get_invite_message(invite, language)
     domain_restriction = invite.get("restrict_domain")
 
-    return templates.TemplateResponse(
-        "invite-register.html.j2",
-        {
+    return render(
+        request,
+        template="bg/invite-register.html.j2",
+        context={
             "request": request,
             "project_name": project_name,
             "display_name": display_name,
@@ -738,14 +729,13 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     Returns:
         Redirect to success page or re-render form with errors
     """
-    templates = get_templates()
-
     # Find and validate invite
     result = await _find_project_by_invite_key(key)
     if not result:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            template="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
                 "error_message": "De opgegeven uitnodiging bestaat niet of is niet meer geldig.",
@@ -760,12 +750,12 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     invite_manager = InviteManager()
 
     try:
-        invite_manager.validate_invite(project_data, invite)
         invite_manager.validate_auth_method(project_data, invite, "local")
     except InviteError as e:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            template="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": error_messages.get(e.error_code, error_messages["generic_error"]),
                 "error_message": e.message,
@@ -827,9 +817,10 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     if errors:
         display_name = project_data.get("display-name", project_name)
         message = invite_manager.project_file_handler.get_invite_message(invite, language)
-        return templates.TemplateResponse(
-            "invite-register.html.j2",
-            {
+        return render(
+            request,
+            template="bg/invite-register.html.j2",
+            context={
                 "request": request,
                 "project_name": project_name,
                 "display_name": display_name,
@@ -852,6 +843,11 @@ async def invite_register_submit(request: Request, key: str) -> Response:
             form_data=form_data,
             realm_name=realm_name,
         )
+
+        # Account created but a named realm role could not be granted: error page, not success
+        # (decision 11) -- retrying loops on UserExistsError.
+        if _realm_roles_unassigned(result_data["assigned"]):
+            return RedirectResponse(url=f"/invite/{key}/error?code=role_not_assigned", status_code=302)
 
         # Store success info in session
         request.session["invite_success"] = {
@@ -886,9 +882,10 @@ async def invite_register_submit(request: Request, key: str) -> Response:
             general_error = error_messages.get(e.error_code, e.message)
 
         display_name = project_data.get("display-name", project_name)
-        return templates.TemplateResponse(
-            "invite-register.html.j2",
-            {
+        return render(
+            request,
+            template="bg/invite-register.html.j2",
+            context={
                 "request": request,
                 "project_name": project_name,
                 "display_name": display_name,
@@ -903,9 +900,10 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     except Exception:
         logger.exception(f"Error creating local account for invite '{key}'")
         display_name = project_data.get("display-name", project_name)
-        return templates.TemplateResponse(
-            "invite-register.html.j2",
-            {
+        return render(
+            request,
+            template="bg/invite-register.html.j2",
+            context={
                 "request": request,
                 "project_name": project_name,
                 "display_name": display_name,
@@ -931,14 +929,13 @@ async def invite_success(request: Request, key: str) -> Response:
     Returns:
         HTML response with success page
     """
-    templates = get_templates()
-
     # Find project and invite
     result = await _find_project_by_invite_key(key)
     if not result:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            template="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
                 "error_message": "De opgegeven uitnodiging bestaat niet of is niet meer geldig.",
@@ -963,9 +960,10 @@ async def invite_success(request: Request, key: str) -> Response:
     application_url = invite.get("application_url", "")
     display_name = project_data.get("display-name", project_name)
 
-    return templates.TemplateResponse(
-        "invite-success.html.j2",
-        {
+    return render(
+        request,
+        template="bg/invite-success.html.j2",
+        context={
             "request": request,
             "project_name": project_name,
             "display_name": display_name,
@@ -992,12 +990,11 @@ async def invite_error(request: Request, key: str) -> Response:
     Returns:
         HTML response with error page
     """
-    templates = get_templates()
-
     # Try to find project for language detection
     result = await _find_project_by_invite_key(key)
+    invite: dict[str, Any] = {}
     if result:
-        _, project_data, _, _ = result
+        _, project_data, invite, _ = result
         language = _get_language(request, project_data)
     else:
         language = request.query_params.get("lang", "nl")
@@ -1011,7 +1008,7 @@ async def invite_error(request: Request, key: str) -> Response:
     # Build detailed error message
     if error_code == "domain_mismatch" and domain:
         if language == "nl":
-            error_message = f"Uw e-mailadres moet eindigen op '{domain}'."
+            error_message = f"Je e-mailadres moet eindigen op '{domain}'."
         else:
             error_message = f"Your email address must end with '{domain}'."
     elif error_code == "user_exists":
@@ -1019,12 +1016,32 @@ async def invite_error(request: Request, key: str) -> Response:
             error_message = "Er bestaat al een account met dit e-mailadres. Gebruik de SSO login optie."
         else:
             error_message = "An account with this email already exists. Use the SSO login option."
+    elif error_code == "role_not_assigned":
+        # The account WAS created; only the intended role could not be granted. Say so
+        # explicitly, warn that retrying will not work (it hits UserExistsError), and point at
+        # the invite's contact address so the user knows who to ask (decision 11).
+        contact = invite.get("contact_email")
+        if language == "nl":
+            error_message = (
+                "Je account is aangemaakt, maar de bijbehorende rol kon niet worden toegekend. "
+                "Opnieuw proberen werkt niet: het account bestaat al. "
+            )
+            if contact:
+                error_message += f"Neem contact op met {contact} om de rol alsnog te laten toekennen."
+        else:
+            error_message = (
+                "Your account was created, but the intended role could not be assigned. "
+                "Trying again will not work: the account already exists. "
+            )
+            if contact:
+                error_message += f"Please contact {contact} to have the role assigned."
     else:
         error_message = ""
 
-    return templates.TemplateResponse(
-        "invite-error.html.j2",
-        {
+    return render(
+        request,
+        template="bg/invite-error.html.j2",
+        context={
             "request": request,
             "error_title": error_title,
             "error_message": error_message,

@@ -1,0 +1,40 @@
+{#
+  De uitleg boven de stap Webadres.
+
+  DIT WAS EEN HANDGEMAAKTE rvo-alert, en op een LOTC-pagina maakt geen enkel stijlblad
+  die op: het thema laadt lotc-layout, nldd en lotc-forms, en lotc_rvo staat daar niet
+  bij. Het gevolg stond op het scherm: het informatie-icoon zweefde los op een eigen
+  regel boven "Hoe worden web adressen gegenereerd?", want de flex-indeling die het
+  ernaast zou zetten kwam uit .rvo-alert en bestond niet. De rest van het blok stond
+  onopgemaakt eronder.
+
+  Het is nu <c-alert type="info">: die brengt het icoon, de uitlijning en de kleur zelf
+  mee, dus de kop hoeft ook geen <strong> in een losse alinea meer te zijn.
+
+  De drie subtiele regels droegen rvo-text--sm rvo-text--subtle, wat om dezelfde reden
+  niets deed. Dat is <c-paragraph size="sm">.
+#}
+<c-alert type="info" heading="Hoe worden web adressen gegenereerd?">
+    <c-layout-flow gap="lg">
+        <div>
+            <c-paragraph><strong>Formaten met "component-" prefix</strong></c-paragraph>
+            <c-paragraph>Elk component krijgt een eigen unieke URL, bijvoorbeeld:<br/>
+                <code>frontend-poc-myapp.domein</code> en <code>backend-poc-myapp.domein</code>.</c-paragraph>
+        </div>
+
+        <div>
+            <c-paragraph><strong>Formaten zonder "component-" prefix</strong></c-paragraph>
+            <c-paragraph>Alle componenten delen dezelfde URL en worden onderscheiden via paden,
+                bijvoorbeeld <code>/</code> voor de frontend en <code>/api</code> voor de backend.</c-paragraph>
+            <c-paragraph size="sm">Dit voorkomt CORS-problemen tussen componenten.</c-paragraph>
+        </div>
+
+        <div>
+            <c-paragraph><strong>Formaten met "-subdomain"</strong></c-paragraph>
+            <c-paragraph>Je kiest een eigen subdomein en basisdomein. De URL wordt dan bijvoorbeeld
+                <code>frontend.mijnapp.rijks.app</code> of <code>mijnapp.rijks.app</code>.</c-paragraph>
+            <c-paragraph size="sm">Het basisdomein moet punt-gescheiden URLs ondersteunen
+                (bijv. rijks.app of rijksapp.nl).</c-paragraph>
+        </div>
+    </c-layout-flow>
+</c-alert>

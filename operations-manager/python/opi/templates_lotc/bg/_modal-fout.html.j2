@@ -1,0 +1,13 @@
+{#
+  Een weigering van de gedeelde dialoog, als FRAGMENT.
+
+  De dialoog haalt zijn inhoud met htmx op, en toont dus wat er terugkomt. Lukt het niet,
+  dan moet er iets terugkomen dat een mens kan lezen - anders staat het venster open en
+  leeg, en dat is het slechtste dat er kan gebeuren op het moment dat er iets misgaat.
+
+  Dit fragment gaat mee met de ECHTE statuscode van de route (404, 400, ...); dat htmx het
+  ondanks die code toont wordt geregeld in bg/admin-approvals.html.j2.
+#}
+<c-alert type="error" heading="Het formulier kon niet worden geladen">
+    <c-paragraph>{{ melding }}</c-paragraph>
+</c-alert>

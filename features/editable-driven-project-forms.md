@@ -40,7 +40,7 @@ DISPLAY_NAME = EditableVisualizer(
 EditableVisualizer
   -> editable_to_form_field() bridge (visualizers/bridge.py)
   -> FormField (forms/field.py)
-  -> ROOSWidgetAdapter renders HTML
+  -> LOTCWidgetAdapter renders HTML
 ```
 
 The bridge resolves values from YAML, applies converter.view(), resolves options from providers, handles defaults, locked_by_service, readonly logic, and HTMX attributes. It produces a `FormField` - a flat bag of resolved values that the widget adapter can render.
@@ -74,7 +74,8 @@ JSON/form data
 | `visualizers/providers.py` | Dynamic options providers (clusters, services, roles, etc.) |
 | `forms/field.py` | `FormField` dataclass (intermediate render type) |
 | `forms/renderer.py` | `FormRenderer` - orchestrates layout + widget rendering |
-| `forms/widgets/roos.py` | `ROOSWidgetAdapter` - renders FormField to ROOS HTML |
+| `forms/widgets/fields.py` | `FieldWidgetAdapter` - de gedeelde veldvoorbereiding |
+| `forms/widgets/lotc.py` | `LOTCWidgetAdapter` - rendert FormField naar HTML |
 | `editables/path.py` | Path resolution with `{K}` dict-key and `{F=V}` field-match filters |
 | `editables/enforcers.py` | Section-level enforcers (admin required, unique names, component services) |
 | `web/router_wizard.py` | Wizard routes (create flow) |
@@ -125,7 +126,7 @@ The rendering pipeline has an unnecessary intermediate type:
 EditableVisualizer -> bridge -> FormField -> WidgetAdapter -> HTML
 ```
 
-`FormField` (`forms/field.py`) is a legacy type from the original Pydantic-model-based form system. The bridge (`visualizers/bridge.py`) converts `EditableVisualizer` into `FormField` by resolving values, options, and display logic. The widget adapter (`ROOSWidgetAdapter`) then renders `FormField` to HTML.
+`FormField` (`forms/field.py`) is a legacy type from the original Pydantic-model-based form system. The bridge (`visualizers/bridge.py`) converts `EditableVisualizer` into `FormField` by resolving values, options, and display logic. The widget adapter (`LOTCWidgetAdapter`) then renders `FormField` to HTML.
 
 This means:
 - Value resolution, options resolution, converter application, and display logic live in the bridge - **not** on the visualizer

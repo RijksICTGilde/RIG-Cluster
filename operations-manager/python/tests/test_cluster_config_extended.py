@@ -261,3 +261,42 @@ class TestNiceUrlFunctions:
     def test_production_nice_url_domains(self):
         domains = get_nice_url_supported_domains("odcn-production")
         assert "rijks.app" in domains
+
+
+class TestSelectableClusters:
+    """The create wizard offers only the clusters the environment is configured for.
+
+    Production must never let a user pick a dev cluster: the choice comes from the
+    managing cluster's own config, defaulting to just that cluster.
+    """
+
+    def test_production_offers_only_odcn_production(self):
+        from opi.core.cluster_config import get_selectable_clusters
+
+        # odcn-production has no create_wizard_clusters key, so it defaults to itself.
+        with patch("opi.core.config.settings.CLUSTER_MANAGER", "odcn-production"):
+            assert get_selectable_clusters() == ["odcn-production"]
+
+    def test_development_offers_the_configured_set(self):
+        from opi.core.cluster_config import get_selectable_clusters
+
+        with patch("opi.core.config.settings.CLUSTER_MANAGER", "local"):
+            clusters = get_selectable_clusters()
+        assert clusters == ["local", "sandboxed-local", "odcn-production"]
+
+    def test_unknown_configured_cluster_is_dropped(self):
+        """A typo in the config must not surface a non-existent cluster."""
+        from opi.core import cluster_config as cc
+
+        with (
+            patch("opi.core.config.settings.CLUSTER_MANAGER", "local"),
+            patch.dict(cc.CLUSTER_CONFIG["local"], {"create_wizard_clusters": ["local", "does-not-exist"]}),
+        ):
+            assert cc.get_selectable_clusters() == ["local"]
+
+    def test_wizard_provider_follows_the_selectable_set(self):
+        from opi.forms.visualizers.providers import ClusterOptionsProvider
+
+        with patch("opi.core.config.settings.CLUSTER_MANAGER", "odcn-production"):
+            values = [o["value"] for o in ClusterOptionsProvider().get_options()]
+        assert values == ["odcn-production"], values

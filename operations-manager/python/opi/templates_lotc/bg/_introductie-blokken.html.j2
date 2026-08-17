@@ -1,0 +1,209 @@
+{#
+  De INHOUD van de blokken waar bg/introductie.html.j2 uit bestaat.
+
+  De pagina houdt zijn eigen indeling: daar staan de panel()-aanroepen, met hun titel en
+  icoon, zodat je aan de pagina ziet waar hij uit bestaat. Hier staat wat er in die panelen
+  komt. De grens loopt dus tussen "welke blokken" (de pagina) en "wat erin staat" (dit
+  bestand).
+
+  Als MACRO's en niet als losse templates die de pagina include't. Dat is geen smaak: een
+  {% raw %}{% include %}{% endraw %} van een deeltemplate dat zelf componenten gebruikt breekt in deze omgeving
+  zodra de schil <template slot=...> gebruikt, en dat doet base_lotc.html.j2 - zie de kop
+  van dat bestand, en de reden dat bg/about.html.j2 zijn vier deeltemplates juist heeft
+  samengevoegd. Een macro heeft dat probleem niet: bg/_service-card.html.j2 en
+  bg/_patterns.html.j2 werken zo al.
+#}
+{% from "bg/_patterns.html.j2" import page_head %}
+
+
+{#
+  De kop van de pagina.
+
+  MET page_head() EN NIET MET <c-hero>, en dat is gemeten en geen smaak. Hier stond eerst
+  een hero met de wolkenfoto van de oude architectuurpagina. In de browser bleek
+  <nldd-hero> een LEGE schaduwboom te hebben (letterlijk ``<!---->``): het component is wel
+  gedefinieerd, maar het projecteert geen enkel slot, dus titel, ondertitel, afbeelding en
+  de alinea eronder stonden er alle vier niet. In de HTML was er niets aan te zien, en de
+  paginatitel was daarmee onzichtbaar.
+
+  Dat verklaart meteen waarom geen enkele bg-pagina <c-hero> gebruikt: hij komt alleen voor
+  op de oude architectuurpagina en op twee proefpagina's, en die worden door geen route
+  meer gerenderd. De hero was daar dus net zo dood, alleen keek er niemand naar.
+
+  page_head() is wat elke andere pagina gebruikt, levert een echte <h1>, en houdt deze
+  pagina in dezelfde vorm als de rest van het portaal. De wolkenfoto (static/cloud.jpg)
+  blijft daarmee ongebruikt; dat is geen verlies - het is een stockbeeld dat niets over ZAD
+  zegt, en de rest van dit portaal heeft nergens sierfoto's.
+#}
+{% macro kop() %}
+{{ page_head(
+    "Jij bouwt de applicatie. Wij de rest.",
+    "Zelfservice Applicatie Deployment (ZAD): van een eenvoudige statische website tot een
+     applicatie met een database, objectopslag en authenticatie. Je zet neer wat je nodig
+     hebt, en het platform regelt het voor je."
+) }}
+{% endmacro %}
+
+
+{#
+  Wat ZAD is, in twee alinea's.
+
+  De twee tellingen eronder komen uit de catalogus en niet uit een zin: "meer dan tien
+  diensten" is precies het soort belofte dat een jaar later niet meer klopt zonder dat
+  iemand het merkt.
+#}
+{% macro wat_het_is(aantal_zelf, aantal_achtergrond) %}
+<c-paragraph>
+    ZAD is een deploymentplatform op overheidsclouds. Het is zelfservice met extra service:
+    je beschrijft je project via click-ops of cli, en alles wordt voor je klaargezet. Behalve je applicatie,
+    die moet je natuurlijk wel zelf nog even bouwen.
+</c-paragraph>
+<c-paragraph>
+    De opzet is dat je in alle scenario's terechtkunt. Een statische site is een component
+    met een webadres eromheen. Een zwaardere integratie is datzelfde component plus een
+    database, een cache, opslag en een inlogvoorziening. Het verschil tussen die twee is
+    welke diensten je aanzet, niet welk platform je nodig hebt.
+</c-paragraph>
+
+{# <c-auto-grid> en GEEN <c-cluster>, en dat is gemeten. Een c-metric is een <a> met een
+   kaart erin; in een cluster kreeg hij breedte 0 - hij was 155 pixels hoog, stond in de
+   HTML compleet, en was op het scherm een lege strook onder de tekst. Zelfde soort val als
+   <c-stack> in een tabelcel. Beide bestaande plekken (bg/dashboard.html.j2 en
+   bg/project-context.html.j2) gebruiken dit raster met dezelfde minimumbreedte. #}
+<c-auto-grid min="200px" gap="md">
+    <c-metric icon="cylinder-split" value="{{ aantal_zelf }}" label="Diensten om te kiezen" />
+    <c-metric icon="gear" value="{{ aantal_achtergrond }}" label="Draaien altijd mee" />
+</c-auto-grid>
+{% endmacro %}
+
+
+{#
+  De puzzelgedachte. Overgenomen van de oude architectuurpagina ("Pieces of the Puzzle"),
+  omdat de eigenaar hem zelf ook gebruikt: de architectuurpuzzel is al opgelost, de
+  stukjes liggen op hun plek.
+#}
+{% macro de_puzzel() %}
+<c-paragraph>
+    De losse stukken zijn er meestal wel: ergens is een cluster, ergens een registry,
+    ergens een database. Wat ontbreekt is dat ze in elkaar passen. Dat gat vullen kost per
+    project opnieuw dezelfde puzzel: netwerk, secrets, certificaten, rechten, back-ups,
+    monitoring.
+</c-paragraph>
+<c-paragraph>
+    Die puzzel is hier al gelegd. Elk stukje ligt op zijn plaats, en wat jij toevoegt is je
+    applicatie. Zeg je dat je een database wilt, dan wordt die aangemaakt en staan de gegevens als omgevingsvariabelen in je
+    component, zonder dat je ze ergens overtypt.
+</c-paragraph>
+{% endmacro %}
+
+
+{#
+  Een raster met dienstkaarten, uit de catalogus. Een macro en geen herhaling, want hij
+  staat er twee keer: voor de diensten die je kiest en voor die welke altijd meedraaien.
+
+  Naam, technische naam en omschrijving zijn die van de dienst ZELF - zie
+  build_lotc_introductie in opi/web/lotc_switch.py. Er wordt hier niets hertaald: wat de
+  dienst over zichzelf zegt, is wat de pagina belooft.
+
+  De iconnaam gaat door | nldd_icon omdat hij uit GEGEVENS komt. Dat de Python-kant hem al
+  vertaald heeft maakt niet uit: to_nldd_icon laat een naam die hij niet kent ongemoeid,
+  dus het filter kan nooit kwaad, en de poort die dat bewaakt eist het hier terecht.
+#}
+{% macro dienstenraster(diensten) %}
+<c-columns columns="1" lg="2" gap="md">
+    {% for dienst in diensten %}
+        <c-catalog-card
+            icon="{{ dienst.icon | nldd_icon }}"
+            title="{{ dienst.label }}"
+            subtitle="{{ dienst.name }}">
+            <c-paragraph size="sm">{{ dienst.summary }}</c-paragraph>
+        </c-catalog-card>
+    {% endfor %}
+</c-columns>
+{% endmacro %}
+
+
+{#
+  Wat er meedraait zonder dat je erom vraagt.
+
+  De alinea onderaan gaat over twee dingen die GEEN dienst in de catalogus zijn en dus niet
+  uit de lijst komen: de nachtelijke afstemronde (features/auto-resource-tuning.md - een
+  nachtelijke sweep over de hele vloot, geheugen en CPU) en de back-ups
+  (features/backup-system.md en features/scheduled-backups.md - PVC's, databases en
+  buckets naar S3-opslag buiten het cluster, versleuteld met een sleutel per project, in te
+  plannen per deployment). Beide claims staan daar zo, en nergens anders vandaan.
+#}
+{% macro op_de_achtergrond(diensten) %}
+<c-paragraph>
+    Een platform dat alleen uitrolt en daarna wegkijkt, laat het echte werk alsnog bij jou
+    liggen. Deze diensten kijken mee zodra je applicatie draait.
+</c-paragraph>
+
+{{ dienstenraster(diensten) }}
+
+<c-paragraph>
+    Daarbovenop draait er 's nachts een ronde over de hele vloot die het geheugen en de CPU
+    van elk component bijstelt op wat het echt gebruikt, en maakt het platform back-ups van
+    schijven, databases en buckets naar opslag buiten het cluster, versleuteld met een
+    sleutel per project en in te plannen per deployment.
+</c-paragraph>
+{% endmacro %}
+
+
+{#
+  De voorgrond. Alles wat hier genoemd wordt bestaat als tabblad of pagina: de toestand en
+  de deployments, de metingen over de tijd (bg/_deployment-metrics.html.j2), de logs
+  (bg/_log-viewer.html.j2), de taken (bg/_tasks.html.j2) en de back-ups
+  (bg/_backup-snapshots.html.j2). Er staat bewust geen opsomming van schermen bij: die
+  veroudert, en wie hier is heeft ze nog niet gezien.
+#}
+{% macro op_de_voorgrond() %}
+<c-paragraph>
+    Alles wat het platform weet over je project staat op een plek bij elkaar. Je ziet per
+    deployment de toestand, het geheugen- en CPU-gebruik over de tijd, de logs van je pods,
+    de lopende taken en de gemaakte back-ups. Wat misgaat wordt in gewone taal gemeld, niet
+    als een statuscode die je zelf moet opzoeken.
+</c-paragraph>
+{% endmacro %}
+
+
+{#
+  De CLI en de Actions.
+
+  De links wijzen naar de REPOSITORIES en niet naar /cli en /actions. Die twee pagina's
+  dragen @requires_sso, dus vanaf hier zou je op het inlogscherm uitkomen - en de
+  repository is bovendien waar de actuele documentatie staat, dezelfde afweging die
+  bg/cli.html.j2 zelf maakt.
+#}
+{% macro gereedschap() %}
+<c-paragraph>
+    Wat je hier aanklikt, kun je ook geautomatiseerd doen. Beide gaan langs dezelfde API
+    als deze interface.
+</c-paragraph>
+
+<c-columns columns="1" md="2" gap="md">
+    <c-shortcut
+        icon="terminal"
+        title="zadctl"
+        desc="De opdrachtregel: projecten opvragen en aanmaken, images bijwerken, deployments verversen."
+        cta="Naar zad-cli"
+        href="https://github.com/RijksICTGilde/zad-cli" />
+    <c-shortcut
+        icon="chevron-left-forward-slash-chevron-right"
+        title="ZAD Actions"
+        desc="GitHub Actions die je image bijwerken vanuit je eigen pijplijn, en PR-omgevingen weer opruimen."
+        cta="Naar zad-actions"
+        href="https://github.com/RijksICTGilde/zad-actions" />
+</c-columns>
+{% endmacro %}
+
+{% macro aan_de_slag() %}
+<c-paragraph>
+    Inloggen gaat met je organisatieaccount. Heb je nog geen toegang tot een project, dan
+    kan iemand uit dat project je een uitnodiging sturen.
+</c-paragraph>
+<c-action-group align="start">
+    <c-button type="primary" label="Inloggen" icon="chevron-right" show-icon="after" href="/auth/login" />
+    <c-button type="secondary" label="Over het platform" href="/about" />
+</c-action-group>
+{% endmacro %}

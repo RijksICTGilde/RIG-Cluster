@@ -8,7 +8,6 @@ to drive multi-step edit flows within the modal.
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -17,19 +16,30 @@ from fastapi.responses import HTMLResponse
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.core.templates import get_templates
-from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
+from opi.core.templates_lotc import templates_lotc
+from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
-from opi.forms.visualizers.flows import get_flow
+from opi.forms.visualizers.flows import (
+    flow_context_from_base,
+    get_flow,
+    parse_indexed_flow_id,
+)
 from opi.forms.visualizers.wizard_sections import (
     EDIT_SECTIONS,
     _extract_services,
 )
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.forms.wizard.mutation import apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
     resolve_active_sections,
+)
+from opi.forms.wizard.save import apply_modal_edit
+from opi.forms.wizard.secrets import (
+    reachable_leaf_keys,
+    redact_unreachable_secrets,
 )
 from opi.forms.wizard.session import (
     clear_modal_state_by_token,
@@ -37,21 +47,23 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
+from opi.handlers.project_file_handler import extract_attachment_catalog
+from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
-from opi.services.project_store import get_project_store
+from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
-from opi.web.project_edit_security import (
-    apply_form_data_to_project,
-    require_project_edit_access,
-)
+from opi.web.lotc_switch import render_fragment
+from opi.web.navigation_lotc import to_nldd_icon
+from opi.web.project_edit_security import require_project_edit_access
 from opi.web.router_wizard import (
     _empty_sequence_item,
     _extract_section_data,
     _find_sequence_editable,
     _split_data_across_sections,
 )
+from opi.web.router_wizard_attachments import REPLACE_TARGET_KEY
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -107,9 +119,31 @@ detail_edit_router = APIRouter(prefix="/projects", tags=["detail-edit"])
 
 
 def _create_renderer() -> FormRenderer:
+    """De formulierrenderer voor dit verzoek.
+
+    De VOORBEREIDING per veldtype zit in de adapter en is bedrijfslogica - welke opties,
+    welke waarde, hoe een reeks wordt opgebouwd. Wat het componentensysteem bepaalt zijn
+    de sjablonen die het veld renderen. Precies zoals in ``opi/web/router_wizard.py``.
+    """
     return FormRenderer(
-        widget_adapter=ROOSWidgetAdapter(),
+        widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
+    )
+
+
+def _progress_fragment(request: Request, context: dict[str, Any]) -> str:
+    """Het voortgangsfragment van de dialoog, in de weergave die dit verzoek koos.
+
+    EEN render, aan beide kanten. Er gaat met opzet geen ``process_components`` overheen:
+    het fragment is een sjabloonbestand, dus zijn componenttags zijn al bij het compileren
+    vervangen. Een tweede slag zou de gerenderde HTML nog eens als Jinja lezen, en een
+    stapnaam of subtaaknaam met ``{{ ... }}`` erin zou dan uitgevoerd worden in plaats van
+    getoond. Zie ``render_progress_fragment`` in ``opi/web/task_progress.py``.
+    """
+    return render_fragment(
+        request,
+        template="bg/_modal-wizard-progress-fragment.html.j2",
+        context=context,
     )
 
 
@@ -136,10 +170,14 @@ def _render_section_html(
         locked_services: Service names that should be visually marked as existing.
             Passed via ``_locked_services`` key in yaml_data so ``render_service_cards`` can
             indicate them. No longer prevents unchecking.
+
+    De adapter rendert meteen af, dus deze string mag NIET nog een keer door een
+    sjabloonrender: hij draagt wat iemand in het formulier heeft getypt, en dat hoort geen
+    Jinja te worden. Zie ``opi/web/router_user_admin.py``, waar dezelfde keuze staat.
     """
     # Check guard before rendering fields
     if section.guard is not None and not section.guard(yaml_data):
-        return f'<c-alert kind="info">{section.guard_message}</c-alert>'
+        return templates_lotc.env.get_template("bg/_modal-guard.html.j2").render({"message": section.guard_message})
 
     renderer = _create_renderer()
     if not section.layout:
@@ -151,12 +189,10 @@ def _render_section_html(
         yaml_data=yaml_data,
         layout=section.layout,
         errors=errors,
+        # Constant here, not a re-derivation of ``state.is_edit``: every route in this
+        # module takes ``project_name`` from the path, so the base always exists.
         edit_mode=True,
     )
-    templates = get_templates()
-    process_components_filter = templates.env.filters.get("process_components")
-    if process_components_filter is not None:
-        html = str(process_components_filter(html))
     return html
 
 
@@ -192,32 +228,22 @@ def _is_backup_restore_flow(flow_id: str) -> bool:
 
 
 def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[str, Any]:
-    """Extract flow builder context from wizard state.
+    """What the flow builder for *flow_id* needs from this wizard session.
 
-    Deployment edit flows need ``component_count`` so the sequence
-    enforces a max-items limit matching the number of project components.
-    Component add flows need ``is_new`` so the name field is editable.
+    Each flow family declares that for itself (see ``INDEXED_FLOWS``); this
+    only hands it the session's template data.
     """
-    if not state or not state.template_data:
+    if not state:
         return {}
-    if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
-        components = state.template_data.get("components", [])
-        return {"component_count": len(components)}
-    if flow_id.startswith("modal-edit-component-") and state.template_data.get("is_new"):
-        return {"is_new": True}
-    if flow_id == "modal-restore":
-        # The new deployment index = total deployments - 1 (the appended empty slot)
-        deployments = state.template_data.get("deployments", [])
-        return {"deployment_index": len(deployments) - 1}
-    return {}
+    return flow_context_from_base(flow_id, state.base_data)
 
 
 def _fully_owned_list_keys(flow: Any) -> set[str]:
     """Top-level list keys that an editable fully owns (bare yaml_path, no index).
 
-    Such keys must not be duplicated into ``state.template_data`` because
+    Such keys must not be duplicated into ``state.base_data`` because
     ``step_data`` already carries the authoritative list; a shadow copy in
-    template_data causes ``get_merged_data`` to silently retain items that
+    base_data causes ``get_merged_data`` to silently retain items that
     the user removed (merge-by-index never shrinks).
 
     Indexed paths like ``deployments[0]/name`` are *not* fully owned — those
@@ -233,35 +259,28 @@ def _fully_owned_list_keys(flow: Any) -> set[str]:
     return owned
 
 
-def _pad_sparse_submission(body: dict[str, Any], flow_id: str, section_id: str = "") -> dict[str, Any]:
+def _pad_at(body: dict[str, Any], key: str, target_idx: int) -> dict[str, Any]:
+    """Re-pad *body*'s *key* list so its single item sits at *target_idx*."""
+    items = body.get(key)
+    if isinstance(items, list) and len(items) >= 1 and target_idx > 0:
+        return {**body, key: [{} for _ in range(target_idx)] + items}
+    return body
+
+
+def _pad_sparse_submission(body: dict[str, Any], flow: FormFlow, section_id: str = "") -> dict[str, Any]:
     """Pad sparse arrays collapsed by json-enc's cleanArrays.
 
-    Single-item edit flows (component-N, deployment-N, domain-N) produce
-    form fields at a specific array index (e.g. ``components[1]/name``).
-    json-enc's ``cleanArrays`` collapses ``{"1": {...}}`` into ``[{...}]``,
-    losing the original index.  This re-pads the array so that
-    ``get_value`` finds data at the correct position.
+    Single-item edit flows produce form fields at a specific array index
+    (e.g. ``components[1]/name``). json-enc's ``cleanArrays`` collapses
+    ``{"1": {...}}`` into ``[{...}]``, losing the original index. This
+    re-pads the array so that ``get_value`` finds data at the correct
+    position.
 
-    Uses flow_id first; falls back to section_id for flows like
-    modal-restore where the index is in the section, not the flow.
+    Uses the flow's declared target; falls back to section_id for flows like
+    modal-restore, where the index sits in the section, not on the flow.
     """
-    # Try flow_id first (most flows encode the index there)
-    for prefix, key in [
-        ("modal-edit-component-", "components"),
-        ("modal-edit-deployment-", "deployments"),
-        ("modal-edit-domain-", "deployments"),
-        ("modal-add-deployment-", "deployments"),
-        ("modal-edit-backup-schedule-", "deployments"),
-    ]:
-        if flow_id.startswith(prefix):
-            suffix = flow_id.removeprefix(prefix)
-            if suffix.isdigit():
-                target_idx = int(suffix)
-                items = body.get(key)
-                if isinstance(items, list) and len(items) >= 1 and target_idx > 0:
-                    padded = [{} for _ in range(target_idx)] + items
-                    return {**body, key: padded}
-            break
+    if flow.target is not None:
+        return _pad_at(body, flow.target.list_key, flow.target.index)
 
     # Fall back to section_id (e.g. "add-deployment-info-1" → deployments index 1)
     for prefix, key in [
@@ -272,11 +291,7 @@ def _pad_sparse_submission(body: dict[str, Any], flow_id: str, section_id: str =
         if section_id.startswith(prefix):
             suffix = section_id.removeprefix(prefix)
             if suffix.isdigit():
-                target_idx = int(suffix)
-                items = body.get(key)
-                if isinstance(items, list) and len(items) >= 1 and target_idx > 0:
-                    padded = [{} for _ in range(target_idx)] + items
-                    return {**body, key: padded}
+                return _pad_at(body, key, int(suffix))
             break
 
     return body
@@ -298,70 +313,6 @@ def _strip_attachment_content(project_data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(att, dict):
             att.pop("content", None)
     return data
-
-
-def _detect_list_target(flow_id: str, state: Any) -> tuple[str, int, bool] | None:
-    """Detect if a flow targets a single item in a list.
-
-    Returns (list_key, index, is_new) or None for non-list flows.
-    """
-    for prefix, list_key in [
-        ("modal-edit-component-", "components"),
-        ("modal-edit-deployment-", "deployments"),
-        ("modal-add-deployment-", "deployments"),
-        ("modal-edit-domain-", "deployments"),
-        ("modal-edit-backup-schedule-", "deployments"),
-    ]:
-        if flow_id.startswith(prefix):
-            suffix = flow_id.removeprefix(prefix)
-            if suffix.isdigit():
-                idx = int(suffix)
-                is_new = prefix == "modal-add-deployment-" or (
-                    prefix == "modal-edit-component-" and state and (state.template_data or {}).get("is_new", False)
-                )
-                return list_key, idx, is_new
-    return None
-
-
-def _apply_list_item_merge(
-    existing_data: dict[str, Any],
-    merged_data: dict[str, Any],
-    list_key: str,
-    idx: int,
-    is_new: bool,
-) -> None:
-    """Merge a single list item into the existing project data.
-
-    For add: appends the new item to the list.
-    For edit: updates the item at the given index in-place, preserving
-    fields the form didn't touch (e.g. readonly ``name``).
-
-    A plain ``dict.update`` cannot express a deleted key, so a field the
-    user cleared (dropped from *item_data*) would otherwise be resurrected
-    from the existing item. ``item_data`` therefore carries ``CLEARED_FIELD``
-    tombstones for such fields (the caller builds *merged_data* with
-    ``strip_cleared=False``); after merging we drop the tombstoned keys.
-    """
-    import copy
-
-    from opi.forms.wizard.state import _strip_cleared_fields
-
-    source_list = merged_data.get(list_key)
-    if not isinstance(source_list, list) or idx >= len(source_list):
-        return
-
-    item_data = copy.deepcopy(source_list[idx])
-    existing_list = existing_data.setdefault(list_key, [])
-
-    if is_new:
-        _strip_cleared_fields(item_data)
-        existing_list.append(item_data)
-    elif idx < len(existing_list) and isinstance(existing_list[idx], dict):
-        existing_list[idx].update(item_data)
-        _strip_cleared_fields(existing_list[idx])
-    elif idx < len(existing_list):
-        _strip_cleared_fields(item_data)
-        existing_list[idx] = item_data
 
 
 def _seed_components_for_new_deployment(state: Any, dep_idx: int) -> None:
@@ -448,7 +399,6 @@ def _render_modal_step(
     # Flatten the per-field warnings into a plain message list for the banner.
     warning_messages = [msg for msgs in (warnings or {}).values() for msg in msgs]
 
-    templates = get_templates()
     context = {
         "request": request,
         "steps": steps,
@@ -464,39 +414,47 @@ def _render_modal_step(
         "step_target": "#edit-section-inner",
         "step_push_url": False,
         "step_query_params": "",
+        # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-sjablonen hebben de
+        # NLDD-woordenschat nodig. Het roos-sjabloon raakt dit niet aan.
+        "nldd_icon": to_nldd_icon,
     }
-    rendered = templates.get_template("wizard/modal_wizard_step.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-    return rendered
+    return render_fragment(
+        request,
+        template="bg/_modal-wizard-step.html.j2",
+        context=context,
+    )
 
 
-_DEPLOYMENT_FLOW_RE = re.compile(r"^modal-(?:edit|add)-(?:deployment|domain)-(\d+)$")
+def _targeted_deployment_name(flow: FormFlow, project_data: dict[str, Any]) -> str | None:
+    """The name of the deployment this flow writes to, if it targets one.
 
-
-def _extract_deployment_name_from_flow(flow_id: str, project_data: dict[str, Any]) -> str | None:
-    """Extract the targeted deployment name from a deployment-scoped flow_id.
-
-    Returns the deployment name if the flow targets a specific deployment,
-    or None for project-wide flows (components, services, etc.).
+    Returns None for project-wide flows (components, services, etc.), which
+    process the whole project rather than one deployment.
     """
-    match = _DEPLOYMENT_FLOW_RE.match(flow_id)
-    if not match:
+    target = flow.target
+    if target is None or target.list_key != "deployments":
         return None
-    index = int(match.group(1))
     deployments = project_data.get("deployments", [])
-    if index < len(deployments):
-        name = deployments[index].get("name")
+    if target.index < len(deployments):
+        name = deployments[target.index].get("name")
         if name:
             return name
     return None
 
 
 async def _start_deployment(
-    request: Request, project_name: str, result_yaml: dict[str, Any], deployment_name: str | None = None
+    request: Request,
+    project_name: str,
+    result_yaml: dict[str, Any],
+    deployment_name: str | None = None,
+    base_version: str | None = None,
 ) -> str:
-    """Create a V2 async task for deployment processing. Returns task_id."""
+    """Create a V2 async task for deployment processing. Returns task_id.
+
+    ``base_version`` is the project-file version the wizard was seeded from. The task
+    writes the whole file, so without it a change that landed while the user was
+    editing is silently overwritten; with it the store merges the two.
+    """
     from opi.core.task_helpers import create_async_task
     from opi.utils.yaml_util import dump_yaml_to_string
 
@@ -507,7 +465,12 @@ async def _start_deployment(
         task_type="create_project",
         project_name=project_name,
         deployment_name=deployment_name,
-        payload={"project_name": project_name, "yaml_content": yaml_content, "deployment_name": deployment_name},
+        payload={
+            "project_name": project_name,
+            "yaml_content": yaml_content,
+            "deployment_name": deployment_name,
+            "base_version": base_version,
+        },
         max_attempts=1,
     )
     return str(task["task_id"])
@@ -583,37 +546,44 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
     project_data = project.data or {}
 
-    # Pass context to dynamic flow builders (e.g. component_count for deployment edit)
-    flow_context: dict[str, Any] = {}
-    if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
-        flow_context["component_count"] = len(project_data.get("components", []))
+    # What the flow builder needs, declared by the flow family itself.
+    flow_context: dict[str, Any] = dict(flow_context_from_base(flow_id, project_data))
 
-    # When adding a new component, ensure the components list has the target slot
-    if flow_id.startswith("modal-edit-component-"):
-        from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
+    indexed = parse_indexed_flow_id(flow_id)
+    if indexed is not None:
+        kind, idx = indexed
 
-        idx = int(flow_id.removeprefix("modal-edit-component-"))
-        components = list(project_data.get("components", []))
-        if idx >= len(components):
-            flow_context["is_new"] = True
-            while len(components) <= idx:
-                components.append(_empty_sequence_item(COMPONENTS_SEQUENCE))
-            project_data = {**project_data, "components": components}
+        # A component flow opened past the end of the list is an add: make the
+        # slot the form writes into.
+        if kind.targets_new_item_when_missing:
+            from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 
-    # When adding a new deployment (or restoring to a new one), append an
-    # empty slot so the form targets that slot instead of an existing deployment.
-    if flow_id.startswith("modal-add-deployment-") or flow_id == "modal-restore":
+            items = list(project_data.get(kind.list_key, []))
+            if idx >= len(items):
+                flow_context["is_new"] = True
+                while len(items) <= idx:
+                    items.append(_empty_sequence_item(COMPONENTS_SEQUENCE))
+                project_data = {**project_data, kind.list_key: items}
+
+        # An add flow always writes into a fresh slot at the end of the list.
+        if kind.appends_new_item:
+            from opi.core.config import settings
+
+            items = list(project_data.get(kind.list_key, []))
+            idx = len(items)
+            items.append({"cluster": settings.CLUSTER_MANAGER})
+            project_data = {**project_data, kind.list_key: items}
+            flow_id = f"{kind.prefix}{idx}"
+
+    # Restoring into a new deployment appends the same kind of slot, but the
+    # index travels as builder context: the flow id carries no index.
+    if flow_id == "modal-restore":
         from opi.core.config import settings
 
         deployments = list(project_data.get("deployments", []))
-        idx = len(deployments)
+        flow_context["deployment_index"] = len(deployments)
         deployments.append({"cluster": settings.CLUSTER_MANAGER})
         project_data = {**project_data, "deployments": deployments}
-
-        if flow_id.startswith("modal-add-deployment-"):
-            flow_id = f"modal-add-deployment-{idx}"
-        else:
-            flow_context["deployment_index"] = idx
 
     flow = get_flow(flow_id, **flow_context)
 
@@ -626,7 +596,22 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # id/filename are needed to display the catalog, and carrying the encrypted blocks
     # bloats the disk-backed session. The content is re-attached from the stored project
     # at save (PreserveAttachmentContentHook).
-    step_data = _split_data_across_sections(flow, _strip_attachment_content(project_data))
+    #
+    # Then drop every other encrypted value this flow cannot edit, so the disk-backed
+    # session stops carrying (and writing back) secrets no step touches. Derived from the
+    # flow's own editables rather than a field list -- see opi.forms.wizard.secrets.
+    session_data = _strip_attachment_content(project_data)
+    keep_keys = reachable_leaf_keys([ed for section in flow.sections for ed in section.editables])
+    session_data, redacted_paths = redact_unreachable_secrets(session_data, keep_keys)
+    if redacted_paths:
+        logger.debug(
+            "Flow %s cannot edit %d encrypted value(s); kept out of the session: %s",
+            flow_id,
+            len(redacted_paths),
+            ", ".join(redacted_paths),
+        )
+
+    step_data = _split_data_across_sections(flow, session_data)
 
     # Resolve active sections with pre-filled data.
     # For single-section edit flows the section's visibility lambda may not
@@ -652,6 +637,12 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     state.locked_services = _extract_services(project_data)
     state.populate_virt_mappings(flow.sections)
 
+    # Record which version of the project file this form is showing. It travels with
+    # the eventual save so the edit is applied as a change on top of that version --
+    # otherwise the full file written back at the end silently reverts anything that
+    # landed while the user was in the wizard.
+    state.base_version = await get_project_store().version_of(f"projects/{project_name}.yaml")
+
     # The full project data is the domain object — providers and converters
     # use it to resolve context (e.g. deployment name from path, component
     # services, etc.).  Step data merges on top during get_merged_data().
@@ -659,26 +650,31 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # Editables whose yaml_path points *directly* at a top-level list (e.g.
     # USERS_SEQUENCE at "users", COMPONENTS_SEQUENCE at "components") fully
     # own that list — step_data already carries the complete value. Keeping
-    # a copy in template_data would cause get_merged_data's merge-by-index
+    # a copy in base_data would cause get_merged_data's merge-by-index
     # to silently retain items the user removed in the UI.
     owned = _fully_owned_list_keys(flow)
-    state.template_data = {k: v for k, v in project_data.items() if k not in owned}
-    state.template_data["_wizard_token"] = wizard_token
+    # ``session_data``, not ``project_data``: base_data is persisted to disk like
+    # step_data is, so it needs the same attachment strip and secret redaction. It read
+    # from the raw project before, which left the encrypted blocks in the session even
+    # though step_data had been stripped of them.
+    state.base_data = {k: v for k, v in session_data.items() if k not in owned}
+    state.base_data["_wizard_token"] = wizard_token
 
-    # Store is_new flag so _detect_list_target can distinguish add vs edit
-    if flow_id.startswith("modal-edit-component-") and flow_context.get("is_new"):
-        state.template_data["is_new"] = True
+    # Remember that this was an add: the flow is rebuilt from its id on later
+    # requests, and only the session knows the item did not exist yet.
+    if flow_context.get("is_new"):
+        state.base_data["is_new"] = True
         existing_components = (project.data or {}).get("components", [])
-        state.template_data["existing_component_names"] = [
+        state.base_data["existing_component_names"] = [
             c.get("name") for c in existing_components if isinstance(c, dict) and c.get("name")
         ]
 
     # Add-deployment and restore flows need existing names for uniqueness validation
-    if flow_id.startswith("modal-add-deployment-") or flow_id == "modal-restore":
+    if (indexed is not None and indexed[0].appends_new_item) or flow_id == "modal-restore":
         existing_deployments = (project.data or {}).get("deployments", [])
         existing_names = [d.get("name") for d in existing_deployments if isinstance(d, dict) and d.get("name")]
-        state.template_data["existing_deployment_names"] = existing_names
-        state.template_data["_original_deployment_names"] = existing_names
+        state.base_data["existing_deployment_names"] = existing_names
+        state.base_data["_original_deployment_names"] = existing_names
 
     # Inject backup/restore context (cluster deployments) for manual backup/restore flows
     if _is_backup_restore_flow(flow_id):
@@ -689,7 +685,25 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
             cluster_deps = backup_context.get("_cluster_deployments", [])
             if any(d.get("name") == requested_dep for d in cluster_deps):
                 backup_context["_selected_deployment"] = requested_dep
-        state.template_data.update(backup_context)
+        state.base_data.update(backup_context)
+
+    # Vervangen: the dialog was opened at one specific attachment, and from here on that is
+    # the session's business rather than the request's. The upload endpoints check every
+    # id they are handed against this value, so a form that shows the id fixed and a POST
+    # that sends a different one get the same answer. Same shape as the two above:
+    # template-only, no editable names it, so it stays out of the saved project.
+    requested_replace = request.query_params.get("replace", "").strip()
+    if requested_replace:
+        if flow_id != "modal-edit-attachments" or requested_replace not in extract_attachment_catalog(project_data):
+            raise HTTPException(status_code=404, detail=f"Bijlage '{requested_replace}' bestaat niet in dit project")
+        state.base_data[REPLACE_TARGET_KEY] = requested_replace
+
+    # Cross-domain-access needs the list of authorized peer projects; the same builder the
+    # create wizard uses, so the two flows cannot drift apart again. Populated only for flows
+    # that carry its section. Template-only: no editable names it, so it falls outside the
+    # write set and never reaches the saved project.
+    if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
+        state.base_data.update(build_cross_domain_context(project_name, _user_email))
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
@@ -770,7 +784,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     if seq_action in ("add", "remove"):
         yaml_data = state.get_merged_data()
         processor = EditableFormProcessor()
-        padded_body = _pad_sparse_submission(body, flow_id, section_id)
+        padded_body = _pad_sparse_submission(body, flow, section_id)
         merged, _err = await processor.process_json_submission(
             padded_body,
             section.editables,
@@ -804,7 +818,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
-    submitted_data = _pad_sparse_submission(body, flow_id, section_id)
+    submitted_data = _pad_sparse_submission(body, flow, section_id)
 
     # Re-render only (preview update, e.g. service checkbox toggled) — process
     # the submission to get merged data but skip validation so newly-visible
@@ -830,6 +844,10 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
+    # Waarschuwingen van deze stap, die meereizen naar de volgende: ze houden de navigatie
+    # niet tegen, maar mogen ook niet verdwijnen zodra je doorklikt.
+    section_warnings: dict[str, list[str]] = {}
+
     # Backup/restore sections have no editables - store raw form data directly
     if _is_backup_restore_flow(flow_id) and not section.editables:
         state.store_step_data(section_id, submitted_data)
@@ -839,12 +857,12 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         processor = EditableFormProcessor()
         yaml_data = state.get_merged_data()
 
-        # Build enforcer context from template_data (e.g. existing names for uniqueness)
+        # Build enforcer context from base_data (e.g. existing names for uniqueness)
         enforcer_ctx: dict[str, Any] = {"project_name": project_name}
-        if state.template_data and "existing_deployment_names" in state.template_data:
-            enforcer_ctx["existing_deployment_names"] = state.template_data["existing_deployment_names"]
-        if state.template_data and "existing_component_names" in state.template_data:
-            enforcer_ctx["existing_component_names"] = state.template_data["existing_component_names"]
+        if state.base_data and "existing_deployment_names" in state.base_data:
+            enforcer_ctx["existing_deployment_names"] = state.base_data["existing_deployment_names"]
+        if state.base_data and "existing_component_names" in state.base_data:
+            enforcer_ctx["existing_component_names"] = state.base_data["existing_component_names"]
 
         submitted_yaml, errors = await processor.process_json_submission(
             submitted_data,
@@ -860,18 +878,16 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # call in the create wizard.
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
 
-        # Auto-add service dependencies
-        if section_id == "services-edit" and isinstance(submitted_yaml.get("services"), list):
-            from opi.services.services import ServiceAdapter
-
-            submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
+        # Verzoen de dienstselectie met de basis (zie apply_services_mutation). Dit hing aan
+        # de sectienaam "services-edit": elke andere flow met een dienstenlijst kreeg geen
+        # aanvulling, en dat is dezelfde fout als 94478afb, een laag verderop.
+        apply_services_mutation(section.editables, yaml_data, submitted_yaml)
 
         # Run section-level enforcer (cross-field validation). Capture warnings
         # too: without a field_warnings dict a FieldWarning (e.g. a subdomain that
         # is "op aanvraag") is silently swallowed — invisible to the user AND to
         # the logs, which makes a stuck wizard impossible to diagnose.
         section_global_errors: list[str] = []
-        section_warnings: dict[str, list[str]] = {}
         if not errors and section.enforcer:
             section_global_errors = await processor.enforce_sections(
                 submitted_yaml,
@@ -881,7 +897,15 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
                 field_warnings=section_warnings,
             )
 
-        if errors or section_global_errors or section_warnings:
+        # ALLEEN fouten houden de stap tegen. Een waarschuwing informeert, en hield hier
+        # de navigatie tegen: bij een eigen domein op een cluster dat er geen certificaat
+        # voor kan aanvragen kwam er geen enkele fout, alleen een FieldWarning -- en dus
+        # bleef je op dezelfde stap staan zonder dat iets vertelde waarom, want een
+        # waarschuwing rendert als gewone tekst en niet als foutmelding. Precies de
+        # "vastzittende wizard" die de toelichting hierboven wilde kunnen diagnosticeren.
+        # De waarschuwing gaat mee naar de volgende stap, want dat is waar je er iets aan
+        # doet: in deze flow is dat de certificaatstap.
+        if errors or section_global_errors:
             # Log why the step did not advance so it is diagnosable from Loki, not
             # just from the (previously missing) on-screen message.
             logger.warning(
@@ -913,8 +937,16 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         state.store_step_data(section_id, section_data)
         state.mark_completed(section_id)
 
-    # Re-resolve active sections (services may add/remove conditional steps)
-    active_section_ids = resolve_active_section_ids(flow, state.step_data)
+    # Re-resolve active sections (services may add/remove conditional steps).
+    # Single-section modal flows bypass resolution, exactly as modal_wizard_init does:
+    # a service-config section's ``visible`` lambda reads the real ``services`` list, but
+    # the modal's step_data only carries the virtual ``_services-config`` key, so resolution
+    # would deem the section inactive and stash_inactive_sections would drop the data we just
+    # stored -- reverting the whole save. The edit button already guaranteed visibility.
+    if len(flow.sections) == 1:
+        active_section_ids = [flow.sections[0].section_id]
+    else:
+        active_section_ids = resolve_active_section_ids(flow, state.step_data)
     state.active_sections = active_section_ids
     state.stash_inactive_sections(active_section_ids)
 
@@ -949,13 +981,30 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         yaml_data = state.get_merged_data()
 
         step_html = _render_section_html(next_section, yaml_data, locked_services=None)
-        rendered = _render_modal_step(request, wizard_token, state, flow_id, next_section, step_html, project_name)
+        rendered = _render_modal_step(
+            request,
+            wizard_token,
+            state,
+            flow_id,
+            next_section,
+            step_html,
+            project_name,
+            warnings=section_warnings or None,
+        )
         return HTMLResponse(content=rendered)
 
     # All steps completed - show review if flow requires it
     if flow.show_review:
         save_modal_state_by_token(wizard_token, state)
-        return _render_modal_review(request, wizard_token, project_name, flow_id, active_sections, state)
+        return _render_modal_review(
+            request,
+            wizard_token,
+            project_name,
+            flow_id,
+            active_sections,
+            state,
+            field_warnings=section_warnings or None,
+        )
 
     # No review needed - do the final submit
     save_modal_state_by_token(wizard_token, state)
@@ -1013,8 +1062,8 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     selected = request.query_params.get("deployment_name", "")
-    if state.template_data:
-        state.template_data["_selected_deployment"] = selected
+    if state.base_data:
+        state.base_data["_selected_deployment"] = selected
         save_modal_state_by_token(wizard_token, state)
 
     flow = get_flow("modal-backup")
@@ -1041,8 +1090,8 @@ async def restore_select_mode(request: Request, project_name: str) -> HTMLRespon
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     restore_mode = request.query_params.get("restore_mode", "existing")
-    if state.template_data:
-        state.template_data["_restore_mode"] = restore_mode
+    if state.base_data:
+        state.base_data["_restore_mode"] = restore_mode
 
     _enrich_restore_target_context(state)
     save_modal_state_by_token(wizard_token, state)
@@ -1062,16 +1111,24 @@ def _attachment_review_items(yaml_data: dict, state) -> list[str]:
     The attachments section is a TemplatePartial whose staged uploads live in the
     wizard session (not yet in the YAML), so _build_section_fields finds nothing.
     Surface both here so the user sees the upload they just made before saving.
+
+    A staged replacement carries an id that is already in the catalog, and it is what the
+    save is going to write. Listing the stored line for that id would show the user the
+    file they are on their way to overwrite, so the replacement takes its place.
     """
+    staged = getattr(state, "staged_attachments", None) or {}
     items: list[str] = []
     seen: set[str] = set()
     for service in yaml_data.get("services", []):
         if isinstance(service, dict) and isinstance(service.get("attachments"), dict):
             for entry in service["attachments"].get("data", []) or []:
                 if isinstance(entry, dict) and entry.get("id"):
-                    items.append(f"{entry.get('filename', entry['id'])} ({entry['id']})")
+                    replacement = staged.get(entry["id"]) if staged.get(entry["id"], {}).get("replace") else None
+                    if replacement is not None:
+                        items.append(f"{replacement.get('filename', entry['id'])} ({entry['id']}, vervangen)")
+                    else:
+                        items.append(f"{entry.get('filename', entry['id'])} ({entry['id']})")
                     seen.add(entry["id"])
-    staged = getattr(state, "staged_attachments", None) or {}
     for att_id, info in staged.items():
         if att_id not in seen:
             items.append(f"{info.get('filename', att_id)} ({att_id})")
@@ -1086,8 +1143,15 @@ def _render_modal_review(
     active_sections,
     state,
     global_errors: list[str] | None = None,
+    field_warnings: dict[str, list[str]] | None = None,
 ) -> HTMLResponse:
-    """Render the review/confirmation page for the modal wizard."""
+    """Render the review/confirmation page for the modal wizard.
+
+    ``field_warnings`` carries the warnings raised by the step that was just submitted.
+    A warning informs and does not block, so on every intermediate step it travels along
+    to the next step -- but the LAST step has no next step, and the warning fell on the
+    floor exactly there, on the screen where the user decides to confirm.
+    """
     from opi.web.router_wizard import _build_section_fields
 
     yaml_data = state.get_merged_data()
@@ -1113,6 +1177,10 @@ def _render_modal_review(
 
     warnings: list[str] = []
 
+    # Warnings from the final step, which has no next step to carry them to
+    for messages in (field_warnings or {}).values():
+        warnings.extend(messages)
+
     # Restore flows: warn that restoring may break the running application
     if flow_id == "modal-restore":
         warnings.append(
@@ -1135,9 +1203,10 @@ def _render_modal_review(
                 "en andere resources worden gemarkeerd voor verwijdering."
             )
 
-    templates = get_templates()
-    rendered = templates.get_template("wizard/modal_wizard_review.html.j2").render(
-        {
+    rendered = render_fragment(
+        request,
+        template="bg/_modal-wizard-review.html.j2",
+        context={
             "request": request,
             "steps": steps,
             "flow_id": flow_id,
@@ -1147,11 +1216,9 @@ def _render_modal_review(
             "action_label": "Bevestigen en verwerken",
             "warnings": warnings,
             "global_errors": global_errors or [],
-        }
+            "nldd_icon": to_nldd_icon,
+        },
     )
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
     return HTMLResponse(content=rendered)
 
 
@@ -1181,34 +1248,16 @@ async def _modal_do_submit(
 
     # Determine post-save action
     action = _determine_flow_action(flow, active_sections)
-    templates = get_templates()
 
     # Backup/restore flows skip project file modification
     if action in ("trigger_backup", "trigger_restore"):
-        return await _handle_backup_restore_submit(
-            request, wizard_token, project_name, flow_id, action, state, templates
-        )
+        return await _handle_backup_restore_submit(request, wizard_token, project_name, flow_id, action, state)
 
     # Merge all step data. Keep CLEARED_FIELD tombstones (strip_cleared=False)
-    # so the dict.update-based merge into the stored project (which cannot
-    # express a deleted key) can honor cleared fields; _apply_list_item_merge
-    # and the defensive strip below remove the tombstones before save.
+    # so the merge into the stored project (which cannot express a deleted key
+    # by absence) can honor cleared fields; ``apply_modal_edit`` removes the
+    # tombstones before the result is saved.
     merged_data = state.get_merged_data(strip_cleared=False)
-
-    # Collect editables for hook execution and the late transient strip.
-    # Transients are intentionally preserved on merged_data here so that
-    # PRE_SAVE hooks (e.g. SubdomainRequestHook reading ``_request-subdomain``)
-    # see them after the list-item merge into ``existing_data``.
-    all_editables = [ed for section in active_sections for ed in section.editables]
-
-    # Strip template-only keys: template_data provides context for rendering
-    # and validation (e.g. config for AGE decryption, existing_deployment_names
-    # for uniqueness checks) but should not overwrite existing project data.
-    # JSON session round-trip also strips ruamel.yaml types (LiteralScalarString).
-    step_produced_keys = {k for sd in state.step_data.values() for k in sd}
-    template_only_keys = set(state.template_data or {}) - step_produced_keys
-    for key in template_only_keys:
-        merged_data.pop(key, None)
 
     # Merge with existing project data (preserve system-managed fields)
     project = get_project_store().get(project_name)
@@ -1227,11 +1276,10 @@ async def _modal_do_submit(
             request,
             project_manager,
             project_name,
-            flow_id,
+            flow,
             wizard_token,
             merged_data,
             active_sections,
-            all_editables,
             state,
         )
     finally:
@@ -1242,9 +1290,15 @@ async def _modal_do_submit(
     logger.info("Project %s updated via modal wizard (flow=%s)", project_name, flow_id)
 
     if action == "process_project":
-        # Extract targeted deployment name from flow_id when editing a specific deployment
-        target_deployment_name = _extract_deployment_name_from_flow(flow_id, existing_data)
-        task_id = await _start_deployment(request, project_name, existing_data, deployment_name=target_deployment_name)
+        # A flow that declares a deployment target deploys only that deployment
+        target_deployment_name = _targeted_deployment_name(flow, existing_data)
+        task_id = await _start_deployment(
+            request,
+            project_name,
+            existing_data,
+            deployment_name=target_deployment_name,
+            base_version=state.base_version,
+        )
         if target_deployment_name:
             logger.info(
                 "Starting targeted deployment for %s/%s (task=%s, flow=%s)",
@@ -1256,22 +1310,22 @@ async def _modal_do_submit(
         else:
             logger.info("Starting full project processing for %s (task=%s, flow=%s)", project_name, task_id, flow_id)
 
-        rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
-            {"task_id": task_id, "project_name": project_name}
+        rendered = render_fragment(
+            request,
+            template="bg/_modal-wizard-progress.html.j2",
+            context={"task_id": task_id, "project_name": project_name},
         )
-        process_components = templates.env.filters.get("process_components")
-        if process_components:
-            rendered = str(process_components(rendered))
 
         clear_modal_state_by_token(wizard_token)
         return HTMLResponse(content=rendered)
 
     # save_only
     clear_modal_state_by_token(wizard_token)
-    rendered = templates.get_template("wizard/modal_wizard_success.html.j2").render({})
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
+    rendered = render_fragment(
+        request,
+        template="bg/_modal-wizard-success.html.j2",
+        context={},
+    )
 
     # Run after_save hooks (fire-and-forget)
     for section in active_sections:
@@ -1288,11 +1342,10 @@ async def _process_and_save_modal_edit(
     request: Request,
     project_manager: ProjectManager,
     project_name: str,
-    flow_id: str,
+    flow: FormFlow,
     wizard_token: str | None,
     merged_data: dict,
     active_sections,
-    all_editables,
     state,
 ) -> tuple[dict, HTMLResponse | None]:
     """Read, merge the modal-edit form into the project, and persist it.
@@ -1307,138 +1360,44 @@ async def _process_and_save_modal_edit(
     # Capture existing attachments' encrypted content before the form merge: the wizard
     # strips it from the session (see _strip_attachment_content), so it is re-attached at
     # save by PreserveAttachmentContentHook keyed by id.
-    from opi.handlers.project_file_handler import extract_attachment_catalog
-
     original_attachment_content = {
         att_id: entry.get("content")
         for att_id, entry in extract_attachment_catalog(existing_data).items()
         if isinstance(entry, dict) and entry.get("content")
     }
 
-    # Targeted list merge for flows that operate on a single list item.
-    # Instead of replacing the entire list, we add or update one entry.
-    list_target = _detect_list_target(flow_id, state)
-    if list_target:
-        list_key, idx, is_new = list_target
-        _apply_list_item_merge(existing_data, merged_data, list_key, idx, is_new)
-        merged_data.pop(list_key, None)
-
-        # New deployments need system-managed fields that the form doesn't
-        # collect. Copy cluster/namespace/repository from an existing deployment
-        # or fall back to sensible defaults.
-        if list_key == "deployments" and is_new:
-            deployments = existing_data.get("deployments", [])
-            if deployments and isinstance(deployments[-1], dict):
-                new_dep = deployments[-1]
-                # Find an existing deployment to copy system fields from
-                existing_dep = next(
-                    (d for d in deployments[:-1] if isinstance(d, dict)),
-                    None,
-                )
-                new_dep.setdefault("namespace", project_name)
-                if existing_dep:
-                    for field in ("cluster", "repository"):
-                        if field in existing_dep and field not in new_dep:
-                            new_dep[field] = existing_dep[field]
-
-    existing_data = apply_form_data_to_project(existing_data, merged_data)
-
-    # Run post_merge hooks (e.g. distribute component refs to deployments)
-    for section in active_sections:
-        if section.post_merge:
-            section.post_merge(existing_data, merged_data)
-
-    # Compute derived values (e.g. issuer from base-domain)
-    processor = EditableFormProcessor()
-    for section in active_sections:
-        processor.apply_dependent_generators(section.editables, existing_data)
-
-    # PRE_SAVE hooks: run while transients are still available so that hooks
-    # such as SubdomainRequestHook can read ``_request-subdomain`` and append
-    # the corresponding entry to ``domains.allowed-subdomains``. Mirrors the
-    # equivalent block in router_wizard.py.
-    from opi.forms.editables.editable import Editable, FormState, WidgetType
-    from opi.forms.editables.hooks import (
-        PreserveAttachmentContentHook,
-        ResolveAttachmentsHook,
-        StripTransientsHook,
-    )
-    from opi.forms.editables.lifecycle import run_hooks
-    from opi.forms.editables.resolvers import build_resolver_map
-    from opi.forms.visualizers.visualizer import EditableVisualizer
-
-    strip_hook_editable = EditableVisualizer(
-        editable=Editable(
-            yaml_path="_system/strip-transients",
-            hooks={FormState.PRE_SAVE: StripTransientsHook(all_editables)},
-        ),
-        widget=WidgetType.HIDDEN,
-        label="",
-    )
-    # Resolve any files staged during this modal session into the encrypted catalog.
-    # The project AGE key is present in existing_data here, so the hook can encrypt.
-    attachments_hook_editable = EditableVisualizer(
-        editable=Editable(
-            yaml_path="_system/resolve-attachments",
-            hooks={FormState.PRE_SAVE: ResolveAttachmentsHook()},
-        ),
-        widget=WidgetType.HIDDEN,
-        label="",
-    )
-    # Re-attach existing attachments' content stripped from the wizard session.
-    preserve_attachments_hook_editable = EditableVisualizer(
-        editable=Editable(
-            yaml_path="_system/preserve-attachment-content",
-            hooks={FormState.PRE_SAVE: PreserveAttachmentContentHook()},
-        ),
-        widget=WidgetType.HIDDEN,
-        label="",
-    )
-    hook_context = {
-        "project_name": project_name,
-        "resolvers": build_resolver_map(all_editables),
-        "staged_attachments": state.staged_attachments or {},
-        "original_attachment_content": original_attachment_content,
-    }
-    await run_hooks(
-        FormState.PRE_SAVE,
-        [
-            *all_editables,
-            attachments_hook_editable,
-            preserve_attachments_hook_editable,
-            strip_hook_editable,
-        ],
+    existing_data = await apply_modal_edit(
         existing_data,
-        hook_context,
+        merged_data,
+        flow=flow,
+        active_sections=active_sections,
+        state=state,
+        project_name=project_name,
+        original_attachment_content=original_attachment_content,
     )
-
-    # Defensive: ensure any transients not stripped by the PRE_SAVE chain
-    # are still removed before save.
-    for section in active_sections:
-        processor.strip_transients_from(existing_data, section.editables)
-
-    # Ensure AGE-encrypted multiline values use literal block scalars
-    from opi.web.router_wizard import _apply_literal_scalars
-
-    _apply_literal_scalars(existing_data)
-
-    # Defensive: drop any CLEARED_FIELD tombstones that survived the merges
-    # above (e.g. via the top-level apply_form_data_to_project path) so they
-    # never reach the saved project file.
-    from opi.forms.wizard.state import _strip_cleared_fields
-
-    _strip_cleared_fields(existing_data)
 
     # Save through the single validated path: schema + structural integrity
     # validation, canonical dumper, commit + push, and cache refresh in one shot.
     # A validation failure (e.g. pre-existing structural drift surfaced by the
     # full-project check) is returned to the caller as a review re-render.
+    #
+    # ConflictError hoort in dezelfde rij. Hij komt uit de compare-and-swap als er
+    # tijdens het bewerken iemand anders in hetzelfde onderdeel schreef, en draagt zelf
+    # de uitleg voor de gebruiker mee. Zonder deze regel viel hij door naar buiten als
+    # een kale 500: gemeten in de reallife-doorloop van RC-112, waar een API-patch en
+    # een verwijdering in de componenten-modal elkaar op hetzelfde bestand raakten.
     try:
-        await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow_id})")
-    except (ProjectSchemaError, ProjectIntegrityError) as e:
-        logger.warning("Modal wizard save rejected by validation for %s (flow=%s): %s", project_name, flow_id, e)
+        await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow.flow_id})")
+    except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
+        logger.warning(
+            "Modal wizard save rejected for %s (flow=%s, %s): %s",
+            project_name,
+            flow.flow_id,
+            type(e).__name__,
+            e,
+        )
         return existing_data, _render_modal_review(
-            request, wizard_token, project_name, flow_id, active_sections, state, global_errors=[str(e)]
+            request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
         )
     return existing_data, None
 
@@ -1450,7 +1409,6 @@ async def _handle_backup_restore_submit(
     flow_id: str,
     action: str,
     state,
-    templates,
 ) -> HTMLResponse:
     """Handle backup/restore wizard submission via the async task queue."""
     from opi.core.async_task_service import TaskType
@@ -1509,8 +1467,8 @@ async def _handle_backup_restore_submit(
             target_deployment = merged_data.get("target_deployment", "")
 
         backup_items = []
-        if state.template_data:
-            for run in state.template_data.get("_backup_runs", []):
+        if state.base_data:
+            for run in state.base_data.get("_backup_runs", []):
                 if run.get("backup_run_id") == backup_run_id:
                     backup_items = run.get("items", [])
                     source_deployment = run.get("deployment_name", "")
@@ -1545,12 +1503,12 @@ async def _handle_backup_restore_submit(
             create_new_deployment,
         )
 
-    rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
-        {"task_id": task_id, "project_name": project_name}
+    # Rendered once on purpose -- see render_progress_fragment in opi/web/task_progress.py.
+    rendered = render_fragment(
+        request,
+        template="bg/_modal-wizard-progress.html.j2",
+        context={"task_id": task_id, "project_name": project_name},
     )
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
 
     clear_modal_state_by_token(wizard_token)
     return HTMLResponse(content=rendered)
@@ -1566,7 +1524,6 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
     from opi.core.task_helpers import get_task_service
     from opi.web.router import _v2_task_to_template_context
 
-    templates = get_templates()
     task_service = get_task_service(request)
     task = await task_service.get_task(task_id)
 
@@ -1580,21 +1537,17 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
             "status": "failed",
             "error": "Taak niet gevonden",
         }
-        rendered = templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
-        process_components = templates.env.filters.get("process_components")
-        if process_components:
-            rendered = str(process_components(rendered))
-        return HTMLResponse(content=rendered)
+        return HTMLResponse(content=_progress_fragment(request, context))
 
     context = _v2_task_to_template_context(task, project_name)
     context["task_id"] = task_id
 
-    rendered = templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-
-    return HTMLResponse(content=rendered)
+    # Rendered once on purpose. The fragment is a template file, so the component
+    # extension already replaced its <c-...> tags at compile time; a second pass with
+    # ``process_components`` would parse the rendered HTML as a Jinja template again,
+    # and a step or deployment name carrying ``{{ ... }}`` would be executed instead of
+    # shown. Same reason as render_progress_fragment in opi/web/task_progress.py.
+    return HTMLResponse(content=_progress_fragment(request, context))
 
 
 async def _build_backup_restore_context_async(
@@ -1730,7 +1683,7 @@ def _enrich_restore_target_context(state) -> None:
     Called before rendering the restore-target step so the template knows
     which deployment the backup originated from.
     """
-    if not state.template_data:
+    if not state.base_data:
         return
 
     # Get backup_run_id from step 1 (restore-select)
@@ -1740,9 +1693,9 @@ def _enrich_restore_target_context(state) -> None:
         return
 
     # Find matching run in _backup_runs
-    for run in state.template_data.get("_backup_runs", []):
+    for run in state.base_data.get("_backup_runs", []):
         if run.get("backup_run_id") == backup_run_id:
-            state.template_data["_source_deployment"] = run.get("deployment_name", "")
+            state.base_data["_source_deployment"] = run.get("deployment_name", "")
             break
 
 

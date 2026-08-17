@@ -1,0 +1,69 @@
+{# Unified attachments list: existing catalog entries (removable, applied on save) plus
+   files staged this session (removable via unstage). Swapped into #wiz-att-list. #}
+{% if error %}
+{# De TEKST hoort in de melding. De automatische omzetting liet content= vallen, en dan
+   staat er een lege rode balk waar de reden hoort te staan. #}
+<c-alert type="error">{{ error }}</c-alert>
+{% endif %}
+{% set ns = namespace(items=[]) %}
+{% for s in services | default([]) %}
+  {% if s is mapping and s.attachments is mapping %}
+    {% for e in s.attachments.data | default([]) %}{% set ns.items = ns.items + [e] %}{% endfor %}
+  {% endif %}
+{% endfor %}
+{% if ns.items or (staged | default([])) %}
+<c-layout-flow gap="sm">
+    {% for att in ns.items %}
+    <c-card padding="sm" background-color="grijs-050" outline="true">
+        <div class="attachment-row">
+            <div><strong>{{ att.filename | default(att.id) }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }})</span></div>
+            {# Zie attachments_upload.html.j2: de htmx-bedrading gaat via :attrs, want een
+               componenttag laat een los hx-attribuut niet door. #}
+            {% set verwijderen_attrs = {
+                'hx-post': '/forms/wizard/' ~ (flow_id if flow_id is defined and flow_id else 'create-project') ~ '/attachments/remove-existing/' ~ att.id,
+                'hx-ext': 'ignore:json-enc',
+                'hx-include': '#wiz-att-token',
+                'hx-target': '#wiz-att-list',
+                'hx-swap': 'innerHTML',
+                'hx-disabled-elt': 'this',
+            } %}
+            <c-button type="secondary" size="sm" label="Verwijderen" :attrs="verwijderen_attrs"/>
+        </div>
+    </c-card>
+    {% endfor %}
+    {% for att in staged | default([]) %}
+    <c-card padding="sm" background-color="grijs-050" outline="true">
+        <div class="attachment-row">
+            {# Een vervanging staat naast de regel die hij overschrijft, en dan zegt "nog
+               niet opgeslagen" alleen de helft: het lijkt een tweede bijlage met dezelfde
+               id. Bij een bestaande id staat er dus wat er bij het opslaan gebeurt. #}
+            <div><strong>{{ att.filename }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }}, {% if att.id in ns.items | map(attribute='id') | list %}vervangt de opgeslagen inhoud bij opslaan{% else %}nog niet opgeslagen{% endif %})</span></div>
+            {% set unstage_attrs = {
+                'hx-post': '/forms/wizard/' ~ (flow_id if flow_id is defined and flow_id else 'create-project') ~ '/attachments/unstage/' ~ att.id,
+                'hx-ext': 'ignore:json-enc',
+                'hx-include': '#wiz-att-token',
+                'hx-target': '#wiz-att-list',
+                'hx-swap': 'innerHTML',
+                'hx-disabled-elt': 'this',
+            } %}
+            <c-button type="secondary" size="sm" label="Verwijderen" :attrs="unstage_attrs"/>
+        </div>
+    </c-card>
+    {% endfor %}
+</c-layout-flow>
+{% else %}
+<p class="rvo-text--sm rvo-text--subtle"><em>Nog geen bijlagen.</em></p>
+{% endif %}
+{% if reset %}
+{# Out-of-band: clear the inputs and flash a success tick after a successful upload. #}
+<div id="wiz-att-id-field" hx-swap-oob="true">
+    {% include "wizard/partials/attachments_id_field.html.j2" %}
+</div>
+{# Moet tot in de klasse gelijk blijven aan het veld in attachments_upload.html.j2: deze
+   kopie VERVANGT dat veld (hx-swap-oob op de id), dus wat hier niet op staat, is na de
+   eerste upload weg. #}
+<input type="file" id="wiz-att-file" name="file" class="attachment-upload__file" hx-swap-oob="true">
+<div id="wiz-att-feedback" hx-swap-oob="true">
+    <span class="att-upload-ok"><c-icon icon="check-mark-circle" color="groen" size="sm"/>Geüpload</span>
+</div>
+{% endif %}

@@ -12,7 +12,7 @@ rules:
   # Tenant-namespace lifecycle: OPI creëert en label't tenant-namespaces.
   - apiGroups: [""]
     resources: [namespaces]
-    verbs: [create, get, list, patch]
+    verbs: [create, get, list, patch, delete]
   # Secrets cluster-breed: OPI plaatst SOPS-age-keys en Keycloak-secrets per
   # tenant-ns; delete voor key-rotation (zie project_manager._ensure_sops_secret).
   - apiGroups: [""]
@@ -25,9 +25,13 @@ rules:
   # Prometheus/kubelet scrape endpoints.
   - nonResourceURLs: [/metrics, /metrics/cadvisor]
     verbs: [get]
-  # Deploy-status + OOM watcher leest deployments.
+  # Deploy-status + OOM watcher leest deployments. De watcher leest ook replicasets:
+  # daarmee bepaalt hij de pod-template-hash van de HUIDIGE ReplicaSet, zodat een pod
+  # van een vervangen ReplicaSet niet meetelt. Zonder dat recht faalt die lookup met
+  # Forbidden en valt hij terug op "alle pods", wat een oude OOM-kill kan doorgeven
+  # aan het auto-tunen.
   - apiGroups: [apps]
-    resources: [deployments]
+    resources: [deployments, replicasets]
     verbs: [get, list]
   # Events voor deploy-progress en diagnostics.
   - apiGroups: [""]

@@ -5,9 +5,17 @@ so a dot-separated URL format could be paired with a dash-only domain (e.g.
 the ODCN cluster domain), producing an unreachable multi-label hostname.
 ProjectManager._enforce_domain_config reuses the same enforcer so the API
 enforces the same rule.
+
+"The same rule" includes the enforcer's distinction between an error and a warning. A
+``FieldWarning`` means "dit is op aanvraag" and is non-blocking in the wizard; the API
+used to collapse it into a refusal, which meant that asking for a domain through the API
+could only fail. It now lets the write through, so the request the caller needs actually
+gets made (see tests/test_publish_on_web_aanvraag_via_api.py).
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def _make_manager():
@@ -79,15 +87,21 @@ class TestEnforceDomainConfig:
             error = await pm._enforce_domain_config(data, "does-not-exist")
         assert error is None
 
-    async def test_unapproved_literal_base_domain_is_rejected(self):
-        """A literal base-domain (not the '__custom__' sentinel) that is neither a
-        cluster-supported domain nor approved for the project must be rejected.
+    async def test_unapproved_literal_base_domain_becomes_a_request(self):
+        """A literal base-domain that is neither cluster-supported nor approved for the
+        project is ON REQUEST -- which is not the same thing as invalid.
 
-        Regression guard: the approval gate used to fire only for '__custom__',
-        so an API upsert could set an arbitrary out-of-cluster domain that the
-        wizard would never allow. API callers cannot tick a request checkbox, so
-        the enforcer's non-blocking warning becomes a hard rejection here.
+        The approval gate must still FIRE for it: it used to fire only for the
+        '__custom__' sentinel, so an API upsert could set an arbitrary out-of-cluster
+        domain nobody ever looked at. That guard stays, and the enforcer still raises for
+        this domain -- but as the non-blocking ``FieldWarning`` it is in the wizard, so
+        the caller lands on the same request flow instead of on an error. What keeps the
+        domain from being USED meanwhile is not this gate but
+        ``apply_domain_approval_fallback`` (tests/test_domain_approval.py): an unapproved
+        domain publishes on the cluster address until an approver says otherwise.
         """
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
+
         pm = _make_manager()
         data = _project("component-deployment-project", "evil.example.org")
         with (
@@ -95,8 +109,14 @@ class TestEnforceDomainConfig:
             patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
         ):
             error = await pm._enforce_domain_config(data, "productie")
-        assert error is not None
-        assert "evil.example.org" in error
+
+            # Het is geen fout, maar het gaat ook niet ongemerkt langs: de enforcer ziet
+            # het domein wel degelijk, en zegt er "op aanvraag" over.
+            with pytest.raises(FieldWarning) as raised:
+                await DomainConfigEnforcer(deployment_index=0).enforce(data, {"project_name": "demo"})
+
+        assert error is None
+        assert "evil.example.org" in str(raised.value)
 
     async def test_approved_project_domain_is_allowed(self):
         """A literal base-domain that the project has approved passes the gate."""
@@ -160,7 +180,15 @@ class TestEnforceDomainConfig:
         assert error is None
 
     async def test_explicit_restricted_domain_subdomain_still_requires_approval(self):
-        """The subdomain-approval gate still fires for an EXPLICITLY chosen restricted domain."""
+        """The subdomain-approval gate still fires for an EXPLICITLY chosen restricted domain.
+
+        Same correction as the domain case above: firing means "op aanvraag", which the
+        API now turns into a request rather than into a refusal. The gate itself must keep
+        firing -- a restricted domain whose subdomains nobody checks is the whole reason
+        it is restricted.
+        """
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
+
         pm = _make_manager()
         data = {
             "name": "regel-k4c",
@@ -178,5 +206,9 @@ class TestEnforceDomainConfig:
             patch("opi.forms.editables.enforcers.get_subdomain_status", return_value=None),
         ):
             error = await pm._enforce_domain_config(data, "pr797")
-        assert error is not None
-        assert "pr797" in error
+
+            with pytest.raises(FieldWarning) as raised:
+                await DomainConfigEnforcer(deployment_index=0).enforce(data, {"project_name": "regel-k4c"})
+
+        assert error is None
+        assert "pr797" in str(raised.value)

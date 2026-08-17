@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
-from asyncpg import UniqueViolationError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy.exc import IntegrityError
+from starlette.responses import Response
 
-if TYPE_CHECKING:
-    from starlette.responses import Response
-
-from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.database_pools import get_database_pool
-from opi.core.templates import get_templates
-from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
+from opi.core.auth_decorators import require_platform_admin, requires_sso
+from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.user_editables import USER_SECTION
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.services.user_admin_service import UserAdminService
 from opi.services.user_service import get_user_service
 from opi.utils.csrf import ensure_csrf_token
@@ -34,24 +30,12 @@ user_admin_router = APIRouter(prefix="/admin/users", tags=["user-admin"])
 
 
 def _get_service() -> UserAdminService:
-    pool = get_database_pool("main")
-    return UserAdminService(pool)
-
-
-def _require_admin(request: Request) -> dict:
-    """Return the current user dict or raise 403 if not an admin."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Niet ingelogd")
-    email = user.get("email", "").lower()
-    if not get_user_service().is_platform_admin(email):
-        raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
-    return user
+    return UserAdminService()
 
 
 def _create_renderer() -> FormRenderer:
     return FormRenderer(
-        widget_adapter=ROOSWidgetAdapter(),
+        widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
     )
 
@@ -61,8 +45,14 @@ def _render_form_html(
     errors: dict | None = None,
     edit_mode: bool = False,
 ) -> str:
-    """Render the user form fields HTML from editables."""
+    """Render the user form fields HTML from editables.
+
+    De adapter rendert meteen af, ook de stapel eromheen (``render_flow``), dus die string
+    mag NIET nog een keer door een sjabloonrender: hij draagt wat iemand in het formulier
+    heeft getypt, en dat hoort geen Jinja te worden.
+    """
     renderer = _create_renderer()
+
     html = renderer.render_fields_from_editables(
         editables=USER_SECTION.editables,
         yaml_data=data,
@@ -70,11 +60,39 @@ def _render_form_html(
         errors=errors,
         edit_mode=edit_mode,
     )
-    templates = get_templates()
-    process_components = templates.env.filters.get("process_components")
-    if process_components is not None:
-        html = str(process_components(html))
     return html
+
+
+def _user_form_response(
+    request: Request,
+    user: dict,
+    page_heading: str,
+    form_action: str,
+    data: dict,
+    errors: dict | None = None,
+    edit_mode: bool = False,
+) -> Response:
+    """Het gebruikersformulier, in de weergave die dit verzoek krijgt.
+
+    Alle vijf de plekken die dit formulier tonen (aanmaken, bewerken, en de drie keer dat
+    het met fouten terugkomt) lopen hierlangs, zodat de keuze tussen de twee weergaven op
+    een plek staat en niet vijf keer meegeschreven hoeft te worden.
+    """
+    from opi.web.lotc_switch import build_lotc_admin, render
+
+    return render(
+        request,
+        template="bg/admin-user-form.html.j2",
+        context={
+            "request": request,
+            "menu_items": get_menu_items(user),
+            "page_heading": page_heading,
+            "form_action": form_action,
+            "form_html": _render_form_html(data=data, errors=errors, edit_mode=edit_mode),
+            "csrf_token": ensure_csrf_token(request),
+            **build_lotc_admin(user=user, current_path="/admin/users"),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -84,49 +102,44 @@ def _render_form_html(
 
 @user_admin_router.get("", response_class=HTMLResponse)
 @requires_sso
-async def list_users(request: Request) -> HTMLResponse:
+async def list_users(request: Request) -> Response:
     """List all platform users."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
     service = _get_service()
     users = await service.list_users()
 
-    templates = get_templates()
     csrf_token = ensure_csrf_token(request)
 
     success_message = request.query_params.get("success")
 
-    return templates.TemplateResponse(
-        "admin/users.html.j2",
-        {
+    # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py.
+    from opi.web.lotc_switch import build_lotc_admin, render
+
+    return render(
+        request,
+        template="bg/admin-users.html.j2",
+        context={
             "request": request,
             "menu_items": get_menu_items(user),
             "users": users,
             "csrf_token": csrf_token,
             "success_message": success_message,
+            **build_lotc_admin(user=user, current_path="/admin/users"),
         },
     )
 
 
 @user_admin_router.get("/create", response_class=HTMLResponse)
 @requires_sso
-async def create_user_form(request: Request) -> HTMLResponse:
+async def create_user_form(request: Request) -> Response:
     """Show the create user form."""
-    user = _require_admin(request)
-    form_html = _render_form_html(data={})
-
-    templates = get_templates()
-    csrf_token = ensure_csrf_token(request)
-
-    return templates.TemplateResponse(
-        "admin/user-form.html.j2",
-        {
-            "request": request,
-            "menu_items": get_menu_items(user),
-            "page_heading": "Gebruiker toevoegen",
-            "form_action": "/admin/users/create",
-            "form_html": form_html,
-            "csrf_token": csrf_token,
-        },
+    user = require_platform_admin(request)
+    return _user_form_response(
+        request,
+        user,
+        page_heading="Gebruiker toevoegen",
+        form_action="/admin/users/create",
+        data={},
     )
 
 
@@ -134,7 +147,7 @@ async def create_user_form(request: Request) -> HTMLResponse:
 @requires_sso
 async def create_user_submit(request: Request) -> Response:
     """Process the create user form."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
     form_data = await request.form()
     submitted = dict(form_data)
 
@@ -148,19 +161,13 @@ async def create_user_submit(request: Request) -> Response:
     )
 
     if errors:
-        form_html = _render_form_html(data=submitted, errors=errors)
-        templates = get_templates()
-        csrf_token = ensure_csrf_token(request)
-        return templates.TemplateResponse(
-            "admin/user-form.html.j2",
-            {
-                "request": request,
-                "menu_items": get_menu_items(user),
-                "page_heading": "Gebruiker toevoegen",
-                "form_action": "/admin/users/create",
-                "form_html": form_html,
-                "csrf_token": csrf_token,
-            },
+        return _user_form_response(
+            request,
+            user,
+            page_heading="Gebruiker toevoegen",
+            form_action="/admin/users/create",
+            data=submitted,
+            errors=errors,
         )
 
     service = _get_service()
@@ -170,21 +177,15 @@ async def create_user_submit(request: Request) -> Response:
             email=new_email,
             full_name=result.get("full_name", "").strip(),
         )
-    except UniqueViolationError:
+    except IntegrityError:
         errors = {"email": ["Er bestaat al een gebruiker met dit e-mailadres"]}
-        form_html = _render_form_html(data=submitted, errors=errors)
-        templates = get_templates()
-        csrf_token = ensure_csrf_token(request)
-        return templates.TemplateResponse(
-            "admin/user-form.html.j2",
-            {
-                "request": request,
-                "menu_items": get_menu_items(user),
-                "page_heading": "Gebruiker toevoegen",
-                "form_action": "/admin/users/create",
-                "form_html": form_html,
-                "csrf_token": csrf_token,
-            },
+        return _user_form_response(
+            request,
+            user,
+            page_heading="Gebruiker toevoegen",
+            form_action="/admin/users/create",
+            data=submitted,
+            errors=errors,
         )
 
     # Sync: add new email to the in-memory allowlist
@@ -198,29 +199,21 @@ async def create_user_submit(request: Request) -> Response:
 
 @user_admin_router.get("/{user_id}/edit", response_class=HTMLResponse)
 @requires_sso
-async def edit_user_form(request: Request, user_id: str) -> HTMLResponse:
+async def edit_user_form(request: Request, user_id: str) -> Response:
     """Show the edit user form, pre-filled."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
     service = _get_service()
     existing = await service.get_user(user_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
 
-    form_html = _render_form_html(data=existing, edit_mode=True)
-
-    templates = get_templates()
-    csrf_token = ensure_csrf_token(request)
-
-    return templates.TemplateResponse(
-        "admin/user-form.html.j2",
-        {
-            "request": request,
-            "menu_items": get_menu_items(user),
-            "page_heading": "Gebruiker bewerken",
-            "form_action": f"/admin/users/{user_id}/edit",
-            "form_html": form_html,
-            "csrf_token": csrf_token,
-        },
+    return _user_form_response(
+        request,
+        user,
+        page_heading="Gebruiker bewerken",
+        form_action=f"/admin/users/{user_id}/edit",
+        data=existing,
+        edit_mode=True,
     )
 
 
@@ -228,7 +221,7 @@ async def edit_user_form(request: Request, user_id: str) -> HTMLResponse:
 @requires_sso
 async def edit_user_submit(request: Request, user_id: str) -> Response:
     """Process the edit user form."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
     service = _get_service()
     existing = await service.get_user(user_id)
     if not existing:
@@ -246,19 +239,14 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
     )
 
     if errors:
-        form_html = _render_form_html(data=submitted, errors=errors, edit_mode=True)
-        templates = get_templates()
-        csrf_token = ensure_csrf_token(request)
-        return templates.TemplateResponse(
-            "admin/user-form.html.j2",
-            {
-                "request": request,
-                "menu_items": get_menu_items(user),
-                "page_heading": "Gebruiker bewerken",
-                "form_action": f"/admin/users/{user_id}/edit",
-                "form_html": form_html,
-                "csrf_token": csrf_token,
-            },
+        return _user_form_response(
+            request,
+            user,
+            page_heading="Gebruiker bewerken",
+            form_action=f"/admin/users/{user_id}/edit",
+            data=submitted,
+            errors=errors,
+            edit_mode=True,
         )
 
     old_email = existing.get("email", "")
@@ -269,21 +257,16 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
             email=new_email,
             full_name=result.get("full_name", "").strip(),
         )
-    except UniqueViolationError:
+    except IntegrityError:
         errors = {"email": ["Er bestaat al een gebruiker met dit e-mailadres"]}
-        form_html = _render_form_html(data=submitted, errors=errors, edit_mode=True)
-        templates = get_templates()
-        csrf_token = ensure_csrf_token(request)
-        return templates.TemplateResponse(
-            "admin/user-form.html.j2",
-            {
-                "request": request,
-                "menu_items": get_menu_items(user),
-                "page_heading": "Gebruiker bewerken",
-                "form_action": f"/admin/users/{user_id}/edit",
-                "form_html": form_html,
-                "csrf_token": csrf_token,
-            },
+        return _user_form_response(
+            request,
+            user,
+            page_heading="Gebruiker bewerken",
+            form_action=f"/admin/users/{user_id}/edit",
+            data=submitted,
+            errors=errors,
+            edit_mode=True,
         )
 
     if not updated:
@@ -305,7 +288,7 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
 @requires_sso
 async def delete_user(request: Request, user_id: str) -> Response:
     """Delete a user."""
-    _require_admin(request)
+    require_platform_admin(request)
     service = _get_service()
 
     # Get email before deleting so we can remove from allowlist

@@ -1,0 +1,117 @@
+{#
+  Projectdetails, herontworpen in bg-vorm.
+
+  De rijkste pagina van de applicatie, en in de vertaalde versie ook de langste: alles
+  onder elkaar in tabbladen van honderden regels. Hier is het een samenstelling:
+  kerncijfers bovenaan, en daaronder per onderwerp een kaart met een kopregel.
+
+  Dat is meer dan een andere indeling. Op de oude pagina moet je scrollen om te weten wat
+  een project IS; hier staat dat in vier tegels, en de rest is verdieping. Dat is precies
+  waar bg zijn kaarten en tegels voor gebruikt.
+
+  De gegevens komen uit een voorbeeldprojectbestand dat door dezelfde helpers loopt als
+  een echt project (opi/web/lotc_fixtures.py), dus wat hier staat is wat de applicatie
+  zou tonen.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}{{ project.display_name }} - Projectdetails{% endblock %}
+
+{% block content %}
+    {{ page_head("{{ project.display_name }}", "{{ project.description }}") }}
+
+    <c-cluster gap="sm">
+        <c-button type="secondary" label="Bewerken" icon="pencil-on-square" show-icon="before" />
+        <c-button type="secondary" label="Uitrollen" icon="arrow-up-arrow-down" show-icon="before" />
+    </c-cluster>
+
+    <c-auto-grid min="200px" gap="md">
+        <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
+        <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" />
+        <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
+        <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Services" />
+    </c-auto-grid>
+
+    <c-columns columns="1" lg="2" gap="lg">
+        {% call panel("Componenten", "rectangle-stack") %}
+<c-stack gap="sm">
+                {% for component in project.components %}
+                    <c-layer
+                        icon="rectangle-stack"
+                        title="{{ component.name }}"
+                        count="{{ component.type }}"
+                        sub="poorten: {{ component.ports.inbound | join(', ') if component.ports else 'geen' }}">
+                        {% for service in component.services or [] %}
+                            <c-chip>{{ service }}</c-chip>
+                        {% endfor %}
+                    </c-layer>
+                {% endfor %}
+            </c-stack>
+        {% endcall %}
+
+        {% call panel("Deployments", "arrow-up-arrow-down") %}
+<c-stack gap="sm">
+                {% for deployment in project.deployments %}
+                    <c-layer
+                        icon="arrow-up-arrow-down"
+                        title="{{ deployment.name }}"
+                        count="{{ deployment.components | length }} componenten"
+                        sub="{{ deployment.cluster }} / {{ deployment.namespace }}">
+                        {% for entry in deployment.components %}
+                            <c-chip>{{ entry.reference }}</c-chip>
+                        {% endfor %}
+                    </c-layer>
+                {% endfor %}
+            </c-stack>
+        {% endcall %}
+    </c-columns>
+
+    <c-columns columns="1" lg="2" gap="lg">
+        {% call panel("Team", "person-2") %}
+<c-stack gap="sm">
+                {% for member in project.users %}
+                    <c-layer icon="person" title="{{ member.email }}" count="{{ member.role }}" sub="lid van dit project" />
+                {% endfor %}
+            </c-stack>
+        {% endcall %}
+
+        {% call panel("Sleutels", "lock-closed") %}
+<c-stack gap="sm">
+                <c-paragraph size="sm">
+                    Afgeschermd getoond. Dit is de component die LOTC nog niet heeft en die
+                    ZAD tijdelijk zelf levert.
+                </c-paragraph>
+                <c-detail-list>
+                    <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
+                    <c-detail-item label="Publieke sleutel" value="{{ project.config['age-public-key'] | default('-', true) | truncate(28) }}" />
+                </c-detail-list>
+                <c-secret-field value="{{ project.config['api-key'] | default('', true) }}" show-copy="true" />
+            </c-stack>
+        {% endcall %}
+    </c-columns>
+
+    {% call panel("Repositories", "chevron-left-forward-slash-chevron-right") %}
+{# NLDD maakt van een tabel een CSS-grid, en zonder het columns-attribuut valt
+           alles in een kolom en stapelen de cellen - dat is geen bug maar de manier
+           waarop nldd-table werkt. Onder RVO is het een native tabel die vanzelf
+           uitlijnt, dus daar zou columns niet nodig zijn; dat verschil is precies wat
+           hier misging.
+
+           En let op: c-table-head IS de kopregel. Er hoort geen c-table-row in. #}
+        <c-table columns="1fr 3fr 1fr">
+            <c-table-head>
+                <c-th>Naam</c-th>
+                <c-th>URL</c-th>
+                <c-th>Branch</c-th>
+            </c-table-head>
+            {% for repository in project.repositories %}
+                <c-table-row>
+                    <c-td>{{ repository.name }}</c-td>
+                    <c-td>{{ repository.url }}</c-td>
+                    <c-td>{{ repository.branch | default('-', true) }}</c-td>
+                </c-table-row>
+            {% endfor %}
+        </c-table>
+    {% endcall %}
+{% endblock %}

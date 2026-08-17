@@ -1,0 +1,10 @@
+{#
+  Kolom voor de LOTC-bouwlijn. c-layout-column heet in lotc-layout c-stack.
+
+  De breedte (size="md-4") gaat niet mee: lotc-layout regelt breedte via de omhullende
+  grid en niet via een maat op de kolom zelf. Ze staat als data-attribuut op het element
+  zodat zichtbaar blijft wat de bedoeling was zolang de indeling nog schuift.
+#}
+<c-stack :class="column.css_class or none" :attrs="dict(column.attributes or {}, **{'data-column-width': column.width|string})">
+    {{ child_html }}
+</c-stack>

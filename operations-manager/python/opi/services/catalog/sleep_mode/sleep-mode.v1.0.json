@@ -1,0 +1,83 @@
+{
+  "additionalProperties": false,
+  "description": "Sleep-mode config for a project, after the cluster default is merged in.\n\nThis doubles as the runtime object callers use: ``matches(name)`` answers whether\na deployment is in scope, and the parsed durations drive the deadlines.",
+  "properties": {
+    "description": {
+      "default": "",
+      "description": "Explanatory text shown on the waker page.",
+      "title": "Description",
+      "type": "string"
+    },
+    "enabled": {
+      "default": false,
+      "description": "Whether sleep-mode is active for this project.",
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "match": {
+      "description": "Which deployments are in scope, by name: an exact name, 'prefix*' (starts with) or '*suffix' (ends with). Anything else is refused.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Match",
+      "type": "array"
+    },
+    "sleep-after-deploy": {
+      "default": "48h",
+      "description": "How long a deployment stays awake after being deployed before it is put to sleep, as a compact duration (48h, 90m, 30s, 2d).",
+      "title": "Sleep-After-Deploy",
+      "type": "string"
+    },
+    "sleep-after-wake": {
+      "default": "1h",
+      "description": "How long a deployment stays awake after being woken, same duration format.",
+      "title": "Sleep-After-Wake",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Heading on the waker page; the deployment name when left out.",
+      "title": "Title"
+    },
+    "wake-mode": {
+      "default": "confirm",
+      "description": "What the waker does with a visitor: 'auto' wakes on the first browser GET, 'confirm' shows a button first, 'manual' only informs.",
+      "enum": [
+        "auto",
+        "confirm",
+        "manual"
+      ],
+      "title": "Wake-Mode",
+      "type": "string"
+    },
+    "waker": {
+      "default": true,
+      "description": "Run a small waker pod in front of a sleeping deployment so a visitor can wake it. Off means only an admin can wake it, via the portal or the API.",
+      "title": "Waker",
+      "type": "boolean"
+    },
+    "waker-component": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Which component the waker answers for; by default the deployment's root component.",
+      "title": "Waker-Component"
+    }
+  },
+  "title": "SleepModeConfig",
+  "type": "object"
+}

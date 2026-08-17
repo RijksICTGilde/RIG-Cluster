@@ -11,6 +11,11 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
+#: One line of a section summary: a label and the value shown next to it. Both are
+#: plain text -- the summary builders escape them and put the tags around them.
+SummaryItem = tuple[str, str]
+
+
 @dataclass
 class FormSection:
     """Groups related editables into a logical UI section (tab or wizard step).
@@ -24,11 +29,23 @@ class FormSection:
     title: str
     icon: str | None = None
     description: str | None = None
+    #: Template with the service's own explanation, shown behind a question mark next
+    #: to the heading. A service already declares this on its ServiceDefinition; the
+    #: section is stamped with it where the sections are collected, so no service has
+    #: to remember it and the config screen explains itself like the service card does.
+    help_template: str | None = None
     editables: list[EditableVisualizer] = field(default_factory=list)
     layout: LayoutElement | list[LayoutElement | str] | None = None
     visible: bool | Callable[[dict[str, Any]], bool] = True
     is_readonly: bool = False
-    summary_fn: Callable[[dict[str, Any]], str] | None = None
+    summary_fn: Callable[[dict[str, Any]], list[SummaryItem]] | None = None
+    """Optional custom summary for this section, as data instead of HTML.
+
+    Returns ``(label, value)`` pairs of plain text. The summary builders escape
+    them and build the markup, so a section that summarizes itself cannot put
+    markup on the review page -- escaping is a property of the path here, not
+    something the author of a summary has to remember.
+    """
     enforcer: EditableEnforcer | None = None
     post_save_action: str = "save_only"  # "save_only" or "process_project"
     guard: Callable[[dict[str, Any]], bool] | None = None

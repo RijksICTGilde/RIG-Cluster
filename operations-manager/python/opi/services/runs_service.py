@@ -5,23 +5,21 @@ and monitors via the cluster (the database console today; ad-hoc job pods next).
 Live status always comes from the pod; this table records lifecycle milestones
 and history. Unlike async_tasks, runs are NOT executed by the task worker -
 they are driven by the console manager and the reaper.
+
+ORM-backed (:class:`opi.services.persistence.runs.Run`) on the shared async engine.
 """
 
 from __future__ import annotations
 
-import json
-import logging
-import uuid
-from datetime import datetime
+from datetime import datetime  # noqa: TC003
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
 
-from opi.core.database_pools import get_database_pool
+from sqlalchemy import func, select, update
 
-if TYPE_CHECKING:
-    from opi.core.database_pool import DatabasePool
+from opi.core.db import session_scope
+from opi.services.persistence.runs import Run
 
-logger = logging.getLogger(__name__)
+_ACTIVE_STATES = ("starting", "running")
 
 
 class RunKind(StrEnum):
@@ -42,26 +40,8 @@ class RunStatus(StrEnum):
     EXPIRED = "expired"  # reaped at TTL
 
 
-def _row_to_dict(row: Any) -> dict | None:
-    """Convert an asyncpg Record to a JSON-serializable dict."""
-    if row is None:
-        return None
-    result = dict(row)
-    for key, value in result.items():
-        if isinstance(value, uuid.UUID):
-            result[key] = str(value)
-        elif isinstance(value, datetime):
-            result[key] = value.isoformat()
-        elif key == "spec" and isinstance(value, str):
-            result[key] = json.loads(value)
-    return result
-
-
 class RunsService:
-    """CRUD over the `runs` table."""
-
-    def __init__(self, pool: DatabasePool) -> None:
-        self._pool = pool
+    """CRUD over the ``runs`` table (ORM-backed)."""
 
     async def create_run(
         self,
@@ -79,143 +59,92 @@ class RunsService:
         expires_at: datetime | None,
     ) -> dict:
         """Insert a new run row in the 'starting' state."""
-        conn = await self._pool.acquire()
-        try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO runs
-                    (kind, session_id, cluster, project, deployment, namespace, name,
-                     spec, status, url, started_by, expires_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12)
-                RETURNING *
-                """,
-                str(kind),
-                session_id,
-                cluster,
-                project,
-                deployment,
-                namespace,
-                name,
-                json.dumps(spec),
-                str(RunStatus.STARTING),
-                url,
-                started_by,
-                expires_at,
+        async with session_scope() as session:
+            row = Run(
+                kind=str(kind),
+                session_id=session_id,
+                cluster=cluster,
+                project=project,
+                deployment=deployment,
+                namespace=namespace,
+                name=name,
+                spec=spec,
+                status=str(RunStatus.STARTING),
+                url=url,
+                started_by=started_by,
+                expires_at=expires_at,
             )
-            result = _row_to_dict(row)
-            if result is None:
-                raise RuntimeError("INSERT INTO runs returned no row")
-            logger.info(
-                "Created run %s kind=%s session=%s for %s/%s", result["id"], kind, session_id, project, deployment
-            )
-            return result
-        finally:
-            await self._pool.release(conn)
+            session.add(row)
+            await session.flush()
+            await session.refresh(row)  # server defaults (id, timestamps)
+            return row.to_dict()
 
     async def list_runs(self, project: str, *, include_ended: bool = False, limit: int = 50) -> list[dict]:
         """List runs for a project, newest first. By default only active ones."""
-        conn = await self._pool.acquire()
-        try:
-            if include_ended:
-                rows = await conn.fetch(
-                    "SELECT * FROM runs WHERE project = $1 ORDER BY started_at DESC LIMIT $2", project, limit
-                )
-            else:
-                rows = await conn.fetch(
-                    "SELECT * FROM runs WHERE project = $1 AND status IN ('starting', 'running') "
-                    "ORDER BY started_at DESC LIMIT $2",
-                    project,
-                    limit,
-                )
-            return [r for r in (_row_to_dict(row) for row in rows) if r is not None]
-        finally:
-            await self._pool.release(conn)
+        stmt = select(Run).where(Run.project == project)
+        if not include_ended:
+            stmt = stmt.where(Run.status.in_(_ACTIVE_STATES))
+        stmt = stmt.order_by(Run.started_at.desc()).limit(limit)
+        async with session_scope() as session:
+            return [row.to_dict() for row in (await session.execute(stmt)).scalars().all()]
 
     async def list_active_runs(self, cluster: str) -> list[dict]:
-        """Every active (starting/running) run on a cluster, across all projects.
-
-        The reaper uses this instead of scanning k8s: a bundle can only exist if a run
-        was started, and the row is written before the k8s resources, so this is the
-        authoritative set of namespaces that can hold a live bundle.
-        """
-        conn = await self._pool.acquire()
-        try:
-            rows = await conn.fetch(
-                "SELECT * FROM runs WHERE cluster = $1 AND status IN ('starting', 'running') ORDER BY started_at DESC",
-                cluster,
+        """Every active (starting/running) run on a cluster, across all projects."""
+        async with session_scope() as session:
+            result = await session.execute(
+                select(Run)
+                .where(Run.cluster == cluster, Run.status.in_(_ACTIVE_STATES))
+                .order_by(Run.started_at.desc())
             )
-            return [r for r in (_row_to_dict(row) for row in rows) if r is not None]
-        finally:
-            await self._pool.release(conn)
+            return [row.to_dict() for row in result.scalars().all()]
 
     async def get_latest_run(self, project: str, deployment: str, kind: RunKind) -> dict | None:
-        """Most recent run for a project+deployment of a given kind (any status).
-
-        Used by the status poll to show 'starting'/'failed' before the pod exists
-        (the slow provisioning runs in the background).
-        """
-        conn = await self._pool.acquire()
-        try:
-            row = await conn.fetchrow(
-                "SELECT * FROM runs WHERE project = $1 AND deployment = $2 AND kind = $3 "
-                "ORDER BY started_at DESC LIMIT 1",
-                project,
-                deployment,
-                str(kind),
-            )
-            return _row_to_dict(row)
-        finally:
-            await self._pool.release(conn)
+        """Most recent run for a project+deployment of a given kind (any status)."""
+        async with session_scope() as session:
+            row = (
+                await session.execute(
+                    select(Run)
+                    .where(Run.project == project, Run.deployment == deployment, Run.kind == str(kind))
+                    .order_by(Run.started_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            return row.to_dict() if row else None
 
     async def mark_running(self, session_id: str, url: str | None = None) -> None:
         """Promote a starting run to running once its pod is ready (idempotent)."""
-        conn = await self._pool.acquire()
-        try:
-            await conn.execute(
-                """
-                UPDATE runs
-                SET status = 'running',
-                    url = COALESCE($2, url),
-                    updated_at = NOW()
-                WHERE session_id = $1 AND status = 'starting'
-                """,
-                session_id,
-                url,
+        values: dict = {"status": "running", "updated_at": func.now()}
+        if url is not None:  # COALESCE: keep the existing url when none is given
+            values["url"] = url
+        async with session_scope() as session:
+            await session.execute(
+                update(Run).where(Run.session_id == session_id, Run.status == "starting").values(**values)
             )
-        finally:
-            await self._pool.release(conn)
 
     async def mark_ended(
         self, session_id: str, status: RunStatus, ended_by: str | None = None, error_message: str | None = None
     ) -> None:
         """Set a terminal status on a run (idempotent: only acts on active rows)."""
-        conn = await self._pool.acquire()
-        try:
-            await conn.execute(
-                """
-                UPDATE runs
-                SET status = $2,
-                    ended_at = NOW(),
-                    ended_by = $3,
-                    error_message = $4,
-                    updated_at = NOW()
-                WHERE session_id = $1 AND status IN ('starting', 'running')
-                """,
-                session_id,
-                str(status),
-                ended_by,
-                error_message,
+        async with session_scope() as session:
+            await session.execute(
+                update(Run)
+                .where(Run.session_id == session_id, Run.status.in_(_ACTIVE_STATES))
+                .values(
+                    status=str(status),
+                    ended_at=func.now(),
+                    ended_by=ended_by,
+                    error_message=error_message,
+                    updated_at=func.now(),
+                )
             )
-        finally:
-            await self._pool.release(conn)
 
 
 _runs_service: RunsService | None = None
 
 
 def get_runs_service() -> RunsService:
-    """Return the process-wide RunsService bound to the main DB pool."""
+    """Return the process-wide RunsService."""
     global _runs_service
     if _runs_service is None:
-        _runs_service = RunsService(get_database_pool("main"))
+        _runs_service = RunsService()
     return _runs_service

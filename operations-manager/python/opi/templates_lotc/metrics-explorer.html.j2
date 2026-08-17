@@ -1,0 +1,153 @@
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}Metrics Explorer{% endblock %}
+
+{% block content %}
+    <div>
+        <c-layout-flow gap="lg">
+
+            <c-heading type="h1" label="Metrics Explorer"/>
+            <p>Selecteer een service om de beschikbare Prometheus metrics te verkennen.</p>
+
+    {% include "metrics-explorer/_bediening.html.j2" %}
+
+    {% include "metrics-explorer/_laden.html.j2" %}
+
+    {% include "metrics-explorer/_fout.html.j2" %}
+
+    {% include "metrics-explorer/_grafiek.html.j2" %}
+
+            </div>
+        </c-layout-flow>
+    </div>
+{% endblock %}
+
+{% block additional_styles %}
+    <link rel="stylesheet" href="{{ static_url('css/metrics-explorer.css') }}">
+{% endblock %}
+
+{% block additional_scripts %}
+<script>
+    const PROMETHEUS_URL = "{{ prometheus_url }}";
+    const SERVICE_INFO = {
+        {% for service in services %}
+            "{{ service.id }}": {
+                "description": "{{ service.description }}",
+                "range": "{{ service.range }}"
+            }{% if not loop.last %},{% endif %}
+        {% endfor %}
+    };
+
+    // All metrics for the currently selected service (before filtering)
+    let allMetrics = [];
+
+    const serviceSelect = document.getElementById("service-select");
+    const metricSelect = document.getElementById("metric-select");
+    const showBtn = document.getElementById("show-btn");
+    const loading = document.getElementById("loading");
+    const errorMsg = document.getElementById("error-msg");
+    const errorText = document.getElementById("error-text");
+    const filterContainer = document.getElementById("filter-container");
+    const metricFilter = document.getElementById("metric-filter");
+    const metricCount = document.getElementById("metric-count");
+    const serviceDescription = document.getElementById("service-description");
+
+    serviceSelect.addEventListener("change", async function() {
+        const serviceId = this.value;
+        metricSelect.innerHTML = '<option value="">-- Laden... --</option>';
+        metricSelect.disabled = true;
+        showBtn.disabled = true;
+        filterContainer.classList.add("is-hidden");
+        metricFilter.value = "";
+        metricCount.textContent = "";
+        allMetrics = [];
+
+        // Update description
+        serviceDescription.textContent = serviceId ? (SERVICE_INFO[serviceId] || {}).description || "" : "";
+
+        if (!serviceId) {
+            metricSelect.innerHTML = '<option value="">-- Selecteer eerst een service --</option>';
+            return;
+        }
+
+        loading.classList.remove("is-hidden");
+        errorMsg.classList.add("is-hidden");
+
+        try {
+            const response = await fetch(`/ui/metrics-explorer/metrics/${serviceId}`);
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || "Onbekende fout");
+            }
+
+            allMetrics = data.metrics || [];
+            populateMetricDropdown(allMetrics);
+
+            if (allMetrics.length > 10) {
+                filterContainer.classList.remove("is-hidden");
+            }
+            metricCount.textContent = `${allMetrics.length} metrics beschikbaar`;
+
+        } catch (err) {
+            errorText.textContent = `Fout: ${err.message}`;
+            errorMsg.classList.remove("is-hidden");
+            metricSelect.innerHTML = '<option value="">-- Fout bij ophalen --</option>';
+        } finally {
+            loading.classList.add("is-hidden");
+        }
+    });
+
+    metricSelect.addEventListener("change", function() {
+        showBtn.disabled = !this.value;
+    });
+
+    function populateMetricDropdown(metrics) {
+        metricSelect.innerHTML = '<option value="">-- Selecteer een metric --</option>';
+        for (const name of metrics) {
+            const opt = document.createElement("option");
+            opt.value = name;
+            opt.textContent = name;
+            metricSelect.appendChild(opt);
+        }
+        metricSelect.disabled = metrics.length === 0;
+    }
+
+    function filterMetrics() {
+        const query = metricFilter.value.toLowerCase();
+        const filtered = allMetrics.filter(m => m.toLowerCase().includes(query));
+        populateMetricDropdown(filtered);
+        metricCount.textContent = `${filtered.length} van ${allMetrics.length} metrics`;
+    }
+
+    function showMetric() {
+        const metric = metricSelect.value;
+        if (!metric) return;
+
+        // Use the service's default range (e.g. 7d for 2h-scrape jobs, 1h for real-time)
+        const serviceId = serviceSelect.value;
+        const range = (SERVICE_INFO[serviceId] || {}).range || "1h";
+
+        // Build the Prometheus graph URL with the metric as expression
+        const params = new URLSearchParams({
+            "g0.expr": metric,
+            "g0.tab": "0",        // Graph tab
+            "g0.range_input": range
+        });
+
+        const graphUrl = `${PROMETHEUS_URL}/graph?${params.toString()}`;
+
+        // Update iframe
+        const frameContainer = document.getElementById("prometheus-frame-container");
+        const frame = document.getElementById("prometheus-frame");
+        const directLink = document.getElementById("prometheus-direct-link");
+
+        frame.src = graphUrl;
+        directLink.href = graphUrl;
+        frameContainer.classList.remove("is-hidden");
+
+        // Scroll to the iframe
+        frameContainer.scrollIntoView({ behavior: "smooth" });
+    }
+</script>
+{% endblock %}

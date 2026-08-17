@@ -22,6 +22,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 |---|---|
 | `keycloak_flow_tool.py` | Inspect/rebuild the ZAD **auto-link first-broker-login flow** on a live realm (`inspect <realm>`, `rebuild <realm> [--confirm-link]`, `inspect-all`). Rebuilds with explicit execution priorities so `idp-create-user-if-unique` precedes the handle-existing subflow (see `features/keycloak-auto-link.md`). Needs `KEYCLOAK_ADMIN_PASSWORD` (optional `KEYCLOAK_URL`, `KEYCLOAK_ADMIN_USER`). |
 | `setup_keycloak_client_scope.py` | Set up custom client scopes (organization-attribute passthrough) for Keycloak clients. |
+| `keycloak_self_service_report.py` | Pre-flight report before disabling the `UPDATE_PASSWORD` required action: per realm, users with that action still pending (they would get stuck at login, blocking, non-zero exit) and federated users who already have a password credential (they keep the SSO bypass, cleanup). Report only. Needs `KEYCLOAK_ADMIN_PASSWORD`; see `features/futures/keycloak-sso-bypass-voorkomen.md`. |
 
 ## Grafana / observability
 
@@ -45,7 +46,9 @@ Most tools talk to live infrastructure and read credentials/config from environm
 |---|---|
 | `add_domain_approvals.py` | Add `domains` configuration blocks to project files. |
 | `fix_shared_service_revisions.py` | Fix shared-service revisions caused by a YAML anchor/alias bug. |
-| `migrate_project_to_sandbox.py` | Migrate production project files to the sandbox cluster. |
+| `migrate_project_to_sandbox.py` | Migrate production project files to the sandbox cluster. `--probe-image` additionally swaps every component workload for the e2e-allservices probe and moves the inbound port to 8080 (RC-19 upgrade-safety test). |
+| `compare_deployments_diff.py` | Summarize a zad-deployments `git diff` into disappeared keys (env vars, secrets, ingress, mounts, schemas) per project, for the RC-19 upgrade-safety test (`features/upgrade-safety-test.md`). Reads a ref-pair via git or a diff via `--stdin`. |
+| `compare_service_identity.py` | RC-19 upgrade-safety test: decrypt the generated secrets in two zad-deployments trees and assert every service still resolves to the SAME thing (database host/name/user/schema, OIDC url/realm/client-id, bucket name, published Ingress host). Catches a same-key/different-value identity change the diff summarizer cannot see. Needs the AGE key (`SOPS_AGE_KEY` or `--key-file`). |
 
 ## Infra / DNS
 

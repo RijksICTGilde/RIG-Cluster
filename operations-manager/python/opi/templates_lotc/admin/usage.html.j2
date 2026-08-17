@@ -1,0 +1,22 @@
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}Gebruik & Kosten - Self Service Portal{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+
+    <div>
+        <c-heading type="h1" label="Gebruik & Kosten"/>
+        <c-paragraph/>
+    </div>
+
+    {% if not has_billing_datasource %}
+    <c-alert heading="Billing datasource niet geconfigureerd"/>
+    {% endif %}
+
+    {% include "admin/usage/_filters.html.j2" %}
+
+    {% include "admin/usage/_tabel.html.j2" %}
+
+</c-layout-flow>
+{% endblock %}

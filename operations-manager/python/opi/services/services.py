@@ -6,17 +6,309 @@ the entire application, from form submission to project processing.
 """
 
 import logging
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from opi.services.services_enums import ServiceType
+from pydantic import ValidationError
+
+from opi.core.buttons import check_button_variant
+from opi.services.config_lists import find_patchable_list
+from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
+
+if TYPE_CHECKING:
+    from opi.services.catalog.base import ConfigLayer
 
 logger = logging.getLogger(__name__)
 
 
 class ServiceValidationError(ValueError):
     """Raised for user-facing service validation failures."""
+
+
+@dataclass
+class DeploymentAction:
+    """A deployment-level action button a service contributes to the UI.
+
+    ``section-deployment-actions.html.j2`` renders one button per action. This is the
+    generic hook so a service (sleep-mode's wake/sleep toggle, the database console,
+    the job runner) owns its own button instead of the template deriving the condition
+    itself.
+
+    An action either POSTs (``endpoint``) or opens the shared modal shell on a fragment
+    URL (``modal_endpoint`` + ``modal_title``) -- exactly one of the two.
+    """
+
+    label: str
+    icon: str
+    #: LOTC-knopvariant: "primary" | "secondary" | "warning" | "subtle" | ...
+    #: Het sjabloon zet hem rechtstreeks in ``type``, en het component slaat een woord
+    #: dat het niet kent stil over -- zie ``check_button_variant`` in __post_init__.
+    kind: str
+    #: Web-route path the POST targets (CSRF handled by the template).
+    endpoint: str | None = None
+    #: Web-route path whose HTML is loaded into the shared edit-modal shell.
+    modal_endpoint: str | None = None
+    #: Heading for that modal; required with ``modal_endpoint``.
+    modal_title: str | None = None
+    #: Optional confirm dialog text; None means no confirmation.
+    confirm_message: str | None = None
+    #: Whether the button should render for this deployment.
+    visible: bool = True
+
+    def __post_init__(self) -> None:
+        check_button_variant(self.kind, f"DeploymentAction '{self.label}'")
+        if bool(self.endpoint) == bool(self.modal_endpoint):
+            raise ValueError(f"DeploymentAction '{self.label}' needs exactly one of endpoint / modal_endpoint")
+        if self.modal_endpoint and not self.modal_title:
+            raise ValueError(f"DeploymentAction '{self.label}' has a modal_endpoint but no modal_title")
+
+
+#: A service's action provider: given (project_data, deployment_name) it returns the
+#: deployment-level buttons that service wants shown. Kept as a plain callable so
+#: services.py stays free of forms/web imports.
+ActionsProvider = Callable[[dict[str, Any], str], list[DeploymentAction]]
+
+
+def service_entry_name(entry: Any) -> str | None:
+    """Return the service name from a ``services``-list entry, format-agnostic.
+
+    Handles every form a services list may hold (RC-5 A):
+    - bare string: ``"publish-on-web"``
+    - new record (project): ``{"name": "keycloak", "config": {...}}``
+    - new record (component reference): ``{"reference": "keycloak", "config": ...}``
+    - legacy single-key dict: ``{"keycloak": {"config": {...}}}``
+
+    Returns None for an unrecognisable entry. The ``name``/``reference`` keys take
+    precedence, so a two-key record is handled where the legacy single-key logic
+    (``next(iter(dict))``) would break.
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        name = entry.get("name") or entry.get("reference")
+        if name is not None:
+            return name
+        # Legacy: the service name is the sole key (excluding record metadata).
+        keys = [key for key in entry if key not in ("config", "schema-version")]
+        if len(keys) == 1:
+            return keys[0]
+    return None
+
+
+def service_entry_schema_version(entry: Any) -> str | None:
+    """Return the ``schema-version`` stamped on a service entry, or None.
+
+    The version is a sibling of ``config`` on the entry record
+    (``{"name": "keycloak", "config": {...}, "schema-version": "2.0"}``). It tells
+    the provider which config version the stored block is at, so ``validate_config``
+    can migrate it forward before validating. None means the entry predates
+    versioning (treated as the service's current version).
+    """
+    if isinstance(entry, dict):
+        version = entry.get("schema-version")
+        if version is not None:
+            return str(version)
+    return None
+
+
+def service_entry_type(entry: Any) -> str | None:
+    """Return the ``type`` of a service entry, format-agnostic (None if none).
+
+    ``type`` marks a service as externally provided (e.g. keycloak ``type: external``)
+    and sits next to ``config``, not inside it. New record: on the entry itself. Legacy
+    ``{X: {type: ..., config: ...}}``: inside the name-keyed body, which is why this
+    cannot simply read the top level the way ``service_entry_schema_version`` does.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        value = entry.get("type")
+        return str(value) if value is not None else None
+    name = service_entry_name(entry)
+    body = entry.get(name) if name is not None else None
+    if isinstance(body, dict) and body.get("type") is not None:
+        return str(body["type"])
+    return None
+
+
+def service_entry_body(entry: Any, name: str | None = None) -> Any:
+    """Return the config-carrying sub-dict of a service entry, format-agnostic.
+
+    New record (``{name/reference: X, config: ...}``) carries ``config`` and its
+    siblings on the entry itself, so the body IS the entry. Legacy
+    ``{X: {config: ...}}`` carries them under the service-name key.
+
+    The returned dict is the live sub-dict, not a copy: writing to it writes to the
+    entry, in whichever form that entry happens to use. That is what lets a caller
+    merge into an entry without first knowing its shape. *name* is accepted as a
+    hint; when omitted it is derived with ``service_entry_name``.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        return entry
+    key = name if name is not None else service_entry_name(entry)
+    return entry.get(key) if key is not None else None
+
+
+def service_entry_config(entry: Any) -> Any:
+    """Return the ``config`` of a service entry, format-agnostic (None if none).
+
+    New record: the ``config`` field on the entry. Legacy ``{X: {config: ...}}``: the
+    ``config`` under the name key, or -- for services whose legacy value carries the
+    config inline without a ``config`` wrapper (e.g. metrics-scraper
+    ``{metrics-scraper: {port, path}}``) -- that inline body itself.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        return entry.get("config")
+    name = service_entry_name(entry)
+    body = entry.get(name) if name is not None else None
+    if isinstance(body, dict):
+        return body.get("config", body) if "config" in body else body
+    return body
+
+
+def service_entry_data(entry: Any) -> Any:
+    """Return the ``data`` of a service entry, format-agnostic (None if none).
+
+    The DEFINE-side counterpart of :func:`service_entry_config`. A definition (today:
+    the attachments catalog) sits under ``data`` rather than ``config``, because it is
+    not configuration of a use -- it is the thing being used. Both entry shapes are
+    handled: the record form (``{"name": "attachments", "data": [...]}``) and the legacy
+    single-key form (``{"attachments": {"data": [...]}}``).
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        return entry.get("data")
+    name = service_entry_name(entry)
+    body = entry.get(name) if name is not None else None
+    if isinstance(body, dict):
+        return body.get("data")
+    return None
+
+
+def unmet_service_requirements(project_data: dict[str, Any], requires: Iterable[str]) -> list[str]:
+    """The entries of a ``ServiceDefinition.requires`` this project does not satisfy yet.
+
+    ``requires`` is a list of yaml paths into the project-level ``services`` block, one
+    level (``services/keycloak``, the service must be selected) or deeper
+    (``services/keycloak/config/restrict-access``, that config key must be set). The
+    wizard resolves the one-level form by auto-selecting the dependency; nothing checked
+    the deeper form, and nothing reported either of them to an API caller, so an unmet
+    requirement surfaced as a later failure rather than as part of the refusal.
+
+    Identity comes from ``service_entry_name``, so a dependency that carries config is
+    found as readily as a bare one. Paths outside ``services/`` are skipped rather than
+    guessed at: this function reads that one block and says so instead of reporting a
+    requirement it never looked for as unmet.
+    """
+    entries = project_data.get("services") or []
+    by_name = {service_entry_name(entry): entry for entry in entries}
+    unmet: list[str] = []
+    for requirement in requires:
+        if not requirement.startswith("services/"):
+            continue
+        name, _, rest = requirement.removeprefix("services/").partition("/")
+        node: Any = by_name.get(name)
+        if node is None:
+            unmet.append(requirement)
+            continue
+        for segment in rest.split("/") if rest else []:
+            if not isinstance(node, dict) or segment not in node:
+                unmet.append(requirement)
+                break
+            node = node[segment]
+    return unmet
+
+
+@dataclass(frozen=True)
+class ConfigAdvice:
+    """A field that is only *worth* filling in because of a setting somewhere else.
+
+    ``requires`` is the unconditional, blocking form of a cross-service dependency: the
+    auth wall cannot work without keycloak, so binding it without keycloak is refused.
+    This is the conditional, non-blocking form, and it needs both halves of that
+    sentence to be different. An invite without a realm role is a perfectly valid
+    invitation -- it hands out a bare account -- right up to the moment keycloak's
+    ``restrict-access`` is switched on, because from then on only a role holder gets in.
+    The same file is correct or useless depending on a value in another service's config,
+    and until now nobody found out until someone tried the link.
+
+    So: a warning, never a refusal, and it is declared on the service that owns the
+    FIELD (invite), not on the service that owns the condition. That is what keeps the
+    advice discoverable from the thing you are editing, and it is why the shape is two
+    yaml paths rather than a service name -- generic code evaluates these without
+    knowing which services exist.
+
+    ``when``    a path anywhere in the project; the advice applies while it holds a
+                truthy value. A boolean toggle and a "this key is set" check therefore
+                read the same way, and ``enabled: false`` correctly says nothing.
+    ``expects`` a path this service owns that should then carry a value. One ``[*]``
+                per list level is expanded, so one advice covers every entry of a list
+                and the warning names the entry it is about
+                (``services/invite/config/active[0]/realm-roles``).
+    ``message`` what the user is told, in Dutch, at that field.
+
+    Both paths are read with ``smart_get_value``, so they resolve against the project
+    file and against the wizard's in-progress state alike.
+    """
+
+    when: str
+    expects: str
+    message: str
+
+
+@dataclass(frozen=True)
+class ConfigAdviceNotice:
+    """One piece of advice, against one concrete field.
+
+    ``field_path`` has its ``[*]`` resolved to the index it is about, so it is the key
+    the form's ``field_warnings`` dict uses and the path an API caller can act on.
+    """
+
+    field_path: str
+    message: str
+
+
+def _is_blank(value: Any) -> bool:
+    """Whether *value* counts as "not filled in" for ``ConfigAdvice.expects``.
+
+    ``False`` and ``0`` are answers, not omissions, so only None and the empty
+    string/list/dict qualify.
+    """
+    if value is None:
+        return True
+    return isinstance(value, str | list | dict | tuple) and len(value) == 0
+
+
+def collect_config_advice(project_data: dict[str, Any]) -> list[ConfigAdviceNotice]:
+    """Every ``ConfigAdvice`` in the catalog whose condition holds and whose field is empty.
+
+    The one evaluator, so the form and the API say the same thing about the same
+    project -- the shape ``custom_domain_certificate_note`` established for the
+    certificate case, where one sentence feeds both a field warning and the ``warnings``
+    on the write action.
+
+    A service that is not selected needs no special case: its ``expects`` path resolves
+    to nothing, so it yields nothing.
+    """
+    from opi.forms.editables.service_path import expand_wildcard_path, smart_get_value
+
+    notices: list[ConfigAdviceNotice] = []
+    for definition in ServiceAdapter.SERVICE_DEFINITIONS.values():
+        for advice in definition.config_advice:
+            if not smart_get_value(project_data, advice.when):
+                continue
+            notices.extend(
+                ConfigAdviceNotice(field_path, advice.message)
+                for field_path, value in expand_wildcard_path(project_data, advice.expects)
+                if _is_blank(value)
+            )
+    return notices
 
 
 @dataclass
@@ -46,20 +338,25 @@ class ServiceDefinition:
     Definition of a service with all its properties and configuration.
 
     This class encapsulates all information about a service including
-    its metadata, scope, variables, and optional configurations.
+    its metadata, binding, variables, and optional configurations.
     """
 
     name: str
     description: str
     icon: str
     color: str
-    scope: str  # "component" or "deployment"
+    binding: ServiceBinding
     variables: list[VariableDefinition] = field(default_factory=list)
     secret_class: str | None = None
     # TODO: specific definitions should not be here
     storage_config: dict[str, Any] | None = None
     component_flag: str | None = None
     hidden: bool = False
+    kind: ServiceKind = ServiceKind.USER
+    """Whether a project chooses this service (``USER``) or the platform always runs it
+    (``SYSTEM``). Distinct from ``hidden``: ``hidden`` means "not in the service picker"
+    (a namespace variant OPI selects itself), ``SYSTEM`` means "always on, never in the
+    project file". A ``SYSTEM`` service is also kept out of the picker."""
     help_template: str | None = None
     """Optional Jinja2 template name (relative to ``templates/help/``) with a
     long-form explanation shown in a popup when the user clicks the info icon."""
@@ -74,16 +371,23 @@ class ServiceDefinition:
     Used for both UI behavior (auto-select, lock) and submit-time
     validation.
     """
-    cleanup_strategy: str = "none"
+    config_advice: list[ConfigAdvice] = field(default_factory=list)
+    """Fields of this service that only become necessary because of a setting elsewhere.
+
+    The conditional sibling of ``requires``: ``requires`` blocks unconditionally, this
+    warns while a condition holds. See ``ConfigAdvice`` for the shape and the reasoning,
+    and ``collect_config_advice`` for the single evaluator both the form and the API use.
+    """
+    cleanup_strategy: CleanupStrategy = CleanupStrategy.NONE
     """How server-side resources are cleaned up when the service is removed.
 
-    - ``"none"``      - no server-side resources to clean up (e.g. storage PVCs,
-                         ingress config).  This is the default.
-    - ``"immediate"``  - ephemeral / easily recreatable resources are deleted
-                         right away (e.g. Redis ACL users, Keycloak clients).
-    - ``"deferred"``   - persistent data resources are marked for deferred
-                         deletion so they can be recovered (e.g. databases,
-                         MinIO buckets).
+    - ``NONE``      - no server-side resources to clean up (e.g. storage PVCs,
+                       ingress config).  This is the default.
+    - ``IMMEDIATE``  - ephemeral / easily recreatable resources are deleted
+                       right away (e.g. Redis ACL users, Keycloak clients).
+    - ``DEFERRED``   - persistent data resources are marked for deferred
+                       deletion so they can be recovered (e.g. databases,
+                       MinIO buckets).
     """
     backup_label: str | None = None
     """Short label used to identify this service in backup/restore flows.
@@ -94,271 +398,38 @@ class ServiceDefinition:
     The label is used as the ``resource_type`` value in backup runs and
     as the form field value in the backup wizard.
     """
+    actions_provider: ActionsProvider | None = None
+    """Optional provider of deployment-level action buttons (see ``DeploymentAction``).
+
+    The deployment-actions template collects these across the services a project
+    uses, so a service owns its own button instead of the template hardcoding the
+    condition. ``None`` means the service contributes no buttons.
+    """
 
 
-class DatabaseVariables(Enum):
-    """Database service variable definitions - single source of truth."""
+class _ServiceDefinitionsView(Mapping[ServiceType, ServiceDefinition]):
+    """Read-only view on the definitions the service packages declare (RC-36).
 
-    HOST = VariableDefinition(
-        name="DATABASE_SERVER_HOST",
-        description="PostgreSQL server hostnaam",
-        source="secret",
-        secret_key="host",
-        aliases=["APP_DATABASE_SERVER_HOST", "APP_DATABASE_SERVER"],
-    )
-    PORT = VariableDefinition(
-        name="DATABASE_SERVER_PORT",
-        description="PostgreSQL server poort",
-        source="secret",
-        secret_key="port",
-        aliases=["APP_DATABASE_PORT", "APP_DATABASE_SERVER_PORT"],
-    )
-    USER = VariableDefinition(
-        name="DATABASE_SERVER_USER",
-        description="Database gebruikersnaam",
-        source="secret",
-        secret_key="username",
-        aliases=["APP_DATABASE_USER"],
-    )
-    PASSWORD = VariableDefinition(
-        name="DATABASE_PASSWORD",
-        description="Database gebruiker wachtwoord",
-        source="secret",
-        secret_key="password",
-        aliases=["APP_DATABASE_PASSWORD"],
-    )
-    USER_RO = VariableDefinition(
-        name="DATABASE_SERVER_USER_RO",
-        description="Read-only database gebruikersnaam",
-        source="secret",
-        secret_key="ro_username",
-        aliases=["APP_DATABASE_USER_RO"],
-    )
-    PASSWORD_RO = VariableDefinition(
-        name="DATABASE_PASSWORD_RO",
-        description="Read-only database gebruiker wachtwoord",
-        source="secret",
-        secret_key="ro_password",
-        aliases=["APP_DATABASE_PASSWORD_RO"],
-    )
-    DATABASE = VariableDefinition(
-        name="DATABASE_DB",
-        description="Database naam",
-        source="secret",
-        secret_key="database",
-        aliases=["APP_DATABASE_DB"],
-    )
-    SCHEMA = VariableDefinition(
-        name="DATABASE_SCHEMA",
-        description="Database schema naam",
-        source="secret",
-        secret_key="schema",
-        aliases=["APP_DATABASE_SCHEMA"],
-    )
-    CONNECTION_STRING = VariableDefinition(
-        name="DATABASE_SERVER_FULL",
-        description="Volledige PostgreSQL connectiestring",
-        source="secret",
-        secret_key="connection_string",
-        aliases=["APP_DATABASE_SERVER_FULL"],
-    )
+    The definitions live in ``opi.services.registry``, assembled from each service's
+    own package. This module cannot import that registry at module level -- the
+    packages import *this* module for ``ServiceDefinition`` -- so the lookup is
+    deferred to first use. A plain ``Mapping`` keeps every existing call site
+    (``[...]``, ``.get``, ``.items()``, ``.values()``, iteration) working unchanged.
+    """
 
+    def _source(self) -> dict[ServiceType, ServiceDefinition]:
+        from opi.services.registry import SERVICE_DEFINITIONS
 
-class KeycloakVariables(Enum):
-    """Keycloak/SSO service variable definitions - single source of truth."""
+        return SERVICE_DEFINITIONS
 
-    CLIENT_ID = VariableDefinition(
-        name="OIDC_CLIENT_ID",
-        description="OAuth2/OIDC client identificatie voor authenticatie",
-        source="secret",
-        secret_key="client_id",
-    )
-    CLIENT_SECRET = VariableDefinition(
-        name="OIDC_CLIENT_SECRET",
-        description="OAuth2/OIDC client geheim voor authenticatie",
-        source="secret",
-        secret_key="client_secret",
-    )
-    PUBLIC_CLIENT_ID = VariableDefinition(
-        name="OIDC_PUBLIC_CLIENT_ID",
-        description="Public OAuth2/OIDC client identificatie voor browser-based authenticatie (keycloak-js)",
-        source="secret",
-        secret_key="public_client_id",
-    )
-    DISCOVERY_URL = VariableDefinition(
-        name="OIDC_DISCOVERY_URL",
-        description="OIDC discovery endpoint URL voor configuratie",
-        source="secret",
-        secret_key="discovery_url",
-    )
-    URL = VariableDefinition(
-        name="OIDC_URL",
-        description="Keycloak basis URL",
-        source="secret",
-        secret_key="base_url",
-    )
-    REALM = VariableDefinition(
-        name="OIDC_REALM",
-        description="Keycloak realm naam",
-        source="secret",
-        secret_key="realm",
-    )
-    HOSTNAME = VariableDefinition(
-        name="OIDC_HOSTNAME",
-        description="Keycloak hostname zonder scheme (afgeleid van base_url)",
-        source="secret",
-        secret_key="hostname",
-    )
+    def __getitem__(self, key: ServiceType) -> ServiceDefinition:
+        return self._source()[key]
 
+    def __iter__(self) -> Iterator[ServiceType]:
+        return iter(self._source())
 
-class MinIOVariables(Enum):
-    """MinIO/Object Storage service variable definitions - single source of truth."""
-
-    HOST = VariableDefinition(
-        name="OBJECT_STORE_HOST",
-        description="MinIO server hostname",
-        source="secret",
-        secret_key="host",
-        aliases=["APP_OBJECT_STORE_HOST"],
-    )
-    PORT = VariableDefinition(
-        name="OBJECT_STORE_PORT",
-        description="MinIO server port",
-        source="secret",
-        secret_key="port",
-        aliases=["APP_OBJECT_STORE_PORT"],
-    )
-    # URL and ENDPOINT_URL are computed in MinIOSecret._get_additional_keys()
-    USER = VariableDefinition(
-        name="OBJECT_STORE_USER",
-        description="MinIO toegangssleutel/gebruikersnaam",
-        source="secret",
-        secret_key="access_key",
-        aliases=["APP_OBJECT_STORE_USER"],
-    )
-    PASSWORD = VariableDefinition(
-        name="OBJECT_STORE_PASSWORD",
-        description="MinIO geheime sleutel/wachtwoord",
-        source="secret",
-        secret_key="secret_key",
-        aliases=["APP_OBJECT_STORE_PASSWORD"],
-    )
-    BUCKET_NAME = VariableDefinition(
-        name="OBJECT_STORE_BUCKET_NAME",
-        description="MinIO bucket naam",
-        source="secret",
-        secret_key="bucket_name",
-        aliases=["APP_OBJECT_STORE_BUCKET_NAME"],
-    )
-    REGION = VariableDefinition(
-        name="OBJECT_STORE_REGION",
-        description="MinIO regio configuratie",
-        source="secret",
-        secret_key="region",
-        aliases=["APP_OBJECT_STORE_REGION"],
-    )
-
-
-class StorageVariables(Enum):
-    """Storage service variable definitions - single source of truth."""
-
-    DATA_PATH = VariableDefinition(
-        name="DATA_PATH", description="Mount pad voor permanente data opslag (/data)", source="direct"
-    )
-    TEMP_PATH = VariableDefinition(
-        name="TEMP_PATH", description="Mount pad voor tijdelijke/tijdelijke opslag (/tmp)", source="direct"
-    )
-
-
-class RedisVariables(Enum):
-    """Redis cache service variable definitions - single source of truth."""
-
-    HOST = VariableDefinition(
-        name="REDIS_HOST",
-        description="Redis server hostname",
-        source="secret",
-        secret_key="host",
-        aliases=["APP_REDIS_HOST"],
-    )
-    PORT = VariableDefinition(
-        name="REDIS_PORT",
-        description="Redis server port",
-        source="secret",
-        secret_key="port",
-        aliases=["APP_REDIS_PORT"],
-    )
-    USERNAME = VariableDefinition(
-        name="REDIS_USERNAME",
-        description="Redis ACL username",
-        source="secret",
-        secret_key="username",
-        aliases=["APP_REDIS_USERNAME"],
-    )
-    PASSWORD = VariableDefinition(
-        name="REDIS_PASSWORD",
-        description="Redis password",
-        source="secret",
-        secret_key="password",
-        aliases=["APP_REDIS_PASSWORD"],
-    )
-    PREFIX = VariableDefinition(
-        name="REDIS_PREFIX",
-        description="Redis key/channel prefix for this project",
-        source="secret",
-        secret_key="key_prefix",
-        aliases=["APP_REDIS_PREFIX"],
-    )
-    URL = VariableDefinition(
-        name="REDIS_URL",
-        description="Full Redis connection URL",
-        source="secret",
-        secret_key="url",
-        aliases=["APP_REDIS_URL"],
-    )
-
-
-class MetricsScraperVariables(Enum):
-    """Metrics scraper service variable definitions."""
-
-    AUTH_TOKEN = VariableDefinition(
-        name="METRICS_AUTH_TOKEN",
-        description="Bearer token that Prometheus sends when scraping /metrics. Validate this to restrict access.",
-        source="secret",
-        secret_key="token",
-        aliases=["PROMETHEUS_METRICS_AUTH_TOKEN"],
-    )
-
-
-class PlatformVariables(Enum):
-    """Platform-provided variable definitions - always available in every deployment."""
-
-    DEPLOYMENT_NAME = VariableDefinition(
-        name="DEPLOYMENT_NAME",
-        description="Naam van het huidige deployment",
-        source="secret",
-        secret_key="deployment_name",
-    )
-    COMPONENT_NAME = VariableDefinition(
-        name="COMPONENT_NAME",
-        description="Naam van het huidige component",
-        source="secret",
-        secret_key="component_name",
-    )
-
-
-class WebVariables(Enum):
-    """Web publishing service variable definitions - single source of truth."""
-
-    PUBLIC_HOST = VariableDefinition(
-        name="PUBLIC_HOST",
-        description="De publieke hostname/URL waar een component bereikbaar zal zijn",
-        source="direct",
-    )
-    PUBLIC_HOSTNAME = VariableDefinition(
-        name="PUBLIC_HOSTNAME",
-        description="De publieke hostname (zonder scheme) waar een component bereikbaar zal zijn",
-        source="direct",
-    )
+    def __len__(self) -> int:
+        return len(self._source())
 
 
 class ServiceAdapter:
@@ -369,143 +440,9 @@ class ServiceAdapter:
     mappings, and operations throughout the application.
     """
 
-    # Service definitions with their properties and variable definitions
-    SERVICE_DEFINITIONS: ClassVar[dict[ServiceType, ServiceDefinition]] = {
-        ServiceType.PUBLISH_ON_WEB: ServiceDefinition(
-            name="Publiceren op het web",
-            description="Maak de applicatie toegankelijk via het publieke internet",
-            icon="wereldbol",
-            color="hemelblauw",
-            scope="component",
-            variables=[var.value for var in WebVariables],
-        ),
-        ServiceType.KEYCLOAK: ServiceDefinition(
-            name="Keycloak Authentication",
-            description="Configureerbare Keycloak authenticatie met ondersteuning voor SSO en lokale gebruikers",
-            icon="sleutel",
-            color="groen",
-            scope="component",
-            secret_class="KeycloakSecret",
-            variables=[var.value for var in KeycloakVariables],
-            requires=["services/publish-on-web"],
-            cleanup_strategy="immediate",
-        ),
-        ServiceType.PERSISTENT_STORAGE: ServiceDefinition(
-            name="Permanente opslag",
-            description="Gegevens blijven bewaard tijdens de levenscyclus van de applicatie",
-            icon="server",
-            color="grijs-600",
-            scope="component",
-            backup_label="pvc",
-            storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
-            variables=[var.value for var in StorageVariables if var.value.name == "DATA_PATH"],
-            cleanup_strategy="deferred",
-        ),
-        ServiceType.TEMP_STORAGE: ServiceDefinition(
-            name="Tijdelijke schijfruimte",
-            description="Gegevens worden niet bewaard tijdens de levenscyclus van de applicatie",
-            icon="klok",
-            color="oranje",
-            scope="component",
-            storage_config={"name": "temp", "type": "ephemeral", "size": "500Mi", "mount-path": "/tmp"},
-            variables=[var.value for var in StorageVariables if var.value.name == "TEMP_PATH"],
-        ),
-        ServiceType.POSTGRESQL_DATABASE: ServiceDefinition(
-            name="PostgreSQL Database",
-            description="Database service voor applicaties",
-            icon="database",
-            color="donkerblauw",
-            scope="deployment",
-            secret_class="DatabaseSecret",
-            variables=[var.value for var in DatabaseVariables],
-            cleanup_strategy="deferred",
-            backup_label="database",
-        ),
-        ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ServiceDefinition(
-            name="Namespace PostgreSQL Database",
-            description="Dedicated PostgreSQL database cluster voor project",
-            icon="database",
-            color="donkerblauw",
-            scope="deployment",
-            secret_class="DatabaseSecret",
-            variables=[var.value for var in DatabaseVariables],
-            hidden=True,
-            cleanup_strategy="deferred",
-            backup_label="database",
-        ),
-        ServiceType.MINIO_STORAGE: ServiceDefinition(
-            name="MinIO Object Storage",
-            description="S3-compatible object storage voor documenten, afbeeldingen en grote bestanden",
-            icon="map",
-            color="rood",
-            scope="deployment",
-            secret_class="MinIOSecret",
-            variables=[var.value for var in MinIOVariables],
-            cleanup_strategy="deferred",
-            backup_label="minio",
-        ),
-        ServiceType.REDIS: ServiceDefinition(
-            name="Redis Cache",
-            description="Shared Redis cache en message broker voor caching en Celery task queues",
-            icon="zandloper",
-            color="rood",
-            scope="deployment",
-            secret_class="RedisSecret",
-            variables=[var.value for var in RedisVariables],
-            cleanup_strategy="immediate",
-        ),
-        ServiceType.NAMESPACE_REDIS: ServiceDefinition(
-            name="Namespace Redis Cache",
-            description="Dedicated Redis instance per namespace voor caching en Celery task queues",
-            icon="zandloper",
-            color="rood",
-            scope="deployment",
-            secret_class="RedisSecret",
-            variables=[var.value for var in RedisVariables],
-            hidden=True,
-            cleanup_strategy="immediate",
-        ),
-        ServiceType.PLATFORM: ServiceDefinition(
-            name="Platform",
-            description="Automatisch beschikbare platform variabelen",
-            icon="info",
-            color="grijs-600",
-            scope="component",
-            secret_class="PlatformSecret",
-            variables=[var.value for var in PlatformVariables],
-            hidden=True,
-        ),
-        ServiceType.ATTACHMENTS: ServiceDefinition(
-            name="Bijlagen",
-            description="Geuploade bestanden (bijv. certificaten) gekoppeld als bestand of env-var aan een component",
-            icon="map",
-            color="grijs-600",
-            scope="component",
-            variables=[],
-        ),
-        ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
-            name="Authorization Wall",
-            description="OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties",
-            icon="schild-met-vinkje-erop",
-            color="groen",
-            scope="component",
-            help_template="authorization-wall.html.j2",
-            variables=[],
-            requires=[
-                "services/publish-on-web",
-                "services/keycloak",
-                "services/keycloak/config/restrict-access",
-            ],
-        ),
-        ServiceType.METRICS_SCRAPER: ServiceDefinition(
-            name="Prometheus Metrics Scraper",
-            description="Zorgt dat prometheus scraping op het component wordt ingeschakeld",
-            icon="grafiek",
-            color="hemelblauw",
-            scope="component",
-            variables=[v.value for v in MetricsScraperVariables],
-        ),
-    }
+    #: Every service's metadata, keyed by service type. Each service declares its own
+    #: ``ServiceDefinition`` in its own package (RC-36); this is the assembled view.
+    SERVICE_DEFINITIONS: ClassVar[Mapping[ServiceType, ServiceDefinition]] = _ServiceDefinitionsView()
 
     @classmethod
     def resolve_service_dependencies(cls, selected: list[Any]) -> list[Any]:
@@ -519,17 +456,10 @@ class ServiceAdapter:
         Returns a new list with missing dependency names prepended, preserving order.
         """
 
-        def _name(entry: Any) -> str | None:
-            if isinstance(entry, str):
-                return entry
-            if isinstance(entry, dict):
-                return next(iter(entry), None)
-            return None
-
-        selected_set = {name for entry in selected if (name := _name(entry)) is not None}
+        selected_set = {name for entry in selected if (name := service_entry_name(entry)) is not None}
         to_add: list[str] = []
         for entry in selected:
-            svc_name = _name(entry)
+            svc_name = service_entry_name(entry)
             if svc_name is None:
                 continue
             try:
@@ -566,13 +496,13 @@ class ServiceAdapter:
     def is_component_service(cls, service: ServiceType) -> bool:
         """Check if a service is component-specific."""
         definition = cls.get_service_definition(service)
-        return definition is not None and definition.scope == "component"
+        return definition is not None and definition.binding is ServiceBinding.COMPONENT
 
     @classmethod
     def is_deployment_service(cls, service: ServiceType) -> bool:
         """Check if a service is deployment-shared."""
         definition = cls.get_service_definition(service)
-        return definition is not None and definition.scope == "deployment"
+        return definition is not None and definition.binding is ServiceBinding.DEPLOYMENT
 
     @classmethod
     def get_component_flag(cls, service: ServiceType) -> str | None:
@@ -632,7 +562,7 @@ class ServiceAdapter:
         return [
             svc_type
             for svc_type, definition in cls.SERVICE_DEFINITIONS.items()
-            if definition.cleanup_strategy != "none"
+            if definition.cleanup_strategy is not CleanupStrategy.NONE
         ]
 
     @classmethod
@@ -655,10 +585,10 @@ class ServiceAdapter:
     def build_component_service_entries(cls, service_names: list[str]) -> list[str | dict[str, Any]]:
         """Build a component-level services list with storage configs embedded.
 
-        Converts a flat list of service name strings into the v2 mixed format
-        where storage services carry their config inline::
+        Converts a flat list of service name strings into the uniform component
+        format where storage services carry their config as a reference record::
 
-            ["publish-on-web", {"persistent-storage": {"config": [...]}}]
+            ["publish-on-web", {"reference": "persistent-storage", "config": [...]}]
         """
         parsed = cls.parse_services_from_strings(service_names)
         storage_configs = cls.create_storage_configs(parsed)
@@ -675,10 +605,37 @@ class ServiceAdapter:
         entries: list[str | dict[str, Any]] = []
         for svc in parsed:
             if svc.value in storage_by_svc:
-                entries.append({svc.value: {"config": storage_by_svc[svc.value]}})
+                entries.append({"reference": svc.value, "config": storage_by_svc[svc.value]})
             else:
                 entries.append(svc.value)
         return entries
+
+    @classmethod
+    def merge_component_service_entries(
+        cls, existing: list[Any], service_names: list[str]
+    ) -> list[str | dict[str, Any]]:
+        """Rebuild a component's services list from names, keeping existing entries.
+
+        Rebuilding from bare names alone (``build_component_service_entries``) silently
+        drops the config an entry carries -- attachment couplings, storage mounts, a
+        component-level ``tls`` -- because the PATCH body has names only. A name that is
+        already present keeps its entry as it stands; only a genuinely new name gets a
+        freshly built entry (storage services get their default config, as in
+        add_component). Names missing from ``service_names`` fall out, along with their
+        config: that is what removal means. The order follows the requested list.
+        """
+        kept: dict[str, Any] = {}
+        for entry in existing or []:
+            entry_name = service_entry_name(entry)
+            if entry_name is not None and entry_name not in kept:
+                kept[entry_name] = entry
+        merged: list[str | dict[str, Any]] = []
+        for name in service_names:
+            if name in kept:
+                merged.append(kept[name])
+            else:
+                merged.extend(cls.build_component_service_entries([name]))
+        return merged
 
     @classmethod
     def extract_service_names_from_project_services(cls, project_services: list[str | dict]) -> list[str]:
@@ -701,20 +658,12 @@ class ServiceAdapter:
         service_names: list[str] = []
 
         for service_item in project_services:
-            if isinstance(service_item, str):
-                # Simple string format
-                service_names.append(service_item)
-            elif isinstance(service_item, dict):
-                # Dict format: {"service-name": {"config": {...}}}
-                # Extract the key (service name)
-                if len(service_item) == 0:
-                    raise ValueError(f"Service dict is empty: {service_item}")
-                if len(service_item) > 1:
-                    raise ValueError(f"Service dict should have exactly one key (service name): {service_item}")
-                service_name = next(iter(service_item.keys()))
-                service_names.append(service_name)
-            else:
+            if not isinstance(service_item, str | dict):
                 raise TypeError(f"Invalid service item type {type(service_item)}, must be str or dict: {service_item}")
+            name = service_entry_name(service_item)
+            if name is None:
+                raise ValueError(f"Cannot determine service name from entry: {service_item}")
+            service_names.append(name)
 
         return service_names
 
@@ -792,13 +741,10 @@ class ServiceAdapter:
             ServiceType.NAMESPACE_REDIS.value,
         }
         project_services = project_data.get("services", [])
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item in namespace_services:
-                    return True
-            elif isinstance(service_item, dict) and any(svc in service_item for svc in namespace_services):
-                return True
-        return False
+        # service_entry_name resolves all three entry formats. Matching on the raw dict
+        # keys only saw the legacy single-key form, so a namespace service carrying
+        # config (which makes it a {name, config} record) went undetected.
+        return any(service_entry_name(entry) in namespace_services for entry in project_services)
 
     @classmethod
     def get_variables(cls, service: ServiceType) -> list[VariableDefinition]:
@@ -918,9 +864,7 @@ class ServiceAdapter:
                 existing_comp_svc_names = set(cls.extract_service_names_from_project_services(existing_comp_services))
 
                 entries_to_add = [
-                    entry
-                    for entry in new_entries
-                    if (entry if isinstance(entry, str) else next(iter(entry))) not in existing_comp_svc_names
+                    entry for entry in new_entries if service_entry_name(entry) not in existing_comp_svc_names
                 ]
 
                 if entries_to_add:
@@ -934,3 +878,525 @@ class ServiceAdapter:
             "components_updated": components_updated,
             "warnings": warnings,
         }
+
+    # --- unified service-config CRUD core (RC-12 follow-up) ---------------------
+    # The pure data-manipulation behind the unified ``/api/v2/.../services/{svc}``
+    # endpoint: it upserts (or removes) one service's config block at a target
+    # layer, leaving validation to the save chokepoint. It writes the same
+    # ``{name, config}`` (project) / ``{reference, config}`` (component / deployment
+    # / deployment-component) records the wizard writes, resolves identity with
+    # ``service_entry_name`` and promotes a bare-string selection in place instead
+    # of appending a duplicate (a services list is a selection set -- checklist
+    # item 5). ``ConfigLayer`` is compared by its ``.value`` so this module need
+    # not import ``catalog.base`` at runtime (that module imports this one).
+
+    @classmethod
+    def _resolve_target_services_list(
+        cls,
+        project_data: dict[str, Any],
+        layer: ConfigLayer,
+        *,
+        component_name: str | None,
+        deployment_name: str | None,
+        create: bool,
+    ) -> list[str | dict[str, Any]]:
+        """Return the ``services`` list at ``layer`` (project / component /
+        deployment / deployment-component), creating it when ``create`` is set.
+
+        Raises ``ServiceValidationError`` when a name required by the layer is
+        missing or does not resolve to an existing component/deployment.
+        """
+        container = cls._resolve_target_container(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name
+        )
+        services = container.get("services")
+        if services is None:
+            if not create:
+                return []
+            services = []
+            container["services"] = services
+        return services
+
+    @classmethod
+    def _resolve_target_container(
+        cls,
+        project_data: dict[str, Any],
+        layer: ConfigLayer,
+        *,
+        component_name: str | None,
+        deployment_name: str | None,
+    ) -> dict[str, Any]:
+        """Return the dict that owns the ``services`` list for ``layer``."""
+        lv = layer.value
+        if lv == "project":
+            return project_data
+        if lv == "component":
+            return cls._require_named(
+                project_data.get("components", []), component_name, kind="component", param="component_name"
+            )
+        if lv == "deployment":
+            return cls._require_named(
+                project_data.get("deployments", []), deployment_name, kind="deployment", param="deployment_name"
+            )
+        if lv == "deployment-component":
+            deployment = cls._require_named(
+                project_data.get("deployments", []), deployment_name, kind="deployment", param="deployment_name"
+            )
+            return cls._require_named(
+                deployment.get("components", []),
+                component_name,
+                kind="deployment component",
+                param="component_name",
+            )
+        raise ServiceValidationError(f"Unknown config target layer: {layer!r}")
+
+    @classmethod
+    def _require_named(cls, items: list[dict[str, Any]], name: str | None, *, kind: str, param: str) -> dict[str, Any]:
+        """Find an item by name/reference or raise a clear ServiceValidationError."""
+        if not name:
+            raise ServiceValidationError(f"A '{param}' is required to target the {kind} layer")
+        for item in items:
+            if service_entry_name(item) == name:
+                return item
+        raise ServiceValidationError(f"{kind.capitalize()} '{name}' not found in project")
+
+    @classmethod
+    def set_service_config(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        config: dict[str, Any] | list[Any],
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> None:
+        """Upsert one service's ``config`` block at ``layer`` (pure data-manipulation).
+
+        Mirrors ``add_services_to_project``: no I/O and no schema validation -- the
+        caller persists through ``save_and_commit_project``, which runs
+        ``validate_service_configs`` and rejects a config the service's model does
+        not accept. An existing entry (bare string, ``{name}``/``{reference}``
+        record, or legacy single-key dict) is found via ``service_entry_name`` and
+        replaced in place; a ``schema-version``/``type`` sibling is preserved. The
+        record key is ``name`` at the project layer and ``reference`` elsewhere,
+        matching the shape the wizard writes.
+
+        Fields the platform writes into the same block (``keycloak.realms``) are carried
+        over from the existing config instead of being replaced -- see
+        ``_keep_platform_fields``.
+        """
+        cls.parse_services_from_strings([service_name])  # rejects an unknown service name
+        target_list = cls._resolve_target_services_list(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=True
+        )
+        key = "name" if layer.value == "project" else "reference"
+
+        # Configuring on a component/deployment selects the service at the project level
+        # too -- but only if the service allows that (RC-84). A structural check requires
+        # every component service to resolve to a project-level service
+        # (project_validation), and a service that needs a project-level decision has to
+        # get one instead of a blank block nobody filled in.
+        if layer.value != "project":
+            cls.ensure_project_selection(project_data, service_name)
+
+        for index, entry in enumerate(target_list):
+            if service_entry_name(entry) == service_name:
+                config = cls._keep_platform_fields(service_name, layer, config, service_entry_config(entry))
+                record: dict[str, Any] = {key: service_name, "config": config}
+                schema_version = service_entry_schema_version(entry)
+                if schema_version is not None:
+                    record["schema-version"] = schema_version
+                entry_type = service_entry_type(entry)
+                if entry_type is not None:
+                    record["type"] = entry_type
+                target_list[index] = record
+                return
+
+        target_list.append({key: service_name, "config": config})
+
+    @classmethod
+    def ensure_project_selection(cls, project_data: dict[str, Any], *service_names: str) -> None:
+        """Select these services at project level where they are not there yet (RC-84).
+
+        Whether that may happen without anyone asking is each service's own answer
+        (``Service.implicit_project_entry``): a service with nothing to decide at project
+        level enrols itself with the entry it names, a service that needs a decision --
+        which domains, which realm, an administrator's approval -- refuses, and the caller
+        is told to select it at project level first.
+
+        Never duplicates and never demotes an existing project entry: an entry already
+        present (bare or with config) is left untouched. Nothing is written unless every
+        name is allowed, so a rejected list leaves the project file as it was.
+
+        Raises ``ServiceValidationError`` for an unknown service name, or when a service
+        may not enrol itself. That refusal names the request that lifts it -- see
+        ``_refusal_message``.
+        """
+        cls.parse_services_from_strings(list(service_names))  # rejects an unknown service name
+
+        # Lazy: the registry imports this module, so it cannot be imported at load time.
+        from opi.services.registry import get_service
+
+        services = project_data.setdefault("services", [])
+        present = {service_entry_name(entry) for entry in services}
+        new_entries: list[str | dict[str, Any]] = []
+        refused: list[str] = []
+        for service_name in service_names:
+            if service_name in present:
+                continue
+            present.add(service_name)
+            entry = get_service(ServiceType(service_name)).implicit_project_entry()
+            if entry is None:
+                refused.append(service_name)
+            else:
+                new_entries.append(entry)
+
+        if refused:
+            raise ServiceValidationError(cls._refusal_message(project_data, refused))
+
+        # Zichzelf mogen inschrijven zegt niets over of de dienst kán werken. De auth wall
+        # heeft op projectniveau niets te beslissen (alleen een optionele banner) en schrijft
+        # zich dus bij, maar zonder keycloak en publish-on-web staat er straks een muur voor
+        # een deur die er niet is. Dat is geen keuze die wij voor iemand maken maar een feit,
+        # en dat hoort de aanroeper NU te horen in plaats van het bij de uitrol te ontdekken.
+        # Alleen over wat we NU inschrijven. Een dienst die er al stond is een bestaande
+        # toestand, en die alsnog afkeuren zou betekenen dat een aanroep die er niets aan
+        # toevoegt ineens faalt op iets wat de aanroeper niet vroeg.
+        toegevoegd = {service_entry_name(entry) for entry in new_entries}
+        onvervuld = [
+            name
+            for name in service_names
+            if name in toegevoegd
+            and unmet_service_requirements(project_data, get_service(ServiceType(name)).definition.requires or [])
+        ]
+        if onvervuld:
+            raise ServiceValidationError(cls._refusal_message(project_data, onvervuld))
+
+        services.extend(new_entries)
+
+    @classmethod
+    def _refusal_message(cls, project_data: dict[str, Any], refused: list[str]) -> str:
+        """Why these services were not enrolled, and what to send instead.
+
+        The refusal used to say only that the services "need project-level configuration
+        that cannot be assumed". That is the reason, not the way out: a client that hangs
+        an authorization-wall on a component learned that something was missing but not
+        which request supplies it, and the service's own ``requires`` -- publish-on-web,
+        keycloak, and keycloak's ``restrict-access`` -- surfaced only afterwards, one
+        failed call at a time (zad-cli, bevinding 21).
+
+        So the message carries three things per service: the endpoint that makes the
+        project-level decision (built with ``config_endpoint_path``, so it cannot drift
+        from the route that is actually registered), where to read what belongs in that
+        body, and the requirements this project does not satisfy yet. Only the unmet ones:
+        a list that repeats what is already there reads as a wall rather than a next step.
+
+        The endpoint is named only when it EXISTS. The generic config route is generated
+        for a layer that has a config model, and a service can carry a project layer
+        without one -- attachments defines a catalog under ``data`` and has no
+        project-level config block at all, so its route was never generated. Naming it
+        anyway would swap one dead end for a worse one: a 404 on a request the message
+        itself recommended. Those services get pointed at their own description instead,
+        which is where the actions they DO declare are listed.
+        """
+
+        # Lazy: de registry importeert deze module, dus niet op laadtijd.
+        from opi.services.registry import get_service
+
+        project_name = project_data.get("name") or "{project_name}"
+        parts: list[str] = []
+        for service_name in refused:
+            service_type = ServiceType(service_name)
+            definition = cls.SERVICE_DEFINITIONS.get(service_type)
+            unmet = unmet_service_requirements(project_data, definition.requires if definition else [])
+
+            # Twee verschillende redenen, en ze door elkaar halen stuurt de lezer de
+            # verkeerde kant op. Mag de dienst zichzelf niet inschrijven, dan moet er een
+            # BESLISSING genomen worden en volgt het endpoint dat die opneemt. Mag hij dat
+            # wel maar ontbreken er diensten waar hij op leunt, dan is er niets te beslissen
+            # en moet er iets anders eerst bestaan -- dan is het endpoint van deze dienst
+            # noemen alleen maar misleidend.
+            if get_service(service_type).implicit_project_entry() is None:
+                sentence = (
+                    f"Service '{service_name}' needs a project-level decision that cannot be assumed, so it is "
+                    f"not selected automatically. {cls._project_selection_hint(service_type, project_name)}"
+                )
+                if unmet:
+                    sentence += f" It also requires, and this project does not have yet: {', '.join(unmet)}."
+            else:
+                sentence = (
+                    f"Service '{service_name}' cannot work in this project yet: it requires "
+                    f"{', '.join(unmet)}, which this project does not have. Add those first; "
+                    f"'{service_name}' itself needs no project-level decision and is selected for you."
+                )
+            parts.append(sentence)
+        return " ".join(parts)
+
+    @classmethod
+    def _project_selection_hint(cls, service_type: ServiceType, project_name: str) -> str:
+        """The one request that selects ``service_type`` at project level.
+
+        Answered from what the service declares, with the same two conditions the v2
+        router uses to decide whether to generate the route at all: the service has to
+        carry the project layer AND have a model to validate a write against. Reading the
+        service rather than assuming the pattern is what keeps the message from pointing
+        at a 404.
+        """
+        from opi.services.catalog.base import ConfigLayer as Layer
+        from opi.services.catalog.base import config_endpoint_path
+        from opi.services.registry import get_service
+
+        service = get_service(service_type)
+        name = service_type.value
+        has_route = Layer.PROJECT in service.config_layers() and service.config_model_for(Layer.PROJECT) is not None
+        if has_route:
+            endpoint = config_endpoint_path(Layer.PROJECT, name, project_name)
+            return (
+                f"Select it first with PUT {endpoint} (the body is this service's project config; "
+                f"GET /api/v2/services/{name} describes it)."
+            )
+        return (
+            f"Its project layer takes no config block, so there is no config route for it; "
+            f"GET /api/v2/services/{name} lists the actions that put something there."
+        )
+
+    @classmethod
+    def remove_service_config(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> bool:
+        """Remove one service's config at ``layer`` by demoting its entry to a bare
+        string, keeping the selection. Returns True if an entry was changed, False
+        if the service was not present at that layer.
+
+        Demotion (rather than deleting the entry) is the least-surprising CRUD
+        semantics for a config resource: DELETE clears the config, not the fact that
+        the component/project uses the service.
+
+        Fields the platform writes are not the caller's to clear either, so a block that
+        holds them keeps exactly those and loses the rest -- "reset my settings" must not
+        mean "throw away the realm-admin password". See ``_keep_platform_fields``.
+        """
+        target_list = cls._resolve_target_services_list(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=False
+        )
+        for index, entry in enumerate(target_list):
+            if service_entry_name(entry) == service_name:
+                if isinstance(entry, str):
+                    return False  # already bare -- no config to remove
+                kept = cls._platform_fields_of(service_name, layer, service_entry_config(entry))
+                if kept:
+                    cls.set_service_config(
+                        project_data,
+                        service_name,
+                        layer,
+                        kept,
+                        component_name=component_name,
+                        deployment_name=deployment_name,
+                    )
+                    return True
+                target_list[index] = service_name
+                return True
+        return False
+
+    @classmethod
+    def _platform_fields_of(cls, service_name: str, layer: ConfigLayer, config: Any) -> dict[str, Any]:
+        """The platform-written fields present in ``config``, or an empty dict."""
+        if not isinstance(config, dict):
+            return {}
+        # Lazy: the registry imports this module, so it cannot be imported at load time.
+        from opi.services.registry import get_service
+
+        try:
+            service = get_service(ServiceType(service_name))
+        except ValueError:
+            return {}
+        return {key: config[key] for key in service.platform_managed_fields(layer) if key in config}
+
+    @classmethod
+    def _keep_platform_fields(
+        cls, service_name: str, layer: ConfigLayer, config: dict[str, Any] | list[Any], stored: Any
+    ) -> dict[str, Any] | list[Any]:
+        """Carry the platform-written fields of the stored config into its replacement.
+
+        This method replaces the whole block, so a field the caller never mentioned would
+        simply disappear. For a user setting that is the intended "reset to default"; for
+        ``keycloak.realms`` it destroyed the only copy of the realm-admin password.
+
+        The API refuses a write that CARRIES such a field (422, in the route), so this is
+        the guarantee for the other half: a write that leaves it out cannot lose it. The
+        stored value is passed through untouched -- not re-validated and not re-dumped --
+        so it keeps exactly the bytes it had, and it stays the safety net for any future
+        write path that does not go through a route.
+        """
+        kept = cls._platform_fields_of(service_name, layer, stored)
+        if not kept or not isinstance(config, dict):
+            return config
+        overwritten = sorted(key for key, value in kept.items() if key in config and config[key] != value)
+        if overwritten:
+            logger.warning(
+                "Ignored a write to platform-managed field(s) %s of service '%s' at the %s layer; "
+                "the stored value is kept",
+                ", ".join(overwritten),
+                service_name,
+                layer.value,
+            )
+        return {**config, **kept}
+
+    @classmethod
+    def patch_service_config_list(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        *,
+        add: list[Any],
+        remove: list[str],
+        list_field: str | None = None,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> dict[str, int]:
+        """Add, update or remove items in one list of a service's config at ``layer``.
+
+        The PATCH counterpart of ``set_service_config``: instead of replacing the whole
+        block, only the named items change. ``add`` takes full entries (validated against
+        the service's own item model here, so a malformed entry fails before anything is
+        written); an entry whose key already exists replaces it. ``remove`` takes keys
+        only, and a key that is not there is a no-op -- removing twice is fine. Remove
+        runs first, so a key in both lists is replaced outright.
+
+        Which list, and what identifies one entry, comes from the config model itself
+        (``opi/services/config_lists.py``). ``list_field`` is ``None`` for a config that
+        IS a list (storage mounts, attachment couplings) and names the field for a config
+        that CONTAINS one (``invite.active``, ``cross-domain-access.inbound``,
+        ``sleep-mode.match``). In the second case the surrounding fields are carried over
+        untouched -- that is the whole point: a PUT there rewrites them, and a caller who
+        does not resend them wipes them.
+
+        A list of plain values (``sleep-mode.match``) has no key field: the value IS its
+        identity, so add is a set union and remove takes values.
+
+        Writes through ``set_service_config`` afterwards, so project-level selection and
+        entry normalization stay on the one path. Returns per-action counts so the
+        caller can report a no-op as a no-op.
+        """
+        # Lazy: the registry imports this module, so it cannot be imported at load time.
+        from opi.services.registry import get_service
+
+        try:
+            service_type = ServiceType(service_name)
+        except ValueError:
+            raise ServiceValidationError(f"Unknown service: {service_name}") from None
+        service = get_service(service_type)
+        model = service.config_model_for(layer)
+        spec = find_patchable_list(model, list_field)
+        if model is None or spec is None:
+            named = f" list '{list_field}'" if list_field else ""
+            raise ServiceValidationError(
+                f"Service '{service_name}' has no patchable{named} config at the {layer.value} layer"
+            )
+
+        item_model = spec.item_model
+        if item_model is None:
+            # Plain values; validated below, through the model that owns the list (a
+            # match pattern is checked by sleep-mode's own field validator, not here).
+            validated_add: list[Any] = list(add)
+        else:
+            try:
+                validated_add = [
+                    item_model.model_validate(item).model_dump(by_alias=True, exclude_unset=True) for item in add
+                ]
+            except ValidationError as e:
+                raise ServiceValidationError(f"Invalid '{service_name}' entry: {e.errors(include_url=False)}") from e
+
+        target_list = cls._resolve_target_services_list(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=True
+        )
+        current_config: Any = None
+        for entry in target_list:
+            if service_entry_name(entry) == service_name:
+                current_config = service_entry_config(entry)
+                break
+        expected = dict if spec.name else list
+        if current_config is not None and not isinstance(current_config, expected):
+            raise ServiceValidationError(
+                f"The config of '{service_name}' at the {layer.value} layer is not "
+                f"{'an object' if spec.name else 'a list'}; only the PUT can replace it"
+            )
+        if spec.name:
+            current: list[Any] = list((current_config or {}).get(spec.name) or [])
+        else:
+            current = list(current_config or [])
+
+        item_key = spec.item_key
+
+        def key_of(item: Any) -> Any:
+            if item_key is None:
+                return item
+            return item.get(item_key) if isinstance(item, dict) else None
+
+        removed_keys = set(remove)
+        kept = [item for item in current if key_of(item) not in removed_keys]
+        removed = len(current) - len(kept)
+
+        merged: list[Any] = list(kept)
+        positions = {key_of(item): index for index, item in enumerate(merged)}
+        added = 0
+        updated = 0
+        for item in validated_add:
+            item_key_value = key_of(item)
+            if item_key_value in positions:
+                merged[positions[item_key_value]] = item
+                updated += 1
+            else:
+                positions[item_key_value] = len(merged)
+                merged.append(item)
+                added += 1
+
+        # Een lijst die de API als ÉÉN entry toont kan er ook maar één houden. Zonder deze
+        # grens waren twee geldige aanroepen genoeg om een project in een stand te zetten
+        # waarin de gewone read weigert (409, "holds 2 entries ... presented as a single
+        # entry") -- en de uitweg vroeg precies wat die read je zou vertellen: welke sleutel
+        # je moet weghalen (zad-cli, punt 13). De fout hoort bij de handeling die de tweede
+        # entry maakt, niet bij de volgende lezer.
+        #
+        # Alleen op TOEVOEGEN. Verwijderen blijft altijd mogelijk, want dat is de weg terug
+        # voor een bestand dat er al meer heeft, en vervangen laat het aantal ongemoeid.
+        if added and len(merged) > 1 and spec.name in service.api_singular_lists:
+            raise ServiceValidationError(
+                f"'{spec.name}' of service '{service_name}' is presented as a single entry by this API, "
+                f"so it holds one. Remove the entry that is there before adding another, in this same "
+                f"call with 'remove' or in a PATCH before it."
+            )
+
+        new_config: dict[str, Any] | list[Any]
+        if spec.name:
+            # Everything around the patched list is carried over verbatim: not re-dumped
+            # through the model, so a field this call does not touch keeps exactly the
+            # value (and the spelling) it had on disk. Validated as a whole, because the
+            # rules that matter here live on the owning model -- the match-pattern check
+            # on sleep-mode, the unique-rule-name check on cross-domain-access.
+            new_config = dict(current_config or {})
+            new_config[spec.name] = merged
+            try:
+                model.model_validate(new_config)
+            except ValidationError as e:
+                raise ServiceValidationError(f"Invalid '{service_name}' config: {e.errors(include_url=False)}") from e
+        else:
+            new_config = merged
+
+        cls.set_service_config(
+            project_data,
+            service_name,
+            layer,
+            new_config,
+            component_name=component_name,
+            deployment_name=deployment_name,
+        )
+        return {"added": added, "updated": updated, "removed": removed}

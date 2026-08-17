@@ -1,0 +1,65 @@
+{#
+  Restore wizard step 1: Select a backup run to restore.
+
+  Expected context (via yaml_data):
+    - _backup_runs: list of dicts with keys: backup_run_id, timestamp, deployment_name, resource_count, resource_types (list), items (list of backup dicts)
+    - _current_cluster: str
+#}
+{% set backup_runs = _backup_runs | default([]) %}
+
+{% if backup_runs %}
+<c-layout-flow gap="lg">
+    <fieldset>
+        <legend class="rvo-form-field__label"><strong>Backup run selecteren</strong></legend>
+        <p class="rvo-text--sm rvo-text--subtle backup-step__intro">
+            Selecteer de backup run die u wilt herstellen. Elke run bevat alle resources die tegelijk zijn geback-upt.
+        </p>
+        {% for run in backup_runs %}
+        <label class="rvo-radio-option backup-option">
+            <input type="radio" name="backup_run_id" value="{{ run.backup_run_id }}"
+                   {% if loop.first %}checked{% endif %}
+                   class="backup-option__radio" />
+            <div class="backup-option__body">
+                <div class="backup-option__title-row">
+                    {# Was een <code> met een eigen blauwe pil (--rvo-color-hemelblauw-200, bestaat
+                       niet). <c-code> geeft de code-opmaak die het thema ervoor heeft. #}
+                    <c-code>{{ run.backup_run_id }}</c-code>
+                    <span class="backup-option__timestamp">{{ run.timestamp | dutch_date }}</span>
+                </div>
+                <div class="backup-option__meta-row">
+                    <span class="backup-option__deployment">
+                        <c-icon icon="rectangle-stack" size="sm" color="donkerblauw"/>
+                        {{ run.deployment_name }}
+                    </span>
+                    <span class="backup-option__count">
+                        {{ run.resource_count }} resource(s)
+                    </span>
+                </div>
+                <div class="backup-option__types">
+                    {# <c-tag> in plaats van drie eigen pillen. .backup-type--pvc/-database/
+                       -bucket verwezen naar --rvo-color-hemelblauw-200, -grasgroen-200/-800
+                       en -oranje-200/-800; geen van die namen staat in lotc-app.css, dus de
+                       pillen kwamen zonder achtergrond EN zonder tekstkleur op het scherm.
+                       Het type draagt de kleur nu, en een onbekend soort valt terug op
+                       default in plaats van op niets. #}
+                    {% for rt in run.resource_types %}
+                    {% set soort = {'pvc': 'info', 'database': 'success', 'bucket': 'warning'}.get(rt, 'default') %}
+                    <c-tag type="{{ soort }}" label="{{ rt | upper }}"/>
+                    {% endfor %}
+                </div>
+            </div>
+        </label>
+        {% endfor %}
+    </fieldset>
+
+    {# Hidden field to pass deployment name along with selected backup run #}
+    <input type="hidden" name="source_deployment" value="{{ backup_runs[0].deployment_name if backup_runs else '' }}" />
+</c-layout-flow>
+{% else %}
+<c-card padding="md" outline="true" background-color="grijs-050">
+    <c-cluster gap="md">
+        <c-icon icon="info" size="md" color="grijs-500"/>
+        <p>Geen backup runs gevonden voor dit project.</p>
+    </c-cluster>
+</c-card>
+{% endif %}

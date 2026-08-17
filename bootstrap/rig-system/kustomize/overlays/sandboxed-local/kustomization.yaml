@@ -22,3 +22,60 @@ resources:
 
 components:
 - ../../components/sops-plugin
+
+patches:
+  # NB: de sops-plugin component doet `op: replace` op /spec/repo — repo-instellingen
+  # moeten dus HIER staan (na de component), niet in argocd-deployment.yaml. Zelfde
+  # constructie als in de odcn-production overlay.
+  #
+  # Pin repo-server terug op de upstream release. De RIG-image (spec.image) draait
+  # daardoor alleen op controller, server en applicationset — dezelfde vorm als
+  # odcn-production, waar repo-server op de Red Hat build blijft staan. De
+  # namespace-sync fixes zitten in de controller, niet in de repo-server.
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/image
+        value: quay.io/argoproj/argocd
+      - op: add
+        path: /spec/repo/version
+        value: v3.3.10
+
+  # Deze env vars stonden in argocd-deployment.yaml en werden daar door de component
+  # weggegooid — de repo-server draaide dus zonder. Sinds ze hier staan zijn ze wél actief.
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/env
+        value:
+        - name: ARGOCD_EXEC_TIMEOUT
+          value: "180"
+        - name: ARGOCD_GIT_ATTEMPTS_COUNT
+          value: "3"
+        - name: ARGOCD_HELM_ALLOW_CONCURRENCY
+          value: "true"
+        # Stream alleen de manifest-generate-paths dir van de app naar de CMP in plaats
+        # van de hele monorepo per render (op odcn gemeten: ~27s van een 28.5s render was
+        # repo streaming, de kustomize+sops render zelf ~1s). De child apps dragen
+        # manifest-generate-paths: '.', dus dit maakt hun syncs op de sandbox ook snel.
+        # Zie issue #130.
+        - name: ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS
+          value: "true"
+
+  # Idem voor de cmp-sidecar: de component zet alleen KUSTOMIZE_PLUGIN_HOME, waardoor
+  # ARGOCD_EXEC_TIMEOUT uit argocd-deployment.yaml verdween.
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/sidecarContainers/0/env
+        value:
+        - name: ARGOCD_EXEC_TIMEOUT
+          value: "180"
+        - name: KUSTOMIZE_PLUGIN_HOME
+          value: /etc/kustomize/plugin

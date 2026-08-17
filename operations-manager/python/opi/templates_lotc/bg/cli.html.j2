@@ -1,0 +1,57 @@
+{#
+  De ZAD CLI.
+
+  EEN WEGWIJZER, GEEN HANDLEIDING, en sinds vandaag ook echt kort.
+
+  Hier stonden opdrachten, een uitleg over de instellingenvolgorde en een stukje over
+  --no-wait. Dat is drie keer misgegaan op dezelfde manier: de repository loopt vooruit,
+  en dan staat hier een handleiding die het gereedschap van vorige maand beschrijft. Het
+  gereedschap heet inmiddels zadctl en niet meer zad, en het wordt bij voorkeur als binary
+  geinstalleerd en niet meer met uv - allebei stond het hier fout.
+
+  Wat er dus WEL hoort: wat het is, hoe je aan de laatste versie komt, en een link. De
+  installatieregels komen letterlijk uit de README van de repository.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}ZAD CLI - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "ZAD CLI",
+        "Dezelfde handelingen als in deze interface, maar vanaf de opdrachtregel."
+    ) }}
+
+    {# De link BOVENAAN en niet onderaan. Deze pagina is een wegwijzer: alles wat de CLI
+       kan staat in de repository, en die documentatie hoort bij de versie die je net
+       hebt gehaald. Onderaan zag je hem pas nadat je de installatie had doorgelezen. #}
+    <c-cluster gap="sm" align="center" class="repo-verwijzing">
+        <c-icon icon="terminal" size="md" color="hemelblauw" />
+        <c-link href="https://github.com/RijksICTGilde/zad-cli"
+                label="Alle opdrachten en instellingen: zad-cli op GitHub"
+                weight="bold" target="_blank" />
+    </c-cluster>
+
+    {% call panel("Installeren", "arrow-down") %}
+        <c-heading type="h3" size="6" label="macOS" />
+        <c-code-viewer language="bash">mkdir -p ~/.local/bin
+curl -fsSL https://github.com/RijksICTGilde/zad-cli/releases/latest/download/zadctl_darwin_arm64.tar.gz \
+  | tar -xzf - -C ~/.local/bin zadctl
+xattr -d com.apple.quarantine ~/.local/bin/zadctl 2>/dev/null || true
+zadctl --version</c-code-viewer>
+        <c-paragraph size="sm">
+            Op een Intel-Mac vervang je <c-code>darwin_arm64</c-code> door
+            <c-code>darwin_amd64</c-code>. De regel met <c-code>xattr</c-code> haalt het
+            quarantainevlaggetje weg dat macOS op elk gedownload bestand zet; zonder die
+            regel weigert Gatekeeper het te openen.
+        </c-paragraph>
+
+        <c-heading type="h3" size="6" label="Linux" />
+        <c-code-viewer language="bash">mkdir -p ~/.local/bin
+curl -fsSL https://github.com/RijksICTGilde/zad-cli/releases/latest/download/zadctl_linux_amd64.tar.gz \
+  | tar -xzf - -C ~/.local/bin zadctl
+zadctl --version</c-code-viewer>
+    {% endcall %}
+
+{% endblock %}

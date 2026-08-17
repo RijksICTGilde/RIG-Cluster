@@ -1,0 +1,52 @@
+{# De keuzes voor dienst, metriek en filter, met de knop.
+
+   De twee keuzelijsten waren handgebouwd: een <label>, een kale <select class="lotc-select">
+   en een <span> eronder, bij elkaar gehouden door .metrics-controls__field. Dat is
+   <c-select-field>, die label en lijst ook aan elkaar koppelt voor een schermlezer.
+
+   native, want het script doet metricSelect.innerHTML = '<option ...>' en leest .value en
+   zet .disabled. De gewone vorm is een <nldd-combo-box>; de native-variant staat er juist
+   voor schermen waarvan de JS de lijst uitleest, en levert een echte <select>.
+
+   De twee <span>'s blijven ernaast staan en gaan NIET als help= mee: het script vult ze
+   op id (serviceDescription, metricCount), en een hulptekst die het component zelf
+   rendert draagt dat id niet.
+
+   .metrics-controls__row is <c-cluster gap="lg" align="end"> - flex met een gat, onderaan
+   uitgelijnd en afbrekend, precies wat de eigen regel deed. #}
+<div class="metrics-controls">
+    <c-cluster gap="lg" align="end">
+        {# Service selector #}
+        <div class="metrics-controls__field">
+            <c-select-field id="service-select" name="service-select" label="Service" native>
+                <option value="">-- Selecteer een service --</option>
+                {% for service in services %}
+                    <option value="{{ service.id }}">{{ service.name }}</option>
+                {% endfor %}
+            </c-select-field>
+            <span id="service-description"></span>
+        </div>
+
+        {# Metric selector #}
+        <div class="metrics-controls__field">
+            <c-select-field id="metric-select" name="metric-select" label="Metric" native disabled>
+                <option value="">-- Selecteer eerst een service --</option>
+            </c-select-field>
+            <span id="metric-count"></span>
+        </div>
+
+        {# Show button #}
+        {% set lotc_onclick_1 %}showMetric(){% endset %}<c-button id="show-btn" label="Tonen in Prometheus" disabled/>
+    </c-cluster>
+
+    {# Metric filter. .metrics-controls__filter was flex + align-items:center + gap +
+       margin-top; de eerste drie zijn <c-cluster>, alleen de marge staat nog in het
+       stijlblad.
+
+       .is-hidden blijft hierop werken omdat die regel !important is en dus wint van de
+       display:flex die het cluster meebrengt - zie de uitleg in base.css. #}
+    <c-cluster gap="sm" align="center" class="metrics-controls__filter is-hidden" id="filter-container">
+        <label for="metric-filter"><strong>Filter metrics:</strong></label>
+        <input type="text" id="metric-filter" class="metrics-filter-input" placeholder="Type om te filteren..." oninput="filterMetrics()" />
+    </c-cluster>
+</div>
