@@ -1,0 +1,203 @@
+<c-page title="ZAD Tools" lang="nl">
+    {# Het eigen stijlblad van deze pagina. Het origineel gaf het mee als additionalCss op
+       c-page; die eigenschap kent dit componentensysteem niet, en de omzetter liet hem dus
+       vallen - waarmee de pagina stil zonder opmaak kwam te staan. Als link-element hier
+       doet het hetzelfde, en zo doen de andere pagina's het ook.
+
+       Let op bij het aanpassen van dit commentaar: schrijf hier nooit een letterlijke
+       style- of script-openingstag. De componentverwerking leest de bron als HTML voordat
+       Jinja het commentaar weghaalt, en zo'n tag begint een blok ruwe tekst dat pas bij de
+       sluittag eindigt. Staat die sluittag er niet, dan is de rest van het bestand tekst,
+       wordt c-page niet meer herkend en komt de pagina onverwerkt in de uitvoer. #}
+    <link rel="stylesheet" href="{{ static_url('css/tools.css') }}">
+    <c-header text="AGE Encryption Tools" subtitle="Encrypt and decrypt text using AGE public and private keys" link="/"/>
+    <c-menu type="bar" size="md"/>
+
+    <c-layout-flow gap="md" size="lg">
+        <c-card padding="md">
+            <c-heading type="h2">Configuration</c-heading>
+
+            <form id="age-tool-form" autocomplete="off">
+                <c-layout-flow gap="md">
+                    <c-text-input-field id="public_key" name="public_key" label="AGE Public Key" placeholder="age1..."/>
+
+                    <c-text-input-field id="private_key" name="private_key" label="AGE Private Key" placeholder="AGE-SECRET-KEY-1..."/>
+
+                    {# Was een handgebouwd veld: een <div class="rvo-form-field"> met een
+                       <label class="rvo-label">, een kale <select class="rvo-select"> en
+                       een <p> als hulptekst. Die drie rvo-klassen deden allang niets meer
+                       (lotc_rvo staat niet in DESIGN_SYSTEMS), dus dit stond er als een
+                       ongestileerde keuzelijst met een losse regel eronder.
+
+                       <c-select-field> is het veld: label, hulptekst en keuzelijst horen
+                       bij elkaar en worden ook aan elkaar gekoppeld voor een schermlezer.
+
+                       native: het script leest operationSelect.value. De gewone vorm van
+                       dit veld is een <nldd-combo-box>; de native-variant staat er juist
+                       voor schermen waarvan de JS de lijst uitleest, en levert een echte
+                       <select> met <option>-kinderen. #}
+                    <c-select-field id="operation" name="operation" label="Operation"
+                                    help="Select whether to encrypt or decrypt" native>
+                        <option value="encrypt">Encrypt</option>
+                        <option value="decrypt">Decrypt</option>
+                    </c-select-field>
+
+                    <c-textarea-field id="input_text" name="input_text" label="Input Text" rows="8" placeholder="Enter text here..."/>
+
+                    {# De knop draagt zijn id EN zijn klikafhandeling. De omzetter maakte
+                       er een <c-button label="Process"/> van met de aanroep in een
+                       {% raw %}{% set %}{% endraw %}-blok dat nergens aan hing, en liet
+                       het id vallen: het script zoekt #submit-btn op, kreeg null, en de
+                       knop deed niets. #}
+                    {% set verwerken %}handleSubmit(event){% endset %}
+                    <c-button id="submit-btn" label="Process" :attrs="{'onclick': verwerken}"/>
+                </c-layout-flow>
+            </form>
+        </c-card>
+
+        {# id="output-card": het script maakt deze kaart zichtbaar zodra er een resultaat
+           is. Ook dat id liet de omzetter vallen. #}
+        <c-card id="output-card" padding="md" class="is-hidden">
+            <c-heading type="h2">Output</c-heading>
+            {# De foutmelding was een <div class="rvo-alert rvo-alert--error"> - klassen
+               van een thema dat er niet meer is, dus een kale regel tekst. Dat is
+               <c-alert type="error">. De eigen .tool-error-message-marge kon mee weg: de
+               melding brengt haar eigen witruimte mee. Het id blijft erop staan, want
+               showError()/showSuccess() zetten .is-hidden op precies dit element. #}
+            <c-alert type="error" id="error-message" class="is-hidden">
+                <span id="error-text"></span>
+            </c-alert>
+            <div id="success-message">
+                <p class="tool-result-label">Result (click to copy):</p>
+                {# BLIJFT een eigen <pre>, en niet <c-code-viewer>. Dat leek de voor de
+                   hand liggende keuze - een blok code met een kopieerknop - maar het
+                   werkt hier niet: code-viewer is een CodeMirror-weergave van EEN tekst
+                   die je in zijn geheel meegeeft bij het opbouwen. Deze bak is bij het
+                   laden leeg en krijgt zijn inhoud pas van showSuccess(), en dat is nu
+                   juist wat er niet aankomt.
+
+                   Gemeten, niet beredeneerd: met <c-code-viewer id="output-text"> en
+                   .textContent = '...' erop bleef de zichtbare tekst leeg. Dezelfde
+                   reden waarom het logpaneel in bg/_log-viewer.html.j2 zijn eigen regelbak
+                   houdt. #}
+                <pre id="output-text" class="output-code-block"></pre>
+            </div>
+        </c-card>
+    </c-layout-flow>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('age-tool-form');
+            const submitBtn = document.getElementById('submit-btn');
+            const outputCard = document.getElementById('output-card');
+            const outputText = document.getElementById('output-text');
+            const errorMessage = document.getElementById('error-message');
+            const errorText = document.getElementById('error-text');
+            const successMessage = document.getElementById('success-message');
+            const operationSelect = document.querySelector('[name="operation"]');
+
+            function cleanupText(text) {
+                let lines = text.split('\n').map(line => line.trim());
+                while (lines.length > 0 && lines[0] === '') { lines.shift(); }
+                while (lines.length > 0 && lines[lines.length - 1] === '') { lines.pop(); }
+                return lines.join('\n');
+            }
+
+            const publicKeyInput = document.querySelector('[name="public_key"]');
+            const privateKeyInput = document.querySelector('[name="private_key"]');
+            const inputTextArea = document.querySelector('[name="input_text"]');
+
+            publicKeyInput.addEventListener('paste', function(e) {
+                e.preventDefault();
+                const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+                publicKeyInput.value = cleanupText(pastedText);
+            });
+
+            privateKeyInput.addEventListener('paste', function(e) {
+                e.preventDefault();
+                const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+                privateKeyInput.value = cleanupText(pastedText);
+            });
+
+            inputTextArea.addEventListener('paste', function(e) {
+                e.preventDefault();
+                const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+                inputTextArea.value = cleanupText(pastedText);
+            });
+
+            publicKeyInput.addEventListener('blur', function() {
+                if (publicKeyInput.value) { publicKeyInput.value = cleanupText(publicKeyInput.value); }
+            });
+
+            privateKeyInput.addEventListener('blur', function() {
+                if (privateKeyInput.value) { privateKeyInput.value = cleanupText(privateKeyInput.value); }
+            });
+
+            inputTextArea.addEventListener('blur', function() {
+                if (inputTextArea.value) { inputTextArea.value = cleanupText(inputTextArea.value); }
+            });
+
+            window.handleSubmit = async function(e) {
+                e.preventDefault();
+
+                const operation = operationSelect.value;
+                const publicKey = publicKeyInput.value.trim();
+                const privateKey = privateKeyInput.value.trim();
+                const inputText = inputTextArea.value.trim();
+
+                if (!inputText) { showError('Input text is required'); return; }
+                if (operation === 'encrypt' && !publicKey) { showError('Public key is required for encryption'); return; }
+                if (operation === 'decrypt' && !privateKey) { showError('Private key is required for decryption'); return; }
+
+                const formData = new FormData();
+                formData.append('input_text', inputText);
+                if (operation === 'encrypt') { formData.append('public_key', publicKey); }
+                else { formData.append('private_key', privateKey); }
+
+                const btnLabel = submitBtn.querySelector('.rvo-button__label') || submitBtn;
+                btnLabel.textContent = 'Processing...';
+                submitBtn.disabled = true;
+
+                try {
+                    const endpoint = operation === 'encrypt' ? '/tools/encrypt' : '/tools/decrypt';
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        body: formData,
+                        headers: { 'X-CSRF-Token': "{{ request.state.csrf_token }}" },
+                    });
+                    const data = await response.json();
+                    if (data.success) { showSuccess(data.result); }
+                    else { showError(data.error || 'Operation failed'); }
+                } catch (error) {
+                    showError('Network error: ' + error.message);
+                } finally {
+                    btnLabel.textContent = 'Process';
+                    submitBtn.disabled = false;
+                }
+            };
+
+            outputText.addEventListener('click', function() {
+                const text = outputText.textContent;
+                navigator.clipboard.writeText(text).then(function() {
+                    const originalText = outputText.textContent;
+                    outputText.textContent = 'Copied to clipboard!';
+                    setTimeout(function() { outputText.textContent = originalText; }, 1000);
+                });
+            });
+
+            function showSuccess(result) {
+                outputCard.classList.remove('is-hidden');
+                errorMessage.classList.add('is-hidden');
+                successMessage.classList.remove('is-hidden');
+                outputText.textContent = result;
+            }
+
+            function showError(message) {
+                outputCard.classList.remove('is-hidden');
+                successMessage.classList.add('is-hidden');
+                errorMessage.classList.remove('is-hidden');
+                errorText.textContent = message;
+            }
+        });
+    </script>
+</c-page>

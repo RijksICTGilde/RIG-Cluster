@@ -1,0 +1,44 @@
+{#
+  Gedeelde omlijsting voor de drie uitkomsten van het aanmaken van een project:
+  gelukt, gedeeltelijk gelukt, mislukt. Die drie hadden dezelfde veertig regels
+  header, menubalk en layout drie keer staan.
+
+  Dit is bewust niet base.html.j2: die heeft een footer en een eigen menubalkopzet,
+  en deze drie pagina's tonen die niet. Zodra dat verschil bewust wordt weggenomen,
+  kan deze template weg.
+
+  Te vullen blokken:
+    - page_title: de titel in het browsertabblad
+    - banner: de c-alert bovenaan die de uitkomst benoemt
+    - heading: de h1
+    - body: alles daaronder
+#}
+<c-page title="{% block page_title %}{% endblock %}" lang="nl" body-class="rvo-theme rvo-responsive">
+    <div class="rvo-demo-page">
+        {# Header #}
+        <c-header text="Zelfservice voor Applicatie Deployment" subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie" link="/"/>
+
+        <c-layout-flow gap="xl" size="lg">
+            {# MenuBar #}
+            <c-menu type="bar" size="md"/>
+
+            <c-layout-flow gap="2xl" size="lg">
+                <main>
+                    <c-layout-flow gap="xl">
+
+                        {% block banner %}{% endblock %}
+
+                        <c-div>
+                            <c-heading type="h1" label="{% block heading %}{% endblock %}"/>
+
+                            <c-layout-flow gap="md">
+                                {% block body %}{% endblock %}
+                            </c-layout-flow>
+                        </c-div>
+
+                    </c-layout-flow>
+                </main>
+            </c-layout-flow>
+        </c-layout-flow>
+    </div>
+</c-page>

@@ -1,5 +1,49 @@
 /* Shared modal styles for the edit-section wizard modal.
-   Used by project-details and admin pages. */
+   Used by project-details and admin pages.
+
+   RC-74 heeft dit bestand langs de componenten gelegd. De uitkomst is bijzonder genoeg om
+   op te schrijven, want de eerste indruk klopt niet: het THEMA HEEFT een dialoog
+   (<c-modal-dialog>, en <c-sheet> voor het zijpaneel), en toch blijft die hier
+   ongebruikt.
+
+   WAAROM DE DIALOOG ZELF BLIJFT
+
+   Deze dialoog wordt niet door zijn markup bestuurd maar door static/js/edit_modal.js.
+   Het openen, de blokkade zolang er een taak loopt, de waarschuwing bij niet-opgeslagen
+   werk, Escape en de klik naast het venster hangen allemaal aan #edit-section-modal,
+   #edit-section-backdrop en .is-open. En <c-modal-dialog> laat een eigen class niet door
+   - gemeten in RC-70: die valt uit de uitvoer. Omzetten zou dus al dat gedrag stilzwijgend
+   uitzetten, en stil is hier het gevaarlijke woord: de dialoog zou nog steeds OPENGAAN.
+
+   Overstappen op <c-modal-dialog> is daarmee geen opmaakklus maar een verhuizing van
+   edit_modal.js naar de show()/hide()-API van het component, over de tien sjablonen die
+   deze dialoog gebruiken. Dat is een taak op zich en geen onderdeel van deze sweep.
+
+   WAT WEL IS OMGEZET
+
+   - .edit-section-header (flex + space-between + gap) is <c-cluster justify="between">.
+     De lijn eronder en de marge staan hieronder; daar heeft het thema niets voor.
+   - De REGELS van .edit-modal-close-btn zijn weg. Die haalden de achtergrond en de rand
+     van een KALE <button>, en die knop is allang een <c-button type="tertiary">. Een
+     component tekent zichzelf in zijn shadow root, dus er was niets meer om beet te
+     pakken.
+
+     De KLASSE blijft wel in de sjablonen staan, en dat is met opzet: hij is geen opmaak
+     meer maar een HAAK. tests/e2e/test_lotc_confirmations.py zoekt de sluitknop op als
+     `nldd-button.edit-modal-close-btn`. Weggehaald liep die test in een timeout - en dat
+     is precies de les die in de opdracht staat: grep de lezers voordat een klasse
+     verdwijnt, en tests zijn ook lezers.
+
+   WAT MET OPZET BLIJFT, EN WAAROM
+
+   .edit-section-actions en .edit-progress-actions ZIEN eruit als opmaak en zijn het niet.
+   static/js/edit_modal.js leest ze: de aanwezigheid van .edit-progress-actions is hoe hij
+   bepaalt of een taak nog loopt (regel 84), en .edit-section-actions is waarmee hij de
+   dialoog weer vrijgeeft. Ze vervangen door een <c-cluster> zou die knopen weghalen.
+
+   .edit-section-error wordt door edit_modal.js als HTML-STRING opgebouwd
+   (innerHTML = '<div class="edit-section-error">' + ...). Een <c-alert> daaruit maken kan
+   niet: de componentlaag draait bij het compileren van een sjabloon, niet in de browser. */
 
 .edit-section-backdrop {
     position: fixed;
@@ -25,7 +69,9 @@
     left: 50%;
     transform: translate(-50%, -50%) scale(0.95);
     background: var(--rvo-color-wit);
-    border-radius: var(--rvo-border-radius-lg);
+    /* Vaste waarde: --rvo-border-radius-lg staat niet in lotc-app.css en leverde dus
+       geen hoekstraal op. 8px is wat die token in het oude thema was. */
+    border-radius: 8px;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     width: 80%;
     max-width: 80vw;
@@ -44,29 +90,14 @@
     transform: translate(-50%, -50%) scale(1);
 }
 
+/* Alleen nog de lijn en de lucht eronder; de flexregel is <c-cluster justify="between">. */
 .edit-section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--rvo-space-md);
     margin-bottom: var(--rvo-space-xl);
     padding-bottom: var(--rvo-space-md);
     border-bottom: 1px solid var(--rvo-color-grijs-200);
 }
 
-.edit-modal-close-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: var(--rvo-space-xs);
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-}
 
-.edit-modal-close-btn:hover {
-    background: var(--rvo-color-grijs-100);
-}
 
 .edit-section-content {
     margin-bottom: var(--rvo-space-lg);
@@ -78,9 +109,38 @@
     color: var(--rvo-color-grijs-500);
 }
 
+/* De laadtoestand van de goedkeuringsdialoog (/admin/approvals), aangestuurd door htmx.
+   ``hx-indicator="#approval-loading"`` op de knop "Beheren" zet .htmx-request op dit
+   element zolang het verzoek loopt, en haalt hem daarna weg.
+
+   Waarom hier eigen regels en niet de indicator-opmaak van htmx zelf: die werkt met
+   opacity, en een element dat alleen doorzichtig is neemt nog steeds ruimte in. Dat is
+   hetzelfde lege vak als de foutbalk die hier weg is - dus display.
+
+   De derde regel dekt de TWEEDE opening: zonder hem staat het formulier van het vorige
+   project nog in beeld terwijl het nieuwe wordt opgehaald.
+
+   Alleen deze dialoog. De bewerkdialogen van een project laden hun eerste stap nog met
+   fetch (static/js/edit_modal.js) en zetten hun laadtekst zelf in #edit-section-inner;
+   die staat er dus alleen als hij bedoeld is, en wordt door de swap vervangen. */
+#approval-loading {
+    display: none;
+}
+
+#approval-loading.htmx-request {
+    display: block;
+}
+
+#approval-loading.htmx-request ~ #edit-section-inner {
+    display: none;
+}
+
 .edit-section-error {
-    background: var(--rvo-color-rood-100);
-    color: var(--rvo-color-rood-800);
+    /* rood-100 en rood-800 staan niet in lotc-app.css: de foutmelding kwam zonder
+       achtergrond EN zonder tekstkleur op het scherm - witte doos, zwarte tekst. Vaste
+       waarden in dezelfde familie als de rood-tinten die er wel zijn. */
+    background: #FDF2F2;
+    color: #8B1A17;
     border: 1px solid var(--rvo-color-rood-300);
     padding: var(--rvo-space-md);
     border-radius: 4px;
@@ -131,22 +191,20 @@
 }
 
 .edit-progress-step.edit-progress-error {
-    color: var(--rvo-color-rood-700);
+    /* rood-700 bestaat niet; vaste waarde, zelfde familie als rood-750. */
+    color: #C0392B;
 }
 
-.edit-progress-tasks {
-    display: flex;
-    flex-direction: column;
-    gap: var(--rvo-space-xs);
-    margin-bottom: var(--rvo-space-lg);
-}
+/* Hier stond de takenlijst: .edit-progress-tasks, -task-item, -subtask en -task-error.
+   Die lijst is een lijst met een status per regel, en het thema levert daar componenten
+   voor; ze staat nu in widgets/_macros.html.j2 (progress_task_list) op c-list met een
+   cel per onderdeel. Dat de opmaak HIER stond was het probleem: vier sjablonen tonen die
+   lijst en de meeste laden dit stijlblad niet, dus daar viel het pictogram boven de
+   tekst. Componenten dragen hun eigen opmaak mee en hebben geen stijlblad nodig. */
 
-.edit-progress-task-item {
-    display: flex;
-    align-items: center;
-    gap: var(--rvo-space-sm);
-    font-size: 0.875rem;
-    color: var(--rvo-color-grijs-700);
+/* The percentage next to the current step: readable, but not louder than the step. */
+.edit-progress-percentage {
+    color: var(--rvo-color-grijs-600);
 }
 
 .edit-progress-actions {
@@ -163,4 +221,10 @@
     gap: var(--rvo-space-md);
     padding-top: var(--rvo-space-md);
     border-top: 1px solid var(--rvo-color-grijs-200);
+}
+
+/* De balk zoals hij bij het openen staat, voordat het eerste voortgangsfragment
+   binnenkomt. Stond als style="width: 0%" in wizard/modal_wizard_progress.html.j2. */
+.edit-progress-bar--empty {
+    width: 0%;
 }

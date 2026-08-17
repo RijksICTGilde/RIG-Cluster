@@ -1,0 +1,182 @@
+{#
+  Een stap van de wizard IN de gedeelde dialoog, als los fragment.
+
+  Een OVERNAME van wizard/modal_wizard_step.html.j2. Dezelfde blokken in dezelfde
+  volgorde, dezelfde velden, dezelfde teksten, dezelfde knoppen onder dezelfde
+  voorwaarden, dezelfde htmx-bedrading:
+
+    stappenbalk (alleen bij >1 stap) -> bg/_wizard-steps.html.j2, met de URL's van de modal
+    kop met icoon en hulpvraagteken   -> c-cluster met c-icon en c-heading
+    globale fouten / waarschuwingen   -> c-alert
+    de velden                         -> de LOTC-formulierlaag, al gerenderd door de adapter
+    de knoppenbalk                    -> c-action-group align="between"
+
+  DE ID'S BLIJVEN. #modal-wizard-steps, #modal-wizard-step-inner, #modal-wizard-form,
+  #edit-section-content en #edit-section-actions staan in htmx-attributen en in
+  static/js/edit_modal.js. Ze veranderen zou de omzetting van een weergavewissel in een
+  gedragswijziging maken. Hetzelfde geldt voor het verborgen veld ``_wizard_token``: daar
+  hangt het opslaan aan.
+
+  step_html gaat er met | safe in en NIET door process_components. Bij de roos-bouwlijn
+  moet dat filter er wel overheen, want daar levert de widget-adapter nog onvertaalde
+  <c-*>-tekst op. De LOTC-adapter rendert meteen, dus hier zou het filter een TWEEDE
+  Jinja-render zijn over HTML waar getypte formulierwaarden in staan - en dan is
+  {{ '{{ ... }}' }} in een ingevulde waarde geen tekst meer maar een expressie.
+
+  TWEE AANPASSINGEN, allebei omdat de knop een ander element is geworden:
+
+  - hx-disabled-elt selecteert ``[type='submit']`` en niet ``button[type='submit']``. De
+    knop is hier een <nldd-button>, geen <button>. Hij dient het formulier wel in, maar
+    een selector op de tagnaam vindt hem niet en dan blijft hij tijdens het verzoek
+    klikbaar. Zelfde bedoeling, andere tagnaam; net als in bg/_wizard-step.html.j2.
+  - "Annuleren" krijgt zijn onclick via :attrs. <c-button> laat geen onclick-attribuut
+    toe, en closeEditModal() is precies wat die knop moet doen; er is geen href die
+    hetzelfde doet.
+
+  "Vorige" krijgt geen icoon: de NLDD-woordenschat heeft geen pijl naar links, en een
+  pijl die de verkeerde kant op wijst is erger dan geen pijl. Zie de KNOWN_GAPS in
+  tests/test_lotc_icon_mapping.py.
+#}
+
+{# De dialoog leeft op de projectpagina (bg/project-tabs.html.j2), en die laadt
+   css/modal.css maar niet css/wizard.css. Toch hangt het gedrag van dit fragment eraan:
+   #modal-wizard-form .wizard-step__saving en #modal-wizard-confirm-saving zijn daar
+   verborgen tot htmx aan het werk is, en de dienstkaarten in de servicestap dragen de
+   service-card__*-klassen. Zonder deze regel staat "Bezig met opslaan" er altijd.
+
+   Het stylesheet reist daarom MET het fragment mee, in plaats van in de kop van de
+   pagina te staan. Dat is bewust: bg/project-tabs.html.j2 is niet van deze omzetting, en
+   een <link> in een htmx-antwoord wordt gewoon toegepast. Hoort hij liever in de kop, dan
+   staat het voorstel daarvoor in het verslag bij deze omzetting. #}
+<link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+
+{# Stappenbalk, alleen bij een flow met meer dan een stap - net als in het origineel. #}
+{% if steps.count > 1 %}
+<div class="edit-step-indicator" id="modal-wizard-steps">
+    {% include "bg/_wizard-steps.html.j2" %}
+</div>
+{% endif %}
+
+<div class="wizard-step" id="modal-wizard-step-inner">
+    <c-stack gap="lg">
+        {# De sectiekop is er voor een dialoog die MEER stappen heeft dan deze: hij zegt in
+           welke stap je zit, en het vraagteken ernaast opent de uitleg van de dienst. Waar
+           de dialoog zelf al een titel draagt die hetzelfde zegt, staan er twee koppen
+           boven elkaar - op /admin/approvals las de bovenste "Domeingoedkeuring - <project>"
+           en de onderste "Domein- en subdomeingoedkeuring". De titel van de dialoog wint
+           daar, want die noemt het project.
+
+           Vandaar een schakelaar in de CONTEXT en niet een verwijdering: dit fragment
+           bedient ook de bewerkdialogen van een project (opi/web/router_detail_edit.py) en
+           daar draagt de kop wel het icoon, de titel en de uitleg van de stap.
+           Standaard AAN, zodat alleen de aanroeper die hem niet wil er iets voor doet. #}
+        {% if show_section_head | default(true) %}
+        <c-stack gap="xs">
+            <c-cluster gap="sm" align="center">
+                {% if section.icon %}
+                    <c-icon icon="{{ nldd_icon(section.icon) }}" size="xl" />
+                {% endif %}
+                <c-heading type="h2" size="4" label="{{ section.title }}" />
+                {# De uitleg van de dienst zelf, hetzelfde vraagteken als op zijn kaart.
+                   Hier moet iemand iets beslissen, dus dit is de plek die hem het
+                   hardst nodig had. #}
+                {% if section.help_template %}
+                    {% set hulp_js %}openServiceHelp('{{ section.help_template|e }}'){% endset %}
+                    <c-icon-button
+                        icon="question-mark-circle"
+                        accessible-label="Uitleg over {{ section.title }}"
+                        variant="neutral-transparent"
+                        size="sm"
+                        :attrs="{'onclick': hulp_js, 'class': 'service-card__help-btn'}" />
+                {% endif %}
+            </c-cluster>
+            {% if section.description %}
+                <c-paragraph>{{ section.description }}</c-paragraph>
+            {% endif %}
+        </c-stack>
+        {% endif %}
+
+        {% if global_errors %}
+            <c-alert type="error" heading="Fouten">
+                <c-stack gap="xs">
+                    {% for err in global_errors %}
+                        <c-paragraph>{{ err }}</c-paragraph>
+                    {% endfor %}
+                </c-stack>
+            </c-alert>
+        {% endif %}
+
+        {% if warnings %}
+            <c-alert type="warning" heading="Let op">
+                <c-stack gap="xs">
+                    {% for msg in warnings %}
+                        <c-paragraph>{{ msg }}</c-paragraph>
+                    {% endfor %}
+                </c-stack>
+            </c-alert>
+        {% endif %}
+
+        {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
+        {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
+        <form id="modal-wizard-form"
+              autocomplete="off"
+              hx-ext="json-enc"
+              hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+              hx-post="{{ _step_url_prefix }}{{ section.section_id }}{{ _token_qs }}"
+              hx-target="#edit-section-inner"
+              hx-swap="innerHTML"
+              hx-disabled-elt="#modal-wizard-form [type='submit']">
+
+            {% if wizard_token %}
+            <input type="hidden" name="_wizard_token" value="{{ wizard_token }}" />
+            {% endif %}
+
+            <div class="wizard-step__fields" id="edit-section-content">
+                {{ step_html | safe }}
+            </div>
+
+            <c-cluster justify="between" align="center" class="wizard-step__actions" id="edit-section-actions">
+                <c-action-group align="between">
+                    {% if not steps.is_first %}
+                        <c-button
+                            type="secondary"
+                            label="Vorige"
+                            hx-get="{{ _step_url_prefix }}{{ steps.prev }}{{ _token_qs }}"
+                            hx-target="#edit-section-inner"
+                            hx-swap="innerHTML" />
+                    {% else %}
+                        {% set annuleren_js %}closeEditModal(){% endset %}
+                        <c-button
+                            html-type="button"
+                            type="tertiary"
+                            label="Annuleren"
+                            :attrs="{'onclick': annuleren_js}" />
+                    {% endif %}
+
+                    <c-cluster gap="sm" align="center">
+                        {% if steps.is_last %}
+                            {# Backup en restore slaan niets op maar starten een taak; daar
+                               staat "Bezig met opslaan" dus niet. Zoals in het origineel. #}
+                            {% if not (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) %}
+                                <span class="wizard-step__saving" aria-hidden="true">Bezig met opslaan…</span>
+                            {% endif %}
+                            <c-button
+                                html-type="submit"
+                                type="primary"
+                                icon="file-text"
+                                show-icon="before"
+                                :label="('Verder') if (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) else ('Opslaan')" />
+                        {% else %}
+                            <c-button
+                                html-type="submit"
+                                type="primary"
+                                label="Volgende"
+                                icon="chevron-right"
+                                show-icon="after" />
+                        {% endif %}
+                    </c-cluster>
+                </c-action-group>
+            </c-cluster>
+        </form>
+    </c-stack>
+</div>

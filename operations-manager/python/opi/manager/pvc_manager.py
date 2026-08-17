@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from opi.services import CloneFromType
+from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE
 from opi.utils.naming import generate_manifest_name, generate_pvc_manifest_type
 
 logger = logging.getLogger(__name__)
@@ -215,11 +216,25 @@ class PVCManager:
                 if deleted_files:
                     logger.info(f"Deleted {len(deleted_files)} old PVC manifest(s) for {component_name}/{storage_name}")
 
+            # An entry without a size cannot come from a validated write: ``size`` is a
+            # required field on the storage config model, so this only fires for a file
+            # that reached the repo another way. It used to fall back to 10Gi, ten times
+            # the largest size the platform offers and a volume nobody asked for. The
+            # starting size is the honest answer instead: it is what enabling the service
+            # gives you, and a volume that turns out too small can still grow.
+            size = storage.get("size")
+            if not size:
+                logger.warning(
+                    f"Storage '{storage_name}' of component '{component_name}' has no size; "
+                    f"falling back to {DEFAULT_STORAGE_SIZE}"
+                )
+                size = DEFAULT_STORAGE_SIZE
+
             # Prepare PVC variables using centralized naming utility with generation
             pvc_variables = {
                 "name": generate_pvc_name(unique_name, storage_name, generation),
                 "namespace": namespace,
-                "size": storage.get("size", "10Gi"),
+                "size": size,
                 "storage_class_name": storage_class_name,
                 "access_modes": access_modes,
                 "backup_enabled": backup_enabled,
@@ -317,6 +332,13 @@ class PVCManager:
             manifest_type = generate_pvc_manifest_type(storage_name)
             pvc_manifest_name = generate_manifest_name(component_name, manifest_type, generation)
 
+            # A previous removal of this storage may have left a
+            # <base>.marked-for-deletion.yaml twin behind (kept so ArgoCD did not
+            # prune the volume). Writing <base>.yaml next to it would put two files
+            # with the same PVC identity in kustomization.yaml, which makes kustomize
+            # refuse to render the whole deployment. Clear the twin first.
+            self._remove_marked_twin(full_output_dir, f"{pvc_manifest_name}.yaml")
+
             pvc_manifest_path = manifest_generator.create_manifest_file(
                 template_path=pvc_template_path,
                 values=pvc_variables,
@@ -328,7 +350,97 @@ class PVCManager:
             created_files.append(f"{pvc_manifest_name}.yaml")
             logger.info(f"Successfully created PVC manifest: {pvc_manifest_path}")
 
+        # Reconcile the marked_for_deletion table against the manifests now on disk: any
+        # pvc mark for this deployment whose file was removed above (or earlier) is stale.
+        await self._prune_stale_pvc_marks(
+            full_output_dir=full_output_dir,
+            project_name=project_data.get("name", ""),
+            deployment_name=deployment_name,
+            cluster=cluster,
+        )
+
         return created_files
+
+    def _remove_marked_twin(self, full_output_dir: str, manifest_filename: str) -> bool:
+        """Remove a leftover ``*.marked-for-deletion.yaml`` twin of a manifest being written.
+
+        When a persistent-storage service is removed, ``handle_service_removal`` renames the
+        PVC manifest to ``<base>.marked-for-deletion.yaml`` so ArgoCD keeps the volume alive.
+        If the same storage is later re-added, ``create_pvc_manifests_for_component`` writes
+        ``<base>.yaml`` again. Both files then carry the identical PVC resource identity, and
+        kustomize refuses to render the whole deployment ("may not add resource with an
+        already registered id"). Removing the marked twin here restores a single manifest.
+
+        The live volume is not affected: ArgoCD re-adopts the existing PVC through the
+        restored plain manifest, so nothing is pruned. This is a pure filesystem operation -
+        the hard requirement that repairs the render; the stale ``marked_for_deletion`` row
+        is reconciled separately by :meth:`_prune_stale_pvc_marks`, which keys off the file
+        no longer existing.
+
+        Returns:
+            True if a marked twin was found and removed.
+        """
+        base = manifest_filename.removesuffix(".yaml")
+        marked_path = os.path.join(full_output_dir, f"{base}{MARKED_FOR_DELETION_SUFFIX}")
+
+        if not os.path.exists(marked_path):
+            return False
+
+        os.remove(marked_path)
+        logger.info(
+            "Removed stale marked-for-deletion PVC manifest %s%s because %s was recreated - "
+            "deferred deletion is cancelled",
+            base,
+            MARKED_FOR_DELETION_SUFFIX,
+            manifest_filename,
+        )
+        return True
+
+    async def _prune_stale_pvc_marks(
+        self,
+        full_output_dir: str,
+        project_name: str,
+        deployment_name: str,
+        cluster: str,
+    ) -> None:
+        """Drop ``pvc`` marks for this deployment whose marked file no longer exists.
+
+        The marked-for-deletion *file* is the source of truth: a row only means something
+        while its ``<name>.marked-for-deletion.yaml`` still sits in the deployment directory.
+        Once the file is gone - because the resource came back (twin removed above) or was
+        cleaned up by hand - the row is stale and is deleted here.
+
+        Selection is on ``(project, deployment, cluster, type=pvc)`` and then filtered by
+        file existence, so a sibling storage that is genuinely still marked (its file is
+        still present) is left untouched. Best-effort: guarded on database availability, so
+        a missing pool warns and continues. Removing the file already repaired the render;
+        this is administration.
+        """
+        try:
+            from opi.core.database_pools import get_database_pool
+            from opi.services.marked_for_deletion_service import MarkedForDeletionService
+
+            get_database_pool("main")  # raises if the DB is unavailable
+        except KeyError, ValueError:
+            logger.warning(
+                "Database pool not available - leaving any stale pvc marks for %s/%s in place",
+                project_name,
+                deployment_name,
+            )
+            return
+
+        service = MarkedForDeletionService()
+        marks = await service.get_marks_for_deployment(project_name, deployment_name, cluster, "pvc")
+        for mark in marks:
+            marked_path = os.path.join(full_output_dir, mark["resource_name"])
+            if os.path.exists(marked_path):
+                continue
+            await service.delete_mark(mark["id"])
+            logger.info(
+                "Deleted stale pvc mark %s (%s) - its manifest no longer exists",
+                mark["id"],
+                mark["resource_name"],
+            )
 
     async def handle_service_removal(
         self,

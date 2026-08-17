@@ -8,6 +8,8 @@ showing components, team members, services, and deployments.
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers.tabs import open_tab
+from tests.e2e.helpers.tekst import toon_tekst
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -16,7 +18,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.e2e
 
-DETAIL_URL = "/projects/details/test-project-detail"
+DETAIL_URL = "/projects/test-project-detail/details"
 
 
 def test_detail_page_renders(app_server: str, auth_page: Page) -> None:
@@ -26,38 +28,49 @@ def test_detail_page_renders(app_server: str, auth_page: Page) -> None:
     assert response.ok, f"Detail page returned {response.status}"
 
     # Should not redirect
-    assert "details/test-project-detail" in auth_page.url
+    assert "test-project-detail/details" in auth_page.url
 
     # Check project name/description appear
-    body = auth_page.text_content("body") or ""
-    assert "Detail Test Project" in body
-    assert "Uitgebreid testproject" in body
+    toon_tekst(auth_page, "Detail Test Project")
+    toon_tekst(auth_page, "Uitgebreid testproject")
 
 
 def test_detail_page_shows_components(app_server: str, auth_page: Page) -> None:
-    """Verify component section shows component names."""
+    """Verify component section shows component names.
+
+    Componenten stonden op het tabblad Project en hebben sinds de opdeling een eigen
+    tabblad; wie hun inhoud meet, moet daarheen.
+    """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
+    open_tab(auth_page, "componenten")
 
-    body = auth_page.text_content("body") or ""
-    assert "web-app" in body
-    assert "worker" in body
+    toon_tekst(auth_page, "web-app")
+    toon_tekst(auth_page, "worker")
 
 
 def test_detail_page_shows_team(app_server: str, auth_page: Page) -> None:
-    """Verify team section lists users and roles."""
+    """Verify team section lists users and roles.
+
+    Het team heeft een eigen tabblad, net als de diensten; op het overzicht staat het
+    niet meer. Deze test las nog het overzicht en viel daarop om.
+    """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
+    open_tab(auth_page, "team")
 
-    body = auth_page.text_content("body") or ""
-    assert "test@example.com" in body
-    assert "developer@example.com" in body
+    toon_tekst(auth_page, "test@example.com")
+    toon_tekst(auth_page, "developer@example.com")
 
 
 def test_detail_page_shows_services(app_server: str, auth_page: Page) -> None:
-    """Verify service badges appear for configured services."""
+    """Verify service badges appear for configured services.
+
+    Diensten hebben sinds de opdeling hun eigen tabblad.
+    """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
+    open_tab(auth_page, "services")
 
     body = auth_page.text_content("body") or ""
     # The project has keycloak and publish-on-web services
@@ -65,13 +78,42 @@ def test_detail_page_shows_services(app_server: str, auth_page: Page) -> None:
 
 
 def test_detail_page_shows_deployments(app_server: str, auth_page: Page) -> None:
-    """Verify deployment section shows deployment info."""
+    """Verify deployment section shows deployment info.
+
+    Het tabblad Deployments wordt eerst geopend. Op de bestaande pagina staan alle
+    tabbladen in EEN document en is dat overbodig; op de nieuwe heeft elk tabblad een
+    eigen URL en staan de deployments er pas als je erheen gaat. open_tab() dekt beide.
+    """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
+    open_tab(auth_page, "deployments")
 
-    body = auth_page.text_content("body") or ""
-    assert "default" in body  # deployment name
-    assert "local" in body  # cluster name
+    toon_tekst(auth_page, "default")
+    toon_tekst(auth_page, "local")
+
+
+def test_service_contributed_blocks_render(app_server: str, auth_page: Page) -> None:
+    """RC-24: the blocks the project's services own actually reach the page.
+
+    They are gathered per project/deployment rather than hardcoded, so a wiring mistake
+    shows up as a silently missing block -- which reads like a project that does not use
+    the service. This asserts the plumbing end to end for both hooks: the project-level
+    Keycloak block and, on the Deployments tab, the database service's action buttons
+    plus their modal opener.
+    """
+    auth_page.goto(f"{app_server}{DETAIL_URL}")
+    auth_page.wait_for_load_state("networkidle")
+    # Het Keycloak-blok is een dienstsectie en staat op het tabblad Services.
+    open_tab(auth_page, "services")
+    toon_tekst(auth_page.locator("#tab-services"), "Keycloak")
+
+    open_tab(auth_page, "deployments")
+    auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
+    tabblad = auth_page.locator("#tab-deployments")
+    toon_tekst(tabblad, "Databaseconsole")
+    toon_tekst(tabblad, "Job uitvoeren")
+    # The buttons call the shared opener; without it they would render but do nothing.
+    assert auth_page.evaluate("typeof openServiceModal") == "function"
 
 
 def test_detail_page_screenshot(app_server: str, auth_page: Page, screenshot_dir: Path) -> None:

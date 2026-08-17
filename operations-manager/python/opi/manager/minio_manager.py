@@ -13,6 +13,7 @@ from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
+from opi.services.project import Project
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import MinIOSecret
@@ -71,33 +72,30 @@ class MinioManager:
         """
         # Find the deployment in project data
         deployments = project_data.get("deployments", [])
-        deployment = next((d for d in deployments if d.get("name") == deployment_name), None)
+        deployment = Project.locate(deployments, name=deployment_name)
 
         if not deployment:
             logger.debug(f"Deployment {deployment_name} not found in project data")
             return None
 
+        from opi.services.services import service_entry_config, service_entry_name
+
         # Get services list for this deployment
         services = project_data.get("services", [])
 
-        # Look for minio-storage service
+        # Look for minio-storage service. Format-agnostic: the entry may be a bare
+        # string, a legacy single-key dict, or a uniform record ({name, config}).
+        # ``next(iter(keys))`` returned "name"/"reference" for a record, so a configured
+        # minio-storage was silently read as unconfigured.
         for service in services:
-            if isinstance(service, str):
-                # Simple format: "- minio-storage"
-                if service == ServiceType.MINIO_STORAGE.value:
-                    logger.debug(f"Found simple minio-storage service for {deployment_name}, no config")
-                    return None
-            elif isinstance(service, dict):
-                # Configured format: "- minio-storage: ..."
-                service_name = next(iter(service.keys())) if service else None
-                if service_name == ServiceType.MINIO_STORAGE.value:
-                    config = service.get(service_name, {}).get("config")
-                    if config:
-                        logger.debug(f"Found minio-storage config for {deployment_name}: {config}")
-                        return config
-                    else:
-                        logger.debug(f"Found minio-storage service for {deployment_name}, but no config block")
-                        return None
+            if service_entry_name(service) != ServiceType.MINIO_STORAGE.value:
+                continue
+            config = service_entry_config(service)
+            if config:
+                logger.debug(f"Found minio-storage config for {deployment_name} with keys: {sorted(config)}")
+                return config
+            logger.debug(f"Found minio-storage service for {deployment_name}, but no config block")
+            return None
 
         logger.debug(f"No minio-storage service found for {deployment_name}")
         return None
@@ -202,12 +200,18 @@ class MinioManager:
                 clone_type = clone_from.get("type")
                 if clone_type == CloneFromType.REMOTE_SOURCE.value:
                     remote_source_name = clone_from.get("reference")
+                    if not remote_source_name:
+                        msg = f"clone-from van type remote-source zonder reference voor '{deployment_name}'"
+                        raise ValueError(msg)
                     await self._handle_remote_source_clone(
                         project_name, deployment_name, remote_source_name, project_data, force_clone
                     )
                     return
                 elif clone_type == CloneFromType.DEPLOYMENT.value:
                     source_deployment = clone_from.get("reference")
+                    if not source_deployment:
+                        msg = f"clone-from van type deployment zonder reference voor '{deployment_name}'"
+                        raise ValueError(msg)
                     logger.info(f"Deployment {deployment_name} has clone-from deployment: {source_deployment}")
                     await self.clone_minio_from_deployment(project_data, deployment, source_deployment)
                     return
@@ -225,7 +229,7 @@ class MinioManager:
         progress_manager = self.project_manager.get_progress_manager()
         minio_task = None
         if progress_manager:
-            minio_task = progress_manager.add_task("Creating MinIO storage resources")
+            minio_task = progress_manager.add_task("MinIO-opslag klaarmaken", subject=deployment_name)
 
         try:
             minio_connector = create_minio_connector()
@@ -1762,9 +1766,7 @@ class MinioManager:
                 if not project_data:
                     raise Exception(f"Project '{project_name}' not found")
 
-                deployment = next(
-                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
-                )
+                deployment = Project(project_data).find("deployments", name=deployment_name)
                 if not deployment:
                     raise Exception(f"Deployment '{deployment_name}' not found")
 
@@ -1785,7 +1787,9 @@ class MinioManager:
             current_generation = self._get_deployment_bucket_generation(project_data, deployment_name)
             target_bucket = generate_bucket_name(project_name, deployment_name, current_generation)
             generation_was_incremented = False
-            new_generation = current_generation  # Will be updated if incremented
+            # 0, not None: this is only read once incremented (where it is reassigned),
+            # and the project file wants a number there.
+            new_generation = current_generation or 0  # Will be updated if incremented
 
             try:
                 minio_connector = create_minio_connector()

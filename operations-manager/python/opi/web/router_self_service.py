@@ -9,12 +9,12 @@ from fastapi.responses import JSONResponse
 
 from opi.api.router import IPRateLimiter
 from opi.connectors.subdomain import (
-    create_subdomain_connector,
     validate_base_domain,
     validate_subdomain,
 )
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.services.persistence.subdomain_registry import create_subdomain_connector
 
 logger = logging.getLogger(__name__)
 

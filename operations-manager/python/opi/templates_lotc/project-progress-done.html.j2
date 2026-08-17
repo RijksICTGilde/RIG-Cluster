@@ -1,0 +1,25 @@
+{% extends "base_lotc.html.j2" %}
+
+{% block title %}Taak niet beschikbaar{% endblock %}
+
+{% block content %}
+<c-page>
+    <c-layout-flow gap="xl">
+        <c-layout-flow gap="md">
+            <c-heading type="h1">Taak niet beschikbaar</c-heading>
+            <p>Deze taak is niet (meer) beschikbaar. Mogelijk is de verwerking al voltooid of bestaat de taak niet.</p>
+        </c-layout-flow>
+
+        <c-card outline="true" padding="md">
+            <c-layout-flow gap="md">
+                <p>Controleer de status van je project via het projectoverzicht.</p>
+                <div>
+                    {# label= en niet als inhoud: nldd-button toont alleen zijn
+                       text-attribuut, dus met de tekst ertussen bleef de knop leeg. #}
+                    <c-button label="Naar projectoverzicht"/>
+                </div>
+            </c-layout-flow>
+        </c-card>
+    </c-layout-flow>
+</c-page>
+{% endblock %}

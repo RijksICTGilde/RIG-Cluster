@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from opi.services.project_service import Project, ProjectUser
+from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
@@ -27,14 +27,14 @@ def mock_auth_project_service() -> Any:
     with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
         mock_service = MagicMock(spec=GitProjectStore)
 
-        test_project = Project(
+        test_project = ProjectSummary(
             name="test-project",
             api_key="test-api-key-12345",
             filename="test-project.yaml",
             users=[ProjectUser(email="user@example.com", role="Developer")],
         )
 
-        def get_project(name: str) -> Project | None:
+        def get_project(name: str) -> ProjectSummary | None:
             if name == "test-project":
                 return test_project
             return None
@@ -50,7 +50,7 @@ def mock_router_project_service() -> Any:
     with patch("opi.api.router.get_project_store") as mock_get_service:
         mock_service = MagicMock(spec=GitProjectStore)
 
-        test_project = Project(
+        test_project = ProjectSummary(
             name="test-project",
             api_key="test-api-key-12345",
             filename="test-project.yaml",
@@ -716,36 +716,43 @@ class TestDeleteDeploymentEndpoint:
 
 @pytest.mark.integration
 class TestValidateCloneEndpoint:
-    """Tests for the validate clone endpoint."""
+    """Tests for the validate clone endpoint.
+
+    These deliberately do NOT mock the validation itself. The previous version mocked
+    ``project_manager._clone_manager``, an attribute that had been gone for months, so
+    the tests stayed green while every real call answered
+    "'ProjectManager' object has no attribute '_clone_manager'". Only the project file
+    is faked here; the check that runs is the one the endpoint runs in production.
+    """
+
+    def _project_manager_returning(self, project_data: dict[str, Any]) -> MagicMock:
+        mock_pm = MagicMock()
+
+        async def mock_get_contents() -> dict[str, Any]:
+            return project_data
+
+        async def mock_close() -> None:
+            pass
+
+        mock_pm.get_contents = mock_get_contents
+        mock_pm.close = mock_close
+        return mock_pm
 
     def test_validate_clone_success(
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
     ) -> None:
-        """Test successful clone validation."""
-        mock_pm = MagicMock()
-
-        # Mock what the route actually calls. Mocking get_contents' internals
-        # (get_project_full_file_path + _project_file_handler) coupled this test
-        # to an implementation that now reads through the ProjectStore instead.
-        async def mock_get_contents() -> dict[str, Any]:
-            return {"name": "test-project", "deployments": []}
-
-        mock_pm.get_contents = mock_get_contents
-
-        mock_clone_manager = MagicMock()
-
-        async def mock_validate(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {"validation": {"passed": True, "checks": []}}
-
-        mock_clone_manager.validate_clone_readiness = mock_validate
-        mock_pm._clone_manager = mock_clone_manager
-
-        async def mock_close() -> None:
-            pass
-
-        mock_pm.close = mock_close
+        """A deployment cloning from a deployment that exists validates."""
+        mock_pm = self._project_manager_returning(
+            {
+                "name": "test-project",
+                "deployments": [
+                    {"name": "productie"},
+                    {"name": "staging", "clone-from": {"type": "deployment", "reference": "productie"}},
+                ],
+            }
+        )
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
@@ -756,40 +763,22 @@ class TestValidateCloneEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "valid"
+        assert data["validation"]["passed"] is True
 
     def test_validate_clone_failure(
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
     ) -> None:
-        """Test clone validation failure."""
-        mock_pm = MagicMock()
-
-        # Mock what the route actually calls. Mocking get_contents' internals
-        # (get_project_full_file_path + _project_file_handler) coupled this test
-        # to an implementation that now reads through the ProjectStore instead.
-        async def mock_get_contents() -> dict[str, Any]:
-            return {"name": "test-project", "deployments": []}
-
-        mock_pm.get_contents = mock_get_contents
-
-        mock_clone_manager = MagicMock()
-
-        async def mock_validate(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {
-                "validation": {
-                    "passed": False,
-                    "errors": ["Source deployment not found"],
-                }
+        """A clone source that is not in the project fails, with the reason named."""
+        mock_pm = self._project_manager_returning(
+            {
+                "name": "test-project",
+                "deployments": [
+                    {"name": "staging", "clone-from": {"type": "deployment", "reference": "verdwenen"}},
+                ],
             }
-
-        mock_clone_manager.validate_clone_readiness = mock_validate
-        mock_pm._clone_manager = mock_clone_manager
-
-        async def mock_close() -> None:
-            pass
-
-        mock_pm.close = mock_close
+        )
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
@@ -800,6 +789,26 @@ class TestValidateCloneEndpoint:
         assert response.status_code == 422
         data = response.json()
         assert data["status"] == "invalid"
+        messages = " ".join(check["message"] for check in data["validation"]["checks"])
+        assert "verdwenen" in messages
+
+    def test_validate_clone_without_clone_configuration_is_a_user_error(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """A deployment that clones from nothing answers 422, not 500."""
+        mock_pm = self._project_manager_returning({"name": "test-project", "deployments": [{"name": "staging"}]})
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/deployments/staging/:validate-clone",
+                headers={"X-API-Key": "test-api-key-12345"},
+            )
+
+        assert response.status_code == 422
+        data = response.json()
+        assert data["validation"]["checks"][0]["name"] == "clone_configuration"
 
 
 @pytest.mark.integration
@@ -1025,23 +1034,20 @@ class TestAddComponentEndpoint:
         )
         assert response.status_code == 422
 
-        # Missing deployment_names
-        response = test_client.post(
-            "/api/projects/test-project/components?sync=true",
-            headers={"X-API-Key": "test-api-key-12345"},
-            json={
-                "name": "worker",
-                "image": "nginx:latest",
-            },
-        )
-        assert response.status_code == 422
+        # deployment_names is deliberately NOT in this list: a component may be defined
+        # without being attached to anything, so leaving it out is a valid request.
 
-    def test_add_component_empty_deployment_names(
+    def test_add_component_empty_deployment_names_is_accepted(
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
     ) -> None:
-        """Test validation rejects empty deployment_names list."""
+        """An empty deployment list defines the component without attaching it.
+
+        This was a 422 while ``deployment_names`` carried ``min_length=1``. Both save
+        gates accept a component that no deployment references, so the restriction lived
+        only in the request model and blocked building the parts up separately.
+        """
         response = test_client.post(
             "/api/projects/test-project/components?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
@@ -1051,7 +1057,7 @@ class TestAddComponentEndpoint:
                 "deployment_names": [],
             },
         )
-        assert response.status_code == 422
+        assert response.status_code != 422, response.text
 
     def test_add_component_no_api_key(
         self,
@@ -1276,11 +1282,14 @@ class TestAddComponentEndpoint:
         test_client: TestClient,
         mock_auth_project_service: Any,
     ) -> None:
-        """Test that requesting a service not defined on the project returns 400."""
+        """Test that requesting a service that may not enrol itself returns 400."""
         mock_pm = create_mock_project_manager(
             add_component_result={
                 "success": False,
-                "error": "Services not defined on project: ['postgresql-database']. Available services: ['keycloak', 'persistent-storage']",
+                "error": (
+                    "Services that must be enabled at project level first: ['keycloak']. They need "
+                    "project-level configuration that cannot be assumed, so they are not added automatically."
+                ),
                 "error_type": "invalid_services",
             }
         )
@@ -1293,7 +1302,7 @@ class TestAddComponentEndpoint:
                     "name": "worker",
                     "image": "nginx:latest",
                     "deployment_names": ["main"],
-                    "services": ["postgresql-database"],
+                    "services": ["keycloak"],
                 },
             )
 
@@ -1301,7 +1310,7 @@ class TestAddComponentEndpoint:
         data = response.json()
         assert data["status"] == "failed"
         assert data["error_type"] == "invalid_services"
-        assert "not defined on project" in data["error"]
+        assert "must be enabled at project level first" in data["error"]
 
 
 @pytest.mark.integration

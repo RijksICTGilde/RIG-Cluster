@@ -1,0 +1,63 @@
+{
+  "$defs": {
+    "AttachmentUse": {
+      "additionalProperties": false,
+      "description": "One coupling: which catalog attachment, and how it reaches the component.",
+      "properties": {
+        "env-name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Environment variable to put the content in. Required when provide-as is 'env-var'.",
+          "title": "Env-Name"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Absolute path to mount the attachment at. Required when provide-as is 'file'.",
+          "title": "Path"
+        },
+        "provide-as": {
+          "description": "How the component receives it: 'file' mounts it at 'path', 'env-var' puts its content in the variable named by 'env-name'.",
+          "enum": [
+            "file",
+            "env-var"
+          ],
+          "title": "Provide-As",
+          "type": "string"
+        },
+        "reference": {
+          "description": "Id of the attachment in the project's catalog that this component uses.",
+          "maxLength": 40,
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference",
+        "provide-as"
+      ],
+      "title": "AttachmentUse",
+      "type": "object"
+    }
+  },
+  "description": "The component-level attachments config: a list of couplings.",
+  "items": {
+    "$ref": "#/$defs/AttachmentUse"
+  },
+  "title": "AttachmentsConfig",
+  "type": "array"
+}

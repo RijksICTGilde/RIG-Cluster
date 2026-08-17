@@ -608,3 +608,56 @@ class TestFinalPassServicesListCheckbox:
             "enabled checkbox must not be dropped on the final pass"
         )
         assert smart_get_value(result, "services/keycloak/config/restrict-access/realm-role") == "allowed-user"
+
+
+class TestSleepModeEmptyFieldsLeaveNoKeys:
+    """Regression: sleep-mode wrote empty form fields into the project file as empty values.
+
+    Observed on a real project: ``match: []``, ``waker-component: null``, ``title: null``
+    and ``description: ''``. An empty text input arrives as ``""`` (not ``None``, which
+    ``_write_field`` would skip), the converter turns it into ``None`` / ``[]``, and
+    without ``remove_when_none`` that falls through to ``smart_set_value``. ``description``
+    had no converter at all, so it wrote the empty string verbatim.
+
+    The empty ``match`` is the dangerous one: ``SleepModeConfig.matches()`` is ``any()``
+    over that list, so an enabled sleep-mode matched no deployment at all.
+    """
+
+    def _submitted(self) -> dict:
+        # Nested, virtualized shape: process_json_submission traverses submitted data by path.
+        return {
+            "_services-config": {
+                "sleep-mode": {
+                    "config": {
+                        "enabled": "true",
+                        "wake-mode": "auto",
+                        "sleep-after-deploy": "4h",
+                        "sleep-after-wake": "1h",
+                        "waker": "true",
+                        "match": "",
+                        "waker-component": "",
+                        "title": "",
+                        "description": "",
+                    }
+                }
+            }
+        }
+
+    async def test_empty_optional_fields_leave_no_keys(self):
+        from opi.forms.visualizers.bridge import editable_to_form_field  # noqa: F401
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.catalog.sleep_mode import SleepModeService
+
+        section = SleepModeService().config_form_section(ConfigLayer.PROJECT)
+        existing = {"services": [{"name": "sleep-mode", "config": {}}], "components": [{"name": "app"}]}
+        result, errors = await EditableFormProcessor().process_json_submission(
+            self._submitted(), list(section.editables), existing
+        )
+        assert errors == {}
+
+        config = next(s for s in result["services"] if isinstance(s, dict))["config"]
+        for field in ("match", "waker-component", "title", "description"):
+            assert field not in config, f"empty {field} must leave no key, got {config[field]!r}"
+        # The fields the user actually filled in are still written.
+        assert config["enabled"] is True
+        assert config["sleep-after-deploy"] == "4h"

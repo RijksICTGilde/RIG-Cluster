@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.services.project_service import Project, ProjectUser
+from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
@@ -43,14 +43,14 @@ def mock_task_service() -> AsyncMock:
 @pytest.fixture
 def mock_auth_project_service() -> Any:
     mock_service = MagicMock(spec=GitProjectStore)
-    test_project = Project(
+    test_project = ProjectSummary(
         name="test-project",
         api_key=API_KEY,
         filename="test-project.yaml",
         users=[ProjectUser(email="user@example.com", role="Developer")],
     )
 
-    def get_project(name: str) -> Project | None:
+    def get_project(name: str) -> ProjectSummary | None:
         return test_project if name == "test-project" else None
 
     mock_service.get = get_project
@@ -584,6 +584,324 @@ class TestAddServiceFlow:
 
         payload = mock_task_service.create_task.call_args[1]["payload"]
         assert payload["components"] is None
+
+    def test_not_marked_deprecated_in_the_spec(self, v2_client: TestClient) -> None:
+        # It was marked deprecated with a successor that never shipped; as it is the
+        # append-bind that touches nothing else, the mark has been lifted.
+        spec = v2_client.get("/openapi.json").json()
+        op = spec["paths"]["/api/v2/projects/{project_name}/services"]["post"]
+        assert op.get("deprecated") is not True
+
+
+# ---------------------------------------------------------------------------
+# Configure Service - unified service-config endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestConfigureServiceFlow:
+    """Verify the unified service-config surface: the catalog list, the typed
+    per-service upsert/clear endpoints, and the read."""
+
+    def test_list_services_is_public_and_registry_driven(self, v2_client: TestClient) -> None:
+        response = v2_client.get("/api/v2/services")
+        assert response.status_code == 200
+        names = {item["name"]: item for item in response.json()["services"]}
+        assert names["keycloak"]["targets"] == ["project"]
+        assert names["keycloak"]["configurable"] is True
+        assert names["namespace-redis"]["configurable"] is False
+
+    def test_openapi_documents_a_typed_body_per_service(self, v2_client: TestClient) -> None:
+        # The whole point: each service's fields+enums are explicit on its route,
+        # so a client can be generated from the spec (no generic config dict).
+        spec = v2_client.get("/openapi.json").json()
+        put = spec["paths"]["/api/v2/projects/{project_name}/services/keycloak/config/project"]["put"]
+        ref = put["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        assert ref.endswith("KeycloakConfig")
+        hc_path = "/api/v2/projects/{project_name}/services/health-check/config/component/{component_name}"
+        hc_ref = spec["paths"][hc_path]["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        scheme = spec["components"]["schemas"][hc_ref.split("/")[-1]]["properties"]["scheme"]
+        assert {"none", "tcp", "http", "https"} <= set(scheme["anyOf"][0]["enum"])
+
+    def test_upsert_project_target_enqueues_typed_config(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            headers=HEADERS,
+            json={"template": "algor"},
+        )
+        assert response.status_code == 202
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["task_type"] == "configure_service"
+        payload = call_kwargs["payload"]
+        assert payload["service"] == "keycloak"
+        assert payload["target"] == "project"
+        assert payload["operation"] == "upsert"
+        assert payload["config"] == {"template": "algor"}
+
+    def test_upsert_component_target_carries_component_name(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/health-check/config/component/backend",
+            headers=HEADERS,
+            json={"scheme": "http", "port": 8080},
+        )
+        assert response.status_code == 202
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["target"] == "component"
+        assert payload["component"] == "backend"
+        assert payload["config"] == {"scheme": "http", "port": 8080}
+
+    def test_invalid_value_rejected_by_typed_body_before_enqueue(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        # The typed body validates at request time: an out-of-enum value -> 422,
+        # before any task is enqueued (health-check.scheme is a Literal).
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/health-check/config/component/backend",
+            headers=HEADERS,
+            json={"scheme": "ftp"},
+        )
+        assert response.status_code == 422
+        mock_task_service.create_task.assert_not_called()
+
+    def test_unsupported_target_has_no_route(self, v2_client: TestClient) -> None:
+        # keycloak carries no config at the component layer, so no such route exists.
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/component/backend",
+            headers=HEADERS,
+            json={"template": "x"},
+        )
+        assert response.status_code == 404
+
+    def test_unknown_service_has_no_route(self, v2_client: TestClient) -> None:
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/not-a-service/config/project",
+            headers=HEADERS,
+            json={},
+        )
+        assert response.status_code == 404
+
+    def test_upsert_requires_api_key(self, v2_client: TestClient) -> None:
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            json={"template": "x"},
+        )
+        assert response.status_code == 401
+
+    def test_read_returns_config_across_targets(self, v2_client: TestClient) -> None:
+        from types import SimpleNamespace
+
+        stored = SimpleNamespace(data={"services": [{"name": "keycloak", "config": {"template": "algor"}}]})
+        with patch("opi.api.v2.router.get_project_store") as get_store:
+            get_store.return_value.get.return_value = stored
+            response = v2_client.get("/api/v2/projects/test-project/services/keycloak/config", headers=HEADERS)
+        assert response.status_code == 200
+        assert response.json()["configurations"] == [{"target": "project", "config": {"template": "algor"}}]
+
+    def test_clear_enqueues_clear_operation(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        response = v2_client.delete(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            headers=HEADERS,
+        )
+        assert response.status_code == 202
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["operation"] == "clear"
+        assert payload["service"] == "keycloak"
+        assert payload["target"] == "project"
+
+
+def _stored_invites(*active: dict[str, Any]) -> Any:
+    """Patch the project store so `invite.active` holds exactly these entries."""
+    from types import SimpleNamespace
+
+    data = {"services": [{"name": "invite", "config": {"default-language": "nl", "active": list(active)}}]}
+    store = MagicMock()
+    store.get.return_value = SimpleNamespace(data=data)
+    return patch("opi.api.v2.router.get_project_store", return_value=store)
+
+
+class TestSingularServiceConfigSurface:
+    """`invite.active` is a list in the file and ONE entry over the API.
+
+    A facade, declared by the service itself (`api_singular_lists`), and it may only
+    exist while it is true: a file holding more than one entry is refused, never shown
+    as one and never overwritten by one. The project file is the only place an invitation
+    exists, so that overwrite would be unrecoverable.
+    """
+
+    _PATH = "/api/v2/projects/test-project/services/invite/config/project"
+
+    def test_openapi_takes_one_invite_and_no_array(self, v2_client: TestClient) -> None:
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        put = spec["paths"][self._PATH.replace("test-project", "{project_name}")]["put"]
+        ref = put["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        assert ref.endswith("InviteConfigSingular")
+        active = spec["components"]["schemas"][ref.split("/")[-1]]["properties"]["active"]
+        # No array anywhere in the field: an entry, or null. This is the whole point.
+        branches = [active, *active.get("anyOf", [])]
+        assert not any(branch.get("type") == "array" for branch in branches)
+        assert any(branch.get("$ref", "").endswith("InviteEntry") for branch in branches)
+        assert active["x-api-singular"] is True
+
+    def test_openapi_keeps_the_list_on_the_patch_route(self, v2_client: TestClient) -> None:
+        # The way out of the facade stays list-shaped, and stays documented as such.
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        path = self._PATH.replace("test-project", "{project_name}") + "/active"
+        patch_op = spec["paths"][path]["patch"]
+        ref = patch_op["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        add = spec["components"]["schemas"][ref.split("/")[-1]]["properties"]["add"]
+        assert any(branch.get("type") == "array" for branch in [add, *add.get("anyOf", [])])
+        assert "single-entry surface" in patch_op["description"]
+
+    def test_put_takes_one_invite_and_stores_a_list(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        with _stored_invites():
+            response = v2_client.put(
+                self._PATH,
+                headers=HEADERS,
+                json={"default-language": "en", "active": {"key": "geheim", "realm-roles": ["editor"]}},
+            )
+        assert response.status_code == 202
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        # The storage shape is untouched: what leaves for the task is the list it always was.
+        assert payload["config"] == {
+            "default-language": "en",
+            "active": [{"key": "geheim", "realm-roles": ["editor"]}],
+        }
+
+    def test_put_without_the_list_writes_no_list(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        with _stored_invites({"key": "eerste"}):
+            response = v2_client.put(self._PATH, headers=HEADERS, json={"default-language": "en"})
+        assert response.status_code == 202
+        assert mock_task_service.create_task.call_args[1]["payload"]["config"] == {"default-language": "en"}
+
+    def test_put_null_clears_the_list(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        with _stored_invites({"key": "eerste"}):
+            response = v2_client.put(self._PATH, headers=HEADERS, json={"active": None})
+        assert response.status_code == 202
+        assert mock_task_service.create_task.call_args[1]["payload"]["config"] == {"active": []}
+
+    def test_put_is_refused_when_the_file_holds_two(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        with _stored_invites({"key": "eerste"}, {"key": "tweede"}):
+            response = v2_client.put(
+                self._PATH, headers=HEADERS, json={"active": {"key": "derde", "realm-roles": ["editor"]}}
+            )
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert "2 entries" in detail
+        assert "PATCH /api/v2/projects/{project_name}/services/invite/config/project/active" in detail
+        mock_task_service.create_task.assert_not_called()
+
+    def test_a_put_that_ignores_the_list_is_refused_too(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        # The dangerous case: the PUT replaces the whole block, so a body that never
+        # mentions `active` deletes both invites just as thoroughly.
+        with _stored_invites({"key": "eerste"}, {"key": "tweede"}):
+            response = v2_client.put(self._PATH, headers=HEADERS, json={"default-language": "en"})
+        assert response.status_code == 409
+        mock_task_service.create_task.assert_not_called()
+
+    def test_read_returns_the_one_invite_as_an_object(self, v2_client: TestClient) -> None:
+        with _stored_invites({"key": "eerste", "realm-roles": ["viewer"]}):
+            response = v2_client.get("/api/v2/projects/test-project/services/invite/config", headers=HEADERS)
+        assert response.status_code == 200
+        config = response.json()["configurations"][0]["config"]
+        assert config["active"] == {"key": "eerste", "realm-roles": ["viewer"]}
+
+    def test_read_of_an_empty_list_is_no_invite(self, v2_client: TestClient) -> None:
+        with _stored_invites():
+            response = v2_client.get("/api/v2/projects/test-project/services/invite/config", headers=HEADERS)
+        assert response.status_code == 200
+        assert response.json()["configurations"][0]["config"]["active"] is None
+
+    def test_read_is_refused_when_the_file_holds_two(self, v2_client: TestClient) -> None:
+        with _stored_invites({"key": "eerste"}, {"key": "tweede"}):
+            response = v2_client.get("/api/v2/projects/test-project/services/invite/config", headers=HEADERS)
+        assert response.status_code == 409
+        assert "hide the others" in response.json()["detail"]
+
+    def test_patch_is_the_way_to_a_second_invite(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        response = v2_client.patch(
+            self._PATH + "/active",
+            headers=HEADERS,
+            json={"add": [{"key": "tweede", "realm-roles": ["editor"]}]},
+        )
+        assert response.status_code == 202
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["operation"] == "patch"
+        assert payload["list_field"] == "active"
+        assert payload["add"] == [{"key": "tweede", "realm-roles": ["editor"]}]
+
+    def test_delete_still_clears_the_whole_block(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        # Deliberately NOT refused: DELETE says "clear this config" and does exactly that,
+        # facade or no facade. Refusing it would leave a project with several invites no
+        # way back at all.
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        with _stored_invites({"key": "eerste"}, {"key": "tweede"}):
+            response = v2_client.delete(self._PATH, headers=HEADERS)
+        assert response.status_code == 202
+        assert mock_task_service.create_task.call_args[1]["payload"]["operation"] == "clear"
+
+
+class TestDeUitnodigingscodeIsTerugTeLezen:
+    """De code IS de uitnodiging, dus een leesantwoord geeft hem terug.
+
+    Dit was eerder andersom bedoeld, en het is een besluit van de eigenaar dat het nu zo
+    is. Drie argumenten, en ze staan voluit in de moduletoelichting van
+    ``opi/services/catalog/invite``: (1) wie de code niet kan teruglezen kan de
+    uitnodiging niet versturen, alleen vervangen, waarmee een link die al onderweg is
+    ongeldig wordt; (2) hij is niet geheim in de gewone zin, want wie de link heeft kan
+    hem inwisselen; (3) verbergen voor de projecteigenaar beschermt niemand, die heeft de
+    projectsleutel al.
+
+    Deze klasse legt de belofte net zo hard vast als de oude belofte lag, en houdt de
+    enkelvoudige gevel eromheen (``api_singular_lists``) in stand.
+    """
+
+    _READ = "/api/v2/projects/test-project/services/invite/config"
+
+    def test_de_lezing_geeft_de_code_terug(self, v2_client: TestClient) -> None:
+        with _stored_invites({"key": "de-echte-code", "realm-roles": ["viewer"]}):
+            response = v2_client.get(self._READ, headers=HEADERS)
+
+        assert response.status_code == 200
+        config = response.json()["configurations"][0]["config"]
+        # Door de enkelvoudige gevel heen, en met de code erin.
+        assert config["active"]["key"] == "de-echte-code"
+
+    def test_de_spec_zegt_dat_de_code_terugkomt(self, v2_client: TestClient) -> None:
+        """Een belofte die niet in het document staat, bestaat niet voor een client."""
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        key = spec["components"]["schemas"]["InviteEntry"]["properties"]["key"]
+
+        assert "RETURNED by a read" in key["description"]
+
+    def test_het_aanmaken_kan_een_gegenereerde_code_melden(self, v2_client: TestClient) -> None:
+        """De andere helft van het besluit: bij het aanmaken krijg je hem ook."""
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        generated = spec["components"]["schemas"]["ConfigureServiceResult"]["properties"]["generated"]
+
+        assert generated["description"]
+        assert "invite" in generated["description"]
+
+    def test_a_list_service_without_the_marker_keeps_its_list(self, v2_client: TestClient) -> None:
+        # The facade is a declaration, not a rule about lists: sleep-mode.match and
+        # cross-domain-access declare nothing, so their bodies stay list-shaped.
+        spec = v2_client.app.openapi()  # type: ignore[attr-defined]
+        put = spec["paths"]["/api/v2/projects/{project_name}/services/sleep-mode/config/project"]["put"]
+        ref = put["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        assert ref.endswith("SleepModeConfig")
+        match = spec["components"]["schemas"][ref.split("/")[-1]]["properties"]["match"]
+        assert any(branch.get("type") == "array" for branch in [match, *match.get("anyOf", [])])
 
 
 # ---------------------------------------------------------------------------

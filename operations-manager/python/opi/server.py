@@ -3,14 +3,13 @@ import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import jinja_roos_components
 from authlib.integrations.starlette_client import OAuth  # type: ignore
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -22,11 +21,13 @@ from opi.api.image_router import image_router
 from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
+from opi.api.openapi_choices import API_DESCRIPTION, annotate_config_choices
 from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
 from opi.api.task_router import task_router
+from opi.api.user_token_auth import REQUIRES_USER_TOKEN
 from opi.api.v2.router import v2_router
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
@@ -35,8 +36,11 @@ from opi.core.database_pools import close_database_pools
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks
+from opi.core.static_files import CacheControlledStaticFiles
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
+from opi.middleware.openapi_etag import OpenApiETagMiddleware
+from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.web.router import web_router
 
@@ -45,7 +49,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-STATIC_DIR_ROOS = Path(jinja_roos_components.__file__).parent / "static" / "roos" / "dist"
+#: De 404-pagina. Bewust zelfstandig: hij moet ook renderen als het thema, de
+#: sjablonenmap of de sessie juist het probleem is.
+_NOT_FOUND_PAGE = """<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pagina niet gevonden - ZAD</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; display: grid; place-items: center;
+         min-height: 100vh; color: #154273; background: #fff; }
+  main { text-align: center; padding: 2rem; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  p { color: #4a4a4a; margin: 0 0 1.5rem; }
+  a { color: #154273; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Deze pagina bestaat niet</h1>
+  <p>De link klopt niet meer, of de pagina is verplaatst.</p>
+  <a href="/dashboard">Naar het dashboard</a>
+</main>
+</body>
+</html>
+"""
 
 
 # todo(berry): move lifespan to own file
@@ -55,6 +84,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     from opi.core.startup import print_boot_banner
 
     print_boot_banner()
+
+    # De probeserver ALS EERSTE, op zijn eigen draad. Hij moet antwoorden ongeacht wat de
+    # eventloop doet, en dus ook al tijdens de rest van deze opstart. Zie
+    # opi/core/probe_server.py voor waarom hij niet in FastAPI zit.
+    from opi.core.probe_server import start_probe_server, stop_probe_server
+
+    start_probe_server()
 
     # Set up Prometheus metrics collectors
     from opi.core.metrics import setup_metrics, setup_tracemalloc, start_peak_memory_tracking
@@ -101,8 +137,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             from opi.core.database_pools import get_database_pool
             from opi.core.task_worker import TaskWorker  # type: ignore[reportMissingImports]
 
-            pool = get_database_pool("main")
-            task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+            get_database_pool("main")  # ensure the shared asyncpg pool is initialized
+            task_service = AsyncTaskService(cluster=settings.CLUSTER_MANAGER)
             app.state.task_service = task_service
 
             from opi.services.oom_watcher import set_task_service
@@ -120,6 +156,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 handle_add_component,
                 handle_add_component_to_deployment,
                 handle_add_service,
+                handle_configure_service,
+                handle_configure_service_values,
+                handle_delete_component,
+                handle_manage_database_schemas,
                 handle_update_component,
             )
             from opi.core.task_handlers_deployment import (  # type: ignore[reportMissingImports]
@@ -134,21 +174,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             )
             from opi.core.task_handlers_project import (  # type: ignore[reportMissingImports]
                 handle_create_project,
+                handle_delete_project,
                 handle_upsert_deployment,
             )
+            from opi.services.catalog.attachments.task import (
+                handle_configure_attachment,
+                handle_delete_attachment,
+            )
+            from opi.services.catalog.sleep_mode.task import handle_sleep_transition
 
             _worker_instance.register_handler(TaskType.CREATE_PROJECT, handle_create_project)
             _worker_instance.register_handler(TaskType.UPSERT_DEPLOYMENT, handle_upsert_deployment)
             _worker_instance.register_handler(TaskType.UPDATE_IMAGE, handle_update_image)
             _worker_instance.register_handler(TaskType.DELETE_DEPLOYMENT, handle_delete_deployment)
+            _worker_instance.register_handler(TaskType.DELETE_PROJECT, handle_delete_project)
+            _worker_instance.register_handler(TaskType.DELETE_COMPONENT, handle_delete_component)
+            _worker_instance.register_handler(TaskType.DELETE_ATTACHMENT, handle_delete_attachment)
+            _worker_instance.register_handler(TaskType.CONFIGURE_ATTACHMENT, handle_configure_attachment)
             _worker_instance.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
             _worker_instance.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
             _worker_instance.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+            _worker_instance.register_handler(TaskType.SLEEP_DEPLOYMENT, handle_sleep_transition)
+            _worker_instance.register_handler(TaskType.WAKE_DEPLOYMENT, handle_sleep_transition)
             _worker_instance.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)
             _worker_instance.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
             _worker_instance.register_handler(TaskType.UPDATE_COMPONENT, handle_update_component)
             _worker_instance.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
             _worker_instance.register_handler(TaskType.ADD_SERVICE, handle_add_service)
+            _worker_instance.register_handler(TaskType.CONFIGURE_SERVICE, handle_configure_service)
+            _worker_instance.register_handler(TaskType.CONFIGURE_SERVICE_VALUES, handle_configure_service_values)
+            _worker_instance.register_handler(TaskType.MANAGE_DATABASE_SCHEMAS, handle_manage_database_schemas)
             _worker_instance.register_handler(TaskType.BACKUP, handle_backup)
             _worker_instance.register_handler(TaskType.RESTORE, handle_restore)
 
@@ -171,7 +226,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                     logger.error("Failed to start backup scheduler: %s", e)
 
             # Start resource tuning scheduler if enabled
-            if settings.RESOURCE_TUNING_SCHEDULER_ENABLED:
+            from opi.services.catalog.resource_tuning.config import resource_tuning_config
+
+            if resource_tuning_config().scheduler_enabled:
                 try:
                     from opi.core.resource_tuning_scheduler import ResourceTuningScheduler
 
@@ -189,8 +246,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             from opi.core.async_task_service import AsyncTaskService  # type: ignore[reportMissingImports]
             from opi.core.database_pools import get_database_pool
 
-            pool = get_database_pool("main")
-            task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+            get_database_pool("main")  # ensure the shared asyncpg pool is initialized
+            task_service = AsyncTaskService(cluster=settings.CLUSTER_MANAGER)
             app.state.task_service = task_service
 
             from opi.services.oom_watcher import set_task_service
@@ -238,12 +295,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error("Failed to start log watcher scheduler: %s", e)
 
+    # Start the sleep-mode sweeper if enabled
+    if settings.SLEEP_MODE_SCHEDULER_ENABLED:
+        try:
+            from opi.services.catalog.sleep_mode.scheduler import SleepModeScheduler
+
+            _sleep_mode_scheduler = SleepModeScheduler(cluster=settings.CLUSTER_MANAGER)
+            await _sleep_mode_scheduler.start()
+            app.state.sleep_mode_scheduler = _sleep_mode_scheduler
+        except Exception as e:
+            logger.error("Failed to start sleep-mode sweeper: %s", e)
+
     yield
 
     # Begin graceful drain: reject new task creation via API immediately
     from opi.core.shutdown import begin_drain
 
     begin_drain()
+
+    # De probeserver gaat als LAATSTE uit, verderop: zolang we aan het afsluiten zijn moet
+    # de kubelet nog antwoord krijgen.
 
     # Stop backup scheduler
     backup_scheduler = getattr(app.state, "backup_scheduler", None)
@@ -259,6 +330,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     db_console_reaper = getattr(app.state, "db_console_reaper", None)
     if db_console_reaper is not None:
         await db_console_reaper.stop()
+
+    # Stop sleep-mode sweeper
+    sleep_mode_scheduler = getattr(app.state, "sleep_mode_scheduler", None)
+    if sleep_mode_scheduler is not None:
+        await sleep_mode_scheduler.stop()
 
     # Stop log watcher scheduler
     logwatcher_scheduler = getattr(app.state, "logwatcher_scheduler", None)
@@ -301,10 +377,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     except Exception as e:
         logger.error(f"Error closing database pools: {e}")
 
+    # Dispose the ORM async engine (service-owned persistence, opi.core.db). Guarded by a
+    # timeout so a stuck connection can never hang the shutdown -- the pod must always be
+    # able to terminate.
+    try:
+        from opi.core.db import dispose_engine
+
+        await asyncio.wait_for(dispose_engine(), timeout=10.0)
+        logger.info("ORM async engine disposed successfully")
+    except TimeoutError:
+        logger.error("Timed out disposing ORM async engine after 10s; continuing shutdown")
+    except Exception as e:
+        logger.error(f"Error disposing ORM async engine: {e}")
+
     # Shut down OpenTelemetry tracing (flush pending spans)
     from opi.core.tracing import shutdown_tracing
 
     shutdown_tracing()
+
+    # Als allerlaatste: tot hier kon de kubelet nog antwoord krijgen.
+    stop_probe_server()
 
     logger.info(f"Stopping application {PROJECT_NAME} version {VERSION}")
     logging.shutdown()
@@ -314,7 +406,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         lifespan=lifespan,
         title="RIG Operations Manager API",
-        description="GitOps Operations and Project Infrastructure API for self-service Kubernetes environments",
+        description=API_DESCRIPTION,
         summary=PROJECT_DESCRIPTION,
         version=VERSION,
         docs_url="/docs",
@@ -345,33 +437,79 @@ def create_app() -> FastAPI:
             routes=app.routes,
         )
 
-        # Add security scheme for X-API-Key header
+        # Twee manieren om je te legitimeren, want er zijn twee soorten endpoints.
         openapi_schema["components"]["securitySchemes"] = {
             "APIKeyHeader": {
                 "type": "apiKey",
                 "in": "header",
                 "name": "X-API-Key",
                 "description": "API key for project authentication",
-            }
+            },
+            "BearerToken": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+                "description": (
+                    "SSO access token, for the endpoints that cannot use a project's API key "
+                    "because they are not about one project yet: listing the projects you may "
+                    "see, and creating a project. Send it as 'Authorization: Bearer <token>'."
+                ),
+            },
         }
 
-        # Apply security to all API routes
+        # Welke route welk schema wil, gelezen uit de route zelf. Hier stond eerder
+        # APIKeyHeader op ALLE /api/-operaties, ook op de twee die geen projectsleutel
+        # kunnen gebruiken; een client die op dit document afging stuurde X-API-Key en
+        # kreeg een 401 die nergens uit te verklaren was (RC-113, bevinding 1).
+        bearer_operations = {
+            (route.path, method.lower())
+            for route in app.routes
+            if getattr(route, "endpoint", None) is not None and getattr(route.endpoint, REQUIRES_USER_TOKEN, False)
+            for method in getattr(route, "methods", None) or []
+        }
+
         for path, methods in openapi_schema["paths"].items():
-            if path.startswith("/api/"):
-                for method in methods.values():
-                    if isinstance(method, dict) and "operationId" in method:
-                        method["security"] = [{"APIKeyHeader": []}]
+            if not path.startswith("/api/"):
+                continue
+            for verb, method in methods.items():
+                if not isinstance(method, dict) or "operationId" not in method:
+                    continue
+                scheme = "BearerToken" if (path, verb) in bearer_operations else "APIKeyHeader"
+                method["security"] = [{scheme: []}]
 
         # Sort paths: V2 first, then v1, for clarity in docs
         paths = openapi_schema.get("paths", {})
         sorted_paths = dict(sorted(paths.items(), key=lambda p: (not p[0].startswith("/api/v2"), p[0])))
         openapi_schema["paths"] = sorted_paths
 
+        # Welke build dit document maakte. info.version is het nummer van de API en beweegt
+        # niet mee met een wijziging aan de spec; een client die wil weten of hij nog naar
+        # dezelfde waarheid kijkt, had daar dus niets aan. De commit is wat er werkelijk
+        # veranderde, en die staat al in /version. Naast de ETag op het document zelf (zie
+        # opi/middleware/openapi_etag.py): dit is te lezen zonder tweede verzoek, die maakt
+        # een conditionele GET mogelijk.
+        from opi.core.version import get_version_info
+
+        version_info = get_version_info()
+        openapi_schema["info"]["x-spec-revision"] = {
+            key: version_info.get(key, "") for key in ("commit", "branch", "build_date")
+        }
+
         # Add API version info
         openapi_schema["info"]["x-api-info"] = {
             "v1_status": "deprecated - use /api/v2 endpoints",
             "v2_status": "current - recommended",
+            "choices": (
+                "Config fields that offer a fixed set of values carry `x-choices` "
+                "(`{const, title}` per value); fields whose values depend on the project "
+                "carry `x-choices-source`, naming the endpoint that serves the list."
+            ),
         }
+
+        # De toegestane waarden per configveld, afgeleid uit dezelfde declaratie die het
+        # formulier gebruikt. Hier en niet in de modellen: een keuzelijst kan per cluster
+        # verschillen, en dit document wordt door dat cluster geserveerd.
+        annotate_config_choices(openapi_schema)
 
         app.openapi_schema = openapi_schema
         return app.openapi_schema
@@ -391,8 +529,26 @@ def create_app() -> FastAPI:
         logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
         raise exc
 
+    @app.exception_handler(StarletteHTTPException)
+    async def _not_found_page(request, exc):  # type: ignore[no-untyped-def]
+        """Serve a 404 as a page to a browser and as JSON to everything else.
+
+        A browser asking for a page that is not there got the API's answer:
+        ``{"detail":"Not Found"}`` on a white screen. The client says which one it
+        wants, so read it: an /api path or a caller that does not ask for HTML keeps
+        the JSON body every client parses today.
+        """
+        if exc.status_code != 404 or request.url.path.startswith("/api"):
+            return await http_exception_handler(request, exc)
+        if "text/html" not in request.headers.get("accept", ""):
+            return await http_exception_handler(request, exc)
+        return HTMLResponse(_NOT_FOUND_PAGE, status_code=404)
+
     from opi.middleware.security_headers import SecurityHeadersMiddleware
 
+    # Als eerste toegevoegd, dus als binnenste uitgevoerd: het document wordt pas
+    # beantwoord nadat onderhoud en autorisatie het verzoek hebben doorgelaten.
+    app.add_middleware(OpenApiETagMiddleware)
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(MaintenanceMiddleware)
@@ -439,6 +595,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(logs_websocket_router, include_in_schema=False)  # WebSocket for log streaming
     app.include_router(resource_router, include_in_schema=True)  # Resource tuning & sanitization
+    app.include_router(sleep_mode_router, include_in_schema=True)  # Sleep-mode wake/status (waker pod + projectsleutel)
     app.include_router(v2_router, include_in_schema=True)  # V2 async API endpoints
     app.include_router(task_router, include_in_schema=True)  # Async task status API
     app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
@@ -447,27 +604,27 @@ def create_app() -> FastAPI:
     app.include_router(invite_router, include_in_schema=False)  # Exclude from OpenAPI docs (public invite flow)
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs
 
-    # Mount ROOS component assets - use a simpler approach
-    try:
-        from jinja_roos_components import get_static_files_path
+    # De assets van het componentensysteem liggen verspreid over meerdere geinstalleerde
+    # pakketten (de kern plus elk design system), vandaar een route met meerdere wortels
+    # in plaats van een mount.
+    from opi.core.templates_lotc import resolve_lotc_static
+    from opi.web.lotc_router import router as lotc_web_router
 
-        roos_static_path = get_static_files_path()
+    app.include_router(lotc_web_router, include_in_schema=False)
 
-        # Just mount the entire static directory
-        if os.path.exists(roos_static_path):
-            app.mount("/static/roos/dist", StaticFiles(directory=STATIC_DIR_ROOS), name="roos")
-            logger.info(f"ROOS static files mounted at /static/roos from {roos_static_path}")
-        else:
-            logger.error(f"ROOS static path does not exist: {roos_static_path}")
-    except ImportError as e:
-        logger.warning(f"jinja-roos-components not available: {e}")
-    except Exception as e:
-        logger.error(f"Error mounting ROOS static files: {e}")
+    @app.get("/static/lotc/{rel:path}", include_in_schema=False)
+    async def lotc_static(rel: str) -> FileResponse:
+        resolved = resolve_lotc_static(rel)
+        if resolved is None:
+            raise HTTPException(status_code=404, detail="Static asset not found")
+        return FileResponse(resolved)
+
+    logger.info("LOTC static files served at /static/lotc/")
 
     # Mount regular static files last (more general path)
     static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
     if os.path.exists(static_dir):
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+        app.mount("/static", CacheControlledStaticFiles(directory=static_dir), name="static")
         logger.info(f"Regular static files mounted at /static from {static_dir}")
 
     # Favicon at the root path (browsers request /favicon.ico automatically)
@@ -495,7 +652,7 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     # Version info - public, so anyone (and the E2E suite) can see which build is running.
-    @app.get("/version", include_in_schema=True, response_class=JSONResponse)
+    @app.get("/version", include_in_schema=True, tags=["meta"], response_class=JSONResponse)
     async def version_info():
         """Return the running build's version metadata (version, commit, branch, ...)."""
         from opi.core.version import get_version_info

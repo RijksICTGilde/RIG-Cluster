@@ -221,7 +221,7 @@ config:
 Declarative Kustomize manifests that bootstrap the cluster itself — PostgreSQL, Keycloak, MinIO, Forgejo, Prometheus, Redis, ArgoCD, cert-manager, ingress-nginx, and more. Each component follows `base/` + `overlays/{local,sandboxed-local,odcn-production}/`. Secrets are SOPS+AGE encrypted. All operations via Taskfile (100+ tasks, no shell scripts).
 
 ### Application (OPI)
-A Python 3.14 FastAPI app with a web UI (Jinja2 + ROOS design system) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
+A Python 3.14 FastAPI app with a web UI (Jinja2 + Lord of the Components, NLDD-thema) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
 
 ## Where To Find Things
 
@@ -272,7 +272,7 @@ uv run python functional_tests/run_all.py                      # integration (ne
 - `tests/e2e/` — 17 Playwright browser tests (16 local + 1 live-sandbox lifecycle)
 - `tests/conftest.py` — 20+ fixtures mocking connectors, services, settings
 - `tests/e2e/conftest.py` — Playwright fixtures: local test server (`app_server`) and live-sandbox (`sandbox_page`) modes, session-cookie signing
-- `tests/e2e/helpers/` — `WizardHelper`, `EditModalHelper`, `ForgejoClient`, `ProjectCleanup`, sandbox API helpers
+- `tests/e2e/helpers/` — `WizardHelper`, `EditModalHelper`, `ForgejoClient`, sandbox API helpers
 
 ### API endpoint surface
 The REST API is large and evolving, so **do not maintain a hand-written endpoint list**. The authoritative, always-current surface is the OpenAPI spec served by a running instance:
@@ -288,7 +288,7 @@ Fetch it to see every path, method, and auth scheme when reviewing endpoint cove
 - Auth is handled by pre-signing session cookies with a known `SECRET_KEY` — no need to touch production auth code
 - Can run against a live sandbox via `E2E_BASE_URL` env var (see `workflow/sandbox.md`) — `test_sandbox_flows.py` drives the create/add-component/delete lifecycle through the UI and API, then verifies the resulting project YAML in the Forgejo `zad-projects` repo via `ForgejoClient`
 - Reusable helpers in `tests/e2e/helpers/` for wizard interaction, edit modals, cleanup, and Forgejo project-file verification
-- Covers: wizard create/edit/validation, edit modals (identity/team/services/backup), self-service portal, detail pages, navigation, ROOS rendering, user admin
+- Covers: wizard create/edit/validation, edit modals (identity/team/services/backup), self-service portal, detail pages, navigation, component rendering, user admin
 
 ### Pytest Markers
 `@pytest.mark.slow`, `@pytest.mark.enable_auth`, `@pytest.mark.requires_infra`, `@pytest.mark.e2e`, `@pytest.mark.sandbox`
@@ -299,9 +299,9 @@ Fetch it to see every path, method, and auth scheme when reviewing endpoint cove
 - Type annotations required on all function parameters and return types
 - Specific exceptions only — no `except Exception`. Let exceptions bubble up in new code
 - No emojis anywhere (code, comments, logs)
-- ROOS components: always check `references/jinja_roos_copied.md` before using — many attributes are non-standard (camelCase, word-based values, Dutch icon names)
+- Components: attributes are kebab-case, samenstellingen krijgen kinderen in plaats van data-props, en Jinja mag niet op attribuutpositie (`:prop="expr"` / `:attrs="<dict>"`). Zie `features/lotc-bouwlijn.md`; de oude ROOS-referentie is met de bibliotheek verdwenen.
 - Principles: KISS, YAGNI, SOLID, DRY — no premature abstractions, no "just in case" features
 
 ## Tech Stack Summary
 
-FastAPI, Python 3.14, SQLAlchemy 2.0 (async) + AsyncPG, Alembic, Keycloak (python-keycloak + authlib), Jinja2 + jinja-roos-components, OpenTelemetry + Prometheus, uv (package manager), Ruff (linter/formatter), Pyright (type checker), SOPS + AGE (secrets), Playwright (E2E)
+FastAPI, Python 3.14, SQLAlchemy 2.0 (async) + AsyncPG, Alembic, Keycloak (python-keycloak + authlib), Jinja2 + lord-of-the-components, OpenTelemetry + Prometheus, uv (package manager), Ruff (linter/formatter), Pyright (type checker), SOPS + AGE (secrets), Playwright (E2E)

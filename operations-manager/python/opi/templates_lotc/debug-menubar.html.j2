@@ -1,0 +1,27 @@
+<!-- djlint:off H030,H031 -->
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="utf-8">
+    <title>Debug Menubar</title>
+</head>
+<body>
+    <h1>Debug Menubar Data Processing</h1>
+
+    <!-- Test with simple inline data -->
+    <h2>Test 1: Simple inline data</h2>
+    <c-menu type="bar"/>
+
+    <!-- Test with template variable -->
+    <h2>Test 2: Template variable</h2>
+    <c-menu type="bar"/>
+
+    <!-- Test current complex structure -->
+    <h2>Test 3: Current complex structure</h2>
+    <c-menu type="bar" size="md"/>
+
+    <!-- Debug: Show what gets passed to menubar component -->
+    <h2>Debug Info</h2>
+    <p>Simple menu variable: {{ simple_menu | tojson }}</p>
+</body>
+</html>

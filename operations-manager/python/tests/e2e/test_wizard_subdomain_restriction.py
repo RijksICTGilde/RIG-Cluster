@@ -11,12 +11,24 @@ Run with: uv run pytest tests/e2e/test_wizard_subdomain_restriction.py -v
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, apply_virtualize
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
 
 pytestmark = [pytest.mark.e2e]
+
+
+def _field(setting: DomainSetting) -> str:
+    """The rendered form-field name of a web-address setting on the first deployment.
+
+    Derived, not typed out: the fields moved under the publish-on-web service (RC-60) and
+    the form posts them under the VIRTUAL services key, so a hand-written selector goes
+    stale silently -- the locator just never matches and the step times out.
+    """
+    return apply_virtualize(domain_setting_path(setting, 0), SERVICE_VIRTUALIZE)
 
 
 def _navigate_to_domain_step(wizard: WizardHelper) -> None:
@@ -63,16 +75,16 @@ class TestSubdomainRestrictionValidation:
 
         # Select "subdomain" format — wait for re-render
         _htmx_settle(auth_page)
-        auth_page.locator("select[name='deployments[0]/domain-format']").select_option(value="subdomain")
+        auth_page.locator(f"select[name='{_field(DomainSetting.DOMAIN_FORMAT)}']").select_option(value="subdomain")
         _wait_htmx_settled(auth_page)
 
         # Select base domain "kind" (restricted) — wait for re-render
         _htmx_settle(auth_page)
-        auth_page.locator("select[name='deployments[0]/base-domain']").select_option(value="kind")
+        auth_page.locator(f"select[name='{_field(DomainSetting.BASE_DOMAIN)}']").select_option(value="kind")
         _wait_htmx_settled(auth_page)
 
         # Fill subdomain, Tab to blur, wait for re-render
-        subdomain_input = auth_page.locator("input[name='deployments[0]/subdomain']")
+        subdomain_input = auth_page.locator(f"input[name='{_field(DomainSetting.SUBDOMAIN)}']")
         if subdomain_input.count() == 0:
             subdomain_input = auth_page.locator("input[name*='/subdomain']")
         assert subdomain_input.count() > 0, "Subdomain input should be visible"
@@ -93,20 +105,27 @@ class TestSubdomainRestrictionValidation:
             )
 
     def test_submit_without_checkbox_shows_error(self, app_server: str, auth_page: Page) -> None:
-        """Submitting without checking the request checkbox shows an error."""
+        """Submitting without checking the request checkbox shows an error.
+
+        Stond op ``xfail(strict=True)`` met precies de meting die RC-71 heeft opgelost:
+        htmx stuurde een NIET aangevinkt vakje als ``'true'`` mee, dus deze stap kwam door
+        de verplicht-controle heen. De reden dat de vlag hier weg kan is dat de oorzaak weg
+        is (static/js/form-associated.js corrigeert de parameters uit FormData), niet dat
+        de test soepeler is geworden.
+        """
         wizard = WizardHelper(auth_page, app_server)
         wizard.open_create_wizard()
         _navigate_to_domain_step(wizard)
 
         _htmx_settle(auth_page)
-        auth_page.locator("select[name='deployments[0]/domain-format']").select_option(value="subdomain")
+        auth_page.locator(f"select[name='{_field(DomainSetting.DOMAIN_FORMAT)}']").select_option(value="subdomain")
         _wait_htmx_settled(auth_page)
 
         _htmx_settle(auth_page)
-        auth_page.locator("select[name='deployments[0]/base-domain']").select_option(value="kind")
+        auth_page.locator(f"select[name='{_field(DomainSetting.BASE_DOMAIN)}']").select_option(value="kind")
         _wait_htmx_settled(auth_page)
 
-        subdomain_input = auth_page.locator("input[name='deployments[0]/subdomain']")
+        subdomain_input = auth_page.locator(f"input[name='{_field(DomainSetting.SUBDOMAIN)}']")
         if subdomain_input.count() == 0:
             subdomain_input = auth_page.locator("input[name*='/subdomain']")
         _htmx_settle(auth_page)
@@ -115,11 +134,15 @@ class TestSubdomainRestrictionValidation:
         _wait_htmx_settled(auth_page)
 
         # Submit WITHOUT checking the request checkbox
-        auth_page.locator(".wizard-step__actions button[type='submit']").click()
+        auth_page.locator(
+            ".wizard-step__actions button[type='submit'], .lotc-action-group button[type='submit']"
+        ).click()
 
-        # Should show an error about the subdomain not being requested
+        # The submit is blocked with a visible validation error and stays on the domain
+        # step: the request checkbox is shown (SubdomainNeedsRequestCondition) and required,
+        # so leaving it unchecked surfaces the standard required-field error on it.
         try:
-            auth_page.locator("text=niet aangevraagd").first.wait_for(state="attached", timeout=10000)
+            auth_page.locator("text=Dit veld is verplicht").first.wait_for(state="attached", timeout=10000)
         except Exception:
             page_text = auth_page.locator("#wizard-step-content").inner_text()
-            pytest.fail(f"Expected error about subdomain not being requested. Page text: {page_text[:500]}")
+            pytest.fail(f"Expected a validation error blocking submit. Page text: {page_text[:500]}")

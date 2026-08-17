@@ -350,10 +350,10 @@ class ArgoConnector:
             app_name: Name of the application. If None, uses default_app_name
 
         Returns:
-            Application status dictionary if successful, None if application doesn't exist (404)
+            Application status dictionary if successful, None if the application does not
+            exist (ArgoCD returns 404, or 403 for a non-existent app)
 
         Raises:
-            PermissionError: If access to the application is denied (403)
             RuntimeError: If an unexpected error occurs
         """
         app_name = app_name or self.default_app_name
@@ -372,14 +372,16 @@ class ArgoConnector:
                 logger.info(f"Application {app_name} not found (404)")
                 return None
             elif status_code == 403:
-                # Expected transient right after creating an app/AppProject (ArgoCD RBAC
-                # still propagating). Logged at debug; callers decide severity - retry loops
-                # warn while retrying and only error if it never resolves.
-                logger.debug(
-                    f"Permission denied accessing application {app_name} - this is OK, the app may "
-                    f"not exist yet / ArgoCD RBAC may still be propagating: {response_text}"
-                )
-                raise PermissionError(f"Permission denied accessing application '{app_name}'")
+                # ArgoCD returns 403 (not 404) for an application that does not exist, to
+                # avoid leaking which apps are present. OPI authenticates as the ArgoCD
+                # admin, so a 403 here never means a real authorization failure - it means
+                # the app is not there yet (just created, AppProject still propagating) or
+                # already gone. Treat it as not-found; every caller already handled the old
+                # PermissionError exactly like the None/404 case (poll-and-wait, or
+                # "already deleted"), so this centralizes that and drops the misleading
+                # "permission denied" error noise.
+                logger.debug(f"Application {app_name} not found (403 - does not exist yet or already gone)")
+                return None
             else:
                 logger.error(f"Status request failed with status {status_code}: {response_text}")
                 raise RuntimeError(f"Failed to get application status: HTTP {status_code}")
@@ -391,6 +393,47 @@ class ArgoConnector:
         except Exception as e:
             logger.error(f"Error getting application status: {e}")
             raise RuntimeError(f"Error getting application status: {e}")
+
+    async def get_application_manifests(
+        self, app_name: str | None = None, revision: str | None = None
+    ) -> tuple[bool, str]:
+        """Ask ArgoCD to render an application's manifests, to detect generation failures.
+
+        This is the API behind ``argocd app manifests``. On a broken kustomization / CMP
+        render ArgoCD returns the generation error (including the plugin stderr) instead of
+        manifests, so calling it right after our own push fails fast with the real message
+        instead of waiting for the controller to reconcile.
+
+        Args:
+            app_name: Application name. If None, uses default_app_name.
+            revision: Optional git revision to render. When omitted, ArgoCD renders the
+                application's current target revision.
+
+        Returns:
+            ``(ok, body)`` where ``ok`` is True on HTTP 200 (the render succeeded; the
+            manifests themselves are not needed, only that it worked). On any other status
+            or a transport error ``ok`` is False and ``body`` is the response body or error
+            text - which for a generation failure contains the underlying cause. The caller
+            decides whether the body indicates a render failure worth blocking on.
+        """
+        app_name = app_name or self.default_app_name
+        manifests_url = f"{self._actual_base_url}/api/v1/applications/{app_name}/manifests"
+        if revision:
+            manifests_url += f"?revision={revision}"
+
+        try:
+            status_code, response_text = await self._make_authenticated_request(
+                "GET", manifests_url, timeout_seconds=120
+            )
+            if status_code == 200:
+                logger.debug(f"Application '{app_name}' rendered successfully")
+                return True, response_text
+            logger.warning(f"Manifest render for '{app_name}' returned status {status_code}")
+            return False, response_text
+        except Exception as e:
+            reason = str(e) or repr(e)
+            logger.error(f"Error rendering manifests for application '{app_name}': {reason}")
+            return False, reason
 
     async def get_application_resource_tree(self, app_name: str | None = None) -> list[dict[str, Any]]:
         """
@@ -498,7 +541,21 @@ class ArgoConnector:
 
             if status_code == 200:
                 logger.info(f"Successfully triggered {refresh_type} refresh for application: {app_name}")
-                reconciled_at = json.loads(response_text).get("status", {}).get("reconciledAt")
+                response_data = json.loads(response_text)
+                status = response_data.get("status", {}) or {}
+                # Surface a render/compare error the moment it appears, at the source. ArgoCD
+                # sets an *Error condition (e.g. ComparisonError) when it cannot generate or
+                # compare the manifests; logging it here puts the real cause in the OPI logs
+                # instead of only in the ArgoCD UI.
+                for condition in status.get("conditions", []) or []:
+                    if str(condition.get("type", "")).endswith("Error"):
+                        logger.warning(
+                            "Application '%s' has condition %s: %s",
+                            app_name,
+                            condition.get("type"),
+                            condition.get("message", ""),
+                        )
+                reconciled_at = status.get("reconciledAt")
                 logger.debug(f"Application '{app_name}' reconciledAt after refresh: {reconciled_at}")
                 return reconciled_at
             elif status_code == 404:

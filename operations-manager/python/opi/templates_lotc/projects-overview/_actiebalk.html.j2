@@ -1,0 +1,21 @@
+{# Zoeken, filteren en de knop voor een nieuw project.
+
+   Twee eigen flexregels uit base.css zijn hier layoutcomponenten geworden:
+   .page-header-row (display:flex + space-between + align-items:center) is
+   <c-cluster justify="between">, en .page-header-actions (twee knoppen naast elkaar met
+   een gat ertussen) is de geneste <c-cluster gap="md">. De afstand komt nu van het thema
+   in plaats van uit een var() die het thema niet levert.
+
+   NIET <c-bar>: zonder center-slot valt zijn end-slot in de middelste gridkolom en staat
+   de rechterkant midden op de balk. Gemeten in de browser. #}
+<c-cluster justify="between" align="center">
+    <c-cluster gap="md" align="center">
+        {% set lotc_onclick_1 %}window.location.href='/projects/new'{% endset %}<c-button label="Nieuw Project" show-icon="before" icon="plus"/>
+        {% set lotc_onclick_2 %}window.location.href='/projects?refresh=true'{% endset %}<c-button label="Vernieuwen" show-icon="before" icon="refresh"/>
+    </c-cluster>
+
+    {# .filter-row was flex + gap + align-items:center, oftewel <c-cluster>. #}
+    <c-cluster gap="sm" align="center">
+        <span>Totaal: <strong>{{ projects|length }} project{% if projects|length != 1 %}en{% endif %}</strong></span>
+    </c-cluster>
+</c-cluster>

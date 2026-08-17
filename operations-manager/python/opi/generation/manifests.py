@@ -20,7 +20,83 @@ from ruamel.yaml import YAML
 from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
 
+#: Label the platform puts on a Secret or ConfigMap that must stay OUT of the config-hash
+#: the ArgoCD CMP plugin injects as ``checksum/config`` on every pod template.
+#:
+#: Services never write this themselves: they declare ``include_in_config_hash=False`` on
+#: their SecretFileSpec and the shared writer translates that here. The string is also
+#: matched by the plugin script in bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml,
+#: which is a shell/yq filter and cannot import it -- ``tests/test_config_hash_label.py``
+#: pins the two against each other so they cannot drift apart unnoticed.
+CONFIG_HASH_IGNORE_LABEL_KEY = "zad.rig/config-hash"
+CONFIG_HASH_IGNORE_LABEL_VALUE = "ignore"
+
 logger = logging.getLogger(__name__)
+
+
+def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:
+    """Kustomize resource identity ``(apiVersion, kind, namespace, name)`` for a manifest doc.
+
+    Returns ``None`` for docs that carry no resource identity (empty docs, lists, or docs
+    without a ``kind``/``metadata.name``) - those cannot collide the way kustomize rejects.
+    """
+    if not isinstance(doc, dict):
+        return None
+    kind = doc.get("kind")
+    metadata = doc.get("metadata")
+    if not kind or not isinstance(metadata, dict):
+        return None
+    name = metadata.get("name")
+    if not name:
+        return None
+    api_version = doc.get("apiVersion", "")
+    namespace = metadata.get("namespace", "") or ""
+    return (str(api_version), str(kind), str(namespace), str(name))
+
+
+def check_duplicate_resource_identities(output_dir: str, regular_files: list[str]) -> None:
+    """Raise if two on-disk manifests declare the same kustomize resource identity.
+
+    Kustomize refuses to build a directory that lists two resources with the same
+    ``(apiVersion, kind, namespace, name)`` - "may not add resource with an already
+    registered id". That failure happens inside the ArgoCD CMP and is invisible to OPI, so
+    this catches the whole class before the manifests are committed and pushed.
+
+    SOPS files are handled by the caller (they are encrypted and go through a generator);
+    entries that are not on disk (e.g. path-rewritten ones) are skipped. A malformed
+    manifest is a different failure that kustomize surfaces on its own, so parse errors are
+    skipped here rather than masking the real error.
+
+    Raises:
+        RuntimeError: When two distinct files declare the same resource identity.
+    """
+    yaml = YAML(typ="safe")
+    seen: dict[tuple[str, str, str, str], str] = {}
+    for rel in regular_files:
+        path = os.path.join(output_dir, rel)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path) as f:
+                docs = list(yaml.load_all(f))
+        except Exception as exc:
+            logger.debug("Skipping duplicate-identity scan for %s: %s", rel, exc)
+            continue
+        for doc in docs:
+            identity = _resource_identity(doc)
+            if identity is None:
+                continue
+            previous = seen.get(identity)
+            if previous is not None and previous != rel:
+                api_version, kind, namespace, name = identity
+                ns_part = f"{namespace}/" if namespace else ""
+                raise RuntimeError(
+                    f"Duplicate Kubernetes resource identity in {output_dir}: "
+                    f"'{previous}' and '{rel}' both declare {kind}.{api_version} {ns_part}{name}. "
+                    "Kustomize cannot render a directory with two resources of the same id. "
+                    "This often means a marked-for-deletion manifest was left next to a recreated one."
+                )
+            seen[identity] = rel
 
 
 def render_template(template_name: str, variables: dict[str, Any]) -> str:
@@ -393,6 +469,11 @@ class ManifestGenerator:
             sops_files = [f for f in sops_files if f not in exclude_files]
             regular_files = [f for f in regular_files if f not in exclude_files]
 
+            # Failsafe before commit/push: two files with the same resource identity make
+            # kustomize refuse to build the whole directory, and that failure only surfaces
+            # later inside the ArgoCD CMP. Catch the whole class here with a clear message.
+            check_duplicate_resource_identities(output_dir, regular_files)
+
             logger.info(
                 f"Kustomization will include {len(sops_files)} SOPS files and {len(regular_files)} regular files"
             )
@@ -464,6 +545,11 @@ class ManifestGenerator:
 
             return True
 
+        except RuntimeError:
+            # A duplicate resource identity is a real, actionable error - let it propagate
+            # so the deploy stops before the broken kustomization is committed, rather than
+            # being swallowed into a False return.
+            raise
         except Exception as e:
             logger.error(f"Error creating kustomization files: {e}")
             return False

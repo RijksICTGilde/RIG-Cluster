@@ -30,6 +30,9 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/resources/limits/memory
         value: "2Gi"
+      # NB: deze cpu-waarden worden overschreven door het sandbox-CPU-beleid in
+      # infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml (request 50m,
+      # geen limit). Pas ze daar aan, niet hier — anders knijp je keycloak alsnog.
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/cpu
         value: "2"

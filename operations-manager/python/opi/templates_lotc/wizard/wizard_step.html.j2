@@ -1,0 +1,90 @@
+{#
+  Wizard Step Fragment - loaded via HTMX for each step.
+
+  Required context:
+    - steps: WizardSteps object
+    - flow_id: FormFlow ID
+    - section: FormSection for the current step
+    - step_html: Pre-rendered form field HTML from FormRenderer
+    - errors: dict of field errors (optional)
+    - global_errors: list of global validation errors (optional)
+#}
+
+{# Step indicator OOB swap - only for HTMX responses, not initial page load #}
+{% if not embedded %}
+<div id="wizard-steps" hx-swap-oob="outerHTML">
+    {% include "wizard/wizard_steps_indicator.html.j2" %}
+</div>
+{% endif %}
+
+{# Step content #}
+<div class="wizard-step" id="wizard-step-inner">
+    <div class="wizard-step__header">
+        <c-cluster gap="sm" align="center">
+            {% if section.icon %}<c-icon icon="{{ section.icon | nldd_icon }}" size="xl"/>{% endif %}
+            <c-heading type="h2" label="{{ section.title }}"/>
+        </c-cluster>
+        {% if section.description %}
+        <p class="wizard-step__description">{{ section.description }}</p>
+        {% endif %}
+    </div>
+
+    {% if global_errors %}
+    <c-alert heading="Fouten">
+        <ul>
+            {% for message in global_errors %}
+            <li>{{ message }}</li>
+            {% endfor %}
+        </ul>
+    </c-alert>
+    {% endif %}
+
+    {% if preset_html %}
+    <div class="wizard-step__presets">
+        <p>Snelstart: kies een scenario</p>
+        {{ preset_html | process_components }}
+    </div>
+    {% endif %}
+
+    <form id="wizard-step-form"
+          autocomplete="off"
+          hx-ext="json-enc"
+          hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+          hx-post="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
+          hx-target="#wizard-step-content"
+          hx-swap="innerHTML"
+          hx-disabled-elt="#wizard-step-form button[type='submit']">
+
+        <div class="wizard-step__fields">
+            {{ step_html | process_components }}
+        </div>
+
+        <c-cluster justify="between" align="center" class="wizard-step__actions">
+            {% if not steps.is_first %}
+            <c-button label="Vorige" show-icon="before" icon="caret-left"/>
+            {% else %}
+            <!-- djlint:off H020 --><span></span><!-- djlint:on -->
+            {% endif %}
+
+            <c-cluster gap="xs" align="center">
+                {% if all_steps_completed and show_review and not steps.is_last %}
+                <c-button label="Naar samenvatting" show-icon="after" icon="caret-right"/>
+                {% endif %}
+
+                <span class="wizard-step__saving" aria-hidden="true">
+                    <c-icon icon="refresh" size="sm"/>Bezig…
+                </span>
+
+                {% if steps.is_last %}
+                    {% if show_review %}
+                    <c-button html-type="submit" type="primary" label="Controleren" show-icon="after" icon="caret-right"/>
+                    {% else %}
+                    <c-button html-type="submit" type="primary" label="Opslaan" show-icon="before" icon="file-text"/>
+                    {% endif %}
+                {% else %}
+                <c-button html-type="submit" type="primary" label="Volgende" show-icon="after" icon="caret-right"/>
+                {% endif %}
+            </c-cluster>
+        </c-cluster>
+    </form>
+</div>

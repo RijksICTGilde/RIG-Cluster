@@ -1,0 +1,32 @@
+{#
+  De foutmeldingen per component, in de nieuwe vormgeving.
+
+  Een OVERNAME van partials/_component_failures.html.j2. Dezelfde melding per component
+  (titel + suggestie), dezelfde logboeklink onder dezelfde voorwaarde, en dezelfde
+  terugval als er geen componentfouten zijn.
+
+  De teksten komen uit de event_interpreter (Python), niet uit dit sjabloon.
+
+  DE LOGBOEKLINK BLIJFT. Hij roept openLogViewer() aan, en die functie staat op de
+  projectpagina: bg/_modals.html.j2 laadt static/js/log_viewer.js en het paneel erbij. Op
+  de VOORTGANGSPAGINA staat dat paneel niet - daar laat bg/_task-progress.html.j2 de link
+  dan ook bewust weg. Hier zou weglaten functionaliteit weghalen.
+
+  <c-link> laat geen onclick toe; de aanroep gaat via :attrs, opgebouwd met {% raw %}{% set %}{% endraw %}
+  boven de tag. Jinja binnen een componenttag leest de voorbewerker als een attribuut.
+#}
+{% if component_failures is defined and component_failures %}
+    {% for failure in component_failures %}
+        <c-alert type="error" heading="{{ failure.title }}">
+            <c-stack gap="xs">
+                <c-paragraph>{{ failure.suggestion }}</c-paragraph>
+                {% if failure.failure_type != "image_pull" and project_name is defined and project_name and failure.deployment %}
+                    {% set logboek_js %}event.preventDefault(); if(typeof openLogViewer==='function'){openLogViewer('{{ project_name }}','{{ failure.deployment }}','{{ failure.component }}',[{reference:'{{ failure.component }}'}])}{% endset %}
+                    <c-link href="#" :attrs="{'onclick': logboek_js}">Bekijk logs voor '{{ failure.component }}'</c-link>
+                {% endif %}
+            </c-stack>
+        </c-alert>
+    {% endfor %}
+{% else %}
+    <c-alert type="error" heading="Verwerking mislukt">{{ error or "Onbekende fout" }}</c-alert>
+{% endif %}

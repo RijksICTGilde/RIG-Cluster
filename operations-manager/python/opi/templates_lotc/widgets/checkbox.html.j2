@@ -1,0 +1,38 @@
+{#
+  Eén aanvinkvakje voor de LOTC-bouwlijn.
+
+  <c-checkbox-field> is de vorm van een aanvinkvakje, hier en in checkbox_group.html.j2:
+  onder NLDD wordt het een <nldd-checkbox-field>, een form-associated element dat zijn
+  waarde via ElementInternals levert en alleen als het aanstaat. In de lichte boom staat
+  geen invoerveld; de echte <input> zit twee schaduwbomen diep. Wat dat betekent voor
+  htmx, voor het terugvinden van het vakje en waarom hier geen kaal <input> staat:
+  features/aanvinkvakje.md. Dat is het enige verhaal over dit component - hier stonden er
+  twee, en die spraken elkaar tegen.
+
+  De id gaat ALLEEN als prop mee, niet ook in de attribuutbundel. Sinds LOTC 762e570 zet
+  de component hem zelf op het BESTURINGSELEMENT (``<nldd-checkbox-field>``) in plaats van
+  op de omhullende div; daarvoor deden wij dat via de bundel en stond hij op allebei, dus
+  op elk aanvinkvakje twee elementen met dezelfde id (ongeldige HTML, en een risico voor
+  ``aria-describedby`` en ``label for=``). De afgeleide id's van de hulptekst en de
+  foutmelding (``id="...-help"``) blijven werken: die worden uit de prop samengesteld.
+  ``[id='<pad>']`` levert nu precies een element op, en dat is het element dat ``.checked``
+  draagt.
+
+  Het verborgen veld bij readonly blijft: dat vakje wordt niet verstuurd omdat de
+  verwerker readonly-velden overslaat, en zonder deze regel zou opslaan de stand wissen.
+#}
+{% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
+<c-checkbox-field
+    id="{{ field.path|e }}"
+    name="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    value="true"
+    :checked="field.value"
+    :help="combined_helper(field)|trim or none"
+    :required="field.required"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="field_attrs(field)" />
+{% if field.readonly and field.value %}
+<input type="hidden" name="{{ field.path|e }}" value="true" />
+{% endif %}
+{{ render_examples(field) }}

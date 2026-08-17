@@ -6,6 +6,7 @@ Kind cluster management and real service connections.
 """
 
 import asyncio
+import logging
 import os
 import subprocess
 import time
@@ -14,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -167,10 +170,9 @@ def kind_cluster(
     2. Deploy test workloads
     3. Wait for workloads to be ready
 
-    Note: Cluster cleanup is intentionally omitted to allow reuse
-    during development. Use 'task test-kind-delete' to clean up.
-    The kubectl context is restored to its original value after
-    the test session completes.
+    The cluster is deleted again when the session ends, and the kubectl context is
+    restored to its original value. Set KEEP_TEST_CLUSTER=1 to keep it, for a develop
+    loop where recreating it every run costs more than leaving it.
 
     Usage:
         @pytest.mark.slow
@@ -227,6 +229,29 @@ def kind_cluster(
             text=True,
             timeout=5,
         )
+
+    # Tear the cluster down. Setting infrastructure up and cleaning it up are the same
+    # responsibility; leaving it behind means whoever runs the tests pays for it forever.
+    # It used to be kept "for reuse during development", which is convenience for the
+    # person in the loop paid for by everyone after them: on this machine both nodes sat
+    # there until Docker OOM-killed them (exit 137), each about a gigabyte.
+    #
+    # KEEP_TEST_CLUSTER=1 keeps it, for the develop loop where recreating it every run is
+    # the bigger cost. Opt in, not the default.
+    if os.environ.get("KEEP_TEST_CLUSTER"):
+        logger.info(
+            f"KEEP_TEST_CLUSTER set; leaving cluster '{kind_cluster_name}' running. "
+            f"Remove it with: kind delete cluster --name {kind_cluster_name}"
+        )
+        return
+
+    logger.info(f"Deleting Kind cluster '{kind_cluster_name}'")
+    subprocess.run(
+        ["kind", "delete", "cluster", "--name", kind_cluster_name],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
 
 
 @pytest.fixture

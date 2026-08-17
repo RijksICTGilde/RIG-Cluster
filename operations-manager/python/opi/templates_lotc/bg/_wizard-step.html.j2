@@ -1,0 +1,142 @@
+{#
+  Een stap van de wizard, als los fragment.
+
+  Een OVERNAME van wizard/wizard_step.html.j2. Dezelfde blokken in dezelfde volgorde,
+  dezelfde htmx-bedrading, dezelfde knoppen onder dezelfde voorwaarden:
+
+    kop met icoon        -> c-cluster met c-icon en c-heading
+    globale fouten       -> c-alert type="error"
+    snelstartkaarten     -> ongewijzigd, het zijn eigen kaarten met wizard.css
+    de velden            -> de LOTC-formulierlaag, al gerenderd door de adapter
+    de knoppenbalk       -> c-action-group align="between"
+
+  DE IDS BLIJVEN. #wizard-step-content, #wizard-step-inner en #wizard-step-form staan in
+  htmx-attributen EN in static/js/wizard.js. Ze veranderen zou de omzetting van een
+  weergavewissel in een gedragswijziging maken.
+
+  step_html en preset_html gaan er met | safe in en NIET door process_components. Bij de
+  roos-bouwlijn moet dat filter er wel overheen, want daar levert de widget-adapter nog
+  onvertaalde <c-*>-tekst op. De LOTC-adapter rendert meteen, dus hier zou het filter een
+  TWEEDE Jinja-render zijn over HTML waar getypte formulierwaarden in staan - en dan is
+  {{ ... }} in een ingevulde waarde geen tekst meer maar een expressie.
+
+  "Vorige" en "Terug" krijgen geen icoon: de NLDD-woordenschat heeft geen pijl naar
+  links, en een pijl die de verkeerde kant op wijst is erger dan geen pijl. Aangevraagd
+  bij het LOTC-project; zie de KNOWN_GAPS in tests/test_lotc_icon_mapping.py.
+#}
+
+{# De stappenbalk wisselt buiten het doel om mee, maar alleen bij een htmx-antwoord: bij
+   het opbouwen van de hele pagina staat hij daar al. #}
+{% if not embedded %}
+<div id="wizard-steps" hx-swap-oob="outerHTML">
+    {% include "bg/_wizard-steps.html.j2" %}
+</div>
+{% endif %}
+
+<div id="wizard-step-inner">
+    <c-stack gap="lg">
+        <c-stack gap="xs">
+            <c-cluster gap="sm" align="center">
+                {% if section.icon %}
+                    <c-icon icon="{{ nldd_icon(section.icon) }}" size="xl" />
+                {% endif %}
+                <c-heading type="h2" size="4" label="{{ section.title }}" />
+            </c-cluster>
+            {% if section.description %}
+                <c-paragraph>{{ section.description }}</c-paragraph>
+            {% endif %}
+        </c-stack>
+
+        {% if global_errors %}
+            <c-alert type="error" heading="Fouten">
+                <c-stack gap="xs">
+                    {% for message in global_errors %}
+                        <c-paragraph>{{ message }}</c-paragraph>
+                    {% endfor %}
+                </c-stack>
+            </c-alert>
+        {% endif %}
+
+        {% if preset_html %}
+            <c-stack gap="sm">
+                <c-paragraph size="sm">Snelstart: kies een scenario</c-paragraph>
+                <div class="wizard-step__presets">{{ preset_html | safe }}</div>
+            </c-stack>
+        {% endif %}
+
+        <form id="wizard-step-form"
+              autocomplete="off"
+              hx-ext="json-enc"
+              hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+              hx-post="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
+              hx-target="#wizard-step-content"
+              hx-swap="innerHTML"
+              {# [type='submit'] en niet button[type='submit']: de knop is hier een
+                 <nldd-button>, geen <button>. Hij dient het formulier wel in - het is
+                 een form-associated element dat requestSubmit() aanroept - maar een
+                 selector op de tagnaam vindt hem niet, en dan blijft de knop tijdens
+                 het verzoek gewoon klikbaar. #}
+              hx-disabled-elt="#wizard-step-form [type='submit']">
+
+            {# De inhoud en de knoppenbalk in een stack: zonder stond <c-action-group>
+               direct achter de stapinhoud en plakten Vorige/Volgende tegen de kaart
+               erboven. Dat gold in elke wizardstap, want ze delen dit sjabloon. #}
+            <c-stack gap="lg">
+            {{ step_html | safe }}
+
+            <c-action-group align="between">
+                {# Ook op de eerste stap staat hier een element, zodat de knop rechts
+                   rechts blijft staan in plaats van naar links te schuiven. #}
+                {% if not steps.is_first %}
+                    <c-button
+                        type="secondary"
+                        label="Vorige"
+                        hx-post="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
+                        hx-target="#wizard-step-content"
+                        hx-swap="innerHTML"
+                        hx-include="#wizard-step-form"
+                        hx-vals='{"_goto": "prev"}'
+                        hx-ext="json-enc" />
+                {% else %}
+                    <!-- djlint:off H020 --><span></span><!-- djlint:on -->
+                {% endif %}
+
+                <c-cluster gap="sm" align="center">
+                    {% if all_steps_completed and show_review and not steps.is_last %}
+                        <c-button
+                            type="tertiary"
+                            label="Naar samenvatting"
+                            icon="chevron-right"
+                            show-icon="after"
+                            hx-post="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
+                            hx-target="#wizard-step-content"
+                            hx-swap="innerHTML"
+                            hx-include="#wizard-step-form"
+                            hx-vals='{"_goto": "review"}'
+                            hx-ext="json-enc"
+                            hx-disabled-elt="this" />
+                    {% endif %}
+
+                    {# De klasse blijft: wizard.css laat dit alleen zien tijdens een
+                       htmx-verzoek. Het draaiende pijltje eromheen is weg, want NLDD
+                       heeft geen refresh-icoon. #}
+                    <span class="wizard-step__saving" aria-hidden="true">Bezig…</span>
+
+                    {% if steps.is_last %}
+                        {% if show_review %}
+                            <c-button html-type="submit" type="primary" label="Controleren"
+                                      icon="chevron-right" show-icon="after" />
+                        {% else %}
+                            <c-button html-type="submit" type="primary" label="Opslaan"
+                                      icon="file-text" show-icon="before" />
+                        {% endif %}
+                    {% else %}
+                        <c-button html-type="submit" type="primary" label="Volgende"
+                                  icon="chevron-right" show-icon="after" />
+                    {% endif %}
+                </c-cluster>
+            </c-action-group>
+            </c-stack>
+        </form>
+    </c-stack>
+</div>

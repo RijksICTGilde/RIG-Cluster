@@ -1,0 +1,14 @@
+{# De knop om een gebruiker toe te voegen.
+
+   .page-header-row uit base.css was display:flex + justify-content:space-between +
+   align-items:center. Dat is precies <c-cluster justify="between" align="center">.
+
+   NIET <c-bar>, al leest die op het oog beter voor "links dit, rechts dat": .lotc-bar is
+   een grid van drie kolommen (1fr auto 1fr) terwijl het component de middelste alleen
+   rendert als er een center-slot is. Zonder dat slot valt het end-slot in de MIDDELSTE
+   kolom en staat het rechteruiteinde midden op de balk. Gemeten in de browser, niet
+   beredeneerd. #}
+<c-cluster justify="between" align="center">
+    {% set lotc_onclick_1 %}window.location.href='/admin/users/create'{% endset %}<c-button label="Gebruiker toevoegen" show-icon="before" icon="plus"/>
+    <span>Totaal: <strong>{{ users|length }} gebruiker{% if users|length != 1 %}s{% endif %}</strong></span>
+</c-cluster>

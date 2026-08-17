@@ -1,0 +1,87 @@
+/* Vormgeving van het projectoverzicht.
+   Stond als <style>-blok in opi/templates/projects-overview.html.j2.
+
+   RC-74 heeft dit bestand langs de componenten gelegd. Van 39 blokken naar wat hieronder
+   staat. Weg zijn:
+
+   - .projects-table met kopregel, celranden en hover, plus .table-container en de vijf
+     .col-*-breedtes - dat is <c-table>, met de breedtes als columns=.
+   - .environment-badge en .env-production/.env-staging/.env-development - drie keer
+     dezelfde pil met een andere kleur. Dat is <c-tag>, waar het type de kleur bepaalt.
+   - .service-tag - ook <c-tag>, en .services-list is <c-cluster>.
+   - .avatar en .team-avatars - <c-avatar> in een <c-avatar-group max="3">. Die groep
+     maakt de "+N"-bol zelf, dus het handmatige aftellen in het sjabloon kon weg.
+   - .actions en .filter-row - <c-cluster>.
+   - .details-link - een <a> met de opmaak van een tertiaire knop. Dat is <c-link>: een
+     echt anker (dus middelklik werkt), opgemaakt door het thema.
+   - .summary-cards - een eigen grid met repeat(auto-fit, minmax(200px, 1fr)). Dat is
+     <c-auto-grid min="200px">.
+   - De hele @media-regel op 768px. Die zette .summary-cards op twee kolommen (auto-fit
+     doet dat vanzelf), .actions onder elkaar en .services-list onder elkaar; die laatste
+     twee zijn nu clusters, en een cluster breekt zelf af als de ruimte op is. */
+
+/* De projectcel: naam, technische naam, beschrijving onder elkaar.
+
+   GEEN component. Dit is typografie binnen een tabelcel - drie regels met elk een eigen
+   grootte, gewicht en kleur - en het thema heeft daar geen blok voor. <c-title-cell> en
+   <c-description-cell> uit NLDD komen in de buurt, maar die horen bij <nldd-list> en niet
+   bij een tabelcel; er past er hier ook geen van beide op drie regels. */
+.project-info .project-name {
+    font-weight: 600;
+    margin-bottom: var(--rvo-space-xs);
+}
+
+.project-name-link {
+    color: var(--rvo-color-grijs-900);
+    text-decoration: none;
+}
+
+.project-name-link:hover {
+    color: var(--rvo-color-hemelblauw);
+    text-decoration: underline;
+}
+
+.project-info .project-id {
+    font-size: 0.75rem;
+    color: var(--rvo-color-grijs-500);
+    font-family: monospace;
+    margin-bottom: var(--rvo-space-xs);
+}
+
+.project-info .project-description {
+    color: var(--rvo-color-grijs-600);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+}
+
+/* Het aantal teamleden boven de bolletjes. GEEN component: een klein grijs regeltje
+   boven een groep is opmaak van deze cel, geen los ding met een naam. */
+.team-info .team-count {
+    font-size: 0.75rem;
+    color: var(--rvo-color-grijs-600);
+    margin-bottom: var(--rvo-space-xs);
+}
+
+/* De kaarten met totalen onder de tabel.
+
+   GEEN component. Het thema heeft geen "kengetal"-blok: een groot getal met een label en
+   een regel eronder is een vorm die NLDD niet kent. De kaart eromheen is wel <c-card> en
+   het raster is <c-auto-grid>; wat hier staat is alleen de typografie erbinnen. */
+.summary-card {
+    text-align: center;
+}
+
+.summary-number {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--rvo-color-hemelblauw);
+}
+
+.summary-label {
+    font-weight: 500;
+    color: var(--rvo-color-grijs-700);
+}
+
+.summary-change {
+    font-size: 0.875rem;
+}

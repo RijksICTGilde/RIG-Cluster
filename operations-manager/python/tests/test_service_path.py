@@ -127,8 +127,9 @@ class TestEnsureServiceInList:
         services: list = ["keycloak", "publish-on-web"]
         idx, entry = ensure_service_in_list(services, "keycloak")
         assert idx == 0
-        assert entry == {"keycloak": {}}
-        assert services[0] == {"keycloak": {}}
+        # RC-5 A2.3: promotion produces the uniform record form
+        assert entry == {"name": "keycloak"}
+        assert services[0] == {"name": "keycloak"}
 
     def test_existing_dict_unchanged(self):
         original = {"keycloak": {"config": {"template": "sso-only"}}}
@@ -141,7 +142,7 @@ class TestEnsureServiceInList:
         services: list = ["publish-on-web"]
         idx, entry = ensure_service_in_list(services, "keycloak")
         assert idx == 1
-        assert entry == {"keycloak": {}}
+        assert entry == {"name": "keycloak"}
         assert len(services) == 2
 
 

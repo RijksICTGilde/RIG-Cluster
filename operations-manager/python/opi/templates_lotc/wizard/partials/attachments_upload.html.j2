@@ -1,0 +1,84 @@
+{# Attachments: one unified list (catalog + staged) at the top, the upload form below.
+   Used in the create wizard AND the modal-edit flow. CSRF inherits from the surrounding
+   wizard step form's hx-headers. _wizard_token routes staging to the modal session.
+
+   VERVANGEN. Geopend via de knop Vervangen bij een bijlage staat _replace_attachment op
+   de id die overschreven wordt. Hetzelfde formulier, twee verschillen: de identifier ligt
+   vast (getoond, niet te wijzigen, en meegestuurd uit een verborgen veld) en er gaat
+   mode=replace mee, zodat de serverkant weet dat een BESTAANDE id hier juist goed is. Dat
+   de knop de id vastzet is geen beveiliging - de serverkant toetst hem tegen de sessie. #}
+{% set vervangt = _replace_attachment | default('', true) %}
+<c-layout-flow gap="lg">
+    <c-card outline="true" padding="md" background-color="grijs-050">
+        <c-layout-flow gap="sm">
+            <c-heading type="h3" label="Bijlagen in dit project"/>
+            <div id="wiz-att-list"
+                 hx-get="/forms/wizard/{{ flow_id if flow_id is defined and flow_id else 'create-project' }}/attachments/list"
+                 hx-trigger="load"
+                 hx-vals='{"_wizard_token": "{{ _wizard_token | default('', true) }}"}'
+                 hx-target="this"
+                 hx-swap="innerHTML"
+                 hx-disabled-elt="this">
+                {% include "wizard/partials/attachments_list.html.j2" %}
+            </div>
+        </c-layout-flow>
+    </c-card>
+
+    <c-card outline="true" padding="md" background-color="grijs-050">
+        <c-layout-flow gap="sm">
+            {% if vervangt %}
+            <c-heading type="h3" label="Bijlage vervangen"/>
+            <c-paragraph size="sm">De inhoud van bijlage <strong>{{ vervangt }}</strong> wordt overschreven door het bestand dat je hier kiest. De identifier blijft hetzelfde, dus alle componenten die deze bijlage gebruiken blijven eraan gekoppeld. De vorige inhoud is daarna weg.</c-paragraph>
+            {% else %}
+            <c-heading type="h3" label="Nieuwe bijlage uploaden"/>
+            {% endif %}
+            <p class="rvo-text--sm rvo-text--subtle">Max 64 KB (bijvoorbeeld een certificaat). Koppelen doe je per component.</p>
+            <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('', true) }}">
+            {% if vervangt %}
+            <input type="hidden" id="wiz-att-mode" name="mode" value="replace">
+            {# required, hoewel je er niets in typt: zonder dat zet het veld er "Optioneel"
+               achter, en dat is precies het omgekeerde van wat een vastliggende id is. #}
+            <c-text-input-field id="wiz-att-id-vast" label="Identifier" value="{{ vervangt }}" readonly="true"
+                required="true"
+                help="De identifier van een vervanging staat vast; daar hangen de koppelingen aan."/>
+            <input type="hidden" id="wiz-att-id" name="attachment_id" value="{{ vervangt }}">
+            {% else %}
+            {# On-change identifier validation lives on this wrapper, NOT on the #wiz-att-id
+               input itself: htmx omits a request-source input from another element's
+               hx-include, so an htmx-controlled id input would drop attachment_id from the
+               upload below. The change event bubbles from the plain input to this wrapper. #}
+            <div id="wiz-att-id-field"
+                 hx-post="/forms/wizard/{{ flow_id if flow_id is defined and flow_id else 'create-project' }}/attachments/validate-id"
+                 hx-ext="ignore:json-enc"
+                 hx-trigger="change from:#wiz-att-id"
+                 hx-include="#wiz-att-id, #wiz-att-token"
+                 hx-target="this"
+                 hx-swap="innerHTML">
+                {% include "wizard/partials/attachments_id_field.html.j2" %}
+            </div>
+            {% endif %}
+            <label class="utrecht-form-label attachment-upload__label" for="wiz-att-file">Bestand</label>
+            {# Een kaal invoerveld, met de vorm van het thema uit wizard.css. Hier stond
+               rvo-file-input, een klasse van de oude bouwlijn die onder LOTC niets laadt.
+               Waarom hier geen <c-file-input-field> staat, en waarom dit veld in de LICHTE
+               boom moet blijven, staat bij .attachment-upload__file in wizard.css. #}
+            <input type="file" id="wiz-att-file" name="file" class="attachment-upload__file">
+            <div class="attachment-upload__row">
+                {# De htmx-bedrading gaat via :attrs. Een componenttag laat een los
+                   hx-attribuut niet door - de automatische omzetting liet ze daarom
+                   allemaal vallen, en de knop stond er wel maar stuurde niets. #}
+                {% set uploaden_attrs = {
+                    'hx-post': '/forms/wizard/' ~ (flow_id if flow_id is defined and flow_id else 'create-project') ~ '/attachments/stage',
+                    'hx-ext': 'ignore:json-enc',
+                    'hx-encoding': 'multipart/form-data',
+                    'hx-include': '#wiz-att-id, #wiz-att-file, #wiz-att-token, #wiz-att-mode',
+                    'hx-target': '#wiz-att-list',
+                    'hx-swap': 'innerHTML',
+                    'hx-disabled-elt': 'this',
+                } %}
+                <c-button type="secondary" size="sm" :label="'Vervangen' if vervangt else 'Uploaden'" :attrs="uploaden_attrs"/>
+                <span id="wiz-att-feedback"></span>
+            </div>
+        </c-layout-flow>
+    </c-card>
+</c-layout-flow>

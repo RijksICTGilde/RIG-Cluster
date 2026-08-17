@@ -1,0 +1,241 @@
+/* Vormgeving van de dashboardpagina.
+   Stond als <style>-blok in opi/templates/dashboard.html.j2.
+
+   RC-74 heeft dit bestand langs de componenten gelegd. Weg zijn:
+
+   - .stats-grid, .metrics-grid en .projects-grid als RASTER - alle drie waren ze
+     repeat(auto-fit, minmax(Npx, 1fr)) en dat is <c-auto-grid min="Npx">. .stats-grid
+     staat nog als klasse op het component, maar alleen voor de marge eronder.
+   - De hele @media-regel op 768px. De drie rasters zetten zichzelf onder auto-fit al op
+     een kolom, en de twee andere regels erin gingen over .health-banner - een klasse die
+     in geen enkel sjabloon meer voorkomt.
+   - .stat-header en .project-header - flex met space-between: <c-cluster justify="between">.
+   - .project-metrics, .metric en .resource-legend - flexrijen met een gat:
+     <c-cluster>. Van .metric bleef alleen de kleur en de tekstgrootte over.
+   - .project-status en de zes .status-*-kleurregels - een gekleurde pil met een toestand
+     erin is <c-tag>, waar het type de kleur bepaalt.
+
+   LET OP bij .metrics-grid: die naam bestaat ook in metrics-charts.css, waar hij iets
+   ANDERS is (een flexkolom voor het metingenfragment). Op het dashboard is hij nu een
+   component, dus die botsing speelt hier niet meer.
+
+   De KLASSE staat wel nog op dat component, en met opzet: tests/e2e/test_lotc_pariteit.py
+   leest de meters uit met locator(".metrics-grid"). Er hangt geen opmaak meer aan - hij is
+   alleen nog een haak. Dat is deze ronde twee keer misgegaan (hier en bij
+   .edit-modal-close-btn in modal.css) en het is steeds dezelfde les: grep de LEZERS
+   voordat een klasse verdwijnt, en tests zijn ook lezers. */
+
+/* De kaarten die oplichten als je eroverheen gaat.
+
+   GEEN component. <c-card> heeft geen "reageer op de muis"-eigenschap, en dit is de enige
+   plek waar een kaart als geheel klikbaar is (de hele kaart zit in een <a>). */
+.stat-card,
+.metric-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stat-card:hover,
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.stats-grid {
+    margin-bottom: var(--rvo-space-xl);
+}
+
+/* Het getal in een kerncijferkaart. GEEN component: het thema heeft geen blok voor "groot
+   getal met een label eronder". Zelfde reden als bij de kengetallen in
+   projects-overview.css. */
+.stat-number {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--rvo-color-hemelblauw);
+}
+
+/* De meters en de grafiekjes.
+
+   GEEN component, en dat kan ook niet: dit zijn <canvas>-elementen die door Chart.js
+   worden getekend. Een canvas heeft een afmeting nodig - zonder hoogte staat er een
+   canvas van nul pixels en zie je niets. Dezelfde reden als in metrics-charts.css.
+
+   .gauge-value ligt met position:absolute over het canvas heen; dat is de enige manier om
+   een percentage midden in een getekende meter te krijgen. */
+.gauge-container {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 150px;
+}
+
+.gauge {
+    max-width: 150px;
+    max-height: 150px;
+}
+
+.gauge-value {
+    position: absolute;
+    text-align: center;
+    top: 60%;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.gauge-percentage {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--rvo-color-hemelblauw);
+}
+
+.gauge-label {
+    font-size: 0.75rem;
+    color: var(--rvo-color-grijs-700);
+}
+
+.chart-container {
+    height: 120px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.chart {
+    max-width: 100%;
+    max-height: 120px;
+}
+
+/* De verdeelbalk voor CPU per project.
+
+   GEEN component. Het thema heeft <c-progress-bar>, maar dat is EEN balk met EEN
+   vordering; dit is een balk die uit N gekleurde stukken bestaat waarvan het script de
+   breedte zet. Dat is een andere zaak.
+
+   De legenda-items blijven een eigen <a> met eigen flex: een <c-cluster> rendert een
+   <div>, en dit item is als geheel een link. */
+.resource-bar {
+    display: flex;
+    height: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--rvo-color-grijs-200, #e0e0e0);
+}
+
+.resource-segment {
+    /* Begint op nul en groeit; het script zet daarna de echte breedte als inline
+       style, en die wint van deze regel. Stond als style="width: 0%" in de markup. */
+    width: 0%;
+    min-width: 4px;
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.resource-legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    text-decoration: none;
+    color: inherit;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background 0.15s ease;
+}
+
+.resource-legend-item:hover {
+    background: var(--rvo-color-grijs-100, #f0f0f0);
+}
+
+.resource-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+/* De zes kleuren waarmee projecten uit elkaar worden gehouden. Het sjabloon stelt de naam
+   samen (resource-color- plus het volgnummer modulo zes), dus deze klassen staan nergens
+   voluit in de markup - ze zijn NIET dood. */
+.resource-color-0, .resource-color-0.resource-segment { background-color: #007bc7; }
+.resource-color-1, .resource-color-1.resource-segment { background-color: #39870c; }
+.resource-color-2, .resource-color-2.resource-segment { background-color: #e17000; }
+.resource-color-3, .resource-color-3.resource-segment { background-color: #d52b1e; }
+.resource-color-4, .resource-color-4.resource-segment { background-color: #6b4c9a; }
+.resource-color-5, .resource-color-5.resource-segment { background-color: #007b8a; }
+
+/* De projectkaart met een gekleurde streep bovenaan per toestand.
+
+   GEEN component. <c-card> kent geen accentkleur op een rand, en de streep is hier het
+   enige dat de toestand van een project van een afstand leesbaar maakt.
+
+   Ook deze namen worden in het sjabloon samengesteld: project-card- plus de toestand in
+   kleine letters. */
+.project-card-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+
+.project-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    border-top: 3px solid transparent;
+    cursor: pointer;
+}
+
+.project-card-healthy { border-top-color: var(--rvo-color-groen, #39870c); }
+.project-card-progressing { border-top-color: var(--rvo-color-oranje, #e17000); }
+.project-card-degraded { border-top-color: var(--rvo-color-rood, #d52b1e); }
+.project-card-disabled { border-top-color: var(--rvo-color-grijs-600, #696969); }
+.project-card-inactive { border-top-color: var(--rvo-color-hemelblauw, #007bc7); }
+.project-card-unknown { border-top-color: var(--rvo-color-grijs-400, #bbb); }
+
+.project-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+}
+
+/* Het bolletje voor de toestand, binnen de <c-tag>.
+
+   GEEN component. De PIL eromheen is <c-tag> geworden, maar dit bolletje niet: bij
+   Progressing en Degraded PULSEERT het, en dat is geen versiering maar het teken dat er
+   op dit moment iets loopt. Het thema heeft daar niets voor - <c-activity-indicator> is
+   een laadmolen en geen toestand (zie ook bg/_log-viewer.html.j2, waar dezelfde vraag
+   speelde voor de verbindingsstip). */
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot-healthy { background: var(--rvo-color-groen, #39870c); }
+.status-dot-progressing {
+    background: var(--rvo-color-oranje, #e17000);
+    animation: statusPulse 1.5s ease-in-out infinite;
+}
+.status-dot-degraded {
+    background: var(--rvo-color-rood, #d52b1e);
+    animation: statusPulse 1s ease-in-out infinite;
+}
+.status-dot-disabled { background: var(--rvo-color-grijs-600, #696969); }
+.status-dot-inactive { background: var(--rvo-color-hemelblauw, #007bc7); }
+.status-dot-unknown { background: var(--rvo-color-grijs-500, #999); }
+
+@keyframes statusPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* De regel met het aantal deployments en gebruikers, en de regel met het laatste
+   deploymoment. De flex eromheen is <c-cluster>; wat hier staat is de kleur, de
+   tekstgrootte en - bij de deployregel - de scheidingslijn erboven. */
+.metric {
+    font-size: 0.875rem;
+    color: var(--rvo-color-grijs-700);
+}
+
+.project-deploy-time {
+    color: var(--rvo-color-grijs-600, #777);
+    font-size: 0.8rem;
+    padding-top: var(--rvo-space-xs);
+    border-top: 1px solid var(--rvo-color-grijs-200, #e0e0e0);
+}

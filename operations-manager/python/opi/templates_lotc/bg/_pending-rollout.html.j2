@@ -1,0 +1,44 @@
+{# Onverwerkte wijzigingen (RC-46)
+
+   Wijzigingen die met rollout=false zijn opgeslagen staan wel in het projectbestand maar
+   nog niet in het cluster. Zonder deze melding loopt een project stilletjes uit de pas,
+   en dat is erger dan een trage uitrol: een trage uitrol merk je. Daarom hier: hoeveel,
+   sinds wanneer, en de knop om het alsnog te doen.
+
+   BOVEN DE TABBALK, en niet in een tabblad: de afwijking gaat over het hele project.
+
+   Dit blok stond op de bestaande pagina en NIET op de hertekende - de automatische
+   omzetting maakte er wel project-details/section-pending-rollout.html.j2 van, maar geen
+   enkele pagina nam dat op, en de knop daarin had zijn aanroep verloren (het
+   {% raw %}{% set %}{% endraw %}-blok werd nergens aan opgehangen). De melding was dus
+   weg zonder dat iets erover klaagde. Gevonden bij het weghalen van de oude pagina.
+#}
+{% if pending_rollout and pending_rollout.count %}
+{% set meervoud = pending_rollout.count != 1 %}
+{% if pending_rollout.rollout_in_progress %}
+{# De teller loopt pas terug als de uitrol KLAAR is, dus tijdens het uitrollen staat hij er
+   nog. De waarschuwing hieronder is op dat moment onwaar - er gaat juist wel iets naar het
+   cluster - en dat zet de lezer op het verkeerde been. Daarom hier een andere kleur, een
+   andere tekst, en geen knop: de verwerking waar die knop om vraagt loopt al. #}
+<c-alert type="info">
+    <strong>Er wordt op dit moment uitgerold.</strong>
+    {{ pending_rollout.count }} wijziging{{ 'en' if meervoud else '' }} uit het projectbestand
+    {{ 'worden' if meervoud else 'wordt' }} nu verwerkt en naar het cluster gebracht.
+    Ververs de pagina om te zien of het klaar is.
+</c-alert>
+{% else %}
+<c-alert type="warning">
+    <strong>{{ pending_rollout.count }} wijziging{{ 'en' if meervoud else '' }} nog niet uitgerold.</strong>
+    Ze staan in het projectbestand, maar er zijn nog geen manifesten gegenereerd en er is niets naar het cluster gegaan.
+    {% if pending_rollout.since %}<br />De oudste wacht sinds {{ pending_rollout.since | dutch_date }}.{% endif %}
+    {% if user_role in ["admin", "owner"] %}
+    <br />
+    {# De aanroep wordt hierboven opgebouwd en via :attrs meegegeven: c-button laat geen
+       onclick als los attribuut toe. Zelfde vorm als de andere knoppen op deze pagina. #}
+    {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
+    <c-button size="sm" label="Nu verwerken" icon="refresh" show-icon="before"
+              :attrs="{'onclick': herverwerken}" />
+    {% endif %}
+</c-alert>
+{% endif %}
+{% endif %}

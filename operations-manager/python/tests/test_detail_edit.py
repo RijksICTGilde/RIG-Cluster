@@ -2,49 +2,42 @@
 
 from __future__ import annotations
 
-from opi.web.router_detail_edit import (
-    _apply_list_item_merge,
-    _detect_list_target,
-    _seed_components_for_new_deployment,
-)
+import pytest
+from opi.forms.visualizers.flows import FlowTarget, get_flow
+from opi.forms.wizard.save import apply_list_item_merge as _apply_list_item_merge
+from opi.web.router_detail_edit import _seed_components_for_new_deployment
 
 
-class TestDetectListTarget:
-    """Tests for _detect_list_target flow-id parsing."""
+class TestFlowTarget:
+    """A flow declares where it writes; nothing reads it back out of the id."""
 
     def test_add_deployment(self) -> None:
-        result = _detect_list_target("modal-add-deployment-2", state=None)
-        assert result == ("deployments", 2, True)
+        assert get_flow("modal-add-deployment-2").target == FlowTarget("deployments", 2, is_new=True)
 
     def test_edit_deployment(self) -> None:
-        result = _detect_list_target("modal-edit-deployment-0", state=None)
-        assert result == ("deployments", 0, False)
+        assert get_flow("modal-edit-deployment-0").target == FlowTarget("deployments", 0)
 
     def test_edit_component(self) -> None:
-        result = _detect_list_target("modal-edit-component-1", state=None)
-        # is_new is None when state is None (falsy short-circuit)
-        assert result is not None
-        assert result[0] == "components"
-        assert result[1] == 1
-        assert not result[2]  # falsy (None when state is None)
+        assert get_flow("modal-edit-component-1").target == FlowTarget("components", 1)
+
+    def test_edit_new_component(self) -> None:
+        assert get_flow("modal-edit-component-1", is_new=True).target == FlowTarget("components", 1, is_new=True)
 
     def test_edit_domain(self) -> None:
-        result = _detect_list_target("modal-edit-domain-0", state=None)
-        assert result == ("deployments", 0, False)
+        assert get_flow("modal-edit-domain-0").target == FlowTarget("deployments", 0)
 
     def test_edit_backup_schedule(self) -> None:
-        result = _detect_list_target("modal-edit-backup-schedule-0", state=None)
-        assert result == ("deployments", 0, False)
+        assert get_flow("modal-edit-backup-schedule-0").target == FlowTarget("deployments", 0)
 
     def test_edit_backup_schedule_second_deployment(self) -> None:
-        result = _detect_list_target("modal-edit-backup-schedule-1", state=None)
-        assert result == ("deployments", 1, False)
+        assert get_flow("modal-edit-backup-schedule-1").target == FlowTarget("deployments", 1)
 
-    def test_unknown_flow(self) -> None:
-        assert _detect_list_target("modal-edit-services-0", state=None) is None
+    def test_project_wide_flow_has_no_target(self) -> None:
+        assert get_flow("modal-edit-services").target is None
 
     def test_non_numeric_suffix(self) -> None:
-        assert _detect_list_target("modal-add-deployment-abc", state=None) is None
+        with pytest.raises(KeyError):
+            get_flow("modal-add-deployment-abc")
 
 
 class TestApplyListItemMerge:
@@ -132,8 +125,8 @@ class TestNewDeploymentSystemFields:
 class _FakeState:
     """Minimal state mock for _seed_components_for_new_deployment tests."""
 
-    def __init__(self, template_data: dict, step_data: dict | None = None) -> None:
-        self.template_data = template_data
+    def __init__(self, base_data: dict, step_data: dict | None = None) -> None:
+        self.base_data = base_data
         self.step_data: dict = step_data or {}
         self.active_sections: list[str] = list(self.step_data.keys())
 
@@ -141,8 +134,8 @@ class _FakeState:
         import copy
 
         merged: dict = {}
-        if self.template_data:
-            merged.update(copy.deepcopy(self.template_data))
+        if self.base_data:
+            merged.update(copy.deepcopy(self.base_data))
         for section_id in self.active_sections:
             if section_id not in self.step_data:
                 continue
@@ -172,7 +165,7 @@ class TestSeedComponentsForNewDeployment:
 
     def test_clone_from_string_fills_images_from_source(self) -> None:
         state = _FakeState(
-            template_data={
+            base_data={
                 "components": [
                     {"name": "frontend"},
                     {"name": "api"},
@@ -204,7 +197,7 @@ class TestSeedComponentsForNewDeployment:
     def test_clone_from_dict_fills_images_from_source(self) -> None:
         """After the converter, clone-from is a dict with 'reference' key."""
         state = _FakeState(
-            template_data={
+            base_data={
                 "components": [
                     {"name": "frontend"},
                     {"name": "api"},
@@ -241,7 +234,7 @@ class TestSeedComponentsForNewDeployment:
 
     def test_no_clone_from_seeds_all_project_components_with_empty_images(self) -> None:
         state = _FakeState(
-            template_data={
+            base_data={
                 "components": [
                     {"name": "frontend", "image": "nginx:latest"},
                     {"name": "api", "image": "python:3.13"},
@@ -267,7 +260,7 @@ class TestSeedComponentsForNewDeployment:
     def test_clone_from_nonexistent_seeds_empty_images(self) -> None:
         """Unknown source still seeds all components, just with empty images."""
         state = _FakeState(
-            template_data={
+            base_data={
                 "components": [{"name": "app"}],
                 "deployments": [
                     {"name": "staging", "components": [{"reference": "app", "image": "img:1"}]},
@@ -287,6 +280,6 @@ class TestSeedComponentsForNewDeployment:
         assert components[0] == {"reference": "app", "image": ""}
 
     def test_out_of_range_index_does_nothing(self) -> None:
-        state = _FakeState(template_data={"deployments": []})
+        state = _FakeState(base_data={"deployments": []})
         _seed_components_for_new_deployment(state, 5)
         assert len(state.step_data) == 0

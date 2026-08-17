@@ -30,21 +30,24 @@ Available both as an on-demand API endpoint (`POST /api/resources/{project_name}
                          |
                          v
    Project YAML  --(git commit)-->  reprocess  -->  ArgoCD  -->  pod rollout
-   (deployment override + base component definition)
+   (deployment override only; root component untouched)
 ```
 
 ### Tuning Flow
 
 For each component in the target deployment(s):
 
-1. Skip if opted out (`auto-tune-resources: false`) or the deployment is not Available.
-2. Determine the recommendation source:
+1. Skip if opted out (`auto-tune-resources: false`).
+2. **Repair first**: if the current override already sits below the declared root, restore it to the root and stop there (see Root Component below). This happens before anything is measured and before the guard below, because a component starved by such an override is exactly the one that neither of them can reach.
+3. Skip if the deployment is not Available — **except on the OOM path**, where the not-Available guard is deliberately skipped (a component that just OOM'd is Available=False by definition, and that is exactly when it must be raised).
+4. Determine the recommendation source:
    - **CPU**: if the cluster has VPA and the component's `VerticalPodAutoscaler` has a populated `.status` → use its CPU `target`. (No Prometheus CPU path exists.)
-   - **Memory**: use the VPA memory `target` **only if it exceeds `VPA_MEMORY_FLOOR_MI`** (the recommender's floor). Otherwise (no VPA, empty `.status`, or target at the floor) fall back to Prometheus `max_over_time(container_memory_working_set_bytes{...})` over `RESOURCE_TUNING_WINDOW_HOURS`.
+   - **Memory**: use the VPA memory `target` **only if it exceeds `VPA_MEMORY_FLOOR_MI`** (the recommender's floor). Otherwise (no VPA, empty `.status`, or target at the floor) fall back to Prometheus `max_over_time(container_memory_working_set_bytes{...})` over `window_hours`.
    - OOM kills are always read from Prometheus (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`); when OOM kills are present the VPA target is not used (the OOM path drives the limit instead).
-3. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps.
-4. Write changed values to the deployment-level override and propagate the request to the base component definition (see below).
-5. Commit once per project, then reprocess so ArgoCD redeploys.
+5. Skip if the observed max is below `min_observed_mi` (see Plausibility Floor below), unless OOM kills were detected.
+6. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps.
+7. Write changed values to the **deployment-level override only**. The base (root) component is left exactly as the user declared it — it is not ratcheted by the tuner (see Root Component below).
+8. Commit once per project, then reprocess so ArgoCD redeploys.
 
 ### Recommendation Algorithm (Memory)
 
@@ -140,25 +143,35 @@ call. Programmatic tuning remains available via `POST /api/resources/{project}/t
 
 OOM-killed containers produce misleading usage data (the pod was killed before reaching its true peak). When OOM kills are detected:
 
-- The limit is set to at least **1.5x the current limit**, regardless of observed usage
-- If the pod was OOM-killed on startup with zero Prometheus metrics, the current YAML values are used as a baseline for the 1.5x calculation
-- OOM kills bypass the change threshold - any OOM kill triggers an update
+- The **not-Available guard is skipped** (`oom_triggered`), so the OOM path is not blocked precisely when it needs to raise the limit.
+- Only the component(s) that actually OOM'd are analysed (a targeted tune, no wasted Prometheus queries on healthy components).
+- The limit is set using a sliding factor: at least **3x** the current limit below 64Mi, 2x below 256Mi, else 1.5x — regardless of observed usage.
+- If the pod was OOM-killed on startup with zero Prometheus metrics, the current YAML values are used as a baseline.
+- OOM kills bypass the change threshold - any OOM kill triggers an update.
 
-### Base Component Propagation
+### Root Component
 
-Resource tuning writes to **deployment-level overrides** (e.g., production gets its own limits). However, when a new deployment is created, it inherits the **base component definition's** defaults - which may be too low.
+Resource tuning writes to **deployment-level overrides only**. The base (root) component is the value the user declared, not shared state the tuner ratchets. Writing tuned values back to the root used to be a last-writer-wins race: on `asses-k2n/api` the nightly sweep pulled the shared limit from 75Mi (measured on production) to 45Mi (measured on a much lighter PR) within six seconds, and every new PR then started at 45Mi and OOM'd. So the tuner no longer touches the root at all.
 
-After updating a deployment's resources, the tuning system also updates the base component's memory request, with two guards:
+A new deployment therefore inherits exactly the declared root. If that is too tight it OOMs once and the OOM watcher raises **that deployment's own override** — the root stays put.
 
-1. **Only increase, never decrease** - if the base is already higher (set manually for a reason), it stays
-2. **Only when the ratio is <= 2x** - if the new request is more than double the current base, it's likely a deployment-specific need (e.g., production vs test) and shouldn't inflate the shared default
+The root is also the **floor**: an override the tuner writes is never tuned below the memory the user declared on the component (a lower bound only — a deployment may always raise itself above it).
 
-Example:
-- Base component has `requests.memory: 64Mi`
-- Production tuning recommends `requests.memory: 100Mi` (ratio 1.56x) → base updated to 100Mi
-- Production tuning recommends `requests.memory: 175Mi` (ratio 2.73x) → base left at 64Mi
+An override that already sits below the root is **repaired** at the top of the tuning flow, before any measurement and ahead of the not-Available guard. Such an override starves the component, and that starvation blocks both routes that would otherwise correct it: there is no running pod to measure, and the deployment reports Available=False. The repair restores the declared value (only the deficient side of it), which needs neither. Deployment-level overrides are written by the tuner alone — there is no editable or API for them — so a repair can never overwrite a value someone set on purpose.
 
-Only `requests.memory` is propagated - limits are deployment-specific by nature (production and staging may have very different limits).
+If the component was auto-disabled for an OOM kill, the repair also **clears that disable**. Leaving it would make the repair invisible and permanent: a component scaled to zero has no pods, so no OOM metric, so nothing that would ever switch it back on. Same shape as the image-pull disable, which clears once the image changes. Disables for any other reason are left alone: memory says nothing about a missing image.
+
+**Veldgeval mpfpsm-lcl pr-200** (14 August 2026): a WireMock stub measured as 0Mi during the sweep, was sized to the cluster minimum of 25Mi, and was then OOM-killed before its first log line. Every route back was closed: the pod could not run, so the next sweep measured 0Mi again; `:refresh` and a new image tag did not help because the value sat in the project spec, not in the manifest. Repairing to the declared root is the way out that needs no measurement.
+
+### Plausibility Floor
+
+An observed max below `min_observed_mi` (5Mi) counts as **no data**, not as a real measurement, and the component is skipped (unless OOM kills were detected, which takes the OOM path with the current YAML values as baseline).
+
+This replaces an exact-zero test that was meant to catch the same thing and did not. A pod that existed only briefly inside the window reports a fraction of a Mi: that is not zero, so it passed, and it prints as `0Mi` in the reason line, which is what `mpfpsm-lcl/pr-200` recorded (`Request: max 0Mi + 25% = 25Mi`). Any container that really ran passes 5Mi within seconds, so nothing legitimate is lost.
+
+### Limit/Request Margin
+
+A written memory limit always stays **at least `RESOURCE_TUNING_MIN_LIMIT_HEADROOM_MI` (64Mi) above the request**, capped by the cluster limit. A container with `limit == request` has no burst headroom and dies on the first spike — the failure mode behind the headscale OOM cascade (a 25Mi==25Mi component killed four times in two minutes). An absolute margin is used rather than a factor, because a factor on a small measurement rounds request and limit to the same value, exactly where headroom is needed most.
 
 ## API
 
@@ -200,23 +213,38 @@ Response:
 POST /api/resources/{project_name}/sanitize?deployment={deployment_name}
 ```
 
-Detects broken deployments (crash loops, missing images, OOM kills) and disables them by setting `disabled: true` in the project YAML.
+Detects broken deployments (crash loops, missing images) and disables them by setting `disabled: true` in the project YAML.
+
+An OOM kill on its own is **not** a reason to disable. OOM is what this tuner repairs, and disabling takes away the pods whose OOM metric is the only signal it reads, which turns a memory set too low into a permanent outage (`mpfpsm-lcl/pr-204`). A component that keeps dying for it still trips the restart threshold.
 
 ## Configuration
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `RESOURCE_TUNING_WINDOW_HOURS` | `24` | Prometheus lookback window |
-| `RESOURCE_TUNING_MEMORY_BUFFER_PERCENT` | `25` | Headroom above the Prometheus measurement (memory request). Not applied to a VPA memory target; still applied to the VPA CPU target |
-| `RESOURCE_TUNING_MEMORY_LIMIT_FACTOR` | `1.5` | Memory limit = observed peak x this factor (burst headroom). The limit decays with the peak; a valid OOM floor is the lower bound |
-| `VPA_MEMORY_FLOOR_MI` | `250` | Mirrors the recommender's `--pod-recommendation-min-allowed-memory-mb` floor. A VPA memory target at/below this is treated as "no signal" and the tuner falls back to Prometheus. Keep in sync with the recommender flag on the cluster |
-| `RESOURCE_TUNING_INCREASE_THRESHOLD` | `10` | Apply an increase when the request grows by ≥ this % |
-| `RESOURCE_TUNING_DECREASE_THRESHOLD` | `30` | Apply a decrease only when the request shrinks by ≥ this % |
-| `RESOURCE_TUNING_MIN_DELTA_MI` | `16` | Ignore memory changes smaller than this (absolute deadband) |
-| `RESOURCE_TUNING_MIN_DELTA_M` | `10` | Ignore CPU changes smaller than this in millicores (absolute deadband) |
-| `RESOURCE_TUNING_SCHEDULER_ENABLED` | `true` | Run the nightly fleet-wide tuner |
-| `RESOURCE_TUNING_HOUR` | `1` | Hour (Europe/Amsterdam) of the nightly sweep (off-peak, before backups) |
-| `RESOURCE_TUNING_PACE_SECONDS` | `15` | Delay after each changed project, to spread pod rollouts |
+The tuning parameters are **owned by the resource-tuning system service**, not the
+platform `Settings`: they live as a validated config dict in
+`opi/services/catalog/resource_tuning/config.py` (values) + `config_model.py` (types).
+They are deliberately **not** environment-driven — they have never been set via env
+vars in practice, and a system service owns its own config. Change a value in
+`config.py`; there is no `RESOURCE_TUNING_*` env var any more.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `window_hours` | `24` | Prometheus lookback window |
+| `memory_buffer_percent` | `25` | Headroom above the Prometheus measurement (memory request). Not applied to a VPA memory target; still applied to the VPA CPU target |
+| `memory_limit_factor` | `1.5` | Memory limit = observed peak x this factor (burst headroom). The limit decays with the peak; a valid OOM floor is the lower bound |
+| `increase_threshold` | `10` | Apply an increase when the request grows by ≥ this % |
+| `decrease_threshold` | `30` | Apply a decrease only when the request shrinks by ≥ this % |
+| `min_delta_mi` | `16` | Ignore memory changes smaller than this (absolute deadband) |
+| `min_delta_m` | `10` | Ignore CPU changes smaller than this in millicores (absolute deadband) |
+| `min_limit_headroom_mi` | `64` | Minimum absolute headroom the memory limit keeps above the request (so limit never equals request) |
+| `min_observed_mi` | `5.0` | Below this observed max the measurement counts as "no data" instead of as a real value |
+| `scheduler_enabled` | `true` | Run the nightly fleet-wide tuner |
+| `hour` | `1` | Hour (Europe/Amsterdam) of the nightly sweep (off-peak, before backups) |
+| `pace_seconds` | `15` | Delay after each changed project, to spread pod rollouts |
+
+`VPA_MEMORY_FLOOR_MI` (`250`, in `Settings`) stays where it is: it mirrors the
+recommender's `--pod-recommendation-min-allowed-memory-mb` flag rather than being a
+tuning knob. A VPA memory target at/below it is treated as "no signal" and the tuner
+falls back to Prometheus.
 
 Cluster-specific bounds live in `cluster_config.py`: memory via `get_min_memory_limit_mi()` / `get_max_memory_limit_mi()` / `get_max_memory_request_mi()`, CPU via `get_min_cpu_m()` (25m) / `get_max_cpu_request_m()` (250m) / `get_max_cpu_limit_m()` (4000m), and the `supports_vpa` capability flag.
 
@@ -238,7 +266,9 @@ Auto-tuning is **on by default**. A component opts out with `auto-tune-resources
 | File | Purpose |
 |------|---------|
 | `opi/services/resource_analyzer.py` | Pure computation: usage/VPA target → memory & CPU recommendation, asymmetric gate |
-| `opi/services/resource_tuning_service.py` | Orchestrates analysis (VPA or Prometheus), applies changes, commits |
+| `opi/services/resource_tuning_service.py` | `apply_resource_tuning` (mutate project_data in place: analysis, root floor, margin) + `tune_deployment_resources` (git read + single commit) |
+| `opi/services/catalog/resource_tuning/` | The resource-tuning **system service**: its owned config (`config.py`/`config_model.py`) and its `@on(ActionEvent.AFTER_SYNC)` handler |
+| `opi/services/deployment_observation.py` | Generic after-sync runner: asks `registry.listeners(ActionEvent.AFTER_SYNC)`, lets each service observe, commits once |
 | `opi/core/resource_tuning_scheduler.py` | Nightly fleet-wide tuner (off-peak sweep + rollout pacing) |
 | `opi/connectors/vpa.py` | Parse VPA `.status.recommendation` (CPU→m, memory→Mi) |
 | `opi/api/resource_router.py` | On-demand API endpoint |
@@ -262,8 +292,10 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 |-----------|---------|
 | **Cluster minimum** | Never set memory below 25Mi |
 | **Deviation deadband** | Only commit when the change clears both a % threshold (10% up / 30% down) and an absolute floor (16Mi / 10m) |
-| **OOM kill priority** | Always increase memory when OOM kills are present |
-| **2x propagation cap** | Base component not inflated by outlier deployments |
+| **OOM kill priority** | Always increase memory when OOM kills are present; the not-Available guard is skipped on the OOM path so it never blocks a needed bump |
+| **Root left untouched** | The tuner writes only deployment overrides; the declared root component is never ratcheted (no last-writer-wins race across deployments) |
+| **Declared root as floor** | An override is never tuned below the memory the user declared on the component (lower bound only) |
+| **Limit/request margin** | A written memory limit stays at least 64Mi above the request, so a container never ends up with limit == request |
 | **OOM floor (memory limit)** | A valid (recent, not-yet-stale) OOM floor is the lower bound for the memory limit, so a real past peak is never undercut; the limit only decays once the floor expires |
 | **OOM watcher net** | The reactive OOM watcher re-bumps a limit that decayed too far (e.g. an unobserved boot spike), so the peak-based limit can shrink without permanently risking startup |
 | **Frozen limit (CPU only)** | A CPU limit already set to differ from the request is left untouched; memory limits are no longer frozen (they track the peak) |
@@ -292,11 +324,40 @@ These are inherent to reactive, history-based autoscaling and are worth knowing 
 
 - **Recommender floor on CPU.** The `VPA_MEMORY_FLOOR_MI` fallback fixes memory only. CPU has no Prometheus path, so a component using less than `podMinCPUMillicores` (25m) is sized at `floor + buffer` (~31m) regardless of actual usage. Accepted because CPU is compressible and cheap; the platform-level fix is lowering the recommender's CPU floor flag.
 
-- **OOM recovery timing gap.** When a freshly-resized pod OOMs, the reactive recovery re-derives `has_oom_kills` from the Prometheus OOM metric, which lags the kill by a scrape interval. If recovery runs within seconds of the kill it reads "no OOM yet", skips the bump, and logs "OOM detected but auto-tune could not determine new limits" - even though the no-metrics trial-and-error bump (1.5-3x) would have worked. *(Mitigation under consideration: pass the already-known OOM signal from the sync / OOM-watcher into the tune so the bump fires regardless of the metric lag.)*
+- **OOM recovery timing gap.** When a freshly-resized pod OOMs, the reactive recovery re-derives `has_oom_kills` from the Prometheus OOM metric, which lags the kill by a scrape interval. The already-known OOM signal is now passed straight from the sync / OOM-watcher into the tune (`oom_components`, `oom_triggered`), so the not-Available guard and the sliding bump fire regardless of the metric lag — the case that produced "OOM detected but auto-tune could not determine new limits" on `asses-k2n/pr-450`. A residual lag only remains if the Prometheus OOM metric is *also* needed for the sliding-factor sizing, which uses the current limit as the baseline when no metrics exist.
 
 - **Net effect depends on provisioning.** On an *under*-provisioned fleet (many components at low defaults running real workloads), the tuner raises more than it lowers - net reserved memory goes *up*. That is reliability, not savings; the memory-reclaim story only pays out on an *over*-provisioned fleet.
 
+## After-sync hook and the system service
+
+Resource tuning is a **system service** (`ServiceKind.SYSTEM`): it always runs, never
+appears in a project's `services` list, and is not shown in the wizard's service
+picker. It plugs into a generic **after-sync hook** rather than being hardcoded in the
+deploy code:
+
+- `ActionEvent.AFTER_SYNC` (an enum, never a string) fires once per deployment after the
+  sync. `registry.listeners(ActionEvent.AFTER_SYNC)` returns the services that declared a
+  handler for it with `@on(...)`, filtered by `Service.applies_to()` (a system service
+  applies to every project).
+- `deployment_observation.run_after_sync_observation()` reads the project fresh from
+  git, builds a `DeploymentObservationContext` (per-component `ComponentHealth`), lets
+  each applicable service observe and mutate `project_data`, and **commits once** for
+  all outcomes together — so two services on the hook cannot race to two commits.
+- Both callers go through this one scan: the inline deploy path
+  (`project_manager`, on `DeploymentHealthError`) and the fire-and-forget watcher
+  (`oom_watcher`). Neither names the resource-tuning service.
+
+The resource-tuning service's after-sync handler (`tune_after_oom`) tunes only the
+components that OOM'd (via `apply_resource_tuning`), compacts the resource history, and
+reports whether a refresh is needed. Image-pull and crash-loop handling remain inline for
+now.
+
+See `instructions/services.md` for the service system and `features/oom-kill-watcher.md`
+for the health watcher.
+
 ## Related
 
+- `features/oom-kill-watcher.md` - the health watcher that detects OOM/image-pull/crash-loop
 - `features/futures/sidecar-resource-tuning.md` - extends tuning to sidecar containers
 - `features/futures/configurable-deployment-resources.md` - prerequisite for resource values in YAML
+- `features/futures/system-wide-oom-watcher.md` - OOMs that arise after a successful deploy (different scope)

@@ -1,0 +1,23 @@
+{#
+  Veldgroep voor de LOTC-bouwlijn.
+
+  De beschrijving stond in de roos-versie in een <p> met een eigen rvo-klasse. Dat is
+  vormgeving die bij een themawissel achterblijft, dus het wordt een c-paragraph.
+
+  DE KAART EROMHEEN is er met opzet. Het oude thema tekende een veldgroep als een grijs
+  blok met een rand; NLDD maakt er een kop zonder omhulsel van. Dat leest als een lange
+  reeks losse velden: je ziet niet meer welke bij elkaar horen, en juist dat is waar een
+  veldgroep voor bestaat. c-card geeft de rand en de afwijkende achtergrond, en allebei
+  komen ze uit het thema - dus geen eigen kleuren en geen eigen stylesheet die bij een
+  themawissel weer achterblijft.
+#}
+<c-card outline padding="lg">
+    <c-fieldset legend="{{ fieldset.legend|e }}" :class="fieldset.css_class or none" :attrs="fieldset.attributes or {}">
+        <c-layout-flow gap="md">
+            {% if fieldset.description %}
+                <c-paragraph>{{ fieldset.description|e }}</c-paragraph>
+            {% endif %}
+            {{ children_content }}
+        </c-layout-flow>
+    </c-fieldset>
+</c-card>

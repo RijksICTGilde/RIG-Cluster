@@ -1,0 +1,143 @@
+{# De LOTC-tegenhanger van _job-modal.html.j2.
+
+   WAAROM EEN TWEEDE BESTAND EN GEEN GEDEELD SJABLOON
+
+   Twee componentsystemen kunnen niet in een Jinja-omgeving: de eerst geregistreerde
+   voorbewerker eist elke <c-*>-tag op en breekt op de tags die hij niet kent (gemeten in
+   docs/lotc-samenleven-met-jinja-roos.md). Het buurbestand is in roos-componenten
+   geschreven, dit in LOTC-componenten; ze renderen ieder in hun eigen omgeving.
+
+   Het staat HIER en niet in templates_lotc/, omdat een dienst alles wat hij is in zijn
+   eigen map draagt (RC-36). tests/test_lotc_dienstblokken.py meet dat deze twee dezelfde
+   bestemmingen, htmx-adressen, JavaScript-aanroepen en id's hebben.
+
+   WAT LETTERLIJK GELIJK MOET BLIJVEN, WANT ER HANGT GEDRAG AAN
+
+     - ``id="job-modal-body"``: elke swap vervangt dit element (hx-swap="outerHTML"), dus
+       het is het BUITENSTE element en het draagt het id in beide takken.
+     - Bij ``starting``/``running`` polt de wikkel zichzelf met hx-get op /status. Verdwijnt
+       dat, dan blijft de dialoog op "wordt gestart" hangen tot je hem sluit.
+     - ``job-form-<deployment>``, ``job-image-<deployment>`` en ``job-command-<deployment>``
+       dragen de deploymentnaam: er staat een dialoog per deployment op dezelfde pagina.
+     - De JSON in hx-headers en hx-vals gaat op een COMPONENTTAG via :attrs. Een los
+       attribuut met een expressie erin komt daar ongeescaped naar buiten, en dan sluit het
+       eerste aanhalingsteken in de JSON het attribuut en is de tag stuk. Op gewone HTML
+       (de <form> hieronder) speelt dat niet: daar staat de JSON in enkele aanhalingstekens.
+#}
+{% if state in ['starting', 'running'] %}
+<div id="job-modal-body"
+     hx-get="/projects/{{ project_name }}/jobs/{{ deployment_name }}/status"
+     hx-trigger="load delay:2s"
+     hx-swap="outerHTML">
+{% else %}
+<div id="job-modal-body">
+{% endif %}
+
+{% if error %}
+    <c-alert type="error" heading="Job" closable>{{ error }}</c-alert>
+{% endif %}
+
+{% if not enabled %}
+    <c-card outline padding="lg">
+        <c-paragraph>Jobs zijn uitgeschakeld op dit cluster.</c-paragraph>
+    </c-card>
+
+{% elif state in ['starting', 'running', 'succeeded', 'failed'] and job %}
+    {# De kaart droeg hier een achtergrondkleur per toestand (groen-150 / rood-150). Die
+       namen komen uit de RVO-schaal en bestaan in NLDD niet; de toestand staat al in de
+       kop, dus hij wordt hier gezegd en niet gekleurd. #}
+    {% set kop = {'starting': 'Job wordt gestart...', 'running': 'Job draait...', 'succeeded': 'Job voltooid', 'failed': 'Job mislukt'}[state] %}
+    {% set logs_bekijken = "openLogViewer('" ~ project_name ~ "', '" ~ job.name ~ "', '" ~ job.name ~ "', [{reference: '" ~ job.name ~ "'}])" %}
+    {% set stoppen_attrs = {
+        'hx-post': '/projects/' ~ project_name ~ '/jobs/' ~ job.session_id ~ '/stop',
+        'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
+        'hx-vals': '{"deployment": "' ~ deployment_name ~ '"}',
+        'hx-target': '#job-modal-body',
+        'hx-swap': 'outerHTML',
+    } %}
+    <c-card outline padding="lg">
+        <c-stack gap="md">
+            <c-heading type="h5" label="{{ kop }}" />
+            <c-paragraph>Image: {{ job.image }}</c-paragraph>
+            <c-paragraph>Commando: {{ job.command }}</c-paragraph>
+            <c-paragraph>Gestart door: {{ job.opened_by }} &middot; verloopt om {{ job.expires_at.strftime("%H:%M") }} UTC</c-paragraph>
+            <c-cluster gap="md">
+                <c-button type="primary" size="sm" label="Logs bekijken"
+                          :attrs="{'onclick': logs_bekijken}" />
+                <c-button type="warning" size="sm"
+                          label="{{ 'Opruimen' if state in ['succeeded', 'failed'] else 'Nu stoppen' }}"
+                          :attrs="stoppen_attrs" />
+            </c-cluster>
+        </c-stack>
+    </c-card>
+
+{% elif state == 'starting' %}
+    {# De run staat geregistreerd maar de pod is nog niet zichtbaar (job is None), dus een
+       wachtkaart; de wikkel hierboven blijft pollen. #}
+    <c-card outline padding="md">
+        <c-stack gap="sm">
+            <c-heading type="h5" label="Job wordt gestart..." />
+            <c-paragraph>Even geduld, de job wordt opgestart.</c-paragraph>
+        </c-stack>
+    </c-card>
+
+{% else %}
+    <c-card outline padding="lg">
+        <c-stack gap="md">
+            <c-heading type="h5" label="Nieuwe job" />
+            <c-paragraph>Voer eenmalig een image + commando uit voor deze deployment (bijv. een migratie). De job krijgt de databaseverbinding van de deployment.</c-paragraph>
+            {# GEEN formulier met een verzendknop, maar een div plus een knop die zelf het
+               verzoek doet - precies zoals de consoledialoog hiernaast.
+
+               Dat is niet de eerste keuze geweest. Het roos-sjabloon heeft hier een <form>
+               met hx-post, en dat naschrijven houdt de bedrading letterlijk gelijk. Alleen
+               werkt het niet, en dat is in de browser uitgezocht en niet beredeneerd:
+
+                 1. <c-form> rendert <nldd-form>, een web-component en geen formulier. Een
+                    knop met type=submit heeft daarin niets om in te dienen.
+                 2. Met een ECHTE <form> eromheen bleef het stil: de knop is een
+                    <nldd-button>, en zijn klik bereikt het submit-event van de omliggende
+                    form niet. Ook een rechtstreekse form.requestSubmit() leverde geen enkel
+                    verzoek op, terwijl het formulier geldig was en zijn FormData klopte.
+
+               De knop die het verzoek zelf doet werkt wel - gemeten: er vertrekt een POST en
+               de dialoog gaat naar "Job wordt gestart...". Dat is hier ook de gewone vorm:
+               de databaseconsole doet het al zo, in beide vormgevingen.
+
+               Gevolg voor de meting: er komt een hx-include bij dat het roos-blok niet heeft.
+               Dat staat als AANVAARD verschil in scripts/lotc_compare_behaviour.py, met deze
+               reden erbij - niet weggefilterd, maar opgeschreven.
+
+               ``id="job-form-<deployment>"`` blijft: het is nu het hx-include-doel, dus de
+               velden worden erdoor meegestuurd. #}
+            {% set uitvoeren_attrs = {
+                'hx-post': '/projects/' ~ project_name ~ '/jobs',
+                'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
+                'hx-include': '#job-form-' ~ deployment_name ~ ' nldd-text-field',
+                'hx-vals': '{"deployment": "' ~ deployment_name ~ '"}',
+                'hx-target': '#job-modal-body',
+                'hx-swap': 'outerHTML',
+                'hx-disabled-elt': 'this',
+            } %}
+            <div id="job-form-{{ deployment_name }}">
+                <c-stack gap="md">
+                    <c-text-input-field
+                        id="job-image-{{ deployment_name }}"
+                        name="image"
+                        label="Image"
+                        value="{{ form_image | default('', true) }}"
+                        required
+                        error="{{ errors.image if (errors and errors.image) else '' }}" />
+                    <c-text-input-field
+                        id="job-command-{{ deployment_name }}"
+                        name="command"
+                        label="Commando"
+                        value="{{ form_command | default('', true) }}"
+                        help="Optioneel. Leeg laten = het standaardcommando van de image." />
+                    <c-button type="primary" size="sm" label="Job uitvoeren" :attrs="uitvoeren_attrs" />
+                </c-stack>
+            </div>
+        </c-stack>
+    </c-card>
+{% endif %}
+</div>

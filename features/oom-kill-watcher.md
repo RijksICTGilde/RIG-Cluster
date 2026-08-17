@@ -68,7 +68,9 @@ The OOM watcher is scheduled at the end of:
 
 | File | Purpose |
 |------|---------|
-| `opi/services/oom_watcher.py` | Fire-and-forget OOM check logic |
+| `opi/services/oom_watcher.py` | Fire-and-forget OOM check logic (the OBSERVING) |
+| `opi/services/catalog/deployment_health/` | The `deployment-health` system service: the JUDGEMENT over what is observed |
+| `opi/services/deployment_state.py` | What the other services report about the deployment, weighed before judging |
 | `opi/services/resource_tuning_service.py` | Extracted tune logic (shared by HTTP endpoint and watcher) |
 | `opi/api/resource_router.py` | HTTP endpoint (thin wrapper over service) |
 | `opi/core/config.py` | OOM watcher settings |
@@ -89,7 +91,7 @@ The `oom_watch_attempt` field in the task payload tracks which attempt number th
 
 ### OOM detected but not fixed
 
-- Check logs for `OOM watcher: auto-tune applied N change(s)`
+- Check logs for `Health watcher: auto-tune committed changes` (the tune now runs through the generic after-sync hook scan; see auto-resource-tuning.md)
 - If max attempts reached, you'll see: `OOM watcher: max attempts (3) reached ... manual intervention required`
 - Verify the metrics backend (Prometheus) is available - the tune service needs it to compute recommendations
 
@@ -101,6 +103,9 @@ The `oom_watch_attempt` field in the task payload tracks which attempt number th
 
 ## Dependencies
 
+- [Diensten die elkaars toestand kennen](deployment-state-and-health.md) - the judgement
+  lives in the `deployment-health` system service, which weighs what other services
+  report (a sleeping deployment is meant to have no pods)
 - [Auto Resource Tuning](auto-resource-tuning.md) - the underlying tune logic
 - kubectl connectivity to the target cluster
 - Prometheus/metrics backend for computing memory recommendations

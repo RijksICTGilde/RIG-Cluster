@@ -14,7 +14,15 @@ from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
-from opi.utils.naming import generate_database_name
+from opi.services.catalog.shared.postgres import DedicatedPostgresFields
+from opi.services.postgres_scope import (
+    database_generation_service_type,
+    get_dedicated_postgres_config,
+    get_postgres_schemas,
+    project_uses_dedicated_postgres,
+)
+from opi.services.project import Project
+from opi.utils.naming import generate_database_name, generate_extra_database_schema
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
 
@@ -95,10 +103,7 @@ class DatabaseManager:
         """
         if service_type is None:
             # Determine service type from project configuration
-            if self._project_uses_namespace_postgresql(project_data):
-                service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-            else:
-                service_type = ServiceType.POSTGRESQL_DATABASE.value
+            service_type = database_generation_service_type(project_data)
 
         project_file_handler = self.project_manager._project_file_handler
         return project_file_handler.get_deployment_service_generation(project_data, deployment_name, service_type)
@@ -147,22 +152,24 @@ class DatabaseManager:
         progress_manager = self.project_manager.get_progress_manager()
         database_task = None
         if progress_manager:
-            database_task = progress_manager.add_task("Database klaarmaken")
+            database_task = progress_manager.add_task("Database klaarmaken", subject=deployment_name)
 
         try:
-            # Determine if using namespace-specific or shared database
-            uses_namespace_postgresql = self._project_uses_namespace_postgresql(project_data)
+            # Determine placement: a dedicated (project-scoped) cluster or the shared
+            # instance. Both namespace-postgresql-database and postgresql-database with
+            # scope: project mean "dedicated" (RC-17).
+            uses_dedicated_postgresql = project_uses_dedicated_postgres(project_data)
 
             # Get appropriate configuration
-            if uses_namespace_postgresql:
-                # Namespace-specific database configuration
+            if uses_dedicated_postgresql:
+                # Dedicated-cluster configuration
                 cluster_config = self._get_database_cluster_config(project_data, cluster_name)
                 db_host = cluster_config["service_endpoint"]
                 infrastructure_namespace = cluster_config["infrastructure_namespace"]
 
                 # Get superuser credentials from infrastructure namespace
                 logger.info(
-                    f"Using namespace-specific PostgreSQL for {project_name} "
+                    f"Using dedicated PostgreSQL cluster for {project_name} "
                     f"(infrastructure: {infrastructure_namespace}, endpoint: {db_host})"
                 )
                 admin_username, admin_password = await self._get_infrastructure_superuser_credentials(
@@ -180,7 +187,7 @@ class DatabaseManager:
             self._ensure_connection()
 
             # Get database service config (includes privileges if specified)
-            service_config = self._get_database_service_config(project_data) if uses_namespace_postgresql else {}
+            service_config = self._get_database_service_config(project_data) if uses_dedicated_postgresql else {}
             database_privileges = service_config.get("privileges", [])
 
             if database_privileges:
@@ -234,22 +241,34 @@ class DatabaseManager:
             db_schema = db_state.schema
             final_password = db_state.password
 
+            # Extra schemas (RC-17), project-wide, all living in this same database so
+            # generations/clones/backups keep working. Create them idempotently (a clone
+            # already carries them; a fresh database gets them empty), owned by the main
+            # user. The default schema stays first in every search_path.
+            extra_schema_pairs = self._resolve_extra_schemas(project_data, project_name, deployment_name)
+            for _postfix, extra_schema in extra_schema_pairs:
+                await self.postgres_connector.create_schema(
+                    schema_name=extra_schema, database=db_database, owner=db_username
+                )
+            all_schemas = [db_schema, *(name for _, name in extra_schema_pairs)]
+
             # Set the default search_path for the role scoped to this database.
             # This ensures applications that don't explicitly set a search_path
             # still resolve to the correct schema. Idempotent and safe on every sync.
             await self.postgres_connector.set_role_search_path(
                 username=db_username,
                 database=db_database,
-                schema=db_schema,
+                schemas=all_schemas,
             )
 
-            # Ensure the persistent read-only role exists alongside the main user.
+            # Ensure the persistent read-only role exists alongside the main user, with
+            # SELECT on every schema so the read-only console can browse all of them.
             ro_username, ro_password = await self._ensure_readonly_user(
                 deployment_name=deployment_name,
                 deployment=deployment,
                 main_username=db_username,
                 database=db_database,
-                schema=db_schema,
+                schemas=all_schemas,
             )
 
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
@@ -263,6 +282,7 @@ class DatabaseManager:
                 database=db_database,
                 ro_username=ro_username,
                 ro_password=ro_password,
+                extra_schemas=extra_schema_pairs,
             )
             self.project_manager._add_secret_to_create(
                 deployment_name,
@@ -314,22 +334,41 @@ class DatabaseManager:
             # User was created (or error occurred)
             return db_password, create_result
 
+    def _resolve_extra_schemas(
+        self, project_data: dict[str, Any], project_name: str, deployment_name: str
+    ) -> list[tuple[str, str]]:
+        """The deployment's extra schemas as ``(postfix, full_schema_name)`` pairs.
+
+        Schemas are project-wide (RC-17 decision 10.5), so the same postfixes apply to
+        every deployment; the full name is per-deployment
+        (``{project}_{deployment}_{postfix}``). Schemas marked for deletion are excluded
+        so provisioning stops managing them while leaving the schema in place.
+        """
+        return [
+            (entry["postfix"], generate_extra_database_schema(project_name, deployment_name, entry["postfix"]))
+            for entry in get_postgres_schemas(project_data)
+        ]
+
     async def _ensure_readonly_user(
         self,
         deployment_name: str,
         deployment: dict[str, Any],
         main_username: str,
         database: str,
-        schema: str,
+        schemas: list[str],
     ) -> tuple[str, str]:
         """Ensure a persistent read-only role exists for the deployment's database.
 
         The role mirrors the main user's lifecycle: created alongside it, granted
-        SELECT-only on the schema, with a default search_path so it resolves the
-        deployment schema. The read-only database console (and read-only
-        application use) connect as this role, so writes are impossible
-        server-side. Its password is kept stable across syncs by reusing the
-        value already stored in the deployment's database secret.
+        SELECT-only on every schema of the deployment (the default schema plus any
+        extra schemas, RC-17 decision 10.4), with a default search_path over the same
+        list. The read-only database console (and read-only application use) connect as
+        this role, so writes are impossible server-side and the console can browse every
+        schema. Its password is kept stable across syncs by reusing the value already
+        stored in the deployment's database secret.
+
+        Args:
+            schemas: The deployment's schemas, primary first; must be non-empty.
 
         Returns:
             Tuple of (ro_username, ro_password).
@@ -347,8 +386,9 @@ class DatabaseManager:
         if create_result["status"] == "exists":
             await self.postgres_connector.update_user_password(username=ro_username, new_password=ro_password)
 
-        await self.postgres_connector.grant_readonly_on_schema(database, schema, ro_username)
-        await self.postgres_connector.set_role_search_path(username=ro_username, database=database, schema=schema)
+        for schema in schemas:
+            await self.postgres_connector.grant_readonly_on_schema(database, schema, ro_username)
+        await self.postgres_connector.set_role_search_path(username=ro_username, database=database, schemas=schemas)
 
         return ro_username, ro_password
 
@@ -550,6 +590,8 @@ class DatabaseManager:
             if clone_type == CloneFromType.REMOTE_SOURCE.value:
                 # Handle remote source cloning directly
                 remote_source_name = clone_from.get("reference")
+                if not remote_source_name:
+                    raise ValueError(f"remote-source clone without a reference: {deployment.get('name')}")
                 if project_data is None:
                     raise ValueError(f"project_data is required for remote-source clone: {deployment.get('name')}")
 
@@ -686,6 +728,22 @@ class DatabaseManager:
             # Source uses base name (None generation) - versioned sources would need explicit handling
             source_database = generate_database_name(project_name, clone_source_ref, None)
             source_schema = source_database  # Schema matches database name
+            # Extra schemas (RC-17) live in the same database and must come along, or a
+            # clone would lose their data. Their names embed the deployment, so the
+            # source uses the source deployment and the target uses this deployment.
+            if project_data is None:
+                msg = (
+                    f"project_data is required to clone '{deployment_name}': without it the extra schemas "
+                    "cannot be resolved, and a clone that silently drops them loses their data"
+                )
+                raise ValueError(msg)
+            extra_clone_pairs = [
+                (
+                    generate_extra_database_schema(project_name, clone_source_ref, postfix),
+                    generate_extra_database_schema(project_name, deployment_name, postfix),
+                )
+                for postfix, _ in self._resolve_extra_schemas(project_data, project_name, deployment_name)
+            ]
             logger.info(f"Clone requested from {source_database} to {db_database} (force={force_clone})")
 
             # Determine service type from project configuration
@@ -788,6 +846,7 @@ class DatabaseManager:
                     target_schema=db_schema,
                     target_owner=db_username,
                     target_owner_password=db_password,
+                    additional_schemas=extra_clone_pairs,
                 )
 
                 if clone_result["status"] != "success":
@@ -947,18 +1006,18 @@ class DatabaseManager:
         if not cluster_name:
             raise ValueError(f"Deployment {deployment['name']} is missing required 'cluster' field")
 
-        # Determine if using namespace-specific or shared database
-        uses_namespace_postgresql = self._project_uses_namespace_postgresql(project_data)
+        # Determine placement: a dedicated (project-scoped) cluster or the shared instance.
+        uses_dedicated_postgresql = project_uses_dedicated_postgres(project_data)
 
-        if uses_namespace_postgresql:
-            # Namespace-specific database configuration
+        if uses_dedicated_postgresql:
+            # Dedicated-cluster configuration
             cluster_config = self._get_database_cluster_config(project_data, cluster_name)
             db_host = cluster_config["service_endpoint"]
             infrastructure_namespace = cluster_config["infrastructure_namespace"]
 
             # Get superuser credentials from infrastructure namespace
             logger.info(
-                f"Using namespace-specific PostgreSQL for {project_name} "
+                f"Using dedicated PostgreSQL cluster for {project_name} "
                 f"(infrastructure: {infrastructure_namespace}, endpoint: {db_host})"
             )
             admin_username, admin_password = await self._get_infrastructure_superuser_credentials(
@@ -1228,21 +1287,8 @@ class DatabaseManager:
         Returns:
             True if project uses namespace-specific PostgreSQL, False otherwise
         """
-        # Check project-level services
-        project_services = project_data.get("services", [])
-        if not project_services:
-            return False
-
-        # Services can be strings or dicts with service name as key
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value:
-                    return True
-            elif isinstance(service_item, dict) and ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item:
-                # Dict format: {"namespace-postgresql-database": {"config": {...}}}
-                return True
-
-        return False
+        # Form-agnostic (bare string / legacy name-as-key / new {name, config} record).
+        return Project(project_data).uses_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value)
 
     def _get_database_service_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -1286,141 +1332,24 @@ class DatabaseManager:
         Raises:
             ValueError: If service configuration is invalid or missing required fields
         """
-        # Hardcoded defaults
-        # Note: Must use CNPG-compatible image (has postgres user with UID 26)
-        DEFAULT_CONFIG = {
-            "image": "ghcr.io/cloudnative-pg/postgresql:17",
-            "instances": 1,
-            "storage": "10Gi",
-            "privileges": [],  # Default: no extra privileges (regular user)
-            "postInitSQL": [],  # Default: no custom init SQL (only vector extension)
-            "resources": {
-                "requests": {
-                    "memory": "256Mi",
-                    "cpu": "100m",
-                },
-                "limits": {
-                    "memory": "512Mi",
-                    "cpu": "500m",
-                },
-            },
-        }
-
-        # Get project-level services
-        project_services = project_data.get("services", [])
-        if not project_services:
-            # Service not defined in project, return defaults
-            return DEFAULT_CONFIG.copy()
-
-        # Find namespace-postgresql-database service and extract config
-        service_name = ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-        user_config = None
-
-        for service_item in project_services:
-            if isinstance(service_item, dict):
-                # Dict format: {"namespace-postgresql-database": {"config": {...}}}
-                if service_name in service_item:
-                    service_data = service_item[service_name]
-                    if isinstance(service_data, dict) and "config" in service_data:
-                        config = service_data["config"]
-                        if not isinstance(config, dict):
-                            raise ValueError(f"Service config for '{service_name}' must be a dict, got {type(config)}")
-                        user_config = config
-                        break
-                    # Service defined but no config - use defaults
-                    user_config = {}
-                    break
-            elif isinstance(service_item, str) and service_item == service_name:
-                # String format: just the service name, no config - use defaults
-                user_config = {}
-                break
-
-        if user_config is None:
-            # Service not found in project services
-            return DEFAULT_CONFIG.copy()
-
-        # Merge user config with defaults (user config takes precedence)
-        merged_config = DEFAULT_CONFIG.copy()
-
-        # Merge top-level fields
-        for key in ["image", "instances", "storage", "privileges", "postInitSQL", "registry"]:
-            if key in user_config:
-                merged_config[key] = user_config[key]
-
-        # Merge resources (nested dict)
-        if "resources" in user_config:
-            if not isinstance(user_config["resources"], dict):
-                raise ValueError(f"Service config 'resources' must be a dict, got {type(user_config['resources'])}")
-
-            # Deep merge resources
-            for resource_type in ["requests", "limits"]:
-                if resource_type in user_config["resources"]:
-                    if not isinstance(user_config["resources"][resource_type], dict):
-                        raise ValueError(
-                            f"Service config 'resources.{resource_type}' must be a dict, "
-                            f"got {type(user_config['resources'][resource_type])}"
-                        )
-                    merged_config["resources"][resource_type].update(user_config["resources"][resource_type])
-
-        # Validate all required fields are present
-        required_fields = ["image", "instances", "storage"]
-        for field in required_fields:
-            if field not in merged_config or merged_config[field] is None:
-                raise ValueError(
-                    f"Database service config missing required field '{field}'. "
-                    f"Provide in services: - namespace-postgresql-database: config: {field}: <value>"
-                )
-
-        # Validate resources structure
-        if "resources" not in merged_config:
-            raise ValueError("Database service config missing required field 'resources'")
-        for resource_type in ["requests", "limits"]:
-            if resource_type not in merged_config["resources"]:
-                raise ValueError(f"Database service config missing required field 'resources.{resource_type}'")
-            for metric in ["memory", "cpu"]:
-                if metric not in merged_config["resources"][resource_type]:
-                    raise ValueError(
-                        f"Database service config missing required field 'resources.{resource_type}.{metric}'"
-                    )
-
-        # Validate privileges if specified
-        if "privileges" in merged_config:
-            privileges = merged_config["privileges"]
-            if not isinstance(privileges, list):
-                raise ValueError(f"Service config 'privileges' must be a list, got {type(privileges)}")
-            # Valid PostgreSQL user privileges
-            valid_privileges = {
-                "SUPERUSER",
-                "NOSUPERUSER",
-                "CREATEDB",
-                "NOCREATEDB",
-                "CREATEROLE",
-                "NOCREATEROLE",
-                "LOGIN",
-                "NOLOGIN",
-                "REPLICATION",
-                "NOREPLICATION",
-                "BYPASSRLS",
-                "NOBYPASSRLS",
-            }
-            for priv in privileges:
-                if not isinstance(priv, str):
-                    raise TypeError(f"Database privilege must be a string, got {type(priv)}: {priv}")
-                if priv.upper() not in valid_privileges:
-                    raise ValueError(
-                        f"Invalid database privilege '{priv}'. Valid privileges: {', '.join(sorted(valid_privileges))}"
-                    )
-
-        # Validate postInitSQL if specified
-        if "postInitSQL" in merged_config:
-            post_init_sql = merged_config["postInitSQL"]
-            if not isinstance(post_init_sql, list):
-                raise ValueError(f"Service config 'postInitSQL' must be a list, got {type(post_init_sql)}")
-            for idx, sql in enumerate(post_init_sql):
-                if not isinstance(sql, str):
-                    raise TypeError(f"postInitSQL[{idx}] must be a string, got {type(sql)}: {sql}")
-
-        logger.debug(f"Database config (merged with defaults): {merged_config}")
+        # RC-5 Phase 2: defaults + validation live in the typed config model,
+        # replacing the previous hand-rolled DEFAULT_CONFIG merge and manual
+        # field/privilege checks. RC-17: the dedicated-cluster config can come from
+        # either service (namespace-postgresql-database, or postgresql-database with
+        # scope: project); get_dedicated_postgres_config reads whichever is present.
+        # For a shared database (no dedicated service) there is no CNPG cluster, so we
+        # return the model defaults -- same result the old namespace read produced when
+        # the service was absent, so postInitSQL/etc. stay empty.
+        if project_uses_dedicated_postgres(project_data):
+            merged_config = get_dedicated_postgres_config(project_data)
+        else:
+            merged_config = DedicatedPostgresFields().model_dump(mode="json")
+        logger.debug(
+            f"Database config (validated via provider): instances={merged_config.get('instances')}, "
+            f"storage={merged_config.get('storage')}, image={merged_config.get('image')}, "
+            f"privileges={len(merged_config.get('privileges') or [])}, "
+            f"postInitSQL={len(merged_config.get('postInitSQL') or [])}"
+        )
         return merged_config
 
     def _get_database_cluster_config(self, project_data: dict[str, Any], cluster_name: str) -> dict[str, Any]:
@@ -1444,6 +1373,7 @@ class DatabaseManager:
             - service_endpoint: Full qualified database service DNS name
             - storage_class: Cluster-specific storage class
             - cluster_name: Name of the cluster
+            - database_operator_namespace: Namespace of the CNPG operator
 
         Example:
             {
@@ -1456,6 +1386,7 @@ class DatabaseManager:
         """
         from opi.core.cluster_config import (
             get_database_cluster_service_endpoint,
+            get_database_operator_namespace,
             get_infrastructure_namespace,
             get_storage_class_name,
         )
@@ -1479,9 +1410,16 @@ class DatabaseManager:
             "service_endpoint": service_endpoint,
             "storage_class": storage_class,
             "cluster_name": cluster_name,
+            # The DB subsystem owns this: the CNPG operator's namespace must be
+            # allowed into the infra namespace so it can extract instance status,
+            # or the dedicated Cluster never becomes Ready.
+            "database_operator_namespace": get_database_operator_namespace(cluster_name),
         }
 
-        logger.debug(f"Built database cluster config for {project_name} in {cluster_name}: {cluster_config}")
+        logger.debug(
+            f"Built database cluster config for {project_name} in {cluster_name}: "
+            f"namespace={infrastructure_namespace}, endpoint={service_endpoint}, storage_class={storage_class}"
+        )
         return cluster_config
 
     async def _get_infrastructure_superuser_credentials(
@@ -1593,7 +1531,8 @@ class DatabaseManager:
             deployment: The deployment configuration containing namespace info
 
         Returns:
-            DatabaseSecret if found, None otherwise
+            DatabaseSecret if the secret exists, None if it is absent. Re-raises on a
+            retrieval error (it does not swallow the failure into a None result).
         """
         try:
             from opi.core.cluster_config import get_prefixed_namespace
@@ -1613,7 +1552,6 @@ class DatabaseManager:
         except Exception as e:
             logger.debug(f"Could not retrieve database secret for {deployment_name}: {e}")
             raise
-            # return None
 
     @staticmethod
     async def _test_database_connection(
@@ -1944,9 +1882,13 @@ class DatabaseManager:
                 project_data, deployment
             )
 
-            # Get database service config (includes privileges if specified)
+            # Get database service config (includes privileges if specified). Placement
+            # (dedicated vs shared) decides whether there is a CNPG config to read;
+            # the revision service-name below is a separate question (which service the
+            # deployment entry is stored under), so keep both flags.
+            uses_dedicated_postgresql = project_uses_dedicated_postgres(project_data)
             uses_namespace_postgresql = self._project_uses_namespace_postgresql(project_data)
-            service_config = self._get_database_service_config(project_data) if uses_namespace_postgresql else {}
+            service_config = self._get_database_service_config(project_data) if uses_dedicated_postgresql else {}
             database_privileges = service_config.get("privileges", [])
 
             # Get current generation from project file (for generational versioning)
@@ -2102,14 +2044,27 @@ class DatabaseManager:
 
             # STEP 7: Store credentials in memory map
             try:
-                # Ensure the persistent read-only role is granted on the (possibly
-                # newly versioned) clone target schema.
+                # Extra schemas (RC-17) declared by the project, created empty on the
+                # clone target (the external source only populates the default schema),
+                # so the search_path, grants and variables match the normal path.
+                extra_schema_pairs = self._resolve_extra_schemas(project_data, project_name, deployment_name)
+                for _postfix, extra_schema in extra_schema_pairs:
+                    await self.postgres_connector.create_schema(
+                        schema_name=extra_schema, database=target_database, owner=target_username
+                    )
+                all_schemas = [target_schema, *(name for _, name in extra_schema_pairs)]
+                await self.postgres_connector.set_role_search_path(
+                    username=target_username, database=target_database, schemas=all_schemas
+                )
+
+                # Ensure the persistent read-only role is granted on every schema of the
+                # (possibly newly versioned) clone target.
                 ro_username, ro_password = await self._ensure_readonly_user(
                     deployment_name=deployment_name,
                     deployment=deployment,
                     main_username=target_username,
                     database=target_database,
-                    schema=target_schema,
+                    schemas=all_schemas,
                 )
                 database_secret = DatabaseSecret(
                     host=self._db_host,
@@ -2120,6 +2075,7 @@ class DatabaseManager:
                     database=target_database,
                     ro_username=ro_username,
                     ro_password=ro_password,
+                    extra_schemas=extra_schema_pairs,
                 )
                 self.project_manager._add_secret_to_create(deployment_name, "database", database_secret)
                 result["operations"].append({"type": "credentials_stored_in_memory", "status": "success"})

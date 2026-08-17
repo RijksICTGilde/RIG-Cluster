@@ -176,13 +176,13 @@ DEFAULT_NL_TRANSLATIONS = {
     "validation.unique": "Deze waarde bestaat al",
     # Project form labels
     "project.display_name": "Projectnaam",
-    "project.display_name.description": "Een beschrijvende naam voor uw project",
+    "project.display_name.description": "Een beschrijvende naam voor je project",
     "project.description": "Projectomschrijving",
     "project.description.description": "Korte beschrijving van het doel en de scope van het project",
     "project.cluster": "Cluster",
-    "project.cluster.description": "Selecteer het gewenste cluster voor uw project",
+    "project.cluster.description": "Selecteer het gewenste cluster voor je project",
     "project.services": "Beschikbare Services",
-    "project.services.description": "Selecteer de services die u wilt activeren voor uw project",
+    "project.services.description": "Selecteer de services die je wilt activeren voor je project",
     "project.users": "Projectleden",
     "project.users.description": "Voeg teamleden toe die toegang moeten krijgen tot het project",
     # Component form labels
@@ -191,7 +191,7 @@ DEFAULT_NL_TRANSLATIONS = {
     "component.port": "Poort",
     "component.port.description": "Poort waarop de applicatie draait",
     "component.image": "Container Image",
-    "component.image.description": "Docker image van uw applicatie",
+    "component.image.description": "Docker image van je applicatie",
     "component.path": "Publicatie Pad",
     "component.path.description": "Het pad waarop dit component gepubliceerd wordt",
     "component.cpu_limit": "CPU Limiet",
@@ -210,8 +210,8 @@ DEFAULT_NL_TRANSLATIONS = {
     # Service labels
     "service.web": "Publiceren op het web",
     "service.web.description": "Maak de applicatie toegankelijk via het publieke internet",
-    "service.sso": "Single Sign-On Rijk",
-    "service.sso.description": "Integreer met de Rijksoverheid SSO voor veilige authenticatie",
+    "service.sso": "Keycloak Authentication",
+    "service.sso.description": "Inloggen via SSO Rijk en via lokale Keycloak-accounts in een eigen realm voor dit project",
     "service.persistent_storage": "Permanente opslag",
     "service.persistent_storage.description": "Gegevens blijven bewaard tijdens de levenscyclus",
     "service.temp_storage": "Tijdelijke schijfruimte",
@@ -222,7 +222,7 @@ DEFAULT_NL_TRANSLATIONS = {
     "service.minio.description": "S3-compatible object storage voor documenten en bestanden",
     # Domain configuration
     "domain.mode": "Web Adres Configuratie",
-    "domain.mode.description": "Kies hoe de URLs voor uw componenten worden gegenereerd",
+    "domain.mode.description": "Kies hoe de URLs voor je componenten worden gegenereerd",
     "domain.subdomain": "Aangepast Subdomein",
     "domain.subdomain.description": "Specificeer een custom subdomein voor alle componenten",
     # Form titles

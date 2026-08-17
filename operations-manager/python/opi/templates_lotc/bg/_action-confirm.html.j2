@@ -1,0 +1,78 @@
+{#
+  De ene bevestiging voor een onomkeerbare actie.
+
+  Overname van project-details/action-confirm.html.j2. Alles wat vraagt voordat het doet
+  rendert hierdoor: de eigen DeploymentAction van een dienst (slapen, wekken) en de
+  gevaarlijke projectacties (project, deployment, component of bijlage verwijderen,
+  opnieuw verwerken).
+
+  Verwacht: action (DeploymentAction of ProjectAction), key, message. Optioneel:
+  blocked_reason. Het endpoint wordt server-side uit de actie zelf ingevuld; dit template
+  ziet nooit een URL uit het verzoek.
+
+  WAT ONVERANDERD MOET BLIJVEN
+
+  De CSRF-header staat op de OMHULLENDE div en niet op de knop: htmx erft hem van een
+  voorouder, en dat is precies de reden dat hij daar staat. Bij roos kwam daar nog een
+  tweede reden bij (een <c-button> gaf attribuutwaarden in dubbele quotes terug en sloopte
+  daarmee de JSON); die geldt hier niet meer, maar de plek blijft dezelfde omdat het
+  gedrag hetzelfde moet blijven.
+
+  Bij bevestigen antwoordt het endpoint met het voortgangsfragment en wisselt htmx dat in
+  deze dialoog in - de vraag wordt de lopende taak. Vandaar hx-target="this" en
+  hx-swap="innerHTML" op de wikkel.
+
+  WAAROM ANNULEREN GEEN <c-button> IS
+
+  Annuleren roept closeEditModal() aan van de gedeelde modal-schil waarin dit fragment
+  geladen wordt; er is geen href die hetzelfde doet, want de dialoog moet dicht en de pagina
+  eronder moet blijven staan. Dat gaat via :attrs op <c-button>, net als bij de
+  deploymentacties. Hier stond een kale <button> met de toelichting dat <c-button> geen
+  onclick toeliet - dat klopte niet, en het kostte die knop al zijn vormgeving.
+#}
+<div data-confirm-action="{{ key }}"
+     hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+     hx-target="this"
+     hx-swap="innerHTML">
+    <c-stack gap="md">
+        {% if blocked_reason %}
+            <c-alert type="warning" heading="{{ blocked_reason }}" />
+        {% else %}
+            <c-paragraph>{{ message }}</c-paragraph>
+        {% endif %}
+
+        {# De plek waar de modal-schil een foutmelding in schrijft als de POST mislukt.
+           Blijft een kale div met dezelfde id en dezelfde klassen: hij hoort bij die
+           schil, niet bij deze omzetting. #}
+        <div id="confirm-action-error" class="edit-section-error is-hidden"></div>
+
+        <c-action-group align="end">
+            {# Een <c-button> en GEEN kale <button>: die laatste krijgt geen enkele
+               stijlklasse en stond er kaal bij. De toelichting hierboven zei dat
+               <c-button> geen onclick toelaat; dat klopt niet, :attrs zet het attribuut
+               wel door - zo openen de deploymentacties hun dialogen ook. #}
+            {% set annuleren = "closeEditModal()" %}
+            <c-button type="secondary" label="Annuleren" :attrs="{'onclick': annuleren}" />
+            {# Niets te bevestigen als de actie vooraf geweigerd is; de dialoog legt dan
+               alleen uit waarom (de server weigert hem ook). #}
+            {% if not blocked_reason %}
+                {# ROOS-kinds en LOTC-types overlappen bijna volledig; wat er niet in zit
+                   valt terug op primary in plaats van de knop te laten struikelen op een
+                   onbekende enum-waarde. Verwijderen is "warning" en blijft dat dus.
+                   Het icoon draagt een ROOS-naam ("verwijderen", "refresh") waar NLDD geen
+                   tegenhanger voor heeft; zoals ROOS_TO_NLDD_ICONS voorschrijft gaat die
+                   ongewijzigd door en blijft de plek leeg, in plaats van een willekeurig
+                   ander icoon te tonen. #}
+                {% set knoptype = action.kind if action.kind in ('primary', 'secondary', 'tertiary', 'quaternary', 'warning', 'subtle', 'warning-subtle') else 'primary' %}
+                <c-button
+                    type="{{ knoptype }}"
+                    label="{{ action.label }}"
+                    show-icon="before"
+                    icon="{{ action.icon | default('', true) | nldd_icon }}"
+                    class="confirm-action-submit"
+                    hx-post="{{ action.endpoint }}"
+                    hx-disabled-elt="this" />
+            {% endif %}
+        </c-action-group>
+    </c-stack>
+</div>

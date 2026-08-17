@@ -8,7 +8,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from jsonpath_ng.ext import parse as jsonpath_parse
+from opi.services.services import service_entry_config, service_entry_name
 
 if TYPE_CHECKING:
     from opi.handlers.project_file_handler import ProjectFileHandler
@@ -22,7 +22,8 @@ class RevisionManager:
     Tracks the lifecycle of databases and buckets as they go through
     clone, restore, and other operations that create new generations.
 
-    Uses JSONPath expressions for efficient querying of project data.
+    Entry lookup goes through ``service_entry_name`` / ``service_entry_config``, so every
+    form a services list may hold is found, not just ``reference`` records.
     """
 
     def __init__(self, project_file_handler: ProjectFileHandler) -> None:
@@ -33,88 +34,79 @@ class RevisionManager:
         """
         self._handler = project_file_handler
 
-    def _jsonpath_find(self, data: dict[str, Any], path: str) -> list[Any]:
-        """Find all matches for a JSONPath expression.
-
-        Args:
-            data: The dictionary to search
-            path: JSONPath expression
-
-        Returns:
-            List of matching values (empty if no matches)
-        """
-        matches = jsonpath_parse(path).find(data)
-        return [m.value for m in matches]
-
-    def _jsonpath_find_one(self, data: dict[str, Any], path: str) -> Any | None:
-        """Find first match for a JSONPath expression.
-
-        Args:
-            data: The dictionary to search
-            path: JSONPath expression
-
-        Returns:
-            First matching value or None if no matches
-        """
-        matches = jsonpath_parse(path).find(data)
-        return matches[0].value if matches else None
+    def _find_deployment(self, project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
+        for deployment in project_data.get("deployments", []) or []:
+            if isinstance(deployment, dict) and deployment.get("name") == deployment_name:
+                return deployment
+        return None
 
     def _get_service_config(
         self, project_data: dict[str, Any], deployment_name: str, service_type: str
     ) -> dict[str, Any] | None:
-        """Get the config dict for a deployment service using JSONPath.
+        """Get the config dict for a deployment service, whatever entry form it uses.
 
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-            service_type: Service type (use ServiceType enum values)
+        Identity goes through ``service_entry_name``, never through a key lookup: a
+        services list holds bare strings, ``{name}`` records, ``{reference}`` records and
+        legacy single-key dicts, and clone state that is not found is silently lost.
 
         Returns:
             Config dict or None if not found
         """
-        path = f"$.deployments[?(@.name=='{deployment_name}')].services[?(@.reference=='{service_type}')].config"
-        return self._jsonpath_find_one(project_data, path)
+        deployment = self._find_deployment(project_data, deployment_name)
+        if deployment is None:
+            return None
+        for entry in deployment.get("services", []) or []:
+            if service_entry_name(entry) != service_type:
+                continue
+            config = service_entry_config(entry)
+            return config if isinstance(config, dict) else None
+        return None
 
     def _ensure_service_entry(
         self, project_data: dict[str, Any], deployment_name: str, service_type: str
     ) -> dict[str, Any] | None:
-        """Ensure a service entry exists for a deployment and service type.
+        """Find-or-create the config dict for a deployment service, entry-form agnostic.
 
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-            service_type: Service type (use ServiceType enum values)
+        Reuses whatever entry is already there instead of appending a second one: a
+        services list is a selection set, so a duplicate name makes
+        ``validate_project_structure`` reject the whole project file. A bare string is
+        promoted in place to a record rather than being left next to a new entry.
 
         Returns:
             Config dict, or None if deployment not found
         """
-        # Find deployment
-        deployment_path = f"$.deployments[?(@.name=='{deployment_name}')]"
-        deployments = self._jsonpath_find(project_data, deployment_path)
-
-        if not deployments:
+        deployment = self._find_deployment(project_data, deployment_name)
+        if deployment is None:
             logger.warning(f"Deployment '{deployment_name}' not found in project data")
             return None
 
-        deployment = deployments[0]
+        services = deployment.setdefault("services", [])
 
-        # Ensure services list exists
-        if "services" not in deployment:
-            deployment["services"] = []
+        for index, entry in enumerate(services):
+            if service_entry_name(entry) != service_type:
+                continue
+            if isinstance(entry, str):
+                # Bare selection: promote in place, keeping the position in the list.
+                promoted: dict[str, Any] = {"reference": service_type, "config": {}}
+                services[index] = promoted
+                return promoted["config"]
+            if "name" in entry or "reference" in entry:
+                if not isinstance(entry.get("config"), dict):
+                    entry["config"] = {}
+                return entry["config"]
+            # Legacy single-key dict: the config lives inside the name-keyed body.
+            body = entry.get(service_type)
+            if not isinstance(body, dict):
+                body = {}
+                entry[service_type] = body
+            if not isinstance(body.get("config"), dict):
+                body["config"] = {}
+            return body["config"]
 
-        # Find or create service entry
-        service_path = f"$.deployments[?(@.name=='{deployment_name}')].services[?(@.reference=='{service_type}')]"
-        services = self._jsonpath_find(project_data, service_path)
-
-        if services:
-            service = services[0]
-            if "config" not in service or not isinstance(service["config"], dict):
-                service["config"] = {}
-            return service["config"]
-
-        # Create new entry
+        # Not selected yet: append. ``reference`` is the form every deployment-level entry
+        # in production already uses, so nothing churns.
         new_entry: dict[str, Any] = {"reference": service_type, "config": {}}
-        deployment["services"].append(new_entry)
+        services.append(new_entry)
         return new_entry["config"]
 
     def get_revisions(
@@ -150,20 +142,19 @@ class RevisionManager:
         Returns:
             Active revision entry or None if not found
         """
-        # Use JSONPath to find active revision directly
-        path = (
-            f"$.deployments[?(@.name=='{deployment_name}')]"
-            f".services[?(@.reference=='{service_type}')]"
-            f".config.revisions[?(@.status=='active')]"
-        )
-        return self._jsonpath_find_one(project_data, path)
+        # Via get_revisions, so entry-form handling lives in one place instead of in a
+        # JSONPath that only matched ``reference`` records.
+        for revision in self.get_revisions(project_data, deployment_name, service_type):
+            if isinstance(revision, dict) and revision.get("status") == "active":
+                return revision
+        return None
 
     def record_clone(
         self,
         project_data: dict[str, Any],
         deployment_name: str,
         service_type: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
         source: str,
     ) -> dict[str, Any]:
@@ -189,7 +180,7 @@ class RevisionManager:
         project_data: dict[str, Any],
         deployment_name: str,
         service_type: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
         backup_reference: str,
     ) -> dict[str, Any]:
@@ -215,7 +206,7 @@ class RevisionManager:
         project_data: dict[str, Any],
         deployment_name: str,
         service_type: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
     ) -> dict[str, Any]:
         """Record initial resource creation.
@@ -238,7 +229,7 @@ class RevisionManager:
         self,
         config: dict[str, Any],
         log_prefix: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
         action: str,
         source: str | None,
@@ -250,7 +241,10 @@ class RevisionManager:
         Args:
             config: The config dict to write to (must be mutable)
             log_prefix: Prefix for log messages (e.g., "staging/postgresql-database")
-            generation: Generation number of the resource (0 = normal name, >0 = versioned)
+            generation: Generation number of the resource (0 = normal name, >0 = versioned).
+                None means "no generation known" and is written as 0 -- a caller cloning a
+                first-generation resource genuinely has none, and this method has always
+                normalised that below.
             resource_name: Actual resource name
             action: Action type (e.g., "clone", "restore", "initial")
             source: Source reference or None
@@ -296,7 +290,7 @@ class RevisionManager:
         project_data: dict[str, Any],
         deployment_name: str,
         service_type: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
         action: str,
         source: str | None,
@@ -435,13 +429,14 @@ class RevisionManager:
         Returns:
             Updated project_data dictionary
         """
-        # Find revision by generation using JSONPath
-        path = (
-            f"$.deployments[?(@.name=='{deployment_name}')]"
-            f".services[?(@.reference=='{service_type}')]"
-            f".config.revisions[?(@.generation=={generation})]"
+        revision = next(
+            (
+                r
+                for r in self.get_revisions(project_data, deployment_name, service_type)
+                if isinstance(r, dict) and r.get("generation") == generation
+            ),
+            None,
         )
-        revision = self._jsonpath_find_one(project_data, path)
 
         if revision is None:
             logger.warning(f"Revision not found for {deployment_name}/{service_type} generation {generation}")
@@ -516,10 +511,8 @@ class RevisionManager:
         Returns:
             List of superseded revision entries
         """
-        # Use JSONPath to find superseded revisions directly
-        path = (
-            f"$.deployments[?(@.name=='{deployment_name}')]"
-            f".services[?(@.reference=='{service_type}')]"
-            f".config.revisions[?(@.status=='superseded')]"
-        )
-        return self._jsonpath_find(project_data, path)
+        return [
+            r
+            for r in self.get_revisions(project_data, deployment_name, service_type)
+            if isinstance(r, dict) and r.get("status") == "superseded"
+        ]

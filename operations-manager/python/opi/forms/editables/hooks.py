@@ -14,6 +14,12 @@ from opi.core import config as opi_config
 from opi.core.cluster_config import get_ingress_postfix
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.resolvers import get_effective_value
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    domain_setting_path,
+    get_domain_setting,
+    set_domain_setting,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +45,10 @@ def _resolve_missing_base_domains(yaml_data: dict[str, Any], context: dict[str, 
 
     cluster_default = get_ingress_postfix(opi_config.settings.CLUSTER_MANAGER).lstrip(".")
     for i, dep in enumerate(yaml_data.get("deployments", [])):
-        if isinstance(dep, dict) and not dep.get("base-domain"):
-            resolved = get_effective_value(yaml_data, f"deployments[{i}]/base-domain", resolvers)
+        if isinstance(dep, dict) and not get_domain_setting(dep, DomainSetting.BASE_DOMAIN):
+            resolved = get_effective_value(yaml_data, domain_setting_path(DomainSetting.BASE_DOMAIN, i), resolvers)
             if resolved and resolved != cluster_default:
-                dep["base-domain"] = resolved
+                set_domain_setting(dep, DomainSetting.BASE_DOMAIN, resolved)
 
 
 class SubdomainRequestHook:
@@ -112,34 +118,13 @@ class ResolveAttachmentsHook:
 
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
         from opi.forms.editables.generators import AttachmentStagingResolveGenerator
+        from opi.handlers.project_file_handler import merge_staged_attachments
 
         staged = context.get("staged_attachments") or {}
         if not staged:
             return
 
-        services = yaml_data.setdefault("services", [])
-        data_list: list | None = None
-        for i, entry in enumerate(services):
-            if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
-                data_list = entry["attachments"].setdefault("data", [])
-                break
-            # The services picker stores an enabled service as a bare string; upgrade
-            # "attachments" to its dict form in place rather than appending a duplicate.
-            if entry == "attachments":
-                upgraded: list = []
-                services[i] = {"attachments": {"data": upgraded}}
-                data_list = upgraded
-                break
-        if data_list is None:
-            data_list = []
-            services.append({"attachments": {"data": data_list}})
-
-        existing_ids = {e.get("id") for e in data_list if isinstance(e, dict)}
-        for att_id, info in staged.items():
-            if att_id in existing_ids:
-                continue
-            data_list.append({"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")})
-
+        merge_staged_attachments(yaml_data, staged)
         AttachmentStagingResolveGenerator().generate(yaml_data)
 
 

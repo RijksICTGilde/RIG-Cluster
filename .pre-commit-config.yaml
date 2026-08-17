@@ -7,15 +7,20 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # Patch files are byte-exact by nature: a context line that is an empty line
+      # must be a single space. Stripping it makes `git am` reject the patch, which
+      # is exactly what images/argocd-rig/Taskfile.yaml `src:verify` runs.
       - id: trailing-whitespace
+        exclude: \.patch$
       - id: end-of-file-fixer
+        exclude: \.patch$
       - id: check-yaml
         args: [--allow-multiple-documents]
       - id: check-added-large-files
         exclude: ^operations-manager/python/static/promo\.mp4$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.11
+    rev: v0.15.5
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -34,7 +39,7 @@ repos:
 
       - id: djlint
         name: djlint
-        entry: uv run --directory operations-manager/python djlint --lint opi/templates/
+        entry: uv run --directory operations-manager/python djlint --lint opi/templates_lotc/
         language: system
         files: ^operations-manager/python/.*\.(html|html\.j2)$
         pass_filenames: false

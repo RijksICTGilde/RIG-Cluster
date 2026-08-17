@@ -37,9 +37,15 @@ spec:
             TLS_FLAG="--disable-tls"
           fi
 
-          # Configure mc alias for target MinIO
+          # Configure mc alias for target MinIO. This is the destination gate: mc verifies
+          # the endpoint and the keys here, so a failure means the target the caller named
+          # is unusable and nothing of ours is broken. Exit with the dedicated code so the
+          # caller can be told that without anyone parsing this log text.
           echo "Configuring MinIO client for target..."
-          mc alias set target "${TARGET_MINIO_ENDPOINT}" "${TARGET_ACCESS_KEY}" "${TARGET_SECRET_KEY}" --api S3v4
+          if ! mc alias set target "${TARGET_MINIO_ENDPOINT}" "${TARGET_ACCESS_KEY}" "${TARGET_SECRET_KEY}" --api S3v4; then
+            echo "ERROR: target object storage is not usable (endpoint, access key or secret key rejected)"
+            exit {{ target_unusable_exit_code }}
+          fi
 
           # Connect to Kopia repository
           echo "Connecting to Kopia repository..."

@@ -29,6 +29,8 @@ from opi.forms.layout import (
     Submit,
     TemplatePartial,
 )
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.services import service_entry_name
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -87,11 +89,16 @@ class FormRenderer:
         self.translator = translator or IdentityTranslator()
         self.providers = options_providers or {}
         self._edit_mode = False
+        # De wizard waarin dit formulier staat. Een TemplatePartial met EIGEN endpoints
+        # (bijlagen) heeft die nodig om de goede URL op te bouwen; zonder dit stond er een
+        # vaste "create-project" in het sjabloon, en dan schreven de bijlagen van een
+        # modal-edit-wizard naar de sessie van de aanmaakwizard.
+        self._flow_id: str | None = None
 
     def render(
         self,
         schema: type[BaseModel],
-        layout: LayoutElement | list[LayoutElement] | None = None,
+        layout: LayoutElement | list[LayoutElement | str] | None = None,
         data: dict[str, Any] | None = None,
         errors: dict[str, list[str]] | None = None,
         form_id: str = "form",
@@ -159,7 +166,7 @@ class FormRenderer:
     def render_fields(
         self,
         schema: type[BaseModel],
-        layout: LayoutElement | list[LayoutElement] | None = None,
+        layout: LayoutElement | list[LayoutElement | str] | None = None,
         data: dict[str, Any] | None = None,
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
@@ -254,7 +261,7 @@ class FormRenderer:
         self,
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
-        layout: LayoutElement | list,
+        layout: LayoutElement | list[LayoutElement | str],
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
         form_id: str = "form",
@@ -281,19 +288,27 @@ class FormRenderer:
         self,
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
-        layout: LayoutElement | list,
+        layout: LayoutElement | list[LayoutElement | str] | None = None,
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
         warnings: dict[str, list[str]] | None = None,
+        flow_id: str | None = None,
     ) -> str:
-        """Render form fields without form wrapper (for HTMX partial updates)."""
+        """Render form fields without form wrapper (for HTMX partial updates).
+
+        ``layout`` may be None -- a FormSection is allowed not to declare one -- and
+        then every field is rendered in order, the same default the schema-driven
+        renderers above build.
+        """
         self._edit_mode = edit_mode
+        self._flow_id = flow_id
         fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode, warnings=warnings)
+        if layout is None:
+            layout = list(fields_by_name)
 
         if isinstance(layout, list):
             content_parts = [self._render_layout_element(elem, fields_by_name, yaml_data) for elem in layout]
-            inner = "\n".join(content_parts)
-            return f'<c-layout-flow gap="lg">\n{inner}\n</c-layout-flow>'
+            return self.adapter.render_flow(content_parts)
         return self._render_layout_element(layout, fields_by_name, yaml_data)
 
     def _build_fields_from_editables(
@@ -438,15 +453,14 @@ class FormRenderer:
 
         context: dict[str, Any] = {}
 
-        # Extract project services
+        # Extract project services. Read the identity through service_entry_name so every
+        # entry form resolves: bare string, uniform record ({name, config}) and the legacy
+        # single-key dict. Reading a record's raw keys yielded "name"/"config" and dropped
+        # the service itself, so any service carrying config vanished from the component
+        # services picker -- a new component came up with only the config-less half ticked.
         services = yaml_data.get("services", [])
         if isinstance(services, list):
-            names: list[str] = []
-            for svc in services:
-                if isinstance(svc, str):
-                    names.append(svc)
-                elif isinstance(svc, dict):
-                    names.extend(svc.keys())
+            names = [name for svc in services if (name := service_entry_name(svc)) is not None]
             context["project_services"] = names
 
         # Extract cluster (for ClusterBaseDomainOptionsProvider)
@@ -479,7 +493,7 @@ class FormRenderer:
         if isinstance(deployments, list):
             for dep in deployments:
                 if isinstance(dep, dict):
-                    base_domain = dep.get("base-domain")
+                    base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN)
                     custom_domain = dep.get("base-domain:custom")
                     if base_domain:
                         context["base_domain"] = base_domain
@@ -584,11 +598,14 @@ class FormRenderer:
 
         children: list[FormField] = []
         for index in range(len(items)):
-            # Compute per-item provider context with reference exclusions
-            item_context = provider_context
+            # Per-item provider context. ``row_data`` is this row's own stored values, so a
+            # provider can answer a question about the row it is rendered in ("which
+            # deployments does the project chosen in THIS row have"). ``exclude_references``
+            # is the older, narrower case: what the other rows already took.
+            row = items[index] if isinstance(items[index], dict) else {}
+            item_context: dict[str, Any] = {**(provider_context or {}), "row_data": row}
             if ref_field_name and used_refs_by_index:
-                other_refs = [r for i, r in used_refs_by_index.items() if i != index]
-                item_context = {**(provider_context or {}), "exclude_references": other_refs}
+                item_context["exclude_references"] = [r for i, r in used_refs_by_index.items() if i != index]
 
             item_children: list[FormField] = []
             seq_children = editable.children or []
@@ -903,18 +920,20 @@ class FormRenderer:
 
         # Template partial
         if isinstance(element, TemplatePartial):
-            from opi.core.templates import get_templates
+            from opi.core.templates_lotc import templates_lotc
 
-            tmpl = get_templates().get_template(element.template)
-            ctx = {**(yaml_data or {}), **element.context}
+            tmpl = templates_lotc.env.get_template(element.template)
+            # flow_id erbij: een partial met eigen endpoints moet weten in WELKE wizard hij
+            # staat. element.context wint, zodat een partial hem desgewenst kan overschrijven.
+            ctx = {"flow_id": self._flow_id, **(yaml_data or {}), **element.context}
             return tmpl.render(ctx)
 
         # Display block (server-rendered via HTMX)
         if isinstance(element, DisplayBlock):
-            from opi.core.templates import get_templates
+            from opi.core.templates_lotc import templates_lotc
 
             context = element.compute(yaml_data or {}, element.context)
-            tmpl = get_templates().get_template(element.template)
+            tmpl = templates_lotc.env.get_template(element.template)
             inner = tmpl.render(context)
             return f'<div id="display-{element.display_id}">{inner}</div>'
 

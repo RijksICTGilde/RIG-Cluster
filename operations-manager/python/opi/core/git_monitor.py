@@ -14,8 +14,8 @@ from opi.connectors.git import start_monitoring_task
 from opi.connectors.kubectl import KubectlExecutionError, create_kubectl_connector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
-from opi.manager.project_manager import ProjectManager, enforce_namespace_pin
+from opi.core.project_schema import ProjectSchemaError, validate_declared_project_schema
+from opi.manager.project_manager import enforce_namespace_pin
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -130,15 +130,24 @@ async def file_change_handler(file_path: str, content: dict) -> None:
     """
     logger.info(f"Detected changes in {file_path}")
 
-    # Security gate: validate against the project schema before any
-    # processing. Fails closed - a schema violation aborts handling so a
-    # hostile project committed directly to git never reaches the connectors.
+    # Security gate: validate before any processing, and before any migration.
+    # Fails closed - a violation aborts handling so a hostile project committed
+    # directly to git never reaches the connectors, and never gets written back
+    # under our own identity because it happened to migrate clean.
+    #
+    # Validation is against the version the file DECLARES, not against the newest
+    # schema (RC-32). A file that has not been reprocessed for months is held to
+    # the rules of its own version; that is what lets the newest schema drop forms
+    # whose migration is long written.
     try:
-        validate_project_schema(content)
+        validate_declared_project_schema(content)
     except ProjectSchemaError as e:
-        # A rejected project file is expected input handling, not an ops-actionable
-        # error: warn (do not feed the ERR log-watch), skip the file, keep polling.
-        logger.warning(f"Projectbestand {file_path} afgekeurd door schemavalidatie: {e}")
+        # This used to be a warning, on the grounds that a rejection is expected
+        # input handling. It is not, any more: every version a file may declare has
+        # a schema, so a rejection means a genuinely broken or hostile file - and
+        # the old silence meant 22 production files were being skipped here with
+        # nobody able to see it. Skip the file, keep polling, but say so loudly.
+        logger.error(f"Projectbestand {file_path} afgekeurd door schemavalidatie en NIET verwerkt: {e}")
         return
 
     # Check if this is a project file with deployments
@@ -147,32 +156,33 @@ async def file_change_handler(file_path: str, content: dict) -> None:
         deployments_count = len(content["deployments"])
         logger.info(f"Project '{project_name}' has {deployments_count} deployment(s)")
 
-        # First validate cluster configuration
-        project_manager = ProjectManager()
+        # First validate cluster configuration. This used to call
+        # ProjectManager.has_deployments_for_current_cluster(content), which takes no
+        # arguments and is a coroutine function: every project file with deployments
+        # raised TypeError right here, so nothing below ever ran. The check is answered
+        # from the content we already hold - a bare ProjectManager has no contents to
+        # answer it with anyway.
+        if not [d for d in content["deployments"] if d.get("cluster") == settings.CLUSTER_MANAGER]:
+            logger.info(
+                f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
+            )
+            return
+
+        # Task 1: Check and create namespaces for deployments
+        logger.info("Task 1: Checking and creating namespaces for deployments...")
         try:
-            if not project_manager.has_deployments_for_current_cluster(content):
-                logger.info(
-                    f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
-                )
-                return
+            namespace_success = await check_and_create_namespaces(content)
+        except ValueError as exc:
+            # Project declared a namespace that doesn't match its name
+            # (the pin rejected it). Skip this project but keep the
+            # polling loop alive so other projects still get processed.
+            logger.error(f"Rejected project '{project_name}' from git monitor: {exc}")
+            return
 
-            # Task 1: Check and create namespaces for deployments
-            logger.info("Task 1: Checking and creating namespaces for deployments...")
-            try:
-                namespace_success = await check_and_create_namespaces(content)
-            except ValueError as exc:
-                # Project declared a namespace that doesn't match its name
-                # (the pin rejected it). Skip this project but keep the
-                # polling loop alive so other projects still get processed.
-                logger.error(f"Rejected project '{project_name}' from git monitor: {exc}")
-                return
-
-            if namespace_success:
-                logger.info("Namespace check/creation completed successfully")
-            else:
-                logger.error("Namespace check/creation failed")
-        finally:
-            await project_manager.close()
+        if namespace_success:
+            logger.info("Namespace check/creation completed successfully")
+        else:
+            logger.error("Namespace check/creation failed")
 
     # Process other content types if needed
     if "services" in content:

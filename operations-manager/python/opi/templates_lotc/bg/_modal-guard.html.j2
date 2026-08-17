@@ -1,0 +1,12 @@
+{#
+  De melding die in de plaats van een formulier komt als de sectie zichzelf blokkeert.
+
+  De tegenhanger van de ene regel in ``_render_section_html`` die bij de roos-bouwlijn een
+  ``<c-alert kind="info">`` als TEKST opbouwt en daarna alsnog door process_components
+  haalt. Dat kan hier niet: de LOTC-formulierlaag rendert meteen af, en een tweede
+  Jinja-slag over gerenderde HTML is precies wat we uit de dialoog willen houden.
+
+  Vandaar een sjabloonbestand met de boodschap als VARIABELE: een render, en de tekst is
+  gegevens en nooit een expressie.
+#}
+<c-alert type="info">{{ message }}</c-alert>

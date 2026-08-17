@@ -1,0 +1,71 @@
+{#
+  De wizardpagina: de schil om de stappen heen.
+
+  Een OVERNAME van wizard/wizard_page.html.j2. Dezelfde vier blokken in dezelfde volgorde
+  (kruimelpad, titel, stappenbalk, stapinhoud), dezelfde stylesheet en scripts, en
+  dezelfde hulpdialoog voor diensten.
+
+  Het kruimelpad was een <nav> met een rvo-breadcrumb-lijst; dat wordt <c-breadcrumbs>,
+  zodat het meeverandert met het thema. Dezelfde drie standen: altijd Projecten, daarna
+  het project als we er een bewerken, en de huidige pagina.
+
+  #wizard-step-content blijft de naam van het doelgebied: elk htmx-attribuut in de
+  stappen en in de stappenbalk wijst erop.
+
+  GEEN kolom om het formulier. Er stond hier een <c-center max="46rem"> met als reden dat
+  een formulier over de volle breedte onleesbaar zou zijn. Dat is een ontwerpkeuze, en die
+  is hier niet aan ons: de bestaande wizard gebruikt de volle breedte (gemeten: 1216px bij
+  een venster van 1440), en deze omzetting hoort hetzelfde te doen en er alleen anders uit
+  te zien. Met die wikkel bleef er 720px over - de helft - en dat viel meteen op.
+
+  Wil je die kolom alsnog, dan is dat een besluit over het FORMULIER en hoort het in beide
+  weergaven te gebeuren, niet alleen in de nieuwe.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import page_head %}
+
+{% block page_title %}{{ flow_title }}{% endblock %}
+
+{% block content %}
+    <c-stack gap="lg">
+        <c-breadcrumbs aria-label="Kruimelpad">
+            <c-breadcrumbs-item label="Projecten" href="/projects" />
+            {% if project_name %}
+                <c-breadcrumbs-item label="{{ project_name }}" href="/projects/{{ project_name }}/details" />
+                <c-breadcrumbs-item label="Bewerken" />
+            {% else %}
+                <c-breadcrumbs-item label="Nieuw project" />
+            {% endif %}
+        </c-breadcrumbs>
+
+        {{ page_head(flow_title) }}
+
+        {# De div draagt het id waar de fragmenten met hx-swap-oob="outerHTML" op mikken.
+           Zonder zou de balk na een stap niet meebewegen. #}
+        <div id="wizard-steps">{% include "bg/_wizard-steps.html.j2" %}</div>
+
+        {# embedded: de stappenbalk staat hierboven al, dus het fragment hoeft hem niet
+           buiten het doel om te vervangen. Bij een htmx-antwoord staat embedded niet
+           gezet en doet hij dat wel. #}
+        <div id="wizard-step-content">
+            {% with embedded=True %}{% include "bg/_wizard-step.html.j2" %}{% endwith %}
+        </div>
+    </c-stack>
+
+{% include "widgets/service_help_modal.html.j2" %}
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+{% endblock %}
+
+{% block additional_scripts %}
+{# json-enc komt in de roos-schil uit base.html.j2; base_lotc laadt alleen htmx zelf.
+   Zonder deze uitbreiding is hx-ext="json-enc" een lege huls: htmx post dan
+   formulier-gecodeerd terwijl de stap-route request.json() leest, en elke stap faalt.
+   Hij staat hier en niet in de schil omdat alleen de wizard hem nodig heeft. #}
+<script src="{{ static_url('js/json-enc.js') }}"></script>
+<script src="{{ static_url('js/codemirror-bundle.js') }}"></script>
+<script src="{{ static_url('js/codemirror-kv.js') }}"></script>
+<script src="{{ static_url('js/wizard.js') }}"></script>
+{% endblock %}

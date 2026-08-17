@@ -1,0 +1,243 @@
+{
+  "$defs": {
+    "AccountLink": {
+      "description": "De standen die iets DOEN.\n\nHier stond ook ``VERIFY``, en die deed niets: ``keycloak_yaml_handler`` bouwt alleen\nvoor ``automatic`` en ``confirm`` een eigen first-broker-login-flow en laat de rest op\nKeycloaks eigen flow staan - precies wat je krijgt als je niets kiest. Wie ``verify``\nkoos kreeg dus dezelfde uitkomst als wie het veld leeg liet, terwijl de keuzelijst\ndeed alsof er een verschil was.",
+      "enum": [
+        "automatic",
+        "confirm"
+      ],
+      "title": "AccountLink",
+      "type": "string"
+    },
+    "KeycloakClientEntry": {
+      "additionalProperties": true,
+      "description": "An ``additional-clients`` item. Only ``name`` is guardrailed; the rest\n(redirect-uris, ...) is advanced pass-through -- the hard 10% the plan leaves\nhand-authored -- so extras are allowed.",
+      "properties": {
+        "name": {
+          "description": "Client id of the extra client to create in the realm.",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "KeycloakClientEntry",
+      "type": "object"
+    },
+    "KeycloakRealm": {
+      "additionalProperties": true,
+      "description": "Per-realm admin connection (OPI-managed, one per cluster).\n\nRelocated verbatim from the old project-level ``config.keycloak`` (RC-5 B). Kept\nas-is -- matched by ``realm`` (deterministic ``{project}-{cluster}``) as before.\n``extra=\"allow\"`` tolerates fields written over time (e.g. ``service_client_secret``);\npassword is stored AGE-encrypted or ``plain:``-prefixed, so it's just a string here.",
+      "properties": {
+        "host": {
+          "description": "Keycloak base URL this realm lives on. Written by the platform.",
+          "title": "Host",
+          "type": "string"
+        },
+        "password": {
+          "description": "That account's password, AGE-encrypted or 'plain:'-prefixed.",
+          "title": "Password",
+          "type": "string"
+        },
+        "realm": {
+          "description": "Realm name, {project}-{cluster}. Written by the platform.",
+          "title": "Realm",
+          "type": "string"
+        },
+        "totp_secret": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shared TOTP seed for the realm-admin account, stored like the password. Only present when the cluster provisions admin OTP.",
+          "title": "Totp Secret"
+        },
+        "username": {
+          "description": "Realm-admin account the platform manages the realm with.",
+          "title": "Username",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "realm",
+        "username",
+        "password"
+      ],
+      "title": "KeycloakRealm",
+      "type": "object"
+    },
+    "KeycloakRealmRoleEntry": {
+      "additionalProperties": true,
+      "description": "A ``realm-roles`` item; ``name`` required, advanced keys pass through.",
+      "properties": {
+        "name": {
+          "description": "Name of the realm role to create.",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "KeycloakRealmRoleEntry",
+      "type": "object"
+    },
+    "RestrictAccessConfig": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "enabled": {
+              "const": false
+            }
+          }
+        },
+        {
+          "properties": {
+            "role": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "properties": {
+            "realm-role": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "realm-role"
+          ]
+        }
+      ],
+      "description": "``restrict-access`` sub-object; keys are well-defined so extras are forbidden.\n\nEnabling the restriction without naming a role is refused here, so the rule lives in\none place: the model. See ``ROLE_REQUIRED_WHEN_ENABLED`` for why it is also written\nout in the schema.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether sign-in is limited to users holding the role below.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "error-message": {
+          "default": "${accessDeniedNoPermission}",
+          "description": "Message shown to a user without the role; a ${...} value is a Keycloak message key.",
+          "title": "Error-Message",
+          "type": "string"
+        },
+        "realm-role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Realm role a user must hold to be let in.",
+          "title": "Realm-Role"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Client role a user must hold to be let in.",
+          "title": "Role"
+        }
+      },
+      "title": "RestrictAccessConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "account-link": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AccountLink"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "How an existing account is linked when a user signs in through an identity provider: automatic or confirm. Leave it out for Keycloak's own flow (verification by email)."
+    },
+    "additional-clients": {
+      "description": "Extra Keycloak clients to create in the realm.",
+      "items": {
+        "$ref": "#/$defs/KeycloakClientEntry"
+      },
+      "title": "Additional-Clients",
+      "type": "array"
+    },
+    "additional_redirect_uris": {
+      "description": "Extra redirect URIs the client accepts, on top of the deployment URLs (e.g. localhost for development).",
+      "items": {
+        "type": "string"
+      },
+      "title": "Additional Redirect Uris",
+      "type": "array"
+    },
+    "realm-roles": {
+      "description": "Realm roles to create.",
+      "items": {
+        "$ref": "#/$defs/KeycloakRealmRoleEntry"
+      },
+      "title": "Realm-Roles",
+      "type": "array"
+    },
+    "realms": {
+      "description": "Per-cluster realm admin connections. Written and managed by the platform: it is carried over on a write, so a caller neither has to send it nor can lose it by leaving it out.",
+      "items": {
+        "$ref": "#/$defs/KeycloakRealm"
+      },
+      "title": "Realms",
+      "type": "array",
+      "x-platform-managed": true
+    },
+    "restrict-access": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RestrictAccessConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Limit sign-in to users holding a given role."
+    },
+    "template": {
+      "default": "sso-only",
+      "description": "Realm template the realm is created from; 'sso-only' is single sign-on without extras.",
+      "title": "Template",
+      "type": "string"
+    },
+    "variables": {
+      "additionalProperties": true,
+      "description": "Values filled into the realm template's placeholders.",
+      "title": "Variables",
+      "type": "object"
+    }
+  },
+  "title": "KeycloakConfig",
+  "type": "object"
+}

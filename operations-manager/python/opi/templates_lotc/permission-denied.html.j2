@@ -1,0 +1,24 @@
+{% extends "base_lotc.html.j2" %}
+
+{#
+  Dashboard - Self Service Portal
+
+  Overzicht van alle projecten, deployments en resource metrics
+  met real-time monitoring en status updates.
+#}
+
+{% block page_title %}Dashboard - Self Service Portal{% endblock %}
+
+{% block content %}
+
+<c-layout-flow gap="sm">
+
+    {% include "permission-denied/_uitleg.html.j2" %}
+
+    {% include "permission-denied/_organisatie.html.j2" %}
+
+    {% include "permission-denied/_acties.html.j2" %}
+
+</c-layout-flow>
+
+{% endblock %}

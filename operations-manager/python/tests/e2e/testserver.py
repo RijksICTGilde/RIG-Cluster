@@ -199,6 +199,39 @@ def _seed_projects(projects: list[dict]) -> None:
     logger.info("Seeded %d fixture projects", len(projects))
 
 
+def _preinitialize_kubectl_without_probing() -> None:
+    """Mark the kubectl singleton as initialised so nothing ever probes a cluster.
+
+    ``KubectlConnector.__init__`` runs a BLOCKING
+    ``subprocess.run(["kubectl", "auth", "whoami"], timeout=10)`` on whatever thread
+    first constructs it -- here the uvicorn event loop that serves every request. There
+    is no cluster in a local E2E run, so on a machine that HAS a kubectl binary (a dev
+    box with kind, and the shared dev server) the probe does not fail fast: it hangs for
+    the full 10 seconds, and every request in flight waits behind it.
+
+    That is what makes this suite look order-dependent when it is not. The connector is
+    a process-wide singleton, so the stall happens exactly once per run, on whichever
+    test happens to touch a page that constructs it -- a different test in every shuffle,
+    and the neighbouring test's own 10s wait expires with it. Measured: run with seed 404
+    lost ``test_saves_description_change`` (its step POST timed out at exactly 10s, with
+    ``Error testing kubectl connection ... timed out after 10 seconds`` alongside it) and
+    then ``test_detail_page_renders``, which reads the project that test no longer got to
+    restore. Three other seeds, where the probe never ran, were green.
+
+    Pre-building the singleton here skips the probe and the retry task it schedules.
+    ``isConnected`` stays False, which is what the probe concluded anyway -- so no route
+    behaves differently, there is just no 10-second hole in the event loop.
+    """
+    from opi.connectors.kubectl import KubectlConnector
+
+    connector = KubectlConnector.__new__(KubectlConnector)
+    connector.env = os.environ.copy()
+    connector._initialized = True
+    KubectlConnector._instance = connector
+    KubectlConnector.isConnected = False
+    KubectlConnector._retry_task = None
+
+
 def create_test_app():
     """Create the FastAPI app with mocked externals and seeded test data.
 
@@ -210,15 +243,32 @@ def create_test_app():
     @contextlib.contextmanager
     def patched_app():
         with (
-            patch("opi.core.startup.run_startup_tasks", new_callable=AsyncMock),
+            # Patch where het GEBRUIKT wordt (opi.server) en niet waar het gedefinieerd
+            # is. ``opi/server.py`` doet ``from opi.core.startup import run_startup_tasks``
+            # en roept die eigen naam aan; het definitiepad patchen raakt die binding
+            # alleen als opi.server hieronder voor het EERST geimporteerd wordt.
+            #
+            # Dat maakte de suite afhankelijk van wat er verder verzameld werd: bij
+            # ``pytest tests/e2e`` was opi.server nog niet geladen en pakte de import de
+            # mock op; bij ``pytest -m e2e`` (de hele boom) had een unittest opi.server al
+            # geimporteerd, bleef de ECHTE functie staan, en ging de app bij het opstarten
+            # een database zoeken die er niet is. De retry duurt langer dan de 10s die de
+            # ``app_server``-fixture wacht, dus faalde elke E2E-test in setup: 397 errors
+            # op een suite die per bestand groen was.
+            patch("opi.server.run_startup_tasks", new_callable=AsyncMock),
             patch("opi.core.config.settings.SECRET_KEY", SECRET_KEY),
             patch("opi.core.config.settings.ENABLE_GIT_MONITOR", False),
             patch(
-                "opi.connectors.subdomain.SubdomainConnector.get_by_subdomain",
+                "opi.services.persistence.subdomain_registry.SubdomainConnector.get_by_subdomain",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch("opi.core.config.settings.SOPS_AGE_PRIVATE_KEY", TEST_AGE_PRIVATE_KEY),
+            # The wizard-create generators encrypt the project's AGE private key and
+            # API key with SOPS_AGE_PUBLIC_KEY; without it, creating a project raises
+            # "Missing public age key for encryption". The matching public key is
+            # already defined above but was never wired to settings.
+            patch("opi.core.config.settings.SOPS_AGE_PUBLIC_KEY", TEST_AGE_PUBLIC_KEY),
             patch(
                 "opi.connectors.prometheus.get_metrics_connector",
                 return_value=SimpleNamespace(is_connected=False),
@@ -229,6 +279,16 @@ def create_test_app():
             ),
             patch("opi.handlers.project_file_handler.save_project_file"),
             patch("opi.services.project_store.GitProjectStore.save", _fake_store_save),
+            # version_of() clones the real zad-projects repo to read a blob SHA -
+            # unavailable here, same reason save is faked above. The edit-modal init
+            # records this as the compare-and-swap base_version, so without a stand-in
+            # every edit-modal open would fail decrypting the git creds. Return a fixed
+            # valid blob SHA (40 hex chars, per _BLOB_SHA_RE); the faked save ignores it.
+            patch(
+                "opi.services.project_store.GitProjectStore.version_of",
+                new_callable=AsyncMock,
+                return_value="0" * 40,
+            ),
             patch("opi.web.router_user_admin._get_service", _mock_get_service),
             patch(
                 "opi.manager.backup.BackupManager",
@@ -237,6 +297,8 @@ def create_test_app():
                 ),
             ),
         ):
+            _preinitialize_kubectl_without_probing()
+
             # Mark all readiness services as ready
             import opi.core.readiness as readiness_module
 

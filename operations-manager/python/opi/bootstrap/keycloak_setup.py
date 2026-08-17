@@ -53,8 +53,17 @@ class KeycloakSetup:
         logger.info("Starting Keycloak setup")
 
         try:
-            # Initialize connectors
+            # Step 0: Ensure OPI's client-credentials service account exists. On a
+            # fresh cluster this uses the admin password once to create it; on
+            # later boots OPI runs purely on client-credentials.
+            await self.ensure_master_admin_service_account()
+
+            # Initialize connectors (uses client-credentials when configured)
             self.keycloak = await create_keycloak_connector()
+
+            # Step 0b: a human master admin that already has OTP, so a fresh cluster is
+            # not left with one shared password-only account.
+            await self.ensure_otp_master_admin()
             self.kubectl = KubectlConnector()
 
             # Build context from settings
@@ -104,6 +113,75 @@ class KeycloakSetup:
             logger.error(f"Keycloak setup failed with exception: {e}")
             return False
 
+    async def ensure_otp_master_admin(self) -> None:
+        """Create a second master admin that carries an OTP credential from the start.
+
+        Keycloak creates the ``KEYCLOAK_ADMIN`` account itself at first boot from the
+        environment, so there is no moment where we could give it an OTP credential; and
+        Keycloak 25 imports an OTP credential only when a user is created, so retrofitting
+        means delete-and-recreate. Doing that to the one account OPI is authenticated as,
+        and that is the break-glass, is not worth it.
+
+        Creating a *second* admin does work: at creation the credential is imported
+        verbatim. A fresh cluster then has a human admin with a second factor from minute
+        one, while the shared ``admin`` stays as break-glass. That is also the better end
+        state -- named accounts rather than one shared login, so the audit log says who did
+        what.
+
+        Idempotent and opt-in: without a seed in the secret nothing happens, and an
+        existing user is left alone (recreating it would rotate the operator's OTP).
+        """
+        username = settings.KEYCLOAK_OTP_ADMIN_USERNAME
+        seed = settings.KEYCLOAK_OTP_ADMIN_TOTP_SECRET
+        password = settings.KEYCLOAK_OTP_ADMIN_PASSWORD
+
+        if not (username and seed and password):
+            logger.debug("No OTP master admin configured; skipping")
+            return
+
+        keycloak = self.keycloak or await create_keycloak_connector()
+        if await keycloak.get_user_by_username("master", username):
+            logger.debug(f"OTP master admin '{username}' already exists")
+            return
+
+        logger.info(f"Creating master admin '{username}' with an OTP credential")
+        user = await keycloak.create_user(
+            realm_name="master",
+            username=username,
+            password=password,
+            email=f"{username}@localhost",
+            first_name="Platform",
+            last_name="Administrator",
+            enabled=True,
+            totp_secret=seed,
+        )
+        await keycloak.assign_realm_roles_to_user("master", user["id"], ["admin"])
+        logger.info(f"Master admin '{username}' created with OTP; seed is in the cluster secret")
+
+    async def ensure_master_admin_service_account(self) -> None:
+        """First-boot self-bootstrap of OPI's client-credentials service account.
+
+        - No client secret configured: stay on admin-password auth (legacy).
+        - Secret set and client-credentials already work: nothing to do.
+        - Otherwise: use the admin password once to create/repair the master
+          confidential client so subsequent boots run on client-credentials.
+        """
+        if not settings.KEYCLOAK_ADMIN_CLIENT_SECRET:
+            logger.info("KEYCLOAK_ADMIN_CLIENT_SECRET not set; using admin password authentication")
+            return
+
+        client_cred = await create_keycloak_connector(use_client_credentials=True)
+        if await client_cred.connection_works():
+            logger.info("OPI Keycloak service account already functional; using client-credentials")
+            return
+
+        logger.info("Bootstrapping OPI Keycloak service account using admin password")
+        admin = await create_keycloak_connector(use_client_credentials=False)
+        await admin.ensure_master_service_account_client(
+            client_id=settings.KEYCLOAK_ADMIN_CLIENT_ID,
+            client_secret=settings.KEYCLOAK_ADMIN_CLIENT_SECRET,
+        )
+
     async def setup_operations_realm(self) -> None:
         """Create OPI's own realm using project file config (like any other project).
 
@@ -144,12 +222,15 @@ class KeycloakSetup:
             "realm_display_name": "Operations Manager",
             "operations_manager_domain": operations_manager_domain,
             "invite_client_id": settings.INVITE_CLIENT_ID,
+            "cli_client_id": settings.CLI_CLIENT_ID,
+            "cli_token_audience": settings.CLI_TOKEN_AUDIENCE,
         }
         context.update(keycloak_config.get("variables", {}))
 
         # Execute YAML template (creates realm, IDP, client scopes, invite client)
         yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
-        handler = KeycloakYamlHandler(self.keycloak)
+        keycloak = self.keycloak or await create_keycloak_connector()
+        handler = KeycloakYamlHandler(keycloak)
         await handler.execute_config(yaml_path, context)
         logger.info(f"Created OPI realm '{OPERATIONS_REALM_NAME}' using template '{template_name}'")
 
@@ -172,17 +253,24 @@ class KeycloakSetup:
         Returns:
             Dictionary with template, variables, and users config
         """
+        from opi.services.services import service_entry_config, service_entry_name
+        from opi.services.services_enums import ServiceType
+
         default: dict[str, Any] = {"template": "sso-support", "variables": {}, "users": []}
         services = project_data.get("services", [])
         for service in services:
-            if isinstance(service, dict) and "keycloak" in service:
-                config = service["keycloak"].get("config", {})
-                return {
-                    "template": config.get("template", "sso-support"),
-                    "variables": config.get("variables", {}),
-                    "restrict_access": config.get("restrict_access"),
-                    "users": config.get("users", []),
-                }
+            # Format-agnostic: the keycloak entry may be a record ({name, config}), a
+            # legacy single-key dict, or a bare string. Matching on ``"keycloak" in dict``
+            # only saw the legacy form and silently missed the uniform record.
+            if service_entry_name(service) != ServiceType.KEYCLOAK.value:
+                continue
+            config = service_entry_config(service) or {}
+            return {
+                "template": config.get("template", "sso-support"),
+                "variables": config.get("variables", {}),
+                "restrict_access": config.get("restrict_access"),
+                "users": config.get("users", []),
+            }
         return default
 
     async def setup_operations_client(self, realm_name: str | None = None) -> bool:

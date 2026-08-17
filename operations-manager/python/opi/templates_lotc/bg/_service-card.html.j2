@@ -1,0 +1,101 @@
+{#
+  Een dienstkaart op het serviceoverzicht.
+
+  MAATSTAF: services-overview/_diensten.html.j2. Die kaart toont vier dingen, en alle
+  vier horen hier ook te staan:
+
+    1. icoon + naam + de infoknop
+    2. de omschrijving van de dienst
+    3. "API naam: <code>publish-on-web</code>"
+    4. het blok Omgevingsvariabelen: per variabele de naam, zijn aliassen en zijn uitleg
+
+  Hier stonden in plaats van 2, 3 en 4 drie CHIPS ("per component", "3 variabelen",
+  "vereist 1"). Dat is een samenvatting van gegevens die het origineel voluit toont, en
+  precies de reden dat je deze pagina opent: je komt kijken HOE de variabele heet die je
+  in je applicatie moet uitlezen. Een telling beantwoordt die vraag niet. De chips zijn
+  daarom weg; er is niets voor in de plaats bedacht.
+
+  Weg is ook het blok "gebruikt door" achter een scheidingslijn: dat stond niet in het
+  origineel, en ``used_by`` werd nergens gevuld - het rendeerde dus nooit.
+
+  De variabelen staan in kolommen (verzoek van de gebruiker). Het origineel zet ze onder
+  elkaar, en dat maakt van een dienst met negen variabelen een halve meter kaart.
+
+  Het is bewust c-auto-grid en geen c-columns met een vast aantal: de kaarten staan zelf
+  al in twee kolommen, dus een harde ``lg="3"`` levert kolommen van negentig pixels op en
+  daarin breekt DATABASE_SERVER_HOST middenin een woord af. Gemeten op een screenshot, en
+  onleesbaar. Met een MINIMUMbreedte krijgt de pagina er zoveel kolommen bij als er
+  passen - drie waar het kan, minder waar het moet.
+
+  DE INFOKNOP is gedrag en geen vormgeving, dus die is LETTERLIJK overgenomen uit
+  widgets/_macros.html.j2: dezelfde functienaam openServiceHelp(), dezelfde klasse
+  service-card__help-btn, dezelfde stopPropagation (waar de kaart zelf klikbaar is - de
+  dienstenkiezer in de wizard - mag het vraagteken de kaart niet meeselecteren).
+  static/js/wizard.js haalt de tekst op bij /forms/wizard/help/<template> en zet hem in
+  #service-help-content.
+
+  De aanroep wordt met {% raw %}{% set %}{% endraw %} BOVEN de tag opgebouwd en via :attrs meegegeven: een
+  componenttag verdraagt geen Jinja binnenin, en class/onclick zijn geen eigen attributen
+  van c-icon-button.
+#}
+{% macro service_card(service) %}
+<c-card outline padding="lg">
+    <c-stack gap="md">
+
+        {# 1 + 2 + 3: kop, omschrijving, API-naam - samen een blok, net als in het origineel #}
+        <c-stack gap="xs">
+            <c-cluster gap="sm" align="center">
+                <c-icon icon="{{ service.icon | nldd_icon }}" color="{{ service.color }}" size="lg" />
+                <c-heading type="h3" size="5" label="{{ service.label }}" />
+                {% if service.help_template %}
+                    {% set help_js = "event.stopPropagation(); openServiceHelp('" ~ service.help_template ~ "')" %}
+                    <c-icon-button
+                        icon="question-mark-circle"
+                        accessible-label="Uitleg over {{ service.label }}"
+                        variant="neutral-transparent"
+                        size="sm"
+                        :attrs="{'onclick': help_js, 'class': 'service-card__help-btn'}" />
+                {% endif %}
+            </c-cluster>
+
+            {% if service.summary %}
+                <c-paragraph size="sm">{{ service.summary }}</c-paragraph>
+            {% endif %}
+
+            <c-paragraph size="sm" color="grijs-500">API naam: <c-code>{{ service.name }}</c-code></c-paragraph>
+        </c-stack>
+
+        {# 4: de omgevingsvariabelen #}
+        {% if service.variables %}
+            <c-stack gap="sm">
+                <c-heading type="h4" size="6" label="Omgevingsvariabelen" />
+                <c-auto-grid min="13rem" gap="md">
+                    {% for variable in service.variables %}
+                        <c-stack gap="xs">
+                            {# De NAAM van de variabele is waar je voor komt: die zet je in
+                               je applicatie. De aliassen zijn de bijvangst.
+
+                               Hij stond in een kale c-code, en die rendert op 13px terwijl
+                               de aliassen in hun alinea op 15,3px uitkwamen - gemeten. De
+                               belangrijkste regel was dus de kleinste. In een alinea van
+                               normale grootte erft de code die maat, en strong maakt het
+                               verschil met de aliassen eronder ook zonder op de grootte te
+                               hoeven letten. #}
+                            <c-paragraph><strong><c-code>{{ variable.name }}</c-code></strong></c-paragraph>
+                            {% if variable.aliases %}
+                                {# Aliassen als code, net als in het origineel: het zijn namen die je
+                                   letterlijk overtypt, en dan helpt vaste breedte. #}
+                                <c-paragraph size="sm" color="grijs-500">Aliassen:
+                                    {% for alias in variable.aliases %}<c-code>{{ alias }}</c-code>{% if not loop.last %}, {% endif %}{% endfor %}
+                                </c-paragraph>
+                            {% endif %}
+                            <c-paragraph size="sm" color="grijs-500">{{ variable.description }}</c-paragraph>
+                        </c-stack>
+                    {% endfor %}
+                </c-auto-grid>
+            </c-stack>
+        {% endif %}
+
+    </c-stack>
+</c-card>
+{% endmacro %}

@@ -6,6 +6,14 @@ metadata:
   annotations:
     policies.kyverno.io/exclude: "disallow-capabilities-strict,disallow-privilege-escalation,restrict-seccomp-strict"
 spec:
+  # RIG-eigen image: upstream v3.5.1 + de namespace-sync en health-fixes uit images/argocd-rig.
+  # Alle componenten volgen dit, behalve repo-server (zie spec.repo hieronder) — zo is de
+  # sandbox dezelfde vorm als odcn-production, waar repo-server op de Red Hat build blijft.
+  # Uit de publieke registry, zodat de sandbox hem via GitOps binnenhaalt in plaats van
+  # via `task load-kind`; die taak blijft bestaan om een lokale build te testen voor je
+  # publiceert (bouw dan met IMAGE_TAG=<iets anders> en pin die tag hier tijdelijk).
+  image: ghcr.io/minbzk/base-images/argocd-rig
+  version: v3.5.1-rig1
   extraConfig:
     resource.customizations.health.cert-manager.io_Issuer: |
       hs = {}
@@ -45,31 +53,32 @@ spec:
         value: "150"
       - name: ARGOCD_K8S_CLIENT_BURST
         value: "300"
+    # Sandbox-CPU-beleid: minimale request, geen cpu-limit — zie de toelichting in
+    # infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml. De controller
+    # en applicationSet vroegen samen 2 van de 4 cores van de dev-server op; daardoor paste
+    # keycloak (2 CPU) er niet meer bij en bleef die Pending.
     resources:
       limits:
-        cpu: 5
         memory: 2Gi
       requests:
-        cpu: 1
+        cpu: 50m
         memory: 512Mi
   applicationSet:
     resources:
       limits:
-        cpu: 5
         memory: 256Mi
       requests:
-        cpu: 1
+        cpu: 25m
         memory: 128Mi
+  # ⚠️  De sops-plugin component (zie kustomization.yaml) doet `op: replace` op /spec/repo:
+  #     ALLES wat hieronder staat wordt bij het renderen weggegooid. Wat echt moet landen,
+  #     hoort als patch in kustomization.yaml, ná de component — daar staan nu image/version
+  #     en de env vars. De rest hieronder is momenteel dood gewicht (annotations, resources,
+  #     en de securityContext/volumeMounts van de sidecar); verifieer met
+  #     `kustomize build <overlay> | grep -A20 '^  repo:'` voor je hier iets aan verandert.
   repo:
     annotations:
       policies.kyverno.io/exclude: "disallow-capabilities-strict,disallow-privilege-escalation,restrict-seccomp-strict"
-    env:
-      - name: ARGOCD_EXEC_TIMEOUT
-        value: "180"
-      - name: ARGOCD_GIT_ATTEMPTS_COUNT
-        value: "3"
-      - name: ARGOCD_HELM_ALLOW_CONCURRENCY
-        value: "true"
     resources:
       limits:
         cpu: 5

@@ -1,0 +1,87 @@
+{# Het blok dat de dienst Keycloak op de projectpagina levert: het realm met zijn
+   admin-console, gebruikersnaam, wachtwoord en de gedeelde OTP. Sinds RC-101 staat het op
+   het tabblad Toegang.
+
+   DE VELDEN ZIEN ERUIT ALS "CONFIGURATIE & SECRETS" (RC-101). Hier stond elke waarde in
+   een eigen omkaderd subblok - een <c-code> met een losse tekstknop "Kopieer" ernaast -
+   waardoor er drie kaders in elkaar stonden (paneel > realm > veld) en elk veld er anders
+   uitzag dan het veld ernaast. Het is nu dezelfde vorm als het blok Configuratie & Secrets
+   in bg/project-tabs.html.j2: label boven, waarde in een <c-secret-field>, het klembord IN
+   het veld, en een onthul-oogje alleen bij wat echt geheim is.
+
+     - ``revealed show-copy`` = zichtbare waarde, wel kopieerbaar (het console-adres, het
+       realm, de gebruikersnaam);
+     - ``show-copy`` zonder ``revealed`` = afgeschermd met een oogje. Dat is het wachtwoord:
+       het staat ONTSLEUTELD in de context, dus als gewone tekst zou het op het scherm
+       staan.
+
+   Daarmee vervallen de klassen config-item / config-code / copy-btn in dit blok: die waren
+   er alleen voor copyToClipboard(), en het kopieren zit nu in het veld. De functie zelf
+   blijft bestaan voor de dienstblokken die hem nog wel gebruiken.
+
+   EEN DING HOUDT ZIJN EIGEN VORM: "Open Admin Console" is een ACTIE en geen waarde.
+
+   DE OTP IS OOK EEN VELD GEWORDEN. Hij was een kop met twee regels uitleg en een knop
+   "Toon code", die de code met htmx ophaalde bij een eigen endpoint. Dat was het lelijkste
+   stuk van het blok, en als veld doet het wat de rest doet: gemaskeerd, met een oogje en
+   het klembord erin.
+
+   Wat daarmee verandert: de code staat nu IN de pagina in plaats van achter een klik. De
+   SEED niet - die blijft op de server, en dat is de eigenschap die telt, want de seed geeft
+   voor altijd codes terwijl deze code binnen 30 seconden vergaat. Het admin-wachtwoord
+   ernaast staat er op precies dezelfde manier, achter dezelfde rolpoort (alleen
+   admin/owner), en dat is het langstlevende van de twee.
+
+   De code hoort bij het MOMENT VAN RENDEREN: hij ververst niet vanzelf, dus de hulptekst
+   zegt dat je de pagina opnieuw laadt voor een verse code. Een code die stilletjes
+   verlopen is, is erger dan een code die zegt dat hij oud is.
+
+   De aanroepen gaan via :attrs; <c-button> laat geen onclick als los attribuut toe. De
+   knop houdt zijn window.open() met data-url in plaats van een href. #}
+{% set console_openen = "window.open(this.dataset.url, '_blank')" %}
+<c-card outline padding="lg">
+    <c-stack gap="md">
+        <c-section-head title="Keycloak" icon="shield-check-mark" />
+        <c-paragraph size="sm">Keycloak realm configuratie en admin toegang</c-paragraph>
+
+        {% for kc_config in section.context.realms %}
+            <c-stack gap="md">
+                <c-heading type="h3" size="5" label="Realm: {{ kc_config.realm }}" />
+
+                <c-stack gap="xs">
+                    <c-heading type="h4" size="6" label="Admin Console" />
+                    <c-secret-field value="{{ kc_config.host }}" revealed show-copy />
+                    {% set console_url = kc_config.host ~ '/admin/master/console/#/' ~ kc_config.realm %}
+                    {% set console_attrs = {'data-url': console_url, 'onclick': console_openen} %}
+                    <c-action-group align="start">
+                        <c-button type="secondary" size="sm" label="Open Admin Console" show-icon="after" icon="link"
+                                  :attrs="console_attrs" />
+                    </c-action-group>
+                </c-stack>
+
+                <c-stack gap="xs">
+                    <c-heading type="h4" size="6" label="Realm" />
+                    <c-secret-field value="{{ kc_config.realm }}" revealed show-copy />
+                </c-stack>
+
+                <c-stack gap="xs">
+                    <c-heading type="h4" size="6" label="Admin Gebruikersnaam" />
+                    <c-secret-field value="{{ kc_config.username }}" revealed show-copy />
+                </c-stack>
+
+                <c-stack gap="xs">
+                    <c-heading type="h4" size="6" label="Admin Wachtwoord" />
+                    <c-secret-field value="{{ kc_config.password }}" show-copy="true" />
+                </c-stack>
+
+                {% if kc_config.has_totp %}
+                    <c-stack gap="xs">
+                        <c-heading type="h4" size="6" label="Gedeelde OTP" />
+                        <c-secret-field value="{{ kc_config.totp_code }}" show-copy="true" />
+                        <c-paragraph size="sm">Dit is de code van het moment dat je deze pagina laadde, en die verloopt binnen 30 seconden. Laad de pagina opnieuw voor een verse code.</c-paragraph>
+                    </c-stack>
+                {% endif %}
+            </c-stack>
+        {% endfor %}
+    </c-stack>
+</c-card>

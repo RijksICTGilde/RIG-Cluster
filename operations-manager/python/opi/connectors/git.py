@@ -803,6 +803,28 @@ class GitConnector:
             logger.warning(f"Error ensuring correct branch: {e}")
             # Don't raise here, as the repository might still be usable
 
+    async def refresh_working_tree(self) -> None:
+        """Bring the local checkout in line with the remote branch.
+
+        ``ensure_repo_cloned`` is niet genoeg voor wie een BESLISSING neemt op wat er wel
+        of niet op schijf staat. Twee redenen, allebei gemeten:
+
+        - hij ververst hooguit EEN keer per proces (``_fetched_in_session``), en een
+          connector wordt gecached op de project-manager. Een langlopende pod kijkt dus
+          naar een checkout die willekeurig oud kan zijn;
+        - ``git fetch`` verplaatst alleen de remote refs en raakt de werkboom niet aan.
+          ``os.path.exists`` ziet daarna nog steeds de oude toestand.
+
+        Dat kostte vijf verweesde ArgoCD-mappen: het opruimen van een project keek met
+        ``os.path.exists`` in zo'n verouderde kloon, concludeerde "niet aanwezig", en liet
+        de map in de repo staan terwijl het projectbestand wel verdween.
+
+        Alles wat op de aanwezigheid van een pad afgaat, hoort dit eerst aan te roepen.
+        """
+        await self.ensure_repo_cloned()
+        await self._pull_latest()
+        self._fetched_in_session = True
+
     async def _fetch_latest(self) -> None:
         """Fetch the latest changes from the repository."""
         if not self._repo_cloned:
@@ -1618,6 +1640,37 @@ class GitConnector:
         logger.debug(f"File {clean_file_path} not present at {ref}: {stderr}")
         return None
 
+    async def get_blob_sha(self, file_path: str, ref: str = "HEAD") -> str | None:
+        """Return the git blob SHA of ``file_path`` at ``ref``, or None if absent.
+
+        The blob names the file's exact content, so it identifies a version of ONE
+        project file rather than of the whole repository: unrelated commits for other
+        projects leave it unchanged. Unlike a plain hash it is also a git object, so
+        ``read_blob`` can hand the very content back later.
+        """
+        await self.ensure_repo_cloned()
+        clean_file_path = self._get_full_path(file_path)
+
+        stdout, stderr, code = await self._run_git_command(["rev-parse", f"{ref}:{clean_file_path}"])
+        if code == 0:
+            return stdout.strip()
+        logger.debug(f"No blob for {clean_file_path} at {ref}: {stderr}")
+        return None
+
+    async def read_blob(self, blob_sha: str) -> str | None:
+        """Return the content of a blob object, or None if it is not in this clone.
+
+        Blobs stay reachable through the history of the branch, so a version read
+        earlier can still be reconstructed after later commits landed on top.
+        """
+        await self.ensure_repo_cloned()
+
+        stdout, stderr, code = await self._run_git_command(["cat-file", "blob", blob_sha])
+        if code == 0:
+            return stdout
+        logger.debug(f"Blob {blob_sha} not available: {stderr}")
+        return None
+
     async def list_file_revisions(self, file_path: str, limit: int = 50) -> list[dict[str, str]]:
         """Return the commits that touched ``file_path``, newest first.
 
@@ -1647,6 +1700,41 @@ class GitConnector:
                 continue
             revisions.append({"ref": parts[0], "author": parts[1], "timestamp": parts[2], "message": parts[3]})
         return revisions
+
+    async def last_modified_per_file(self, subdir: str) -> dict[str, str]:
+        """When each file under ``subdir`` was last touched, as ISO 8601, newest wins.
+
+        One ``git log`` pass over the whole history rather than one per file: an
+        overview page asks this for every project it lists, and a per-file walk would
+        make the page cost a subprocess per row.
+
+        Merge commits list no files under ``--name-only`` and are therefore skipped,
+        which is what we want -- a merge is not an edit of the file. Keys are
+        repo-relative paths; a file that only ever appeared in a merge is absent, so
+        callers must treat a missing key as "unknown" and not as "never changed".
+        """
+        await self.ensure_repo_cloned()
+        prefix = self._get_full_path(subdir).strip("/")
+
+        # Record separator before each commit's timestamp, so the file list that
+        # follows can be attributed to it without counting lines.
+        stdout, stderr, code = await self._run_git_command(
+            ["log", "--pretty=format:%x1e%aI", "--name-only", "--", prefix]
+        )
+        if code != 0:
+            logger.debug(f"git log failed for {prefix}: {stderr}")
+            return {}
+
+        last_modified: dict[str, str] = {}
+        for record in stdout.split("\x1e"):
+            lines = [line.strip() for line in record.splitlines() if line.strip()]
+            if not lines:
+                continue
+            timestamp, paths = lines[0], lines[1:]
+            for path in paths:
+                # Newest first, so the first sighting of a path is its last change.
+                last_modified.setdefault(path, timestamp)
+        return last_modified
 
     async def list_changed_files(self, old_commit: str, new_commit: str) -> list[str]:
         """Return repo-relative paths changed between two commits.

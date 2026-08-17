@@ -1,0 +1,69 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "liveness-path": {
+      "anyOf": [
+        {
+          "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path for the liveness and startup probes, '/' when left out. Only used with an http(s) scheme. Absolute, and limited to safe URL characters: it is interpolated into the generated pod spec.",
+      "title": "Liveness-Path"
+    },
+    "port": {
+      "anyOf": [
+        {
+          "maximum": 65535,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Port to probe; the component's first inbound port when left out. Must be 1024 or higher: images run non-root and cannot bind below that.",
+      "title": "Port"
+    },
+    "readiness-path": {
+      "anyOf": [
+        {
+          "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path for the readiness probe, '/' when left out. Only used with an http(s) scheme.",
+      "title": "Readiness-Path"
+    },
+    "scheme": {
+      "anyOf": [
+        {
+          "enum": [
+            "none",
+            "tcp",
+            "http",
+            "https"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "How the component is probed: 'tcp' opens a connection, 'http'/'https' request a path, 'none' disables probing. Left out means tcp, or none when the component has no inbound port.",
+      "title": "Scheme"
+    }
+  },
+  "title": "HealthCheckConfig",
+  "type": "object"
+}

@@ -21,11 +21,8 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE,
     DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE,
     DEPLOYMENT_COMP_IMAGE_EDITABLE,
-    DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
-    DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
     DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
     DEPLOYMENT_COMP_REFERENCE_EDITABLE,
-    DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
     DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
     DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
@@ -36,6 +33,13 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENTS_SEQUENCE_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.catalog.publish_on_web.visualizers import (
+    DEPLOYMENT_COMP_PUBLISH_ATTACHMENT as PUBLISH_ON_WEB_DEPLOYMENT_COMP_ATTACHMENT,
+)
+from opi.services.catalog.publish_on_web.visualizers import (
+    DEPLOYMENT_COMP_PUBLISH_TLS as PUBLISH_ON_WEB_DEPLOYMENT_COMP_TLS,
+)
+from opi.services.registry import deployment_component_service_visualizers
 
 DEPLOYMENT_NAME = EditableVisualizer(
     editable=DEPLOYMENT_NAME_EDITABLE,
@@ -76,7 +80,7 @@ DEPLOYMENT_CUSTOM_BASE_DOMAIN = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Eigen domein",
     placeholder="voorbeeld.nl",
-    help_text="Voer uw eigen domeinnaam in. U bent zelf verantwoordelijk voor DNS-configuratie. Gebruik het domein zonder 'subdomein', dus voorbeeld.nl en niet www.voorbeeld.nl",
+    help_text="Voer je eigen domeinnaam in. Je bent zelf verantwoordelijk voor DNS-configuratie. Gebruik het domein zonder 'subdomein', dus voorbeeld.nl en niet www.voorbeeld.nl",
 )
 
 DEPLOYMENT_DOMAIN_MODE = EditableVisualizer(
@@ -145,7 +149,7 @@ BACKUP_RESOURCE_TYPES = EditableVisualizer(
     editable=BACKUP_RESOURCE_TYPES_EDITABLE,
     widget=WidgetType.CHECKBOX_GROUP,
     label="Resource types",
-    description="Selecteer welke resource types u wilt back-uppen.",
+    description="Selecteer welke resource types je wilt back-uppen.",
 )
 
 DEPLOYMENT_COMP_REFERENCE = EditableVisualizer(
@@ -165,18 +169,6 @@ DEPLOYMENT_COMP_PULL_POLICY = EditableVisualizer(
     editable=DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
     widget=WidgetType.SELECT,
     label="Pull policy",
-)
-
-DEPLOYMENT_COMP_USER_ENV_VARS = EditableVisualizer(
-    editable=DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
-    widget=WidgetType.KEY_VALUE,
-    label="Omgevingsvariabelen",
-    description="Deployment-specifieke omgevingsvariabelen voor dit component.",
-    help_text=(
-        "Overschrijft de omgevingsvariabelen uit de componentdefinitie voor deze deployment. "
-        "Bijvoorbeeld: API_URL=https://api.production.example.com"
-    ),
-    attributes={"kv_format": "env"},
 )
 
 DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE = EditableVisualizer(
@@ -229,7 +221,8 @@ DEPLOYMENT_COMPONENTS_SEQ = EditableVisualizer(
         DEPLOYMENT_COMP_REFERENCE,
         DEPLOYMENT_COMP_IMAGE,
         DEPLOYMENT_COMP_PULL_POLICY,
-        DEPLOYMENT_COMP_USER_ENV_VARS,
+        # Per-service deployment-component visualizers, from the registry (RC-25).
+        *deployment_component_service_visualizers(),
         DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE,
     ],
 )
@@ -241,24 +234,11 @@ DEPLOYMENT_COMP_REFERENCE_READONLY = EditableVisualizer(
     readonly_on_edit=True,
 )
 
-DEPLOYMENT_COMP_PUBLISH_TLS = EditableVisualizer(
-    editable=DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="TLS-modus",
-    help_text=(
-        "Erven = gebruik de instelling van het component. Anders een override voor deze "
-        "deployment: standaard (platform), passthrough (cert op de pod), of aangeleverd "
-        "(eigen cert op de ingress)."
-    ),
-    attributes={"data-rerender": "true"},
-)
-
-DEPLOYMENT_COMP_PUBLISH_ATTACHMENT = EditableVisualizer(
-    editable=DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="Certificaat (bijlage)",
-    help_text="De PEM-bijlage (cert + key) die als certificaat op de ingress komt.",
-)
+# The per-deployment certificate override belongs to publish-on-web and is declared in its
+# package (RC-78), where the deployment form also picks it up from. Re-exported here under
+# the names the domain wizard's certificate step already used.
+DEPLOYMENT_COMP_PUBLISH_TLS = PUBLISH_ON_WEB_DEPLOYMENT_COMP_TLS
+DEPLOYMENT_COMP_PUBLISH_ATTACHMENT = PUBLISH_ON_WEB_DEPLOYMENT_COMP_ATTACHMENT
 
 DEPLOYMENT_CERT_COMPONENTS_SEQ = EditableVisualizer(
     editable=DEPLOYMENT_CERT_COMPONENTS_SEQ_EDITABLE,

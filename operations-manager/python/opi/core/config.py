@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+from typing import Any
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
@@ -139,7 +140,38 @@ def _get_env_files() -> list[str]:
 
 
 class Settings(BaseSettings):
-    model_config = {"env_file": _get_env_files(), "env_file_encoding": "utf-8"}
+    # ``extra="allow"`` instead of pydantic-settings' default ``forbid``: an unknown key is
+    # reported, not fatal.
+    #
+    # Forbidding meant an OPI image refused to start on a config file that mentions a
+    # setting newer than itself, which is exactly what a rollback or an upgrade test does.
+    # It cost the upgrade-safety run twice: the baseline image crash-looped on SLEEP_MODE_*
+    # and the operator had to strip those lines from the live ConfigMap by hand, then put
+    # them back before swapping to the new image. The second time one line was missed
+    # (KEYCLOAK_ENFORCE_ADMIN_OTP), so the new side ran without OTP and the test could not
+    # show anything about it -- silently, because nothing complains about a setting that is
+    # simply absent.
+    #
+    # The reason for forbidding was catching typos in configuration, and that is worth
+    # keeping, so unknown keys are logged as a warning naming each one (see
+    # ``_warn_about_unknown_settings``). A typo still surfaces; a rollback no longer bricks.
+    model_config = {"env_file": _get_env_files(), "env_file_encoding": "utf-8", "extra": "allow"}
+
+    def model_post_init(self, __context: Any) -> None:
+        self._warn_about_unknown_settings()
+
+    def _warn_about_unknown_settings(self) -> None:
+        """Name every config key this build does not know.
+
+        Two causes, and the message cannot tell them apart: a typo, or a setting from a
+        newer version than this image. Both are worth seeing.
+        """
+        unknown = sorted(self.model_extra or {})
+        if unknown:
+            logger.warning(
+                f"{len(unknown)} unknown configuration key(s) ignored by this build "
+                f"(a typo, or a setting newer than this image): {', '.join(unknown)}"
+            )
 
     OWN_DOMAIN: str = "operations-manager.kind"
     ADDITIONAL_DOMAINS: str = ""  # Comma-separated list of additional domains for redirect URIs
@@ -170,6 +202,12 @@ class Settings(BaseSettings):
     OIDC_CLIENT_ID: str | None = None
     OIDC_CLIENT_SECRET: str | None = None
     OIDC_DISCOVERY_URL: str | None = None
+
+    # CLI settings - the public OIDC client the zad-cli uses for the
+    # authorization-code + PKCE loopback flow (RFC 8252), and the audience its
+    # access tokens must carry for this API to accept them.
+    CLI_CLIENT_ID: str = "zad-cli"
+    CLI_TOKEN_AUDIENCE: str = "zad-api"
 
     # Invite system settings
     INVITE_CLIENT_ID: str = "operations-manager-invites"
@@ -262,6 +300,28 @@ class Settings(BaseSettings):
     KEYCLOAK_ADMIN_USERNAME: str = "admin"
     KEYCLOAK_ADMIN_PASSWORD: str = "changeMe123!"
 
+    # OPI's own client-credentials service account for Keycloak admin operations.
+    # When the secret is set, OPI authenticates with this confidential master
+    # client instead of the shared admin password, so the admin account can be
+    # OTP-enforced/locked without locking OPI out. The admin password is only
+    # needed for first-boot self-bootstrap of this client (and as break-glass).
+    # A second, human master admin that carries an OTP credential from creation. Keycloak
+    # makes the shared KEYCLOAK_ADMIN itself at first boot, so that one can never be born
+    # with a second factor; this one can. Empty means the bootstrap step does nothing.
+    KEYCLOAK_OTP_ADMIN_USERNAME: str = ""
+    KEYCLOAK_OTP_ADMIN_PASSWORD: str = ""
+    KEYCLOAK_OTP_ADMIN_TOTP_SECRET: str = ""
+
+    KEYCLOAK_ADMIN_CLIENT_ID: str = "opi-admin-service"
+    KEYCLOAK_ADMIN_CLIENT_SECRET: str = ""
+
+    # Shared OTP for project realm-admin accounts. Off by default so enabling the
+    # feature is a deliberate, controlled rollout: when False, no OTP is
+    # generated, stored, shown, or enforced anywhere. When True, newly created
+    # realms get a shared OTP credential at creation and existing realms are
+    # retrofitted (seed shown in the portal) the next time they are processed.
+    KEYCLOAK_ENFORCE_ADMIN_OTP: bool = False
+
     # Default shared realm configuration
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "RIG Platform"
@@ -344,28 +404,9 @@ class Settings(BaseSettings):
     LOGWATCHER_WINDOW: str = "now-35m"  # Loki look-back per run (30m cadence + 5m overlap)
     LOGWATCHER_DEDUP_HOURS: float = 6.0  # do not re-alert the same signature within this window
 
-    # Resource tuning configuration
-    RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
-    RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed (request)
-    # Memory limit = observed peak x this factor (burst headroom above the peak).
-    # Limits decay with the peak instead of being frozen; a valid OOM floor is the
-    # lower bound and the OOM watcher is the reactive net for unobserved boot spikes.
-    RESOURCE_TUNING_MEMORY_LIMIT_FACTOR: float = 1.5
-    RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Legacy symmetric threshold (superseded by the asymmetric gate)
-    RESOURCE_TUNING_OOM_FLOOR_MIN_AGE_DAYS: int = 10  # OOM floor may expire after this many days...
-    RESOURCE_TUNING_OOM_FLOOR_STABLE_PERCENT: int = 50  # ...if observed max stays below this % of the floor
-    # Asymmetric deviation gate: react promptly to increases (reliability),
-    # conservatively to decreases (cost only) so we don't churn git/ArgoCD.
-    RESOURCE_TUNING_INCREASE_THRESHOLD: int = 10  # Apply an increase when the request grows by >= this %
-    RESOURCE_TUNING_DECREASE_THRESHOLD: int = 30  # Apply a decrease only when the request shrinks by >= this %
-    # Scheduled fleet-wide auto-tuner (reads VPA where available, else Prometheus)
-    RESOURCE_TUNING_SCHEDULER_ENABLED: bool = True
-    RESOURCE_TUNING_HOUR: int = 1  # Hour (Europe/Amsterdam) of the nightly fleet sweep; before backups (~2am)
-    RESOURCE_TUNING_PACE_SECONDS: int = 15  # Delay after each changed project, to spread pod rollouts
-    # Absolute deadband: ignore a change smaller than this regardless of percentage,
-    # so tiny pods near the floor don't churn on a few MB / a few millicores.
-    RESOURCE_TUNING_MIN_DELTA_MI: int = 16  # memory, in Mi
-    RESOURCE_TUNING_MIN_DELTA_M: int = 10  # CPU, in millicores
+    # Resource tuning parameters moved to the resource-tuning service package
+    # (opi/services/catalog/resource_tuning/config.py): a system service owns its own
+    # config as a validated dict, and these have never been environment-driven.
     # Mirrors the upstream VPA recommender's podMinMemoryMb floor
     # (--pod-recommendation-min-allowed-memory-mb). A target at this value carries
     # no real signal (usage is below the floor), so fall back to Prometheus for the
@@ -434,6 +475,16 @@ class Settings(BaseSettings):
     BACKUP_SWEEP_DRY_RUN: bool = True
     BACKUP_ORPHAN_RETENTION_DAYS: int = 30
 
+    # Sleep-mode: scale idle preview deployments to zero after a deadline and wake
+    # them on request. These are operational toggles (env-overridable); the actual
+    # sleep-mode config and its cluster-wide default are owned by the service package
+    # (opi/services/catalog/sleep_mode).
+    SLEEP_MODE_SCHEDULER_ENABLED: bool = True
+    SLEEP_MODE_SWEEP_MINUTES: int = 30  # how often the sweeper checks deadlines
+    SLEEP_MODE_PACE_SECONDS: int = 15  # delay between changed projects, to spread commits
+    SLEEP_MODE_WAKING_TIMEOUT_MINUTES: int = 10  # revert a stuck `waking` back to `awake`
+    SLEEP_MODE_WAKER_IMAGE: str = "ghcr.io/minbzk/base-images/zad-waker:latest"
+
     # Ephemeral database console (on-request, auto-expiring web DB client).
     # OPI applies/removes these directly (outside git/ArgoCD); a reaper enforces
     # the TTL and a per-pod activeDeadlineSeconds is the hard backstop.
@@ -449,6 +500,12 @@ class Settings(BaseSettings):
     # since docker.io/ghcr are blocked on ODCN.
     DB_CONSOLE_PGWEB_IMAGE: str = "sosedoff/pgweb:0.16.2"
     DB_CONSOLE_DBGATE_IMAGE: str = "dbgate/dbgate:6.6.1"
+
+    # TransIP DNS API, used to keep CAA records on the zones we administer.
+    # Their presence is the on/off switch: without credentials the CAA reconciler
+    # skips, so sandbox and local do nothing by themselves.
+    TRANSIP_ACCOUNT_NAME: str | None = None
+    TRANSIP_PRIVATE_KEY: str | None = None  # PEM, the whole key
 
     # Ad-hoc job runs (run an image + command once; a "run" like the console).
     # Independently toggleable and TTL'd; the shared run reaper sweeps both kinds.

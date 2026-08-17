@@ -1,0 +1,74 @@
+{#
+  Wizard Step Indicator - shows progress through wizard steps.
+
+  Dit was een eigen <nav> met een <ol class="wizard-steps__list">, een genummerde bol per
+  stap, een streep ertussen via ::after en een handgetekende voortgangsbalk eronder - bij
+  elkaar vijftien selectors in wizard.css. Daar bestaat een component voor:
+  <c-step-indicator> met <c-step-indicator-item>-kinderen. bg/_wizard-steps.html.j2 deed
+  het al zo; dit is dezelfde omzetting voor de bestaande wizard.
+
+  Het component leidt "past / current / future" zelf af uit `current`, maar wij zetten de
+  stand per stap expliciet. Onze afgeronde stappen hoeven namelijk niet aaneengesloten te
+  zijn: wie terugspringt heeft een latere stap al af, en die hoort een link te blijven.
+
+  De review-stap staat niet in steps.all. Dan wijst `current` voorbij de laatste stap, en
+  is elke afgeronde stap een link - net als in de bestaande balk.
+
+  DE ID IS VAN DE WIKKEL. Hier stond id="wizard-steps" op de <nav>, terwijl de sjablonen
+  die deze balk buiten het doel om verwisselen (wizard_step, wizard_review) hem al in een
+  <div id="wizard-steps" hx-swap-oob="outerHTML"> zetten. Dat waren dus TWEE elementen met
+  hetzelfde id op een pagina. De wikkel houdt het id, deze partial niet meer - zelfde
+  verdeling als aan de bg-kant.
+
+  Required context:
+    - steps: WizardSteps object
+
+  Optional context (for reuse outside wizard):
+    - step_base_url: URL prefix for step links (default: /forms/wizard/<flow_id>/step/)
+    - step_target: HTMX target selector (default: #wizard-step-content)
+    - step_query_params: Query string to append to step URLs (default: "")
+    - flow_id: FormFlow ID (required when step_base_url is not set)
+
+  step_push_url wordt niet meer gelezen. Het stond in de contextlijst maar werd nergens
+  gebruikt: de oude markup zette geen hx-push-url, en deze doet dat ook niet.
+#}
+{% set base_url = step_base_url | default('/forms/wizard/' ~ flow_id ~ '/step/') %}
+{% set target = step_target | default('#wizard-step-content') %}
+{% set query_params = step_query_params | default('') %}
+{% set current_index = (steps.index + 1) if steps.current in steps.all else (steps.count + 1) %}
+
+<c-step-indicator current="{{ current_index }}" accessible-label="Wizard voortgang">
+    {% for section_id in steps.all %}
+        {% set is_current = section_id == steps.current %}
+        {% set is_completed = section_id in steps.completed %}
+        {% if is_completed and not is_current %}
+            {# Een afgeronde stap blijft een echte link, zodat hij zonder JavaScript
+               werkt; htmx onderschept hem en post eerst de huidige stap, zodat wat je net
+               typte niet verdwijnt door terug te springen.
+
+               De htmx-attributen gaan via :attrs en niet los in de tag. Reden: hx-vals en
+               hx-headers dragen JSON, dus aanhalingstekens, en een los attribuut waar een
+               expressie in staat komt ONGEESCAPED naar buiten - dan sluit de eerste " in
+               de JSON het attribuut en is de tag stuk. De :attrs-spread escapet elke
+               waarde. #}
+            {% set stap_attrs = {
+                'hx-post': base_url ~ steps.current ~ query_params,
+                'hx-target': target,
+                'hx-swap': 'innerHTML',
+                'hx-include': '#wizard-step-form',
+                'hx-vals': '{"_goto": "' ~ section_id ~ '"}',
+                'hx-ext': 'json-enc',
+                'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
+            } %}
+            <c-step-indicator-item
+                text="{{ steps.titles[section_id] }}"
+                status="past"
+                href="{{ base_url }}{{ section_id }}{{ query_params }}"
+                :attrs="stap_attrs" />
+        {% else %}
+            <c-step-indicator-item
+                text="{{ steps.titles[section_id] }}"
+                status="{{ 'current' if is_current else 'future' }}" />
+        {% endif %}
+    {% endfor %}
+</c-step-indicator>

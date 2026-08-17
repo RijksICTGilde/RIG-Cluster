@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import yaml
-from opi.core.templates import get_templates
+from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
 from opi.manager.job_manager import ANNOT_COMMAND, ANNOT_IMAGE, JobManager, JobRun
 from opi.manager.run_support import ANNOT_EXPIRES, ANNOT_OPENED_BY, LABEL_RUN, LABEL_RUN_DEPLOYMENT
@@ -31,7 +31,7 @@ def test_generate_job_name():
 
 def _render_tasks(items) -> str:
     req = SimpleNamespace(scope={"type": "http"}, headers={}, state=SimpleNamespace())
-    tmpl = get_templates().get_template("project-details/section-tasks.html.j2")
+    tmpl = templates_lotc.get_template("bg/_tasks.html.j2")
     return tmpl.render(request=req, project_name="proj", items=items)
 
 
@@ -41,7 +41,7 @@ def test_tasks_tab_empty():
 
 
 def test_tasks_tab_lists_runs_and_tasks():
-    # Unified rows as produced by router_jobs._normalize_run / _normalize_task.
+    # Unified rows as produced by router_tasks._normalize_run / _normalize_task.
     items = [
         {
             "soort": "Project verversen",
@@ -78,7 +78,7 @@ def test_tasks_tab_lists_runs_and_tasks():
 
 
 def test_normalize_run_and_task():
-    from opi.web.router_jobs import _normalize_run, _normalize_task
+    from opi.web.router_tasks import _normalize_run, _normalize_task
 
     run = _normalize_run({"kind": "db-console", "deployment": "dep", "status": "running", "started_by": "a@b.nl"})
     assert run["soort"] == "Databaseconsole"
@@ -219,7 +219,7 @@ def _fake_request():
 
 
 def _render_modal(**ctx) -> str:
-    tmpl = get_templates().get_template("project-details/_job-modal.html.j2")
+    tmpl = templates_lotc.get_template("shared/_job-modal.html.j2")
     return tmpl.render(request=_fake_request(), **ctx)
 
 

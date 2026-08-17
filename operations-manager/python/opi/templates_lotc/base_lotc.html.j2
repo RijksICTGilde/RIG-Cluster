@@ -1,0 +1,268 @@
+{#
+  Basistemplate voor de LOTC-bouwlijn, in de opzet van bg.rijks.app.
+
+  De tegenhanger van templates/base.html.j2, maar gerenderd door de LOTC-omgeving
+  (opi/core/templates_lotc.py) in plaats van door jinja-roos. Zolang de omzetting
+  loopt bestaan beide schillen naast elkaar; deze verdwijnt niet, de andere wel.
+
+  De grens tussen de twee systemen loopt per overervingsketen: een pagina die dit
+  template uitbreidt wordt door de LOTC-omgeving gerenderd en mag dus uitsluitend
+  LOTC-componenten gebruiken. Mengen binnen een keten kan niet - beide systemen
+  eisen alle <c-*>-tags op.
+
+  WAAROM DE SCHIL IN EEN BESTAND STAAT EN NIET IN DEELTEMPLATES
+  Een {% include %} van een deeltemplate dat zelf componenten gebruikt, breekt zodra
+  dit template <template slot=...> gebruikt: de ingevoegde partial verliest dan de
+  renderers voor zijn eigen componenten ("'_lotc_jinja_menu_item' is undefined").
+  Gemeten op LOTC 26ab110, gemeld aan het LOTC-project. Tot dat verholpen is staat de
+  markup van de schil hier bij elkaar.
+
+  Dat is geen verlies aan compartimentering, want de markup is niet waar de keuzes
+  zitten. De INDELING staat in opi/web/navigation_lotc.py: welke items in de hulpbalk
+  horen en welke in de zijkolom, hoe ze gegroepeerd zijn, en hoe onze ROOS-iconen op
+  de NLDD-woordenschat afbeelden. Wie de opzet wil verschuiven - en dat gaat gebeuren,
+  bg.rijks.app is ons voorbeeld en nog in beweging - verandert dat bestand en raakt
+  geen template aan.
+
+  Drie verschillen met de roos-schil die bij het omzetten steeds terugkomen:
+    - attributen zijn kebab-case (body-class, max-width), niet camelCase
+    - samenstellingen krijgen KINDEREN, geen data-props: <c-menu> met <c-menu-item>
+      in plaats van :items="menu_items"
+    - <c-page> bedraadt zelf de <head>, inclusief de CSS/JS van elk actief design
+      system onder /static/lotc/
+#}
+
+{% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
+
+{# Wat het gebruikersmenu rechtsboven nodig heeft. Uit het verzoek en niet uit een extra
+   contextsleutel, zodat elke route die deze schil gebruikt hem meteen goed heeft - ook
+   de routes die hun context zelf samenstellen. #}
+{% set gebruikersnaam = (navigation.utility | selectattr('link', 'equalto', '/account') | map(attribute='label') | first) | default('Account', true) %}
+{# IS ER EIGENLIJK IEMAND INGELOGD? get_menu_items() zet /account en /auth/logout alleen in
+   de hulpbalk als er een gebruiker is, en anders "Inloggen" (opi/web/menu.py). De schil
+   negeerde dat en tekende het accountmenu altijd, dus kreeg een ANONIEME bezoeker
+   rechtsboven "Account" met daarin "Profiel" en "Uitloggen" - drie bestemmingen die hem
+   alle drie op het inlogscherm zetten, terwijl de weg die hij zoekt (inloggen) er niet
+   stond. Dat viel niet op zolang alleen /about publiek was; sinds /introductie de
+   landingspagina is, is dit het eerste dat een nieuwkomer rechtsboven ziet. #}
+{% set is_ingelogd = (navigation.utility | selectattr('link', 'equalto', '/account') | list | length) > 0 %}
+{% set gekozen_weergave = request.cookies.get('zad_scheme', '') %}
+{% set huidig_pad = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
+
+{# htmx komt niet vanzelf mee. setup_components(htmx=True) zet alleen de validatie van
+   hx-attributen aan; het script moet je zelf laden. Zonder blijft elk blok dat de pagina
+   lazy inlaadt op zijn plaatshouder staan - zichtbaar op het scherm, stil in de tests.
+
+   Uit static/js/ en niet van unpkg.com. Beide schillen haalden hem van een CDN, en dat is
+   voor de HELE interactielaag van dit portaal een afhankelijkheid buiten de deur: valt die
+   weg of is er geen uitgaand verkeer, dan laadt er niets meer bij en blijft elk lazy blok
+   op zijn plaatshouder staan. In eigen beheer is het een bestand dat met de image meekomt.
+   Zelfde versie (1.9.12), zodat dit alleen over de HERKOMST gaat. #}
+{# Een pagina die de gedeelde dialoog gebruikt zet hier zijn eigen stylesheet en scripts
+   bij, via {% block head_extra %}. Ze staan bewust NIET standaard in de schil: de meeste
+   pagina's openen geen dialoog, en dan is het drie bestanden voor niets. #}
+{# NLDD leest de licht/donker-stand van `data-scheme` op <html>, en <c-page> laat geen
+   attribuut op die tag toe (gemeten: theme= en :attrs verdwijnen allebei). Deze regel zet
+   hem alsnog, vóór de eerste weergave, uit de waarde die de SERVER al kent - dus zonder
+   dat de pagina eerst licht opkomt en dan omslaat. Bij "systeem" gebeurt er niets en
+   volgt NLDD de voorkeur van het besturingssysteem.
+
+   Zodra <c-page> een attribuut doorlaat kan dit weg; gemeld aan het LOTC-project. #}
+{% set scheme_script %}{% if gekozen_weergave %}<script>document.documentElement.setAttribute('data-scheme','{{ gekozen_weergave }}')</script>{% endif %}{% endset %}
+{# form-associated.js hoort direct achter htmx: het corrigeert de parameters die htmx
+   verzamelt voor web-componenten die hun waarde via ElementInternals leveren (elk
+   aanvinkvakje van het thema). Naast htmx en niet naast json-enc, want het geldt voor elk
+   htmx-verzoek uit een formulier, ongeacht de codering. Zie features/aanvinkvakje.md. #}
+{% set lotc_head %}<script src="{{ static_url('js/htmx.min.js') }}"></script><script src="{{ static_url('js/form-associated.js') }}"></script><script src="{{ static_url('js/htmx-formgedrag.js') }}"></script><link rel="stylesheet" href="{{ static_url('css/lotc-app.css') }}">{{ scheme_script }}{% block head_extra %}{% endblock %}{% endset %}
+
+<c-page title="{{ page_title_value }}" lang="nl" head="{{ lotc_head }}">
+
+{# DE PAGINA-INDELING, zoals het LOTC-project hem heeft aangereikt en geverifieerd.
+
+   Hier stond <c-app-shell>, en dat gaf geen bovengrens aan de inhoud: <main> had
+   `max-width: none` en groeide lineair mee, 1008px bij een viewport van 1280 maar 2288px
+   bij 2560. Tekstregels van 2288 pixels leest niemand.
+
+   De bovengrens komt uit `width="1920px"` op de DRIE regio's (kopbalk, sidebar-section,
+   voettekst): dat zet --_max-width, waardoor de achtergrond tot de rand doorloopt en de
+   inhoud afkapt. Het getal is een keuze en staat hier een keer per regio.
+
+   Wat wij zelf uitprobeerden en wat NIET werkte, zodat niemand het opnieuw doet:
+   <c-container max-width> en <c-simple-section> houden allebei `max-width: none`, en
+   <nldd-page> als kale wikkel OM <c-app-shell> heen deed niets aan de breedte terwijl hij
+   wel het venster-scrollen brak. De sleutel is de vlakverdeling hieronder, niet een wikkel.
+
+   nldd-top-navigation-bar, nldd-page-footer en nldd-menu-bar zijn nog rauwe tags: die zijn
+   nog niet als c-* gemapt. Dat werkt sinds de slot-fix in LOTC 7ee5efa. #}
+<nldd-page background="inherit">
+
+    {# logo-title is de tweede regel naast het logo; die droegen wij eerder als subtitle=
+       op <c-header> en waren we kwijt. Wies zet hem hier, en zonder valt de kopbalk uit
+       elkaar omdat er maar een van de twee regels is. #}
+    <nldd-top-navigation-bar slot="header" width="1920px"
+        logo-title="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+        {# website-title is de KORTE naam van de site, als link linksboven; Wies zet daar
+           "Wies". De volledige zin stond hier eerst en las als een lap tekst in een link.
+           De organisatie hoort in logo-title hierboven. #}
+        website-title="Zelfservice Applicatie Deployment (ZAD)" website-href="/">
+        <nldd-menu-bar slot="utility" accessible-label="Gebruikersmenu">
+
+                    <nldd-menu-bar-item text="Weergave" icon="sun" expandable>
+                        <nldd-menu placement="bottom-start" variant="menu">
+                            {% for waarde, weergave_label in [("", "Systeem"), ("light", "Licht"), ("dark", "Donker")] %}
+                                <nldd-menu-item type="radio" text="{{ weergave_label }}"
+                                                href="/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}"
+                                                onclick="location.href='/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}'"
+                                                {% if waarde == gekozen_weergave %}selected{% endif %}></nldd-menu-item>
+                            {% endfor %}
+                        </nldd-menu>
+                    </nldd-menu-bar-item>
+
+                    {% if navigation.beheer %}
+                        <nldd-menu-bar-item text="Beheer" icon="gear" expandable>
+                            <nldd-menu placement="bottom-start" variant="menu">
+                                {% for item in navigation.beheer %}
+                                    <nldd-menu-item text="{{ item.label }}" href="{{ item.link }}" onclick="location.href='{{ item.link }}'"></nldd-menu-item>
+                                {% endfor %}
+                            </nldd-menu>
+                        </nldd-menu-bar-item>
+                    {% endif %}
+
+                    {% if is_ingelogd %}
+                        <nldd-menu-bar-item text="{{ gebruikersnaam }}" icon="person-circle" expandable>
+                            <nldd-menu placement="bottom-start" variant="menu">
+                                <nldd-menu-item text="Profiel" href="/account" onclick="location.href='/account'"></nldd-menu-item>
+                                <nldd-menu-divider></nldd-menu-divider>
+                                <nldd-menu-item text="Uitloggen" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>
+                            </nldd-menu>
+                        </nldd-menu-bar-item>
+                    {% else %}
+                        {# Geen uitklapmenu maar een enkele knop: er valt niets te kiezen.
+                           Een <nldd-menu-BAR-item> navigeert wel gewoon op zijn href - het
+                           is de <nldd-menu-item> in een uitklapmenu die dat niet doet. #}
+                        <nldd-menu-bar-item text="Inloggen" icon="person-circle" href="/auth/login"></nldd-menu-bar-item>
+                    {% endif %}
+
+        </nldd-menu-bar>
+    </nldd-top-navigation-bar>
+
+    <c-sidebar-section width="1920px" sidebar-label="Navigatie" sticky-top>
+        {# De navigatie ZONDER <nldd-container> eromheen: die gaf hem een eigen vlak met
+           achtergrond en ronde hoeken, en dat is niet wat wij willen. We gebruiken de
+           vlakverdeling van NLDD met ons eigen menu erin, dus <c-sidenav> hangt
+           rechtstreeks in het slot. #}
+
+            {# <c-sidenav-group> is een BROER van de items die eronder horen, geen
+               ouder die ze omvat. De groepering zit dus in de volgorde, en daarom
+               levert navigation_lotc de zijkolom al als (kopje, items)-paren in
+               weergavevolgorde. #}
+            {# De zijkolom staat in een blok, zodat een pagina hem kan VERVANGEN in plaats
+               van er iets onder te hangen. Dat is nodig zodra je een project selecteert:
+               dan wil je geen tweede niveau onder "Projecten" maar een heel andere set
+               (Overzicht, Componenten, Deployments). Een tweede niveau kan hier ook niet:
+               c-sidenav-group is een KOPJE en geen uitklapbare ouder - het is een broer
+               van de items eronder. #}
+            {% block sidenav %}
+            <c-sidenav slot="sidebar">
+                {% for label, items in navigation.sidebar %}
+                    {% if label %}
+                        <c-sidenav-group label="{{ label }}" />
+                    {% endif %}
+                    {% for item in items %}
+                        <c-sidenav-item
+                            label="{{ item.label }}"
+                            href="{{ item.link }}"
+                            icon="{{ item.icon | default('', true) | nldd_icon }}"
+                            :active="item.active" />
+                    {% endfor %}
+                {% endfor %}
+            </c-sidenav>
+            {% endblock %}
+
+        {# tabindex zodat de skip-link hier kan landen. #}
+        <div id="hoofdinhoud" tabindex="-1">
+        <c-stack gap="lg">
+            {% block content %}
+                <c-stack gap="xs">
+                    <c-heading type="h1" size="3" label="Welkom bij het Self Service Portal" />
+                    <c-paragraph>Gebruik de navigatie om door de verschillende secties te bladeren.</c-paragraph>
+                </c-stack>
+            {% endblock %}
+        </c-stack>
+        </div>
+    </c-sidebar-section>
+
+    <nldd-page-footer slot="footer" width="1920px">
+        <nldd-container>
+
+            {# De voettekst stond er niet, en daarmee waren "Over het platform", de
+               architectuurpagina, de API-referentie en de versievermelding op ELKE pagina
+               onbereikbaar - vier bestemmingen die de bestaande schil wel heeft. Dit is
+               dezelfde inhoud als in base.html.j2; de vorm volgt het thema. #}
+            {% set vi = version_info() %}
+            {% set version_label = 'ZAD ' + vi.version
+                + (' @ ' + vi.branch if vi.branch else '')
+                + (' *' if vi.dirty else '')
+                + (' (' + vi.build_date + ')' if vi.build_date else '') %}
+            {% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
+            {# HET BLAUWE BLOKJE onderaan de voettekst is NIET van ons, en het is ook geen fout.
+               Het is `.page-footer::after` in de schaduwboom van nldd-page-footer: een
+               decoratief vlakje van 48 bij 24 in rgb(21, 66, 115). Het staat op elke pagina en
+               het is drie keer aangezien voor een kapot element - onvindbaar met elke
+               DOM-controle, want een pseudo-element komt in geen enkele querySelector voor.
+               Wie het weg wil, moet dat bij het thema aankaarten.
+
+               De voettekst heeft drie slots: breadcrumbs, de hoofdinhoud, en een legal-bar
+               onderaan. De links horen in de hoofdinhoud, de versievermelding erbij.
+
+               Hier stonden twee <c-menu>'s. Een c-menu rendert ALTIJD een <nldd-menu-bar>, en
+               dat is een horizontale navigatiebalk: hij meet zichzelf op en hangt er een
+               overloopknop ("Meer opties") aan als hij denkt dat de inhoud niet past. Voor
+               een rijtje voetteksmenu-items is dat het verkeerde gereedschap, en de kop
+               "Platform" die base.html.j2 wel heeft (als label van de primaryMenu) kan er
+               helemaal niet in.
+
+               LET OP, want dit is een val waar deze omzetting al twee keer in trapte: een
+               <nldd-menu-BAR-item> navigeert WEL gewoon op zijn href. Het is de
+               <nldd-menu-item> in een uitklapmenu die dat niet doet (zie bg/projects.html.j2).
+               Die twee lijken op elkaar en gedragen zich anders. #}
+            {# GEEN <c-footer> hier: die zit binnen <nldd-page-footer> en dan render je twee
+               voetteksten in elkaar - zichtbaar als het Rijkswapen dat onderaan twee keer
+               staat. De buitenste is de juiste, want die draagt slot="footer" en de
+               1920-grens. Wat hier stond is de INHOUD van onze voettekst; die blijft. #}
+                <c-stack gap="xs">
+                    <c-heading type="h2" size="6" label="Platform" />
+                    {# De introductie staat hier ook al is hij de landingspagina van ``/``:
+                       wie ingelogd is komt daar nooit meer langs (``/`` gaat dan naar het
+                       dashboard), en dan is de voettekst de enige weg terug. #}
+                    <c-link href="/introductie" label="Introductie" />
+                    <c-link href="/about" label="Over het platform" />
+                    {# /docs en niet /api: dat laatste stond hier en levert een 404. De
+                       bestaande voettekst (base.html.j2) wijst naar /docs, de door FastAPI
+                       geserveerde Swagger-pagina; bij het omzetten is dat /api geworden. Het
+                       staat in base_lotc, dus het was op ELKE pagina fout, en niets sloeg erop
+                       aan: een link controleert niemand tot iemand erop klikt. Sinds RC-65
+                       loopt tests/e2e/test_lotc_links.py elke interne link na. #}
+                    <c-link href="/docs" label="API Referentie" />
+                </c-stack>
+
+                    {# De versievermelding staat BIJ de links en niet in de legal-bar-slot.
+                       Die slot leek de aangewezen plek, maar een
+                       <nldd-page-footer-legal-bar-item> toont zijn text= niet: wat er
+                       overbleef was een leeg donkerblauw blokje onder een scheidingslijn,
+                       op elke pagina. Dat blokje was er al voordat ik hieraan begon en het
+                       is precies dit. #}
+                    {% if commit_ref %}
+                        <c-link href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}"
+                                label="{{ version_label }}" />
+                    {% else %}
+                        <c-paragraph size="sm">{{ version_label }}</c-paragraph>
+                    {% endif %}
+            </nldd-container>
+    </nldd-page-footer>
+
+</nldd-page>
+
+    {% block additional_styles %}{% endblock %}
+    {% block additional_scripts %}{% endblock %}
+</c-page>

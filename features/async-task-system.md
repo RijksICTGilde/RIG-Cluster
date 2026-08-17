@@ -311,6 +311,29 @@ Each handler receives:
 
 Each handler calls the appropriate `ProjectManager` methods, exactly as the current inline code does, but through the persistent progress manager. Handlers have **no dependency on FastAPI or the Request object** -- they only use `ProjectManager`, connectors, and the progress manager.
 
+#### How a handler reports failure
+
+The task's `status` is the field a caller reads first, so it must say what happened. A
+handler signals failure in one of three ways, and `reported_failure()` in
+`opi/core/task_worker.py` reads all three:
+
+1. `{"success": False, "error": ...}` -- the backup and restore handlers;
+2. `{"status": "failed", "error": ..., "error_type": ...}` -- the component and service handlers;
+3. calling `progress.fail_project(...)`, whatever it returns afterwards.
+
+Any of the three ends the task on `status: failed` with the handler's own result kept
+(so `error_type` and the parts that did succeed survive) and **without a retry** -- the
+handler already decided this is permanent.
+
+This used to read only the first form. A rejected service selection therefore reported
+`status: completed` while its own `result` said `failed`, its `error_message` was set and
+its subtask "Component toevoegen" had failed -- measured in
+`docs/generale-repetitie-2026-08-12.md`, bevinding 5. Form 3 was a race on top of that:
+`fail_project()` writes fire-and-forget, and the worker's `complete_task()` landed after it.
+
+A task that succeeds is unchanged: `complete_task()`, `progress_percent: 100`,
+`current_step: Done`.
+
 ### Instance Identification
 
 ```python
@@ -393,6 +416,23 @@ POST /api/tasks                    -- Create task directly (used by federation, 
 | (not found) | `404 Not Found` | Unknown task ID |
 
 Clients use the HTTP status code to decide whether to keep polling: `202` means retry, `200` means done (check `status` for success vs failure).
+
+### Who may poll a task
+
+`GET /api/tasks/{task_id}` and `POST /api/tasks/{task_id}/:cancel` accept two credentials:
+
+1. The **project's `X-API-Key`**, compared against the project the task belongs to. This is the
+   normal path.
+2. An **`Authorization: Bearer <SSO token>`** whose email equals the task's `created_by`.
+
+The second exists for exactly one case: `POST /api/v2/projects` returns the new project's API key
+with its `202`, but that key is only accepted once the project file exists - which is what the task
+is still doing. Without a second way in, a client that just created a project has nothing to poll
+and no signal to wait for. The task records who started it, so that person's token is that signal.
+
+A valid token says who the caller is, not that the task is theirs: a task without `created_by`
+cannot be opened with any token, and another user's token is refused. See
+`opi/api/task_router.py::_validate_task_access` and `tests/test_task_router.py::TestGetTaskWithBearerToken`.
 
 ### Response Format
 

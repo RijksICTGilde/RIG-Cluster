@@ -8,7 +8,9 @@ including deployments, services, PVCs, and other manifest resources.
 import logging
 import re
 from enum import Enum
-from typing import Any, Literal, get_args
+from typing import Any, get_args
+
+from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
 
 logger = logging.getLogger(__name__)
 
@@ -69,23 +71,11 @@ DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
 # Used when the requested domain+subdomain is not yet approved.
 SAFE_FALLBACK_FORMAT = "component-deployment-project"
 
-# Type alias derived from the template keys so OpenAPI exposes an enum.
-# The Literal must be written explicitly (Python cannot construct Literal from
-# runtime values), but a runtime assertion below guarantees the two stay in sync.
-DomainFormatId = Literal[
-    "component-deployment-project",
-    "deployment-project",
-    "component-deployment-subdomain",
-    "deployment-subdomain",
-    "component-subdomain",
-    "subdomain",
-    "component.deployment.project",
-    "deployment.project",
-    "component.deployment.subdomain",
-    "deployment.subdomain",
-    "component.subdomain",
-]
-
+# The type alias lives in the service package (``publish_on_web/domain_config.py``) because
+# that service's ``config_model`` types its ``domain-format`` field with it, and this module
+# already imports that one -- taking it from here would be an import cycle. It is re-exported
+# here so every existing reader keeps its import, and the assertion that it matches the
+# templates stays where the templates are.
 assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101
     "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
 )
@@ -534,6 +524,54 @@ def generate_database_schema(project_name: str, deployment_name: str) -> str:
     deployment_clean = _sanitize_for_identifier(deployment_name)
     schema = f"{project_clean}_{deployment_clean}"
     return _truncate_if_needed(schema, 63)  # PostgreSQL schema limit
+
+
+#: The character shape of an extra-schema postfix (RC-17): lowercase letters, digits and
+#: underscores, starting with a letter. It becomes part of a PostgreSQL schema name and,
+#: uppercased, part of an environment-variable name, so both have to accept it. Declared
+#: here, next to the functions that build those names, because the config model, the form
+#: validator and the API all have to apply the SAME rule and there is no other module all
+#: three already depend on.
+SCHEMA_POSTFIX_PATTERN = r"^[a-z][a-z0-9_]*$"
+
+#: The most characters a postfix may have on its own.
+#:
+#: This does NOT replace the composed check (``{project}_{deployment}_{postfix}`` under 63
+#: characters), and cannot: how much room is left depends on the project and deployment
+#: names, so no fixed number can promise a fit. What it does is make the ordinary mistake
+#: fail early and legibly -- a 200-character postfix is refused for being 200 characters,
+#: rather than being reported as a problem with a composed name the caller never wrote.
+#: 32 is well above every real postfix (`rapportage` is 10) and well below anything that
+#: could plausibly fit.
+SCHEMA_POSTFIX_MAX_LENGTH = 32
+
+
+def generate_extra_database_schema(project_name: str, deployment_name: str, postfix: str) -> str:
+    """Generate the full name of an extra schema (RC-17).
+
+    Format: ``{project}_{deployment}_{postfix}``. Unlike the default schema, an extra
+    schema is NOT truncated: two long postfixes could truncate to the same name and
+    silently collide, so this fails loudly instead. Callers validate the postfix and
+    the resulting length at save time; this is the last-line guard.
+
+    Raises:
+        ValueError: if the resulting name exceeds the 63-character PostgreSQL limit.
+    """
+    project_clean = _sanitize_for_identifier(project_name)
+    deployment_clean = _sanitize_for_identifier(deployment_name)
+    postfix_clean = _sanitize_for_identifier(postfix)
+    schema = f"{project_clean}_{deployment_clean}_{postfix_clean}"
+    if len(schema) > 63:
+        raise ValueError(f"Schema name '{schema}' exceeds the 63-character PostgreSQL limit; choose a shorter postfix")
+    return schema
+
+
+def generate_schema_variable_name(postfix: str) -> str:
+    """The env-variable name that exposes an extra schema: ``DATABASE_SCHEMA_{POSTFIX}``.
+
+    The postfix is sanitised and uppercased so it is a valid variable-name fragment.
+    """
+    return f"DATABASE_SCHEMA_{_sanitize_for_identifier(postfix).upper()}"
 
 
 def generate_database_name(project_name: str, deployment_name: str, generation: int | None = None) -> str:
@@ -1738,25 +1776,32 @@ def find_root_component(deployment: dict) -> str | None:
         >>> find_root_component({"name": "prod"})
         None
     """
-    return deployment.get("root-component")
+    return get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
 
 
 def apply_domain_approval_fallback(
-    domain_format: str,
+    domain_format: str | None,
     base_domain: str | None,
     subdomain: str | None,
     ingress_postfix: str,
     project_data: dict[str, Any],
     cluster: str,
-) -> tuple[str, str | None]:
+) -> tuple[str | None, str | None]:
     """Check domain approval and return the effective format + domain.
 
     If the requested domain+subdomain combination is approved, returns
     them unchanged. If not approved, falls back to the safe format
     (component-deployment-project) on the cluster domain.
 
+    ``domain_format`` may be None: a deployment that names no format composes its
+    hostname through the legacy dispatch in :func:`get_component_ingress_map`, and that
+    shape needs the very same verdict. An approved domain is handed back untouched
+    (None stays None, so the caller keeps its own dispatch); an unapproved one gets the
+    safe format regardless of what was asked for, because "no format named" is not a
+    reason to publish on a domain nobody approved.
+
     Args:
-        domain_format: Requested domain format ID
+        domain_format: Requested domain format ID, or None when none is named
         base_domain: Requested base domain
         subdomain: Requested subdomain
         ingress_postfix: Cluster ingress postfix (for fallback domain)
@@ -1850,11 +1895,20 @@ def get_component_ingress_map(
     """
     base_name = generate_unique_name(deployment_name, component_name)
 
-    # When domain_format is explicitly set, use the template-based generation
-    if domain_format and domain_format in DOMAIN_FORMAT_TEMPLATES:
-        effective_format, effective_domain = apply_domain_approval_fallback(
-            domain_format, base_domain, subdomain, ingress_postfix, project_data, cluster
-        )
+    # The approval gate runs BEFORE a shape is chosen, so it covers every shape. It used
+    # to sit inside the branch below, which meant a deployment that names no
+    # domain-format -- an older file on ``domain-mode: nice-url``, or a write that only
+    # set base-domain and subdomain -- composed its hostname in the legacy dispatch with
+    # nobody having checked whether the domain was approved. That published an
+    # unapproved domain AND showed it as the component's address, because this function
+    # is also what the portal and the API read (RC-104).
+    effective_format, effective_domain = apply_domain_approval_fallback(
+        domain_format, base_domain, subdomain, ingress_postfix, project_data, cluster
+    )
+
+    # A named format, or the safe one an unapproved domain fell back to, resolves through
+    # the template.
+    if effective_format and effective_format in DOMAIN_FORMAT_TEMPLATES:
         domain = resolve_domain_tail(effective_domain, ingress_postfix)
         hostname = generate_hostname_from_format(
             domain_format=effective_format,
@@ -1866,7 +1920,7 @@ def get_component_ingress_map(
         )
         return {base_name: hostname}
 
-    # --- Legacy dispatch (domain_format not set) ---
+    # --- Legacy dispatch (no domain_format, and the domain it names IS approved) ---
 
     # Nice URL format (DOTS): component.subdomain.base_domain
     if hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
@@ -1916,6 +1970,10 @@ def get_deployment_hostnames(
     Returns:
         List of unique hostnames for the deployment
     """
+    # Local, like in apply_domain_approval_fallback: connectors.subdomain imports this
+    # module, so a module-scope import would be a cycle.
+    from opi.connectors.subdomain import is_deployment_domain_approved
+
     hostnames: list[str] = []
 
     for component_name in component_names:
@@ -1935,10 +1993,16 @@ def get_deployment_hostnames(
         if hostname not in hostnames:
             hostnames.append(hostname)
 
+    # The root hostname is the one address here that is NOT composed by
+    # get_component_ingress_map, so the approval verdict that function applies does not
+    # reach it. Without this the components of an unapproved domain move to the cluster
+    # address while ``subdomain.base-domain`` is still handed out as a hostname.
+    domain_approved = is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
+
     # For DOTS format (nice URLs) without explicit domain_format, add root hostname
     # When domain_format is set, the template already defines the hostname shape;
     # root hostname is only relevant for legacy nice-url with component prefix.
-    if not domain_format and hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
+    if domain_approved and not domain_format and hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)
@@ -2205,3 +2269,50 @@ def ensure_fqdn(hostname: str) -> str:
     cluster_conf = CLUSTER_CONFIG.get(settings.CLUSTER_MANAGER, {})
     namespace = cluster_conf.get("namespace", "rig-system")
     return f"{host}.{namespace}.svc.cluster.local{port_suffix}"
+
+
+# --- Container registry tags -------------------------------------------------
+#
+# The platform pushes every uploaded image into ONE registry repository (the robot
+# account's own repo), because Quay has no nested repositories under a single
+# robot-account scope. That makes the tag the only place where ownership can live,
+# so the tag carries the owning project.
+
+#: Separates the owning project from the rest of a registry tag.
+#:
+#: A project name matches ``^[a-z][a-z0-9-]*$`` and therefore never contains an
+#: underscore, so the part before the FIRST underscore is unambiguously the owner --
+#: also when the image name itself contains one. Two different projects can never
+#: produce the same tag.
+REGISTRY_TAG_OWNER_SEPARATOR = "_"
+
+#: The project-name shape the registry tag relies on for its unambiguous prefix.
+REGISTRY_TAG_OWNER_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
+
+def build_registry_tag(project_name: str, image_name: str, tag: str) -> str:
+    """Build the owner-pinned registry tag for an uploaded image.
+
+    Args:
+        project_name: The project the image belongs to (the API key's project).
+        image_name: Image name as supplied by the caller.
+        tag: Image tag as supplied by the caller.
+
+    Returns:
+        ``{project_name}_{image_name}-{tag}``.
+    """
+    return f"{project_name}{REGISTRY_TAG_OWNER_SEPARATOR}{image_name}-{tag}"
+
+
+def registry_tag_owner(registry_tag: str) -> str | None:
+    """The project that owns a registry tag, or None when the tag is unowned.
+
+    Tags pushed before ownership pinning have no owner prefix; they return None and
+    stay readable. A tag whose prefix is not a valid project name is not treated as
+    owned either -- ownership is only claimed by a prefix that could have been
+    produced by ``build_registry_tag``.
+    """
+    owner, separator, _rest = registry_tag.partition(REGISTRY_TAG_OWNER_SEPARATOR)
+    if not separator or not REGISTRY_TAG_OWNER_RE.match(owner):
+        return None
+    return owner
