@@ -105,6 +105,60 @@ Dus **0 rood, en van de skips blijft er precies één over die er volgens ontwer
 zijn.** Wie deze suite in een schone omgeving draait moet Firefox meenemen, anders zijn die
 drie visuele tests stil weg.
 
+### De poorten die geen test zijn
+
+| Poort | Uitkomst |
+|---|---|
+| `uv run ruff check .` | **All checks passed!** |
+| `uv run ruff format --check .` | **1062 files already formatted** |
+| `uv run pyright` | **0 errors, 0 warnings, 0 informations** |
+
+### En de poort die niet groen is: de tak merget niet in `main`
+
+Dit staat hier omdat het de merge BLOKKEERT, en dat is volgens het plan het enige waarvoor
+een bevinding uit de "wat er buiten valt"-lijst mag komen. Gemeten met `git merge-tree`
+tegen `origin/main` in plaats van tegen de gestelde basis:
+
+```
+git merge-tree --write-tree origin/main origin/release-augustus-2026   -> exit 1
+```
+
+**14 conflicten**, over deze bestanden:
+
+| Soort | Bestanden |
+|---|---|
+| Inhoudelijk (6) | `opi/core/startup.py`, `opi/forms/visualizers/providers.py`, `opi/manager/project_manager.py`, `opi/services/project_store.py`, `opi/web/router.py`, `workflow/review.md` |
+| Inhoudelijk, tests (2) | `tests/test_detail_page_backup_laziness.py`, `tests/test_project_resource_usage.py` |
+| modify/delete (6) | `opi/templates/project-details.html.j2` en vijf bestanden onder `opi/templates/project-details/` |
+
+Die laatste zes zijn het zwaarste deel en het is **geen mechanisch conflict**. De releasetak
+heeft die sjablonen verwijderd (de LOTC-migratie), en `main` heeft ze in de tussentijd
+gewijzigd. Sinds de merge-base (`02ee39fe`) staan er:
+
+- **21 commits op `main`**,
+- **1418 commits op de releasetak**.
+
+Van die 21 raken er meerdere precies die verwijderde sjablonen, met werk dat niet in de
+LOTC-versie zit:
+
+```
+7b721dae fix(project-details): bevestig een delete en herstel geen verwijderde deployment
+0993c687 perf(project-details): laad lazy blokken pas als ze in beeld komen
+fe490809 feat(project-details): compacte kaart met het totale resourcegebruik van het project
+723360ac fix(project-details): één backup-request per project, niet één per deployment
+b2abbb08 perf(project-details): haal backup-snapshots lui op, net als de ArgoCD-blokken
+```
+
+Dat is geen conflict dat je oplost door een kant te kiezen: dat werk moet **opnieuw op de
+LOTC-sjablonen worden gezet**, en de twee conflicterende testbestanden
+(`test_detail_page_backup_laziness.py`, `test_project_resource_usage.py`) zijn precies de
+tests die daarbij horen. Kiest iemand hier de releasekant, dan valt dat werk stil weg zonder
+dat een test het merkt, want de tests die het pinnen vallen in hetzelfde conflict.
+
+Het is **niet gerepareerd** in deze doorloop, en dat is opzettelijk: de tak moest stilstaan
+om de rest van dit verslag geldig te houden, en een merge-resolutie over 14 bestanden is een
+eigen taak met een eigen review.
+
 ### Noot bij zad-waker
 
 Er staat **geen Go** op deze machine, en de docker-daemon deelt `/workspace` niet: een
