@@ -779,6 +779,50 @@ class MinioConnector:
             logger.exception("Failed to list buckets")
             raise MinioExecutionError(f"Bucket listing failed: {e}") from e
 
+    async def bucket_has_objects(self, alias: str, bucket_name: str) -> bool:
+        """Whether a bucket holds any object.
+
+        The counterpart of ``PostgresConnector.database_has_user_data``: a restore into a
+        bucket that already holds objects merges the backup with what is there instead of
+        replacing it (RC-123). An existing but empty bucket is fine, which is what a retry
+        after a half-failed restore looks like.
+
+        Args:
+            alias: MinIO server alias
+            bucket_name: Name of the bucket to inspect
+
+        Returns:
+            True if the bucket contains at least one object or prefix
+        """
+        try:
+            stdout, stderr, code = await self._run_mc_command(["ls", f"{alias}/{bucket_name}", "--json"])
+
+            if code != 0:
+                error_msg = f"Failed to list objects in bucket {bucket_name}: {stderr}"
+                logger.error(error_msg)
+                raise MinioExecutionError(error_msg)
+
+            for line in stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse object listing: {e}")
+                    continue
+                # mc reports an empty listing as no lines at all; an error line carries
+                # status "error" and says nothing about content.
+                if entry.get("status") == "error":
+                    continue
+                return True
+            return False
+
+        except MinioExecutionError:
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to inspect bucket {bucket_name}")
+            raise MinioExecutionError(f"Bucket emptiness check failed: {e}") from e
+
     # Bucket Versioning Operations
 
     async def get_bucket_versioning_status(self, alias: str, bucket_name: str) -> dict[str, Any]:
