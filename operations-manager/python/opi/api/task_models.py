@@ -101,6 +101,8 @@ class CreateProjectResult(BaseModel):
     elapsed_time: str = ""
     file_path: str = ""
     error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class UpsertDeploymentResult(BaseModel):
@@ -130,6 +132,9 @@ class UpdateImageResult(BaseModel):
     component: str = ""
     updates: dict[str, Any] = Field(default_factory=dict)
     actions_performed: list[str] = Field(default_factory=list)
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class DeleteComponentResult(BaseModel):
@@ -146,6 +151,9 @@ class DeleteComponentResult(BaseModel):
     simply gone, while a confirmed deletion also changed deployments and dependency
     declarations, and the caller should learn which ones."""
     processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class DeleteDeploymentResult(BaseModel):
@@ -165,6 +173,9 @@ class DeleteDeploymentResult(BaseModel):
     """The deployment was not in the project; nothing was removed by this call."""
     deletion_results: dict[str, Any] = Field(default_factory=dict)
     warning: str = ""
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class CloneDatabaseResult(BaseModel):
@@ -173,6 +184,9 @@ class CloneDatabaseResult(BaseModel):
     source: dict[str, Any] = Field(default_factory=dict)
     target: dict[str, Any] = Field(default_factory=dict)
     rows_copied: int | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class CloneBucketResult(BaseModel):
@@ -181,6 +195,9 @@ class CloneBucketResult(BaseModel):
     source: dict[str, Any] = Field(default_factory=dict)
     target: dict[str, Any] = Field(default_factory=dict)
     objects_copied: int | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class RefreshProjectResult(BaseModel):
@@ -191,6 +208,9 @@ class RefreshProjectResult(BaseModel):
     project: ProjectInfo | None = None
     urls: dict[str, DeploymentUrls] = Field(default_factory=dict)
     processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class RefreshDeploymentResult(BaseModel):
@@ -201,6 +221,9 @@ class RefreshDeploymentResult(BaseModel):
     project: ProjectInfo | None = None
     urls: dict[str, DeploymentUrls] = Field(default_factory=dict)
     processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
 class AddComponentResult(BaseModel):
