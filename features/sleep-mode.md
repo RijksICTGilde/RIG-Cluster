@@ -241,11 +241,8 @@ Twee eigenschappen die hieraan vastzitten:
 `ghcr.io/minbzk/base-images/zad-waker`; OPI's ghcr->RCR-rewrite regelt de pull op ODCN.
 
 - **Publiceren naar ghcr:** `task publish-waker` (multi-platform build + push, net als de
-  andere base-images).
-- **Sandbox (kind):** `task build-waker-image` bouwt lokaal en `kind load`t de tag
-  `ghcr.io/minbzk/base-images/zad-waker:sandbox`. Die pinned tag matcht
-  `SLEEP_MODE_WAKER_IMAGE` in de sandboxed-local overlay, dus het `IfNotPresent`-beleid
-  gebruikt de geladen image zonder te pullen.
+  andere base-images). Dat is de enige bouwweg: ook de sandbox pullt de gepubliceerde
+  `:latest`, zodat er maar een tag in omloop is.
 
 De pagina hergebruikt bewust de vormgeving van de authorization sign-in card, zodat de twee
 pagina's consistent zijn.
@@ -253,7 +250,7 @@ pagina's consistent zijn.
 **Een wijziging in `images/zad-waker/` is een eigen uitrolstap.** Het image komt los uit de
 registry, dus een nieuwe OPI-versie brengt geen nieuwe wekker mee en omgekeerd:
 
-1. `task publish-waker` (ghcr) of `task build-waker-image` (sandbox/kind);
+1. `task publish-waker`;
 2. bestaande wekkerpods draaien nog de oude binary tot ze opnieuw worden aangemaakt. Bij
    `:latest` (`imagePullPolicy: Always`) is dat de eerstvolgende keer dat een deployment in
    slaapstand gaat; bij een pinned tag moet ook `SLEEP_MODE_WAKER_IMAGE` mee. Wie een
