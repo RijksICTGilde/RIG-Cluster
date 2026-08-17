@@ -16,6 +16,7 @@ from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
 from opi.services.catalog.shared.postgres import DedicatedPostgresFields
 from opi.services.postgres_scope import (
+    database_generation_service_type,
     get_dedicated_postgres_config,
     get_postgres_schemas,
     project_uses_dedicated_postgres,
@@ -102,10 +103,7 @@ class DatabaseManager:
         """
         if service_type is None:
             # Determine service type from project configuration
-            if self._project_uses_namespace_postgresql(project_data):
-                service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-            else:
-                service_type = ServiceType.POSTGRESQL_DATABASE.value
+            service_type = database_generation_service_type(project_data)
 
         project_file_handler = self.project_manager._project_file_handler
         return project_file_handler.get_deployment_service_generation(project_data, deployment_name, service_type)
