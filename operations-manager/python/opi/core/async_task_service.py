@@ -22,6 +22,11 @@ from opi.services.persistence.async_tasks import AsyncTask
 
 logger = logging.getLogger(__name__)
 
+#: Vangnet op de lengte van een opgeslagen foutbericht. Geen kolomeis (de kolom is TEXT),
+#: maar een grens tegen een exceptie die een dump meesleept. Ruim boven elke echte foutzin,
+#: zodat de melding die een gebruiker leest heel blijft.
+MAX_ERROR_MESSAGE_CHARS = 8000
+
 
 def _deferred(task=AsyncTask):
     """Rows that wrote to the project file and deliberately did not roll it out (RC-46).
@@ -339,9 +344,15 @@ class AsyncTaskService:
         the work that did succeed; a retry does not store it, because the next attempt
         writes its own.
         """
-        # Truncate to fit the DB column (varchar 255).
-        if len(error_message) > 255:
-            error_message = error_message[:252] + "..."
+        # Er is geen kolombreedte om voor af te knippen: ``error_message`` is TEXT, in de
+        # baseline-migratie en in het ORM-model. Het commentaar dat hier stond ("varchar
+        # 255") beschreef een kolom die er niet is, en de 255 tekens knipten een zin
+        # middenin een woord af terwijl de subtaak diezelfde zin voluit droeg -- de
+        # zad-cli las daardoor "... lists the actions that put s" als de verklaring
+        # (punt 26). De grens hieronder is dus geen kolomeis maar een vangnet tegen een
+        # exceptie die een dump meesleept; hij ligt ver boven elke echte foutzin.
+        if len(error_message) > MAX_ERROR_MESSAGE_CHARS:
+            error_message = error_message[: MAX_ERROR_MESSAGE_CHARS - 3] + "..."
 
         async with session_scope() as session:
             if attempt_count < max_attempts:
