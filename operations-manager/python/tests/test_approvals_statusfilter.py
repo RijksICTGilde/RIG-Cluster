@@ -61,8 +61,15 @@ class TestHetFilteren:
         assert [len(p["approval_items"]) for p in PROJECTEN] == [2, 1, 3]
 
 
-class TestDeKeuzelijst:
-    """Gerenderd, want een waarde in de context zegt niets over wat er op het scherm staat."""
+class TestHetFiltermenu:
+    """Gerenderd, want een waarde in de context zegt niets over wat er op het scherm staat.
+
+    De vorm is die van het sorteren op /projects: een toolbar-knop met een uitklapmenu, als
+    kale nldd-markup. Hier stond eerst een kaal <c-select> in een <c-cluster>, en dat stond
+    naast de projectenpagina als iets uit een andere applicatie. De les die deze tests
+    vasthouden is niet "gebruik nldd-menu-item" maar: het patroon stond er al, twintig regels
+    verderop.
+    """
 
     def _render(self, status: str) -> str:
         return templates_lotc.env.get_template("bg/admin-approvals.html.j2").render(
@@ -76,27 +83,50 @@ class TestDeKeuzelijst:
             menu_items=[],
         )
 
-    def test_elke_status_staat_in_de_lijst(self) -> None:
+    def test_elke_status_staat_in_het_menu(self) -> None:
         html = self._render("")
 
         for sleutel, label in APPROVAL_STATUSSEN:
-            assert label in html, label
+            assert f'text="{label}"' in html, label
             if sleutel:
-                assert f'value="{sleutel}"' in html, sleutel
+                assert f'href="/admin/approvals?status={sleutel}"' in html, sleutel
 
-    def test_de_gekozen_status_staat_geselecteerd(self) -> None:
-        """Zonder dit staat de lijst na de swap op 'alles' terwijl je filtert."""
-        html = self._render("approved")
-
-        gekozen = html.split('value="approved"', 1)[1].split(">", 1)[0]
-        assert "selected" in gekozen, "de gekozen status is niet geselecteerd"
-
-    def test_zonder_keuze_is_er_niets_geselecteerd_behalve_alles(self) -> None:
+    def test_de_items_dragen_hun_bestemming_twee_keer(self) -> None:
+        """href zodat een gefilterde lijst een deelbare URL is, en hx-get omdat een
+        nldd-menu-item niet uit zichzelf op zijn href navigeert."""
         html = self._render("")
 
-        for sleutel in ("requested", "approved", "denied"):
-            achter = html.split(f'value="{sleutel}"', 1)[1].split(">", 1)[0]
-            assert "selected" not in achter, sleutel
+        item = html.split('text="Goedgekeurd"', 1)[1].split("</nldd-menu-item>", 1)[0]
+        assert 'href="/admin/approvals?status=approved"' in item
+        assert 'hx-get="/admin/approvals?status=approved"' in item
+        assert 'hx-target="#approvals-gebied"' in item
+
+    def test_de_gekozen_status_staat_in_het_KNOPLABEL(self) -> None:
+        """Dat is wat je ziet zonder het menu te openen; zonder dit lijkt het filter uit."""
+        assert 'text="Status: Goedgekeurd"' in self._render("approved")
+        assert 'text="Status: Alle statussen"' in self._render("")
+
+    def test_de_gekozen_status_staat_aangevinkt_in_het_menu(self) -> None:
+        """Zonder dit staat het menu na de swap op 'alles' terwijl je filtert."""
+        html = self._render("approved")
+
+        item = html.split('text="Goedgekeurd"', 1)[1].split(">", 1)[0]
+        assert "selected" in item, "de gekozen status is niet aangevinkt"
+
+    def test_zonder_keuze_is_er_niets_aangevinkt_behalve_alles(self) -> None:
+        html = self._render("")
+
+        for label in ("Aangevraagd", "Goedgekeurd", "Afgewezen"):
+            item = html.split(f'text="{label}"', 1)[1].split(">", 1)[0]
+            assert "selected" not in item, label
+
+    def test_elke_status_staat_er_maar_EEN_keer(self) -> None:
+        """Er stond een overloopmenu naast de knop in plaats van ervoor in de plaats, en
+        dan staat het hele filter dubbel op het scherm: als knop en als hamburgermenu."""
+        html = self._render("")
+
+        for label in ("Aangevraagd", "Goedgekeurd", "Afgewezen"):
+            assert html.count(f'text="{label}"') == 1, f"{label} staat er dubbel"
 
     def test_het_filter_staat_binnen_het_geswapte_gebied(self) -> None:
         """Stond het erbuiten, dan hertekent de lijst wel en de keuzelijst niet, en raakt
@@ -104,7 +134,7 @@ class TestDeKeuzelijst:
         html = self._render("approved")
 
         gebied = html.split('id="approvals-gebied"', 1)[1]
-        assert 'name="status"' in gebied, "de keuzelijst valt buiten het geswapte gebied"
+        assert "nldd-menu-item" in gebied, "het filtermenu valt buiten het geswapte gebied"
 
     def test_de_telling_zegt_hoeveel_er_verborgen_zijn(self) -> None:
         """Een gefilterde lege pagina is alleen bruikbaar als hij het verschil toont

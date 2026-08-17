@@ -49,6 +49,19 @@ def project_uses_dedicated_postgres(project_data: dict[str, Any]) -> bool:
     return postgres_scope(project_data) == "project"
 
 
+def database_generation_service_type(project_data: dict[str, Any]) -> str:
+    """The deployment-level services entry that carries this project's database generation.
+
+    A project expresses "dedicated PostgreSQL" through either of two service names, and
+    the generation is stored under whichever one the project actually declares. Three
+    copies of this if/else had grown (restore_router twice, database_manager); they must
+    agree or a restore writes the generation under a name nobody reads back.
+    """
+    if Project(project_data).uses_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value):
+        return ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+    return ServiceType.POSTGRESQL_DATABASE.value
+
+
 def schema_is_marked(entry: dict[str, Any]) -> bool:
     """Whether a raw schema entry is marked for deletion.
 
