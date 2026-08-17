@@ -553,13 +553,16 @@ function flashCleanIndicator(input) {
     });
 }
 
-/* Re-render the current step when a [data-rerender] field changes */
-document.addEventListener('change', function(e) {
-    var el = e.target.closest('[data-rerender]');
-    if (!el) return;
-    var form = document.getElementById('wizard-step-form')
-            || document.getElementById('modal-wizard-form');
-    if (!form) return;
+/* ========================================================================
+ * Hertekenen na een keuze in een cascade
+ * ======================================================================== */
+
+function _huidigStapFormulier() {
+    return document.getElementById('wizard-step-form')
+        || document.getElementById('modal-wizard-form');
+}
+
+function _hertekenNu(form) {
     _seqHidden(form, '_rerender', '1');
     /* Zelfde reden als bij een rij toevoegen of verwijderen: dit is HERTEKENEN en geen
        opslaan. Een cascade vult juist de velden waar de volgende keuze van afhangt, dus op
@@ -571,4 +574,89 @@ document.addEventListener('change', function(e) {
     form.noValidate = true;
     htmx.trigger(form, 'submit');
     form.noValidate = validatieStond;
+}
+
+/* De BESTURING met deze naam, niet de omhulling eromheen.
+ * Een keuzelijst is onder het thema een kale <select> met de naam erop, maar een tekstveld
+ * is een <nldd-text-field> met de echte <input> in zijn schaduwboom. Het element dat de
+ * waarde draagt is in beide gevallen het eerste met deze naam dat een string-value heeft. */
+function _besturingMetNaam(naam) {
+    var kandidaten = document.querySelectorAll('[name="' + naam + '"]');
+    for (var i = 0; i < kandidaten.length; i++) {
+        if (typeof kandidaten[i].value === 'string') return kandidaten[i];
+    }
+    return null;
+}
+
+function _kanDeWaardeDragen(el, waarde) {
+    if (!el.options) return true;
+    for (var i = 0; i < el.options.length; i++) {
+        if (el.options[i].value === waarde) return true;
+    }
+    return false;
+}
+
+/* EEN KEUZE DIE VALT TERWIJL ER NOG EEN VERZOEK LOOPT, MAG NIET VERDWIJNEN.
+ *
+ * Gemeten in de browser (RC-127), op de cross-domain-stap in de aanmaakwizard: verandert er
+ * een tweede [data-rerender]-veld terwijl het formulier al een hertekenverzoek open heeft
+ * staan, dan levert die tweede wijziging GEEN htmx:configRequest en GEEN
+ * htmx:beforeRequest op - er vertrekt niets, ook niet later:
+ *
+ *     change  to/component   inflight=false  -> configRequest, beforeRequest
+ *     change  from/project    inflight=true  -> (niets)
+ *     beforeSwap, afterRequest, afterSettle
+ *     de keuzelijst 'from/deployment' biedt daarna alleen [''], en blijft dat
+ *
+ * htmx zet dat tweede verzoek in de wachtrij van het ELEMENT dat het doet (hier het
+ * formulier) en speelt het na het eerste antwoord opnieuw af. Maar het antwoord vervangt
+ * #wizard-step-content, en het formulier zit daarbinnen: het haalt zichzelf dus uit de
+ * pagina. htmx weigert een verzoek op een element dat niet meer in het document staat, en
+ * daarmee is de keuze weg zonder fout, zonder melding en zonder herstel. Dat is precies het
+ * beeld van de gestrande cascade: een geldige keuze in de rij en een lege lijst eronder.
+ *
+ * Vandaar dezelfde bescherming die _sequenceDispatch al had, plus wat daar niet nodig was:
+ * de keuze zelf terugzetten. Het antwoord dat onderweg was, is gerenderd ZONDER deze keuze,
+ * dus de verse rij komt leeg terug - opnieuw indienen alleen zou een leeg veld versturen.
+ */
+function _hertekenNaDeSwap(naam, waarde, bron) {
+    function haak() {
+        var form = _huidigStapFormulier();
+        // Nog bezig: het oude formulier draagt htmx-request tot na de swap. Zo landen we
+        // niet op de OOB-swap van de stapbalk, die vóór de inhoud kan komen.
+        if (!form || form.classList.contains('htmx-request')) return;
+        document.body.removeEventListener('htmx:afterSettle', haak);
+
+        if (document.contains(bron)) {
+            // De swap raakte ons veld niet, dus de waarde staat er nog: gewoon hertekenen.
+            _hertekenNu(form);
+            return;
+        }
+        var vers = naam ? _besturingMetNaam(naam) : null;
+        if (!vers) {
+            console.warn('[herteken] veld "' + naam + '" is na de swap verdwenen; de keuze is niet doorgegeven');
+            return;
+        }
+        if (vers.value === waarde) return;  // de render die landde kende de keuze al
+        if (!_kanDeWaardeDragen(vers, waarde)) {
+            console.warn('[herteken] "' + waarde + '" staat niet meer in de lijst van "' + naam + '"');
+            return;
+        }
+        vers.value = waarde;
+        vers.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    document.body.addEventListener('htmx:afterSettle', haak);
+}
+
+/* Re-render the current step when a [data-rerender] field changes */
+document.addEventListener('change', function(e) {
+    var el = e.target.closest('[data-rerender]');
+    if (!el) return;
+    var form = _huidigStapFormulier();
+    if (!form) return;
+    if (form.classList.contains('htmx-request')) {
+        _hertekenNaDeSwap(e.target.getAttribute('name'), e.target.value, e.target);
+        return;
+    }
+    _hertekenNu(form);
 });
