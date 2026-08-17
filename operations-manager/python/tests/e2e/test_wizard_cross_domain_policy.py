@@ -168,9 +168,13 @@ def _wacht(page: Page, expressie: str, field: str, value: str, waarop: str) -> N
             " return el ? [...el.options].map(o => o.value) : null; }",
             field,
         )
+        buren = page.evaluate(
+            "() => Object.fromEntries([...document.querySelectorAll('select[name*=\"/config/inbound[\"]')]"
+            ".map(e => [e.getAttribute('name'), e.value]))"
+        )
         raise AssertionError(
             f"{waarop} niet gebeurd binnen {_SELECT_TIMEOUT_MS} ms voor {field}='{value}'; "
-            f"de keuzelijst biedt nu {opties}"
+            f"de keuzelijst biedt nu {opties}; de rij staat op {buren}"
         ) from exc
 
 
