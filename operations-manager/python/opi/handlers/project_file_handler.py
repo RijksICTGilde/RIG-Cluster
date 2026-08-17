@@ -51,6 +51,17 @@ def is_image_pull_disable_reason(reason: str) -> bool:
     return any(reason.startswith(r) for r in IMAGE_PULL_REASONS)
 
 
+def is_oom_disable_reason(reason: str) -> bool:
+    """Whether a ``disabled-reason`` string names an out-of-memory kill.
+
+    A substring match rather than a prefix match: sanitize joins its reasons with
+    "; ", so the OOM part can sit anywhere in the string. Read by the resource
+    tuner, which clears such a disable once it has repaired the memory that caused
+    the kills.
+    """
+    return "OOMKilled" in reason
+
+
 # Phrases in a pull error that mean "the registry could not answer", as opposed to
 # "the registry answered, and the image is not there". A 5xx or a rate limit says
 # nothing about whether the tag exists, so the component must NOT be auto-disabled

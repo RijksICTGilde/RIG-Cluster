@@ -692,6 +692,181 @@ class TestLimitRequestMargin:
         assert lim >= req + 64
 
 
+class TestImplausibleMeasurement:
+    """Veldgeval mpfpsm-lcl pr-200: a pod that barely existed inside the window
+    measured as a fraction of a Mi, printed as "0Mi", and passed the exact-zero
+    test that was supposed to catch exactly this."""
+
+    @patch("opi.services.resource_tuning_service.supports_vpa", return_value=False)
+    @patch("opi.services.resource_tuning_service.KubectlConnector")
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_fraction_of_a_mi_counts_as_no_data(
+        self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
+    ):
+        data = _make_project_data(component_limits="1418Mi", component_requests="512Mi")
+        mock_git_data.return_value = (data, "test.yaml")
+        # 0.3Mi: real enough to survive "== 0", far too small to size on.
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0.3, avg_mb=0.3)
+        mock_kubectl.isConnected = False
+
+        mock_pm = MagicMock()
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        result = await tune_deployment_resources("test-project", "production")
+
+        assert result.changes == []
+        mock_pm.save_and_commit_project.assert_not_called()
+
+
+def _starved_project_data(disabled_reason=None):
+    """Project with a 25Mi override under a 1418Mi root, optionally auto-disabled."""
+    data = _make_project_data(
+        component_limits="1418Mi",
+        component_requests="512Mi",
+        deployment_limits="25Mi",
+        deployment_requests="25Mi",
+    )
+    if disabled_reason is not None:
+        dep_comp = data["deployments"][0]["components"][0]
+        dep_comp["disabled"] = True
+        dep_comp["disabled-reason"] = disabled_reason
+    return data
+
+
+class TestRootRepair:
+    """Veldgeval mpfpsm-lcl pr-200: an override written below the declared root
+    starves the component, and the starvation then blocks both routes that would
+    correct it (no pod to measure, and Available=False for the guard)."""
+
+    @patch("opi.services.resource_tuning_service.supports_vpa", return_value=False)
+    @patch("opi.services.resource_tuning_service.KubectlConnector")
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_override_below_root_restored_without_data(
+        self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
+    ):
+        mock_git_data.return_value = (_starved_project_data(), "test.yaml")
+        # Nothing to measure, and the deployment reports Available=False.
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0)
+        mock_kubectl.isConnected = True
+        mock_kubectl.return_value = _kubectl_unavailable()
+
+        mock_pm = MagicMock()
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        result = await tune_deployment_resources("test-project", "production")
+
+        assert len(result.changes) == 1
+        assert result.changes[0]["source"] == "root"
+        dep_res = mock_pm.save_and_commit_project.call_args[0][0]["deployments"][0]["components"][0]["resources"]
+        assert dep_res["limits"]["memory"] == "1418Mi"
+        assert dep_res["requests"]["memory"] == "512Mi"
+
+    @patch("opi.services.resource_tuning_service.supports_vpa", return_value=False)
+    @patch("opi.services.resource_tuning_service.KubectlConnector")
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_repair_clears_an_oom_disable(
+        self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
+    ):
+        """A component sanitize switched off for OOM comes back on with its memory."""
+        mock_git_data.return_value = (_starved_project_data("12 restarts; OOMKilled detected"), "test.yaml")
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0)
+        mock_kubectl.isConnected = True
+        mock_kubectl.return_value = _kubectl_unavailable()
+
+        mock_pm = MagicMock()
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        await tune_deployment_resources("test-project", "production")
+
+        dep_comp = mock_pm.save_and_commit_project.call_args[0][0]["deployments"][0]["components"][0]
+        assert dep_comp["disabled"] is False
+        assert "disabled-reason" not in dep_comp
+        assert dep_comp["resources"]["limits"]["memory"] == "1418Mi"
+
+    @patch("opi.services.resource_tuning_service.supports_vpa", return_value=False)
+    @patch("opi.services.resource_tuning_service.KubectlConnector")
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_repair_leaves_an_image_pull_disable_alone(
+        self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
+    ):
+        """Memory says nothing about a missing image: that disable stays."""
+        mock_git_data.return_value = (_starved_project_data("ImagePullBackOff: manifest unknown"), "test.yaml")
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0)
+        mock_kubectl.isConnected = True
+        mock_kubectl.return_value = _kubectl_unavailable()
+
+        mock_pm = MagicMock()
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        await tune_deployment_resources("test-project", "production")
+
+        dep_comp = mock_pm.save_and_commit_project.call_args[0][0]["deployments"][0]["components"][0]
+        assert dep_comp["disabled"] is True
+        assert dep_comp["disabled-reason"] == "ImagePullBackOff: manifest unknown"
+
+    @patch("opi.services.resource_tuning_service.supports_vpa", return_value=False)
+    @patch("opi.services.resource_tuning_service.KubectlConnector")
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_override_above_root_is_left_to_the_measurement(
+        self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
+    ):
+        """The root is a floor, not a target: an override above it is not pulled down
+        by the repair, and an unavailable deployment is still skipped."""
+        data = _make_project_data(
+            component_limits="128Mi",
+            component_requests="64Mi",
+            deployment_limits="512Mi",
+            deployment_requests="256Mi",
+        )
+        mock_git_data.return_value = (data, "test.yaml")
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0)
+        mock_kubectl.isConnected = True
+        mock_kubectl.return_value = _kubectl_unavailable()
+
+        mock_pm = MagicMock()
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        result = await tune_deployment_resources("test-project", "production")
+
+        assert result.changes == []
+        mock_pm.save_and_commit_project.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # kubectl events filtering
 # ---------------------------------------------------------------------------
