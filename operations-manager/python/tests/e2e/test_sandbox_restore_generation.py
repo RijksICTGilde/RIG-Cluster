@@ -228,7 +228,10 @@ def test_twee_restores_geven_twee_databases_en_verdubbelen_de_rijen_niet(
     final = _read_secret(namespace, secret_name)
     code, output = _psql(final, f'SELECT count(*) FROM "{final["DATABASE_SCHEMA"]}".klanten')
     assert code == 0, output[:1000]
-    logger.info("EINDTOESTAND: db=%s schema=%s rijen=%s", final["DATABASE_DB"], final["DATABASE_SCHEMA"], output)
-    assert output == str(_ROWS), (
-        f"na twee restorerondes staan er {output} rijen in {final['DATABASE_DB']}, verwacht {_ROWS}"
+    # _psql plakt stdout en stderr aan elkaar, en ``kubectl run --rm`` schrijft daar zijn
+    # eigen 'pod ... deleted' achteraan. Het getal is de eerste regel.
+    rows = output.splitlines()[0].strip()
+    logger.info("EINDTOESTAND: db=%s schema=%s rijen=%s", final["DATABASE_DB"], final["DATABASE_SCHEMA"], rows)
+    assert rows == str(_ROWS), (
+        f"na twee restorerondes staan er {rows} rijen in {final['DATABASE_DB']}, verwacht {_ROWS}"
     )
