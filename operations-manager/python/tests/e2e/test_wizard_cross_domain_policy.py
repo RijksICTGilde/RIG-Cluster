@@ -159,13 +159,21 @@ def _wacht(page: Page, expressie: str, field: str, value: str, waarop: str) -> N
     JS-fout in de expressie, een gesloten pagina, een navigatie eronder -- gaat ongemoeid
     door: die als "niet gebeurd binnen 30000 ms" melden verstopt de oorzaak achter een
     wachtverhaal, en dan zoek je in de verkeerde hoek.
+
+    Het OPSCHRIFT van de opties gaat mee en niet alleen hun waarde. Een lege cascadelijst is
+    altijd ``['']``, maar het opschrift zegt van wie de leegte is: "Kies eerst een project"
+    betekent dat de server de keuze nooit heeft gezien (de wijziging is onderweg
+    kwijtgeraakt), "Dit project heeft geen deployments op dit cluster" betekent dat hij hem
+    wel zag en niets te bieden had. Dat verschil stond drie keer niet in de melding, en drie
+    keer is de oorzaak daarom aan de test toegeschreven in plaats van aan de cascade
+    (RC-127).
     """
     try:
         page.wait_for_function(expressie, arg=[field, value], timeout=_SELECT_TIMEOUT_MS)
     except PlaywrightTimeoutError as exc:
         opties = page.evaluate(
             "(name) => { const el = document.querySelector(`select[name='${name}']`);"
-            " return el ? [...el.options].map(o => o.value) : null; }",
+            " return el ? [...el.options].map(o => `${o.value} (${o.label})`) : null; }",
             field,
         )
         buren = page.evaluate(
