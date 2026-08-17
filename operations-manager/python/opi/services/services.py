@@ -1359,6 +1359,22 @@ class ServiceAdapter:
                 merged.append(item)
                 added += 1
 
+        # Een lijst die de API als ÉÉN entry toont kan er ook maar één houden. Zonder deze
+        # grens waren twee geldige aanroepen genoeg om een project in een stand te zetten
+        # waarin de gewone read weigert (409, "holds 2 entries ... presented as a single
+        # entry") -- en de uitweg vroeg precies wat die read je zou vertellen: welke sleutel
+        # je moet weghalen (zad-cli, punt 13). De fout hoort bij de handeling die de tweede
+        # entry maakt, niet bij de volgende lezer.
+        #
+        # Alleen op TOEVOEGEN. Verwijderen blijft altijd mogelijk, want dat is de weg terug
+        # voor een bestand dat er al meer heeft, en vervangen laat het aantal ongemoeid.
+        if added and len(merged) > 1 and spec.name in service.api_singular_lists:
+            raise ServiceValidationError(
+                f"'{spec.name}' of service '{service_name}' is presented as a single entry by this API, "
+                f"so it holds one. Remove the entry that is there before adding another, in this same "
+                f"call with 'remove' or in a PATCH before it."
+            )
+
         new_config: dict[str, Any] | list[Any]
         if spec.name:
             # Everything around the patched list is carried over verbatim: not re-dumped
