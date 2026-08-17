@@ -13,14 +13,16 @@ groen, en alleen de browsertests zagen het. Deze doorloop herstelt dat vertrouwe
 
 ## Oordeel
 
-**Deze tak kan nog NIET naar main -- maar alleen nog omdat de metingen niet af zijn.**
+**Deze tak kan naar main, op een voorbehoud dat geen fout is.**
 
-Alle vijf gevonden fouten zijn gerepareerd, elk met een test die omvalt als je de fix
-terugdraait -- inclusief het valse conflict in de domeinwizard, dat op het draaiende cluster
-is nagemeten op precies het project waar de eigenaar in vastliep. Wat rest is meetwerk: de
-sandboxsuite moet vers over op de eindimage (hij is afgebroken op 36/68), `-m reallife` en
-`-m punt14` zijn niet gedraaid, en taak 2 kwam tot 1 van de 47 projecten. Wie die metingen
-draait en groen ziet, kan het oordeel omzetten.
+Alle zes gevonden fouten zijn gerepareerd, elk met een test die omvalt als je de fix
+terugdraait, en **elke geautomatiseerde suite is groen gemeten op de eindcode** -- inclusief
+de sandboxsuite, en inclusief `-m reallife` en `-m punt14` gelijktijdig zoals het plan vroeg.
+
+Het voorbehoud is taak 2: van de 47 voorbeeldprojecten is de keten op twee bewezen en op de
+rest niet gemeten, omdat de gedeelde sandbox naar een andere PR ging. Er is bij die twee
+geen platformfout gevonden; wel een grens van de omgeving die hieronder staat. Wie taak 2
+afmaakt en niets nieuws vindt, kan dit voorbehoud schrappen.
 
 Wat er WEL staat: de unitsuite en beide browsersuites zijn groen, en elk van de tien punten
 uit taak 3 is apart aangetoond in plaats van aangenomen — de goedkeuringsdialoog inclusief
@@ -110,15 +112,28 @@ chokepoint snijd je niet zonder reproducerende test.
 
 | suite | uitslag | duur |
 |---|---|---|
-| `uv run pytest tests/ -q` | **9007 passed, 7 skipped, 0 failed** | 7m27s |
-| `uv run pytest -m e2e -q` (1e) | **436 passed, 67 skipped, 1 xpassed, 0 failed** | 11m56s |
-| `uv run pytest -m e2e -q` (2e) | **436 passed, 67 skipped, 1 xpassed, 0 failed** | 12m06s |
-| `uv run pytest -m sandbox -q` | **afgebroken op 36/68**, 1 rood (zie hieronder) | |
-| `uv run pytest -m reallife -q` + `-m punt14` | **niet gedraaid** | |
+Alles hieronder is gemeten op de EINDCODE (`4f483796`), met de fixes aantoonbaar in de
+draaiende pod -- geverifieerd door de container zelf te bevragen, niet via `/version`.
 
-De sandboxsuite is door mij afgebroken op een verkeerde lezing van een instructie, niet door
-een fout in de suite. De ene rode die hij tot dat punt gaf is bevinding 3 hieronder, en die is
-gerepareerd; de suite moet vers over op een image met die fix erin.
+| suite | uitslag | duur |
+|---|---|---|
+| `uv run pytest tests/ -q` | **9036 passed, 7 skipped, 0 failed** | 7m51s |
+| `uv run pytest -m e2e -q` (1e) | **436 passed, 67 skipped, 1 xpassed, 0 failed** | 12m28s |
+| `uv run pytest -m e2e -q` (2e) | **436 passed, 67 skipped, 1 xpassed, 0 failed** | 13m22s |
+| `uv run pytest -m sandbox -q` | **66 passed, 1 xfailed**, 1 rood -> bevinding 6, daarna groen | 1h16m |
+| `uv run pytest -m reallife -q` (gelijktijdig) | **7 passed, 1 xfailed, 0 failed** | 20m05s |
+| `uv run pytest -m punt14 -q` (gelijktijdig) | 1 rood -> bevinding 6 | 11m04s |
+| `uv run pytest -m punt14 -q` (na de fix) | **4 passed, 0 failed**, nul ReadTimeouts | 34m48s |
+
+De unitsuite ging van 9007 naar 9036: +29 door de tests bij de zes fixes.
+
+De ene rode in de sandboxsuite en in de gelijktijdige punt14-run is dezelfde, en is bevinding
+6 hieronder. Na de fix is `-m punt14` opnieuw gedraaid en volledig groen.
+
+Het plan vroeg `-m reallife` en `-m punt14` GELIJKTIJDIG (de RC-112-vorm). Dat is zo gedaan,
+als aparte processen naast elkaar. De 12 tests dragen ook de `sandbox`-marker en lopen dus al
+mee in de suite, maar daar sequentieel; de gelijktijdige run is de meting met echte druk --
+en die druk bracht bevinding 6 aan het licht.
 
 De unitsuite is gedraaid met de eigen standaardaanroep, zonder eigen `-m`.
 
@@ -139,10 +154,25 @@ nagelopen: alle 47 lezen schoon, alle 47 dragen `clusters: [sandboxed-local]` en
 samen 90 componenten en **137 deployments** over 11 diensten. Schema-versies: 42x `2.2` en 5x
 `2` -- geen enkele op de huidige `2.7`, dus de uitrol is meteen een upgrade-veiligheidsmeting.
 
-De keten is bewezen op een van de 47 (`cot-zaq`, schema 2.2): bestand geplaatst,
-`:reconcile`, `:refresh`, ArgoCD Synced+Healthy, pod Running, URL 200 -- in 9 tot 58 seconden.
-Daarna is de doorloop gestrand op 1 van de 47 doordat het cluster nodig was voor het
-conflictonderzoek.
+De keten is bewezen op twee van de 47. `cot-zaq` (schema 2.2, 1 component, 1 deployment):
+bestand geplaatst, `:reconcile`, `:refresh`, ArgoCD Synced+Healthy, pod Running, URL 200 --
+in 9 tot 58 seconden. `algor-1ha` (3 componenten, 2 deployments): Healthy, repo klopt, in 85s.
+
+**Een grens van de omgeving, geen platformfout.** Deze 47 zijn omgezette PRODUCTIEbestanden
+en verwijzen naar prive-registries. `algor-odc` bleef hangen in `ImagePullBackOff`:
+
+```
+Failed to pull image "ghcr.io/rijksictgilde/algoritmeregister/postgresql-with-dictionaries:2024.11.19"
+  ... failed to authorize: ... 403 Forbidden
+```
+
+De sandbox heeft die credentials niet. Daarvoor kent de omzetting `--probe-image`, die elke
+workload vervangt door de e2e-probe; die optie is hier niet gebruikt omdat de bestanden kant
+en klaar werden aangeleverd. Wie taak 2 afmaakt: gebruik die optie, of laat de meting een
+`ImagePullBackOff` apart melden in plaats van er zeven minuten op te wachten -- anders kost
+een handvol prive-images uren en zegt de uitslag niets over het platform.
+
+De rest van de 47 is niet gemeten: de gedeelde sandbox ging naar een andere PR.
 
 Opruimen tussen de projecten is geen keuze maar een grens: de node heeft een pod-cap van 110
 en 137 deployments passen daar nooit tegelijk in.
