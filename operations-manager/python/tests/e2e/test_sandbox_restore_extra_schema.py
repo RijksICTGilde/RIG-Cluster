@@ -149,8 +149,8 @@ def _psql(secret: dict[str, str], statement: str) -> tuple[int, str]:
     return result.returncode, (result.stdout + result.stderr).strip()
 
 
-def _backup_and_restore(sandbox_url: str, project: str, deployment: str, key: str, *, round_name: str) -> None:
-    """One full generation restore: back the database up, then restore that run."""
+def _backup_and_restore(sandbox_url: str, project: str, deployment: str, key: str, *, round_name: str) -> str:
+    """One backup + restore round. Returns the database the restore says it wrote into."""
     backup = _api(
         sandbox_url,
         "POST",
@@ -178,6 +178,9 @@ def _backup_and_restore(sandbox_url: str, project: str, deployment: str, key: st
     body = restore.json()
     assert body["status"] == "success", body
     assert body["refresh_succeeded"] is True, body
+    targets = [detail["target_pvc_name"] for detail in body["pvcs_restored"] if detail["success"]]
+    assert len(targets) == 1, body
+    return targets[0]
 
 
 @pytest.mark.timeout(3600)
@@ -231,16 +234,24 @@ def test_twee_generatie_restores_met_een_extra_schema(database_project: CreatedP
     # 3. Twee generatie-restores achter elkaar. De EERSTE ging altijd al goed (de
     #    databasenaam zonder generatie is een prefix van de naam met postfix en sorteert
     #    dus vooraan); de TWEEDE is waar het op stukliep.
+    #    LET OP: de tweede ronde levert vandaag GEEN nieuwe generatie op. De restore
+    #    schrijft de generatie deployment-breed weg
+    #    (``set_deployment_service_generation``) maar leest hem component-breed terug
+    #    (``get_database_generation``), en die plek wordt voor een database nooit
+    #    geschreven. Elke ronde meldt dus opnieuw 0 -> 1. Dat is een aparte bevinding,
+    #    geen RC-121; hier wordt daarom niet geëist dat de naam verandert. Het maakt de
+    #    tweede ronde juist het gevaarlijke geval: bron- en doelnaam zijn gelijk, en de
+    #    OUDE code hernoemde dan het rapportageschema over de zojuist teruggezette data
+    #    heen (r < v). Wat hieronder telt is dus waar de data staat.
     for round_name in ("generatie 1", "generatie 2"):
-        previous_db = start["DATABASE_DB"]
-        _backup_and_restore(sandbox_url, project, deployment, key, round_name=round_name)
-        # De refresh schrijft de nieuwe generatie naar zad-deployments; ArgoCD brengt hem
-        # in het geheim. Daarop wachten is wachten op de TOESTAND, niet op de klok.
+        target_db = _backup_and_restore(sandbox_url, project, deployment, key, round_name=round_name)
+        # De refresh schrijft de generatie naar zad-deployments; ArgoCD brengt hem in het
+        # geheim. Wachten op de toestand die de restore ZELF noemt, niet op een klok.
         assert cluster.wait_for(
-            lambda db=previous_db: _read_secret(namespace, secret_name)["DATABASE_DB"] != db,
+            lambda db=target_db: _read_secret(namespace, secret_name)["DATABASE_DB"] == db,
             timeout=600.0,
             interval=10.0,
-        ), f"DATABASE_DB staat na '{round_name}' nog op {previous_db}; de nieuwe generatie is nooit doorgekomen"
+        ), f"DATABASE_DB komt na '{round_name}' niet uit op {target_db}"
         start = _read_secret(namespace, secret_name)
         logger.info("[%s] NA DE RESTORE: db=%s schema=%s", round_name, start["DATABASE_DB"], start["DATABASE_SCHEMA"])
 
