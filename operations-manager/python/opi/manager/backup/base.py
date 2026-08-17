@@ -89,6 +89,9 @@ class SnapshotInfo:
     component_name: str | None = None
     storage_name: str | None = None
     generation: int | None = None
+    #: For database snapshots: the database the dump was taken from, as tagged by the
+    #: backup pod. None on snapshots taken before that tag existed.
+    source_database: str | None = None
     backup_run_id: str | None = None  # Groups PVCs from same backup run
     # Resource type for filtering (pvc, database, bucket)
     resource_type: str | None = None
