@@ -234,15 +234,10 @@ def test_twee_generatie_restores_met_een_extra_schema(database_project: CreatedP
     # 3. Twee generatie-restores achter elkaar. De EERSTE ging altijd al goed (de
     #    databasenaam zonder generatie is een prefix van de naam met postfix en sorteert
     #    dus vooraan); de TWEEDE is waar het op stukliep.
-    #    LET OP: de tweede ronde levert vandaag GEEN nieuwe generatie op. De restore
-    #    schrijft de generatie deployment-breed weg
-    #    (``set_deployment_service_generation``) maar leest hem component-breed terug
-    #    (``get_database_generation``), en die plek wordt voor een database nooit
-    #    geschreven. Elke ronde meldt dus opnieuw 0 -> 1. Dat is een aparte bevinding,
-    #    geen RC-121; hier wordt daarom niet geëist dat de naam verandert. Het maakt de
-    #    tweede ronde juist het gevaarlijke geval: bron- en doelnaam zijn gelijk, en de
-    #    OUDE code hernoemde dan het rapportageschema over de zojuist teruggezette data
-    #    heen (r < v). Wat hieronder telt is dus waar de data staat.
+    #    De generatie loopt sinds RC-123 wel op, dus ronde 2 levert een echte nieuwe
+    #    database (``..._v2``). Dat het OPLOPEN klopt is de meting van
+    #    ``test_sandbox_restore_generation.py``; wat hieronder telt is waar de data
+    #    staat, want daar ging RC-121 over.
     for round_name in ("generatie 1", "generatie 2"):
         target_db = _backup_and_restore(sandbox_url, project, deployment, key, round_name=round_name)
         # De refresh schrijft de generatie naar zad-deployments; ArgoCD brengt hem in het
