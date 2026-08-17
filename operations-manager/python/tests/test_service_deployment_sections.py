@@ -52,37 +52,23 @@ def _templates(ctx: DeploymentPageContext) -> list[str]:
 
 
 class TestMetricsScraper:
-    """The Resource Metrics block is the metrics-scraper service's, not the page's."""
+    """The Resource Metrics block moved to the Metrics TAB and is no longer a section.
 
-    def test_section_for_a_project_that_scrapes_metrics(self) -> None:
+    It used to hang here, and it fetched exactly the fragment the Metrics tab fetches
+    (``/projects/details/<p>/metrics/<d>``, id ``metrics-content-<name>``): the same charts,
+    twice, on two tabs. The block predates the tab and stayed behind when the tab arrived.
+
+    Same call as for backups above, and for the same reason: two views of the same data
+    drift apart. The tab is the wider one -- it renders for every project with deployments,
+    service or no service, because resource usage is not a per-service extra.
+    """
+
+    def test_the_block_is_no_longer_a_deployment_page_section(self) -> None:
         ctx = _ctx([], components=[{"name": "c1", "services": [{"reference": "metrics-scraper"}]}])
-        sections = collect_deployment_page_sections(ctx)
-        assert [s.template for s in sections] == ["metrics_scraper/section-deployment.html.j2"]
-        assert sections[0].context["available"] is True
-        assert sections[0].context["deployment_name"] == "dep-1"
+        assert _templates(ctx) == [], "the metrics block is back on the per-deployment hook"
 
-    def test_no_section_without_the_service(self) -> None:
+    def test_no_section_without_the_service_either(self) -> None:
         assert _templates(_ctx(["publish-on-web"])) == []
-
-    def test_unavailable_when_prometheus_is_down(self) -> None:
-        ctx = _ctx([{"name": "metrics-scraper"}], prometheus=False)
-        section = collect_deployment_page_sections(ctx)[0]
-        assert section.context["available"] is False
-        assert "Prometheus" in section.context["unavailable_reason"]
-
-    def test_unavailable_for_a_deployment_on_another_cluster(self) -> None:
-        ctx = _ctx([{"name": "metrics-scraper"}], cluster="other-cluster")
-        section = collect_deployment_page_sections(ctx)[0]
-        assert section.context["available"] is False
-        assert "test-cluster" in section.context["unavailable_reason"]
-
-    def test_template_renders_through_the_app_env(self) -> None:
-        """The service-owned template resolves via the catalog search path and renders
-        with the components (guards the loader wiring in opi/core/templates_lotc.py)."""
-        section = collect_deployment_page_sections(_ctx([{"name": "metrics-scraper"}]))[0]
-        html = templates.env.get_template(section.template).render(section=section)
-        assert "/projects/details/proj/metrics/dep-1" in html
-        assert "Resource Metrics" in html
 
 
 BACKUPS_TEMPLATE = "shared/section-backups.html.j2"
