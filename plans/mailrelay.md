@@ -191,7 +191,11 @@ Beslist in dit ontwerp, niet meer open: het lokale deel is per project instelbaa
 
 Vier dingen die na het oorspronkelijke ontwerp zijn gemeten of besloten. De rest van het plan hierboven blijft staan; waar deze aanvulling een openstaande beslissing invult, staat dat erbij.
 
-## 1. Bereikbaarheid: gedeeltelijk bewezen, nog niet rond
+## 1. Bereikbaarheid: ACHTERHAALD, zie de meting van 17 augustus bovenaan
+
+> **Deze paragraaf klopt niet meer en blijft staan omdat de denkfout leerzaam is.** De meting hieronder liep door het baseline-netwerkbeleid van `rig-prd-vlam-wt8`, dat egress naar buiten alleen op 443 en 80 toestaat. De SMTP-pakketten hebben de pod nooit verlaten, dus alle conclusies over de tegenpartij zijn op niets gebouwd. Met een tijdelijke NetworkPolicy erbij antwoordt poort 25 meteen en is een testbericht aangenomen. Lees dit als een waarschuwing: bij "er komt niets terug" hoort de eerste vraag te zijn of het pakket überhaupt is vertrokken.
+
+### De oorspronkelijke tekst
 
 Stap 2 van de uitrol is uitgevoerd vanuit `rig-prd-vlam-wt8` op productie, de namespace die `egress.projectcalico.org/egressGatewayPolicy: rig-ron` draagt. Gemeten met `nc` in de bestaande `productie-vlam-proxy`-pod, dus zonder iets uit te rollen:
 
