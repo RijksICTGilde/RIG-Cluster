@@ -82,16 +82,29 @@ eigen wizardtoken. De serverkant was tussen de twee tests ongewijzigd (projectre
 e-mailtoelating, wizardstaatbestanden), want de create-taak is in deze opzet nagemaakt en
 het "aangemaakte" project bereikt de gedeelde opslag nooit. En met de besmetting bewust
 aangezet -- twee wizardgangen achter elkaar op dezelfde pagina in dezelfde context --
-begon de tweede gang alsnog leeg, omdat `open_create_wizard` eerst
-`/forms/wizard/restart` ophaalt en dat de wizardstaat wist.
+begon de tweede gang alsnog leeg.
+
+**De isolatie loopt langs twee wegen, en dat is precies de val bij het vastleggen ervan.**
+De indiening van een gang wist de wizardstaat zelf (`clear_wizard_state` in
+`opi/web/router_wizard.py`), en het openen van een gang wist hem nog eens, doordat
+`open_create_wizard` eerst `/forms/wizard/restart` ophaalt. Een test die de eerste gang
+indient toetst daardoor de restart niet: de staat was bij de indiening al weg, en de test
+blijft groen als je de restart eruit haalt. Wil je die weg pinnen, laat de eerste gang dan
+**niet** indienen -- stop zodra de regel staat -- zodat de restart het enige overgebleven
+mechanisme is. Zo staat het nu in
+`test_a_second_wizard_in_the_same_browser_session_starts_without_a_rule`, en de negatieve
+controle bewijst het: met de `goto("/forms/wizard/restart")` uit `open_create_wizard`
+gehaald valt die test om ("Wizard is on step 'Cross-domain toegang', expected
+'Projectgegevens'"), en met de restart erin is hij groen.
 
 Wat er wel aan de hand was, staat onder punt 1 hierboven: korte vangnetten (10 s) op
 wachtregels die een **volledige** ronde langs de server moeten dekken, plus een vaste
 `wait_for_timeout(600)` die volgens de meting nooit iets afdekte. Zulk rood treft de test
 die op dat moment loopt, dus het springt heen en weer tussen twee tests -- en dat lijkt op
 besmetting terwijl het belasting is. De les: markeer een test pas als bekend-rood met een
-reden die je hebt **gemeten**, en leg de bewering die je aanneemt vast als test. Dat is nu
-`test_a_second_wizard_in_the_same_browser_session_starts_without_a_rule`.
+reden die je hebt **gemeten**, en leg de bewering die je aanneemt vast als test -- en toets
+die test daarna door het mechanisme dat hij claimt weg te halen (de negatieve controle),
+anders legt hij alleen de waarneming vast en niet de weg.
 
 ## Configuratie
 
