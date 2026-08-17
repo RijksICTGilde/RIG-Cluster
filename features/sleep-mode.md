@@ -178,11 +178,62 @@ de twee `zadctl service sleep-mode`-commando's waren onbruikbaar.
   die deployment, `argocd_resources_changed=False`).
 - **Commit-storm voorkomen.** De wekker doet single-flight (één wek-call per pod-leven), het
   wek-endpoint is idempotent, en de sweeper paced tussen projecten.
+- **De wekker vraagt alleen door als er iemand wacht.** Zie de volgende sectie; dat is de
+  reden dat een slapende deployment niet 28.800 statusverzoeken per dag kost.
 
 De sweeper (`SLEEP_MODE_SWEEP_MINUTES`, standaard 30 min) doet per ronde: een matchende
 `awake` deployment zonder deadline krijgt er een (`sleep-after-deploy`); een `awake` met
 verlopen deadline gaat `sleeping`; een deployment die te lang (`SLEEP_MODE_WAKING_TIMEOUT_MINUTES`,
 standaard 10) in `waking` staat gaat terug naar `awake` (kapot image dat nooit terugkwam).
+
+## Hoe vaak de wekker het vraagt (twee snelheden)
+
+Er zijn twee lussen en ze gaan naar verschillende plekken. De **browsertab** pollt elke
+2 seconden `/__zad/status` op de wekkerpod zelf; dat verkeer bereikt OPI nooit. De
+**wekkerpod** pollt `GET /api/sleep-mode/{p}/{d}/status` op OPI, en dat is de lus die geld
+kost: elk verzoek doet in `flow.status` een `kubectl get deployments`, dus een aanroep op
+de apiserver.
+
+Die lus stond op één vaste snelheid van 3 seconden, voor de hele levensduur van de pod.
+Een slapende deployment zonder een enkele bezoeker kostte daarmee **1200 verzoeken per uur
+en 28.800 per dag**, voor een antwoord dat niemand las — precies het omgekeerde van waar
+slaapstand voor bestaat.
+
+De pod kent nu twee snelheden:
+
+| Situatie | Interval | Waarom |
+|---|---|---|
+| Er wacht iemand | `ZAD_POLL_INTERVAL_SEC` (3s) | Wie op "starten" drukt wil niet minutenlang naar een pagina kijken |
+| Er wacht niemand | 30s (`idlePollInterval` in `main.go`) | Niemand leest het antwoord, maar de pod moet het wél zelf blijven ontdekken |
+
+"Er wacht iemand" is precies twee dingen, en niets anders:
+
+1. een recent verzoek op `/__zad/status` of op de wekkerpagina zelf — de tab pollt elke
+   2 seconden, dus dat betekent dat er een mens naar een spinner kijkt (het venster is drie
+   keer het snelle interval, zodat één weggevallen verzoek de pod niet halverwege een wacht
+   terugzet);
+2. een wek-verzoek dat déze pod heeft gestuurd en dat nog loopt — de app start koud op
+   terwijl er verkeer aankomt, dus de overdracht moet meteen gezien worden, ook als die
+   bezoeker zijn tab dichtdoet. Een wek die is *mislukt* loopt niet, en houdt de snelle
+   cadans dus niet voor de rest van het podleven vast.
+
+De kubelet-probes (`/__zad/healthz`, `/__zad/ready`) tellen bewust **niet** mee: die komen
+constant langs, en zouden betekenen dat er altijd iemand wacht.
+
+Twee eigenschappen die hieraan vastzitten:
+
+- **Wie wacht, wacht niet langer dan eerst.** Een bezoeker die aankomt terwijl de pod op
+  zijn trage cadans zit, zet niet alleen de snelle cadans aan maar duwt ook direct een
+  check door (`kick`), zodat er geen deel van de trage pauze bij zijn wachttijd komt. De
+  overhead blijft in beide gevallen begrensd door het snelle interval (≤3s).
+- **De pod stopt nooit met vragen, en dat is het hele punt.** Een deployment kan van
+  buitenaf gewekt worden — via `zadctl`, via de API, via het portaal — zonder dat er ergens
+  een browser is. `/__zad/ready` is bewust omgekeerd (200 zolang de app *niet* terug is),
+  dus een pod die zou stoppen met vragen blijft 200 antwoorden en blijft in de EndpointSlice
+  staan terwijl de app draait: een wekpagina vóór een applicatie die allang wakker is. Dat
+  is de reden dat de trage cadans een *vertraging* is en geen pauze;
+  `TestWokenFromOutside` in `images/zad-waker/main_test.go` dekt precies dat geval en valt
+  om als de trage doorpoll verdwijnt.
 
 ## Het wekkerimage
 
@@ -198,6 +249,19 @@ standaard 10) in `waking` staat gaat terug naar `awake` (kapot image dat nooit t
 
 De pagina hergebruikt bewust de vormgeving van de authorization sign-in card, zodat de twee
 pagina's consistent zijn.
+
+**Een wijziging in `images/zad-waker/` is een eigen uitrolstap.** Het image komt los uit de
+registry, dus een nieuwe OPI-versie brengt geen nieuwe wekker mee en omgekeerd:
+
+1. `task publish-waker` (ghcr) of `task build-waker-image` (sandbox/kind);
+2. bestaande wekkerpods draaien nog de oude binary tot ze opnieuw worden aangemaakt. Bij
+   `:latest` (`imagePullPolicy: Always`) is dat de eerstvolgende keer dat een deployment in
+   slaapstand gaat; bij een pinned tag moet ook `SLEEP_MODE_WAKER_IMAGE` mee. Wie een
+   draaiende wekker meteen wil verversen doet `kubectl -n <ns> rollout restart deploy/<waker>`.
+
+Er is geen speciale zorg voor "oud en nieuw naast elkaar": beide versies lezen hetzelfde,
+bevroren `state`-contract (`starting | ready`), dus een oude wekker blijft correct werken —
+hij pollt alleen nog op de vaste 3 seconden tot hij vervangen is.
 
 ## Configuratie (settings)
 
