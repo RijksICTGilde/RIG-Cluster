@@ -529,7 +529,26 @@ class SubdomainCheckResponse(BaseModel):
 
     subdomain: str = Field(description="The subdomain that was checked", examples=["myapp"])
     base_domain: str = Field(description="The base domain it was checked under", examples=["rijksapp.nl"])
-    available: bool = Field(description="Whether the subdomain is free to claim", examples=[True])
+    available: bool = Field(
+        description=(
+            "Whether this subdomain is still free WITHIN ZAD, under the given base domain. "
+            "It says nothing about who owns that base domain or whether DNS for it exists: "
+            "any syntactically valid domain is accepted here, because a project may bring "
+            "its own. Read 'cluster_domain' alongside it to know whether the address can go "
+            "live without a domain request."
+        ),
+        examples=[True],
+    )
+    cluster_domain: bool = Field(
+        default=False,
+        description=(
+            "Whether the base domain is one this cluster serves itself. True means a free "
+            "name here is an address you can use straight away; false means it is a domain "
+            "of your own, so claiming the name is only the first half and the domain still "
+            "has to be requested and approved."
+        ),
+        examples=[True],
+    )
     validation_error: str | None = Field(
         default=None,
         description="Why the answer is 'not available' when it is the value itself that is wrong.",

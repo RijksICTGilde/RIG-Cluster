@@ -85,7 +85,7 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
-from opi.connectors.subdomain import validate_base_domain, validate_subdomain
+from opi.connectors.subdomain import get_supported_base_domains, validate_base_domain, validate_subdomain
 from opi.core.auth_decorators import get_current_user
 from opi.core.cluster_config import get_ingress_postfix, get_selectable_clusters, supports_custom_domain_certificates
 from opi.core.config import settings
@@ -550,6 +550,14 @@ async def check_subdomain_availability_v2(
 ) -> SubdomainCheckResponse:
     """Of *subdomain* nog vrij is onder *base_domain*, over alle projecten heen.
 
+    **Waar de controle wel en niet over gaat.** Hij zegt of deze subdomeinnaam binnen ZAD
+    nog niet vergeven is. Hij zegt niets over eigendom van het basisdomein en niets over
+    DNS: elk syntactisch geldig domein wordt hier geaccepteerd, want een project mag zijn
+    eigen domein meebrengen. Een vrije naam onder een domein dat niet van dit cluster is,
+    is dus nog geen werkend adres. Daarvoor staat ``cluster_domain`` in het antwoord: is
+    die waar, dan bedient dit cluster het domein zelf en kun je de naam meteen gebruiken;
+    is die onwaar, dan moet het domein daarnaast nog aangevraagd en goedgekeurd worden.
+
     De projectnaam staat in het pad omdat de vraag bij een project hoort: je vraagt dit
     omdat je het subdomein voor een deployment van dit project wilt claimen, en de
     reservering wordt per project en deployment vastgelegd.
@@ -588,12 +596,19 @@ async def check_subdomain_availability_v2(
 
     _project_data_or_404(project_name)
 
+    # Of dit cluster het basisdomein zelf bedient. Reist mee in elk antwoord, ook in een
+    # afwijzing: het is een eigenschap van het domein en niet van de uitkomst, en juist bij
+    # "niet beschikbaar" wil een aanroeper weten welk van de twee dingen hij aan het
+    # oplossen is.
+    cluster_domain = base_domain.lower() in get_supported_base_domains(settings.CLUSTER_MANAGER)
+
     is_valid, validation_error = validate_subdomain(subdomain)
     if not is_valid:
         return SubdomainCheckResponse(
             subdomain=subdomain.lower(),
             base_domain=base_domain.lower(),
             available=False,
+            cluster_domain=cluster_domain,
             validation_error=validation_error,
         )
 
@@ -605,6 +620,7 @@ async def check_subdomain_availability_v2(
             subdomain=subdomain.lower(),
             base_domain=base_domain.lower(),
             available=False,
+            cluster_domain=cluster_domain,
             validation_error=domain_error,
         )
 
@@ -615,6 +631,7 @@ async def check_subdomain_availability_v2(
         subdomain=subdomain.lower(),
         base_domain=base_domain.lower(),
         available=is_available,
+        cluster_domain=cluster_domain,
         validation_error=None,
     )
 
