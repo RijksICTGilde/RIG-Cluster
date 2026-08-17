@@ -394,6 +394,28 @@ class ComponentReference(BaseModel):
     image: str = Field(..., max_length=512, description="Image URL for this component", examples=["nginx:1.21"])
 
 
+# The two domain fields say the same thing in three request models, and the choices behind
+# them live on the publish-on-web config model instead -- so a caller reading the schema of
+# the request they are about to send finds no list and no pointer to one. These say once
+# where the list is. The value set itself is NOT restated here: base-domain is open by
+# design (a domain of your own is a legitimate value), and domain-format keeps its enum
+# from ``DomainFormatId``, which is where the closed set belongs.
+BASE_DOMAIN_DESCRIPTION = (
+    "Base domain for URL generation (e.g. 'rijksapp.nl'). Not a closed set: read the domains this "
+    "cluster offers from GET /api/v2/projects/{project_name}/clusters ('base-domains'), or write a "
+    "domain of your own here -- there is no separate field or marker for that. Only the cluster's "
+    "own domain ('default-domain' in that same response) and an empty value take effect immediately; "
+    "every other value needs an approval, and until it is granted the deployment runs on the cluster "
+    "address."
+)
+DOMAIN_FORMAT_DESCRIPTION = (
+    "URL format template ID that controls how hostnames are generated. Formats containing 'subdomain' "
+    "require the subdomain field to be set, and the dotted variants only work on a base domain that "
+    "supports separate subdomains. The same choices, per base domain, are on the publish-on-web "
+    "deployment config (PUT /api/v2/projects/{project_name}/services/publish-on-web/config/deployment)."
+)
+
+
 class UpsertDeploymentRequest(BaseModel):
     deploymentName: str = Field(..., max_length=63, description="Name of the deployment", examples=["production"])
     components: list[ComponentReference] = Field(
@@ -415,10 +437,7 @@ class UpsertDeploymentRequest(BaseModel):
     )
     domain_format: DomainFormatId | None = Field(
         None,
-        description=(
-            "URL format template ID that controls how hostnames are generated. "
-            "Formats containing 'subdomain' require the subdomain field to be set."
-        ),
+        description=DOMAIN_FORMAT_DESCRIPTION,
         examples=["component-deployment-subdomain"],
     )
     subdomain: str | None = Field(
@@ -432,7 +451,7 @@ class UpsertDeploymentRequest(BaseModel):
     )
     base_domain: str | None = Field(
         None,
-        description="Base domain for URL generation (e.g., 'rijksapp.nl'). Must be a cluster-supported domain.",
+        description=BASE_DOMAIN_DESCRIPTION,
         examples=["rijksapp.nl"],
         max_length=255,
     )
@@ -774,10 +793,7 @@ class DeploymentDomainSettingsRequest(BaseModel):
     )
     domain_format: DomainFormatId | None = Field(
         None,
-        description=(
-            "URL format template ID that controls how hostnames are generated. "
-            "Formats containing 'subdomain' require the subdomain field to be set."
-        ),
+        description=DOMAIN_FORMAT_DESCRIPTION,
         examples=["component-deployment-subdomain"],
     )
     subdomain: str | None = Field(
@@ -791,7 +807,7 @@ class DeploymentDomainSettingsRequest(BaseModel):
     )
     base_domain: str | None = Field(
         None,
-        description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
+        description=BASE_DOMAIN_DESCRIPTION,
         examples=["rijks.app"],
         max_length=255,
     )
@@ -1041,10 +1057,7 @@ class SelfServiceProjectRequest(BaseModel):
     )
     domain_format: DomainFormatId | None = Field(
         None,
-        description=(
-            "URL format template ID that controls how hostnames are generated. "
-            "Formats containing 'subdomain' require the subdomain field to be set."
-        ),
+        description=DOMAIN_FORMAT_DESCRIPTION,
         examples=["component-deployment-project"],
     )
     subdomain: str | None = Field(
@@ -1062,7 +1075,7 @@ class SelfServiceProjectRequest(BaseModel):
     base_domain: str | None = Field(
         None,
         max_length=255,
-        description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
+        description=BASE_DOMAIN_DESCRIPTION,
         examples=["rijks.app"],
     )
     issuer: str | None = Field(
@@ -1848,8 +1861,11 @@ async def add_service(
     project level.  If ``components`` is provided, the service is appended to those
     components' ``services`` lists; entries already there keep their config.
 
-    The request always succeeds - if the service already exists it is
-    reported in ``services_skipped`` / ``warnings``.
+    The request always succeeds - if the service already exists at project level it is
+    reported in ``services_skipped`` / ``warnings``, and the components in ``components``
+    are still bound to it. ``components_updated`` lists only the components whose
+    ``services`` list actually changed, so a component that already had the service is
+    absent from it.
 
     Headers:
         X-API-Key: The API key for the project (required)
@@ -1931,9 +1947,10 @@ async def add_service(
         )
 
         if result["success"]:
-            # Process deployments only when new services were actually added
+            # Process deployments when anything changed: a service selected at project
+            # level, or an already-selected one bound to a component.
             processing_status = "skipped"
-            if result.get("services_added"):
+            if result.get("services_added") or result.get("components_updated"):
                 processing_success = await project_manager.process_project_from_git(
                     f"projects/{project_name}.yaml",
                 )
