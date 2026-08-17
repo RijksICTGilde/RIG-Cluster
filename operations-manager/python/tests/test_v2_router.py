@@ -304,7 +304,18 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             for service_type, service in SERVICES.items()
             if any(service.platform_managed_fields(layer) for layer in ConfigLayer)
         }
-        assert declared == {"keycloak": ["realms"], "publish-on-web": ["domains"]}
+        # De kloonstatus staat erbij sinds punt 28 van de zad-cli: ``generation`` en
+        # ``revisions`` zeiden alleen in hun beschrijving dat het platform ze schrijft, en
+        # proza is geen regel. Ze komen uit ``CloneState``, dus elke dienst die dat
+        # meemengt staat hier, op elke laag waar dat model dienstdoet.
+        assert declared == {
+            "keycloak": ["realms"],
+            "minio-storage": ["generation", "revisions"],
+            "persistent-storage": ["generation", "revisions"],
+            "postgresql-database": ["generation", "revisions"],
+            "publish-on-web": ["domains"],
+            "temp-storage": ["generation", "revisions"],
+        }
 
         # keycloak answers "realms" at every layer because it serves one model to all of
         # them; only the project layer has a config block, and only it has routes.
@@ -315,7 +326,15 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             for layer in ConfigLayer
             if "put" in spec["paths"].get(f"/api/v2/projects/{{project_name}}/services/{name}/config/{layer.value}", {})
         }
-        assert with_a_put == {("keycloak", "project")}
+        # minio-storage en postgresql-database staan erbij omdat hun projectlaag wel een
+        # PUT heeft: daar zet een gebruiker zijn eigen instellingen, en de kloonstatus uit
+        # CloneState reist met hetzelfde model mee. Dat is precies de reden dat de weigering
+        # bestaat, want zonder markering was die tak schrijfbaar via een route die er wel is.
+        assert with_a_put == {
+            ("keycloak", "project"),
+            ("minio-storage", "project"),
+            ("postgresql-database", "project"),
+        }
 
     def test_a_service_without_platform_fields_is_unaffected(
         self, v2_client: TestClient, mock_task_service: AsyncMock
@@ -1301,20 +1320,23 @@ class TestServiceConfigWritesOnlyWhatWasSent:
 
         assert self._payload_config(mock_task_service) == {"enable-versioning": True}
 
-    def test_another_field_does_not_drag_versioning_along(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
-        """Het geval waarin een standaard normaal binnenglipt: een deelbericht.
+    def test_de_kloonstatus_is_niet_van_de_aanroeper(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        """``generation`` was hier het deelbericht waarmee dit geval werd gemeten, en dat
+        kan niet meer: sinds punt 28 van de zad-cli dragen ``generation`` en ``revisions``
+        de markering ``x-platform-managed``. OPI schrijft ze, dus een schrijfactie erop
+        wordt geweigerd in plaats van uitgevoerd.
 
-        Wie alleen de kloonstatus zet, zegt niets over versiebeheer -- dus staat die
-        sleutel er daarna ook niet.
+        Het oorspronkelijke onderwerp (een deelbericht materialiseert geen standaard) staat
+        hierboven al op ``test_empty_body_writes_no_field``; wat hier overblijft is de
+        weigering zelf, op de laag waar de kloonstatus werkelijk staat.
         """
         mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
 
-        v2_client.put(
+        response = v2_client.put(
             "/api/v2/projects/test-project/services/minio-storage/config/deployment/main?rollout=false",
             headers={"X-API-Key": API_KEY},
             json={"generation": 2},
         )
 
-        assert self._payload_config(mock_task_service) == {"generation": 2}
+        assert response.status_code == 422, response.text
+        mock_task_service.create_task.assert_not_called()
