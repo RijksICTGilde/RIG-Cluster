@@ -501,6 +501,12 @@ class Settings(BaseSettings):
     DB_CONSOLE_PGWEB_IMAGE: str = "sosedoff/pgweb:0.16.2"
     DB_CONSOLE_DBGATE_IMAGE: str = "dbgate/dbgate:6.6.1"
 
+    # TransIP DNS API, used to keep CAA records on the zones we administer.
+    # Their presence is the on/off switch: without credentials the CAA reconciler
+    # skips, so sandbox and local do nothing by themselves.
+    TRANSIP_ACCOUNT_NAME: str | None = None
+    TRANSIP_PRIVATE_KEY: str | None = None  # PEM, the whole key
+
     # Ad-hoc job runs (run an image + command once; a "run" like the console).
     # Independently toggleable and TTL'd; the shared run reaper sweeps both kinds.
     JOB_ENABLED: bool = True
