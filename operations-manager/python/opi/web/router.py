@@ -2387,6 +2387,16 @@ async def deployment_metrics_fragment(
 
     deployment_ctx = DeploymentContext(deployment_name, components)
 
+    # Een deployment op een ANDER cluster levert hier geen metingen op, want deze OPI
+    # bevraagt alleen de Prometheus van zijn eigen cluster. Zonder deze vlag zou dat als
+    # "geen data" lezen, en dan zoekt de lezer de fout bij zijn applicatie. Deze melding
+    # stond in het dienstblok van de metrics-scraper op het tabblad Deployments; dat blok
+    # is weg omdat het dezelfde grafieken dubbel toonde, en de melding hoort thuis waar de
+    # grafieken staan.
+    from opi.core.config import settings
+
+    ander_cluster = cluster if cluster and cluster != settings.CLUSTER_MANAGER else ""
+
     return render(
         request,
         template="bg/_deployment-metrics.html.j2",
@@ -2399,6 +2409,8 @@ async def deployment_metrics_fragment(
             "pvc_storage": pvc_storage,
             "duration": duration,
             "prometheus_bereikbaar": prometheus_bereikbaar,
+            "ander_cluster": ander_cluster,
+            "eigen_cluster": settings.CLUSTER_MANAGER,
             "metingen_leeg": not _heeft_metingen(metrics, pvc_storage),
         },
     )

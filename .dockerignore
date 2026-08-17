@@ -96,6 +96,23 @@ operations-manager/python/scripts/
 test-*
 **/*_test.py
 
+# Claude Code: sessiegegevens en vooral de WORKTREES.
+#
+# Een agent werkt in .claude/worktrees/agent-<id>/, en dat is een volledige kopie van deze
+# repo BINNEN de buildcontext. Gemeten op 17 augustus 2026: 21 worktrees, samen 12 GB, met
+# 13.355 gewijzigde .py-bestanden op een dag. Elk daarvan telt als bouwafhankelijkheid, dus
+# elke regel die een agent schrijft kostte een volledige rebuild - skaffold bouwde
+# onophoudelijk terwijl er aan de echte broncode niets veranderd was.
+#
+# De synchronisatieregels vangen dit niet af: die matchen op
+# operations-manager/python/opi/**/*.py, en een bestand in een worktree staat op
+# .claude/worktrees/agent-XXX/operations-manager/python/opi/..., wat daar niet op matcht.
+# Geen sync dus, maar een rebuild.
+#
+# Zelfde soort oorzaak als de scripts- en tests-regels hierboven, en de derde keer dat een
+# map in de context ongemerkt de bouwlus opat.
+.claude/
+
 # Node.js (if any)
 node_modules/
 npm-debug.log*
