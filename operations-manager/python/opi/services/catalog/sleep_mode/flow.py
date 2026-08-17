@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from opi.services.catalog.sleep_mode.api_models import DISABLED
+
 logger = logging.getLogger(__name__)
 
 
@@ -140,10 +142,13 @@ async def wake(
 
         cluster = deployment.get("cluster", "")
         config = sleep_config.load(project_data, cluster)
-        current = sleep_state.read(project_data, deployment_name)
         if config is None or not config.matches(deployment_name):
             steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
-            return WakeResult(changed=False, state=current.state)
+            # ``disabled``, not the stored state: sleep-mode does not apply here, and
+            # ``/status`` already says exactly that for this same case. Reporting the
+            # stored ``awake`` would make one word mean two things across the two
+            # endpoints again -- the thing this pair of fields exists to end.
+            return WakeResult(changed=False, state=DISABLED)
 
         waking_timeout = timedelta(minutes=settings.SLEEP_MODE_WAKING_TIMEOUT_MINUTES)
         if not service.begin_wake(project_data, deployment_name, now, waking_timeout):
@@ -209,10 +214,10 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
 
         cluster = deployment.get("cluster", "")
         config = sleep_config.load(project_data, cluster)
-        current = sleep_state.read(project_data, deployment_name)
         if config is None or not config.matches(deployment_name):
             steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
-            return WakeResult(changed=False, state=current.state)
+            # Same as in ``wake``: sleep-mode does not apply, so the state is ``disabled``.
+            return WakeResult(changed=False, state=DISABLED)
 
         # Mint a wake token only when a waker will actually be generated, mirroring the
         # sweeper's SLEEP branch, so the deployment can be woken from its own page later.
@@ -248,17 +253,29 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
 
 
 async def status(project_name: str, deployment_name: str, *, presented_token: str | None = None) -> dict:
-    """Read-only status the waker polls: ``{"state": "starting" | "ready"}``.
+    """Read-only status: what the waker polls, and the deployment's real sleep state.
 
-    Reads the cached project data (this is hot, every few seconds) and asks kubectl
-    whether the app component behind the waker has a ready pod. ``ready`` tells the waker
-    to step out of the EndpointSlice.
+    Two fields, because one word cannot mean two things (RC-119). ``state`` is the waker's
+    poll contract and nothing else: ``starting`` until the app behind the waker has a ready
+    pod, then ``ready``, which tells the waker to step out of the EndpointSlice. That field
+    is frozen -- the waker image is pulled from a registry and may be older than this code.
+
+    ``sleep_state`` is the answer to the question a client actually asks: is this deployment
+    awake, sleeping, waking, or is sleep-mode not configured for it at all (``disabled``).
+    That last case used to report a hardcoded ``starting`` without looking at anything,
+    which is why a project without sleep-mode looked like a deployment that was forever
+    starting up. No pod is queried for it: there is nothing to be ready.
+
+    Reads the cached project data (this is hot, polled every few seconds) and only hits
+    kubectl when there is a waker component to ask about.
     """
     from opi.connectors.kubectl import KubectlConnector
     from opi.core.cluster_config import get_prefixed_namespace
     from opi.handlers.project_file_handler import ProjectFileHandler
     from opi.services.catalog.sleep_mode import config as sleep_config
     from opi.services.catalog.sleep_mode import manifests
+    from opi.services.catalog.sleep_mode import state as sleep_state
+    from opi.services.catalog.sleep_mode.api_models import DISABLED
     from opi.services.project_store import get_project_store
     from opi.utils.naming import generate_unique_name
 
@@ -275,13 +292,18 @@ async def status(project_name: str, deployment_name: str, *, presented_token: st
 
     cluster = deployment.get("cluster", "")
     config = sleep_config.load(project_data, cluster)
-    handler = ProjectFileHandler()
-    component = None
-    if config is not None:
-        component = manifests.select_waker_component(project_data, deployment, config, handler)
+    if config is None or not config.matches(deployment_name):
+        # Sleep-mode does not apply here, so there is no sleep state and no pod worth
+        # asking about. The waker field stays 'starting': its contract is untouched, and
+        # no waker is polling this anyway.
+        return {"state": "starting", "sleep_state": DISABLED}
+
+    current = sleep_state.read(project_data, deployment_name).state
+    component = manifests.select_waker_component(project_data, deployment, config, ProjectFileHandler())
     if component is None:
-        # No waker component known; report starting so the waker keeps its page.
-        return {"state": "starting"}
+        # Sleep-mode applies but no waker component is known; report starting so a waker
+        # that is polling keeps its page.
+        return {"state": "starting", "sleep_state": current}
 
     unique_name = generate_unique_name(deployment_name, component)
     namespace = get_prefixed_namespace(cluster, deployment.get("namespace", ""))
@@ -290,4 +312,4 @@ async def status(project_name: str, deployment_name: str, *, presented_token: st
     if statuses:
         raw = statuses[0].get("ready", "0")
         ready = int(raw.split("/")[0]) if "/" in raw else int(raw)
-    return {"state": "ready" if ready > 0 else "starting"}
+    return {"state": "ready" if ready > 0 else "starting", "sleep_state": current}

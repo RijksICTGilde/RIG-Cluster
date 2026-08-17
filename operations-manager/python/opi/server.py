@@ -177,7 +177,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 handle_delete_project,
                 handle_upsert_deployment,
             )
-            from opi.services.catalog.attachments.task import handle_delete_attachment
+            from opi.services.catalog.attachments.task import (
+                handle_configure_attachment,
+                handle_delete_attachment,
+            )
             from opi.services.catalog.sleep_mode.task import handle_sleep_transition
 
             _worker_instance.register_handler(TaskType.CREATE_PROJECT, handle_create_project)
@@ -187,6 +190,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance.register_handler(TaskType.DELETE_PROJECT, handle_delete_project)
             _worker_instance.register_handler(TaskType.DELETE_COMPONENT, handle_delete_component)
             _worker_instance.register_handler(TaskType.DELETE_ATTACHMENT, handle_delete_attachment)
+            _worker_instance.register_handler(TaskType.CONFIGURE_ATTACHMENT, handle_configure_attachment)
             _worker_instance.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
             _worker_instance.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
             _worker_instance.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)

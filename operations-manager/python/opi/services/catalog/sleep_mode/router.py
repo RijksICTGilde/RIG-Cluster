@@ -14,6 +14,10 @@ Two ways in, because there are two callers with genuinely different rights:
 
 Both headers are declared as parameters so they appear in the OpenAPI document; a
 generated client can see what it may send instead of discovering a 401.
+
+Both answers are declared as response models (RC-119), for the same reason: a bare
+JSONResponse put no schema in the document at all, so a client could not see which values
+either endpoint returns. See ``api_models`` for why there are two state fields.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from opi.services.catalog.sleep_mode import flow
+from opi.services.catalog.sleep_mode.api_models import SleepStatusResponse, WakeResponse
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFound, InvalidWakeToken
 from opi.services.project_store import get_project_store
 
@@ -63,7 +68,15 @@ def _presented_token(project_name: str, wake_token: str | None, api_key: str | N
     raise HTTPException(status_code=401, detail="X-Wake-Token or X-API-Key header required")
 
 
-@sleep_mode_router.post("/{project_name}/{deployment_name}/wake")
+@sleep_mode_router.post(
+    "/{project_name}/{deployment_name}/wake",
+    response_model=WakeResponse,
+    status_code=202,
+    responses={
+        200: {"model": WakeResponse, "description": "Nothing to do: the deployment was not sleeping."},
+        202: {"model": WakeResponse, "description": "A wake started; the deployment is now waking."},
+    },
+)
 async def wake(
     project_name: str,
     deployment_name: str,
@@ -73,6 +86,10 @@ async def wake(
     """Start waking a deployment. 202 when a transition starts, 200 for a no-op.
 
     Authenticate with the deployment's ``X-Wake-Token`` or with the project's ``X-API-Key``.
+
+    ``state`` and ``sleep_state`` carry the same value here. The second exists so one word
+    means one thing across both endpoints: on ``/status`` the field called ``state`` is the
+    waker's poll contract and NOT a sleep state.
     """
     token = _presented_token(project_name, x_wake_token, x_api_key)
     try:
@@ -81,19 +98,26 @@ async def wake(
         raise HTTPException(status_code=401, detail="Invalid wake token") from exc
     except DeploymentNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return JSONResponse({"state": result.state}, status_code=202 if result.changed else 200)
+    return JSONResponse(
+        {"state": result.state, "sleep_state": result.state}, status_code=202 if result.changed else 200
+    )
 
 
-@sleep_mode_router.get("/{project_name}/{deployment_name}/status")
+@sleep_mode_router.get("/{project_name}/{deployment_name}/status", response_model=SleepStatusResponse)
 async def status(
     project_name: str,
     deployment_name: str,
     x_wake_token: WakeTokenHeader = None,
     x_api_key: ApiKeyHeader = None,
 ) -> JSONResponse:
-    """Report whether the app behind the waker is back yet: starting | ready.
+    """Report whether the app behind the waker is back yet, and the real sleep state.
 
     Authenticate with the deployment's ``X-Wake-Token`` or with the project's ``X-API-Key``.
+
+    ``state`` is the waker's poll contract (``starting | ready``) and nothing else; it is
+    frozen because a waker image older than this code reads it. ``sleep_state`` is the
+    deployment's real state, including ``disabled`` when sleep-mode is not configured for
+    it -- the case that used to report a hardcoded ``starting``.
     """
     token = _presented_token(project_name, x_wake_token, x_api_key)
     try:
