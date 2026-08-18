@@ -281,6 +281,39 @@ def _op_labels(resultaten: list[dict[str, Any]], labels: tuple[str, ...]) -> dic
     return tabel
 
 
+def projectnamespaces() -> set[str]:
+    """De namespaces die van GEBRUIKERS zijn, en dus niet op deze pagina horen.
+
+    Deze pagina gaat over de diensten die wij aanbieden: de databases en volumes van het
+    ZAD-platform zelf, plus de infrastructuur eromheen. Wat een gebruiker in zijn eigen
+    project doet is zijn zaak en staat op de projectpagina.
+
+    De queries hebben GEEN namespacefilter -- ze tellen op wat er is, in een set per blok,
+    en dat blijft zo: een filter in PromQL zou een lijst namespaces in elke query bakken en
+    die loopt weg zodra er een project bij komt. Er wordt hier dus afgetrokken in plaats van
+    gefilterd.
+
+    En het is een uitsluiting, geen lijst van onze eigen namespaces. Zo'n lijst zou drijven:
+    komt er een infrastructuuronderdeel bij, dan valt het stil buiten beeld en ziet niemand
+    dat. Andersom is veiliger -- een onbekende namespace komt IN beeld, en dat merk je.
+    """
+    from opi.core.cluster_config import get_namespace_prefix
+    from opi.core.config import settings
+    from opi.services.project_store import get_project_store
+
+    try:
+        prefix = get_namespace_prefix(settings.CLUSTER_MANAGER)
+    except ValueError:
+        logger.warning("Onbekend cluster %s; projectnamespaces niet af te leiden", settings.CLUSTER_MANAGER)
+        return set()
+
+    namespaces: set[str] = set()
+    for project in get_project_store().get_all():
+        namespaces.add(f"{prefix}{project.name}")
+        namespaces.add(f"{prefix}{project.name}-infrastructure")
+    return namespaces
+
+
 async def _voer_queries_uit(queries: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
     """Voer alle queries van een blok tegelijk uit via de metriekconnector."""
     connector = await get_metrics_connector()
@@ -313,9 +346,12 @@ async def haal_opslag() -> Blok:
     capaciteit = _op_labels(antwoorden["capaciteit"], labels)
     inodes = _op_labels(antwoorden["inodes"], labels)
 
+    van_projecten = projectnamespaces()
     rijen: list[OpslagRij] = []
     for sleutel in sorted(set(vulling) | set(capaciteit)):
         namespace, claim = sleutel
+        if namespace in van_projecten:
+            continue
         vulling_procent = vulling.get(sleutel)
         inodes_procent = inodes.get(sleutel)
         rijen.append(
@@ -362,9 +398,12 @@ async def haal_databases() -> Blok:
     langste = _op_labels(antwoorden["langste_transactie"], db_labels)
     xid = _op_labels(antwoorden["xid_leeftijd"], db_labels)
 
+    van_projecten = projectnamespaces()
     rijen: list[DatabaseRij] = []
     for sleutel in sorted(set(grootte) | set(verbindingen)):
         namespace, instantie, database = sleutel
+        if namespace in van_projecten:
+            continue
         langste_transactie = langste.get(sleutel)
         xid_leeftijd = xid.get(sleutel)
         rijen.append(
@@ -396,6 +435,8 @@ async def haal_databases() -> Blok:
     instanties: list[InstantieRij] = []
     for sleutel in sorted(set(wachtend) | set(verbindingen_per_instantie)):
         namespace, instantie = sleutel
+        if namespace in van_projecten:
+            continue
         wachtende = wachtend.get(sleutel)
         instanties.append(
             InstantieRij(

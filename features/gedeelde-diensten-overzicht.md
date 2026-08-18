@@ -1,11 +1,26 @@
-# Gedeelde diensten: hoe vol, hoe druk
+# Services status: hoe vol, hoe druk
 
-Een beheerpagina op `/admin/diensten` die laat zien hoe de GEDEELDE diensten ervoor staan:
-hoe vol elke PVC zit, hoe groot elke database is, hoeveel verbindingen er openstaan.
+Een beheerpagina op `/admin/diensten` die laat zien hoe de diensten ervoor staan die WIJ
+aanbieden: hoe vol de volumes en databases van het platform zitten, hoeveel verbindingen er
+openstaan, en hoe lang de langste transactie loopt.
 
-Aanleiding: dat was nergens te zien, dus merkten we het pas als er iets omviel. Bij de
-meting tegen productie van 18 augustus 2026 stond `production-typesense-data-pvc` in
-`rig-prd-ubbw-0i1` op 92,7% en zag niemand dat.
+Aanleiding: dat was nergens te zien, dus merkten we het pas als er iets omviel.
+
+## Wat er bewust NIET op staat
+
+De namespaces van gebruikersprojecten. Wat iemand in zijn eigen project draait is zijn
+zaak en staat op de projectpagina; deze pagina gaat over onze kant.
+
+Dat heeft een prijs die je moet kennen. De meting die tot deze pagina leidde was juist een
+project-PVC: `production-typesense-data-pvc` in `rig-prd-ubbw-0i1` stond op 18 augustus
+2026 op 92,7% en niemand zag dat. Dat geval valt nu buiten beeld. Wie ook op
+gebruikersvolumes wil letten heeft daar een eigen weg voor nodig, bijvoorbeeld alerting op
+dezelfde `DREMPELS`.
+
+De uitsluiting is een AFTREKKING en geen lijst van onze eigen namespaces: de projecten uit
+de store vallen af, de rest blijft. Zo'n lijst zou drijven, want een nieuw
+infrastructuuronderdeel zou er stil buiten vallen. Nu komt een onbekende namespace juist in
+beeld.
 
 Alerting valt hier buiten. De drempels staan wel al op een plek zodat alerting straks
 dezelfde grenzen kan gebruiken.
@@ -25,7 +40,7 @@ zijn gewone URL's.
 
 ## Gebruik
 
-Menu > Beheer > Gedeelde diensten, of rechtstreeks `/admin/diensten`.
+Menu > Beheer > Services status, of rechtstreeks `/admin/diensten`.
 
 Een rij kleurt volgens `DREMPELS` in `opi/services/gedeelde_diensten.py`:
 
