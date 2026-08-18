@@ -263,6 +263,49 @@ credentials uit te delen die nergens op uitkomen. Het platformaccount wordt dan 
 overgeslagen: een cluster zonder relay heeft eenvoudigweg nog geen platformmail, en dat mag
 het opstarten niet tegenhouden.
 
+## De upstream: een klein record, en waar de tweede vandaan komt
+
+Een upstream is niet meer dan **host, poort, TLS, en eventueel inloggegevens**. Dat is de hele abstractie, en zodra je hem zo bekijkt vallen alle omgevingen samen:
+
+| Waar | Wat het werkelijk is |
+|---|---|
+| Productie | `rmrmail.rijksweb.nl:25` over RON, geen auth (hun toelating staat op ons uitgaande IP) |
+| Sandbox en local | de SMTP-sink `rig-mail-sink:25` in dezelfde namespace, geen auth |
+| Een tweede cluster, later | het chisel-eindpunt naar de relay op het hoofdcluster, **wél** auth, want onze eigen submissiepoort eist die |
+
+Vandaag varieert daarvan alleen de host, en die staat per cluster in `MAIL_UPSTREAM_HOST` in het geheim. De poort staat vast op 25 en dat is geen toeval: de Service van de sink vertaalt 25 naar 1025, zodat de sink als niet-root kan draaien zonder dat de poort een instelling per cluster hoeft te worden. Een numerieke instelling via een omgevingsvariabele is hier precies de knop die je niet wilt, want bij een verkeerd type valt Stalwart stil terug op zijn standaard 25 en dan werkt productie per ongeluk wel en de sandbox stil niet.
+
+### Wat er moet gebeuren als er een tweede upstream komt
+
+Niets nieuws, en dat is met opzet zo gelaten. Stalwart spreekt deze taal al:
+
+- **Meerdere upstreams** zijn meerdere `[remote.<naam>]`-blokken in de configmap van dát cluster. Auth komt daar terug als een optioneel `[remote.<naam>.auth]`-blok. Dat blok stond er ooit en is eruit gehaald toen bleek dat de Rijksoverheid-server niet authenticeert; het hoort optioneel per upstream te zijn, niet globaal afwezig.
+- **De keuze** is een expressie. `next-hop` is bij Stalwart geen vaste waarde maar een expressie (vandaar de enkele quotes in `"'upstream'"`), dus kiezen op basis van het geauthenticeerde account is één regel: een expressie op `authenticated_as`.
+- **De catalogus hoort op één plek**, en dat is de configmap van de relay: daar staan de hosts en daar hangen de geheimen aan. Zet hem niet ook in OPI; dan heb je twee bronnen voor dezelfde host en poort.
+
+Eén ding zou ik daarbij anders doen dan bij de Keycloak-blueprints, en dat is de les uit die hoek. Daar staat de keuzelijst hardgecodeerd in `KeycloakTemplateOptionsProvider` en is hij voor elk cluster gelijk; de clusterafhankelijkheid zit ergens anders, in welk bestand de bootstrap laadt. Kopieer je dat hier, dan krijgt een project in de sandbox een upstream aangeboden die daar niet draait, en dat merk je pas bij het versturen. **Een keuzelijst voor upstreams hoort afgeleid te worden van wat er op dit cluster staat.**
+
+Tot die tweede upstream er is, kiest het cluster en niet de service. Elk scenario dat we vandaag kennen (sandbox, tweede cluster) is er een per cluster.
+
+## De sandbox: een sink in plaats van een echte mailserver
+
+`infrastructure/bootstrap/infrastructure/mail/sink/` bevat Mailpit, ingeladen door alleen de overlays `local` en `sandboxed-local`. Op ODCN staat hij er niet, dus dat image hoeft niet langs de registry en het signature-beleid daar.
+
+Hij doet precies twee dingen: hij neemt SMTP aan en bezorgt niets, en hij geeft elk bericht integraal terug via een HTTP-API (`/api/v1/messages`, `/api/v1/message/{id}` met `From` en `ReturnPath`, en `/api/v1/message/{id}/headers`). Niets wordt bewaard, want er is geen `MP_DATABASE` gezet: een herstart is de manier om schoon te beginnen.
+
+Daarmee is de identiteitscontrole een assertie geworden in plaats van een handmatige proef. `scripts/mail_identity_check.py` stuurt drie berichten met een expres foute `From:` en een expres foute envelope, en toetst wat er aan de andere kant uitkomt:
+
+```bash
+kubectl -n rig-ron port-forward svc/rig-mail-relay 1587:587 &
+kubectl -n rig-ron port-forward svc/rig-mail-sink 8025:8025 &
+cd operations-manager/python
+uv run python scripts/mail_identity_check.py --user <account> --password <geheim>
+```
+
+De eerste sandbox-run beantwoordt en passant een vraag die nog openstaat: de relay praat STARTTLS met strikte certificaatcontrole, en nergens staat wat Stalwart doet als de tegenpartij STARTTLS niet aanbiedt. De sink biedt het niet aan. Komt er post aan, dan valt hij terug op platte tekst en is `allow-invalid-certs = false` een voorkeur; komt er niets aan, dan is het een garantie. Noteer de uitkomst in `docs/ron-koppeling.md`, want dat verschil bepaalt of er op productie een tweede slot op zit.
+
+Het netwerkbeleid van de relay staat in de dev-overlays op precies deze sink dichtgezet. Daar stond eerst `0.0.0.0/0` met het argument dat niet vastligt welke testupstream een ontwikkelaar gebruikt; nu er een sink meekomt ligt het wel vast, en een relay die overal heen mag is een open relay zodra iemand een account bemachtigt.
+
 ## Wat er nog niet af is
 
 **De relay draait nog nergens**, maar de weg ernaartoe is inmiddels bewezen. Op 17 augustus
