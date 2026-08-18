@@ -328,7 +328,15 @@ def pagina(mock_settings: Any) -> Any:
     Over HTTP en dus door de echte template heen: de knop staat achter een
     ``{% if application_url %}``, en die voorwaarde is precies wat hier getoetst wordt.
     """
-    from opi.server import create_app
+    import opi.server
+
+    # NIET mock_settings.SECRET_KEY. ``opi/server.py`` bindt ``settings`` bij zijn eigen
+    # import; is die module al door een eerdere test geimporteerd, dan wijst die naam naar
+    # de ECHTE settings en niet naar de mock, en tekent het koekje met een sleutel die de
+    # app niet gebruikt. Deze regel leest de sleutel die de gebouwde app echt gebruikt, dus
+    # in beide volgordes de goede -- de fixture hangt niet langer aan de collectievolgorde.
+    _ = mock_settings
+    sleutel = opi.server.settings.SECRET_KEY
 
     def render(project: dict[str, Any]) -> str:
         store = MagicMock()
@@ -342,11 +350,14 @@ def pagina(mock_settings: Any) -> Any:
             )
         ]
         with patch("opi.api.invite_routes.get_project_store", return_value=store):
-            app = create_app()
+            app = opi.server.create_app()
             client = TestClient(app)
-            client.cookies.set("session", _sessiekoekje(mock_settings.SECRET_KEY))
-            antwoord = client.get(f"/invite/{SLEUTEL}/success")
-            assert antwoord.status_code == 200, antwoord.status_code
+            client.cookies.set("session", _sessiekoekje(sleutel))
+            # follow_redirects=False, want TestClient VOLGT een 302 en dan meet de toets de
+            # gevolgde pagina in plaats van de succespagina: de assert op 200 was groen op
+            # het verkeerde scherm. Dit is de grendel die de fout hierboven zichtbaar maakt.
+            antwoord = client.get(f"/invite/{SLEUTEL}/success", follow_redirects=False)
+            assert antwoord.status_code == 200, f"{antwoord.status_code} -> {antwoord.headers.get('location')}"
             return antwoord.text
 
     return render
