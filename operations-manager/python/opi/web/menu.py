@@ -62,7 +62,7 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         menu_items.append({"label": "Gebruikersbeheer", "link": "/admin/users", "icon": "user"})
         menu_items.append({"label": "Gebruik & Kosten", "link": "/admin/usage", "icon": "grafiek"})
         menu_items.append({"label": "Domeinen", "link": "/admin/approvals", "icon": "wereldbol"})
-        menu_items.append({"label": "Gedeelde diensten", "link": "/admin/diensten", "icon": "weegschaal"})
+        menu_items.append({"label": "Services status", "link": "/admin/diensten", "icon": "weegschaal"})
 
     # Add user-specific menu items
     if user:
