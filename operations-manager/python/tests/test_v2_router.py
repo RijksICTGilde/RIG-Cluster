@@ -309,10 +309,10 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             "publish-on-web": ["domains"],
             # RC-114: the SMTP account and its password are written by the mail manager,
             # and the approval by the approver flow -- a project that could set its own
-            # status to approved would make the approval no approval at all. `from-domain`
-            # is identity rule 2: a project picks its display name, not its domain, and
-            # having no editable protects nothing because the API is the other door.
-            "send-email": ["accounts", "approval", "from-domain"],
+            # status to approved would make the approval no approval at all. There is no
+            # sender-address field to protect: every project sends from one fixed address
+            # that the relay writes into the From: header itself.
+            "send-email": ["accounts", "approval"],
         }
 
         # keycloak answers "realms" at every layer because it serves one model to all of

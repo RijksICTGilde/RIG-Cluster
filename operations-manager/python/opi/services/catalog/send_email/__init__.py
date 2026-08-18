@@ -198,7 +198,7 @@ class SendEmailService(Service):
         description=(
             "Verstuur e-mail vanuit je applicatie via de mailrelay van het platform. "
             "Je krijgt een eigen SMTP-account met een eigen dagbudget; het afzenderadres "
-            "ligt vast op het maildomein van het platform."
+            "ligt vast en is voor alle projecten hetzelfde."
         ),
         help_template="send_email/help.md",
         icon="envelop",
@@ -231,14 +231,12 @@ class SendEmailService(Service):
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.send_email.editables import (
-            SEND_EMAIL_FROM_LOCAL_PART_EDITABLE,
             SEND_EMAIL_FROM_NAME_EDITABLE,
             SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE,
         )
 
         return [
             SEND_EMAIL_FROM_NAME_EDITABLE,
-            SEND_EMAIL_FROM_LOCAL_PART_EDITABLE,
             SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE,
         ]
 
@@ -250,7 +248,6 @@ class SendEmailService(Service):
         if cached is None:
             from opi.forms.visualizers.sections import FormSection
             from opi.services.catalog.send_email.visualizers import (
-                SEND_EMAIL_FROM_LOCAL_PART,
                 SEND_EMAIL_FROM_NAME,
                 SEND_EMAIL_MESSAGES_PER_DAY,
             )
@@ -266,14 +263,13 @@ class SendEmailService(Service):
                 ),
                 visible=self._config_selected,
                 post_save_action="process_project",
-                editables=[SEND_EMAIL_FROM_NAME, SEND_EMAIL_FROM_LOCAL_PART, SEND_EMAIL_MESSAGES_PER_DAY],
+                editables=[SEND_EMAIL_FROM_NAME, SEND_EMAIL_MESSAGES_PER_DAY],
                 # Doorlopen van deze stap IS de aanvraag. Via de generieke functie en niet
                 # via de eigen hook, zodat er geen tweede weg naar een aanvraag ontstaat;
                 # de API-kant roept dezelfde functie aan (project_manager, config-schrijf).
                 post_merge=_request_approval_on_save,
                 layout=[
                     config_path(ConfigLayer.PROJECT, self.service_type, "config", "from-name"),
-                    config_path(ConfigLayer.PROJECT, self.service_type, "config", "from-local-part"),
                     config_path(ConfigLayer.PROJECT, self.service_type, "config", "messages-per-day"),
                 ],
             )

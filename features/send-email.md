@@ -63,27 +63,28 @@ Op projectniveau, in de wizard of via de API:
 | Veld | Betekenis |
 |---|---|
 | `from-name` | de naam die de ontvanger boven het bericht ziet |
-| `from-local-part` | het eerste deel voor de @; standaard `noreply`. De accountnaam komt eraan vast: het adres wordt `noreply.project-<project>@<maildomein>` |
 | `messages-per-day` | het dagbudget van dit project, maximaal 5000. Zie de kanttekening hieronder: de relay dwingt vandaag één plafond af voor elk account |
 
-De projectnaam zit in het adres omdat de relay hem daar nodig heeft: de From:-header wordt
-op de relay getoetst tegen de naam van het account dat inlogt, en een adres mag maar één keer
-op de hele relay bestaan — een gedeelde `noreply@` zou voor het tweede project niet aan te
-maken zijn.
+Dat is de hele lijst, en het ontbrekende veld is het punt: **het afzenderadres is niet
+instelbaar.** Elk project verstuurt vanaf `noreply-rijksapp@rijksoverheid.nl`, en de relay
+schrijft dat adres zelf in de `From:` van elk bericht. Zet een applicatie er zelf een in, dan
+wordt die vervangen; de weergavenaam blijft wel staan, dus de ontvanger ziet
+`Algoritmeregister <noreply-rijksapp@rijksoverheid.nl>`.
 
-En wat je niet instelt: het domein achter de @ ligt vast op het maildomein van het platform
-(`mail.rijksapp.nl` op productie — let op het enkelvoud, `rijksapps.nl` is de zone van
-ODC-Noord zelf). Dat is geen betutteling maar techniek: een `From:` in een vreemd domein
-haalt DMARC nooit, dus die post komt toch niet aan.
+Overschrijven en niet weigeren, want vrijwel elke maillibrary zet standaard een `From:`. Een
+550 op iets waar de ontwikkelaar niets aan kan doen is geen regel maar een val.
 
-`from-domain` bestaat wel in het model, maar is **geen zelfbediening**: het veld draagt
-`platform_managed_fields`, dus een PUT die het meestuurt is een 422 en een formulierveld is
-er niet. Een eigen domein kost eerst één DKIM-record in de zone van dat domein, en die ronde
-loopt met de hand tot een project erom vraagt. Zonder die grens zou een project na één
-goedkeuring zijn afzenderdomein alsnog kunnen verzetten: de goedkeuring wordt één keer
-gevraagd, niet opnieuw bij elke wijziging. Wat een projectdomein later goedkoop maakt is dat
-de envelope altijd op óns domein blijft — SPF geldt voor het envelope-domein, dus een
-projectdomein kost één record in plaats van een volledige set.
+Waarom een domein dat niet van ons is: onze post gaat de deur uit via de mailserver van de
+Rijksoverheid, dus hij draagt hun identiteit. Dat is ook de enige opzet die aankomt.
+`rijksoverheid.nl` publiceert `p=reject`, en wij ondertekenen niet met DKIM omdat wij in die
+zone geen sleutel kunnen publiceren. Daarmee is SPF-uitlijning tussen envelope en `From:` het
+enige dat een bericht door DMARC krijgt, en die uitlijning bestaat alleen zolang beide in
+`rijksoverheid.nl` zitten. Een afzenderadres per project breekt precies dat, en dan komt er
+bij elke ontvanger buiten de Rijksoverheid niets meer aan.
+
+De envelope draagt het project wel, in het plusdeel:
+`noreply-rijksapp+<project>@rijksoverheid.nl`. Zo blijft een bounce herleidbaar zonder het
+domein te verlaten.
 
 ### Voorbeeld
 
@@ -91,17 +92,17 @@ projectdomein kost één record in plaats van een volledige set.
 services:
   - name: send-email
     config:
-      from-name: Algoritmeregister
-      from-local-part: noreply   # levert noreply.project-algor-odc@mail.rijksapp.nl op
+      from-name: Algoritmeregister   # de ontvanger ziet
+                                     # Algoritmeregister <noreply-rijksapp@rijksoverheid.nl>
       messages-per-day: 750
       # accounts: door het platform geschreven, zie hieronder
 ```
 
 ## Wat het platform beheert
 
-`approval`, `accounts` en `from-domain` zijn platformdata: een beheerder beslist, en OPI maakt het account
+`approval` en `accounts` zijn platformdata: een beheerder beslist, en OPI maakt het account
 aan op de relay en schrijft neer wat het gemaakt heeft (per cluster: gebruikersnaam, AGE-versleuteld wachtwoord, afzenderadres en
-bounce-adres). Alle drie dragen `platform_managed_fields`, dus de API kan ze niet wissen
+bounce-adres). Allebei dragen `platform_managed_fields`, dus de API kan ze niet wissen
 en niet overschrijven — een PUT die ze weglaat verliest ze niet. Bij `approval` is dat niet
 alleen netjes maar de kern: een project dat zijn eigen status op `approved` kan zetten heeft
 geen goedkeuring.
@@ -251,11 +252,11 @@ omgeving). Dat herstartmoment is precies wanneer het account ontstaat.
 | `MAIL_RELAY_ADMIN_USERNAME` / `MAIL_RELAY_ADMIN_PASSWORD` | waarmee OPI accounts aanmaakt |
 | `MAIL_PLATFORM_ACCOUNT` | de naam van het account van ZAD zelf (het wachtwoord is géén instelling, zie hierboven) |
 | `MAIL_PLATFORM_SECRET_NAME` | de Secret in de eigen namespace waarin OPI dat wachtwoord bewaart |
-| `MAIL_PLATFORM_FROM_LOCAL_PART` / `MAIL_PLATFORM_MESSAGES_PER_DAY` | afzender en budget van dat account |
+| `MAIL_PLATFORM_MESSAGES_PER_DAY` | het budget van dat account (de afzender is geen instelling: die is voor iedereen gelijk) |
 | `MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY` | het budget van een project dat er zelf geen kiest |
 
-Per cluster staan de relay-hostnaam, de poort, de namespace en het maildomein in
-`opi/core/cluster_config.py`.
+Per cluster staan de relay-hostnaam, de poort, de namespace en het vaste afzenderadres in
+`opi/core/cluster_config.py` (`get_mail_from_address`).
 
 Is `MAIL_RELAY_API_URL` leeg, dan weigert de dienst te provisionen in plaats van
 credentials uit te delen die nergens op uitkomen. Het platformaccount wordt dan stil
@@ -264,17 +265,17 @@ het opstarten niet tegenhouden.
 
 ## Wat er nog niet af is
 
-**De relay draait nog nergens.** Stap 2 van de uitrol is nog open: de route naar
-`rmrmail.rijksweb.nl` bestaat (de oude `Network is unreachable` is weg), maar op poort 25,
-587 én 465 komt geen banner terug en geen weigering. Dat patroon wijst op een firewall die
-stil laat vallen of op retourverkeer dat de weg terug niet vindt. De vraag die open staat —
-welk bronadres uit `145.21.227.140/30` de tegenpartij werkelijk ziet, of dat adres in hun
-toelating staat, en of het retourpad is ingericht — kunnen wij zelf niet beantwoorden: de
-namespace `quattro-egress-gateway` is van ODCN.
+**De relay draait nog nergens**, maar de weg ernaartoe is inmiddels bewezen. Op 17 augustus
+2026 gemeten vanuit een pod met `rig-ron`-egress: `rmrmail.rijksweb.nl` antwoordt op poort 25
+met een banner en neemt een testbericht aan. De eerdere meting, waarin alle drie de poorten
+stil bleven, liep door het baseline-netwerkbeleid van de tenant dat egress alleen op 443 en 80
+toestaat; die pakketten hadden de pod nooit verlaten. Zie `docs/ron-koppeling.md`.
 
-Daarom staat de overlay in `infrastructure/bootstrap/clusters/*/kustomization.yaml` nog
-uitgecommentarieerd. De manifesten zijn er en ze bouwen. Zolang die banner er niet is, zou
-een relay draaien die niets kan bezorgen.
+Wat dat opleverde en wat hier verwerkt is: poort 25 en niet 587, geen authenticatie maar een
+toelating op ons uitgaande IP, STARTTLS, en 30 MB als grens aan hun kant.
+
+De overlay in `infrastructure/bootstrap/clusters/*/kustomization.yaml` staat nog
+uitgecommentarieerd tot de geheimen zijn aangemaakt (zie hieronder).
 
 ### Wat er bij het aanzetten werkelijk moet gebeuren
 
@@ -282,19 +283,16 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
 
 1. **De geheimen vullen en genereren**:
    `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` — de
-   upstream-gegevens van het mailteam en de DKIM-sleutel er met de hand in (die zijn niet te
-   genereren), daarna `task generate-secrets-for-cluster <cluster>` voor de rest.
+   daarna `task generate-secrets-for-cluster <cluster>`. Er is niets meer met de hand in te
+   vullen: de upstream vraagt geen inloggegevens en er is geen DKIM-sleutel.
 
    Twee dingen die je hier op je neus laten vallen:
 
-   - **Twee waarden in dat sjabloon zijn per cluster, en het sjabloon is er één voor alle
-     clusters.** `MAIL_DOMAIN` staat op de productiewaarde `mail.rijksapp.nl` en
-     `MAIL_DB_HOST` op `rig-db-rw.rig-prd-operations`. Op `local` en `sandboxed-local` klopt
-     geen van beide: `get_mail_domain` in `opi/core/cluster_config.py` zegt daar `mail.kind`
-     respectievelijk `mail.sandbox.rijksapp.dev`, en de database draait in `rig-system`. Pas
-     ze aan vóór het genereren — anders ondertekent de relay met een DKIM-sleutel voor het
-     ene domein wat OPI als het andere aankondigt, en start hij sowieso niet op zonder
-     database.
+   - **Eén waarde in dat sjabloon is per cluster, en het sjabloon is er één voor alle
+     clusters.** `MAIL_DB_HOST` staat op `rig-db-rw.rig-prd-operations`; op `local` en
+     `sandboxed-local` draait de database in `rig-system`. Pas dat aan vóór het genereren,
+     anders start de relay niet op. Het afzenderadres is wél voor elk cluster gelijk, dus
+     daar valt niets aan te verschuiven.
    - **`generate-secrets-for-cluster` doet niets als er al geheimen liggen.** De taak stopt
      met `exit 0` zodra er één `*.sops.yaml` in de clustermap staat ("To regenerate, delete
      the *.sops.yaml files in that directory first"). Op `odcn` staan die er allemaal al,
@@ -318,9 +316,14 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
    en zegt of het platformaccount klaarstaat; het maakt dan ook de Secret met zijn
    wachtwoord aan. Blijft `MAIL_RELAY_API_URL` leeg, dan slaat het die stap stil over —
    geen fout, maar ook geen mail.
-5. **DNS**: SPF op ons maildomein dat de uitgaande IP's van de upstream autoriseert, en de
-   publieke helft van de DKIM-sleutel als TXT op `zad._domainkey.<maildomein>`. Zonder deze
-   twee vertrekt de post wel en komt hij niet aan.
+5. **DNS**: niets. Dit was de langste post op deze lijst en hij is vervallen. Het
+   afzenderdomein is `rijksoverheid.nl`, en dat autoriseert de uitgaande IP's van de
+   upstream al via `v=spf1 redirect=spf-a.ssonet.nl` — de upstream ís hun eigen
+   mailinfrastructuur. Wij hebben geen zone om iets in te zetten en hoeven dat ook niet.
+   Wat daar tegenover staat: er is geen tweede been. Wij ondertekenen niet met DKIM, dus
+   SPF-uitlijning tussen envelope en `From:` is het enige dat een bericht door DMARC krijgt.
+   Gaat de envelope-herschrijving ooit stuk, dan weigert elke ontvanger buiten de
+   Rijksoverheid alles.
 
 Twee dingen die bij het naspelen tegen een echte Stalwart v0.11.8 stuk bleken en nu goed
 staan — ze horen hier omdat ze allebei pas bij het aanzetten zichtbaar zouden worden:

@@ -6,7 +6,6 @@ from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY
 from opi.services.catalog.send_email.editables import (
-    SEND_EMAIL_FROM_LOCAL_PART_EDITABLE,
     SEND_EMAIL_FROM_NAME_EDITABLE,
     SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE,
 )
@@ -18,20 +17,8 @@ SEND_EMAIL_FROM_NAME = EditableVisualizer(
     description="De naam die de ontvanger boven het bericht ziet staan.",
     help_text=(
         "Dit is het enige deel van de afzender dat je zelf kiest. Laat je het leeg, dan ziet "
-        "de ontvanger alleen het e-mailadres. Het adres zelf ligt vast op het maildomein van "
-        "het platform, omdat post uit een vreemd domein bij de ontvanger toch niet aankomt."
-    ),
-)
-
-SEND_EMAIL_FROM_LOCAL_PART = EditableVisualizer(
-    editable=SEND_EMAIL_FROM_LOCAL_PART_EDITABLE,
-    widget=WidgetType.TEXT,
-    label="Deel voor de @ in het afzenderadres",
-    description="Bijvoorbeeld 'noreply' of de naam van je project.",
-    help_text=(
-        "Hiermee bepaal je het eerste stuk van het afzenderadres, dus het deel voor de @. "
-        "Vul je niets in, dan wordt dat 'noreply'. Het deel achter de @ is het maildomein "
-        "van het platform en kun je hier niet wijzigen."
+        "de ontvanger alleen het e-mailadres. Het adres zelf ligt vast en is voor alle projecten "
+        "hetzelfde, omdat post uit een ander domein bij de ontvanger niet aankomt."
     ),
 )
 

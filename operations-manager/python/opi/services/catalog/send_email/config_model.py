@@ -13,20 +13,16 @@ nor rewrite them -- the same protection the Keycloak realm block got, declared h
 start instead of repaired afterwards (aanvulling 5 in the plan). ``approval`` in particular:
 a project that could set its own status to ``approved`` would be no approval at all.
 
-``from-domain`` carries the same marking for a different reason: it is identity rule 2 of
-the plan ("a project may pick its display name, not its domain"). The field exists so the
-later own-domain flow does not need a schema change, but a domain only works once a DKIM
-record sits in its zone, and that ronde is arranged by hand. Self-service on the field
-would let a project point ``From:`` and ``MAIL FROM`` at any domain -- and because
-``ensure_approval_requests`` stops as soon as an approval block exists, it could do so
-after the fact without a second verdict.
+There is no field for the sender ADDRESS, and there deliberately is not going to be one:
+every project sends from one fixed address that the relay writes into the ``From:`` header
+itself. ``from-name`` (the display name) is all a project chooses.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field
 
 from opi.services.config_managed import PLATFORM_MANAGED
 
@@ -36,15 +32,6 @@ from opi.services.config_managed import PLATFORM_MANAGED
 #: the sum of the accounts must stay under the volume that was agreed, and a single project
 #: asking for a number with an extra zero is exactly how that is broken.
 MAX_MESSAGES_PER_DAY = 5000
-
-#: The local part of an address, as the relay will enforce it. Expressed in the ANNOTATION
-#: rather than in a ``field_validator`` so the form can reuse the very same rule through
-#: ``ModelFieldValidator`` -- a hand-written copy next to a model is a second definition of
-#: one rule, and the two drift (see that validator's docstring).
-MailLocalPart = Annotated[
-    str,
-    StringConstraints(pattern=r"^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$"),
-]
 
 
 class SendEmailAccount(BaseModel):
@@ -96,27 +83,6 @@ class SendEmailConfig(BaseModel):
         default=None,
         alias="from-name",
         description="Display name shown to the recipient, e.g. 'Algoritmeregister'. The address itself is fixed.",
-    )
-    from_local_part: MailLocalPart | None = Field(
-        default=None,
-        alias="from-local-part",
-        description=(
-            "First half of the local part of the sender address, e.g. 'noreply'. Defaults to 'noreply'. "
-            "The account name is appended to it, so the address becomes "
-            "noreply.project-<project>@<maildomein>: the relay pins the From: header to an address "
-            "carrying the account name, and an address may only exist once on the whole relay."
-        ),
-    )
-    from_domain: str | None = Field(
-        default=None,
-        alias="from-domain",
-        json_schema_extra={PLATFORM_MANAGED: True},
-        description=(
-            "Sender domain, when the project has one of its own. Left out for the platform mail domain. "
-            "Written by the platform: a domain of your own needs a DKIM record in its zone first AND a rule "
-            "for that domain in the relay's identity script (which today only allows the platform mail "
-            "domain), and that path is set up by hand until a project asks for it, so this is not self-service."
-        ),
     )
     messages_per_day: Annotated[int, Field(ge=1, le=MAX_MESSAGES_PER_DAY)] | None = Field(
         default=None,
