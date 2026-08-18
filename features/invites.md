@@ -127,6 +127,13 @@ project's own addresses and therefore cannot write this field; set it through th
 CLI or by hand. A save through the portal leaves it alone, unless you pick a destination
 there -- then the choice you just made wins and the fixed address is dropped.
 
+Because the picker does not own that field, an invitation that stores a fixed address shows
+*Geen knop tonen* in the picker while the success page does show its button. The form
+framework hands a field's converter the whole project file but not which sequence item it is
+rendering, so the picker cannot read a sibling field of its own entry. Nothing is lost by it
+-- a save never touches the address -- but to change or remove a fixed address, use the API
+or the CLI rather than the portal.
+
 Older files that store a derivable `application-url` keep working unchanged. The service's
 config migration (v1.0 -> v1.1) converts such an address into the target behind it where it
 can match one, and leaves it exactly as it is where it cannot.

@@ -104,3 +104,17 @@ def test_de_lege_keuze_staat_vooraan(monkeypatch: Any) -> None:
     opties = _opties(monkeypatch, [])
 
     assert opties[0] == {"value": "", "label": "Geen knop tonen"}
+
+
+def test_een_opgeslagen_keuze_komt_niet_als_tekst_in_de_lijst(monkeypatch: Any) -> None:
+    """Sinds RC-136 is de opgeslagen waarde een OBJECT, en het formulier geeft de rauwe
+    opslag als huidige waarde door. Zonder deze grens verscheen die als
+    "{'deployment': 'production', ...} (niet meer afleidbaar)": een regel die niets
+    betekent en die je ook nog kon kiezen."""
+    opties = _opties(
+        monkeypatch,
+        [{"deployment_name": "production", "component_name": "frontend", "path": "/", "url": "https://a/"}],
+        huidig=str({"deployment": "production", "component": "frontend"}),
+    )
+
+    assert _labels(opties) == ["Geen knop tonen", "production / frontend"]

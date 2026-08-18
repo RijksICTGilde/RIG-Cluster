@@ -18,7 +18,7 @@ Je kiest een deployment en een component van je eigen project, niet een webadres
 
 Bestaat de gekozen bestemming niet meer -- component verwijderd, niet meer op het web gepubliceerd, deployment weg -- dan toont de pagina geen knop. Dat is beter dan een knop die ergens verkeerd heen wijst: dat verschil zie je pas nadat je erop geklikt hebt.
 
-Wil je naar een adres BUITEN dit project verwijzen, dan kan dat nog steeds, met het veld **application-url** in het projectbestand of via de API. De keuzelijst hier biedt dat niet aan, omdat ze alleen de adressen van dit project kent.
+Wil je naar een adres BUITEN dit project verwijzen, dan kan dat nog steeds, met het veld **application-url** in het projectbestand of via de API. De keuzelijst hier biedt dat niet aan, omdat ze alleen de adressen van dit project kent. Staat er zo'n vast adres in je projectbestand, dan toont deze lijst *Geen knop tonen* terwijl de succespagina wel een knop laat zien; opslaan raakt dat adres niet aan, maar wijzigen of weghalen doe je via de API of de CLI.
 
 **Let op:** de link is het enige slot op de deur. Iedereen die hem heeft kan een account aanmaken, dus deel hem bewust en kies geen zelfbedachte, te raden sleutel. Verwijder je een uitnodiging, dan blijven de accounts die er al mee zijn aangemaakt gewoon bestaan.
 
