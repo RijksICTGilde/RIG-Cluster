@@ -30,7 +30,7 @@ VOLSTE_PVC = "production-typesense-data-pvc"
 
 #: c-table rendert geen <table> maar custom elements; een selector op tbody/tr matcht
 #: NIETS en laat een telling stilletjes op nul uitkomen.
-OPSLAG_RIJEN = '#diensten-opslag nldd-table-row[data-lotc-component="table-row"]' 
+OPSLAG_RIJEN = '#diensten-opslag nldd-table-row[data-lotc-component="table-row"]'
 
 
 def _open_diensten(app_server: str, auth_page: Page) -> str:

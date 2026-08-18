@@ -46,9 +46,11 @@ def _gebruikersdienst(admins: set[str]) -> Any:
 @pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.asyncio
 async def test_een_niet_beheerder_komt_er_niet_in(route: Any) -> None:
-    with patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst(set())):
-        with pytest.raises(HTTPException) as fout:
-            await route(_verzoek("ontwikkelaar@rijksoverheid.nl"))
+    with (
+        patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst(set())),
+        pytest.raises(HTTPException) as fout,
+    ):
+        await route(_verzoek("ontwikkelaar@rijksoverheid.nl"))
 
     assert fout.value.status_code == 403
 
@@ -56,9 +58,11 @@ async def test_een_niet_beheerder_komt_er_niet_in(route: Any) -> None:
 @pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.asyncio
 async def test_zonder_sessie_komt_er_niemand_in(route: Any) -> None:
-    with patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst(set())):
-        with pytest.raises(HTTPException) as fout:
-            await route(_verzoek(None))
+    with (
+        patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst(set())),
+        pytest.raises(HTTPException) as fout,
+    ):
+        await route(_verzoek(None))
 
     assert fout.value.status_code == 401
 

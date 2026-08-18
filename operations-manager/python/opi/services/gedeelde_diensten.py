@@ -262,7 +262,7 @@ def _waarde(reeks: dict[str, Any]) -> float | None:
         return None
     try:
         getal = float(rauw[1])
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     if getal != getal:  # NaN
         return None
