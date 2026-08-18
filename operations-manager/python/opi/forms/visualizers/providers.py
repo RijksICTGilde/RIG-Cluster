@@ -1262,10 +1262,10 @@ class CrossDomainProjectOptionsProvider:
     """Peer projects a cross-domain rule may reference.
 
     Reads ``_cross_domain_projects`` from ``yaml_data`` -- a precomputed list of project
-    names the logged-in user is authorized for (set by ``build_cross_domain_context``),
-    excluding the own project. Empty (no context at all) shows an explanatory option instead
-    of a blank select. A stored value that is no longer in the list is kept selectable so a
-    save does not silently drop it.
+    names the logged-in user is authorized for (set by ``build_cross_domain_context``), the
+    own project included. Empty (no context at all) shows an explanatory option instead of a
+    blank select. A stored value that is no longer in the list is kept selectable so a save
+    does not silently drop it.
 
     This list is deliberately limited to projects the user is authorized for: a peer you
     cannot see is a peer you cannot name here. That does narrow cross-domain access to
