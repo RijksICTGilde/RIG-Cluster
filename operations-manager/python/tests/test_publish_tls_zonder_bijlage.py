@@ -31,6 +31,7 @@ from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.visualizers.providers import PublishTlsModeOptionsProvider, PublishTlsOverrideOptionsProvider
+from opi.forms.wizard.save import guard_target_still_points_at_the_same_item
 from opi.forms.wizard.state import WizardState
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
 from opi.manager.project_validation import validate_service_configs
@@ -290,6 +291,52 @@ def test_de_melding_noemt_de_deployment_waar_de_waarde_staat() -> None:
     project["deployments"][0]["components"][0]["services"] = {"publish-on-web": {"config": {"tls": "provided"}}}
 
     assert "deployment 'production'" in _afkeuring(project)
+
+
+# --- 4b. een index-doel dat inmiddels een andere deployment aanwijst --------------------
+
+
+def _doel_van_de_webadresflow() -> Any:
+    return get_flow(f"modal-edit-domain-{PR_19}").target
+
+
+def test_een_verschoven_lijst_weigert_de_opslag() -> None:
+    """Het scherm werd geopend op index 2 = pr-19; als daar inmiddels een andere
+    deployment staat, mag de bewerking daar niet in landen."""
+    sessie = WizardState(flow_id=f"modal-edit-domain-{PR_19}", current_step="x")
+    sessie.base_data = {"deployments": _project()["deployments"]}
+
+    # Ondertussen is 'test' verdwenen: pr-19 schuift op, en op index 2 staat nu iets anders.
+    verschoven = _project()
+    verschoven["deployments"] = [
+        verschoven["deployments"][0],
+        verschoven["deployments"][2],
+        {"name": "pr-20", "cluster": "c", "components": []},
+    ]
+
+    with pytest.raises(ProjectIntegrityError) as fout:
+        guard_target_still_points_at_the_same_item(verschoven, sessie, _doel_van_de_webadresflow())
+
+    melding = str(fout.value)
+    assert "pr-19" in melding
+    assert "pr-20" in melding
+    assert "opnieuw" in melding
+
+
+def test_een_ongewijzigde_lijst_laat_de_opslag_door() -> None:
+    sessie = WizardState(flow_id=f"modal-edit-domain-{PR_19}", current_step="x")
+    sessie.base_data = {"deployments": _project()["deployments"]}
+
+    guard_target_still_points_at_the_same_item(_project(), sessie, _doel_van_de_webadresflow())
+
+
+def test_zonder_lijst_in_de_sessie_wordt_er_niet_gegokt() -> None:
+    """Een flow die de lijst niet in base_data draagt (een add, of een lijst die een
+    editable volledig bezit) mag hier niet op stuklopen."""
+    sessie = WizardState(flow_id=f"modal-edit-domain-{PR_19}", current_step="x")
+    sessie.base_data = {}
+
+    guard_target_still_points_at_the_same_item(_project(), sessie, _doel_van_de_webadresflow())
 
 
 # --- 5. een webadres wijzigen raakt alleen die deployment ------------------------------
