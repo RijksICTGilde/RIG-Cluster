@@ -239,3 +239,23 @@ nldd-sidebar-section {
 .is-hidden {
     display: none !important;
 }
+
+/* Een lang adres in een tabelcel breekt af in plaats van eroverheen te lopen.
+ *
+ * Een e-mailadres is een woord zonder afbreekpunten, dus de standaard laat het gewoon
+ * over de volgende kolom heen lopen: in de takentabel schoof
+ * "robbert.uittenbroek@rijksoverheid.nl" uit de kolom Door dwars over de datum in
+ * Gestart, die daardoor onleesbaar was. Dat viel pas op toen de datum in die kolom paste
+ * (RC-133) - daarvoor lag de overlap over een kolom die zelf al onleesbaar was.
+ *
+ * anywhere en niet break-all: alleen breken als het woord anders niet past. Bij 1280 en
+ * 1440 raakt dat alleen het adres; pas bij 1024, waar de zes kolommen echt te krap
+ * worden, breken ook de andere waarden middenin een woord af. Dat is daar de betere van
+ * twee kwaden: zonder deze regel schuiven de kolommen daar over elkaar heen.
+ *
+ * De klasse staat op de TABEL en niet op de applicatie: elke cel in het portaal zo laten
+ * breken is een veel grotere ingreep dan waar dit een antwoord op is.
+ */
+.lange-waarden-breken nldd-cell {
+    overflow-wrap: anywhere;
+}
