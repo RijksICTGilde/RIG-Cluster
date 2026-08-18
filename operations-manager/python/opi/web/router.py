@@ -71,6 +71,7 @@ from .router_approvals import approvals_router
 from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
 from .router_self_service import check_subdomain_availability_web
+from .router_shared_services import shared_services_router
 from .router_tasks import tasks_router
 from .router_usage import usage_router
 from .router_user_admin import user_admin_router
@@ -91,6 +92,7 @@ web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
 web_router.include_router(usage_router)
+web_router.include_router(shared_services_router)
 web_router.include_router(approvals_router)
 web_router.include_router(attachments_router)
 web_router.include_router(wizard_attachments_router)

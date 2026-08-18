@@ -123,7 +123,7 @@ GROUPS: list[tuple[str, list[str]]] = [
     # beheerpagina over het hele platform, niet iets dat je gebruikt om je eigen project
     # te bouwen. Het menu-item zelf is al alleen voor een platformbeheerder zichtbaar
     # (menu.py, achter is_admin), dus deze groep zegt hetzelfde als wie hem ziet.
-    ("Beheer", ["/metrics-explorer", "/admin/users", "/admin/usage", "/admin/approvals"]),
+    ("Beheer", ["/metrics-explorer", "/admin/users", "/admin/usage", "/admin/approvals", "/admin/diensten"]),
 ]
 
 
