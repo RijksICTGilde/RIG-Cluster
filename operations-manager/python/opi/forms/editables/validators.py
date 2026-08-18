@@ -31,7 +31,7 @@ class ModelFieldValidator:
         field = model.model_fields[field_name]
         # A field carries its constraints in ``metadata`` only when they sit directly on
         # the field. On an OPTIONAL field they sit inside the union member instead
-        # (``MailLocalPart | None``), so ``metadata`` is empty and ``Annotated[(X,)]`` --
+        # (``SomeConstrainedType | None``), so ``metadata`` is empty and ``Annotated[(X,)]`` --
         # one argument -- is a TypeError at import time. The annotation alone already
         # carries the rule in that case, so use it as-is.
         annotation = Annotated[(field.annotation, *field.metadata)] if field.metadata else field.annotation

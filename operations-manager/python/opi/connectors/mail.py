@@ -112,40 +112,20 @@ class MailConnector:
         data = result.get("data") if isinstance(result, dict) else None
         return data if isinstance(data, dict) else result
 
-    async def ensure_domain(self, domain: str) -> None:
-        """Make sure the relay knows this mail domain.
-
-        Not cosmetic and not optional: an account is created with its addresses, and the
-        relay refuses an address in a domain it does not hold. It does so with a 200 and
-        ``{"error":"notFound","item":"<domein>"}`` -- so without this call the very first
-        account of the very first project fails, and the failure names the domain and not
-        the account (measured against v0.11.8).
-
-        A domain is a principal like any other, so an existing one is left alone and this
-        is replay-safe.
-        """
-        if await self.get_principal(domain) is not None:
-            return
-        await self._request(
-            "POST",
-            "/api/principal",
-            payload={"type": "domain", "name": domain, "description": "ZAD send-email"},
-        )
-        logger.info(f"Maildomein {domain} aangemaakt op de relay")
-
     async def create_principal(
         self,
         name: str,
         password: str,
-        from_address: str,
-        bounce_address: str,
     ) -> None:
         """Create the account. The relay refuses a duplicate; the manager checks first.
 
-        Both addresses go on the account, and that is not cosmetic. The relay rewrites the
-        envelope to the bounce address and only THEN checks ``must-match-sender``, so an
-        account that does not own its own bounce address cannot hand in a single message
-        ("501 5.5.4 You are not allowed to send from this address", measured).
+        The account carries a name and a secret and nothing else. It used to carry its
+        sender and bounce address as ``emails``, because ``must-match-sender`` refused an
+        account that did not own its own envelope address ("501 5.5.4 You are not allowed
+        to send from this address", measured). That check is off now: an address only
+        exists in a domain the relay holds as LOCAL, and the sender domain became
+        ``rijksoverheid.nl`` -- holding that locally would swallow mail to colleagues
+        there instead of relaying it. The sieve script pins sender and envelope anyway.
 
         There is deliberately no daily limit here: a principal in Stalwart v0.11 has no
         such field (the API answers "JSON deserialization failed" on one), so the limit
@@ -158,7 +138,12 @@ class MailConnector:
                 "type": "individual",
                 "name": name,
                 "secrets": [password],
-                "emails": [from_address, bounce_address],
+                # GEEN "emails". Een adres kan alleen bestaan in een domein dat de relay
+                # als lokaal domein kent, en ons afzenderdomein is rijksoverheid.nl: dat
+                # als lokaal domein registreren zou mail AAN collega's daar lokaal laten
+                # bezorgen in plaats van doorsturen. Het account heeft de adressen ook niet
+                # nodig -- must-match-sender staat uit en het sieve-script zet afzender en
+                # envelope onvoorwaardelijk vast. Zie de configmap van de relay.
                 # Without a role the account authenticates and is then refused with "550
                 # 5.7.1 Your account is not authorized to use this service" (measured):
                 # enabledPermissions alone grants nothing to build on.
@@ -175,15 +160,11 @@ class MailConnector:
         self,
         name: str,
         password: str | None = None,
-        from_address: str | None = None,
-        bounce_address: str | None = None,
     ) -> None:
         """Bring an existing account in line with what the project asks for."""
         changes: list[dict[str, Any]] = []
         if password is not None:
             changes.append({"action": "set", "field": "secrets", "value": [password]})
-        if from_address is not None and bounce_address is not None:
-            changes.append({"action": "set", "field": "emails", "value": [from_address, bounce_address]})
         if not changes:
             return
         await self._request("PATCH", f"/api/principal/{name}", payload=changes)

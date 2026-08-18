@@ -25,7 +25,7 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
-from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_port, get_namespace
+from opi.core.cluster_config import get_mail_from_address, get_mail_relay_host, get_mail_relay_port, get_namespace
 from opi.core.config import settings
 from opi.services import ServiceType
 from opi.services.catalog.send_email import is_approved
@@ -128,28 +128,11 @@ class MailManager:
         if not is_platform_account:
             _refuse_platform_account(username)
 
-        # The relay refuses an account whose address is in a domain it does not know
-        # ({"error":"notFound","item":"<domein>"} on the create, measured against
-        # v0.11.8), so the domain of both addresses is made first. Idempotent: an
-        # existing domain is left alone.
-        await connector.ensure_domain(from_address.rpartition("@")[2])
-        await connector.ensure_domain(bounce_address.rpartition("@")[2])
-
         existing = await connector.get_principal(username)
         if existing is None:
-            await connector.create_principal(
-                name=username,
-                password=password,
-                from_address=from_address,
-                bounce_address=bounce_address,
-            )
+            await connector.create_principal(name=username, password=password)
         else:
-            await connector.update_principal(
-                name=username,
-                password=password,
-                from_address=from_address,
-                bounce_address=bounce_address,
-            )
+            await connector.update_principal(name=username, password=password)
         return MailAccount(
             username=username,
             from_address=from_address,
@@ -189,7 +172,7 @@ class MailManager:
         view = Project(project_data)
         config = view.get(_CONFIG_BASE) or {}
 
-        from_address, bounce_address = self._addresses(cluster, username, config)
+        from_address, bounce_address = self._addresses(cluster, username)
         messages_per_day = config.get("messages-per-day") or settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
 
         entry, password = await self._existing_account_entry(view, cluster)
@@ -256,12 +239,11 @@ class MailManager:
             return None
 
         cluster = settings.CLUSTER_MANAGER
-        domain = get_mail_domain(cluster)
         username = settings.MAIL_PLATFORM_ACCOUNT
-        # Same shape as a project's address (<lokaal deel>.<account>@<domein>) and for the
-        # same reason: the relay pins the From: header to an address carrying the account
-        # name, so a bare "noreply@" is refused at DATA. See ``_addresses``.
-        from_address = f"{settings.MAIL_PLATFORM_FROM_LOCAL_PART}.{username}@{domain}"
+        # ZAD sends from the same fixed address as every project -- there is one sender
+        # address on the whole relay. Only the envelope differs, so a bounce still says
+        # which account produced it. See ``_addresses``.
+        from_address, bounce_address = MailManager._addresses(cluster, username)
 
         stored = await MailManager._read_platform_secret()
         password = (stored or {}).get("password") or ""
@@ -286,7 +268,7 @@ class MailManager:
             username=username,
             password=password,
             from_address=from_address,
-            bounce_address=f"bounce+{username}@{domain}",
+            bounce_address=bounce_address,
             messages_per_day=settings.MAIL_PLATFORM_MESSAGES_PER_DAY,
             is_platform_account=True,
         )
@@ -457,26 +439,25 @@ class MailManager:
 
     # --- internals --------------------------------------------------------------
 
-    def _addresses(self, cluster: str, username: str, config: dict[str, Any]) -> tuple[str, str]:
+    @staticmethod
+    def _addresses(cluster: str, username: str) -> tuple[str, str]:
         """The sender and bounce address for this account.
 
-        The account name is part of the address, and that is load-bearing twice over. The
-        relay pins the ``From:`` header to ``<iets>.<account>@<domein>`` (identity rule 2,
-        in the sieve script in the relay's configmap), so an address that does not carry
-        the account name is refused at DATA. And an address is unique across the whole
-        relay -- a second account claiming an address another one already holds is refused
-        with ``fieldAlreadyExists`` -- so a bare ``noreply@`` would work for exactly one
-        project and break the next one. Both measured against Stalwart v0.11.8.
+        The sender address is the SAME for every project and cannot be configured. The
+        relay overwrites the ``From:`` header with it unconditionally (identity rule 2 in
+        the sieve script), so what is returned here is a report of what will happen, not a
+        request. It is handed to the application as ``SMTP_FROM`` purely so a developer can
+        see what recipients will see.
 
-        The bounce address is always in the PLATFORM domain, even when the project picked
-        a domain of its own: SPF is checked against the envelope domain, so keeping the
-        envelope on our own domain is what makes a project domain cost one DKIM record
-        instead of a full DNS set (see the plan's afzenderdomein table).
+        The bounce address carries the project in the plus part and stays in the same
+        domain, and that is load-bearing: ``rijksoverheid.nl`` publishes ``p=reject`` and
+        we sign nothing with DKIM, so SPF alignment between envelope and ``From:`` is the
+        only thing that gets a message through DMARC. Leaving the domain to make bounces
+        land somewhere of ours would fail every message at every external recipient.
         """
-        platform_domain = get_mail_domain(cluster)
-        local_part = config.get("from-local-part") or "noreply"
-        domain = config.get("from-domain") or platform_domain
-        return f"{local_part}.{username}@{domain}", f"bounce+{username}@{platform_domain}"
+        from_address = get_mail_from_address(cluster)
+        local_part, _, domain = from_address.partition("@")
+        return from_address, f"{local_part}+{username}@{domain}"
 
     async def _existing_account_entry(self, view: Project, cluster: str) -> tuple[dict[str, Any] | None, str | None]:
         """The stored account for this cluster and its decrypted password, if any."""

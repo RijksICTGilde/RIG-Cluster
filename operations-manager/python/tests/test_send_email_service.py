@@ -23,7 +23,12 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
-from opi.core.cluster_config import get_mail_domain, get_mail_relay_host, get_mail_relay_namespace, get_mail_relay_port
+from opi.core.cluster_config import (
+    get_mail_from_address,
+    get_mail_relay_host,
+    get_mail_relay_namespace,
+    get_mail_relay_port,
+)
 from opi.core.config import settings
 from opi.manager.mail_manager import MailManager
 from opi.services.catalog.approval import ApproverScope
@@ -78,24 +83,23 @@ class TestTheConfigModel:
     def test_an_empty_config_is_valid(self) -> None:
         """Everything is optional: switching the service on requires no decisions."""
         config = SendEmailConfig()
-        assert config.from_local_part is None
         assert config.accounts == []
 
-    def test_a_local_part_with_an_at_sign_is_refused(self) -> None:
-        """It would land verbatim in an address, so it is refused here and not at send time."""
-        with pytest.raises(ValidationError):
-            SendEmailConfig(**{"from-local-part": "no@reply"})
+    def test_er_is_geen_veld_voor_het_afzenderadres(self) -> None:
+        """Het adres ligt vast en is voor elk project hetzelfde.
 
-    def test_a_local_part_with_a_space_is_refused(self) -> None:
-        with pytest.raises(ValidationError):
-            SendEmailConfig(**{"from-local-part": "no reply"})
-
-    def test_a_local_part_may_not_start_with_a_dot(self) -> None:
-        with pytest.raises(ValidationError):
-            SendEmailConfig(**{"from-local-part": ".noreply"})
-
-    def test_a_plain_local_part_is_accepted(self) -> None:
-        assert SendEmailConfig(**{"from-local-part": "noreply"}).from_local_part == "noreply"
+        Niet netheid maar noodzaak: `rijksoverheid.nl` publiceert p=reject en wij
+        ondertekenen niet met DKIM, dus SPF-uitlijning tussen envelope en From: is het
+        enige dat een bericht door DMARC krijgt. Een adres per project breekt precies dat.
+        Deze test valt om zodra iemand het veld terugzet.
+        """
+        velden = set(SendEmailConfig.model_fields) | {f.alias for f in SendEmailConfig.model_fields.values() if f.alias}
+        assert "from_local_part" not in velden
+        assert "from-local-part" not in velden
+        assert "from_domain" not in velden
+        assert "from-domain" not in velden
+        # De weergavenaam blijft wel van het project.
+        assert "from_name" in SendEmailConfig.model_fields
 
     def test_a_budget_above_the_cap_is_refused(self) -> None:
         """The cap is the agreement with the mail team, so it is refused, never clamped."""
@@ -118,33 +122,18 @@ class TestTheAccountBlockIsPlatformData:
     def test_the_platform_written_fields_are_declared(self) -> None:
         """``approval`` too, and that one is not a nicety: a project that could set its own
         status to approved would make the approval no approval at all."""
-        assert SERVICE.platform_managed_fields(ConfigLayer.PROJECT) == frozenset(
-            {"accounts", "approval", "from-domain"}
-        )
+        assert SERVICE.platform_managed_fields(ConfigLayer.PROJECT) == frozenset({"accounts", "approval"})
 
     def test_the_user_fields_are_not(self) -> None:
         managed = SERVICE.platform_managed_fields(ConfigLayer.PROJECT)
         assert "from-name" not in managed
-        assert "from-local-part" not in managed
         assert "messages-per-day" not in managed
 
-    def test_a_write_carrying_the_domain_is_refused(self) -> None:
-        """Identity rule 2 of the plan: a project picks its display name, not its domain.
-
-        Without the marking the field simply rode along in the generated PUT -- having no
-        editable protects nothing, the API is the other door. And the approval does not
-        cover it either: ``ensure_approval_requests`` stops as soon as an approval block
-        exists, so after one verdict the domain could be changed without a second one.
-        """
-        from fastapi import HTTPException
+    def test_de_weergavenaam_gaat_wel_gewoon_door(self) -> None:
+        """De naam is het enige dat een project kiest, en die is niet platform-managed."""
         from opi.api.v2.router import _refuse_platform_managed
 
         managed = SERVICE.platform_managed_fields(ConfigLayer.PROJECT)
-        with pytest.raises(HTTPException) as refused:
-            _refuse_platform_managed(ServiceType.SEND_EMAIL.value, {"from-domain": "eigen.example"}, managed)
-        assert refused.value.status_code == 422
-
-        # ... while the display name a project DOES choose goes straight through.
         _refuse_platform_managed(ServiceType.SEND_EMAIL.value, {"from-name": "Algoritmeregister"}, managed)
 
 
@@ -228,7 +217,6 @@ class TestTheOneAccountPath:
         connector.get_principal = AsyncMock(return_value=existing)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.ensure_domain = AsyncMock()  # type: ignore[method-assign]
         return connector
 
     @pytest.mark.asyncio
@@ -261,9 +249,9 @@ class TestTheOneAccountPath:
         connector.create_principal.assert_not_awaited()
         connector.update_principal.assert_awaited_once()
         # Beide adressen gaan mee: de relay herschrijft de envelope naar het bounce-adres
-        # en toetst daarna pas of de afzender bij het account hoort, dus een account dat
-        # zijn eigen bounce-adres niet bezit krijgt geen enkel bericht binnen.
-        assert connector.update_principal.await_args.kwargs["bounce_address"] == "bounce+myproject@mail.example"
+        # Adressen gaan NIET meer naar de relay: must-match-sender staat uit en een adres
+        # zou een lokaal domein vereisen. Alleen naam en wachtwoord.
+        assert set(connector.update_principal.await_args.kwargs) == {"name", "password"}
 
     def test_the_platform_caller_needs_no_project(self) -> None:
         """A staticmethod, so ZAD's account goes through the very same code without a
@@ -272,22 +260,29 @@ class TestTheOneAccountPath:
         assert isinstance(MailManager.__dict__["ensure_account"], staticmethod)
 
     @pytest.mark.asyncio
-    async def test_the_domain_of_both_addresses_is_made_first(self) -> None:
-        """Gemeten tegen v0.11.8: een account met een adres in een domein dat de relay niet
-        kent wordt geweigerd met 200 + {"error":"notFound","item":"<domein>"}. Zonder deze
-        stap mislukt het allereerste projectaccount, met een fout die het domein noemt en
-        het account niet."""
+    async def test_er_wordt_geen_domein_geregistreerd(self) -> None:
+        """Het afzenderdomein is `rijksoverheid.nl` en dat mag de relay NOOIT als lokaal
+        domein kennen.
+
+        Stalwart kiest zijn route per ontvanger en bezorgt een lokaal domein lokaal, dus
+        een geregistreerd `rijksoverheid.nl` zou mail AAN collega's daar in onze eigen
+        opslag laten verdwijnen in plaats van naar de upstream sturen. Precies de meest
+        voorkomende ontvanger, en het zou stil misgaan. Daarom draagt het account ook geen
+        adressen meer en staat must-match-sender uit.
+        """
         connector = self._connector(existing=None)
         await MailManager.ensure_account(
             connector=connector,
             username="project-myproject",
             password="geheim",
-            from_address="noreply.project-myproject@eigen.example",
-            bounce_address="bounce+project-myproject@mail.example",
+            from_address="noreply-rijksapp@rijksoverheid.nl",
+            bounce_address="noreply-rijksapp+project-myproject@rijksoverheid.nl",
             messages_per_day=500,
         )
-        gemaakt = [call.args[0] for call in connector.ensure_domain.await_args_list]
-        assert gemaakt == ["eigen.example", "mail.example"]
+        assert not hasattr(MailConnector, "ensure_domain"), (
+            "de connector mag geen weg meer hebben om een domein bij de relay te registreren"
+        )
+        assert set(connector.create_principal.await_args.kwargs) == {"name", "password"}
 
 
 class TestHetPlatformaccountIsGeenProjectaccount:
@@ -306,7 +301,6 @@ class TestHetPlatformaccountIsGeenProjectaccount:
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
         connector.delete_principal = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        connector.ensure_domain = AsyncMock()  # type: ignore[method-assign]
         return connector
 
     def test_a_project_account_never_carries_the_platform_name(self) -> None:
@@ -391,39 +385,38 @@ class TestTheAddresses:
     def _manager(self) -> MailManager:
         return MailManager(project_manager=SimpleNamespace())  # type: ignore[arg-type]
 
-    def test_the_default_local_part_is_noreply(self) -> None:
-        """En het adres draagt de accountnaam: de relay pint de From: op
-        <iets>.<account>@<domein>, en een adres bestaat maar een keer op de hele relay."""
-        sender, _ = self._manager()._addresses("sandboxed-local", "myproject", {})
-        assert sender == f"noreply.myproject@{get_mail_domain('sandboxed-local')}"
+    def test_elk_project_verstuurt_van_hetzelfde_vaste_adres(self) -> None:
+        """Er is EEN afzenderadres op de hele relay, en het is niet instelbaar.
 
-    def test_the_project_chooses_the_local_part(self) -> None:
-        sender, _ = self._manager()._addresses("sandboxed-local", "myproject", {"from-local-part": "support"})
-        assert sender == f"support.myproject@{get_mail_domain('sandboxed-local')}"
+        De relay overschrijft de From: ermee, dus wat hier terugkomt is een mededeling aan
+        de applicatie (SMTP_FROM) en geen verzoek.
+        """
+        een, _ = MailManager._addresses("sandboxed-local", "project-een")
+        twee, _ = MailManager._addresses("sandboxed-local", "project-twee")
+        assert een == twee == get_mail_from_address("sandboxed-local")
 
-    def test_two_projects_never_claim_the_same_address(self) -> None:
-        """De relay weigert een tweede account met een adres dat al bestaat
-        (fieldAlreadyExists, gemeten). Zonder de accountnaam erin zou elk project dat
-        'noreply' kiest het tweede project onprovisioneerbaar maken."""
-        een, _ = self._manager()._addresses("sandboxed-local", "project-een", {"from-local-part": "noreply"})
-        twee, _ = self._manager()._addresses("sandboxed-local", "project-twee", {"from-local-part": "noreply"})
-        assert een != twee
+    def test_het_bounce_adres_draagt_het_project_in_het_plusdeel(self) -> None:
+        """Attributie zonder het domein te verlaten: een teruggekomen bericht is te
+        herleiden tot een project zonder de relay iets te vragen."""
+        _, bounce = MailManager._addresses("sandboxed-local", "myproject")
+        assert bounce == "noreply-rijksapp+myproject@rijksoverheid.nl"
 
-    def test_the_bounce_address_carries_the_account_name(self) -> None:
-        """So a returned message is traceable to one project without asking the relay."""
-        _, bounce = self._manager()._addresses("sandboxed-local", "myproject", {})
-        assert bounce == f"bounce+myproject@{get_mail_domain('sandboxed-local')}"
+    def test_de_envelope_blijft_in_het_domein_van_de_afzender(self) -> None:
+        """Dit is de regel waar alles op rust en daarom staat hij hier apart.
 
-    def test_an_own_domain_moves_the_sender_but_not_the_bounce(self) -> None:
-        """A domain gets there through the platform, never through the API (see
-        ``TestTheAccountBlockIsPlatformData``); this is what the platform writing one does.
+        `rijksoverheid.nl` publiceert p=reject en wij ondertekenen niet met DKIM, dus
+        SPF-uitlijning tussen envelope en From: is het ENIGE dat een bericht door DMARC
+        krijgt. Verhuist het bounce-adres ooit naar een domein van onszelf, dan weigert
+        elke ontvanger buiten de Rijksoverheid alles wat we sturen.
+        """
+        afzender, bounce = MailManager._addresses("sandboxed-local", "myproject")
+        assert afzender.partition("@")[2] == bounce.partition("@")[2]
 
-        SPF is checked against the ENVELOPE domain. Keeping the envelope on our own
-        domain is exactly why a project domain costs one DKIM record instead of a full
-        DNS set -- move the bounce along and that saving is gone."""
-        sender, bounce = self._manager()._addresses("sandboxed-local", "myproject", {"from-domain": "eigen.example"})
-        assert sender == "noreply.myproject@eigen.example"
-        assert bounce == f"bounce+myproject@{get_mail_domain('sandboxed-local')}"
+    def test_alle_clusters_gebruiken_hetzelfde_adres(self) -> None:
+        """Voorlopig een adres, overal. Wijkt een cluster af, dan zegt OPI iets anders dan
+        de relay afdwingt en ziet een ontwikkelaar een adres dat nooit vertrekt."""
+        adressen = {get_mail_from_address(c) for c in ("local", "sandboxed-local", "odcn-production")}
+        assert adressen == {"noreply-rijksapp@rijksoverheid.nl"}
 
 
 class TestHetOpgeschrevenAccountVeroudertNiet:
@@ -573,7 +566,7 @@ class TestHetPlatformaccountIsEenGewoonAccount:
         stored = {
             "username": "zad-platform",
             "password": "bewaard-wachtwoord",
-            "from-address": "noreply.zad-platform@mail.sandbox.rijksapp.dev",
+            "from-address": "noreply-rijksapp@rijksoverheid.nl",
         }
 
         async def _read() -> dict[str, str] | None:
@@ -741,11 +734,11 @@ class TestTheClusterConfig:
         assert get_mail_relay_namespace(cluster) == namespace
         assert get_mail_relay_host(cluster) == f"rig-mail-relay.{namespace}.svc.cluster.local"
         assert get_mail_relay_port(cluster) == 587
-        assert "@" not in get_mail_domain(cluster)
 
-    def test_production_sends_from_the_platform_domain(self) -> None:
-        """Let op het enkelvoud: rijksapps.nl is de zone van ODC-Noord zelf."""
-        assert get_mail_domain("odcn-production") == "mail.rijksapp.nl"
+    def test_production_sends_from_the_fixed_address(self) -> None:
+        """Geen eigen maildomein: we versturen via de mailserver van de Rijksoverheid en
+        dragen daarom hun domein. Zie docs/ron-koppeling.md."""
+        assert get_mail_from_address("odcn-production") == "noreply-rijksapp@rijksoverheid.nl"
 
 
 class TestTheSecretHandedToTheApplication:
@@ -1115,16 +1108,13 @@ class TestDeRelayAntwoordtGeen404:
         aangemaakt: list[dict] = []
         connector, server = await self._connector(aangemaakt)
         try:
-            await connector.create_principal(
-                name="myproject",
-                password="geheim",
-                from_address="noreply.myproject@mail.example",
-                bounce_address="bounce+myproject@mail.example",
-            )
+            await connector.create_principal(name="myproject", password="geheim")
         finally:
             await server.close()
 
         payload = aangemaakt[0]
         assert payload["roles"] == ["user"]
-        assert payload["emails"] == ["noreply.myproject@mail.example", "bounce+myproject@mail.example"]
+        # GEEN adressen op het account: die zouden rijksoverheid.nl als lokaal domein
+        # vereisen, en dan bezorgt de relay mail AAN dat domein bij zichzelf.
+        assert "emails" not in payload
         assert "limits" not in payload
