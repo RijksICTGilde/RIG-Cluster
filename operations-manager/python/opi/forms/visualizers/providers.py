@@ -958,15 +958,55 @@ _PUBLISH_TLS_MODE_OPTIONS = [
     {"value": "provided", "label": "Eigen certificaat op de ingress (aangeleverd)"},
 ]
 
+#: Wat 'aangeleverd' heet zolang het project geen bijlage heeft om aan te leveren.
+#: ``PublishOnWebComponentConfig`` weigert ``tls: provided`` zonder ``attachment``, en het
+#: bijlageveld dat ernaast verschijnt heeft bij een lege catalogus geen enkele waarde om te
+#: kiezen -- dus wie de modus toch koos kwam in een scherm dat hij niet kon opslaan en niet
+#: kon herstellen. De optie blijft STAAN en wordt uitgeschakeld: wie ernaar zoekt vindt hem
+#: met de reden erbij, waar een optie die stil verdwijnt alleen een tweede raadsel geeft.
+_PROVIDED_WITHOUT_CERTIFICATE = "Eigen certificaat op de ingress - upload eerst een certificaat bij Bijlagen"
+
+
+def publish_tls_mode_options(yaml_data: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """De drie TLS-modi, met 'provided' uitgeschakeld zolang er geen bijlage is.
+
+    Eén helper voor beide lagen (component en de per-deployment override): een modus die
+    op het component niet te kiezen is, moet dat op de override ook niet zijn.
+
+    Zonder project (een kale render, een voorbeeld) blijft alles staan. Dat is dezelfde
+    keuze als bij het erf-label van ``PublishTlsOverrideOptionsProvider``: geen gegevens is
+    geen reden om te gokken, en een lege catalogus concluderen uit een ontbrekende context
+    zou de modus uitschakelen op een scherm dat er niets over weet.
+    """
+    # Lokaal, zoals bij AttachmentOptionsProvider hieronder: project_file_handler importeert
+    # deze module langs de vormenlaag terug.
+    from opi.handlers.project_file_handler import extract_attachment_catalog
+
+    kan_aangeleverd = not yaml_data or bool(extract_attachment_catalog(yaml_data))
+    return [
+        {**option, "label": _PROVIDED_WITHOUT_CERTIFICATE, "disabled": True}
+        if option["value"] == "provided" and not kan_aangeleverd
+        else dict(option)
+        for option in _PUBLISH_TLS_MODE_OPTIONS
+    ]
+
 
 class PublishTlsModeOptionsProvider:
-    """Static options for how TLS is handled on a published component."""
+    """Options for how TLS is handled on a published component.
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    ``yaml_data`` is handed to every provider that accepts it (see
+    ``bridge._resolve_options``); zonder project valt de lijst terug op alle drie de modi.
+    """
+
+    # De WAARDEN liggen vast: elk project krijgt deze drie. Alleen of 'provided' te kiezen
+    # is hangt van de bijlagencatalogus af, en dat verandert niets aan wat de API accepteert.
     options_source: ClassVar[OptionsSource | None] = None
 
+    def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
+        self._yaml_data = yaml_data or {}
+
     def get_options(self) -> list[dict[str, Any]]:
-        return list(_PUBLISH_TLS_MODE_OPTIONS)
+        return publish_tls_mode_options(self._yaml_data)
 
 
 class PublishTlsOverrideOptionsProvider:
@@ -1009,7 +1049,7 @@ class PublishTlsOverrideOptionsProvider:
         return f"Erven van het component: {labels.get(mode, mode)}"
 
     def get_options(self) -> list[dict[str, Any]]:
-        return [{"value": "", "label": self._inherited_label()}, *_PUBLISH_TLS_MODE_OPTIONS]
+        return [{"value": "", "label": self._inherited_label()}, *publish_tls_mode_options(self._yaml_data)]
 
 
 class YesNoOptionsProvider:
