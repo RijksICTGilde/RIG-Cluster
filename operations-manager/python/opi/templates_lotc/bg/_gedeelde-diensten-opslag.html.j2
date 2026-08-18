@@ -16,6 +16,18 @@
     {% if not blok.gemeten or not blok.rijen %}
         {{ leeg_of_stuk(blok, "Er zijn geen PVC's met volumemetrieken gevonden. In de sandbox is dat normaal: de lokale Prometheus heeft niet alle metrieken die Mimir in productie wel heeft.") }}
     {% else %}
+        {# DE BELANGRIJKSTE REGEL VAN DIT BLOK. Een volume dat hier NIET staat, is niet
+           daarmee in orde: het wordt alleen niet gemeten. kubelet_volume_stats_* komt van
+           de CSI-aanroep NodeGetVolumeStats, en een storageclass zonder die ondersteuning
+           levert niets. Gemeten in de sandbox op 18 augustus 2026: van de acht PVC's in
+           rig-system stond er EEN in deze tabel, namelijk die op csi-hostpath-sc. De
+           andere zeven, waaronder rig-db-1 van de database zelf, draaien op de
+           standard-klasse (local-path) en leveren geen enkele meting. #}
+        <c-stack gap="md">
+        <c-paragraph size="sm">
+            Alleen volumes op een CSI-driver die volumestatistieken ondersteunt staan hier.
+            Een volume dat ontbreekt is dus niet leeg of gezond, het wordt niet gemeten.
+        </c-paragraph>
         <c-table columns="1.4fr 1.6fr 0.8fr 1.2fr 0.8fr 0.8fr">
             <c-table-head>
                 <c-th>Namespace</c-th>
@@ -42,5 +54,6 @@
                 </c-table-row>
             {% endfor %}
         </c-table>
+        </c-stack>
     {% endif %}
 {% endcall %}
