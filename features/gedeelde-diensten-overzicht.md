@@ -17,9 +17,15 @@ De cijfers komen van onze eigen Keycloak-extensie op `/realms/master/rig-metrics
 `features/keycloak-rig-metrics.md`), niet van Keycloak zelf: realms, gebruikers per realm
 met de verdeling over lokaal, SAML en OIDC, en de logins en mislukte logins per realm.
 
-Twee dingen om te weten. Die scrape-job draait elke twee uur, dus de logins staan over 24
-uur en niet over een uur; een korter venster levert lege cellen op die op "niemand logt
-in" lijken. En de realmtabel heeft GEEN toestandkolom: bij mislukte logins bestaat geen
+Twee dingen om te weten. Die scrape-job draait elke twee uur, en dat heeft gevolgen voor
+de vorm van de queries. De gauges (realms, gebruikers) gaan door `last_over_time(...[6h])`
+en niet als kale instant-query: Prometheus toont bij een instant-query alleen samples
+binnen het staleness-venster van vijf minuten, dus een kale query antwoordt ongeveer vier
+procent van de tijd en zwijgt de rest. Gemeten tegen de sandbox op 18 augustus 2026: vlak
+na een scrape veertien realms, een half uur later nul, met een gezonde target en de
+reeksen gewoon in de TSDB. Zes uur terugkijken overleeft ook een gemiste scrape. De logins
+staan over 24 uur; een range-selector valt buiten de staleness-regel en heeft dit dus niet
+nodig. En de realmtabel heeft GEEN toestandkolom: bij mislukte logins bestaat geen
 grens die ergens op slaat, en een verzonnen grens zou groen of rood tonen zonder
 betekenis.
 

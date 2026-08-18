@@ -123,3 +123,27 @@ async def test_een_kapotte_bron_kost_het_blok_en_niet_de_pagina(monkeypatch: pyt
     assert blok.gemeten is False
     assert blok.fout is not None
     assert blok.rijen == []
+
+
+def test_de_gauges_kijken_terug_en_vertrouwen_niet_op_het_staleness_venster() -> None:
+    """De grendel op de fout die het blok leeg liet: een kale instant-query.
+
+    Prometheus toont bij een instant-query alleen samples binnen het staleness-venster van
+    vijf minuten. Deze job scrapet elke TWEE UUR, dus een kale ``rig_keycloak_users_total``
+    antwoordt ongeveer vier procent van de tijd en zwijgt de rest. Gemeten tegen de
+    sandbox-Prometheus op 18 augustus 2026: vlak na een scrape veertien realms, een half uur
+    later nul, met een gezonde target en de reeksen gewoon in de TSDB.
+
+    De counters hoeven dit niet: een range-selector als [24h] valt buiten de staleness-regel.
+    """
+    gauges = ("realms", "gebruikers", "gebruikers_per_idp")
+
+    for naam in gauges:
+        query = gedeelde_diensten._KEYCLOAK_QUERIES[naam]
+        assert "last_over_time" in query, (
+            f"query '{naam}' is een kale instant-query en levert daarmee bijna altijd niets: {query}"
+        )
+
+    for naam in ("logins", "mislukte_logins"):
+        query = gedeelde_diensten._KEYCLOAK_QUERIES[naam]
+        assert "increase(" in query, f"query '{naam}' hoort een range-selector te gebruiken: {query}"

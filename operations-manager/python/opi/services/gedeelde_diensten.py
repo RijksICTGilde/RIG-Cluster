@@ -190,10 +190,25 @@ _DATABASE_QUERIES: dict[str, str] = {
 #
 # Die job scrapet elke TWEE UUR. Aantallen kloppen daarmee prima; een venster korter dan
 # een paar uur levert niets op, en daarom staat er 24h onder de logins en niet 1h.
+# LAST_OVER_TIME OP DE GAUGES, EN DAT IS GEEN VERSIERING. Prometheus laat een instant-query
+# alleen samples zien die binnen het staleness-venster van vijf minuten vallen. Deze job
+# scrapet elke TWEE UUR, dus een kale ``rig_keycloak_users_total`` geeft ongeveer vier
+# procent van de tijd een antwoord en de rest van de tijd niets. Gemeten tegen de
+# sandbox-Prometheus op 18 augustus 2026: vlak na een scrape kwamen alle realms terug,
+# een half uur later nul reeksen, met een gezonde target en de reeksen gewoon in de TSDB.
+# Op het scherm stond dan "Er zijn geen Keycloak-metrieken gevonden" -- precies de stille
+# storing die deze pagina moet voorkomen.
+#
+# Het venster is zes uur en niet drie: dan overleeft het beeld ook een gemiste scrape. De
+# prijs is dat een getal tot zes uur oud kan zijn, en voor gebruikersaantallen is dat
+# prima.
+#
+# De counters hebben dit NIET nodig. Een range-selector als [24h] valt buiten de
+# staleness-regel: die kijkt zelf terug en vindt zijn samples wel.
 _KEYCLOAK_QUERIES: dict[str, str] = {
-    "realms": "rig_keycloak_realms_total",
-    "gebruikers": "sum by (realm) (rig_keycloak_users_total)",
-    "gebruikers_per_idp": "sum by (realm, idp_type) (rig_keycloak_users_by_idp_total)",
+    "realms": "last_over_time(rig_keycloak_realms_total[6h])",
+    "gebruikers": "sum by (realm) (last_over_time(rig_keycloak_users_total[6h]))",
+    "gebruikers_per_idp": "sum by (realm, idp_type) (last_over_time(rig_keycloak_users_by_idp_total[6h]))",
     "logins": "sum by (realm) (increase(rig_keycloak_logins_total[24h]))",
     "mislukte_logins": "sum by (realm) (increase(rig_keycloak_login_errors_total[24h]))",
 }
