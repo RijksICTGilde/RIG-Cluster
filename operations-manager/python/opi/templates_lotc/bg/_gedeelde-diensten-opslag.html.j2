@@ -1,0 +1,46 @@
+{#
+  Het opslagblok van /admin/diensten, apart opgehaald.
+
+  Dit is het belangrijkste blok van de pagina: hier komt de eerste echte melding vandaan.
+  Bij de meting van 18 augustus 2026 stond production-typesense-data-pvc in
+  rig-prd-ubbw-0i1 op 92,7% en zag niemand dat.
+
+  Volst eerst, en dat sorteren gebeurt in Python (haal_opslag) en niet hier: de volgorde
+  IS de boodschap, en die hoort niet af te hangen van het sjabloon dat hem toont.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% from "bg/_resource-formats.html.j2" import gib %}
+{% from "bg/_diensten-status.html.j2" import status_tag, leeg_of_stuk %}
+
+{% call panel("Opslag", "cylinder-2-big-small-split") %}
+    {% if not blok.gemeten or not blok.rijen %}
+        {{ leeg_of_stuk(blok, "Er zijn geen PVC's met volumemetrieken gevonden. In de sandbox is dat normaal: de lokale Prometheus heeft niet alle metrieken die Mimir in productie wel heeft.") }}
+    {% else %}
+        <c-table columns="1.4fr 1.6fr 0.8fr 1.2fr 0.8fr 0.8fr">
+            <c-table-head>
+                <c-th>Namespace</c-th>
+                <c-th>Claim</c-th>
+                <c-th>Vulling</c-th>
+                <c-th>Gebruikt / capaciteit</c-th>
+                <c-th>Inodes</c-th>
+                <c-th>Toestand</c-th>
+            </c-table-head>
+            {% for rij in blok.rijen %}
+                <c-table-row>
+                    <c-td>{{ rij.namespace }}</c-td>
+                    <c-td>{{ rij.claim }}</c-td>
+                    <c-td>{% if rij.vulling_procent is not none %}{{ '%.1f' | format(rij.vulling_procent) }}%{% else %}-{% endif %}</c-td>
+                    <c-td>
+                        {%- if rij.gebruikt_bytes is not none and rij.capaciteit_bytes is not none -%}
+                            {{ gib(rij.gebruikt_bytes) }} / {{ gib(rij.capaciteit_bytes) }}
+                        {%- else -%}
+                            -
+                        {%- endif -%}
+                    </c-td>
+                    <c-td>{% if rij.inodes_procent is not none %}{{ '%.1f' | format(rij.inodes_procent) }}%{% else %}-{% endif %}</c-td>
+                    <c-td>{{ status_tag(rij.status) }}</c-td>
+                </c-table-row>
+            {% endfor %}
+        </c-table>
+    {% endif %}
+{% endcall %}

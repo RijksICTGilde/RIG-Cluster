@@ -1,0 +1,75 @@
+{#
+  Het databaseblok van /admin/diensten, apart opgehaald.
+
+  TWEE TABELLEN, EN DAT IS GEEN VERSIERING. Grootte, verbindingen, langste transactie en
+  XID-leeftijd bestaan per database; wachtende verbindingen bestaan alleen per instantie
+  (cnpg_backends_waiting_total heeft geen datname-label). Dat getal op elke databaserij
+  plakken zou hetzelfde cijfer zo vaak herhalen als er databases in de instantie zitten,
+  en dan lijkt een instantie met tien databases tien keer zo druk als een met een.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% from "bg/_resource-formats.html.j2" import gib %}
+{% from "bg/_diensten-status.html.j2" import status_tag, leeg_of_stuk %}
+
+{% call panel("Databases", "cylinder-split") %}
+    {% if not blok.gemeten or not blok.rijen %}
+        {{ leeg_of_stuk(blok, "Er zijn geen CNPG-databases met metrieken gevonden.") }}
+    {% else %}
+        <c-stack gap="lg">
+            {# XID-leeftijd staat erbij en niet alleen in de toestand: een rij die "Kritiek"
+               zegt zonder het getal te tonen laat je raden waar dat vandaan komt.
+
+               Namespace en instantie staan in EEN kolom. Ze stonden los, en dan zijn het
+               acht kolommen: op een schermafdruk liep "Langste transactie" over zijn
+               buren heen en viel de toestand-tag buiten de kaart. #}
+            <c-table columns="1.6fr 1fr 0.7fr 1fr 1.3fr 1fr 0.9fr">
+                <c-table-head>
+                    <c-th>Instantie</c-th>
+                    <c-th>Database</c-th>
+                    <c-th>Grootte</c-th>
+                    <c-th>Verbindingen</c-th>
+                    <c-th>Langste transactie</c-th>
+                    <c-th>XID-leeftijd</c-th>
+                    <c-th>Toestand</c-th>
+                </c-table-head>
+                {% for rij in blok.rijen %}
+                    <c-table-row>
+                        <c-td>{{ rij.namespace }}/{{ rij.instantie }}</c-td>
+                        <c-td>{{ rij.database }}</c-td>
+                        <c-td>{% if rij.grootte_bytes is not none %}{{ gib(rij.grootte_bytes) }}{% else %}-{% endif %}</c-td>
+                        <c-td>{% if rij.verbindingen is not none %}{{ rij.verbindingen | round | int }}{% else %}-{% endif %}</c-td>
+                        <c-td>{% if rij.langste_transactie_seconden is not none %}{{ rij.langste_transactie_seconden | round | int }} s{% else %}-{% endif %}</c-td>
+                        <c-td>{% if rij.xid_leeftijd is not none %}{{ '{:,}'.format(rij.xid_leeftijd | round | int) | replace(',', '.') }}{% else %}-{% endif %}</c-td>
+                        <c-td>{{ status_tag(rij.status) }}</c-td>
+                    </c-table-row>
+                {% endfor %}
+            </c-table>
+
+            {% if blok.extra_rijen %}
+                <c-stack gap="sm">
+                    <c-heading type="h3" size="5" label="Per instantie" />
+                    <c-paragraph size="sm">
+                        Wachtende verbindingen staan op een lock te wachten. Boven nul knelt er iets;
+                        dat is een eigenschap van de instantie, niet van een losse database.
+                    </c-paragraph>
+                    <c-table columns="1.6fr 1fr 1fr 0.9fr">
+                        <c-table-head>
+                            <c-th>Instantie</c-th>
+                            <c-th>Verbindingen</c-th>
+                            <c-th>Wachtend</c-th>
+                            <c-th>Toestand</c-th>
+                        </c-table-head>
+                        {% for rij in blok.extra_rijen %}
+                            <c-table-row>
+                                <c-td>{{ rij.namespace }}/{{ rij.instantie }}</c-td>
+                                <c-td>{% if rij.verbindingen is not none %}{{ rij.verbindingen | round | int }}{% else %}-{% endif %}</c-td>
+                                <c-td>{% if rij.wachtend is not none %}{{ rij.wachtend | round | int }}{% else %}-{% endif %}</c-td>
+                                <c-td>{{ status_tag(rij.status) }}</c-td>
+                            </c-table-row>
+                        {% endfor %}
+                    </c-table>
+                </c-stack>
+            {% endif %}
+        </c-stack>
+    {% endif %}
+{% endcall %}
