@@ -1842,13 +1842,34 @@ class InviteApplicationUrlOptionsProvider:
             logger.debug("Could not derive public URLs for the invite destination", exc_info=True)
             urls = []
 
+        # Een component MAG meerdere paden publiceren, en dat zijn dan evenzoveel adressen.
+        # Het label noemde alleen deployment en component, dus die adressen kwamen als twee
+        # regels "production / frontend" in de lijst: niet te onderscheiden, terwijl je er
+        # wel een van moet kiezen. De ontdubbeling hieronder pakt ze niet, en terecht, want
+        # de URL's verschillen echt. Het pad komt er dus bij, maar alleen waar het iets
+        # oplost: bij een component met een enkel pad is "/" achter de naam alleen ruis.
         seen: set[str] = set()
+        gekozen: list[dict[str, str]] = []
         for entry in urls:
             url = entry.get("url")
             if not url or url in seen:
                 continue
             seen.add(url)
-            options.append({"value": url, "label": f"{entry['deployment_name']} / {entry['component_name']}"})
+            gekozen.append(entry)
+
+        meervoudig: set[tuple[str, str]] = set()
+        geteld: set[tuple[str, str]] = set()
+        for entry in gekozen:
+            sleutel = (entry["deployment_name"], entry["component_name"])
+            if sleutel in geteld:
+                meervoudig.add(sleutel)
+            geteld.add(sleutel)
+
+        for entry in gekozen:
+            label = f"{entry['deployment_name']} / {entry['component_name']}"
+            if (entry["deployment_name"], entry["component_name"]) in meervoudig:
+                label = f"{label} ({entry.get('path') or '/'})"
+            options.append({"value": entry["url"], "label": label})
 
         if self.current_value and self.current_value not in seen:
             options.append({"value": self.current_value, "label": f"{self.current_value} (niet meer afleidbaar)"})
