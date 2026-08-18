@@ -703,7 +703,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # that carry its section. Template-only: no editable names it, so it falls outside the
     # write set and never reaches the saved project.
     if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
-        state.base_data.update(build_cross_domain_context(project_name, _user_email))
+        state.base_data.update(build_cross_domain_context(_user_email))
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:

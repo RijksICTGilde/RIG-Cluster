@@ -291,7 +291,7 @@ class CrossDomainAccessService(Service):
                 )
                 continue
             normalized.append(rule)
-        return resolve_rules(normalized, cluster=ctx.cluster, self_project=ctx.project_name, lookup_project=lookup)
+        return resolve_rules(normalized, cluster=ctx.cluster, lookup_project=lookup)
 
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
         project_config = self._project_config(ctx.project_data)
