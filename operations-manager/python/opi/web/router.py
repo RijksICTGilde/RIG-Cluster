@@ -65,7 +65,7 @@ from opi.web.project_actions import build_project_action
 from opi.web.stap_labels import stap_label
 from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
 
-from ..utils.age import decrypt_age_content
+from ..utils.age import decrypt_age_content, is_age_encrypted
 from .metrics_explorer_router import metrics_explorer_router
 from .router_approvals import approvals_router
 from .router_attachments import attachments_router
@@ -101,6 +101,41 @@ web_router.include_router(tasks_router)
 # leaving half the block behind in this router. Shared routers are mounted once.
 for _service_router in collect_service_routers():
     web_router.include_router(_service_router)
+
+
+async def ontsleutel_helm_values(items: list[dict[str, Any]], naam_sleutel: str, waar: str, private_key: str) -> None:
+    """Maak de ``helm-values`` van helm-chart- of helmfile-items leesbaar voor de pagina.
+
+    Het veld heeft in het schema geen type (``"helm-values": {}``) en komt in de
+    projectbestanden in twee vormen voor: als AGE-blok en als gewone boom. In
+    ``mb-docs-helmfile`` staan ze zelfs allebei -- versleuteld op de deployment, in
+    platte tekst op het project. De generatie leest beide vormen
+    (``_decrypt_with_private_key`` ontsleutelt alleen strings), maar deze
+    weergaveweg ontsleutelde onvoorwaardelijk. Een boom viel dan in de ``except``
+    en werd ``None``, en omdat het sjabloon het blok alleen toont ``if ... is
+    mapping`` verdween het van het scherm zonder melding.
+
+    Daarom kijken we eerst wat er staat: alleen een AGE-blok gaat door de
+    ontsleuteling, de rest blijft zoals hij is.
+    """
+    for item in items:
+        waarde = item.get("helm-values")
+        if not waarde:
+            continue
+        naam = item.get(naam_sleutel, "unknown")
+        if not isinstance(waarde, str):
+            # Al een boom: niets te ontsleutelen, en niets te verliezen.
+            continue
+        if not is_age_encrypted(waarde):
+            # Een string die geen AGE-blok is, is YAML in platte tekst.
+            item["helm-values"] = load_yaml_from_string(waarde)
+            continue
+        try:
+            item["helm-values"] = load_yaml_from_string(await decrypt_age_content(waarde, private_key))
+            logger.info(f"Decrypted helm-values for {waar} '{naam}'")
+        except Exception as e:
+            logger.warning(f"Failed to decrypt helm-values for {waar} '{naam}': {e}")
+            item["helm-values"] = None
 
 
 @web_router.get("/")
@@ -1546,65 +1581,28 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                     logger.warning(f"Aliases of component '{component_name}' could not be read: {error}")
                     component["aliases"] = {}
 
-        # Decrypt helm-charts base helm-values
-        for helm_chart in project_data_decrypted.get("helm-charts", []):
-            chart_name = helm_chart.get("name", "unknown")
-            if helm_chart.get("helm-values"):
-                try:
-                    decrypted_yaml = await decrypt_age_content(helm_chart["helm-values"], project_private_key)
-                    helm_chart["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                    logger.info(f"Decrypted helm-values for helm-chart '{chart_name}'")
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt helm-values for helm-chart '{chart_name}': {e}")
-                    helm_chart["helm-values"] = None
-
-        # Decrypt helmfile base helm-values
-        for helmfile in project_data_decrypted.get("helmfile", []):
-            helmfile_name = helmfile.get("name", "unknown")
-            if helmfile.get("helm-values"):
-                try:
-                    decrypted_yaml = await decrypt_age_content(helmfile["helm-values"], project_private_key)
-                    helmfile["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                    logger.info(f"Decrypted helm-values for helmfile '{helmfile_name}'")
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt helm-values for helmfile '{helmfile_name}': {e}")
-                    helmfile["helm-values"] = None
-
-        # Decrypt deployment-level helm-charts and helmfile helm-values
+        # helm-values leesbaar maken: op projectniveau (de catalogus) en op
+        # deploymentniveau (de verwijzing), voor helm-charts zowel als helmfile.
+        await ontsleutel_helm_values(
+            project_data_decrypted.get("helm-charts", []), "name", "helm-chart", project_private_key
+        )
+        await ontsleutel_helm_values(
+            project_data_decrypted.get("helmfile", []), "name", "helmfile", project_private_key
+        )
         for deployment in project_data_decrypted.get("deployments", []):
             deployment_name = deployment.get("name", "unknown")
-
-            # Decrypt deployment helm-charts helm-values
-            for helm_chart in deployment.get("helm-charts", []):
-                chart_ref = helm_chart.get("reference", "unknown")
-                if helm_chart.get("helm-values"):
-                    try:
-                        decrypted_yaml = await decrypt_age_content(helm_chart["helm-values"], project_private_key)
-                        helm_chart["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                        logger.info(
-                            f"Decrypted helm-values for deployment '{deployment_name}' helm-chart '{chart_ref}'"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to decrypt helm-values for deployment '{deployment_name}' helm-chart '{chart_ref}': {e}"
-                        )
-                        helm_chart["helm-values"] = None
-
-            # Decrypt deployment helmfile helm-values
-            for helmfile in deployment.get("helmfile", []):
-                helmfile_ref = helmfile.get("reference", "unknown")
-                if helmfile.get("helm-values"):
-                    try:
-                        decrypted_yaml = await decrypt_age_content(helmfile["helm-values"], project_private_key)
-                        helmfile["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                        logger.info(
-                            f"Decrypted helm-values for deployment '{deployment_name}' helmfile '{helmfile_ref}'"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to decrypt helm-values for deployment '{deployment_name}' helmfile '{helmfile_ref}': {e}"
-                        )
-                        helmfile["helm-values"] = None
+            await ontsleutel_helm_values(
+                deployment.get("helm-charts", []),
+                "reference",
+                f"deployment '{deployment_name}' helm-chart",
+                project_private_key,
+            )
+            await ontsleutel_helm_values(
+                deployment.get("helmfile", []),
+                "reference",
+                f"deployment '{deployment_name}' helmfile",
+                project_private_key,
+            )
 
         # Process services to add display information
         services_with_info = []
