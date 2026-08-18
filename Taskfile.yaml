@@ -2458,6 +2458,11 @@ tasks:
         echo "Overlays configured for local images"
     silent: true
 
+  sandbox:renew-wildcard-cert:
+    desc: "Renew the *.sandbox.rijksapp.dev wildcard Let's Encrypt cert (every ~90 days). See docs/sandbox-wildcard-cert-renewal.md."
+    cmds:
+      - scripts/renew-sandbox-cert.sh
+
   sandbox:import-wildcard-cert:
     desc: "Import wildcard TLS certificate for *.sandbox.rijksapp.dev"
     cmds:
