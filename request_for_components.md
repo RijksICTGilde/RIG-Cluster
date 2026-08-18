@@ -370,3 +370,39 @@ De meting bij 800px is bovendien niet monotoon: de sorteerknop is daar wél zich
 **Wat wij intussen doen.** De eigen overloopgroep weghalen, op `/projects` en op `/admin/approvals`. Dat repareert de dubbeling en de dode knop op de breedtes waar het wel werkt, en het geeft niets op: de overloop werkte toch al niet. Bewaakt door `tests/test_lotc_toolbar_overloop.py`.
 
 **Voorstel.** De "Meer"-knop pas tonen wanneer er werkelijk iets is overgelopen, en de inhoud van `slot="overflow"` in dat menu opnemen zodat hij bruikbaar is - of, als de toolbar zijn eigen items in de overloop hoort te zetten, die weg laten vallen uit de balk én in het menu laten verschijnen. Nu gebeurt er van beide iets half.
+
+## Handgeschreven componenten vallen terug op vaste lichte kleuren, en zijn in de donkere weergave onleesbaar
+
+Gemeten in ZAD op 18 augustus 2026, in Chromium, met `data-scheme="dark"` op `<html>`. Per stuk tekst de berekende `color`, de achtergrond die er onder ligt (dwars door schaduwbomen en slots) en de WCAG-verhouding daartussen. De achtergrond komt van een proefelement met `background-color: Canvas`: met `color-scheme: dark` tekent de browser het paginavlak zelf (#121212) terwijl de computed `background-color` van `<html>` doorzichtig blijft.
+
+| component | regel | kleur | achtergrond | contrast |
+|---|---|---|---|---|
+| `c-secret-field` (lotc-nldd) | `background: var(--nldd-color-surface, #fff)` | #FFFFFF (geërfd) | #FFFFFF | **1,00** |
+| `.lotc-shortcut-cta` (lord-of-the-components) | `color: var(--semantics-actions-primary-default-background-color, #154273)` | #154273 | #121212 | **1,84** |
+| `.lotc-native-select` (lotc-forms) | `color: var(--nldd-color-text, #1a1a1a)` op `background: var(--nldd-color-surface, #fff)` | #1A1A1A | #FFFFFF | donker op wit, dus leesbaar - maar een wit vak in een donkere pagina |
+
+De norm is 4,5:1 voor gewone tekst. In de lichte weergave meet alles ruim voldoende; het gaat uitsluitend om donker.
+
+**Welke schakel het is.** Deze componenten schrijven hun kleuren als `var(--nldd-color-…, <vaste kleur>)`. Die namen worden nergens gezet - het NLDD-thema draait op `--semantics-…` en `--primitives-…` - dus wint altijd de terugval, en dat is een vaste lichte waarde. De tekst eroverheen komt wél uit het thema en wordt in donker bijna wit. `c-secret-field` is het ergste geval: het zet een wit vlak en géén tekstkleur, dus wit op wit. Op de projectpagina van ZAD, blok "Configuratie & Secrets", waren de projectnaam, de API-sleutel en beide AGE-sleutels daardoor letterlijk onzichtbaar.
+
+`.lotc-shortcut-cta` is daarnaast een **typfout**: het vraagt `--semantics-actions-primary-default-background-color` (meervoud "actions"), en het thema kent `--semantics-action…`/`--semantics-content-accent-color`. Zelfde gevolg: de vaste `#154273` wint, en die is op een donker vlak niet te lezen.
+
+De volledige inventaris van namen die nergens gezet worden, met een vaste kleur als terugval:
+
+```
+lord_of_the_components/static/lotc/app-components.css
+  --semantics-actions-primary-default-background-color   (.lotc-shortcut-cta)
+  --semantics-action-primary-background-color            (.lotc-avatar)
+  --semantics-feedback-warning-color                     (.lotc-unimplemented)
+  --semantics-feedback-error-color
+lotc_nldd/templates/components/secret-field.html.j2
+  --nldd-color-surface, --nldd-color-border, --nldd-color-text
+lotc_nldd/templates/components/data-list.html.j2
+  --nldd-color-text, --nldd-color-text-subtle
+lotc_forms/templates/components/select-field.html.j2
+  --nldd-color-text, --nldd-color-surface, --nldd-color-border, --nldd-color-error
+```
+
+**Wat wij intussen doen.** In `static/css/lotc-app.css` wijzen wij die namen op `:root` aan op de themawaarde die er al is (`--nldd-color-surface: var(--semantics-surfaces-base-background-color)`, enzovoort), inclusief de typfout hierboven. Er komt daarmee geen enkele kleurwaarde bij en de lichte weergave verandert niet - `--semantics-surfaces-base-background-color` is daar #FFFFFF, precies de terugval die er stond. De drie namen die wij bewust NIET invullen (`.lotc-avatar`, `.lotc-unimplemented`, `.lotc-statusbar`) zetten hun voorgrond én achtergrond zelf vast en zijn dus in beide standen even leesbaar; die staan met die reden in `tests/test_donkere_weergave_vaste_kleuren.py`, dat ook rood wordt zodra er een naam bij komt. `tests/e2e/test_donkere_weergave_contrast.py` meet het contrast op de getroffen schermen in beide standen.
+
+**Voorstel.** De handgeschreven componenten hun kleuren uit `--semantics-…` laten halen, net als de gegenereerde componenten. Waar een eigen naam gewenst is (`--nldd-color-surface` als overschrijfpunt per toepassing), die naam dan zelf in het thema definiëren met een `light-dark()`-waarde, zodat de terugval een vangnet is en niet de werkelijke waarde. En de typfout `--semantics-actions-primary-default-background-color` rechtzetten - een kleur die als *background-color* heet maar als tekstkleur gebruikt wordt, is bovendien het verkeerde token voor die plek.

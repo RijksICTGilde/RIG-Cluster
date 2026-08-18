@@ -103,7 +103,11 @@ c-fieldset c-fieldset {
     padding: 0;
     border: 0;
     background: none;
-    color: var(--nldd-color-hemelblauw, #007bc7);
+    /* --nldd-color-hemelblauw bestaat nergens, dus stond hier altijd de vaste #007bc7 -
+       een kleur die niet meebeweegt met de licht/donker-stand (RC-134). Het themotoken
+       voor accenttekst doet dat wel; de vaste waarde blijft als vangnet voor het geval de
+       themastylesheet niet geladen is. */
+    color: var(--semantics-content-accent-color, #007bc7);
     cursor: pointer;
 }
 .kv-toggle {
