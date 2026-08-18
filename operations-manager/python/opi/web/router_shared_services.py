@@ -20,7 +20,13 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso
-from opi.services.gedeelde_diensten import DREMPELS, ONGEMETEN_DIENSTEN, haal_databases, haal_opslag
+from opi.services.gedeelde_diensten import (
+    DREMPELS,
+    ONGEMETEN_DIENSTEN,
+    haal_databases,
+    haal_keycloak,
+    haal_opslag,
+)
 from opi.web.lotc_switch import build_lotc_admin, render
 from opi.web.menu import get_menu_items
 
@@ -72,5 +78,19 @@ async def gedeelde_diensten_databases(request: Request) -> Response:
     return render(
         request,
         template="bg/_gedeelde-diensten-databases.html.j2",
+        context={"request": request, "blok": blok},
+    )
+
+
+@shared_services_router.get("/keycloak", response_class=HTMLResponse)
+@requires_sso
+async def gedeelde_diensten_keycloak(request: Request) -> Response:
+    """Het Keycloak-blok, apart opgehaald."""
+    require_platform_admin(request)
+
+    blok = await haal_keycloak()
+    return render(
+        request,
+        template="bg/_gedeelde-diensten-keycloak.html.j2",
         context={"request": request, "blok": blok},
     )
