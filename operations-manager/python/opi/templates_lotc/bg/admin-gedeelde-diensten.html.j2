@@ -1,0 +1,87 @@
+{#
+  Gedeelde diensten: hoe vol, hoe druk, en wanneer moeten we bijsturen.
+
+  De pagina zelf meet NIETS. De twee blokken worden lui opgehaald, elk met een eigen
+  verzoek, zoals het dashboard en de projectdetailpagina dat al doen: zo staat de pagina
+  er meteen, houdt een trage metriekbron hem niet op, en kost een kapot blok alleen dat
+  blok in plaats van de hele pagina.
+
+  DE VOLGORDE IS EEN KEUZE. Opslag bovenaan, want daar komt de eerste echte melding
+  vandaan. Daarna de databases. Daarna - en nadrukkelijk NIET weggelaten - wat er niet
+  gemeten wordt: zonder dat blok leest de afwezigheid van Redis en MinIO als "die zijn in
+  orde". En onderaan de drempels, zodat een rode rij hierboven navraagbaar is.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Gedeelde diensten - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "Gedeelde diensten",
+        "Hoe vol de PVC's en databases zitten en hoeveel verbindingen er openstaan, over alle projecten heen."
+    ) }}
+
+    <div id="diensten-opslag"
+         hx-get="/admin/diensten/opslag"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <c-paragraph>Opslag wordt opgehaald...</c-paragraph>
+    </div>
+
+    <div id="diensten-databases"
+         hx-get="/admin/diensten/databases"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <c-paragraph>Databases worden opgehaald...</c-paragraph>
+    </div>
+
+    {% call panel("Wat er niet gemeten wordt", "exclamation-triangle") %}
+        <c-stack gap="md">
+            <c-paragraph>
+                Deze diensten staan hierboven NIET in beeld. Dat is geen oordeel over hun toestand:
+                we weten die simpelweg niet. Er is hier met opzet geen leeg vak voor gemaakt, want
+                een leeg vak leest als "in orde".
+            </c-paragraph>
+            {% for dienst in ongemeten %}
+                <c-alert type="warning" heading="{{ dienst.naam }} is niet in beeld">
+                    <c-stack gap="xs">
+                        <c-paragraph>{{ dienst.reden }}</c-paragraph>
+                        <c-paragraph size="sm">Nodig: {{ dienst.nodig }}</c-paragraph>
+                    </c-stack>
+                </c-alert>
+            {% endfor %}
+        </c-stack>
+    {% endcall %}
+
+    {% call panel("Drempels", "score-meter") %}
+        <c-stack gap="md">
+            <c-paragraph>
+                Vanaf deze waarden kleurt een rij hierboven. Ze staan op een plek in de code
+                (DREMPELS in opi/services/gedeelde_diensten.py) zodat alerting straks dezelfde
+                grenzen gebruikt en er geen tweede waarheid ontstaat.
+            </c-paragraph>
+            {# De eenheid in een EIGEN kolom en niet achter het getal: dat gaf "1
+               verbindingen". En de duizendtallen gegroepeerd, anders staat er 150000000
+               en telt iedereen de nullen. #}
+            <c-table columns="1.9fr 1.1fr 0.9fr 0.9fr 2.4fr">
+                <c-table-head>
+                    <c-th>Meting</c-th>
+                    <c-th>Eenheid</c-th>
+                    <c-th>Let op vanaf</c-th>
+                    <c-th>Kritiek vanaf</c-th>
+                    <c-th>Waarom</c-th>
+                </c-table-head>
+                {% for drempel in drempels %}
+                    <c-table-row>
+                        <c-td>{{ drempel.naam }}</c-td>
+                        <c-td>{{ drempel.eenheid }}</c-td>
+                        <c-td>{{ '{:,}'.format(drempel.waarschuwing | round | int) | replace(',', '.') }}</c-td>
+                        <c-td>{{ '{:,}'.format(drempel.kritiek | round | int) | replace(',', '.') }}</c-td>
+                        <c-td>{{ drempel.uitleg }}</c-td>
+                    </c-table-row>
+                {% endfor %}
+            </c-table>
+        </c-stack>
+    {% endcall %}
+{% endblock %}
