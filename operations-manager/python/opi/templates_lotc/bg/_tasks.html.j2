@@ -6,8 +6,22 @@
   de Taken-tab ruimt zijn plek op als je hem verlaat - zo polt htmx alleen terwijl je kijkt.
 
   De tabel was een kale <table> met eigen klassen (backup-table, tasks-table). Nu c-table.
-  Die heeft onder NLDD columns nodig, anders stapelen de cellen; zes kolommen, met de
-  ruimte naar soort en deployment omdat daar de langste teksten in staan.
+  Die heeft onder NLDD columns nodig, anders stapelen de cellen.
+
+  De verdeling over die zes kolommen is GEMETEN, niet geschat: hij stond op
+  "2fr 2fr 1fr 2fr 1fr 1fr", waarmee Gestart en Beeindigd het smalst van de zes waren
+  terwijl er de langste vaste waarde in staat -- de datum brak daar over drie of vier
+  regels. De breedte die elke kolom nodig heeft, in het thema van de applicatie:
+
+      Soort 163px ("Deployment verwijderen")   Door       251px (een e-mailadres)
+      Deployment 96px                          Gestart    126px ("17 sep 2026 23:18")
+      Status 102px                             Beeindigd  126px
+
+  De tabel krijgt zelf 705px bij een venster van 1280 en 864px bij 1440, dus alles past
+  niet tegelijk. De verdeling hieronder geeft de datum voorrang: bij 1280 en 1440 staat
+  hij op een regel en breekt alleen Soort af, bij 1024 breekt de datum netjes tussen dag
+  en tijd in plaats van middenin. Bewaakt door
+  tests/e2e/test_lotc_takentabel_datumkolom.py; die test meet het opnieuw.
 #}
 {% from "bg/_patterns.html.j2" import panel %}
 
@@ -16,7 +30,7 @@
         {% if not items %}
             <c-paragraph>Er zijn nog geen taken uitgevoerd voor dit project.</c-paragraph>
         {% else %}
-            <c-table columns="2fr 2fr 1fr 2fr 1fr 1fr">
+            <c-table class="lange-waarden-breken" columns="1.75fr 1.4fr 1.45fr 1.6fr 1.9fr 1.9fr">
                 <c-table-head>
                     <c-th>Soort</c-th>
                     <c-th>Deployment</c-th>
@@ -69,10 +83,21 @@
                             {% endif %}
                         </c-td>
                         <c-td>{{ item.door or "-" }}</c-td>
-                        {# Dezelfde inkorting als de bestaande pagina: de eerste zestien
-                           tekens van de ISO-tijd, met de T als spatie. #}
-                        <c-td>{{ (item.gestart or "")[:16] | replace("T", " ") }}</c-td>
-                        <c-td>{{ ((item.beeindigd or "")[:16] | replace("T", " ")) if item.beeindigd else "-" }}</c-td>
+                        {# Via dutch_date, net als elke andere datum in het portaal.
+
+                           Hier stond een inkorting: de eerste zestien tekens van de
+                           ISO-tijd, met de T als spatie. Die toonde het UTC-getal zonder
+                           dat erbij te zeggen -- de zone-aanduiding valt juist buiten die
+                           zestien tekens. De takendienst slaat op in UTC (kolom
+                           timestamptz, gevuld met de servertijd van de database, die op
+                           Etc/UTC staat), terwijl wij in Europe/Amsterdam kijken: in de
+                           zomer zag je alles twee uur te vroeg. Het filter rekent om en
+                           schrijft de maand voluit. Bewaakt door
+                           tests/test_dates_go_through_one_filter.py.
+
+                           Een leeg veld levert vanzelf "-" op; dat doet het filter zelf. #}
+                        <c-td>{{ item.gestart | dutch_date(short_month=True) }}</c-td>
+                        <c-td>{{ item.beeindigd | dutch_date(short_month=True) }}</c-td>
                     </c-table-row>
                 {% endfor %}
             </c-table>
