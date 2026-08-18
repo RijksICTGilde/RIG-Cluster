@@ -324,7 +324,9 @@ class TestDeSuccespagina:
     def test_een_bestemming_wordt_uitgerekend_bij_het_renderen(self, pagina: Any) -> None:
         project = _project()
         html = pagina(
-            _met_invite(project, _basis_entry(**{"application-target": {"deployment": "production", "component": "frontend"}}))
+            _met_invite(
+                project, _basis_entry(**{"application-target": {"deployment": "production", "component": "frontend"}})
+            )
         )
 
         assert _adres(project) in html
