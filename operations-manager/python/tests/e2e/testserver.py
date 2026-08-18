@@ -133,62 +133,101 @@ def _mock_get_service() -> InMemoryUserAdminService:
 #: de browsertest hetzelfde beeld als de aanleiding voor deze pagina.
 _DIENSTEN_METRIEKEN: dict[str, list[dict]] = {
     "vulling": [
-        {"metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
-         "value": [1787000000.0, "92.7"]},
-        {"metric": {"namespace": "rig-prd-mb-docs-helmfile-infrastructure",
-                    "persistentvolumeclaim": "mb-docs-helmfile-db-1"}, "value": [1787000000.0, "62.8"]},
-        {"metric": {"namespace": "rig-prd-algor-odc-infrastructure", "persistentvolumeclaim": "algor-odc-db-1"},
-         "value": [1787000000.0, "60.8"]},
-        {"metric": {"namespace": "rig-prd-operations", "persistentvolumeclaim": "minio-storage-versioned"},
-         "value": [1787000000.0, "40.5"]},
+        {
+            "metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
+            "value": [1787000000.0, "92.7"],
+        },
+        {
+            "metric": {
+                "namespace": "rig-prd-mb-docs-helmfile-infrastructure",
+                "persistentvolumeclaim": "mb-docs-helmfile-db-1",
+            },
+            "value": [1787000000.0, "62.8"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-algor-odc-infrastructure", "persistentvolumeclaim": "algor-odc-db-1"},
+            "value": [1787000000.0, "60.8"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-operations", "persistentvolumeclaim": "minio-storage-versioned"},
+            "value": [1787000000.0, "40.5"],
+        },
     ],
     "gebruikt": [
-        {"metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
-         "value": [1787000000.0, "9955571302"]},
-        {"metric": {"namespace": "rig-prd-mb-docs-helmfile-infrastructure",
-                    "persistentvolumeclaim": "mb-docs-helmfile-db-1"}, "value": [1787000000.0, "674309865"]},
-        {"metric": {"namespace": "rig-prd-algor-odc-infrastructure", "persistentvolumeclaim": "algor-odc-db-1"},
-         "value": [1787000000.0, "652835225"]},
-        {"metric": {"namespace": "rig-prd-operations", "persistentvolumeclaim": "minio-storage-versioned"},
-         "value": [1787000000.0, "43486543872"]},
+        {
+            "metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
+            "value": [1787000000.0, "9955571302"],
+        },
+        {
+            "metric": {
+                "namespace": "rig-prd-mb-docs-helmfile-infrastructure",
+                "persistentvolumeclaim": "mb-docs-helmfile-db-1",
+            },
+            "value": [1787000000.0, "674309865"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-algor-odc-infrastructure", "persistentvolumeclaim": "algor-odc-db-1"},
+            "value": [1787000000.0, "652835225"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-operations", "persistentvolumeclaim": "minio-storage-versioned"},
+            "value": [1787000000.0, "43486543872"],
+        },
     ],
     "capaciteit": [
-        {"metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
-         "value": [1787000000.0, "10737418240"]},
-        {"metric": {"namespace": "rig-prd-mb-docs-helmfile-infrastructure",
-                    "persistentvolumeclaim": "mb-docs-helmfile-db-1"}, "value": [1787000000.0, "1073741824"]},
-        {"metric": {"namespace": "rig-prd-algor-odc-infrastructure", "persistentvolumeclaim": "algor-odc-db-1"},
-         "value": [1787000000.0, "1073741824"]},
-        {"metric": {"namespace": "rig-prd-operations", "persistentvolumeclaim": "minio-storage-versioned"},
-         "value": [1787000000.0, "107374182400"]},
+        {
+            "metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
+            "value": [1787000000.0, "10737418240"],
+        },
+        {
+            "metric": {
+                "namespace": "rig-prd-mb-docs-helmfile-infrastructure",
+                "persistentvolumeclaim": "mb-docs-helmfile-db-1",
+            },
+            "value": [1787000000.0, "1073741824"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-algor-odc-infrastructure", "persistentvolumeclaim": "algor-odc-db-1"},
+            "value": [1787000000.0, "1073741824"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-operations", "persistentvolumeclaim": "minio-storage-versioned"},
+            "value": [1787000000.0, "107374182400"],
+        },
     ],
     "inodes": [
-        {"metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
-         "value": [1787000000.0, "3.1"]},
+        {
+            "metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
+            "value": [1787000000.0, "3.1"],
+        },
     ],
     "grootte": [
-        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"},
-         "value": [1787000000.0, "24049331"]},
-        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"},
-         "value": [1787000000.0, "19166899"]},
+        {
+            "metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"},
+            "value": [1787000000.0, "24049331"],
+        },
+        {
+            "metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"},
+            "value": [1787000000.0, "19166899"],
+        },
     ],
     "verbindingen": [
-        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"},
-         "value": [1787000000.0, "2"]},
-        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"},
-         "value": [1787000000.0, "3"]},
+        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"}, "value": [1787000000.0, "2"]},
+        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"}, "value": [1787000000.0, "3"]},
     ],
     "langste_transactie": [
-        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"},
-         "value": [1787000000.0, "0"]},
-        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"},
-         "value": [1787000000.0, "0"]},
+        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"}, "value": [1787000000.0, "0"]},
+        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"}, "value": [1787000000.0, "0"]},
     ],
     "xid_leeftijd": [
-        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"},
-         "value": [1787000000.0, "71449"]},
-        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"},
-         "value": [1787000000.0, "71449"]},
+        {
+            "metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"},
+            "value": [1787000000.0, "71449"],
+        },
+        {
+            "metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"},
+            "value": [1787000000.0, "71449"],
+        },
     ],
     "wachtend": [
         {"metric": {"namespace": "rig-system", "pod": "rig-db-1"}, "value": [1787000000.0, "0"]},
