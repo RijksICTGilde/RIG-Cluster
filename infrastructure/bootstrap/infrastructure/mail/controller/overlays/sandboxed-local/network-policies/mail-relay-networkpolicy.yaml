@@ -58,16 +58,16 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # De upstream mailserver. Alleen de twee poorten waarop een upstream post aanneemt;
-    # verder heeft de relay buiten het cluster niets te zoeken. Anders dan op ODCN staat
-    # hier wel 0.0.0.0/0: welke testupstream een ontwikkelaar gebruikt ligt niet vast, en er
-    # hangt hier geen RON-koppeling aan. Op ODCN is het adres wel bekend en staat het er als
-    # /32 in, en daar is het alleen 25 omdat dat de enige poort is die daar open staat.
+    # De upstream is hier de SMTP-sink in deze namespace, en verder niets. Hier stond
+    # eerst 0.0.0.0/0 omdat "welke testupstream een ontwikkelaar gebruikt niet vastligt";
+    # nu er een sink meekomt ligt het wel vast, en dan hoort de relay ook in een
+    # ontwikkelcluster niet naar willekeurige mailservers op internet te kunnen praten.
+    # Dat is geen formaliteit: een relay die overal heen mag is een open relay zodra
+    # iemand een account bemachtigt.
     - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
+        - podSelector:
+            matchLabels:
+              app: rig-mail-sink
       ports:
         - protocol: TCP
           port: 25
-        - protocol: TCP
-          port: 587

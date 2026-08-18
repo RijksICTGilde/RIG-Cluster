@@ -1,0 +1,91 @@
+# De testupstream van de sandbox: een SMTP-sink die alles aanneemt en niets bezorgt.
+#
+# WAAROM DIT BESTAAT. De relay levert alles af bij een upstream, en op ODCN is dat de
+# mailserver van de Rijksoverheid. Die is vanuit een ontwikkelcluster niet bereikbaar en
+# je wilt er ook niet op oefenen. Zonder sink is de sandbox dus stuk op precies het punt
+# waar de identiteitsregels zitten: het overschrijven van de From:, het plusdeel in de
+# envelope, en het verwijderen van de Received-keten. Dat zijn de regels waarop dit hele
+# ontwerp rust, en ze waren tot nu toe alleen met de hand na te spelen.
+#
+# Mailpit doet precies twee dingen en verder niets: hij toont dat er SMTP binnenkomt, en
+# hij geeft elk bericht integraal terug via een HTTP-API. Daarmee wordt een identiteits-
+# regel een assertie in een test in plaats van een belofte in een comment.
+#
+# ALLEEN VOOR local EN sandboxed-local. Deze map wordt niet vanuit de odcn-overlay
+# ingeladen, dus dit image hoeft niet langs de registry en het signature-beleid van ODCN.
+#
+# GEEN AUTHENTICATIE EN GEEN TLS OP DE SINK, en dat is niet slordig maar bruikbaar. De
+# relay biedt aan zonder inloggegevens (de upstream op productie kent ook geen AUTH), dus
+# de sink hoeft er geen te vragen. Wie erbij mag bepaalt het NetworkPolicy naast de relay,
+# en dat is alleen de relay zelf.
+#
+# En het levert meteen het antwoord op een vraag die nog openstaat in de configmap van de
+# relay: `[remote.upstream.tls]` staat op STARTTLS met strikte certificaatcontrole, en de
+# documentatie zegt nergens wat Stalwart doet als STARTTLS niet wordt aangeboden. Deze sink
+# biedt het niet aan. Komt er post aan, dan valt Stalwart dus terug op platte tekst en is
+# `allow-invalid-certs = false` een voorkeur en geen garantie. Komt er niets aan, dan is het
+# wel een garantie. Dat is precies de meting die we niet konden doen; noteer de uitkomst in
+# docs/ron-koppeling.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rig-mail-sink
+  namespace: rig-ron
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rig-mail-sink
+  template:
+    metadata:
+      labels:
+        app: rig-mail-sink
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.30.7
+          env:
+            # Geen MP_DATABASE, dus alles blijft in het geheugen. Een sink hoort niets te
+            # bewaren: een herstart is de manier om schoon te beginnen, en er is geen PVC
+            # nodig die met readOnlyRootFilesystem zou botsen.
+            - name: MP_SMTP_BIND_ADDR
+              value: "[::]:1025"
+            - name: MP_UI_BIND_ADDR
+              value: "[::]:8025"
+          ports:
+            - containerPort: 1025
+              name: smtp
+            - containerPort: 8025
+              name: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+              ephemeral-storage: "128Mi"
+            limits:
+              cpu: 200m
+              memory: 256Mi
+              ephemeral-storage: "256Mi"
+          livenessProbe:
+            tcpSocket:
+              port: 1025
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 1025
+            initialDelaySeconds: 2
+            periodSeconds: 5
