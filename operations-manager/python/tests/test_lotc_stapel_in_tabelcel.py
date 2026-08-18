@@ -35,8 +35,12 @@ from opi.core.template_helpers import CATALOG_DIR, TEMPLATES_DIR
 #: Een ``<c-td ...>`` gevolgd door een ``<c-stack``, met alleen witruimte en Jinja-blokken
 #: ertussen. Zo staan de gevallen erin die we gemeten hebben; een stack die dieper in de cel
 #: zit (in een kaart, in een cluster) is een ander geval en valt niet om.
+#: Let op de ``[^<]``: een overgeslagen Jinja-blok mag GEEN tag-grens passeren. Met een kale
+#: ``.*?`` onder ``re.DOTALL`` slikte deze regex ``</c-td></c-table>`` heen en landde hij op
+#: een stack die helemaal buiten de tabel stond (gemeten op
+#: ``_gedeelde-diensten-databases.html.j2``, een valse melding).
 STAPEL_IN_CEL = re.compile(
-    r"<c-td[^>]*>\s*(?:\{\#.*?\#\}\s*|\{%.*?%\}\s*)*<c-stack",
+    r"<c-td[^>]*>\s*(?:\{\#[^<]*?\#\}\s*|\{%[^<]*?%\}\s*)*<c-stack",
     re.DOTALL,
 )
 
