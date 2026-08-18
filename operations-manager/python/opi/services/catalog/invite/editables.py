@@ -23,6 +23,7 @@ from opi.forms.editables.validators import (
     UrlValidator,
 )
 from opi.services.catalog.base import ConfigLayer, config_path
+from opi.services.catalog.invite.converters import ApplicationTargetConverter
 from opi.services.catalog.invite.defaults import (
     default_contact_email,
     default_message_en,
@@ -116,13 +117,25 @@ INVITE_CONTACT_EMAIL_EDITABLE = Editable(
 # derived from the domain format, the subdomain and the cluster, so asking for a URL asks
 # for something they would have to look up and could get wrong.
 #
+# And for the same reason the ANSWER is not what gets stored: all three of those inputs can
+# change, and then a stored address points at a hostname that does not exist while
+# everything needed to work out the new one is still in the project file. So the field
+# writes ``application-target`` -- the choice -- and the address is derived again every time
+# the success page is rendered. The list the user sees is unchanged; only what a save
+# records did (RC-136).
+#
+# ``application-url`` is still accepted and still valid, for a destination OUTSIDE this
+# project. This picker cannot offer one, so it does not own that field either: it is the
+# API/CLI shape, and a save through the portal leaves it alone unless a target is chosen
+# (``InviteService.settle_destination``).
+#
 # Still not required: a project without publish-on-web has no address to offer, and an
 # invitation without a destination simply shows no button.
-INVITE_APPLICATION_URL_EDITABLE = Editable(
-    yaml_path=_cp("active[*]", "application-url"),
+INVITE_APPLICATION_TARGET_EDITABLE = Editable(
+    yaml_path=_cp("active[*]", "application-target"),
     values_provider="InviteApplicationUrlOptionsProvider",
     validator=UrlValidator(),
-    converter=EmptyToNoneConverter(),
+    converter=ApplicationTargetConverter(),
     remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
 )
@@ -205,7 +218,7 @@ INVITE_ITEM_CHILD_EDITABLES = [
     INVITE_REALM_ROLES_EDITABLE,
     INVITE_RESTRICT_DOMAIN_EDITABLE,
     INVITE_CONTACT_EMAIL_EDITABLE,
-    INVITE_APPLICATION_URL_EDITABLE,
+    INVITE_APPLICATION_TARGET_EDITABLE,
     INVITE_AUTH_METHODS_EDITABLE,
     INVITE_MESSAGE_NL_EDITABLE,
     INVITE_MESSAGE_EN_EDITABLE,

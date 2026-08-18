@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 #: The two authentication methods an invite can offer. A closed set, so it is typed as a
 #: Literal in the model (the guardrail) rather than relying on the form widget's options.
@@ -42,6 +42,38 @@ class I18nText(BaseModel):
 
     nl: str | None = Field(default=None, description="Dutch text.")
     en: str | None = Field(default=None, description="English text.")
+
+
+class ApplicationTarget(BaseModel):
+    """Where the success button points, expressed as the CHOICE instead of its answer.
+
+    A hostname is derived from the domain format, the subdomain and the cluster, and all
+    three can change. Stored as a URL the destination goes stale the moment one of them
+    does, while everything needed to work it out again sits in the same project file. So
+    the deployment and the component are what is written down, and the address is derived
+    at render time (``opi/services/catalog/invite/destination.py``).
+
+    ``path`` is only needed where it distinguishes: a component MAY publish more than one
+    path and those are that many addresses. Publishes it one, then deployment plus
+    component already names exactly one address and the path would be noise -- the same
+    rule the picker's label follows.
+
+    An object rather than a composite string ("production/frontend//api") deliberately: a
+    path contains slashes of its own, so splitting it back apart is the kind of home-grown
+    record format that several readers have already mis-parsed in this codebase.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    deployment: str = Field(description="Name of the deployment whose address the button points at.")
+    component: str = Field(description="Name of the component within that deployment.")
+    path: str | None = Field(
+        default=None,
+        description=(
+            "Which published path, needed only when the component publishes more than one. "
+            "Left out it means the component's only address."
+        ),
+    )
 
 
 class InviteEntry(BaseModel):
@@ -89,7 +121,22 @@ class InviteEntry(BaseModel):
         default=None, alias="contact-email", description="Address shown to a user who needs help redeeming."
     )
     application_url: str | None = Field(
-        default=None, alias="application-url", description="Where the user is sent after redeeming."
+        default=None,
+        alias="application-url",
+        description=(
+            "Where the user is sent after redeeming, as a fixed address. Use this for a destination "
+            "OUTSIDE this project; for one of the project's own addresses use 'application-target', "
+            "which keeps following it when the subdomain or the domain format changes."
+        ),
+    )
+    application_target: ApplicationTarget | None = Field(
+        default=None,
+        alias="application-target",
+        description=(
+            "Where the user is sent after redeeming, as a deployment/component choice. The address is "
+            "worked out when the page is rendered, so it follows a subdomain or domain-format change. "
+            "Mutually exclusive with 'application-url'."
+        ),
     )
     message: I18nText | None = Field(default=None, description="Text shown on the invitation page.")
     success_title: I18nText | None = Field(
@@ -98,6 +145,22 @@ class InviteEntry(BaseModel):
     success_button: I18nText | None = Field(
         default=None, alias="success-button", description="Label of the button leading to the application."
     )
+
+    @model_validator(mode="after")
+    def _one_destination_at_most(self) -> InviteEntry:
+        """At most one destination: a fixed address OR a deployment/component choice.
+
+        Neither is also fine -- an invitation without a destination simply shows no button,
+        and that is a valid thing to want. Both is not: they can point at two different
+        places and nothing decides which one wins, so the reader would have to guess.
+        """
+        if self.application_url and self.application_target:
+            msg = (
+                "een uitnodiging heeft één bestemming: kies 'application-target' (een deployment "
+                "en component van dit project) of 'application-url' (een vast adres), niet allebei"
+            )
+            raise ValueError(msg)
+        return self
 
 
 class InviteConfig(BaseModel):
