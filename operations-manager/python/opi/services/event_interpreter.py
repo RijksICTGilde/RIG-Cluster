@@ -644,6 +644,73 @@ def interpret_argocd_errors(
     return deduped
 
 
+# Een ComparisonError betekent alleen "ArgoCD kon de gewenste toestand niet bepalen". Dat
+# gebeurt in twee heel verschillende fases: bij het OPHALEN van de repository, of bij het
+# RENDEREN van de manifesten. De uitleg wees altijd naar het tweede, dus wie een fetch-
+# timeout kreeg ging zijn manifesten zitten uitpluizen terwijl daar niets mis mee was
+# (amtbz-2m9/productie, 2026-08-18). Deze tabel splitst de repository-fases af; wat er niet
+# op matcht is een echte renderfout en houdt de oude uitleg.
+_COMPARISON_ERROR_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
+    (
+        # Bewust op git-context matchen en niet op een kaal "failed to fetch": dat staat ook
+        # in een Helm-chart die zijn dependency niet kan ophalen, en dat is wel degelijk
+        # een renderfout.
+        re.compile(
+            r"git fetch|unable to checkout git repo|failed to initialize repository resources",
+            re.IGNORECASE,
+        ),
+        "Repository niet bereikbaar",
+        "ArgoCD kon de Git-repository niet ophalen; aan je manifesten ligt het dus niet. "
+        "Dit gebeurt vooral vlak na een herstart van de repository-server, die dan alle "
+        "repositories opnieuw moet binnenhalen. Meestal lost het zichzelf op bij de volgende "
+        "sync. Blijft het staan, meld het dan bij het platformteam.",
+        EventSeverity.INFORMATIONAL,
+    ),
+    (
+        # Geen ".*" tussen "path" en "does not exist": in een lange renderfout kan dat over
+        # een halve melding heen matchen.
+        re.compile(r"app path does not exist|path \S* ?does not exist", re.IGNORECASE),
+        "Pad bestaat niet in de repository",
+        "De ArgoCD-applicatie wijst naar een map die niet (meer) in de repository staat. "
+        "Meld dit bij het platformteam: waarschijnlijk is de deployment verwijderd terwijl "
+        "de applicatie is blijven staan.",
+        EventSeverity.ACTIONABLE,
+    ),
+    (
+        re.compile(r"authentication required|could not read Username|invalid credentials", re.IGNORECASE),
+        "Geen toegang tot de repository",
+        "ArgoCD mag de Git-repository niet lezen. Controleer of het toegangstoken van het project nog geldig is.",
+        EventSeverity.ACTIONABLE,
+    ),
+    (
+        re.compile(r"unknown revision|couldn't find remote ref|revision .* not found", re.IGNORECASE),
+        "Revisie niet gevonden",
+        "De branch of commit waar de deployment naar wijst bestaat niet in de repository. "
+        "Controleer de branchnaam in je projectbestand.",
+        EventSeverity.ACTIONABLE,
+    ),
+]
+
+_COMPARISON_ERROR_DEFAULT = (
+    "Configuratiefout (kustomize CMP)",
+    "De manifesten konden niet worden gegenereerd of vergeleken. Vaak staan er twee "
+    "resources met dezelfde naam in de deployment, of is een manifest ongeldig.",
+    EventSeverity.ACTIONABLE,
+)
+
+
+def _comparison_error_translation(message: str) -> tuple[str, str, EventSeverity]:
+    """Kies label, uitleg en ernst voor een ComparisonError op basis van de ruwe tekst.
+
+    Returns:
+        (resource-label, suggestie, ernst)
+    """
+    for pattern, label, suggestion, severity in _COMPARISON_ERROR_PATTERNS:
+        if pattern.search(message):
+            return label, suggestion, severity
+    return _COMPARISON_ERROR_DEFAULT
+
+
 def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
     """Enrich an ArgoCD error with pattern-matched translation if possible."""
     message = error.get("message", "")
@@ -652,19 +719,17 @@ def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
     # raw kustomize/CMP message underneath, so it does not read as a cryptic condition name.
     if error.get("resource") == "ComparisonError":
         enriched = dict(error)
+        label, suggestion, severity = _comparison_error_translation(message)
         # No "/" in the label: interpret_argocd_errors later strips a Kind/ prefix on "/".
-        enriched["resource"] = "Configuratiefout (kustomize CMP)"
+        enriched["resource"] = label
         # ArgoCD dumps the whole failed CMP command (kBs of script source) into the message;
         # show only the meaningful tail, keep the raw under "Origineel bericht".
         condensed = condense_render_error(message)
         enriched["message"] = condensed
         if condensed != message:
             enriched["original_message"] = message
-        enriched["suggestion"] = (
-            "De manifesten konden niet worden gegenereerd of vergeleken. Vaak staan er twee "
-            "resources met dezelfde naam in de deployment, of is een manifest ongeldig."
-        )
-        enriched["severity"] = EventSeverity.ACTIONABLE.value
+        enriched["suggestion"] = suggestion
+        enriched["severity"] = severity.value
         return enriched
     if _IMAGE_PULL_RE.search(message):
         title, suggestion, severity = _image_pull_translation(message)
