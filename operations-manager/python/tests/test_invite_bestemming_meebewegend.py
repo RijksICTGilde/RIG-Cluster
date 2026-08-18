@@ -5,12 +5,13 @@ domeinformaat, het subdomein en het cluster, en alle drie kunnen wijzigen -- daa
 opgeslagen URL naar een adres dat niet meer bestaat, terwijl alles om hem opnieuw uit te
 rekenen gewoon in het projectbestand stond.
 
-Vandaar ``application-target``: de KEUZE (welke deployment, welk component, eventueel welk
-pad) in plaats van het antwoord. Deze suite houdt de vier plekken vast waar dat waar moet
-zijn: het model, de migratie, wat het formulier wegschrijft, en wat de succespagina toont.
+Vandaar ``application-target``: de KEUZE als ``component:deployment[:/pad]`` in plaats van
+het antwoord. Deze suite houdt de vier plekken vast waar dat waar moet zijn: het model, de
+samengestelde waarde zelf, wat het formulier wegschrijft, en wat de succespagina toont.
 
-``application-url`` blijft geldig en blijft geaccepteerd: niet elke bestemming ligt binnen
-dit project.
+``application-url`` blijft geldig en gelijkwaardig, en bestaande projectbestanden worden
+NIET herschreven: een uitnodiging is een lopende afspraak met iemand die de link al heeft,
+en niet elke URL is afleidbaar. De voorrang is bestemming, dan URL, dan geen knop.
 """
 
 from __future__ import annotations
@@ -24,10 +25,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from itsdangerous import TimestampSigner
+from opi.forms.editables.converters import InviteTargetConverter
 from opi.services.catalog.invite import InviteService
 from opi.services.catalog.invite.config_model import InviteConfig
-from opi.services.catalog.invite.converters import ApplicationTargetConverter
-from opi.services.catalog.invite.migrations import migrate_invite_config_1_0_to_1_1
+from opi.services.catalog.invite.target_format import join_target, split_target
 from opi.services.project_store import ProjectSummary, ProjectUser
 from pydantic import ValidationError
 
@@ -100,11 +101,9 @@ def _adres(project: dict[str, Any]) -> str:
 class TestHetModelKentTweeVormen:
     def test_een_keuze_wordt_geaccepteerd(self) -> None:
         config = InviteConfig.model_validate(
-            {"active": [_basis_entry(**{"application-target": {"deployment": "production", "component": "frontend"}})]}
+            {"active": [_basis_entry(**{"application-target": "frontend:production"})]}
         )
-        doel = config.active[0].application_target
-        assert doel is not None
-        assert (doel.deployment, doel.component, doel.path) == ("production", "frontend", None)
+        assert config.active[0].application_target == "frontend:production"
 
     def test_een_vast_adres_blijft_geldig(self) -> None:
         """Niet elke bestemming ligt binnen dit project; die vorm verdwijnt dus niet."""
@@ -122,7 +121,7 @@ class TestHetModelKentTweeVormen:
                         _basis_entry(
                             **{
                                 "application-url": "https://ergens.anders.nl/",
-                                "application-target": {"deployment": "production", "component": "frontend"},
+                                "application-target": "frontend:production",
                             }
                         )
                     ]
@@ -136,72 +135,102 @@ class TestHetModelKentTweeVormen:
         assert config.active[0].application_url is None
         assert config.active[0].application_target is None
 
+    def test_een_waarde_die_geen_twee_namen_noemt_wordt_geweigerd(self) -> None:
+        """Anders wordt een typefout stilletjes "geen knop", en dat ziet er precies zo uit
+        als een bestemming die iemand expres heeft leeggelaten."""
+        with pytest.raises(ValidationError) as fout:
+            InviteConfig.model_validate({"active": [_basis_entry(**{"application-target": "frontend"})]})
+        assert "component:deployment" in str(fout.value)
+
+    def test_een_url_in_het_bestemmingsveld_wordt_geweigerd(self) -> None:
+        """Wie zich vergist in het veld hoort dat te horen, niet een uitnodiging zonder
+        knop te krijgen."""
+        with pytest.raises(ValidationError):
+            InviteConfig.model_validate(
+                {"active": [_basis_entry(**{"application-target": "https://ergens.anders.nl/"})]}
+            )
+
 
 # ---------------------------------------------------------------------------
-# 2. De migratie v1.0 -> v1.1
+# 2. De samengestelde waarde zelf
 # ---------------------------------------------------------------------------
 
 
-class TestDeMigratie:
-    def test_een_afleidbaar_adres_wordt_de_keuze_erachter(self) -> None:
-        project = _project()
-        config = {"active": [_basis_entry(**{"application-url": _adres(project)})]}
+class TestDeSamengesteldeWaarde:
+    """``:`` is veilig als scheidingsteken; ``/`` zou het niet zijn.
 
-        gemigreerd = migrate_invite_config_1_0_to_1_1(config, project)
+    Deployment- en componentnamen zijn DNS-1123-labels en kunnen zelf geen dubbele punt
+    bevatten, en het pad staat achteraan: splitsen van links met een maximum van twee laat
+    een pad met een dubbele punt erin heel. Een pad BESTAAT uit schuine strepen, dus daarop
+    splitsen gaat wel mis -- vandaar deze randgevallen.
+    """
 
-        entry = gemigreerd["active"][0]
-        assert entry["application-target"] == {"deployment": "production", "component": "frontend"}
-        assert "application-url" not in entry
+    def test_zonder_pad(self) -> None:
+        assert split_target("frontend:production") == ("frontend", "production", None)
 
-    def test_een_adres_dat_niet_te_matchen_is_blijft_staan(self) -> None:
-        """Dat is een extern of verouderd adres; stilletjes weggooien is erger dan bewaren."""
-        config = {"active": [_basis_entry(**{"application-url": "https://ergens.anders.nl/"})]}
+    def test_met_pad(self) -> None:
+        assert split_target("frontend:production:/api") == ("frontend", "production", "/api")
 
-        gemigreerd = migrate_invite_config_1_0_to_1_1(config, _project())
+    def test_een_pad_met_een_dubbele_punt_erin_blijft_heel(self) -> None:
+        """Dit is de reden voor maxsplit=2 in plaats van een kale split."""
+        assert split_target("frontend:production:/a:b/c") == ("frontend", "production", "/a:b/c")
 
-        entry = gemigreerd["active"][0]
-        assert entry["application-url"] == "https://ergens.anders.nl/"
-        assert "application-target" not in entry
+    def test_een_pad_met_schuine_strepen_blijft_heel(self) -> None:
+        assert split_target("frontend:production:/api/v2/dingen") == ("frontend", "production", "/api/v2/dingen")
 
-    def test_de_onderstreepte_schrijfwijze_migreert_ook(self) -> None:
-        """De bestanden die aan de dienst voorafgaan dragen de veldnamen letterlijk."""
-        project = _project()
-        config = {"active": [{"key": SLEUTEL, "application_url": _adres(project)}]}
+    def test_een_lege_waarde_noemt_niets(self) -> None:
+        assert split_target("") == ("", "", None)
+        assert split_target(None) == ("", "", None)
 
-        entry = migrate_invite_config_1_0_to_1_1(config, project)["active"][0]
+    def test_rommel_die_niet_te_splitsen_valt_noemt_niets(self) -> None:
+        """Geen uitzondering: vier aanroepers zouden dan hetzelfde oordeel moeten vellen,
+        en een ervan rendert een publieke pagina."""
+        assert split_target("frontend") == ("", "", None)
 
-        assert entry["application-target"] == {"deployment": "production", "component": "frontend"}
-        assert "application_url" not in entry
+    def test_een_url_is_geen_bestemming(self) -> None:
+        """Een URL bevat OOK dubbele punten, dus de kale splitsing maakte er vrolijk
+        ("https", "//ergens.anders.nl/") van: een keuze die geen component noemt en toch
+        geldig leek. De naamvorm is wat het scheidingsteken veilig maakt, dus die wordt
+        getoetst."""
+        assert split_target("https://ergens.anders.nl/") == ("", "", None)
+        assert split_target("HOOFDLETTERS:production") == ("", "", None)
 
-    def test_tweemaal_draaien_verandert_niets(self) -> None:
-        """Vooruit-only en idempotent: de tweede gang heeft niets meer te consumeren."""
-        project = _project()
-        config = {"active": [_basis_entry(**{"application-url": _adres(project)})]}
+    @pytest.mark.parametrize(
+        "waarde",
+        ["frontend:production", "frontend:production:/api", "frontend:production:/a:b/c", "f:p:/api/v2"],
+    )
+    def test_heen_en_terug_levert_dezelfde_waarde_op(self, waarde: str) -> None:
+        assert join_target(*split_target(waarde)) == waarde
 
-        een = migrate_invite_config_1_0_to_1_1(config, project)
-        twee = migrate_invite_config_1_0_to_1_1(een, project)
+    def test_zonder_pad_komt_er_geen_los_scheidingsteken_achter(self) -> None:
+        assert join_target("frontend", "production", None) == "frontend:production"
 
-        assert een == twee
 
-    def test_zonder_project_blijft_de_config_ongemoeid(self) -> None:
-        """Er valt niets tegen te matchen, en dan is gokken erger dan niets doen."""
-        config = {"active": [_basis_entry(**{"application-url": "https://a/"})]}
+# ---------------------------------------------------------------------------
+# 2b. Bestaande bestanden worden niet herschreven
+# ---------------------------------------------------------------------------
 
-        assert migrate_invite_config_1_0_to_1_1(config, None) == config
 
-    def test_de_dienst_draait_de_stap_alleen_vanaf_1_0(self) -> None:
-        """De huidige versie migreren zou de stap op zijn eigen uitvoer loslaten."""
-        from opi.services.catalog.base import PROJECT_DATA_CONTEXT_KEY
-
-        project = _project()
-        config = {"active": [_basis_entry(**{"application-url": _adres(project)})]}
-        context = {PROJECT_DATA_CONTEXT_KEY: project}
-
-        assert InviteService().migrate_config(config, "1.1", context) == config
-        assert "application-target" in InviteService().migrate_config(config, "1.0", context)["active"][0]
-
+class TestBestaandeBestandenBlijvenMetRustGelaten:
     def test_de_dienst_staat_op_1_1(self) -> None:
         assert InviteService.config_schema_version == "1.1"
+
+    def test_de_versieophoging_herschrijft_geen_gegevens(self) -> None:
+        """Een uitnodiging is een lopende afspraak met iemand die de link al heeft: een
+        migratie die de bestemming omzet verandert stilletjes waar die persoon uitkomt, en
+        bij een foute match ergens anders dan de bedoeling was. Dit is bovendien de EERSTE
+        ophoging in de catalogus, en het is prettig als die er een is die niets herschrijft."""
+        config = {"active": [_basis_entry(**{"application-url": "https://ergens.anders.nl/"})]}
+
+        assert InviteService().migrate_config(config, "1.0") == config
+
+    def test_een_bestaand_adres_overleeft_een_opslag_door_het_formulier(self) -> None:
+        """De keuzelijst bezit dat veld niet, dus opslaan kan hem niet laten vallen."""
+        project = _met_invite(_project(), _basis_entry(**{"application-url": "https://ergens.anders.nl/"}))
+
+        InviteService().settle_destination(project)
+
+        assert project["services"][-1]["config"]["active"][0]["application-url"] == "https://ergens.anders.nl/"
 
 
 # ---------------------------------------------------------------------------
@@ -214,9 +243,9 @@ class TestDeKeuzelijstSchrijftDeKeuze:
         """De lijst toont adressen -- die herkent een mens -- maar bewaart de keuze."""
         project = _project()
 
-        opgeslagen = ApplicationTargetConverter().write(_adres(project), context_data=project)
+        opgeslagen = InviteTargetConverter().write(_adres(project), context_data=project)
 
-        assert opgeslagen == {"deployment": "production", "component": "frontend"}
+        assert opgeslagen == "frontend:production"
 
     def test_een_component_met_twee_paden_bewaart_het_pad(self) -> None:
         """Twee paden zijn twee adressen; zonder het pad is de keuze niet eenduidig."""
@@ -225,27 +254,24 @@ class TestDeKeuzelijstSchrijftDeKeuze:
 
         api = next(rij for rij in derived_destinations(project) if rij["path"] == "/api")
 
-        opgeslagen = ApplicationTargetConverter().write(api["url"], context_data=project)
+        opgeslagen = InviteTargetConverter().write(api["url"], context_data=project)
 
-        assert opgeslagen == {"deployment": "production", "component": "frontend", "path": "/api"}
+        assert opgeslagen == "frontend:production:/api"
 
     def test_de_lege_keuze_schrijft_geen_bestemming(self) -> None:
-        assert ApplicationTargetConverter().write("", context_data=_project()) is None
+        assert InviteTargetConverter().write("", context_data=_project()) is None
 
     def test_een_adres_buiten_dit_project_levert_geen_keuze_op(self) -> None:
-        assert ApplicationTargetConverter().write("https://ergens.anders.nl/", context_data=_project()) is None
+        assert InviteTargetConverter().write("https://ergens.anders.nl/", context_data=_project()) is None
 
     def test_de_opgeslagen_keuze_selecteert_zijn_eigen_regel_weer(self) -> None:
         """Anders staat de lijst bij het openen op "geen knop" terwijl er een bestemming is."""
         project = _project()
-        doel = {"deployment": "production", "component": "frontend"}
 
-        assert ApplicationTargetConverter().read(doel, context_data=project) == _adres(project)
+        assert InviteTargetConverter().read("frontend:production", context_data=project) == _adres(project)
 
     def test_een_keuze_die_niet_meer_oplost_selecteert_niets(self) -> None:
-        doel = {"deployment": "weg", "component": "frontend"}
-
-        assert ApplicationTargetConverter().read(doel, context_data=_project()) == ""
+        assert InviteTargetConverter().read("frontend:weg", context_data=_project()) == ""
 
     def test_een_gekozen_bestemming_verdringt_een_bestaand_vast_adres(self) -> None:
         """Het model weigert allebei, dus de opslag moet er een overhouden: de nieuwe keuze."""
@@ -254,7 +280,7 @@ class TestDeKeuzelijstSchrijftDeKeuze:
             _basis_entry(
                 **{
                     "application-url": "https://ergens.anders.nl/",
-                    "application-target": {"deployment": "production", "component": "frontend"},
+                    "application-target": "frontend:production",
                 }
             ),
         )
@@ -263,7 +289,7 @@ class TestDeKeuzelijstSchrijftDeKeuze:
 
         entry = project["services"][-1]["config"]["active"][0]
         assert "application-url" not in entry
-        assert entry["application-target"] == {"deployment": "production", "component": "frontend"}
+        assert entry["application-target"] == "frontend:production"
 
     def test_een_vast_adres_zonder_keuze_blijft_staan(self) -> None:
         """Geen keuze gemaakt betekent "hier valt niets te kiezen", niet "gooi maar weg"."""
@@ -323,18 +349,14 @@ def pagina(mock_settings: Any) -> Any:
 class TestDeSuccespagina:
     def test_een_bestemming_wordt_uitgerekend_bij_het_renderen(self, pagina: Any) -> None:
         project = _project()
-        html = pagina(
-            _met_invite(
-                project, _basis_entry(**{"application-target": {"deployment": "production", "component": "frontend"}})
-            )
-        )
+        html = pagina(_met_invite(project, _basis_entry(**{"application-target": "frontend:production"})))
 
         assert _adres(project) in html
 
     def test_de_knop_volgt_een_gewijzigd_subdomein(self, pagina: Any) -> None:
         """Dit is de hele aanleiding: hetzelfde bestand, een ander subdomein, en de knop
         wijst mee in plaats van naar een adres dat niet meer bestaat."""
-        entry = _basis_entry(**{"application-target": {"deployment": "production", "component": "frontend"}})
+        entry = _basis_entry(**{"application-target": "frontend:production"})
 
         oud = _project(subdomein="production")
         nieuw = _project(subdomein="acceptatie")
@@ -346,11 +368,7 @@ class TestDeSuccespagina:
     def test_een_bestemming_die_niet_meer_oplost_toont_geen_knop(self, pagina: Any) -> None:
         """Geen knop is beter dan een knop die ergens verkeerd heen wijst: dat verschil
         ziet de gebruiker pas nadat hij geklikt heeft."""
-        html = pagina(
-            _met_invite(
-                _project(), _basis_entry(**{"application-target": {"deployment": "production", "component": "weg"}})
-            )
-        )
+        html = pagina(_met_invite(_project(), _basis_entry(**{"application-target": "weg:production"})))
 
         assert _knop_bestemming(html) is None
 
@@ -371,11 +389,7 @@ class TestDeSuccespagina:
         toetsen vacuum waar en meten ze niets. Deze regel pint dat hij hem wel vindt.
         """
         project = _project()
-        html = pagina(
-            _met_invite(
-                project, _basis_entry(**{"application-target": {"deployment": "production", "component": "frontend"}})
-            )
-        )
+        html = pagina(_met_invite(project, _basis_entry(**{"application-target": "frontend:production"})))
 
         assert _knop_bestemming(html) == _adres(project)
 

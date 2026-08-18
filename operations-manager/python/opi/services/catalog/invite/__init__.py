@@ -119,8 +119,15 @@ class InviteService(Service):
     )
     config_model = InviteConfig
     # 1.1 added ``application-target``: the destination of the success button as the
-    # deployment/component CHOICE instead of the address that choice worked out to. See
-    # ``migrations.py`` for the step and why it keeps an address it cannot match.
+    # component/deployment CHOICE instead of the address that choice worked out to.
+    #
+    # ``migrate_config`` stays the inherited no-op, deliberately. Existing project files are
+    # NOT rewritten: an invitation is a standing arrangement with someone who already holds
+    # the link, so converting its destination silently changes where that person ends up,
+    # and on a wrong match ends them up somewhere else entirely. ``application-url`` stays
+    # valid and equal; the two shapes live side by side with a fixed precedence (see
+    # ``destination.resolve_invite_url``). This being the catalog's FIRST version bump, it
+    # is worth something that it is one that rewrites nothing.
     config_schema_version = "1.1"
     config_section_id = "invite-config"
     modal_flow_id = "modal-edit-invite-config"
@@ -202,25 +209,17 @@ class InviteService(Service):
         from opi.services.project import Project
 
         base = config_path(ConfigLayer.PROJECT, self.service_type, "config", "active")
+        # Both spellings of both keys: the on-disk keys are hyphenated, but the files that
+        # predate the invite service carry the underscore field names verbatim and validate
+        # just as well (see the config-model docstring). Reading only one spelling here
+        # would leave exactly those files with the pair the model rejects.
         for entry in Project(project_data).get(base) or []:
-            if not isinstance(entry, dict) or not entry.get("application-target"):
+            if not isinstance(entry, dict):
+                continue
+            if not (entry.get("application-target") or entry.get("application_target")):
                 continue
             for stale in ("application-url", "application_url"):
                 entry.pop(stale, None)
-
-    def migrate_config(self, config: Any, from_version: str, context: dict[str, Any] | None = None) -> Any:
-        """v1.0 -> v1.1: replace a derivable ``application-url`` with its target.
-
-        Forward-only and idempotent; it needs the surrounding project to work out which
-        component an address pointed at, and gets it from the validation context. See
-        ``opi/services/catalog/invite/migrations.py``.
-        """
-        from opi.services.catalog.base import PROJECT_DATA_CONTEXT_KEY
-        from opi.services.catalog.invite.migrations import migrate_invite_config_1_0_to_1_1
-
-        if from_version != "1.0":
-            return config
-        return migrate_invite_config_1_0_to_1_1(config, (context or {}).get(PROJECT_DATA_CONTEXT_KEY))
 
     # --- config field ownership -------------------------------------------------
 

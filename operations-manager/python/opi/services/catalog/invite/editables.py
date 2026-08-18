@@ -13,7 +13,7 @@ are deliberately NOT offered here (advanced pass-through, see the config model).
 
 from __future__ import annotations
 
-from opi.forms.editables.converters import EmptyToNoneConverter, NonEmptyListConverter
+from opi.forms.editables.converters import EmptyToNoneConverter, InviteTargetConverter, NonEmptyListConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import (
     AllowedValuesValidator,
@@ -23,7 +23,6 @@ from opi.forms.editables.validators import (
     UrlValidator,
 )
 from opi.services.catalog.base import ConfigLayer, config_path
-from opi.services.catalog.invite.converters import ApplicationTargetConverter
 from opi.services.catalog.invite.defaults import (
     default_contact_email,
     default_message_en,
@@ -120,13 +119,14 @@ INVITE_CONTACT_EMAIL_EDITABLE = Editable(
 # And for the same reason the ANSWER is not what gets stored: all three of those inputs can
 # change, and then a stored address points at a hostname that does not exist while
 # everything needed to work out the new one is still in the project file. So the field
-# writes ``application-target`` -- the choice -- and the address is derived again every time
-# the success page is rendered. The list the user sees is unchanged; only what a save
-# records did (RC-136).
+# writes ``application-target`` -- ``component:deployment[:/pad]``, the choice -- and the
+# address is derived again every time the success page is rendered. The list the user sees
+# is unchanged; only what a save records did (RC-136).
 #
-# ``application-url`` is still accepted and still valid, for a destination OUTSIDE this
-# project. This picker cannot offer one, so it does not own that field either: it is the
-# API/CLI shape, and a save through the portal leaves it alone unless a target is chosen
+# ``application-url`` is still accepted, still valid and NOT deprecated: it is the shape for
+# a destination OUTSIDE this project, and it is what every existing invitation still stores,
+# because those are not rewritten. This picker cannot offer such an address, so it does not
+# own that field either; a save through the portal leaves it alone unless a target is chosen
 # (``InviteService.settle_destination``).
 #
 # Still not required: a project without publish-on-web has no address to offer, and an
@@ -135,7 +135,7 @@ INVITE_APPLICATION_TARGET_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "application-target"),
     values_provider="InviteApplicationUrlOptionsProvider",
     validator=UrlValidator(),
-    converter=ApplicationTargetConverter(),
+    converter=InviteTargetConverter(),
     remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
 )
