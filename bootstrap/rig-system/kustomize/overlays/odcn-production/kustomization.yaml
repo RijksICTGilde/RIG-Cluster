@@ -31,7 +31,7 @@ patches:
         path: /spec/repo/env
         value:
         - name: ARGOCD_EXEC_TIMEOUT
-          value: "180"
+          value: "180s"
         - name: ARGOCD_GIT_ATTEMPTS_COUNT
           value: "3"
         - name: ARGOCD_HELM_ALLOW_CONCURRENCY
@@ -65,7 +65,7 @@ patches:
         path: /spec/repo/sidecarContainers/0/env
         value:
         - name: ARGOCD_EXEC_TIMEOUT
-          value: "180"
+          value: "180s"
         - name: KUSTOMIZE_PLUGIN_HOME
           value: /etc/kustomize/plugin
         - name: KUBERNETES_SERVICE_HOST
