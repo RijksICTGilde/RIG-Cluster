@@ -47,7 +47,7 @@ def test_de_pagina_laadt(app_server: str, auth_page: Page) -> None:
     response = auth_page.goto(f"{app_server}{DIENSTEN_URL}")
     assert response is not None
     assert response.ok
-    assert "Gedeelde diensten" in auth_page.content()
+    assert "Services status" in auth_page.content()
 
 
 def test_geen_onvertaalde_componenttags(app_server: str, auth_page: Page) -> None:

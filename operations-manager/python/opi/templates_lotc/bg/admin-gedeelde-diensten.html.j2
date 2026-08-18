@@ -1,5 +1,8 @@
 {#
-  Gedeelde diensten: hoe vol, hoe druk, en wanneer moeten we bijsturen.
+  Services status: hoe vol en hoe druk de diensten zijn die WIJ aanbieden.
+
+  Wat een gebruiker in zijn eigen project doet staat hier NIET; dat hoort op de
+  projectpagina. De meetlaag trekt de projectnamespaces er daarom af.
 
   De pagina zelf meet NIETS. De twee blokken worden lui opgehaald, elk met een eigen
   verzoek, zoals het dashboard en de projectdetailpagina dat al doen: zo staat de pagina
@@ -14,12 +17,12 @@
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import page_head %}
 
-{% block page_title %}Gedeelde diensten - Self Service Portal{% endblock %}
+{% block page_title %}Services status - Self Service Portal{% endblock %}
 
 {% block content %}
     {{ page_head(
-        "Gedeelde diensten",
-        "Hoe vol de PVC's en databases zitten en hoeveel verbindingen er openstaan, over alle projecten heen."
+        "Services status",
+        "Hoe vol de databases en volumes van het platform zitten en hoeveel verbindingen er openstaan. Wat gebruikers in hun eigen project draaien staat hier niet."
     ) }}
 
     <div id="diensten-opslag"
