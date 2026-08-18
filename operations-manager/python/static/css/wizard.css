@@ -1,5 +1,37 @@
 /* Wizard CSS - extracted from wizard_page.html.j2 and roos.py */
 
+/* KLEUREN KOMEN HIER UIT HET THEMA, NIET UIT EEN VASTE WAARDE (RC-134).
+ *
+ * De opdrachtgever meldde dat vooral de FORMULIEREN in de donkere weergave niet klopten.
+ * Gemeten in Chromium met data-scheme="dark":
+ *
+ *   samenvattingstap    #333333 op #20252B  1,22   39 stukken tekst, waaronder elke
+ *                       #555555 op #20252B  2,07   labelnaam en elke waarde
+ *   dienstenstap        14 witte .service-card-vlakken (400x115) in een donkere pagina
+ *
+ * Beide vormen komen uit hetzelfde: een vaste kleur die de licht/donker-stand niet volgt,
+ * terwijl de kleur ernaast (de thema-tekstkleur, het thema-vlak van de kaart) dat wel doet.
+ * Elke kleur hieronder wijst daarom naar het themotoken met dezelfde BEDOELING, met de
+ * oude waarde als vangnet erachter voor het geval de themastylesheet niet geladen is:
+ *
+ *   vlak van een kaart of dialoog  --semantics-surfaces-base-background-color
+ *   gedempt vlak (#FAFAFA/#f5f5f5) --semantics-surfaces-tinted-background-color
+ *   gekozen optie (#E5F0F9)        --semantics-categories-accent-tinted-background-color
+ *   lijn of rand (#E0E0E0/#ccc)    --semantics-dividers-color
+ *   gewone tekst (#333)            --semantics-content-color
+ *   gedempte tekst (#666/#555)     --semantics-content-secondary-color
+ *   goed / fout                    --semantics-content-success-color / -critical-color
+ *   accentknop (#007BC7 + wit)     --semantics-buttons-accent-filled-background-color
+ *
+ * Er komt geen kleurwaarde bij, en de lichte weergave verandert niet: de tokens hebben daar
+ * dezelfde (of vrijwel dezelfde) waarde als de vaste kleuren die er stonden. Bewaakt door
+ * tests/e2e/test_donkere_weergave_contrast.py en tests/test_donkere_weergave_vaste_kleuren.py.
+ *
+ * WAT HIER NIET UIT KOMT: de CodeMirror-editor van het sleutel/waarde-veld tekent zijn eigen
+ * kantlijn (#f5f5f5) uit zijn eigen basisthema. Dat is een lichte editor met donkere tekst -
+ * in zichzelf leesbaar, maar wel een licht vlak in een donkere pagina. Zie features/donkere-weergave-contrast.md.
+ */
+
 /* Helper text spacing - stack description + help_text vertically */
 .lotc-form-field__helper-group {
     display: flex;
@@ -20,7 +52,7 @@
    tussen de balk en de inhoud van het venster, en <c-step-indicator> heeft daar geen stand
    voor. */
 .edit-step-indicator {
-    border-bottom: 1px solid #E0E0E0;
+    border-bottom: 1px solid var(--semantics-dividers-color, #E0E0E0);
     padding-bottom: 0.5rem;
 }
 
@@ -33,7 +65,7 @@
     margin-bottom: 1.5rem;
 }
 .wizard-step__description {
-    color: #666;
+    color: var(--semantics-content-secondary-color, #666);
     margin-top: 0.5rem;
 }
 .wizard-step__fields {
@@ -46,16 +78,16 @@
    is de haak waarmee static/js/edit_modal.js de dialoog weer vrijgeeft. */
 .wizard-step__actions {
     padding-top: 1.5rem;
-    border-top: 1px solid #E0E0E0;
+    border-top: 1px solid var(--semantics-dividers-color, #E0E0E0);
 }
 /* .wizard-step__actions-right is <c-cluster gap="xs"> geworden. */
 
 /* Nested fieldsets (sub-sections) get a card-like border */
 c-fieldset c-fieldset {
-    border: 1px solid #E0E0E0;
+    border: 1px solid var(--semantics-dividers-color, #E0E0E0);
     border-radius: 4px;
     padding: 1.25rem;
-    background: #FAFAFA;
+    background: var(--semantics-surfaces-tinted-background-color, #FAFAFA);
 }
 
 /* Sequence items */
@@ -103,12 +135,16 @@ c-fieldset c-fieldset {
     padding: 0;
     border: 0;
     background: none;
-    color: var(--nldd-color-hemelblauw, #007bc7);
+    /* --nldd-color-hemelblauw bestaat nergens, dus stond hier altijd de vaste #007bc7 -
+       een kleur die niet meebeweegt met de licht/donker-stand (RC-134). Het themotoken
+       voor accenttekst doet dat wel; de vaste waarde blijft als vangnet voor het geval de
+       themastylesheet niet geladen is. */
+    color: var(--semantics-content-accent-color, #007bc7);
     cursor: pointer;
 }
 .kv-toggle {
     display: inline-flex;
-    border: 1px solid #ccc;
+    border: 1px solid var(--semantics-dividers-color, #ccc);
     border-radius: 4px;
     overflow: hidden;
     margin-bottom: 0.5rem;
@@ -116,18 +152,18 @@ c-fieldset c-fieldset {
 .kv-toggle__btn {
     padding: 0.25rem 0.75rem;
     border: none;
-    background: #f5f5f5;
+    background: var(--semantics-surfaces-tinted-background-color, #f5f5f5);
     cursor: pointer;
     font-size: 0.8125rem;
     font-weight: 600;
-    color: #333;
+    color: var(--semantics-content-color, #333);
 }
 .kv-toggle__btn:not(:last-child) {
-    border-right: 1px solid #ccc;
+    border-right: 1px solid var(--semantics-dividers-color, #ccc);
 }
 .kv-toggle__btn--active {
-    background: #007BC7;
-    color: white;
+    background: var(--semantics-buttons-accent-filled-background-color, #007BC7);
+    color: var(--semantics-buttons-accent-filled-content-color, white);
 }
 .kv-editor__status {
     font-size: 0.75rem;
@@ -135,10 +171,10 @@ c-fieldset c-fieldset {
     min-height: 1.25rem;
 }
 .kv-editor__status--ok {
-    color: #39870C;
+    color: var(--semantics-content-success-color, #39870C);
 }
 .kv-editor__status--error {
-    color: #C00;
+    color: var(--semantics-content-critical-color, #C00);
 }
 
 /* Radio option descriptions */
@@ -152,7 +188,7 @@ c-fieldset c-fieldset {
 }
 .wizard-review__section-content {
     font-size: 0.9375rem;
-    color: #333;
+    color: var(--semantics-content-color, #333);
 }
 .wizard-review__section-content dl {
     display: grid;
@@ -162,7 +198,7 @@ c-fieldset c-fieldset {
 }
 .wizard-review__section-content dt {
     font-weight: 600;
-    color: #555;
+    color: var(--semantics-content-secondary-color, #555);
 }
 .wizard-review__section-content dd {
     margin: 0;
@@ -190,9 +226,9 @@ c-fieldset c-fieldset {
     align-items: flex-start;
     gap: 0.75rem;
     padding: 1rem;
-    border: 2px solid var(--rvo-color-grijs-300, #e5e5e5);
+    border: 2px solid var(--semantics-dividers-color, var(--rvo-color-grijs-300, #e5e5e5));
     border-radius: 8px;
-    background: white;
+    background: var(--semantics-surfaces-base-background-color, white);
     transition: border-color 0.2s, background-color 0.2s;
     cursor: pointer;
 }
@@ -201,18 +237,18 @@ c-fieldset c-fieldset {
 }
 .service-card--selected {
     border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
+    background: var(--semantics-categories-accent-tinted-background-color, #E5F0F9);
 }
 .service-card--locked-checked {
     border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
+    background: var(--semantics-categories-accent-tinted-background-color, #E5F0F9);
     opacity: 0.85;
 }
 /* Read-only card (project details): same look as the picker, but nothing to pick. */
 .service-card--static,
 .service-card--static:hover {
     cursor: default;
-    border-color: var(--rvo-color-grijs-300, #e5e5e5);
+    border-color: var(--semantics-dividers-color, var(--rvo-color-grijs-300, #e5e5e5));
 }
 .service-card--static .service-card__content {
     cursor: default;
@@ -229,17 +265,17 @@ c-fieldset c-fieldset {
 }
 .service-card__title {
     font-weight: 600;
-    color: var(--rvo-color-zwart, #000);
+    color: var(--semantics-content-color, var(--rvo-color-zwart, #000));
 }
 .service-card__description {
     font-size: 0.875rem;
-    color: var(--rvo-color-grijs-700, #666);
+    color: var(--semantics-content-secondary-color, var(--rvo-color-grijs-700, #666));
     margin: 0;
     line-height: 1.4;
 }
 .service-card__hint {
     font-size: 0.8rem;
-    color: var(--rvo-color-hemelblauw, #007BC7);
+    color: var(--semantics-content-accent-color, var(--rvo-color-hemelblauw, #007BC7));
     margin: 0.25rem 0 0 0;
     font-style: italic;
 }
@@ -297,7 +333,7 @@ c-fieldset c-fieldset {
     left: 50%;
     transform: translate(-50%, -50%) scale(0.95);
     z-index: 1001;
-    background: white;
+    background: var(--semantics-surfaces-base-background-color, white);
     border-radius: 8px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
     width: min(640px, 90vw);
@@ -333,9 +369,9 @@ c-fieldset c-fieldset {
 }
 
 /* CodeMirror KV editor wrapper */
-.cm-kv-wrapper { border: 1px solid #ccc; border-radius: 4px; min-height: 7.5rem; }
-.cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid #007BC7; }
-.kv-editor--error .cm-kv-wrapper { border-color: #d52b1e; }
+.cm-kv-wrapper { border: 1px solid var(--semantics-dividers-color, #ccc); border-radius: 4px; min-height: 7.5rem; }
+.cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid var(--semantics-content-accent-color, #007BC7); }
+.kv-editor--error .cm-kv-wrapper { border-color: var(--semantics-content-critical-color, #d52b1e); }
 
 /* Uit opi/templates/wizard/wizard_step.html.j2 */
 #wizard-step-form .wizard-step__saving { display: none; }
@@ -434,7 +470,7 @@ c-fieldset c-fieldset {
 }
 
 /* Uit opi/templates/wizard/partials/attachments_upload.html.j2 */
-.att-upload-ok { display:inline-flex; align-items:center; gap:0.35rem; color:#39870c; font-weight:600; animation: attUploadOk 2.6s ease forwards; }
+.att-upload-ok { display:inline-flex; align-items:center; gap:0.35rem; color:var(--semantics-content-success-color, #39870c); font-weight:600; animation: attUploadOk 2.6s ease forwards; }
 @keyframes attUploadOk { 0% {opacity:0; transform:translateY(-2px) scale(0.9);} 12% {opacity:1; transform:none;} 75% {opacity:1;} 100% {opacity:0;} }
 
 /* ===================================================================
@@ -546,10 +582,12 @@ c-fieldset c-fieldset {
 }
 
 .restore-mode-option--selected {
-    /* Vaste waarde, geen var(): --rvo-color-hemelblauw-100 staat niet in de lijst van
-       lotc-app.css en leverde dus NIETS op - de gekozen optie was niet te zien. Dit is de
-       lichtste tint van dezelfde hemelblauw die er wel is. */
-    background: #E5F0F9;
+    /* Hier stond een vaste #E5F0F9, omdat --rvo-color-hemelblauw-100 niet in de lijst van
+       lotc-app.css staat en dus NIETS opleverde - de gekozen optie was niet te zien. Die
+       vaste waarde loste dat op maar volgde de licht/donker-stand niet. Het themotoken
+       hieronder is dezelfde bedoeling (het lichtste accentvlak) en is in licht #E3EFFE,
+       dus vrijwel de waarde die er stond. */
+    background: var(--semantics-categories-accent-tinted-background-color, #E5F0F9);
     border-color: var(--rvo-color-hemelblauw);
 }
 
