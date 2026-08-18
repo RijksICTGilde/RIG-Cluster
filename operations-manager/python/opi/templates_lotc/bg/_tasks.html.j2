@@ -92,7 +92,8 @@
                            timestamptz, gevuld met de servertijd van de database, die op
                            Etc/UTC staat), terwijl wij in Europe/Amsterdam kijken: in de
                            zomer zag je alles twee uur te vroeg. Het filter rekent om en
-                           schrijft de maand voluit. Bewaakt door
+                           schrijft de maand in het Nederlands; short_month kort die af,
+                           want anders past de datum niet in deze zes kolommen. Bewaakt door
                            tests/test_dates_go_through_one_filter.py.
 
                            Een leeg veld levert vanzelf "-" op; dat doet het filter zelf. #}
