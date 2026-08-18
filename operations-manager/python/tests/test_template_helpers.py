@@ -24,6 +24,39 @@ class TestFormatDutchDate:
         result = format_dutch_date("2026-03-05T10:30:00Z", include_time=False)
         assert result == "5 maart 2026"
 
+    def test_short_month_abbreviates(self):
+        """short_month kort de maand af, met dezelfde omrekening naar onze tijd.
+
+        Dit is wat de takentabel gebruikt: die heeft zes kolommen en "18 september 2026
+        01:40" is daar 174px breed tegen 126 afgekort.
+        """
+        assert format_dutch_date("2026-09-17T21:18:55+00:00", short_month=True) == "17 sep 2026 23:18"
+
+    def test_short_month_uses_the_dutch_abbreviations(self):
+        """Niet af te leiden met de eerste drie letters: maart is "mrt", niet "maa"."""
+        maanden = [
+            format_dutch_date(f"2026-{nummer:02d}-15T12:00:00+00:00", include_time=False, short_month=True)
+            for nummer in range(1, 13)
+        ]
+        assert [regel.split()[1] for regel in maanden] == [
+            "jan",
+            "feb",
+            "mrt",
+            "apr",
+            "mei",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "okt",
+            "nov",
+            "dec",
+        ]
+
+    def test_short_month_without_time(self):
+        """De twee opties bijten elkaar niet."""
+        assert format_dutch_date("2026-03-05T10:30:00Z", include_time=False, short_month=True) == "5 mrt 2026"
+
     def test_none_returns_dash(self):
         """Should return '-' for None."""
         assert format_dutch_date(None) == "-"
