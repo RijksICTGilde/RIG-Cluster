@@ -609,15 +609,15 @@
                         <c-card outline padding="md">
                             <c-stack gap="sm">
                                 <c-heading type="h3" size="5" label="{{ helm_chart.name }}" />
-                                {% if helm_chart.get('repository') %}
-                                    <c-paragraph size="sm">{{ helm_chart.repository }}</c-paragraph>
+                                {% if helm_chart.get('git-url') %}
+                                    <c-paragraph size="sm">{{ helm_chart['git-url'] }}</c-paragraph>
                                 {% endif %}
                                 <c-detail-list>
-                                    {% if helm_chart.get('chart') %}
-                                        <c-detail-item label="Chart" value="{{ helm_chart.chart }}" />
+                                    {% if helm_chart.get('chart-path') %}
+                                        <c-detail-item label="Chart" value="{{ helm_chart['chart-path'] }}" />
                                     {% endif %}
-                                    {% if helm_chart.get('version') %}
-                                        <c-detail-item label="Version" value="{{ helm_chart.version }}" />
+                                    {% if helm_chart.get('git-ref') %}
+                                        <c-detail-item label="Versie" value="{{ helm_chart['git-ref'] }}" />
                                     {% endif %}
                                 </c-detail-list>
                                 {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping and helm_chart['helm-values'] | length > 0 %}
@@ -643,15 +643,21 @@
                         <c-card outline padding="md">
                             <c-stack gap="sm">
                                 <c-heading type="h3" size="5" label="{{ helmfile.name }}" />
-                                {% if helmfile.get('repository') %}
-                                    <c-paragraph size="sm">{{ helmfile.repository }}</c-paragraph>
+                                {% if helmfile.get('url') %}
+                                    <c-paragraph size="sm">{{ helmfile.url }}</c-paragraph>
                                 {% endif %}
                                 <c-detail-list>
                                     {% if helmfile.get('path') %}
-                                        <c-detail-item label="Path" value="{{ helmfile.path }}" />
+                                        <c-detail-item label="Pad" value="{{ helmfile.path }}" />
                                     {% endif %}
-                                    {% if helmfile.get('branch') %}
-                                        <c-detail-item label="Branch" value="{{ helmfile.branch }}" />
+                                    {% if helmfile.get('ref') %}
+                                        <c-detail-item label="Ref" value="{{ helmfile.ref }}" />
+                                    {% endif %}
+                                    {% if helmfile.get('files') %}
+                                        <c-detail-item label="Eigen bestanden" value="{{ helmfile.files | join(', ') }}" />
+                                    {% endif %}
+                                    {% if helmfile.get('services') %}
+                                        <c-detail-item label="Diensten" value="{{ helmfile.services | map('service_name') | join(', ') }}" />
                                     {% endif %}
                                 </c-detail-list>
                                 {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values'] | length > 0 %}

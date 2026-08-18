@@ -108,11 +108,17 @@ deployments:
 # ANDERS NIET TE METEN ZIJN: zowel de bestaande als de hertekende pagina zetten er
 # `{% if project.helm_charts %}` omheen, dus zonder gegevens rendert er aan beide kanten
 # niets en zegt een vergelijking niets.
+# De veldnamen zijn die van het schema (`helm-chart` en `helmfile-entry` in
+# `opi/schemas/project_v2.json`). Ze stonden hier als `repository`/`chart`/`version` en
+# `repository`/`branch`, en dat zijn namen die het schema met
+# `additionalProperties: false` verbiedt - de pagina las ze, dus toonde ze voor een echt
+# projectbestand niets.
 helm-charts:
   - name: redis-cache
-    repository: https://charts.bitnami.com/bitnami
-    chart: redis
-    version: "18.1.5"
+    source-type: git-clone
+    git-url: https://github.com/bitnami/charts.git
+    git-ref: "18.1.5"
+    chart-path: bitnami/redis
     helm-values:
       architecture: standalone
       auth:
@@ -120,9 +126,15 @@ helm-charts:
 
 helmfile:
   - name: monitoring-stack
-    repository: https://github.com/example/monitoring
+    url: https://github.com/example/monitoring.git
+    ref: main
     path: helmfile.d/monitoring.yaml
-    branch: main
+    files:
+      helmfile.yaml.gotmpl: |
+        bases:
+          - "helmfile/bases/environment.yaml.gotmpl"
+    services:
+      - publish-on-web
     helm-values:
       grafana:
         enabled: true
