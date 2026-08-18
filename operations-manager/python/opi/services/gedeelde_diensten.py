@@ -133,10 +133,14 @@ ONGEMETEN_DIENSTEN: list[OngemetenDienst] = [
     OngemetenDienst(
         naam="MinIO",
         reden=(
-            "Nul metrieken. De vulling van zijn PVC staat hierboven wel (die komt van de "
-            "kubelet), maar over buckets, objecten en fouten weten we niets."
+            "Niet in beeld via de bron die de blokken hierboven gebruiken. Onze EIGEN "
+            "Prometheus heeft wel een scrape-job 'minio' op /minio/v2/metrics/cluster; "
+            "of daar bruikbare reeksen uit komen is nog niet nagemeten."
         ),
-        nodig="MinIO's eigen /minio/v2/metrics endpoint aanzetten en laten scrapen. Ook een keuze van het platformteam.",
+        nodig=(
+            "Nameten wat die job werkelijk oplevert, en zo ja er een blok van maken langs "
+            "dezelfde weg als Keycloak (rechtstreeks PrometheusConnector)."
+        ),
     ),
 ]
 
@@ -174,6 +178,27 @@ _DATABASE_QUERIES: dict[str, str] = {
 }
 
 
+# Keycloak komt uit een ANDERE bron dan de blokken hierboven. De kubelet- en CNPG-cijfers
+# komen op productie uit Mimir via de Grafana-connector; deze metrieken worden gescrapet
+# door onze EIGEN Prometheus (job ``keycloak-rig-metrics``, zie de scrape-config in
+# infrastructure/bootstrap/infrastructure/prometheus). Ze zitten niet in Mimir, dus
+# ``get_metrics_connector()`` vindt ze niet en dit blok praat rechtstreeks met
+# ``PrometheusConnector`` -- net als de metrics-explorer al deed.
+#
+# De metrieken zelf komen van onze eigen Keycloak-extensie op /realms/master/rig-metrics
+# (features/keycloak-rig-metrics.md), niet van Keycloak zelf.
+#
+# Die job scrapet elke TWEE UUR. Aantallen kloppen daarmee prima; een venster korter dan
+# een paar uur levert niets op, en daarom staat er 24h onder de logins en niet 1h.
+_KEYCLOAK_QUERIES: dict[str, str] = {
+    "realms": "rig_keycloak_realms_total",
+    "gebruikers": "sum by (realm) (rig_keycloak_users_total)",
+    "gebruikers_per_idp": "sum by (realm, idp_type) (rig_keycloak_users_by_idp_total)",
+    "logins": "sum by (realm) (increase(rig_keycloak_logins_total[24h]))",
+    "mislukte_logins": "sum by (realm) (increase(rig_keycloak_login_errors_total[24h]))",
+}
+
+
 @dataclass(frozen=True)
 class OpslagRij:
     """Een PVC."""
@@ -202,6 +227,25 @@ class DatabaseRij:
 
 
 @dataclass(frozen=True)
+class RealmRij:
+    """Een Keycloak-realm: hoeveel gebruikers erin zitten en hoeveel er inloggen.
+
+    GEEN status, met opzet. De andere blokken hebben een drempel die ergens op slaat: een
+    volle PVC loopt vol, een oplopende xid-leeftijd eindigt in een database die niet meer
+    schrijft. Bij mislukte logins is er geen zulk getal. Tien mislukte pogingen op een
+    realm met drie gebruikers is iets anders dan tien op een realm met duizend, en wat
+    "te veel" is hangt af van de aanvalsdruk, niet van ons. Een verzonnen grens zou hier
+    groen of rood tonen zonder betekenis, en dat is erger dan geen kleur.
+    """
+
+    realm: str
+    gebruikers: float | None
+    gebruikers_per_idp: dict[str, float]
+    logins_24u: float | None
+    mislukte_logins_24u: float | None
+
+
+@dataclass(frozen=True)
 class InstantieRij:
     """Een CNPG-instantie, met wat alleen op instantieniveau bestaat."""
 
@@ -226,6 +270,10 @@ class Blok:
     fout: str | None = None
     rijen: list[Any] = field(default_factory=list)
     extra_rijen: list[Any] = field(default_factory=list)
+    #: Een telling die het blok als geheel betreft en niet uit de rijen volgt. Het
+    #: aantal realms komt uit een eigen metriek: een realm zonder gebruikers levert
+    #: geen rij op, maar bestaat wel.
+    totaal: float | None = None
 
 
 def beoordeel(drempel_naam: str, waarde: float | None) -> str:
@@ -449,3 +497,52 @@ async def haal_databases() -> Blok:
         )
 
     return Blok(gemeten=True, rijen=list(rijen), extra_rijen=list(instanties))
+
+
+async def haal_keycloak() -> Blok:
+    """Realms, gebruikers per realm en de logins van de afgelopen 24 uur.
+
+    Praat RECHTSTREEKS met onze eigen Prometheus en niet via ``get_metrics_connector()``:
+    zie de toelichting bij ``_KEYCLOAK_QUERIES``. Dat is geen slordigheid maar de enige
+    bron die deze metrieken heeft.
+    """
+    from opi.connectors.prometheus import PrometheusConnector
+
+    try:
+        prom = PrometheusConnector()
+        namen = list(_KEYCLOAK_QUERIES)
+        uitkomsten = await asyncio.gather(*(prom.custom_query(_KEYCLOAK_QUERIES[naam]) for naam in namen))
+        antwoorden = dict(zip(namen, uitkomsten, strict=True))
+    except Exception as fout:
+        # Zie haal_opslag: breed gevangen zodat dit blok valt en niet de pagina, en op
+        # WARNING zodat een mislukte meting niet op "niets te melden" lijkt.
+        logger.warning("Kon de Keycloak-metrieken niet ophalen: %s", fout, exc_info=True)
+        return Blok(gemeten=False, fout=str(fout))
+
+    gebruikers = _op_labels(antwoorden["gebruikers"], ("realm",))
+    logins = _op_labels(antwoorden["logins"], ("realm",))
+    mislukt = _op_labels(antwoorden["mislukte_logins"], ("realm",))
+    per_idp = _op_labels(antwoorden["gebruikers_per_idp"], ("realm", "idp_type"))
+
+    idp_per_realm: dict[str, dict[str, float]] = {}
+    for (realm, idp_type), waarde in per_idp.items():
+        idp_per_realm.setdefault(realm, {})[idp_type] = waarde
+
+    rijen: list[RealmRij] = []
+    for (realm,) in sorted(set(gebruikers) | set(logins)):
+        mislukte = mislukt.get((realm,))
+        rijen.append(
+            RealmRij(
+                realm=realm,
+                gebruikers=gebruikers.get((realm,)),
+                gebruikers_per_idp=idp_per_realm.get(realm, {}),
+                logins_24u=logins.get((realm,)),
+                mislukte_logins_24u=mislukte,
+            )
+        )
+
+    # Meeste gebruikers eerst; een realm zonder meting zakt naar onderen.
+    rijen.sort(key=lambda rij: (rij.gebruikers is None, -(rij.gebruikers or 0.0)))
+
+    realms_totaal = _op_labels(antwoorden["realms"], ())
+    return Blok(gemeten=True, rijen=list(rijen), totaal=realms_totaal.get(()))
