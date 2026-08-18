@@ -21,11 +21,11 @@
                     gebruikers heeft hieronder geen rij.
                 </c-paragraph>
             {% endif %}
-            <c-table columns="1.8fr 1fr 1.6fr 1fr 1fr">
+            <c-table columns="1.7fr 1fr 1.8fr 1fr 1fr">
                 <c-table-head>
                     <c-th>Realm</c-th>
                     <c-th>Gebruikers</c-th>
-                    <c-th>Waarvan</c-th>
+                    <c-th>Inlogmethode</c-th>
                     <c-th>Logins 24u</c-th>
                     <c-th>Mislukt 24u</c-th>
                 </c-table-head>
@@ -34,7 +34,12 @@
                         <c-td>{{ rij.realm }}</c-td>
                         <c-td>{% if rij.gebruikers is not none %}{{ rij.gebruikers | round | int }}{% else %}-{% endif %}</c-td>
                         {# De verdeling over lokaal, SAML en OIDC in EEN cel: als losse kolommen
-                           zou elke nieuwe idp-soort de tabel breder maken. #}
+                           zou elke nieuwe idp-soort de tabel breder maken.
+
+                           De som hoeft NIET gelijk te zijn aan de kolom Gebruikers: wie nooit
+                           via een provider binnenkwam telt daar wel mee en hier niet. Een realm
+                           zonder gekoppelde provider heeft hier dus een streepje, en dat is
+                           geen ontbrekende meting. #}
                         <c-td>{% if rij.gebruikers_per_idp %}{% for soort, aantal in rij.gebruikers_per_idp | dictsort %}{{ soort }} {{ aantal | round | int }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}</c-td>
                         <c-td>{% if rij.logins_24u is not none %}{{ rij.logins_24u | round | int }}{% else %}-{% endif %}</c-td>
                         <c-td>{% if rij.mislukte_logins_24u is not none %}{{ rij.mislukte_logins_24u | round | int }}{% else %}-{% endif %}</c-td>
