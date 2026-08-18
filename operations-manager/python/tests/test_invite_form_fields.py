@@ -109,12 +109,12 @@ def test_the_destination_is_picked_not_typed() -> None:
 
 def test_the_destination_is_stored_as_the_choice_not_as_the_address() -> None:
     """The hostname is derived from three things that can all change; the choice behind it
-    is not. So the field writes the deployment/component pick and the address is worked
+    is not. So the field writes the component/deployment pick and the address is worked
     out again at render time (RC-136)."""
     editable = _visualizer_for("application-target").editable
 
     assert editable.yaml_path.endswith("application-target")
-    assert type(editable.converter).__name__ == "ApplicationTargetConverter"
+    assert type(editable.converter).__name__ == "InviteTargetConverter"
 
 
 def test_every_required_field_has_a_default() -> None:

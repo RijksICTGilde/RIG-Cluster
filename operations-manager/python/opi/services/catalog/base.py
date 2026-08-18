@@ -153,17 +153,6 @@ def config_endpoint_path(layer: ConfigLayer, service_name: str, project_name: st
 #: services, or a list for sequence configs (e.g. storage mounts).
 ServiceConfigData = dict[str, Any] | list[Any]
 
-#: Validation-context key under which the surrounding project file is handed to
-#: ``validate_config`` / ``migrate_config``.
-#:
-#: A config block is validated on its own, which is right: a service owns its own fields.
-#: A config MIGRATION can need more, because what a stored value meant may only be
-#: readable against the rest of the file -- the invite service works out which component
-#: a stored address used to point at, and that derivation lives in the deployments. The
-#: key is optional everywhere: a step that does not find the project leaves the config
-#: alone rather than guessing.
-PROJECT_DATA_CONTEXT_KEY = "project_data"
-
 
 @dataclass
 class ProvisionContext:
@@ -804,9 +793,7 @@ class Service(ABC):
         """
         return (ConfigRole.USE,) if layer in self.config_layers() else ()
 
-    def migrate_config(
-        self, config: ServiceConfigData, from_version: str, context: dict[str, Any] | None = None
-    ) -> ServiceConfigData:
+    def migrate_config(self, config: ServiceConfigData, from_version: str) -> ServiceConfigData:
         """Convert an older config forward to ``config_schema_version`` (hub).
 
         Forward-only (spoke -> hub); the default is identity, correct for a service
@@ -816,13 +803,6 @@ class Service(ABC):
 
         ``config`` is a dict for most services, or a list for services whose config
         is a sequence (e.g. storage mounts).
-
-        ``context`` is the same validation context ``validate_config`` was given. A
-        step that has to look OUTSIDE its own block reads the surrounding project from
-        it under ``PROJECT_DATA_CONTEXT_KEY``; the invite service does, to work out
-        which component an address used to point at. It is optional on purpose: a step
-        that cannot see the project must fall back to leaving the config alone, never
-        to guessing.
         """
         return config
 
@@ -856,7 +836,7 @@ class Service(ABC):
             msg = f"Service '{self.service_type.value}' has a config_model but no config_schema_version"
             raise TypeError(msg)
         config: ServiceConfigData = {} if raw_config is None else raw_config
-        migrated = self.migrate_config(config, from_version or self.config_schema_version, context)
+        migrated = self.migrate_config(config, from_version or self.config_schema_version)
         return self.config_model.model_validate(migrated, context=context)
 
     # --- config field ownership (RC-5 "service owns its fields") ----------------

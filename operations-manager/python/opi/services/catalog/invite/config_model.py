@@ -30,6 +30,8 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opi.services.catalog.invite.target_format import split_target
+
 #: The two authentication methods an invite can offer. A closed set, so it is typed as a
 #: Literal in the model (the guardrail) rather than relying on the form widget's options.
 AuthMethod = Literal["sso", "local"]
@@ -42,38 +44,6 @@ class I18nText(BaseModel):
 
     nl: str | None = Field(default=None, description="Dutch text.")
     en: str | None = Field(default=None, description="English text.")
-
-
-class ApplicationTarget(BaseModel):
-    """Where the success button points, expressed as the CHOICE instead of its answer.
-
-    A hostname is derived from the domain format, the subdomain and the cluster, and all
-    three can change. Stored as a URL the destination goes stale the moment one of them
-    does, while everything needed to work it out again sits in the same project file. So
-    the deployment and the component are what is written down, and the address is derived
-    at render time (``opi/services/catalog/invite/destination.py``).
-
-    ``path`` is only needed where it distinguishes: a component MAY publish more than one
-    path and those are that many addresses. Publishes it one, then deployment plus
-    component already names exactly one address and the path would be noise -- the same
-    rule the picker's label follows.
-
-    An object rather than a composite string ("production/frontend//api") deliberately: a
-    path contains slashes of its own, so splitting it back apart is the kind of home-grown
-    record format that several readers have already mis-parsed in this codebase.
-    """
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    deployment: str = Field(description="Name of the deployment whose address the button points at.")
-    component: str = Field(description="Name of the component within that deployment.")
-    path: str | None = Field(
-        default=None,
-        description=(
-            "Which published path, needed only when the component publishes more than one. "
-            "Left out it means the component's only address."
-        ),
-    )
 
 
 class InviteEntry(BaseModel):
@@ -129,13 +99,14 @@ class InviteEntry(BaseModel):
             "which keeps following it when the subdomain or the domain format changes."
         ),
     )
-    application_target: ApplicationTarget | None = Field(
+    application_target: str | None = Field(
         default=None,
         alias="application-target",
         description=(
-            "Where the user is sent after redeeming, as a deployment/component choice. The address is "
-            "worked out when the page is rendered, so it follows a subdomain or domain-format change. "
-            "Mutually exclusive with 'application-url'."
+            "Where the user is sent after redeeming, as the CHOICE behind the address: "
+            "'component:deployment', or 'component:deployment:/path' where the component publishes "
+            "more than one path. The address is worked out when the page is rendered, so it follows a "
+            "subdomain or domain-format change. Mutually exclusive with 'application-url'."
         ),
     )
     message: I18nText | None = Field(default=None, description="Text shown on the invitation page.")
@@ -145,6 +116,28 @@ class InviteEntry(BaseModel):
     success_button: I18nText | None = Field(
         default=None, alias="success-button", description="Label of the button leading to the application."
     )
+
+    @model_validator(mode="after")
+    def _the_target_names_a_component_and_a_deployment(self) -> InviteEntry:
+        """The composite value has to split into two names, or it names nothing.
+
+        Without this a typo is accepted and turns into "no button" at render time, which
+        looks exactly like a destination someone deliberately left empty. Rejecting it here
+        means the API and the CLI say so at write time, where the typo can still be fixed.
+        The PATH is not checked: it is free-form and only has to match what the component
+        publishes, which this model cannot see.
+        """
+        if self.application_target is None:
+            return self
+        component, deployment, _path = split_target(self.application_target)
+        if not component or not deployment:
+            msg = (
+                "'application-target' noemt een component en een deployment, gescheiden door een "
+                "dubbele punt: 'component:deployment', of 'component:deployment:/pad' als de "
+                f"component meer dan een pad publiceert. Gekregen: {self.application_target!r}"
+            )
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def _one_destination_at_most(self) -> InviteEntry:

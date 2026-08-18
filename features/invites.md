@@ -59,9 +59,7 @@ services:
             - allowed-user
           restrict-domain: rijksoverheid.nl
           contact-email: beheer@example.nl
-          application-target:
-            deployment: production
-            component: docs
+          application-target: docs:production
           auth-methods:
             - sso
             - local
@@ -83,7 +81,7 @@ services:
 | `active[].realm-roles` | Keycloak realm roles granted on redemption. Empty = account only. |
 | `active[].restrict-domain` | Only e-mail addresses of this domain may redeem (with or without a leading `@`). |
 | `active[].contact-email` | Shown to the user as a contact, and on the role-not-assigned error page. |
-| `active[].application-target` | Where the success-page button points, as a `{deployment, component, path}` choice within this project. |
+| `active[].application-target` | Where the success-page button points, as a `component:deployment[:/path]` choice within this project. |
 | `active[].application-url` | Where the success-page button points, as a fixed address. For a destination outside this project. |
 | `active[].auth-methods` | `sso` and/or `local`. Empty = both allowed (subject to the realm). |
 | `active[].message` / `success-title` / `success-button` | `{nl, en}` texts for the invite pages. |
@@ -97,11 +95,16 @@ button.
 **`application-target`** -- a destination inside this project, named as the CHOICE:
 
 ```yaml
-application-target:
-  deployment: production
-  component: frontend
-  path: /api          # only needed when the component publishes more than one path
+application-target: frontend:production          # the component's only address
+application-target: frontend:production:/api     # one of several paths it publishes
 ```
+
+`:` is safe as the separator: component and deployment names are DNS-1123 labels
+(`^[a-z]([-a-z0-9]*[a-z0-9])?`, max 63) and cannot contain a colon, and the path sits last,
+so the value is split from the left with a maximum of two and a path containing a colon
+survives. Splitting on `/` would not survive -- a path is made of slashes. The two names are
+checked against that shape, which is also what stops a URL (which has colons too) from
+passing as a destination.
 
 The address is worked out when the success page is rendered, from the same derivation the
 project-details page lists (`publish-on-web`). So it keeps pointing at the right place when
@@ -109,8 +112,8 @@ the subdomain, the domain format or the cluster changes. Use this for anything t
 itself publishes; the portal's picker writes exactly this, offering the addresses by name
 (`production / frontend`).
 
-`path` is only needed where it distinguishes: a component MAY publish several paths and
-those are that many addresses. Publishes it one, leave `path` out.
+The path is only needed where it distinguishes: a component MAY publish several paths and
+those are that many addresses. Publishes it one, leave it off.
 
 If the target stops resolving -- the component was removed, publish-on-web was switched off,
 the deployment is gone -- the success page shows NO button. A button pointing somewhere
@@ -134,9 +137,11 @@ rendering, so the picker cannot read a sibling field of its own entry. Nothing i
 -- a save never touches the address -- but to change or remove a fixed address, use the API
 or the CLI rather than the portal.
 
-Older files that store a derivable `application-url` keep working unchanged. The service's
-config migration (v1.0 -> v1.1) converts such an address into the target behind it where it
-can match one, and leaves it exactly as it is where it cannot.
+**Existing project files are not rewritten.** There is no data migration and none is
+planned: an invitation is a standing arrangement with someone who already holds the link, so
+converting its destination silently changes where that person ends up, and on a wrong match
+somewhere else entirely. Not every stored address is derivable either. The two shapes are
+equals and live side by side; precedence is target, then URL, then no button.
 
 Advanced pass-through fields (`groups`, `client-roles`, and the deprecated `roles`, an alias
 for `realm-roles`) validate but are not offered in the UI. Keys are hyphenated on disk; the
@@ -183,4 +188,6 @@ If a realm role that an invite grants is later removed from the Keycloak config:
 - Migration: projects that used the old top-level `invites:` block are moved to
   `services/invite/config` automatically (schema v2.5 -> v2.6).
 - The invite service's own config schema is at **v1.1** (`invite.v1.1.json`). v1.1 added
-  `application-target`; the step from v1.0 is forward-only and idempotent.
+  `application-target` and rewrites nothing: `migrate_config` is the inherited no-op. This is
+  the catalog's first version bump, and it is worth something that the first one is one that
+  touches no data.
