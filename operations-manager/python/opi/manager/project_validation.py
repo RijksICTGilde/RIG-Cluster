@@ -72,6 +72,22 @@ def _accepted_config_fields(provider: Service, layer: ConfigLayer) -> list[str]:
     return names
 
 
+def validation_reasons(error: ValidationError) -> str:
+    """De redenen van een ValidationError, zoals ze aan een gebruiker getoond mogen worden.
+
+    ``str(e)`` van pydantic is uitvoer voor een ontwikkelaar: hij zet er
+    ``[type=value_error, input_value=..., input_type=dict]`` achter en een link naar
+    errors.pydantic.dev. Dat kwam zo op het scherm van iemand die een webadres wilde
+    wijzigen, met de afgekeurde waarde erin -- en die waarde kan een geheim zijn.
+
+    ``error["msg"]`` draagt alleen de reden. Het voorvoegsel ``Value error, `` dat pydantic
+    voor een ``model_validator`` zet valt eraf: de zin eromheen zegt al dat er iets ongeldig
+    is, en "Value error" voegt daar niets aan toe wat de lezer verder helpt.
+    """
+    reasons = [error_entry["msg"].removeprefix("Value error, ") for error_entry in error.errors()]
+    return "; ".join(reasons) or "waarde voldoet niet aan het model"
+
+
 def _validate_one_config(
     name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str, from_version: str | None = None
 ) -> None:
@@ -104,7 +120,8 @@ def _validate_one_config(
         accepted = _accepted_config_fields(provider, layer)
         hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
         raise ProjectIntegrityError(
-            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: {e}.{hint}"
+            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: "
+            f"{validation_reasons(e)}.{hint}"
         ) from e
 
 
@@ -127,7 +144,7 @@ def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str
     try:
         model.model_validate(raw)
     except ValidationError as e:
-        reasons = "; ".join(error["msg"] for error in e.errors()) or "waarde voldoet niet aan het model"
+        reasons = validation_reasons(e)
         raise ProjectIntegrityError(
             f"Project '{project_name}': gegevens van service '{name}' {where} zijn ongeldig: {reasons}."
         ) from None
@@ -306,7 +323,7 @@ def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any,
     try:
         model.model_validate(raw)
     except ValidationError as e:
-        reasons = "; ".join(error["msg"] for error in e.errors()) or "waarde voldoet niet aan het model"
+        reasons = validation_reasons(e)
         raise ProjectIntegrityError(
             f"Project '{project_name}': '{service.owned_property}' {where} is ongeldig: {reasons}."
         ) from None
