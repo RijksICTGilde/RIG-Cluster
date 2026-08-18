@@ -30,6 +30,8 @@ Zo zag RC-134 eruit, gemeten in Chromium:
 
 | plek | kleur | achtergrond | contrast | herkomst |
 |---|---|---|---|---|
+| wizard, samenvattingstap (39 stuks) | #333333 / #555555 | #20252B | 1,22 / 2,07 | `wizard.css` (van ons) |
+| wizard, dienstenstap | (14 witte vlakken van 400x115) | | | `wizard.css` (van ons) |
 | projectpagina, "Configuratie & Secrets" | #FFFFFF | #FFFFFF | 1,00 | `c-secret-field` (componentenlaag) |
 | bewerkdialoog: kop, labels, "Annuleren" | #D9DEE5 | #FFFFFF | 1,35 | `modal.css` (van ons) |
 | bewerkdialoog: "Laden..." | #64748B | #FFFFFF | 3,24 | `modal.css` (van ons) |
@@ -38,6 +40,20 @@ Zo zag RC-134 eruit, gemeten in Chromium:
 
 De norm is WCAG AA: 4,5:1 voor gewone tekst, 3:1 voor grote tekst (>= 24px, of >= 18,66px
 en vet).
+
+## Twee dingen die een contrastmeting NIET vindt
+
+**Een licht eiland.** Een vlak met een vaste lichte achtergrond EN een vaste donkere tekst
+is intern consistent en haalt de norm ruim - en staat toch als fel wit blok in een donkere
+pagina. Zo waren de dienstkaarten van de wizard en de filtervelden van `/admin/usage`. Dat
+was precies wat de melding beschreef ("een wizardscherm heeft een verkeerde achtergrond"),
+en met een verhouding is het niet te vangen. De suite meet het daarom apart: een vlak met
+luminantie >= 0,5 dat >= 0,4 lichter is dan het paginavlak. Voor de reparatie 9 op de
+overzichtspagina's en 14 op de dienstenstap; erna 0.
+
+**De volgorde van repareren.** Breng je van zo'n eiland alleen het VLAK naar het thema, dan
+staat de vaste donkere tekst opeens op een donker vlak en is het erger dan eerst - bij de
+dienstkaarten 1,36:1. Voorgrond en achtergrond horen in dezelfde stap mee.
 
 ## Hoe je het repareert
 
@@ -98,6 +114,28 @@ zijn niet vanzelfsprekend en kosten anders een uur zoeken:
 Het omhooglopen gaat bovendien door de PLATGESLAGEN boom (`assignedSlot`, dan
 `parentElement`, dan de schaduwgastheer): een geslot element hangt onder zijn `<slot>` en
 niet onder zijn eigen ouder, en de vlakken zitten juist in die schaduwboom.
+
+## Wat NIET stuk was, hoewel het verdacht was
+
+**De omweg voor `data-scheme`.** `<c-page>` laat geen attribuut op `<html>` toe, dus zet
+`base_lotc.html.j2` de stand met een inline `<script>`. Dat is een omweg om onze eigen
+componentlaag heen, en een component dat zijn kleuren bij upgrade uitrekent en daarna niet
+herrekent zou dan de lichte waarden zien - dezelfde vorm als de `width=`-fout in
+`request_for_components.md`. Gemeten door `customElements.define` te verpakken en bij de
+eerste `connectedCallback` te kijken: bij de upgrade van het eerste component (`nldd-icon`,
+van 111) stond `data-scheme` er al. Het script staat in de `<head>` en de componenten in de
+`<body>`; het is dus altijd op tijd. `test_data_scheme_staat_er_voor_het_eerste_component_upgradet`
+houdt dat zo.
+
+**Systeem-donker versus expliciet donker.** Bij "systeem" zet dat script niets en hangt
+alles aan `prefers-color-scheme`. Gemeten over acht schermen: dezelfde aantallen, dezelfde
+elementen, dezelfde paginakleur - zowel voor als na de reparatie. Ook geen verschil dus.
+
+**`native="true"` op onze selects.** Een echte `<select>` krijgt de themakleuren niet van
+een component; hij las `--nldd-color-surface`/`-text` uit lotc-forms en viel dus terug op
+wit met donkere tekst. Sinds die namen hierboven ingevuld worden, volgt hij mee. `native`
+kan dus blijven staan - en dat moest ook, want `<c-option>` rendert binnen een echte
+`<select>` een `<nldd-menu-item>` en dan blijft de lijst leeg.
 
 ## Wat NIET stuk was
 
