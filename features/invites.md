@@ -59,7 +59,9 @@ services:
             - allowed-user
           restrict-domain: rijksoverheid.nl
           contact-email: beheer@example.nl
-          application-url: https://docs.example.nl
+          application-target:
+            deployment: production
+            component: docs
           auth-methods:
             - sso
             - local
@@ -81,9 +83,53 @@ services:
 | `active[].realm-roles` | Keycloak realm roles granted on redemption. Empty = account only. |
 | `active[].restrict-domain` | Only e-mail addresses of this domain may redeem (with or without a leading `@`). |
 | `active[].contact-email` | Shown to the user as a contact, and on the role-not-assigned error page. |
-| `active[].application-url` | Where the success-page button points. |
+| `active[].application-target` | Where the success-page button points, as a `{deployment, component, path}` choice within this project. |
+| `active[].application-url` | Where the success-page button points, as a fixed address. For a destination outside this project. |
 | `active[].auth-methods` | `sso` and/or `local`. Empty = both allowed (subject to the realm). |
 | `active[].message` / `success-title` / `success-button` | `{nl, en}` texts for the invite pages. |
+
+### Where the success button points
+
+Two shapes, and at most one of them per invitation (both at once is rejected: nothing would
+decide which the button follows). Neither is also fine -- then the page simply shows no
+button.
+
+**`application-target`** -- a destination inside this project, named as the CHOICE:
+
+```yaml
+application-target:
+  deployment: production
+  component: frontend
+  path: /api          # only needed when the component publishes more than one path
+```
+
+The address is worked out when the success page is rendered, from the same derivation the
+project-details page lists (`publish-on-web`). So it keeps pointing at the right place when
+the subdomain, the domain format or the cluster changes. Use this for anything the project
+itself publishes; the portal's picker writes exactly this, offering the addresses by name
+(`production / frontend`).
+
+`path` is only needed where it distinguishes: a component MAY publish several paths and
+those are that many addresses. Publishes it one, leave `path` out.
+
+If the target stops resolving -- the component was removed, publish-on-web was switched off,
+the deployment is gone -- the success page shows NO button. A button pointing somewhere
+wrong is worse: the user only finds out after clicking it.
+
+**`application-url`** -- a fixed address, for a destination OUTSIDE this project:
+
+```yaml
+application-url: https://ergens.anders.example.nl/
+```
+
+Nothing is derived, so nothing follows a change either. The portal's picker only offers this
+project's own addresses and therefore cannot write this field; set it through the API, the
+CLI or by hand. A save through the portal leaves it alone, unless you pick a destination
+there -- then the choice you just made wins and the fixed address is dropped.
+
+Older files that store a derivable `application-url` keep working unchanged. The service's
+config migration (v1.0 -> v1.1) converts such an address into the target behind it where it
+can match one, and leaves it exactly as it is where it cannot.
 
 Advanced pass-through fields (`groups`, `client-roles`, and the deprecated `roles`, an alias
 for `realm-roles`) validate but are not offered in the UI. Keys are hyphenated on disk; the
@@ -129,3 +175,5 @@ If a realm role that an invite grants is later removed from the Keycloak config:
 - There is no expiry: an invite link is valid until the invite is removed.
 - Migration: projects that used the old top-level `invites:` block are moved to
   `services/invite/config` automatically (schema v2.5 -> v2.6).
+- The invite service's own config schema is at **v1.1** (`invite.v1.1.json`). v1.1 added
+  `application-target`; the step from v1.0 is forward-only and idempotent.
