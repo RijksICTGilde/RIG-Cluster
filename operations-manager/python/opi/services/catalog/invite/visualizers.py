@@ -18,7 +18,7 @@ from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.invite.editables import (
     INVITE_ACTIVE_EDITABLE,
-    INVITE_APPLICATION_URL_EDITABLE,
+    INVITE_APPLICATION_TARGET_EDITABLE,
     INVITE_AUTH_METHODS_EDITABLE,
     INVITE_CONTACT_EMAIL_EDITABLE,
     INVITE_DEFAULT_LANGUAGE_EDITABLE,
@@ -84,8 +84,8 @@ INVITE_CONTACT_EMAIL = EditableVisualizer(
     help_text="Getoond aan de uitgenodigde gebruiker als contact bij problemen.",
 )
 
-INVITE_APPLICATION_URL = EditableVisualizer(
-    editable=INVITE_APPLICATION_URL_EDITABLE,
+INVITE_APPLICATION_TARGET = EditableVisualizer(
+    editable=INVITE_APPLICATION_TARGET_EDITABLE,
     widget=WidgetType.SELECT,
     label="Naar welke applicatie",
     help_text=(
@@ -151,7 +151,7 @@ INVITE_ACTIVE = EditableVisualizer(
         INVITE_KEY,
         INVITE_REALM_ROLES,
         INVITE_CONTACT_EMAIL,
-        INVITE_APPLICATION_URL,
+        INVITE_APPLICATION_TARGET,
         INVITE_AUTH_METHODS,
         INVITE_MESSAGE_NL,
         INVITE_MESSAGE_EN,

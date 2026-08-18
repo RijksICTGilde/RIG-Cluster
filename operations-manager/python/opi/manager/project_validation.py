@@ -19,7 +19,7 @@ from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
-from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.base import PROJECT_DATA_CONTEXT_KEY, ConfigLayer, Service
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.postgres_scope import get_postgres_schemas
@@ -89,14 +89,23 @@ def validation_reasons(error: ValidationError) -> str:
 
 
 def _validate_one_config(
-    name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str, from_version: str | None = None
+    name: str,
+    raw: Any,
+    layer: ConfigLayer,
+    where: str,
+    project_name: str,
+    from_version: str | None = None,
+    project_data: dict[str, Any] | None = None,
 ) -> None:
     """Validate one service config block against its provider's typed model.
 
     Shared by the project-level and component-level walks. Skips services that are
     unknown or take no typed config. ``from_version`` is the entry's stamped
     ``schema-version``, threaded through so the provider migrates an older config
-    block forward before validating (None = current version). Fails closed: raises
+    block forward before validating (None = current version). ``project_data`` rides
+    along in the validation context for the one thing a config block cannot answer for
+    itself: a migration step that has to read the rest of the file (see
+    ``PROJECT_DATA_CONTEXT_KEY``). Fails closed: raises
     ProjectIntegrityError, with the service's own accepted-field list
     (config_api_fields / config_editables) appended so the message tells the user
     which keys the service accepts.
@@ -111,7 +120,12 @@ def _validate_one_config(
         return  # service takes no typed config at this layer
     try:
         if model is provider.config_model:
-            provider.validate_config(raw, from_version=from_version, context=STORED_PROJECT_CONTEXT)
+            context = (
+                STORED_PROJECT_CONTEXT
+                if project_data is None
+                else {**STORED_PROJECT_CONTEXT, PROJECT_DATA_CONTEXT_KEY: project_data}
+            )
+            provider.validate_config(raw, from_version=from_version, context=context)
         else:
             # A layer-specific model (per-mount clone state). OPI writes it, so there is no
             # stamped version to migrate from; validate the shape directly.
@@ -178,7 +192,9 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
         if raw is None:
             continue  # bare service / no project-level config to validate
         from_version = service_entry_schema_version(entry)
-        _validate_one_config(name, raw, ConfigLayer.PROJECT, "op projectniveau", project_name, from_version)
+        _validate_one_config(
+            name, raw, ConfigLayer.PROJECT, "op projectniveau", project_name, from_version, project_data
+        )
 
     # Component-level service references (storage mounts, metrics port/path). Their
     # config lives on the component's service entry, not at project level, so the

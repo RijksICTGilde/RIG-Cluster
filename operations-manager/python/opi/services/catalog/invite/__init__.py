@@ -1,7 +1,7 @@
 """invite service: onboard users into the project's Keycloak realm via a shared link.
 
 An invite is a configuration-as-code unit at the PROJECT layer. It owns its typed config
-model (``InviteConfig``), its drift-locked schema fragment (``invite.v1.0.json``), its
+model (``InviteConfig``), its drift-locked schema fragment (``invite.v1.1.json``), its
 wizard/edit form section, and its read-only detail-page block. It replaces the old top-level
 ``invites:`` section, which sat outside the service contract and could only be created by
 hand-editing YAML.
@@ -118,7 +118,10 @@ class InviteService(Service):
         ],
     )
     config_model = InviteConfig
-    config_schema_version = "1.0"
+    # 1.1 added ``application-target``: the destination of the success button as the
+    # deployment/component CHOICE instead of the address that choice worked out to. See
+    # ``migrations.py`` for the step and why it keeps an address it cannot match.
+    config_schema_version = "1.1"
     config_section_id = "invite-config"
     modal_flow_id = "modal-edit-invite-config"
 
@@ -175,8 +178,49 @@ class InviteService(Service):
 
         The form hands over two dicts and wants nothing back; one implementation serves
         both, so the portal and the API cannot generate keys by different rules.
+
+        It also settles the destination (below), because a save has to leave the entry in
+        a shape the model accepts and the picker only owns one of the two fields.
         """
         self.generate_missing_values(project_data)
+        self.settle_destination(project_data)
+
+    def settle_destination(self, project_data: dict[str, Any]) -> None:
+        """Leave at most one destination per invite: the chosen target wins over an address.
+
+        The portal's picker owns ``application-target`` only -- it offers this project's
+        own addresses, and a fixed ``application-url`` is the API/CLI shape for a
+        destination outside the project, which the picker can never name. So a project
+        file can arrive here with both: an address that was already stored, plus a target
+        the user just picked. The model refuses that pair, and rightly: nothing decides
+        which of the two the button follows.
+
+        The target wins, because it is the one that was just chosen. Nothing is dropped
+        the other way round: an entry with only an address keeps it, since the picker
+        writing no target means "no choice made here", not "no destination".
+        """
+        from opi.services.project import Project
+
+        base = config_path(ConfigLayer.PROJECT, self.service_type, "config", "active")
+        for entry in Project(project_data).get(base) or []:
+            if not isinstance(entry, dict) or not entry.get("application-target"):
+                continue
+            for stale in ("application-url", "application_url"):
+                entry.pop(stale, None)
+
+    def migrate_config(self, config: Any, from_version: str, context: dict[str, Any] | None = None) -> Any:
+        """v1.0 -> v1.1: replace a derivable ``application-url`` with its target.
+
+        Forward-only and idempotent; it needs the surrounding project to work out which
+        component an address pointed at, and gets it from the validation context. See
+        ``opi/services/catalog/invite/migrations.py``.
+        """
+        from opi.services.catalog.base import PROJECT_DATA_CONTEXT_KEY
+        from opi.services.catalog.invite.migrations import migrate_invite_config_1_0_to_1_1
+
+        if from_version != "1.0":
+            return config
+        return migrate_invite_config_1_0_to_1_1(config, (context or {}).get(PROJECT_DATA_CONTEXT_KEY))
 
     # --- config field ownership -------------------------------------------------
 
