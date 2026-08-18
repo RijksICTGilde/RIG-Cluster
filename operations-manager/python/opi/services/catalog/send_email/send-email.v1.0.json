@@ -91,34 +91,6 @@
       "description": "Whether an administrator has allowed this project to send mail. Written by the platform: until it says approved, no account is created, no network policy is written and no SMTP credentials reach the deployment.",
       "x-platform-managed": true
     },
-    "from-domain": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Sender domain, when the project has one of its own. Left out for the platform mail domain. Written by the platform: a domain of your own needs a DKIM record in its zone first AND a rule for that domain in the relay's identity script (which today only allows the platform mail domain), and that path is set up by hand until a project asks for it, so this is not self-service.",
-      "title": "From-Domain",
-      "x-platform-managed": true
-    },
-    "from-local-part": {
-      "anyOf": [
-        {
-          "pattern": "^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$",
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "First half of the local part of the sender address, e.g. 'noreply'. Defaults to 'noreply'. The account name is appended to it, so the address becomes noreply.project-<project>@<maildomein>: the relay pins the From: header to an address carrying the account name, and an address may only exist once on the whole relay.",
-      "title": "From-Local-Part"
-    },
     "from-name": {
       "anyOf": [
         {

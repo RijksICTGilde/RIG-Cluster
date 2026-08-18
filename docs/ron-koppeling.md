@@ -93,7 +93,7 @@ Let op het verschil met egress: dit is een **label op het Route- of Ingress-obje
 
 - ZAD kan de egress-annotatie nog niet vanuit het projectbestand zetten, dus RON-namespaces vragen een handmatige stap.
 - Het ingresscontroller-label wordt nergens door OPI gezet. Zolang dat zo is, kan een RON-ingress niet via ZAD worden opgeleverd, want achteraf labelen werkt niet.
-- De mailkoppeling werkt. Wat nog moet: de DNS-records voor `mail.rijksapp.nl` (SPF, DKIM, DMARC), anders komt uitgaande mail wel weg maar mogelijk niet aan.
+- De mailkoppeling werkt. Er is voor DNS niets meer te doen, en dat is een wijziging ten opzichte van eerder op deze pagina: het afzenderdomein is `rijksoverheid.nl` geworden in plaats van een eigen `mail.rijksapp.nl`. Zie hieronder.
 
 ## De mailkoppeling, gemeten op 17 augustus 2026
 
@@ -121,6 +121,25 @@ Vier dingen die het ontwerp raken:
 Het goede nieuws is dat die grendel er structureel al zit. De enige egressregel richting buiten staat hardgecodeerd in `manifests/tenant-baseline-network-policy.yaml.jinja` en laat alleen 443 en 80 door. Het veld `ports.outbound` in het projectbestand suggereert anders, maar wordt nergens in de manifestgeneratie naar een egressregel vertaald; het leeft alleen in de formulieren en in cross-domain-access, dat over verkeer binnen het cluster gaat. Een project kan poort 25 dus niet zelf openzetten.
 
 Wat er dan wél moet gebeuren, is die eigenschap vastpinnen in plaats van hem te vertrouwen: **een regressietest die vastlegt dat de tenant-baseline nooit iets anders dan 443 en 80 naar `0.0.0.0/0` toestaat.** Zonder die test is dit een eigenschap die iemand er over een jaar in één regel uit haalt zonder te weten dat er een mailrelay op leunt.
+
+## Het afzenderadres is `noreply-rijksapp@rijksoverheid.nl`
+
+Vastgesteld op 18 augustus 2026. Er komt geen eigen maildomein. We versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit, en elk project verstuurt vanaf hetzelfde vaste adres. De relay schrijft dat adres zelf in de `From:` van elk bericht; een applicatie kan er niet omheen en hoeft er niets voor te doen.
+
+Waarom het niet anders kan, en dit is het stuk dat je moet onthouden:
+
+```
+_dmarc.rijksoverheid.nl   v=DMARC1; p=reject; adkim=r; aspf=r
+rijksoverheid.nl          v=spf1 redirect=spf-a.ssonet.nl
+```
+
+`p=reject` betekent dat een bericht met `From: @rijksoverheid.nl` dat DMARC niet haalt, door de ontvanger wordt geweigerd. DMARC slaagt als het `From:`-domein uitlijnt met de envelope (SPF) of met de handtekening (DKIM). Wij kunnen niet ondertekenen, want daarvoor moet onze publieke sleutel in hún zone staan. **SPF-uitlijning is dus het enige been om op te staan**, en daarom wordt de envelope herschreven naar `noreply-rijksapp+<project>@rijksoverheid.nl`: hetzelfde domein als de `From:`, met het project in het plusdeel zodat een bounce herleidbaar blijft.
+
+Wat dat oplevert: de hele DNS-post valt weg. Hun SPF autoriseert de uitgaande IP's van de upstream al, want de upstream is hun eigen infrastructuur.
+
+Wat dat kost: er is geen tweede been. Gaat de envelope-herschrijving stuk, dan haalt geen enkel bericht nog DMARC en weigert elke ontvanger buiten de Rijksoverheid alles. Dat is een enkele faalpunt en het staat als zodanig in de relayconfiguratie beschreven.
+
+En let op de valstrik die dit met zich meebracht: het envelope-adres op het relay-account zetten zou betekenen dat de relay `rijksoverheid.nl` als LOKAAL domein kent, en dan bezorgt hij mail áán collega's daar bij zichzelf in plaats van hem door te sturen. Daarom draagt een account geen adressen meer en staat `must-match-sender` uit.
 
 ## De mailmeting van 15 augustus was ongeldig
 

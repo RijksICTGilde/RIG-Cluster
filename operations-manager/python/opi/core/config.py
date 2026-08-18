@@ -393,7 +393,6 @@ class Settings(BaseSettings):
     # their prefix (``MAIL_PROJECT_ACCOUNT_PREFIX``): a name inside it is reachable from
     # the project path again, and MailManager refuses that path rather than allow it.
     MAIL_PLATFORM_ACCOUNT: str = "zad-platform"
-    MAIL_PLATFORM_FROM_LOCAL_PART: str = "noreply"
     MAIL_PLATFORM_MESSAGES_PER_DAY: int = 2000
     # The Secret in OPI's OWN namespace that holds the platform account's credentials.
     # A Secret and not an environment variable: OPI generates this password itself, and a

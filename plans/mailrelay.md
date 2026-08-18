@@ -12,7 +12,7 @@
 | app                 |   | SMTP-relay               |   | upstream mailserver|
 | SMTP_HOST=...       |-->| :587 submission, AUTH    |-->| :25 STARTTLS       |
 | SMTP_USER=<project> |   | rate limit per account   |   | geen auth, ons IP  |
-| SMTP_PASS=<secret>  |   | From-policy + DKIM       |   | staat toegelaten   |
+| SMTP_PASS=<secret>  |   | vaste From, geen DKIM    |   | staat toegelaten   |
 +---------------------+   | header sanitatie         |   +--------------------+
      ClusterIP, geen      | egressGatewayPolicy:     |
      RON-egress nodig     |   rig-ron                |
@@ -39,6 +39,18 @@ De koppeling werkt en een testbericht is aangenomen. Vier correcties op de tekst
 - **30 MB** is hun grens (`SIZE 31457280`).
 
 Dat maakt de paragraaf hierna niet minder waar, maar juist dwingender: zonder authenticatie aan de andere kant is er niets dat een applicatie tegenhoudt behalve ons eigen netwerkbeleid.
+
+## Besloten op 18 augustus 2026: één vast afzenderadres, geen eigen domein
+
+Dit vervangt de hele afzenderdomein-paragraaf verderop, en het raakt ook de tweede aanname hierboven (waar staat "ondertekend met onze DKIM-sleutel": dat gebeurt niet meer).
+
+Alle projecten versturen vanaf **`noreply-rijksapp@rijksoverheid.nl`**. De relay schrijft dat adres zelf in de `From:` van elk bericht; er is geen veld, geen keuze en geen weg eromheen. Een project kiest alleen de weergavenaam ernaast.
+
+Waarom: we versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit. `rijksoverheid.nl` publiceert `p=reject` en wij kunnen in hun zone geen DKIM-sleutel publiceren, dus **SPF-uitlijning tussen envelope en `From:` is het enige dat een bericht door DMARC krijgt.** Daarom wordt ook de envelope herschreven naar `noreply-rijksapp+<project>@rijksoverheid.nl`: zelfde domein, project in het plusdeel, bounce blijft herleidbaar.
+
+Wat vervalt: het eigen maildomein, alle DNS-records die daarbij hoorden (hun SPF autoriseert de upstream al), DKIM in zijn geheel, en de velden `from-domain` en `from-local-part`.
+
+Wat het kost: er is geen tweede been. Gaat de envelope-herschrijving stuk, dan weigert elke ontvanger buiten de Rijksoverheid alles. Volledig uitgewerkt in `docs/ron-koppeling.md`.
 
 ## Waarom niet gewoon de upstream langs elke app openzetten
 
@@ -177,7 +189,7 @@ Je onderliggende punt klopt wel: `smtp-mail` zet een protocolnaam in iets dat ge
 
 ## Openstaande beslissingen
 
-1. **Bevestigen: `mail.rijksapp.nl` als platform-maildomein.** Let op het enkelvoud. `rijksapps.nl` is de zone van ODC-Noord zelf (`docs.`, `rcr.`, `cluster-api.apps.prd1.gn2.`), daar kunnen wij niets aanmaken en applicatiemail versturen vanuit het domein van onze platformleverancier is sowieso onverstandig. `rijksapp.nl`, `rijks.app` en `rijksapp.dev` zijn wel van ons en worden al door external-dns beheerd (`opi/core/cluster_config.py`). Een subdomein in plaats van de kale zone houdt een eventueel reputatieprobleem weg bij het domein waar de applicaties op draaien. Die twee namen schelen één letter en hebben verschillende eigenaren; benoem dat expliciet in de mail naar het mailteam.
+1. **VERVALLEN, 18 augustus 2026.** Hier stond dat `mail.rijksapp.nl` het platform-maildomein zou worden. Er komt geen eigen maildomein: we versturen via de mailserver van de Rijksoverheid en dragen daarom hun domein, met één vast afzenderadres `noreply-rijksapp@rijksoverheid.nl` voor alle projecten. Dat maakt de hele DNS-post overbodig (hun SPF autoriseert de upstream al) en maakt DKIM onmogelijk (wij kunnen in hun zone geen sleutel publiceren), dus SPF-uitlijning tussen envelope en From: is het enige dat een bericht door DMARC krijgt. Uitgewerkt in `docs/ron-koppeling.md`.
 2. **Kan external-dns de losse TXT- en MX-records zetten** (DNSEndpoint-CRD), of gaat dat via het DNS-beheerpaneel? Geen blokkade, wel bepalend voor wie het doet.
 3. **Bounce-mailbox**: krijgen we een account bij het mailteam dat OPI over IMAP mag legen? Nodig voor optie 2 hierboven.
 4. **Alleen verzenden, of later ook ontvangen?** Ik ga nu uit van alleen verzenden. Ontvangen is een wezenlijk ander product en moet niet stiekem meegroeien via de bounce-afhandeling.
@@ -333,7 +345,7 @@ zich draagt.
 Wat er nu echt staat, en hoe het is aangetoond:
 
 1. **Envelope** - een applicatie die `MAIL FROM:<noreply.ander@...>` aanbiedt, levert bij
-   de upstream `MAIL FROM:<bounce+demo@mail.rijksapp.nl>` af. De MAIL FROM van de
+   de upstream `MAIL FROM:<noreply-rijksapp+demo@rijksoverheid.nl>` af. De MAIL FROM van de
    applicatie wordt weggegooid, niet getoetst; dat is meteen de sterkste vorm.
 2. **From** - een sieve-script op de DATA-fase (de enige plek waar v0.11 kopregels kan
    aanraken) eist dat het adres in de From: het adres van dit account is. Vreemd domein:
@@ -355,7 +367,7 @@ Wat er nu echt staat, en hoe het is aangetoond:
    X-Originating-IP, X-Mailer, X-Originating-Client en X-Authenticated-Sender wel bij de
    upstream af. Stalwart v0.11.8 weigert het dus niet.
 6. **Message-ID** - `<12345@app-pod-7f9c.rig-prd-demo.svc.cluster.local>` komt aan als
-   `<12345@mail.rijksapp.nl>`. Het unieke deel blijft, het interne domein gaat eraf.
+   `<12345@rijksoverheid.nl>`. Het unieke deel blijft, het interne domein gaat eraf.
    Weggooien alleen kan niet: `add-headers` draait VOOR het script, dus dan vertrekt het
    bericht zonder Message-ID.
 7. **Verklikkers** - `X-Mailer` en `X-Originating-IP` zijn weg bij de ontvanger.
