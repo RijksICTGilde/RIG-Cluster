@@ -371,6 +371,18 @@ De meting bij 800px is bovendien niet monotoon: de sorteerknop is daar wél zich
 
 **Voorstel.** De "Meer"-knop pas tonen wanneer er werkelijk iets is overgelopen, en de inhoud van `slot="overflow"` in dat menu opnemen zodat hij bruikbaar is - of, als de toolbar zijn eigen items in de overloop hoort te zetten, die weg laten vallen uit de balk én in het menu laten verschijnen. Nu gebeurt er van beide iets half.
 
+## `select-field`: geen maat voor het label, terwijl het label soms de kop van het blok is
+
+Gemeten in ZAD op 18 augustus 2026, op `/projects/<naam>/deployments` en `/projects/<naam>/metrics`.
+
+De deploymentkiezer op die twee tabbladen is een `<c-select-field>` met `label="Geselecteerde deployment"`. Dat label doet daar meer dan een veld benoemen: het is de enige plek op de pagina die zegt WELKE deployment je op dat moment bekijkt. De projectnaam staat bovenaan, de tabbalk noemt de sectie, en daaronder volgt meteen de inhoud van één deployment.
+
+**Wat je ziet.** Het label staat in dezelfde bescheiden maat als elk ander formulierlabel, en gaat daardoor op in de pagina. De eigenaar meldde het als "niet duidelijk genoeg welke deployment je hebt" en vroeg of de kop iets groter kon.
+
+**Waarom we het niet zelf oplossen.** `select-field` kent `id`, `name`, `label`, `value`, `placeholder`, `native`, `help`, `error`, `required`, `disabled` en `class`. Geen maat voor het label. Het kan dus alleen met een eigen CSS-regel die het label van dit component overschrijft, en dat is precies het soort regel dat met de componentlaag vecht en die niemand later durft weg te halen. De tekst zelf is wel aangepast, want dat kan wel.
+
+**Voorstel.** Een maat of een nadruk op het label van een veld, in dezelfde geest als de maten die knoppen en koppen al kennen. Als dat niet past bij de bedoeling van een formulierlabel, dan is het alternatief een component dat "wat je nu bekijkt" uitdrukt met een kiezer erbij, want dat is hier het werkelijke patroon: dit veld is geen invoer maar een navigatie.
+
 ## Handgeschreven componenten vallen terug op vaste lichte kleuren, en zijn in de donkere weergave onleesbaar
 
 Gemeten in ZAD op 18 augustus 2026, in Chromium, met `data-scheme="dark"` op `<html>`. Per stuk tekst de berekende `color`, de achtergrond die er onder ligt (dwars door schaduwbomen en slots) en de WCAG-verhouding daartussen. De achtergrond komt van een proefelement met `background-color: Canvas`: met `color-scheme: dark` tekent de browser het paginavlak zelf (#121212) terwijl de computed `background-color` van `<html>` doorzichtig blijft.
