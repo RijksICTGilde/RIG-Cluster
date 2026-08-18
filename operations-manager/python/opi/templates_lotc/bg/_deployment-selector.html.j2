@@ -30,6 +30,14 @@
   <select> vuurt geen change als je de al getoonde optie kiest, dus bij twee deployments
   was de getoonde via de kiezer niet meer te bereiken.
 
+  HET LABEL ZEGT DAT HET EEN KEUZE IS. Er stond "Deployment", en dat leest als een kopje
+  boven een lijst in plaats van als de aanduiding van wat er NU openstaat. Op een pagina
+  waar de projectnaam bovenaan staat en de tabbalk de sectie noemt, was daardoor niet in
+  een oogopslag te zien welke deployment je bekijkt. "Geselecteerde deployment" zegt het
+  wel. Groter maken kan niet met een attribuut: c-select-field kent alleen id, name, label,
+  value, placeholder, native, help, error, required, disabled en class -- geen maat voor
+  het label. Dat is dus een vraag aan de componentenlaag en geen eigen CSS-regel hier.
+
   Geen class in :attrs: het component zet er zelf al een op, en twee class-attributen op
   een tag betekent dat de browser de tweede negeert.
 
@@ -49,7 +57,7 @@
         native="true"
         id="global-deployment-selector"
         name="global-deployment-selector"
-        label="Deployment"
+        label="Geselecteerde deployment"
         data-no-optional-badge="true"
         :attrs="kiezer_gedrag">
         {% for deployment in project.deployments | sort(attribute='name') %}
