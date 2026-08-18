@@ -112,3 +112,35 @@ async def test_een_projectdatabase_staat_niet_op_de_pagina(monkeypatch: pytest.M
 
     assert [rij.namespace for rij in blok.rijen] == ["rig-prd-operations"]
     assert [rij.namespace for rij in blok.extra_rijen] == ["rig-prd-operations"]
+
+
+def test_geen_enkele_query_telt_dezelfde_reeks_dubbel() -> None:
+    """Dezelfde target wordt door twee jobs gescrapet; optellen verdubbelt de waarde.
+
+    ``cnpg_pg_database_size_bytes`` komt zowel uit de job 'cloudnative-pg' als uit
+    'kubernetes-pods'. Dat viel niet op zolang er maar een van de twee binnen het
+    staleness-venster viel: de som telde dan een enkele reeks op. Zodra ``last_over_time``
+    ze allebei zichtbaar maakt, telt ``sum by`` ze bij elkaar op. Gemeten op de sandbox:
+    de keycloak-database staat op 92 MB, de som maakte er 183 MB van.
+
+    Per (namespace, pod, datname) bestaat er logisch EEN reeks, en per (namespace, pvc)
+    ook. Er valt dus niets op te tellen.
+    """
+    from opi.services.gedeelde_diensten import _DATABASE_QUERIES, _OPSLAG_QUERIES
+
+    for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES}.items():
+        assert "sum by" not in query, (
+            f"query '{naam}' telt op over reeksen die door meerdere jobs gescrapet worden "
+            f"en verdubbelt daarmee de waarde; gebruik max by: {query}"
+        )
+
+
+def test_elke_meting_kijkt_terug_over_het_staleness_venster_heen() -> None:
+    """Een deel van deze reeksen komt uit een job die elke twee uur scrapet."""
+    from opi.services.gedeelde_diensten import _DATABASE_QUERIES, _OPSLAG_QUERIES
+
+    for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES}.items():
+        assert "last_over_time" in query, (
+            f"query '{naam}' is een kale instant-query en mist daarmee alles wat langer dan "
+            f"vijf minuten geleden gescrapet is: {query}"
+        )

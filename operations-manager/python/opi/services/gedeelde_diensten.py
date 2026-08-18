@@ -151,30 +151,53 @@ ONGEMETEN_DIENSTEN: list[OngemetenDienst] = [
 # De sum/max-omhulling is er om de LABELS vast te leggen. Kaal geven deze metrieken ook
 # instance, job, usename en state terug, en dan zou een rij per (state, usename) ontstaan
 # in plaats van een rij per database.
+# LAST_OVER_TIME OVERAL, OM DEZELFDE REDEN ALS BIJ KEYCLOAK. Een instant-query toont alleen
+# samples binnen het staleness-venster van vijf minuten. Een deel van deze reeksen komt uit
+# een job die elke TWEE UUR scrapet, en die is daarmee bijna altijd onzichtbaar. Gemeten
+# tegen de sandbox op 18 augustus 2026: van cnpg_pg_database_size_bytes staan 161 reeksen in
+# de index en gaf de kale query er 18 terug. De tabel toonde dus stilzwijgend een deel, en
+# dat is niet van een volledige tabel te onderscheiden.
+#
+# Zes uur terugkijken overleeft ook een gemiste scrape. De prijs is dat een getal tot zes uur
+# oud kan zijn. Voor vulling en groottes is dat prima; voor de langste transactie betekent
+# het dat je naar de piek van het afgelopen venster kijkt en niet naar dit moment.
+_TERUGBLIK = "6h"
+
+# MAX BY EN NIET SUM BY, en dat is geen smaak. Dezelfde target wordt door TWEE jobs
+# gescrapet: cnpg_pg_database_size_bytes komt zowel uit 'cloudnative-pg' als uit
+# 'kubernetes-pods'. Dat viel niet op zolang er maar een van de twee vers was, want dan
+# telde de som een enkele reeks op. Zodra last_over_time ze allebei zichtbaar maakt, telt
+# sum ze bij elkaar op: gemeten op de sandbox stond de keycloak-database op 92 MB en maakte
+# de som er 183 MB van.
+#
+# Per (namespace, pod, datname) bestaat er logisch EEN reeks, en per (namespace, pvc) ook.
+# Er valt dus niets op te tellen; max neemt de waarde en is ongevoelig voor hoeveel jobs
+# hem toevallig scrapen.
+
 _OPSLAG_QUERIES: dict[str, str] = {
     "vulling": (
-        "100 * sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes)"
-        " / sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes)"
+        "100 * max by (namespace, persistentvolumeclaim) (last_over_time(kubelet_volume_stats_used_bytes[6h]))"
+        " / max by (namespace, persistentvolumeclaim) (last_over_time(kubelet_volume_stats_capacity_bytes[6h]))"
     ),
-    "gebruikt": "sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes)",
-    "capaciteit": "sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes)",
+    "gebruikt": "max by (namespace, persistentvolumeclaim) (last_over_time(kubelet_volume_stats_used_bytes[6h]))",
+    "capaciteit": "max by (namespace, persistentvolumeclaim) (last_over_time(kubelet_volume_stats_capacity_bytes[6h]))",
     "inodes": (
-        "100 * sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_inodes_used)"
+        "100 * max by (namespace, persistentvolumeclaim) (last_over_time(kubelet_volume_stats_inodes_used[6h]))"
         " / clamp_min("
-        "sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_inodes_used)"
-        " + sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_inodes_free)"
+        "max by (namespace, persistentvolumeclaim) (last_over_time(kubelet_volume_stats_inodes_used[6h]))"
+        " + max by (namespace, persistentvolumeclaim) (last_over_time(kubelet_volume_stats_inodes_free[6h]))"
         ", 1)"
     ),
 }
 
 _DATABASE_QUERIES: dict[str, str] = {
-    "grootte": "sum by (namespace, pod, datname) (cnpg_pg_database_size_bytes)",
-    "verbindingen": "sum by (namespace, pod, datname) (cnpg_backends_total)",
-    "langste_transactie": "max by (namespace, pod, datname) (cnpg_backends_max_tx_duration_seconds)",
-    "xid_leeftijd": "max by (namespace, pod, datname) (cnpg_pg_database_xid_age)",
+    "grootte": "max by (namespace, pod, datname) (last_over_time(cnpg_pg_database_size_bytes[6h]))",
+    "verbindingen": "max by (namespace, pod, datname) (last_over_time(cnpg_backends_total[6h]))",
+    "langste_transactie": "max by (namespace, pod, datname) (last_over_time(cnpg_backends_max_tx_duration_seconds[6h]))",
+    "xid_leeftijd": "max by (namespace, pod, datname) (last_over_time(cnpg_pg_database_xid_age[6h]))",
     # cnpg_backends_waiting_total heeft GEEN datname: wachtende verbindingen zijn een
     # eigenschap van de instantie, niet van een database. Vandaar een eigen tabel.
-    "wachtend": "sum by (namespace, pod) (cnpg_backends_waiting_total)",
+    "wachtend": "max by (namespace, pod) (last_over_time(cnpg_backends_waiting_total[6h]))",
 }
 
 
