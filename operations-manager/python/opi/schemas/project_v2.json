@@ -221,6 +221,14 @@
             "cpu": { "type": "string" }
           }
         },
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory": { "type": "string" },
+            "cpu": { "type": "string" }
+          }
+        },
         "source": { "type": "string", "enum": ["auto-tune", "oom-watcher", "manual"] },
         "deployment": { "type": "string" },
         "reason": { "type": "string" }
