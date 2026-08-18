@@ -111,9 +111,7 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True, s
             dt = dt.astimezone(ZoneInfo("Europe/Amsterdam"))
 
         day = dt.day
-        month = DUTCH_MONTHS[dt.month - 1]
-        if short_month:
-            month = DUTCH_MONTHS_SHORT[dt.month - 1]
+        month = (DUTCH_MONTHS_SHORT if short_month else DUTCH_MONTHS)[dt.month - 1]
         year = dt.year
 
         if include_time:
