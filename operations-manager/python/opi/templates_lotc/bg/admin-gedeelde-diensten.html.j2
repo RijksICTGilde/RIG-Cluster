@@ -39,6 +39,13 @@
         <c-paragraph>Databases worden opgehaald...</c-paragraph>
     </div>
 
+    <div id="diensten-keycloak"
+         hx-get="/admin/diensten/keycloak"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <c-paragraph>Keycloak wordt opgehaald...</c-paragraph>
+    </div>
+
     {% include "bg/_gedeelde-diensten-ongemeten.html.j2" %}
 
     {% include "bg/_gedeelde-diensten-drempels.html.j2" %}

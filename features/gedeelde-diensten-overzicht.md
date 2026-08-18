@@ -6,6 +6,23 @@ openstaan, en hoe lang de langste transactie loopt.
 
 Aanleiding: dat was nergens te zien, dus merkten we het pas als er iets omviel.
 
+## Keycloak komt uit een andere bron
+
+De blokken opslag en databases lezen via `get_metrics_connector()`, die op productie naar
+Grafana en Mimir gaat. Het Keycloak-blok doet dat NIET: die metrieken worden gescrapet
+door onze eigen Prometheus (job `keycloak-rig-metrics`) en zitten niet in Mimir. Het blok
+praat daarom rechtstreeks met `PrometheusConnector`, net als de metrics-explorer.
+
+De cijfers komen van onze eigen Keycloak-extensie op `/realms/master/rig-metrics` (zie
+`features/keycloak-rig-metrics.md`), niet van Keycloak zelf: realms, gebruikers per realm
+met de verdeling over lokaal, SAML en OIDC, en de logins en mislukte logins per realm.
+
+Twee dingen om te weten. Die scrape-job draait elke twee uur, dus de logins staan over 24
+uur en niet over een uur; een korter venster levert lege cellen op die op "niemand logt
+in" lijken. En de realmtabel heeft GEEN toestandkolom: bij mislukte logins bestaat geen
+grens die ergens op slaat, en een verzonnen grens zou groen of rood tonen zonder
+betekenis.
+
 ## Wat er bewust NIET op staat
 
 De namespaces van gebruikersprojecten. Wat iemand in zijn eigen project draait is zijn

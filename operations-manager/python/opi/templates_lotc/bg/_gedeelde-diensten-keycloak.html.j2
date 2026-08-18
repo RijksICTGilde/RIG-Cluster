@@ -1,0 +1,46 @@
+{#
+  Het Keycloak-blok van /admin/diensten, apart opgehaald.
+
+  GEEN TOESTAND-KOLOM, met opzet. De andere blokken hebben drempels die ergens op slaan;
+  bij mislukte logins bestaat zo'n getal niet. Zie de toelichting bij RealmRij.
+
+  De logins staan over 24 UUR en niet over een uur: de scrape-job draait elke twee uur,
+  dus een korter venster levert lege cellen op die op "niemand logt in" lijken.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% from "bg/_diensten-status.html.j2" import leeg_of_stuk %}
+
+{% call panel("Keycloak", "person-2") %}
+    {% if not blok.gemeten or not blok.rijen %}
+        {{ leeg_of_stuk(blok, "Er zijn geen Keycloak-metrieken gevonden.") }}
+    {% else %}
+        <c-stack gap="md">
+            {% if blok.totaal is not none %}
+                <c-paragraph size="sm">
+                    {{ blok.totaal | round | int }} realms in totaal (zonder master). Een realm zonder
+                    gebruikers heeft hieronder geen rij.
+                </c-paragraph>
+            {% endif %}
+            <c-table columns="1.8fr 1fr 1.6fr 1fr 1fr">
+                <c-table-head>
+                    <c-th>Realm</c-th>
+                    <c-th>Gebruikers</c-th>
+                    <c-th>Waarvan</c-th>
+                    <c-th>Logins 24u</c-th>
+                    <c-th>Mislukt 24u</c-th>
+                </c-table-head>
+                {% for rij in blok.rijen %}
+                    <c-table-row>
+                        <c-td>{{ rij.realm }}</c-td>
+                        <c-td>{% if rij.gebruikers is not none %}{{ rij.gebruikers | round | int }}{% else %}-{% endif %}</c-td>
+                        {# De verdeling over lokaal, SAML en OIDC in EEN cel: als losse kolommen
+                           zou elke nieuwe idp-soort de tabel breder maken. #}
+                        <c-td>{% if rij.gebruikers_per_idp %}{% for soort, aantal in rij.gebruikers_per_idp | dictsort %}{{ soort }} {{ aantal | round | int }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}</c-td>
+                        <c-td>{% if rij.logins_24u is not none %}{{ rij.logins_24u | round | int }}{% else %}-{% endif %}</c-td>
+                        <c-td>{% if rij.mislukte_logins_24u is not none %}{{ rij.mislukte_logins_24u | round | int }}{% else %}-{% endif %}</c-td>
+                    </c-table-row>
+                {% endfor %}
+            </c-table>
+        </c-stack>
+    {% endif %}
+{% endcall %}
