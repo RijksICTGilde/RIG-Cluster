@@ -1872,8 +1872,8 @@ class InviteApplicationUrlOptionsProvider:
             options.append({"value": entry["url"], "label": label})
 
         # Alleen een ADRES kan hier nog bij. De opgeslagen waarde is sinds RC-136 de KEUZE
-        # (een object), en het formulier geeft de rauwe opslag als huidige waarde door: dat
-        # kwam als "{'deployment': 'production', ...} (niet meer afleidbaar)" in de lijst
+        # ("frontend:production"), en het formulier geeft de RAUWE opslag als huidige waarde
+        # door: die kwam zo als "frontend:production (niet meer afleidbaar)" in de lijst
         # terecht -- een regel die niets betekent en die je ook nog kon kiezen. Een keuze die
         # nog wel oplost staat sowieso al in de lijst hierboven; een die dat niet meer doet
         # heeft geen adres om te tonen, en dan is "geen knop" het eerlijke antwoord, want dat

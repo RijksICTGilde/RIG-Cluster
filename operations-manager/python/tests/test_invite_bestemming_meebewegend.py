@@ -26,6 +26,7 @@ import pytest
 from fastapi.testclient import TestClient
 from itsdangerous import TimestampSigner
 from opi.forms.editables.converters import InviteTargetConverter
+from opi.manager.project_validation import validation_reasons
 from opi.services.catalog.invite import InviteService
 from opi.services.catalog.invite.config_model import InviteConfig
 from opi.services.catalog.invite.target_format import join_target, split_target
@@ -140,7 +141,12 @@ class TestHetModelKentTweeVormen:
         als een bestemming die iemand expres heeft leeggelaten."""
         with pytest.raises(ValidationError) as fout:
             InviteConfig.model_validate({"active": [_basis_entry(**{"application-target": "frontend"})]})
-        assert "component:deployment" in str(fout.value)
+
+        # ``validation_reasons`` is wat de gebruiker te zien krijgt; ``str(e)`` van pydantic
+        # is ontwikkelaarsuitvoer met ``input_value`` erin en gaat nergens heen.
+        melding = validation_reasons(fout.value)
+        assert "component:deployment" in melding
+        assert "frontend" not in melding, "de afgekeurde waarde hoort niet in de melding"
 
     def test_een_url_in_het_bestemmingsveld_wordt_geweigerd(self) -> None:
         """Wie zich vergist in het veld hoort dat te horen, niet een uitnodiging zonder

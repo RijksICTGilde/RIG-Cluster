@@ -126,6 +126,11 @@ class InviteEntry(BaseModel):
         means the API and the CLI say so at write time, where the typo can still be fixed.
         The PATH is not checked: it is free-form and only has to match what the component
         publishes, which this model cannot see.
+
+        The rejected value is NOT echoed. This message reaches a user through
+        ``validation_reasons``, and a value someone got wrong may be one they pasted from
+        somewhere else -- the same reason the config-validation chokepoint stopped quoting
+        pydantic's ``input_value``.
         """
         if self.application_target is None:
             return self
@@ -134,7 +139,7 @@ class InviteEntry(BaseModel):
             msg = (
                 "'application-target' noemt een component en een deployment, gescheiden door een "
                 "dubbele punt: 'component:deployment', of 'component:deployment:/pad' als de "
-                f"component meer dan een pad publiceert. Gekregen: {self.application_target!r}"
+                "component meer dan een pad publiceert"
             )
             raise ValueError(msg)
         return self
