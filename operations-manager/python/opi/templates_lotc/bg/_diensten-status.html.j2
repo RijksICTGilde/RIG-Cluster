@@ -1,0 +1,43 @@
+{#
+  De vertaling van een toestand naar wat er op het scherm staat, op EEN plek.
+
+  Beide blokken van /admin/diensten tonen dezelfde vier toestanden, en die horen er in
+  beide blokken hetzelfde uit te zien. De toestanden zelf worden in Python bepaald
+  (opi/services/gedeelde_diensten.py, tegen DREMPELS); hier staat alleen de weergave.
+
+  ONBEKEND IS GRIJS EN NADRUKKELIJK NIET GROEN. Niet kunnen meten is geen goed nieuws, en
+  precies dat verschil is waarom dit overzicht er is.
+#}
+{% macro status_tag(status) %}
+    <c-tag
+        type="{{ 'success' if status == 'ok' else 'warning' if status == 'waarschuwing' else 'error' if status == 'kritiek' else 'default' }}"
+        label="{{ 'OK' if status == 'ok' else 'Let op' if status == 'waarschuwing' else 'Kritiek' if status == 'kritiek' else 'Onbekend' }}" />
+{% endmacro %}
+
+{#
+  Wat er in een blok staat als er niets staat.
+
+  Twee heel verschillende gevallen die er niet hetzelfde uit mogen zien: "we hebben
+  gemeten en er is niets" tegenover "we konden niet meten". Op het dashboard waren die
+  jarenlang niet uit elkaar te houden, en daardoor bleef een kapotte grafiek maanden
+  onopgemerkt.
+#}
+{% macro leeg_of_stuk(blok, niets_tekst) %}
+    {% if not blok.gemeten %}
+        <c-alert type="error" heading="Kon niet meten">
+            <c-stack gap="xs">
+                <c-paragraph>
+                    De metriekbron gaf geen antwoord. Dit blok zegt dus niets over de toestand:
+                    lees het niet als "er is niets aan de hand".
+                </c-paragraph>
+                {% if blok.fout %}
+                    <c-paragraph size="sm">{{ blok.fout }}</c-paragraph>
+                {% endif %}
+            </c-stack>
+        </c-alert>
+    {% else %}
+        <c-alert type="info" heading="Niets te melden">
+            {{ niets_tekst }}
+        </c-alert>
+    {% endif %}
+{% endmacro %}
