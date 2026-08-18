@@ -288,10 +288,13 @@ def test_de_teruggebrachte_secties_staan_er_met_echte_gegevens(app_server: str, 
         "Helm Charts",
         "redis-cache",
         "18.1.5",
-        # Helmfile
+        # Helmfile. De git-bron hoort erbij: zonder url staat er een helmfile-kaart
+        # zonder te zeggen waar de helmfile vandaan komt, en dat is het enige wat
+        # een lezer nodig heeft om hem terug te vinden.
         "Helmfile",
         "monitoring-stack",
         "helmfile.d/monitoring.yaml",
+        "https://github.com/example/monitoring.git",
     ]
     ontbreekt = [item for item in verwacht if item not in markup]
     assert not ontbreekt, f"niet op het tabblad Project: {ontbreekt}"
