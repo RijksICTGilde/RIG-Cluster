@@ -24,16 +24,20 @@ from opi.services.project_store import get_project_store
 CROSS_DOMAIN_PROJECTS_KEY = "_cross_domain_projects"
 
 
-def build_cross_domain_context(project_name: str, user_email: str) -> dict[str, Any]:
-    """Peer projects this user may point a cross-domain rule at, own project excluded.
+def build_cross_domain_context(user_email: str) -> dict[str, Any]:
+    """Peer projects this user may point a cross-domain rule at, own project included.
 
     Limited to projects the user is authorized for: a peer you cannot see is a peer you
-    cannot name. ``project_name`` is empty in the create wizard (the project does not exist
-    yet), which simply means nothing is excluded.
+    cannot name.
+
+    The own project is in the list on purpose. The tenant baseline isolates per DEPLOYMENT,
+    not per project, so one deployment of a project cannot reach another deployment of that
+    same project without a rule either -- excluding the own project left that case with no
+    way to express it at all.
     """
     projects = sorted(
         summary.name
         for summary in get_project_store().get_all()
-        if summary.name != project_name and is_user_authorized_for_project(summary.name, user_email)
+        if is_user_authorized_for_project(summary.name, user_email)
     )
     return {CROSS_DOMAIN_PROJECTS_KEY: projects}
