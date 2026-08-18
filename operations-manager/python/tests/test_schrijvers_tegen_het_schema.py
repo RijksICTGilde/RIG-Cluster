@@ -194,6 +194,53 @@ def test_het_uitzetten_van_een_component_blijft_geldig() -> None:
     poorten(project)
 
 
+def test_het_weer_aanzetten_na_een_nieuwe_image_blijft_geldig() -> None:
+    """De deployhaak zet componenten weer aan zodra hun image verandert."""
+    project = _basis_project()
+    handler = ProjectFileHandler()
+    handler.set_deployment_component_disabled(project, "productie", "api", True, "ImagePullBackOff: nginx:1.24")
+
+    handler.reenable_components_with_changed_image(project, ["productie"], force_reenable=True)
+
+    poorten(project)
+
+
+def test_de_wortelcomponent_bijstellen_blijft_geldig() -> None:
+    """De OOM-reparatie schrijft ook op de wortelcomponent: resources en een eigen historie."""
+    project = _basis_project()
+    handler = ProjectFileHandler()
+
+    handler.set_component_resources(
+        project, "api", {"limits_memory": "256Mi", "requests_memory": "128Mi", "limits_cpu": "1000m"}
+    )
+    handler.append_component_resource_history(
+        project,
+        "api",
+        {
+            "timestamp": "2026-08-18T01:00:00+00:00",
+            "limits": {"memory": "256Mi"},
+            "requests": {"memory": "128Mi"},
+            "source": "oom-watcher",
+            "reason": "OOM kills detected",
+        },
+    )
+
+    poorten(project)
+
+
+def test_het_verwijderen_van_verwijzingen_blijft_geldig() -> None:
+    """Verwijderen is ook schrijven: wat achterblijft moet geldig zijn, niet alleen wat weggaat."""
+    from opi.handlers.project_file_handler import remove_attachment_references, remove_component_references
+
+    project = _basis_project()
+    project["deployments"][0]["components"].append({"reference": "api", "image": "nginx:1.25"})
+
+    remove_attachment_references(project, "ca-bundle")
+    remove_component_references(project, "api")
+
+    poorten(project)
+
+
 # ---------------------------------------------------------------------------
 # De back-up- en herstelpaden: generatienummers en kloonstatus
 # ---------------------------------------------------------------------------
@@ -209,6 +256,7 @@ def test_generatienummers_van_de_backuptaken_blijven_geldig() -> None:
     handler.set_database_generation(project, "productie", 3)
     handler.set_bucket_generation(project, "productie", 2)
     handler.set_storage_generation(project, "productie", "api", "data", 1)
+    handler.set_deployment_service_generation(project, "productie", ServiceType.MINIO_STORAGE.value, 4)
 
     poorten(project)
 
