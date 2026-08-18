@@ -286,7 +286,15 @@ tasks:
   encrypt-value-age-base64:
     desc: "Encrypt a value with AGE and output in base64+age:base64encoded format"
     vars:
+      # Zelfde variabele als alle andere sleuteltaken. Stond hier hardgecodeerd op
+      # security/key.txt, waardoor deze taak met een ander cluster geselecteerd
+      # stilzwijgend met de ODCN-sleutel werkte: versleutelen leverde dan een waarde op
+      # die het eigen cluster niet kan lezen.
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       VALUE: '{{.VALUE | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Draai 'task select-cluster' of geef KEY_FILE expliciet mee."
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -294,13 +302,13 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Extract the public key from {{.KEY_FILE}}
+        AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         # Encrypt the value with age and encode to base64
         ENCRYPTED=$(echo -n "{{.VALUE}}" | age -r "$AGE_PUBLIC_KEY" -a | base64 | tr -d '\n')
@@ -311,7 +319,15 @@ tasks:
   encrypt-value-age:
     desc: "Encrypt a value with AGE and output in armor format"
     vars:
+      # Zelfde variabele als alle andere sleuteltaken. Stond hier hardgecodeerd op
+      # security/key.txt, waardoor deze taak met een ander cluster geselecteerd
+      # stilzwijgend met de ODCN-sleutel werkte: versleutelen leverde dan een waarde op
+      # die het eigen cluster niet kan lezen.
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       VALUE: '{{.VALUE | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Draai 'task select-cluster' of geef KEY_FILE expliciet mee."
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -319,13 +335,13 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Extract the public key from {{.KEY_FILE}}
+        AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         # Encrypt the value with age in armor format
         echo -n "{{.VALUE}}" | age -r "$AGE_PUBLIC_KEY" -a
@@ -334,7 +350,15 @@ tasks:
   decrypt-secret:
     desc: "Decrypt a SOPS-encrypted secret file for editing"
     vars:
+      # Zelfde variabele als alle andere sleuteltaken. Stond hier hardgecodeerd op
+      # security/key.txt, waardoor deze taak met een ander cluster geselecteerd
+      # stilzwijgend met de ODCN-sleutel werkte: versleutelen leverde dan een waarde op
+      # die het eigen cluster niet kan lezen.
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       FILE: '{{.FILE | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Draai 'task select-cluster' of geef KEY_FILE expliciet mee."
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -347,8 +371,8 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
@@ -364,7 +388,7 @@ tasks:
         echo "📄 Output: $OUTPUT_FILE"
 
         # Decrypt using SOPS with the AGE key
-        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" sops --decrypt "{{.FILE}}" > "$OUTPUT_FILE"
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.FILE}}" > "$OUTPUT_FILE"
 
         echo ""
         echo "✅ Decrypted successfully!"
@@ -374,8 +398,16 @@ tasks:
   encrypt-secret:
     desc: "Encrypt a secret YAML file with SOPS (creates .sops.yaml version)"
     vars:
+      # Zelfde variabele als alle andere sleuteltaken. Stond hier hardgecodeerd op
+      # security/key.txt, waardoor deze taak met een ander cluster geselecteerd
+      # stilzwijgend met de ODCN-sleutel werkte: versleutelen leverde dan een waarde op
+      # die het eigen cluster niet kan lezen.
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       FILE: '{{.FILE | default ""}}'
       KEEP_ORIGINAL: '{{.KEEP_ORIGINAL | default "false"}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Draai 'task select-cluster' of geef KEY_FILE expliciet mee."
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -389,8 +421,8 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
@@ -408,8 +440,8 @@ tasks:
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Extract the public key from {{.KEY_FILE}}
+        AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         echo "🔐 Encrypting: {{.FILE}}"
         echo "📄 Output: $OUTPUT_FILE"
