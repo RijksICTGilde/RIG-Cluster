@@ -43,23 +43,38 @@ data:
     require = [{if = "listener", eq = "submission", then = true}, {else = false}]
     mechanisms = "[plain, login]"
     directory = "'internal'"
-    # De envelope-afzender moet bij het geauthenticeerde account horen. Gemeten: deze
-    # controle draait NA de herschrijving hieronder, dus hij toetst 'bounce+<account>@'.
-    # Daarom staat dat adres ook op het account (MailConnector zet beide adressen op de
-    # principal). Het is hier de vangnetregel, niet de regel die het werk doet: het werk
-    # doet de herschrijving, die de MAIL FROM van de applicatie sowieso weggooit.
-    must-match-sender = true
+    # UIT, en dat is een bewuste keuze met een reden die niet voor de hand ligt.
+    #
+    # Deze controle eist dat het envelope-adres op het geauthenticeerde account staat.
+    # Dat betekent dat elk account een adres in ons afzenderdomein moet dragen, en een
+    # adres kan alleen bestaan in een domein dat de relay als LOKAAL domein kent. Sinds
+    # de afzender `rijksoverheid.nl` is, zou dat betekenen dat wij `rijksoverheid.nl`
+    # als lokaal domein registreren. Stalwart kiest zijn route per ontvanger en bezorgt
+    # een lokaal domein lokaal, dus mail AAN een collega op `@rijksoverheid.nl` zou in
+    # onze eigen berichtenopslag verdwijnen in plaats van naar de upstream gaan. Precies
+    # de meest voorkomende ontvanger, en het zou stil misgaan.
+    #
+    # De controle kost ons niets: de herschrijving hieronder gooit de MAIL FROM van de
+    # applicatie sowieso onvoorwaardelijk weg, en het sieve-script zet de From: vast. Deze
+    # regel was het vangnet achter een deur die al dicht zit.
+    must-match-sender = false
 
     # --- Identiteitsregels (plans/mailrelay.md, punt 1 t/m 7) --------------------
     #
-    # 1. De envelope-afzender wordt herschreven naar een adres in ons eigen domein, per
-    #    account herkenbaar. De upstream ziet daardoor altijd hetzelfde domein bij
-    #    hetzelfde account, en een bounce komt bij ons terug en is herleidbaar.
-    #    Gemeten: een applicatie die MAIL FROM:<noreply.ander@...> aanbiedt, levert bij de
-    #    upstream MAIL FROM:<bounce+demo@mail.rijksapp.nl> af.
+    # 1. De envelope-afzender wordt herschreven naar het vaste afzenderadres, met het
+    #    account als plusdeel. Twee dingen tegelijk, en ze zijn allebei nodig:
+    #
+    #    - DMARC. `rijksoverheid.nl` publiceert `p=reject` met ontspannen uitlijning
+    #      (`aspf=r`). Uitgaande mail haalt DMARC alleen als het envelope-domein uitlijnt
+    #      met het From:-domein, en dat is precies wat dit doet. Wij ondertekenen niet met
+    #      DKIM (zie hieronder), dus SPF-uitlijning is de ENIGE weg. Een envelope in een
+    #      ander domein betekent dat elke ontvanger buiten de Rijksoverheid het bericht
+    #      weigert.
+    #    - Attributie. Het plusdeel houdt zichtbaar bij welk project een bounce hoort,
+    #      zonder het domein te verlaten en dus zonder de uitlijning te breken.
     [session.mail]
     rewrite = [
-      {if = "authenticated_as", ne = "", then = "'bounce+' + authenticated_as + '@%{env:MAIL_DOMAIN}%'"},
+      {if = "authenticated_as", ne = "", then = "'%{env:MAIL_FROM_LOCAL}%+' + authenticated_as + '@%{env:MAIL_DOMAIN}%'"},
       {else = false},
     ]
 
@@ -76,11 +91,14 @@ data:
 
     set "domein" "%{env:MAIL_DOMAIN}%";
     set "account" "${env.authenticated_as}";
+    set "afzender" "%{env:MAIL_FROM_LOCAL}%@%{env:MAIL_DOMAIN}%";
 
     # 2a. Precies EEN afzenderadres in de From:. Dit staat VOOR regel 2 en is er de
     #    voorwaarde van: 'address :all' is waar zodra EEN adres in de header matcht, dus
     #    "From: <invoice@evil.example>, noreply.demo@${domein}" haalde regel 2 en vertrok
-    #    met onze DKIM-handtekening op naam van het slachtoffer. RFC 5322 laat meerdere
+    #    op naam van het slachtoffer. Nu regel 2 overschrijft in plaats van toetst, is dit
+    #    de voorwaarde die de overschrijving eenduidig maakt: bij precies een mailbox is
+    #    ondubbelzinnig welk deel de weergavenaam is. RFC 5322 laat meerdere
     #    mailboxen in From: toe (met een Sender: erbij); wij niet - een account stuurt als
     #    zichzelf of niet.
     #    Gemeten tegen Stalwart v0.11.8: From met twee mailboxen -> 550, From met een
@@ -89,21 +107,33 @@ data:
         reject "550 5.7.1 De From:-header moet precies een adres bevatten.";
     }
 
-    # 2. De From:-header moet het adres van DIT account zijn. Een project kiest zijn
-    #    weergavenaam, niet zijn adres en niet zijn domein: een From: in een vreemd domein
-    #    haalt DMARC nooit, en een From: van een ander project is het misbruik waar deze
-    #    relay nu juist voor moet passen: de upstream authenticeert niet en vertrouwt op ons
-    #    uitgaande adres, dus alles wat hier langskomt gaat naar buiten als onze organisatie.
-    #    Het adres dat OPI uitgeeft is <lokaal-deel>.<account>@<domein>; de eerste vorm
-    #    hieronder laat ook <account>@<domein> toe, zodat een account zonder eigen lokaal
-    #    deel blijft werken.
-    #    Gemeten: From: attacker@vreemd-domein.nl -> 550, From: van een ander project ->
-    #    550, eigen adres met eigen weergavenaam -> afgeleverd.
-    if not anyof(
-        address :all :is "From" "${account}@${domein}",
-        address :all :matches "From" "*.${account}@${domein}"
-    ) {
-        reject "550 5.7.1 De From:-header moet het adres van dit account zijn (op ${domein}).";
+    # 2. De From: wordt OVERSCHREVEN met het vaste afzenderadres. Elk project verstuurt
+    #    onder hetzelfde adres; er is geen adres per project meer en er valt hier niets
+    #    te kiezen.
+    #
+    #    OVERSCHRIJVEN EN NIET WEIGEREN, en dat is een bewuste keuze. Weigeren zou elke
+    #    applicatie breken die zelf een From: zet, en dat doet vrijwel elke maillibrary
+    #    standaard. Een 550 op iets waar de ontwikkelaar niets aan kan doen is geen regel
+    #    maar een val. Overschrijven is bovendien strikter: er is geen invoer die eraan
+    #    ontsnapt, want er wordt niets getoetst.
+    #
+    #    De weergavenaam van de applicatie blijft staan, het adres niet. Dat is met opzet:
+    #    "Algoritmeregister <noreply-rijksapp@rijksoverheid.nl>" leest voor de ontvanger
+    #    beter dan een kaal adres, en de weergavenaam raakt DMARC niet.
+    #    LET OP wat daarmee open blijft: een weergavenaam mag alles bevatten, ook iets dat
+    #    op een ander adres lijkt. Wie "beveiliging@bank.nl" als naam zet, krijgt dat ook
+    #    te zien in menig mailprogramma. Dat is hier aanvaard omdat elk project langs een
+    #    goedkeuring komt; wordt dat ooit zelfbediening, dan hoort hier een filter op.
+    #    NOG NIET GEMETEN, in tegenstelling tot de rest van dit bestand. De vorige vorm van
+    #    regel 2 (weigeren) is nagespeeld tegen v0.11.8; deze overschrijvende vorm is dat
+    #    niet. Te toetsen bij het aanzetten, met drie berichten: From met weergavenaam,
+    #    From zonder weergavenaam, en From met een kaal adres zonder punthaken.
+    if header :matches "From" "*<*>" {
+        deleteheader "From";
+        addheader :last "From" "${1}<${afzender}>";
+    } else {
+        deleteheader "From";
+        addheader :last "From" "${afzender}";
     }
 
     # 6. Het Message-ID houdt zijn unieke deel maar krijgt ONS domein. Een applicatie zet
@@ -146,21 +176,29 @@ data:
     #    de upstream, dus DMARC slaagt op DKIM-alignment ongeacht wat de upstream met de
     #    envelope doet. Gemeten: de afgeleverde post draagt
     #    "DKIM-Signature: ... s=zad; d=<maildomein>" met From in de h=-lijst.
-    [auth.dkim]
-    sign = "['rsa']"
-    verify = "relaxed"
+    # 3. GEEN DKIM-ondertekening, en dat is geen vergeten stap.
+    #
+    #    Ondertekenen heeft alleen zin als de publieke sleutel in de DNS-zone van het
+    #    afzenderdomein staat. Het afzenderdomein is `rijksoverheid.nl` en die zone is niet
+    #    van ons, dus wij kunnen daar geen selector publiceren. Ondertekenen met een domein
+    #    dat we wel beheren zou een handtekening opleveren die niet uitlijnt met de From:
+    #    en dus niets doet voor DMARC, terwijl een handtekening die nergens verifieert bij
+    #    sommige ontvangers juist tegen ons werkt. Geen handtekening is dan beter dan een
+    #    kapotte.
+    #
+    #    Wat het wel betekent: we leunen VOLLEDIG op SPF-uitlijning, en die staat of valt
+    #    met de envelope-herschrijving hierboven. Gaat die stuk, dan haalt geen enkel
+    #    bericht DMARC meer en weigert elke ontvanger buiten de Rijksoverheid alles. Er is
+    #    geen tweede been om op te staan.
+    #
+    #    Terugweg als het ooit moet: het mailteam publiceert een selector voor ons onder
+    #    `rijksoverheid.nl`, en dan komt hier een [auth.dkim] met [signature.rsa] terug met
+    #    `domain = "rijksoverheid.nl"`.
 
-    [signature.rsa]
-    private-key = "%{file:/etc/mail/dkim/dkim.key}%"
-    domain = "%{env:MAIL_DOMAIN}%"
-    selector = "zad"
-    headers = ["From", "To", "Date", "Subject", "Message-ID"]
-    algorithm = "rsa-sha256"
-    canonicalization = "relaxed/relaxed"
-
-    # 4. SPF is een DNS-actie bij het mailteam en staat hier bewust NIET: wij praten nooit
-    #    rechtstreeks met het internet, dus ons maildomein moet de uitgaande IP's van de
-    #    UPSTREAM autoriseren, niet die van ons. Makkelijk over het hoofd te zien.
+    # 4. SPF staat hier bewust NIET: wij praten nooit rechtstreeks met het internet. Het
+    #    SPF-record van `rijksoverheid.nl` (`v=spf1 redirect=spf-a.ssonet.nl`) moet de
+    #    uitgaande IP's van de UPSTREAM autoriseren, en dat doet het al, want de upstream
+    #    IS hun eigen mailinfrastructuur. Daar hoeven wij niets voor te regelen.
 
     # --- Alles gaat naar een upstream ------------------------------------------
     #

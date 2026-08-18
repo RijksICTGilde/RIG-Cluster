@@ -63,6 +63,11 @@ spec:
                 secretKeyRef:
                   name: mail-relay-credentials
                   key: MAIL_DOMAIN
+            - name: MAIL_FROM_LOCAL
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_FROM_LOCAL
             - name: MAIL_UPSTREAM_HOST
               valueFrom:
                 secretKeyRef:
@@ -112,9 +117,6 @@ spec:
               mountPath: /etc/mail/config.toml
               subPath: config.toml
               readOnly: true
-            - name: dkim
-              mountPath: /etc/mail/dkim
-              readOnly: true
             - name: tmp
               mountPath: /tmp
           livenessProbe:
@@ -131,15 +133,5 @@ spec:
         - name: config
           configMap:
             name: rig-mail-relay-config
-        # De DKIM-sleutel zit in hetzelfde geheim als de rest: de gedeelde
-        # secret-generatie levert per bestand EEN document (zie de toelichting in
-        # infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml).
-        # Alleen deze sleutel wordt aangekoppeld, de rest komt als omgevingsvariabele.
-        - name: dkim
-          secret:
-            secretName: mail-relay-credentials
-            items:
-              - key: dkim.key
-                path: dkim.key
         - name: tmp
           emptyDir: {}

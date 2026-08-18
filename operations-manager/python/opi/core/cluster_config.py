@@ -27,7 +27,7 @@ CLUSTER_CONFIG = {
         "mail_relay_namespace": "rig-ron",
         "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
         "mail_relay_port": 587,
-        "mail_domain": "mail.kind",
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
@@ -95,7 +95,7 @@ CLUSTER_CONFIG = {
         "mail_relay_namespace": "rig-ron",
         "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
         "mail_relay_port": 587,
-        "mail_domain": "mail.sandbox.rijksapp.dev",
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
@@ -160,7 +160,7 @@ CLUSTER_CONFIG = {
         "mail_relay_namespace": "rig-prd-ron",
         "mail_relay_host": "rig-mail-relay.rig-prd-ron.svc.cluster.local",
         "mail_relay_port": 587,
-        "mail_domain": "mail.rijksapp.nl",
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator (see the note in the other clusters).
         "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
@@ -732,25 +732,32 @@ def get_mail_relay_port(cluster_name: str) -> int:
     return cluster_config["mail_relay_port"]
 
 
-def get_mail_domain(cluster_name: str) -> str:
+def get_mail_from_address(cluster_name: str) -> str:
     """
-    Get the platform mail domain outgoing mail is sent from.
+    The one sender address every project sends from. Not configurable per project.
 
-    The domain the envelope sender and the ``From:`` header are pinned to, so the
-    upstream always sees one domain for one authenticated account and DKIM alignment
-    holds regardless of what the upstream does with the envelope.
+    The relay pins the ``From:`` header to this address and rewrites the envelope to
+    ``<local>+<project>@<domain>``. Both live in the relay's own config (MAIL_FROM_LOCAL
+    and MAIL_DOMAIN in its secret); this function is what OPI hands to the application as
+    ``SMTP_FROM``. The two must agree -- if they drift, a developer is shown one address
+    while another one leaves the building.
+
+    It is a domain we do NOT own: mail goes out over the Rijksoverheid mail server, so it
+    carries their domain. That is also the only arrangement that survives DMARC, because
+    they publish ``p=reject`` and we sign nothing with DKIM, leaving SPF alignment between
+    envelope and ``From:`` as the single thing that can pass. See docs/ron-koppeling.md.
 
     Args:
         cluster_name: Name of the cluster
 
     Returns:
-        Mail domain (e.g. ``mail.rijksapp.nl``)
+        The fixed sender address (e.g. ``noreply-rijksapp@rijksoverheid.nl``)
 
     Raises:
         ValueError: If cluster is not found in configuration
     """
     cluster_config = get_cluster_config(cluster_name)
-    return cluster_config["mail_domain"]
+    return cluster_config["mail_from_address"]
 
 
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
