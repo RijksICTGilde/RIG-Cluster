@@ -8,4 +8,7 @@ generators:
 
 resources:
   - ../../base
+  # De SMTP-sink als testupstream. Staat alleen in local en sandboxed-local: op ODCN is de
+  # upstream de mailserver van de Rijksoverheid en heeft een sink niets te zoeken.
+  - ../../../sink/base
   - network-policies/mail-relay-networkpolicy.yaml
