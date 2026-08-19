@@ -302,13 +302,15 @@ cd operations-manager/python
 uv run python scripts/mail_identity_check.py --user <account> --password <geheim>
 ```
 
-De eerste sandbox-run beantwoordt en passant een vraag die nog openstaat: de relay praat STARTTLS met strikte certificaatcontrole, en nergens staat wat Stalwart doet als de tegenpartij STARTTLS niet aanbiedt. De sink biedt het niet aan. Komt er post aan, dan valt hij terug op platte tekst en is `allow-invalid-certs = false` een voorkeur; komt er niets aan, dan is het een garantie. Noteer de uitkomst in `docs/ron-koppeling.md`, want dat verschil bepaalt of er op productie een tweede slot op zit.
+De eerste sandbox-run beantwoordde en passant een vraag die openstond: de relay praat STARTTLS met strikte certificaatcontrole, en nergens stond wat Stalwart doet als de tegenpartij STARTTLS niet aanbiedt. **Gemeten op 19 augustus 2026: het is een garantie.** Zonder STARTTLS weigert hij permanent (`STARTTLS was not advertised by host`) en bouncet het bericht; met een certificaat dat niet valideert weigert hij tijdelijk en blijft het bericht in de wachtrij. Hij valt in geen van beide gevallen terug op platte tekst. Daar hoort een tweede uitkomst bij die productie raakt: Stalwart leest de trust store van het besturingssysteem niet, dus een interne CA valt niet te vertrouwen. Beide staan uitgewerkt in `docs/ron-koppeling.md`. De sink biedt STARTTLS daarom nu wel aan, met een certificaat dat een initContainer bij elke start maakt.
 
 Het netwerkbeleid van de relay staat in de dev-overlays op precies deze sink dichtgezet. Daar stond eerst `0.0.0.0/0` met het argument dat niet vastligt welke testupstream een ontwikkelaar gebruikt; nu er een sink meekomt ligt het wel vast, en een relay die overal heen mag is een open relay zodra iemand een account bemachtigt.
 
 ## Wat er nog niet af is
 
-**De relay draait nog nergens**, maar de weg ernaartoe is inmiddels bewezen. Op 17 augustus
+**De relay draait op de sandbox, en op productie nog niet.** Op 19 augustus 2026 liep er een
+bericht doorheen en eindigde `scripts/mail_identity_check.py` met exitcode 0: alle vier de
+identiteitsregels doen wat ze beloven. De weg naar de upstream is los daarvan bewezen. Op 17 augustus
 2026 gemeten vanuit een pod met `rig-ron`-egress: `rmrmail.rijksweb.nl` antwoordt op poort 25
 met een banner en neemt een testbericht aan. De eerdere meting, waarin alle drie de poorten
 stil bleven, liep door het baseline-netwerkbeleid van de tenant dat egress alleen op 443 en 80
