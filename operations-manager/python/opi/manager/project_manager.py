@@ -2559,7 +2559,7 @@ class ProjectManager:
 
             logger.info(f"Successfully created ArgoCD infrastructure application for project '{project_name}'")
 
-            # STEP 7: Refresh ArgoCD user-applications to detect new infrastructure folder
+            # STEP 7: ArgoCD-verbinding voor de verversbewaker hieronder en voor STEP 9
             logger.info(
                 f"Refreshing ArgoCD user-applications to create infrastructure application for '{project_name}'"
             )
@@ -2577,22 +2577,32 @@ class ProjectManager:
             if not await argo_connector.login():
                 raise RuntimeError("Failed to login to ArgoCD")
 
-            # Refresh user-applications app to pick up the new {project_name}-infrastructure folder
-            if not await argo_connector.refresh_application("user-applications"):
-                raise RuntimeError("Failed to refresh ArgoCD user-applications")
-
-            logger.info("ArgoCD user-applications refreshed, waiting for infrastructure application to be created")
-
             # STEP 8: Wait for infrastructure application to be created by ArgoCD
             infra_app_name = f"{project_name}-infrastructure"
             if progress_manager and infra_task:
                 progress_manager.update_task(infra_task, "Wachten tot ArgoCD de infrastructuur aanmaakt")
 
-            await self._argo_manager.wait_for_application_created(
-                app_name=infra_app_name,
-                timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
-                poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
+            # Dezelfde bewaker als bij de deployment-applicaties: de refresh die de umbrella
+            # onze infrastructuurmap moet laten zien kan opgaan in een reconcile die zijn
+            # revisie al had opgehaald, en dan gebeurt er tot de volgende reconcile niets.
+            umbrella_watcher = asyncio.create_task(
+                self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
             )
+            try:
+                await self._argo_manager.wait_for_application_created(
+                    app_name=infra_app_name,
+                    timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
+                    poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
+                )
+            finally:
+                umbrella_watcher.cancel()
+                try:
+                    await umbrella_watcher
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    # De bewaker is een vangnet en mag het wachten nooit meeslepen.
+                    logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
 
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
 
@@ -2753,7 +2763,8 @@ class ProjectManager:
 
         Bedoeld om naast de wachters te draaien en door de aanroeper geannuleerd te worden.
         """
-        await argo_connector.refresh_application("user-applications")
+        if not await argo_connector.refresh_application("user-applications"):
+            logger.warning("Refresh van user-applications leverde niets op; een volgende ronde probeert het opnieuw")
         if not pushed_commit:
             return
 
@@ -2774,7 +2785,10 @@ class ProjectManager:
                 f"user-applications staat nog op revisie {revision or 'onbekend'} in plaats van {pushed_commit}; "
                 "de vorige refresh is verloren gegaan, opnieuw verversen"
             )
-            await argo_connector.refresh_application("user-applications")
+            if not await argo_connector.refresh_application("user-applications"):
+                logger.warning(
+                    "Refresh van user-applications leverde niets op; een volgende ronde probeert het opnieuw"
+                )
 
     async def process_project_from_git(
         self,
