@@ -299,3 +299,19 @@ Gedraaid op 14 augustus, tweede keer over bestaande componenten, alles groen. In
 - De overlays: `infrastructure/bootstrap/clusters/fundament-poc/` en de twee onder `bootstrap/rig-system/kustomize/`. Begin bij de componenten die op ODCN echt draaien, en let op de twee punten uit 2.2n en 2.2o van het hoofddocument: de storageclass staat op vijf plaatsen, en de backup-networkpolicy selecteert op een Capsule-tenantlabel dat hier niets matcht.
 - external-dns, bij voorkeur als Fundament-plugin in plaats van uit onze eigen tree.
 - Overwegen om cert-manager om te zetten naar de Fundament-plugin, zodat het platformbeheerd is in plaats van iets van ons.
+
+## 8. Twee dingen om te onthouden bij het beheren van dit cluster
+
+### 8.1 Gebruik `deploy-operations-manager` hier niet
+
+Die taak doet `kustomize build | kubectl apply` op dezelfde overlay die ArgoCD sinds de app-of-apps bezit. Met `selfHeal: true` wint ArgoCD, dus je wijziging wordt binnen een minuut teruggedraaid en je bent aan het vechten met de reconciler zonder dat er iets fout lijkt te gaan.
+
+Op dit cluster is de weg: commit naar de `fundament`-branch, ArgoCD synchroniseert. De taak blijft nuttig voor clusters waar OPI niet in GitOps zit.
+
+### 8.2 De configuratie van OPI komt volledig uit git, de bron van de secrets niet
+
+Wat OPI meekrijgt zit in de wave-4 Application: een ConfigMap met 28 variabelen (waaronder `CLUSTER_MANAGER=fundament-poc`, dus hij weet welk cluster hij beheert) en een SOPS-versleuteld secret met 21 sleutels. Beide staan in git.
+
+Wat niet in git staat is `operations-manager/python/.env.fundament-poc.secrets`, de platte bron waaruit `generate-env-secrets-for-operations-manager` dat secret maakt. Dat is de goede kant op: platte secrets horen niet in git. Maar het betekent wel dat dat bestand op één laptop staat.
+
+Raakt het kwijt, dan zijn de waarden niet verloren: het versleutelde secret in git is te ontsleutelen met `security/fundament-poc-key.txt`. De echte enkelvoudige afhankelijkheid is dus die AGE-sleutel, en die staat ook maar op één plek. Dat geldt voor elk cluster, maar hier is het nieuw en dus het opschrijven waard.
