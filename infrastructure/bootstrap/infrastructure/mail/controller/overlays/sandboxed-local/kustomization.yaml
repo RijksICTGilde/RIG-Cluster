@@ -31,3 +31,28 @@ patches:
       kind: Namespace
       metadata:
         name: rig-ron
+
+  # De sink draagt een zelfondertekend certificaat en Stalwart valideert tegen de
+  # ingebouwde webpki-roots; een eigen CA toevoegen kan niet (gemeten: hij leest de trust
+  # store van het besturingssysteem niet). Zonder deze schakelaar mislukt elke bezorging
+  # naar de sink op "invalid peer certificate" en komt er in dit cluster nooit post aan.
+  # Alleen hier: de basis zet hem op "false" en odcn laat hem daar staan.
+  #
+  # Op naam en niet op index: kustomize voegt env-lijsten samen op het veld `name`, dus
+  # deze patch blijft staan als er in de basis een variabele voor of achter bij komt.
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rig-mail-relay
+      spec:
+        template:
+          spec:
+            containers:
+              - name: stalwart
+                env:
+                  - name: MAIL_UPSTREAM_ALLOW_INVALID_CERTS
+                    value: "true"

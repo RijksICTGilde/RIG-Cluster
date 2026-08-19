@@ -40,15 +40,31 @@ import requests
 
 VAST_ADRES = "noreply-rijksapp@rijksoverheid.nl"
 
-#: Headers die er onder geen beding uit mogen komen. De Received-keten draagt pod-IP's en
-#: namespace-namen, de rest draagt het account en de client.
+#: Headers die er onder geen beding uit mogen komen: ze dragen het account en de client.
 VERBODEN_HEADERS = (
-    "Received",
     "X-Originating-IP",
     "X-Authenticated-Sender",
     "X-Mailer",
     "X-Originating-Client",
 )
+
+
+def received_fouten(ontvangen: list[str]) -> list[str]:
+    """Toetst de Received-keten van een bericht dat bij de sink is aangekomen.
+
+    Waarom dit niet gewoon "er mag geen Received in staan" is: de ONTVANGENDE server zet
+    er zelf een. Dat doet elke MTA, het gebeurt NA het moment dat de relay het bericht uit
+    handen geeft, en geen enkele relay kan dat wegnemen. Een toets die op de kale
+    aanwezigheid van Received afgaat, keurt daarom ook een relay af die precies doet wat
+    hij moet doen - gemeten op 19 augustus 2026, toen de drie andere regels al klopten.
+
+    Wat de regel WEL betekent: de relay geeft zijn EIGEN keten niet door. De hop waarmee
+    de applicatie bij de relay binnenkwam draagt het pod-IP en de namespace van de
+    inzender, en die hoort eraf. Blijft die staan, dan staan er twee.
+    """
+    if len(ontvangen) != 1:
+        return [f"Received-keten telt {len(ontvangen)} regels, verwacht alleen die van de ontvanger: {ontvangen}"]
+    return []
 
 
 def _stuur(host: str, poort: int, user: str, password: str, from_header: str, onderwerp: str) -> None:
@@ -125,12 +141,14 @@ def main() -> int:
             fouten.append(f"[{naam}] envelope-domein wijkt af van het From-domein: SPF lijnt niet uit")
 
         # 4: niets van binnen het cluster gaat mee naar buiten.
-        aanwezig = {k.lower() for k in _headers(args.api, bericht["ID"])}
+        headers = _headers(args.api, bericht["ID"])
+        aanwezig = {k.lower(): v for k, v in headers.items()}
         fouten.extend(
             f"[{naam}] header {verboden} staat er nog in"
             for verboden in VERBODEN_HEADERS
             if verboden.lower() in aanwezig
         )
+        fouten.extend(f"[{naam}] {fout}" for fout in received_fouten(aanwezig.get("received", [])))
 
         print(f"  {naam}: From={afzender!r} naam={getoonde_naam!r} envelope={envelope!r}")
 
