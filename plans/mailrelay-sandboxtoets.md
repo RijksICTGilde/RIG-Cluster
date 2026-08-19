@@ -1,35 +1,43 @@
-# De mailrelay draaien in de sandbox en de identiteitsregels bewijzen
+# De identiteitstoets van de mailrelay draaien op de sandbox
 
-**Prefix**: RC-114 (vervolg) — tweede poging, na RC-138
+**Prefix**: RC-114 (vervolg) — derde poging, na RC-138 en RC-139
 **Basis**: `claude/mailrelay-ready`
-**Doel**: de relay en zijn testupstream draaiend krijgen op de sandbox, en met een bestaand
-script bewijzen dat de identiteitsregels doen wat ze beloven.
+**Doel**: één ding. Een bericht door de relay laten lopen en met een bestaand script
+bewijzen dat de identiteitsregels doen wat ze beloven.
 
 ## Wat er al staat, en dus NIET opnieuw hoeft
 
-RC-138 is vier keer omgevallen doordat zijn worker-container verdween, maar het werk dat hij
-wél afmaakte is in deze basis opgenomen:
+Twee eerdere pogingen zijn omgevallen doordat hun worker-container verdween, maar hun werk
+is in deze basis opgenomen. Alles hieronder is af:
 
-- de mailrelay-overlay staat **aan** in `infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml`
-- `MAIL_RELAY_API_URL` staat **aan** in de OPI-deployment van datzelfde clustertype
-
-Begin dus niet daar. Eén ding uit die commit is wél rechtgezet en dat is leerzaam: er stond
-in een toelichting geschreven dat de identiteitsregels waren doorgemeten en dat de uitslag in
-`docs/ron-koppeling.md` stond, terwijl geen van beide bestanden was aangeraakt. **Schrijf
-geen uitkomst op die je niet hebt gemeten.** De assertie hieronder is de exitcode van een
-script, niet een zin in een commit.
+- **De relay draait via een eigen ArgoCD Application** (`ron-infrastructure`, destination
+  `rig-ron`, in `bootstrap/rig-system/kustomize/overlays/sandboxed-local`). Niet via de
+  clusterkustomization: de CMP-plugin forceert daar `namespace: rig-system` op de hele
+  build, wat de `rig-ron`-resources plat trok en stukliep op een dubbele
+  `mail-relay-credentials` Secret.
+- **De submission-listener draait op 2525 in de container**, met de Service op 587. Een
+  niet-root proces krijgt op deze host EACCES op 25, 465 en 587. Het netwerkbeleid kijkt
+  naar de podpoort en noemt dus ook 2525.
+- **`auto-update = false` op het spamfilter.** Stalwart haalde bij elke start een regelset
+  van GitHub; die route bestaat op de sandbox niet en de mislukte fetch gaf een
+  `config.build`-fout.
+- **De sink heeft een emptyDir op `/tmp`**, want Mailpit schrijft daar een sqlite-klad en
+  het manifest had `readOnlyRootFilesystem`.
+- **`task sandbox:create-sops-age-secret` maakt ook `rig-ron` en zijn sops-age-key aan**,
+  want de CMP heeft beide nodig om te renderen en GitOps kan ze in namespaced mode niet
+  zelf brengen.
+- De mailrelay-overlay staat daarom bewust NIET in
+  `infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml`. Zet hem daar niet
+  terug.
 
 ## Werk in kleine stappen en commit na elke stap
 
-De worker van de vorige poging verdween telkens na drie tot elf minuten. Dat is een
-omgevingsprobleem waar jij niets aan kunt doen, maar je kunt er wel omheen werken:
+De workers van beide vorige pogingen verdwenen na acht tot vijftien minuten. Dat is een
+omgevingsprobleem waar jij niets aan kunt doen, maar je kunt eromheen werken:
 
-- **Commit na elke stap hieronder.** Een volgende dispatch begint dan waar jij ophield in
-  plaats van bij nul.
-- **Zet niet zelf een sandbox op als het even kan.** `task sandbox:setup` duurt vijf tot tien
-  minuten en dat is langer dan de vorige workers leefden. Kijk eerst met
-  `kubectl get ns` of er al een draait. Is die er niet en lukt het opzetten niet binnen jouw
-  levensduur, commit dan wat je hebt en meld dat in het verslag.
+- **Commit na elke stap.** Een volgende dispatch begint dan waar jij ophield.
+- **Zet niet zelf een sandbox op als er al een draait.** Kijk eerst met `kubectl get ns`.
+  `task sandbox:setup` duurt vijf tot tien minuten en dat is de meeste tijd die je hebt.
 
 ## De assertie
 
@@ -45,6 +53,10 @@ foute envelope, en toetst:
    ondertekenen niet met DKIM, dus SPF-uitlijning is het enige dat een bericht door DMARC
    krijgt)
 4. de `Received`-keten en de verklikkerheaders zijn eraf
+
+**Schrijf geen uitkomst op die je niet gemeten hebt.** Een eerdere poging schreef in een
+toelichting dat de regels waren doorgemeten terwijl geen van de genoemde bestanden was
+aangeraakt. De assertie is de exitcode, niet een zin in een commit.
 
 ## Twee dingen die je zonder waarschuwing verkeerd doet
 
@@ -64,6 +76,9 @@ waarden voor `sandboxed-local` in en versleutel het met `task encrypt-secret`. D
   `@secret-gen:random:24`-merkteken wordt alleen door de generatietaak ingevuld en blijft
   bij handmatig versleutelen letterlijk staan
 
+Let op dat dit geheim twee keer gerenderd wordt: in `rig-system` voor OPI, en in `rig-ron`
+voor de relay via zijn eigen overlay.
+
 **2. De database van de relay moet bestaan.** De relay bewaart zijn accounts en wachtrij in
 PostgreSQL (`MAIL_DB_NAME: mailrelay`), niet op een PVC. Bestaat die database of die
 gebruiker niet, dan start Stalwart niet op en zie je dat pas in de podlog.
@@ -73,15 +88,15 @@ gebruiker niet, dan start Stalwart niet op en zie je dat pas in de podlog.
 1. **Claim de sandbox**: `orch sandbox claim`. Aan het eind `orch sandbox release`, ook als
    het misgaat.
 2. **Het geheim maken** volgens punt 1 hierboven → verifieer: `sops --decrypt` op het
-   resultaat toont de vier waarden. **Commit.**
-3. **De build controleren**:
-   `SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" kustomize build --enable-alpha-plugins --enable-exec --load-restrictor LoadRestrictionsNone infrastructure/bootstrap/clusters/sandboxed-local`
-   → verifieer: bouwt zonder fout en bevat `rig-mail-relay`, `rig-mail-sink` en het
-   netwerkbeleid. Faalt hij op iets anders dan het geheim, dan is dat een bevinding.
-4. **Synchroniseren**: `task sandbox:sync`, en wachten tot ArgoCD de namespace `rig-ron`
-   heeft aangemaakt → verifieer: `kubectl -n rig-ron get pods` toont `rig-mail-relay` en
-   `rig-mail-sink` allebei Running. Start de relay niet op, lees dan zijn log: dat is
-   vrijwel zeker de database uit punt 2. **Commit wat je onderweg moest aanpassen.**
+   resultaat toont de waarden. **Commit.**
+3. **De overlay bouwen**:
+   `SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" kustomize build --enable-alpha-plugins --enable-exec --load-restrictor LoadRestrictionsNone infrastructure/bootstrap/infrastructure/mail/controller/overlays/sandboxed-local`
+   → verifieer: bouwt zonder fout en bevat `rig-mail-relay`, `rig-mail-sink`, het geheim en
+   het netwerkbeleid, allemaal in `rig-ron`.
+4. **Synchroniseren**: `task sandbox:sync`, en wachten tot de Application
+   `ron-infrastructure` gesynchroniseerd is → verifieer: `kubectl -n rig-ron get pods` toont
+   `rig-mail-relay` en `rig-mail-sink` allebei Running. Start de relay niet op, lees dan
+   zijn log; de eerste verdachte is de database uit punt 2. **Commit wat je moest aanpassen.**
 5. **Een account**: OPI maakt bij het opstarten zijn eigen platformaccount aan
    (`ensure_platform_mail_account`) en bewaart het wachtwoord in de Secret uit
    `MAIL_PLATFORM_SECRET_NAME` in de namespace van OPI → verifieer: die Secret bestaat en de
@@ -104,8 +119,7 @@ gebruiker niet, dan start Stalwart niet op en zie je dat pas in de podlog.
    identiteitsregel 2 in
    `infrastructure/bootstrap/infrastructure/mail/controller/base/configmap.yaml` en zet
    ervoor in de plaats wat er gemeten is, in dezelfde stijl als de regels eromheen. Werk ook
-   de toelichting bij in `infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml`,
-   want daar staat nu dat de toets nog niet gedraaid is.
+   de toelichting bij in `infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml`.
 9. `orch sandbox release`.
 
 ## Wat niet de bedoeling is
@@ -119,14 +133,13 @@ gebruiker niet, dan start Stalwart niet op en zie je dat pas in de podlog.
   de toets waardeloos.
 - Het script niet verbouwen behalve als het zelf stuk is; het is de assertie.
 - **Blijf van de limieten af.** Er staan vier bekende vervolgpunten open (een burst-limiter
-  naast de daglimiet, het besluit of het spamfilter aan gaat, `messages = 10` per sessie dat
-  te laag is, en of een outbound throttle op `sender` het plusdeel meeneemt). Die horen bij
-  een volgende taak, niet bij deze. Kom je onderweg een gegeven tegen dat er iets over zegt,
-  schrijf het op in het verslag maar verander niets.
+  naast de daglimiet, het besluit of het spamfilter aan gaat nu `auto-update` uit staat,
+  `messages = 10` per sessie dat te laag is, en of een outbound throttle op `sender` het
+  plusdeel meeneemt). Die horen bij een volgende taak. Kom je een gegeven tegen dat er iets
+  over zegt, schrijf het op in het verslag maar verander niets.
 
 ## Verslag
 
-Wat er in de PR moet staan: de uitslag van de toets (alle vier de punten), het antwoord op de
-TLS-vraag uit stap 7, en alles wat onderweg anders bleek dan hierboven beschreven. Dat laatste
-is het waardevolste deel, want dit plan is geschreven zonder dat er ooit een relay heeft
-gedraaid.
+De uitslag van de toets (alle vier de punten), het antwoord op de TLS-vraag uit stap 7, en
+alles wat onderweg anders bleek dan hierboven beschreven. Dat laatste is het waardevolste
+deel: de twee vorige pogingen leverden samen vijf blokkades op die niemand had voorzien.
