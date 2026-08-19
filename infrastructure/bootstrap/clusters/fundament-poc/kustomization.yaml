@@ -1,38 +1,46 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Infrastructuurcomponenten voor fundament-poc.
+# App-of-apps voor fundament-poc.
 #
-# Begonnen bij de negen die op ODCN echt draaien, met twee bewuste weglatingen:
+# Deze map bevatte eerder een platte lijst kustomize-paden, die de root-Application in
+# een keer renderde. Daarmee was er geen plek om volgorde uit te drukken, en dat is nodig
+# zodra operators meedoen: een CRD moet geregistreerd zijn voordat een custom resource
+# die hem gebruikt aangeboden wordt.
 #
-# - forgejo: alleen de sandbox draait een eigen git-server. Hier gebruiken we dezelfde
-#   git-server als ODCN, dus die hoort niet in de clusterlaag.
-# - registry: egress staat open naar 0.0.0.0/0 op 443, dus ghcr.io en docker.io zijn
-#   direct bereikbaar. Er is geen mirror nodig (zie extensions: [] in cluster_config).
+# Nu is elke component een eigen Application met een sync-wave. ArgoCD verwerkt waves op
+# volgorde en wacht tot de resources van een wave gezond zijn. Dat geeft het gedrag van
+# Flux' dependsOn, alleen uitgedrukt als een getal in plaats van een verwijzing. Als de
+# volgorde ooit te complex wordt voor getallen is ApplicationSet RollingSync het
+# alternatief; dat kost wel de autosync op de gegenereerde Applications.
 #
-# Nog niet opgenomen, wachtend op een beslissing:
+# Waves:
+#   -1  operators: leveren CRD's, de ingressklasse en de StorageClass
+#    0  secrets: de rest leest deze
+#    1  opslag en databases: vragen PVC's en de CNPG-CRD
+#    2  diensten die op een database of op minio wachten
+#    3  configuratie die op een draaiende dienst wacht
 #
-# - backup-destination: staat ook op ODCN buiten de clusterlijst en gaat via
-#   `task bootstrap-backup-destination`. Let op punt 2.2o: die overlay selecteert
-#   tenant-namespaces op het Capsule-tenantlabel, en Capsule draait hier niet.
-#   De selector moet `created-by: operations-manager` worden, zoals in minio/config.
-#
-# secrets/config wordt gegenereerd, niet met de hand geschreven. Draai eerst
-# `task generate-infrastructure-secrets-for-cluster` (met CLUSTER_TYPE=fundament-poc),
-# anders faalt de build hieronder op een ontbrekende map.
+# Op ODCN staat deze map er bewust anders uit te zien: daar praat ArgoCD via de
+# Capsule-proxy en is hij tenant-scoped, dus hij mag geen CRD's of cluster-brede RBAC
+# aanmaken. De operators worden daar buiten GitOps geinstalleerd. Zie
+# plans/operators-via-argo-in-plaats-van-taken.md.
 resources:
-  - ../../infrastructure/secrets/config/overlays/fundament-poc
-  - ../../infrastructure/postgresql/database/overlays/fundament-poc
-  - ../../infrastructure/keycloak/controller/overlays/fundament-poc
-  - ../../infrastructure/keycloak/config/overlays/fundament-poc
-  - ../../infrastructure/minio/controller/overlays/fundament-poc
-  - ../../infrastructure/minio/config/overlays/fundament-poc
-  - ../../infrastructure/prometheus/controller/overlays/fundament-poc
-  - ../../infrastructure/redis/controller/overlays/fundament-poc
-  # external-dns staat klaar maar is uitgeschakeld tot zijn secret bestaat. De deployment
-  # verwacht `transip-credentials` in deze namespace, en dat secret zit alleen in de
-  # odcn-overlay (transip-secret.yaml.sops.yaml), versleuteld met de ODCN-sleutel.
-  # Aanzetten: ontsleutel dat bestand met security/key.txt, herversleutel het met
-  # security/fundament-poc-key.txt naar de secrets/config/overlays/fundament-poc map,
-  # en haal het commentaarteken hieronder weg.
-  # - ../../infrastructure/external-dns/controller/overlays/fundament-poc
+  - applications/-1-cert-manager.yaml
+  - applications/-1-cloudnative-pg.yaml
+  - applications/-1-ingress-nginx.yaml
+  - applications/-1-storage.yaml
+  - applications/0-secrets.yaml
+  - applications/1-postgresql.yaml
+  - applications/1-redis.yaml
+  - applications/1-minio.yaml
+  - applications/2-keycloak.yaml
+  - applications/2-prometheus.yaml
+  - applications/2-minio-config.yaml
+  - applications/3-keycloak-config.yaml
+
+# external-dns staat klaar in infrastructure/bootstrap/infrastructure/external-dns maar
+# heeft nog geen Application: hij verwacht het transip-credentials secret, en dat zit
+# alleen in de odcn-overlay versleuteld met de ODCN-sleutel. Aanzetten is dat bestand
+# herversleutelen met security/fundament-poc-key.txt en hier een Application op wave 3
+# toevoegen.
