@@ -20,6 +20,7 @@ kind: Kustomization
 #    1  opslag en databases: vragen PVC's en de CNPG-CRD
 #    2  diensten die op een database of op minio wachten
 #    3  configuratie die op een draaiende dienst wacht
+#    4  de operations-manager zelf, die op alles hierboven wacht
 #
 # Op ODCN staat deze map er bewust anders uit te zien: daar praat ArgoCD via de
 # Capsule-proxy en is hij tenant-scoped, dus hij mag geen CRD's of cluster-brede RBAC
@@ -38,9 +39,21 @@ resources:
   - applications/2-prometheus.yaml
   - applications/2-minio-config.yaml
   - applications/3-keycloak-config.yaml
+  - applications/4-operations-manager.yaml
 
 # external-dns staat klaar in infrastructure/bootstrap/infrastructure/external-dns maar
 # heeft nog geen Application: hij verwacht het transip-credentials secret, en dat zit
 # alleen in de odcn-overlay versleuteld met de ODCN-sleutel. Aanzetten is dat bestand
 # herversleutelen met security/fundament-poc-key.txt en hier een Application op wave 3
 # toevoegen.
+
+# De branch staat hier op een plaats in plaats van in twaalf bestanden. Op fundament-poc
+# lezen we van de branch `fundament` en niet van `main`: dat is de upstream waar dit werk
+# heen gaat. Verhuist het naar main, dan is dit de enige regel die verandert.
+patches:
+  - target:
+      kind: Application
+    patch: |-
+      - op: replace
+        path: /spec/source/targetRevision
+        value: fundament

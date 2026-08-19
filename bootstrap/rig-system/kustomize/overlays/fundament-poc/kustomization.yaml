@@ -7,12 +7,16 @@ kind: Kustomization
 generators:
 - decrypt-sops.yaml
 
+# Bewust minimaal: alleen wat moet bestaan voordat ArgoCD iets kan doen. De
+# operations-manager stond hier eerder ook, maar die hangt af van dingen die pas via
+# GitOps komen (de cert-manager-CRD voor zijn Issuer, de StorageClass voor zijn PVC, de
+# IngressClass voor zijn ingress). Imperatief toepassen betekende dus een falende Issuer
+# en een PVC die blijft hangen. Hij is nu een Application op wave 4.
 resources:
 - namespace.yaml
 - argocd-deployment.yaml
 - argocd-application-infrastructure.yaml
 - argocd-application-user-applications.yaml
-- ../../operations-manager/overlays/fundament-poc
 
 # Niet meegenomen, met reden:
 # - csi-snapshot/base: de VolumeSnapshot-CRD's staan al op het cluster (Gardener zet ze
@@ -25,6 +29,24 @@ components:
 - ../../components/sops-plugin
 
 patches:
+  # De branch op een plaats, net als in de app-of-apps. Op fundament-poc lezen we van
+  # `fundament` en niet van `main`. Twee vormen, want de infrastructuur-Application
+  # gebruikt `source` en die voor user-applications `sources`.
+  - target:
+      kind: Application
+      name: fundament-poc-infrastructure
+    patch: |-
+      - op: replace
+        path: /spec/source/targetRevision
+        value: fundament
+  - target:
+      kind: Application
+      name: user-applications
+    patch: |-
+      - op: replace
+        path: /spec/sources/0/targetRevision
+        value: fundament
+
   # De sops-plugin component doet `op: replace` op /spec/repo, dus alles wat echt moet
   # landen staat hier, na de component. Zie de waarschuwing in argocd-deployment.yaml.
   - target:

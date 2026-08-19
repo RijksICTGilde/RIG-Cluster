@@ -283,6 +283,53 @@ tasks:
         echo "⚠️  For production use, consider storing the key in a secure vault or HSM."
     silent: true
 
+  create-namespace:
+    desc: "Create the selected cluster's platform namespace"
+    vars:
+      NS: '{{default .RIG_NAMESPACE .NAMESPACE}}'
+      CTX: '{{.KUBE_CONTEXT}}'
+    preconditions:
+      - sh: '[ -n "{{.NS}}" ]'
+        msg: "RIG_NAMESPACE is niet gezet. Draai 'task select-cluster'."
+    cmds:
+      - |
+        CTX_FLAG=""
+        [ -n "{{.CTX}}" ] && CTX_FLAG="--context {{.CTX}}"
+        kubectl $CTX_FLAG create namespace {{.NS}} --dry-run=client -o yaml | kubectl $CTX_FLAG apply -f -
+        echo "✅ namespace {{.NS}}"
+    silent: true
+
+  create-sops-age-secret:
+    desc: "Place the selected cluster's AGE key as the sops-age-key secret, so ArgoCD can decrypt"
+    vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      NS: '{{default .RIG_NAMESPACE .NAMESPACE}}'
+      CTX: '{{.KUBE_CONTEXT}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Draai 'task select-cluster' of geef KEY_FILE expliciet mee."
+      - sh: '[ -n "{{.NS}}" ]'
+        msg: "RIG_NAMESPACE is niet gezet. Draai 'task select-cluster'."
+    cmds:
+      - |
+        # Dit is de enige echte kip-en-ei in de secretketen: git bevat versleutelde
+        # secrets, ArgoCD moet ze kunnen lezen, dus de sleutel moet in het cluster staan
+        # voordat er ook maar iets gesynct wordt. Hij kan per definitie niet uit git komen.
+        [ -f "{{.KEY_FILE}}" ] || { echo "❌ {{.KEY_FILE}} bestaat niet. Draai eerst 'task generate-age-key'."; exit 1; }
+
+        # --context alleen meegeven als het cluster er een heeft. Kind-clusters zetten
+        # KUBE_CONTEXT niet en draaien op de huidige context.
+        CTX_FLAG=""
+        [ -n "{{.CTX}}" ] && CTX_FLAG="--context {{.CTX}}"
+
+        kubectl $CTX_FLAG create secret generic sops-age-key \
+          --from-file=key={{.KEY_FILE}} \
+          -n {{.NS}} \
+          --dry-run=client -o yaml | kubectl $CTX_FLAG apply -f -
+
+        echo "✅ sops-age-key in {{.NS}}, uit {{.KEY_FILE}}"
+    silent: true
+
   encrypt-value-age-base64:
     desc: "Encrypt a value with AGE and output in base64+age:base64encoded format"
     vars:
