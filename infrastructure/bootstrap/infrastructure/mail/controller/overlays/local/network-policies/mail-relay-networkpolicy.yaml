@@ -73,5 +73,9 @@ spec:
             matchLabels:
               app: rig-mail-sink
       ports:
+        # 1025, niet 25: dat is de podpoort (de Service vertaalt 25 -> 1025, zie
+        # sink/base/service.yaml), en een NetworkPolicy kijkt naar de poort van de pod.
+        # Stond hier 25, dan blijft de relay hangen op het verbinden met de sink: de
+        # bezorging stopt na "TLSA record not found" en er komt niets bij de sink aan.
         - protocol: TCP
-          port: 25
+          port: 1025
