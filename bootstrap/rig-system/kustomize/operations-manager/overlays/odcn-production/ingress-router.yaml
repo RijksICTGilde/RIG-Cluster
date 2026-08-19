@@ -1,0 +1,62 @@
+# Een eigen certificaat op router.rijksapp.nl.
+#
+# Deze naam is de kale ingang van het cluster: elke andere naam die wij publiceren is een
+# CNAME hierheen. Er hing geen Ingress aan, dus gaf de OpenShift-router zijn eigen wildcard
+# terug (*.rig.prd1.gn2.quattro.rijksapps.nl), en dat certificaat slaat niet op deze naam.
+# Elke HTTPS-verbinding faalde daardoor op naamvalidatie, en daar zakte de internet.nl-toets
+# op. Met deze Ingress krijgt de naam een Let's Encrypt-certificaat op zichzelf en serveert
+# de operations-manager er de uitleg over het aanwijzen van een eigen domein (de root-route
+# kiest die pagina op de host).
+#
+# LET OP, EN DIT IS DE REDEN DAT DIT BESTAND NIET OP ingress-rijksapp.yaml LIJKT:
+# GEEN external-dns.alpha.kubernetes.io/target. Op de Ingress hiernaast wijst die annotatie
+# naar router.rijksapp.nl, wat daar klopt. Hier zou hij een CNAME van router.rijksapp.nl
+# naar zichzelf laten maken, bovenop de A/AAAA die er met de hand in staan, en dat is een lus
+# op precies de naam waar al het verkeer langs komt.
+#
+# external-dns (v0.15.0, --source=ingress --policy=sync --txt-prefix=edns-) beheert alleen
+# records die hij bezit, en van deze naam bestaat geen edns-marker: gemeten op 19 augustus
+# 2026 heeft edns-zad.rijksapp.nl er wel een en edns-router.rijksapp.nl niet. Hij laat de
+# A/AAAA dus met rust. De exclude-annotatie hieronder is de tweede grendel, niet de eerste.
+#
+# NA HET UITROLLEN CONTROLEREN:
+#   dig @ns0.transip.net router.rijksapp.nl A      -> nog steeds 147.181.48.71
+#   dig @ns0.transip.net router.rijksapp.nl AAAA   -> nog steeds 2a04:9a00:1007:4000:0:2:0:8
+#   dig @ns0.transip.net router.rijksapp.nl CNAME  -> leeg
+#   dig @ns0.transip.net edns-router.rijksapp.nl TXT -> leeg
+#   curl https://router.rijksapp.nl/                -> 200, certificaat op deze naam
+# en dat zad.rijksapp.nl het nog doet, want dat is een CNAME hierheen.
+#
+# De twee andere zones (rijks.app, rijksapp.dev) wijzen naar hetzelfde adres en krijgen
+# hetzelfde, maar pas nadat deze bewezen is. Een kopie van dit bestand met de naam vervangen
+# volstaat; dns_config.ROUTER_HOSTNAMES kent ze al.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: operations-manager-router-rijksapp-nl
+  namespace: rig-prd-operations
+  annotations:
+    cert-manager.io/issuer: letsencrypt-operations-manager
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "384"
+    cert-manager.io/private-key-rotation-policy: Always
+    external-dns.alpha.kubernetes.io/exclude: "true"
+    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
+    haproxy.router.openshift.io/timeout: "300s"
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000;includeSubDomains;preload"
+spec:
+  rules:
+    - host: router.rijksapp.nl
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: operations-manager
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - router.rijksapp.nl
+      secretName: operations-manager-router-rijksapp-nl-tls
