@@ -50,3 +50,12 @@ def test_helemaal_geen_received_valt_ook_op() -> None:
 
     assert len(fouten) == 1
     assert "0" in fouten[0]
+
+
+def test_een_regel_die_niet_van_de_ontvanger_is_valt_op() -> None:
+    """Precies een regel is niet genoeg: gaf de relay er een door en schreef de ontvanger
+    er geen, dan is het er ook een. Die ene moet aantoonbaar van de ontvanger zijn."""
+    fouten = received_fouten([INZENDER_REGEL])
+
+    assert len(fouten) == 1
+    assert "niet die van de ontvanger" in fouten[0]
