@@ -14,18 +14,26 @@
 # ALLEEN VOOR local EN sandboxed-local. Deze map wordt niet vanuit de odcn-overlay
 # ingeladen, dus dit image hoeft niet langs de registry en het signature-beleid van ODCN.
 #
-# GEEN AUTHENTICATIE EN GEEN TLS OP DE SINK, en dat is niet slordig maar bruikbaar. De
-# relay biedt aan zonder inloggegevens (de upstream op productie kent ook geen AUTH), dus
-# de sink hoeft er geen te vragen. Wie erbij mag bepaalt het NetworkPolicy naast de relay,
-# en dat is alleen de relay zelf.
+# GEEN AUTHENTICATIE OP DE SINK, en dat is niet slordig maar bruikbaar. De relay biedt aan
+# zonder inloggegevens (de upstream op productie kent ook geen AUTH), dus de sink hoeft er
+# geen te vragen. Wie erbij mag bepaalt het NetworkPolicy naast de relay, en dat is alleen
+# de relay zelf.
 #
-# En het levert meteen het antwoord op een vraag die nog openstaat in de configmap van de
-# relay: `[remote.upstream.tls]` staat op STARTTLS met strikte certificaatcontrole, en de
-# documentatie zegt nergens wat Stalwart doet als STARTTLS niet wordt aangeboden. Deze sink
-# biedt het niet aan. Komt er post aan, dan valt Stalwart dus terug op platte tekst en is
-# `allow-invalid-certs = false` een voorkeur en geen garantie. Komt er niets aan, dan is het
-# wel een garantie. Dat is precies de meting die we niet konden doen; noteer de uitkomst in
-# docs/ron-koppeling.md.
+# WEL STARTTLS, en dat MOET, want anders komt er niets aan. Dit was eerst een sink zonder
+# TLS, met de gedachte dat dat meteen de openstaande vraag uit de configmap van de relay
+# zou beantwoorden: valt Stalwart terug op platte tekst als STARTTLS ontbreekt? Gemeten op
+# 19 augustus 2026: nee. Hij weigert permanent met "STARTTLS was not advertised by host" en
+# bouncet het bericht. `[remote.upstream.tls]` is dus een garantie en geen voorkeur - zie
+# docs/ron-koppeling.md - en een sink zonder TLS maakt de sandbox stuk op precies het punt
+# waarvoor hij bestaat.
+#
+# Het certificaat wordt bij elke start gemaakt in plaats van bewaard. Een zelfondertekend
+# certificaat van een wegwerp-sink heeft geen enkele waarde om te beschermen, en het is
+# beter dan een sleutel in de repository: er valt niets te roteren en niets te lekken.
+# Stalwart vertrouwt het niet (hij gaat af op zijn ingebouwde webpki-roots en leest de
+# trust store van het besturingssysteem niet), en daarom zet de sandboxed-local-overlay
+# MAIL_UPSTREAM_ALLOW_INVALID_CERTS om. Dat is ook precies waarom de sink verder niets
+# hoeft te bewijzen: hij moet STARTTLS AANBIEDEN, niet vertrouwd worden.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -48,6 +56,46 @@ spec:
         runAsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # Het image van de relay, puur omdat daar openssl in zit en het op dit cluster
+        # toch al binnengehaald is. Scheelt een tweede image voor drie regels shell.
+        - name: maak-certificaat
+          image: stalwartlabs/mail-server:v0.11.8
+          command:
+            - /usr/bin/openssl
+            - req
+            - -x509
+            - -newkey
+            - rsa:2048
+            - -nodes
+            - -keyout
+            - /tls/tls.key
+            - -out
+            - /tls/tls.crt
+            - -days
+            - "3650"
+            - -subj
+            - /CN=rig-mail-sink.rig-ron.svc.cluster.local
+            - -addext
+            - subjectAltName=DNS:rig-mail-sink.rig-ron.svc.cluster.local,DNS:rig-mail-sink.rig-ron.svc,DNS:rig-mail-sink
+          volumeMounts:
+            - name: tls
+              mountPath: /tls
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+              ephemeral-storage: "64Mi"
+            limits:
+              cpu: 200m
+              memory: 128Mi
+              ephemeral-storage: "128Mi"
       containers:
         - name: mailpit
           image: axllent/mailpit:v1.30.7
@@ -61,6 +109,12 @@ spec:
               value: "[::]:1025"
             - name: MP_UI_BIND_ADDR
               value: "[::]:8025"
+            # Hiermee komt STARTTLS in de EHLO-lijst. Zonder deze twee weigert de relay
+            # permanent; zie de toelichting bovenaan dit bestand.
+            - name: MP_SMTP_TLS_CERT
+              value: /tls/tls.crt
+            - name: MP_SMTP_TLS_KEY
+              value: /tls/tls.key
           ports:
             - containerPort: 1025
               name: smtp
@@ -94,6 +148,12 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: tls
+              mountPath: /tls
+              readOnly: true
       volumes:
         - name: tmp
+          emptyDir: {}
+        # Het certificaat leeft alleen zolang de pod leeft; de initContainer maakt het.
+        - name: tls
           emptyDir: {}

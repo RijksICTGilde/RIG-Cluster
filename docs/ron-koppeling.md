@@ -122,6 +122,41 @@ Het goede nieuws is dat die grendel er structureel al zit. De enige egressregel 
 
 Wat er dan wél moet gebeuren, is die eigenschap vastpinnen in plaats van hem te vertrouwen: **een regressietest die vastlegt dat de tenant-baseline nooit iets anders dan 443 en 80 naar `0.0.0.0/0` toestaat.** Zonder die test is dit een eigenschap die iemand er over een jaar in één regel uit haalt zonder te weten dat er een mailrelay op leunt.
 
+## STARTTLS naar de upstream is een garantie, geen voorkeur
+
+Open vraag bij het ontwerp: `[remote.upstream.tls]` staat op `implicit = false` met
+`allow-invalid-certs = false`, maar de documentatie zegt nergens wat er gebeurt als
+STARTTLS mislukt of het certificaat wordt afgekeurd. Valt Stalwart terug op platte tekst,
+of mislukt de bezorging? Dat verschil bepaalt of dit een garantie is of alleen een voorkeur.
+
+Gemeten op 19 augustus 2026 op de sandbox, tegen Stalwart v0.11.8, met de SMTP-sink als
+upstream. **Stalwart valt niet terug op platte tekst.** In geen van beide gevallen vertrekt
+er iets onversleuteld:
+
+| Wat de upstream aanbiedt | Wat de relay doet |
+|---|---|
+| geen STARTTLS in de EHLO-lijst | `STARTTLS was not advertised by host`, **permanente** fout, bericht gebounced |
+| STARTTLS met een certificaat dat niet valideert | `invalid peer certificate`, **tijdelijke** fout, bericht blijft in de wachtrij |
+
+Het verschil tussen die twee is de moeite van het onthouden waard. Zou de upstream ooit
+zijn STARTTLS verliezen, dan bouncet de post meteen en is dat luid zichtbaar. Verloopt zijn
+certificaat, dan stapelt de wachtrij zich stil op tot hij is vernieuwd.
+
+**En een tweede uitkomst, die productie raakt: Stalwart leest de trust store van het
+besturingssysteem niet.** Een eigen CA in `/etc/ssl/certs/ca-certificates.crt` hangen
+verandert niets aan de uitslag; de fout blijft `UnknownIssuer`. Hij gaat af op de
+webpki-roots die in de binary zitten. Presenteert `rmrmail.rijksweb.nl` ooit een
+certificaat van een interne CA in plaats van een publiek vertrouwde, dan is er geen knop
+om die CA te vertrouwen en is de enige uitweg `allow-invalid-certs` - wat de controle in
+zijn geheel uitzet. Dat is het scenario om in de gaten te houden bij een certificaatwissel
+aan hun kant.
+
+Daarom komt `allow-invalid-certs` sinds RC-140 uit de omgeving
+(`MAIL_UPSTREAM_ALLOW_INVALID_CERTS`), met `"false"` in de basis van het Deployment. Alleen
+de `sandboxed-local`-overlay zet hem om, want de sink daar draagt een zelfondertekend
+certificaat en kan per definitie niet door webpki-validatie komen. `local` en `odcn` staan
+strikt.
+
 ## Het afzenderadres is `noreply-rijksapp@rijksoverheid.nl`
 
 Vastgesteld op 18 augustus 2026. Er komt geen eigen maildomein. We versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit, en elk project verstuurt vanaf hetzelfde vaste adres. De relay schrijft dat adres zelf in de `From:` van elk bericht; een applicatie kan er niet omheen en hoeft er niets voor te doen.
