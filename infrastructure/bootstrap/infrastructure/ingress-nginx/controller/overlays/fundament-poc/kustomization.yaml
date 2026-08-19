@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# De cloud-variant, niet de Kind-variant die bootstrap/rig-system/kustomize/ingress-nginx
+# gebruikt. Die patcht hostPorts en gaat uit van poortmappings op de control-plane node;
+# hier deelt de metal-ccm een echt LoadBalancer-adres uit via MetalLB.
+#
+# Er is bewust nog geen gedeelde base: zolang alleen dit cluster deze component gebruikt
+# zou dat een abstractie voor een geval zijn. Migreert de sandbox mee (stap 4 van
+# plans/operators-via-argo-in-plaats-van-taken.md), verhuis dan de twee generieke patches
+# hieronder naar een kustomize component en laat per overlay alleen de URL en de
+# clusterspecifieke patch staan.
+resources:
+  - https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/cloud/deploy.yaml
+
+patches:
+  # Generiek, niet clusterspecifiek. OPI praat met Keycloak via deze ingress en zijn
+  # admin-token draagt een resource_access-entry per realm; bij 15 realms was de
+  # Authorization-header 8446 bytes en gaf nginx op de standaard 8k een 400 terug,
+  # waardoor een verse OPI-pod niet meer opstartte.
+  - target:
+      kind: ConfigMap
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: ingress-nginx-controller
+        namespace: ingress-nginx
+      data:
+        allow-snippet-annotations: "true"
+        annotations-risk-level: "Critical"
+        large-client-header-buffers: "4 16k"
+
+  # Ook generiek: zonder deze vlag negeert nginx de ssl-passthrough-annotatie en werkt de
+  # passthrough-modus van publish-on-web niet.
+  - target:
+      kind: Deployment
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --enable-ssl-passthrough

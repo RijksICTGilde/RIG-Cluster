@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Gepind op een release-tag en niet op latest: dit manifest wordt bij elke render
+# opgehaald, dus met een zwevende referentie verandert de versie zonder dat iemand iets
+# wijzigt. Ophogen is een bewuste stap.
+#
+# Bevat CRD's. Die zijn te groot voor de annotatie van client-side apply, dus de
+# ArgoCD-Application die dit uitrolt heeft ServerSideApply=true nodig.
+resources:
+  - https://github.com/cert-manager/cert-manager/releases/download/v1.21.1/cert-manager.yaml

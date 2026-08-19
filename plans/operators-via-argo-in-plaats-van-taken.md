@@ -93,6 +93,8 @@ Dat maakt de regel uit paragraaf 1 expliciet in plaats van impliciet: heeft de A
 
 **De CMP-plugin.** De render loopt via `kustomize-sops-v1.0`. Een Application per component betekent meer renders, en de streaming-optimalisatie (`ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS`) moet dan per Application kloppen, anders wordt elke render de hele monorepo.
 
+**Remote kustomize-resources zijn onbeproefd bij ArgoCD.** De vier operator-componenten halen hun manifest van een URL op. Gemeten: geen enkele component die vandaag in een clusterlijst staat doet dat, dus of de repo-server met de CMP-sidecar tijdens een render naar buiten mag is nooit getest. Op ODCN is dat sowieso geblokkeerd (daar draait de RCR-mirror om), op fundament staat egress open. Alternatief is de manifests in de repo zetten in plaats van ze op te halen; dat is beter reproduceerbaar en haalt netwerk uit het renderpad, maar het maakt de repo groter en het ophogen van een versie wordt een commit met veel regels. Dit moet in stap 2 beslist en gemeten worden, niet aangenomen.
+
 **Volgorde faalt anders dan een script faalt.** Een taak stopt bij de eerste fout met een leesbare melding. Een sync die op een wave blijft hangen ziet eruit als "Progressing" en vraagt om in ArgoCD te kijken. Dat is een echte verandering in hoe je een mislukte installatie debugt.
 
 ## 6. Voorgestelde volgorde
