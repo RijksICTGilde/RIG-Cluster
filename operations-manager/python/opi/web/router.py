@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 from datetime import UTC, datetime
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.dns_config import ROUTER_HOSTNAMES, ROUTER_IPV4, ROUTER_IPV6
+from opi.core.dns_config import ROUTER_HOSTNAMES, ROUTER_IPV4, ROUTER_IPV6, router_hostname_for
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
@@ -142,6 +142,37 @@ async def ontsleutel_helm_values(items: list[dict[str, Any]], naam_sleutel: str,
             item["helm-values"] = None
 
 
+def _render_eigen_domein(request: Request, *, current_path: str) -> Response:
+    """De uitleg over het aanwijzen van een eigen domein.
+
+    Twee ingangen, een pagina: de kale routernaam (waar de bezoeker binnenvalt vanuit
+    andermans DNS-record) en /eigen-domein in het menu (waar een projecteigenaar hem
+    opzoekt). De genoemde routernaam volgt de zone waarop je kijkt.
+    """
+    gebruiker = get_current_user(request)
+    return render(
+        request,
+        template="bg/router.html.j2",
+        context={
+            "request": request,
+            "menu_items": get_menu_items(gebruiker),
+            "navigation": get_navigation(gebruiker, current_path=current_path),
+            "router_host": router_hostname_for(request.url.hostname),
+            "router_ipv4": ROUTER_IPV4,
+            "router_ipv6": ROUTER_IPV6,
+        },
+    )
+
+
+@web_router.get("/eigen-domein", response_class=HTMLResponse)
+async def eigen_domein(request: Request) -> Response:
+    """BEWUST ZONDER ``@requires_sso``: wie een domein aanwijst is vaak een DNS-beheerder
+    van een andere organisatie, zonder account hier. Een inlogmuur zou de pagina precies
+    voor zijn publiek onbereikbaar maken. ``tests/test_routerpagina.py`` bewaakt dat.
+    """
+    return _render_eigen_domein(request, current_path="/eigen-domein")
+
+
 @web_router.get("/")
 async def root(request: Request):
     """De voordeur: het dashboard als je ingelogd bent, anders de introductie.
@@ -160,19 +191,7 @@ async def root(request: Request):
     typt de naam en geen pad.
     """
     if request.url.hostname in ROUTER_HOSTNAMES:
-        gebruiker = get_current_user(request)
-        return render(
-            request,
-            template="bg/router.html.j2",
-            context={
-                "request": request,
-                "menu_items": get_menu_items(gebruiker),
-                "navigation": get_navigation(gebruiker, current_path="/"),
-                "router_host": request.url.hostname,
-                "router_ipv4": ROUTER_IPV4,
-                "router_ipv6": ROUTER_IPV6,
-            },
-        )
+        return _render_eigen_domein(request, current_path="/")
     if get_current_user(request) is None:
         return RedirectResponse(url="/introductie", status_code=302)
     return RedirectResponse(url="/dashboard", status_code=302)

@@ -47,6 +47,9 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "CLI", "link": "/cli", "icon": "computercode"},
         {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
+        # Onder de API-docs en niet bij Introductie: dit is naslag voor wie zijn eigen
+        # domein hierheen laat wijzen, dezelfde soort lezer als de API-documentatie.
+        {"label": "Eigen domein", "link": "/eigen-domein", "icon": "wereldbol"},
     ]
 
     # Auto-detect admin status from user email
