@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fundament-poc-keycloak-config
+  namespace: rig-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: default
+  source:
+    repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
+    path: infrastructure/bootstrap/infrastructure/keycloak/config/overlays/fundament-poc
+    targetRevision: main
+    plugin:
+      name: kustomize-sops-v1.0
+      env:
+        - name: SOPS_KEY_SECRET
+          value: "sops-age-key"
+        - name: KUSTOMIZE_FOLDERS
+          value: "current"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rig-system
+  syncPolicy:
+    automated:
+      # Een lege render is altijd een fout en nooit een gewenste toestand. Zonder deze
+      # vlag zou prune alles van deze component verwijderen op een kapotte commit.
+      allowEmpty: false
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: 5
+      backoff:
+        duration: "30s"
+        factor: 2
+        maxDuration: "5m"
