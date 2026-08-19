@@ -17,7 +17,15 @@ Twee dingen kunnen hier stil kapotgaan:
 
 from typing import TYPE_CHECKING
 
-from opi.core.dns_config import MANAGED_DNS_ZONES, ROUTER_HOSTNAMES, ROUTER_IPV4, ROUTER_IPV6
+from opi.core.dns_config import (
+    DEFAULT_ROUTER_HOSTNAME,
+    MANAGED_DNS_ZONES,
+    ROUTER_HOSTNAMES,
+    ROUTER_IPV4,
+    ROUTER_IPV6,
+)
+from opi.web.menu import get_menu_items
+from opi.web.router import eigen_domein
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
@@ -25,7 +33,7 @@ if TYPE_CHECKING:
 
 def test_elke_beheerde_zone_heeft_een_routernaam() -> None:
     """Afgeleid uit de zones, zodat een nieuwe zone niet vergeten wordt."""
-    assert ROUTER_HOSTNAMES == {f"router.{zone}" for zone in MANAGED_DNS_ZONES}
+    assert {f"router.{zone}" for zone in MANAGED_DNS_ZONES} == ROUTER_HOSTNAMES
     assert "router.rijksapp.nl" in ROUTER_HOSTNAMES
 
 
@@ -70,3 +78,43 @@ def test_de_getoonde_adressen_zijn_die_van_de_configuratie() -> None:
     """De pagina put uit dezelfde bron als de rest; geen tweede lijst om te verouderen."""
     assert ROUTER_IPV4 == "147.181.48.71"
     assert ROUTER_IPV6 == "2a04:9a00:1007:4000:0:2:0:8"
+
+
+def test_de_uitleg_heeft_een_eigen_adres(test_client: TestClient) -> None:
+    """Het menu staat op zad.<zone>, dus de pagina moet ook zonder de routernaam te halen zijn."""
+    response = test_client.get("/eigen-domein", headers={"host": "zad.rijksapp.nl"})
+
+    assert response.status_code == 200, response.text
+    assert ROUTER_IPV4 in response.text
+
+
+def test_het_eigen_adres_vraagt_geen_rechten() -> None:
+    """Wie een domein aanwijst is vaak een DNS-beheerder van buiten, zonder account hier.
+
+    Rechtstreeks op de functie: een 200 hierboven bewijst dit niet, want bij een ontbrekende
+    testconfiguratie kan een route om een heel andere reden doorlaten.
+    """
+    assert not getattr(eigen_domein, "_requires_sso", False)
+
+
+def test_de_genoemde_routernaam_volgt_de_zone(test_client: TestClient) -> None:
+    """Wie op rijks.app kijkt heeft niets aan router.rijksapp.nl."""
+    response = test_client.get("/eigen-domein", headers={"host": "zad.rijks.app"})
+
+    assert response.status_code == 200
+    assert "router.rijks.app" in response.text
+
+
+def test_een_onbekende_host_krijgt_de_standaardnaam(test_client: TestClient) -> None:
+    response = test_client.get("/eigen-domein", headers={"host": "localhost"})
+
+    assert response.status_code == 200
+    assert DEFAULT_ROUTER_HOSTNAME in response.text
+
+
+def test_het_menu_wijst_naar_de_uitleg() -> None:
+    """Onder de API-docs, zoals afgesproken."""
+    links = [item["link"] for item in get_menu_items(None)]
+
+    assert "/eigen-domein" in links
+    assert links.index("/eigen-domein") == links.index("/docs") + 1
