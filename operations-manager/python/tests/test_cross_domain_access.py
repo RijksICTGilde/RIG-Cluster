@@ -455,6 +455,25 @@ class TestOptionsProviders:
         assert "dp-bn7" in values
         assert "gone" in values  # stored-but-unknown kept selectable
 
+    def test_project_provider_shows_the_display_name_with_the_code(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
+
+        provider = CrossDomainProjectOptionsProvider(
+            yaml_data={
+                "_cross_domain_projects": ["regelrecht", "dp-bn7"],
+                "_cross_domain_project_labels": {
+                    "regelrecht": "Regelrecht (regelrecht)",
+                    "dp-bn7": "Digitaal Paspoort (dp-bn7)",
+                },
+            },
+            current_value="gone",
+        )
+        labels = {o["value"]: o["label"] for o in provider.get_options()}
+        assert labels["regelrecht"] == "Regelrecht (regelrecht)"
+        assert labels["dp-bn7"] == "Digitaal Paspoort (dp-bn7)"
+        # Stored-but-gone has no label to look up: bare code plus the reason.
+        assert labels["gone"] == "gone (niet meer beschikbaar)"
+
     def test_project_provider_empty_shows_explanation(self) -> None:
         from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
 
@@ -647,19 +666,19 @@ class TestSharedFormContext:
     """One builder for both flows, so "works when editing, empty in the create wizard" -- the
     state that made this step unusable -- cannot come back."""
 
-    def _build(self, monkeypatch) -> dict:
+    class _Summary:
+        def __init__(self, name: str, data: dict | None = None) -> None:
+            self.name = name
+            self.data = data
+
+    def _build(self, monkeypatch, summaries: list | None = None) -> dict:
         import opi.services.catalog.cross_domain_access.context as context_mod
 
-        class _Summary:
-            def __init__(self, name: str) -> None:
-                self.name = name
-
+        projects = summaries or [self._Summary(name) for name in ("regelrecht", "me", "verboden")]
         monkeypatch.setattr(
             context_mod,
             "get_project_store",
-            lambda: type(
-                "S", (), {"get_all": lambda self: [_Summary("regelrecht"), _Summary("me"), _Summary("verboden")]}
-            )(),
+            lambda: type("S", (), {"get_all": lambda self: projects})(),
         )
         monkeypatch.setattr(context_mod, "is_user_authorized_for_project", lambda name, email: name != "verboden")
         return context_mod.build_cross_domain_context("u@example.com")
@@ -674,6 +693,37 @@ class TestSharedFormContext:
         # The tenant baseline isolates per DEPLOYMENT, so reaching another deployment of your
         # own project needs a rule too. Hiding the own project left that with no way to say it.
         assert "me" in self._build(monkeypatch)["_cross_domain_projects"]
+
+    def test_sorted_on_display_name_ignoring_case(self, monkeypatch) -> None:
+        # Sorting on the code, or case-sensitively on the name, would put "Banaan" first.
+        context = self._build(
+            monkeypatch,
+            [
+                self._Summary("p3", {"display-name": "citroen"}),
+                self._Summary("p1", {"display-name": "Banaan"}),
+                self._Summary("p2", {"display-name": "appel"}),
+            ],
+        )
+        assert context["_cross_domain_projects"] == ["p2", "p1", "p3"]
+        assert context["_cross_domain_project_labels"] == {
+            "p1": "Banaan (p1)",
+            "p2": "appel (p2)",
+            "p3": "citroen (p3)",
+        }
+
+    def test_falls_back_to_the_code_without_a_display_name(self, monkeypatch) -> None:
+        context = self._build(
+            monkeypatch,
+            [
+                self._Summary("zonder-data"),  # data is None
+                self._Summary("leeg", {"display-name": "   "}),  # aanwezig maar blanco
+                self._Summary("mist", {"name": "mist"}),  # geen display-name in de data
+            ],
+        )
+        labels = context["_cross_domain_project_labels"]
+        # Geen weergavenaam -> alleen de code, geen lege haakjes.
+        assert labels == {"zonder-data": "zonder-data", "leeg": "leeg", "mist": "mist"}
+        assert context["_cross_domain_projects"] == ["leeg", "mist", "zonder-data"]
 
     def test_both_flows_call_the_same_builder(self) -> None:
         import inspect
