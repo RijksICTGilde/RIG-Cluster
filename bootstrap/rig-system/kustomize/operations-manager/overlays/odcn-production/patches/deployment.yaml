@@ -56,11 +56,12 @@ spec:
             secretKeyRef:
               name: prometheus-metrics-auth
               key: token
-        # TransIP DNS API, for the CAA records on rijks.app / rijksapp.nl / rijksapp.dev.
+        # TransIP DNS API, for the CAA records on rijks.app / rijksapp.nl / rijksapp.dev
+        # and the no-mail records on the router names in those zones.
         # The secret already exists in this namespace: external-dns uses it.
         #
-        # Optional on purpose. The CAA reconciler is non-critical by design and skips
-        # itself when the credentials are absent, but a required secretKeyRef fails the
+        # Optional on purpose. Both DNS reconcilers are non-critical by design and skip
+        # themselves when the credentials are absent, but a required secretKeyRef fails the
         # container before Python ever runs: a missing or renamed secret would hold the
         # whole portal in CreateContainerConfigError over DNS hygiene.
         - name: TRANSIP_ACCOUNT_NAME
