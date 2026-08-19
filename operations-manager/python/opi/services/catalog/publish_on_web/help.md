@@ -18,4 +18,4 @@ Je component krijgt de variabelen **PUBLIC_HOST** en **PUBLIC_HOSTNAME** met het
 
 ## Je eigen domein gebruiken
 
-In plaats van een adres van het platform kun je een eigen domeinnaam laten uitkomen op je applicatie. Welk DNS-record je daarvoor laat zetten, wat het platform daarna zelf regelt en welke twee punten bij je eigen organisatie blijven, staat op [Eigen domein](/eigen-domein).
+In plaats van een adres van het platform kun je een eigen domeinnaam laten uitkomen op je applicatie. Op [Eigen domein](/eigen-domein) staat welk DNS-record je daarvoor laat zetten, wat het platform daarna zelf regelt en welke twee punten bij je eigen organisatie blijven.
