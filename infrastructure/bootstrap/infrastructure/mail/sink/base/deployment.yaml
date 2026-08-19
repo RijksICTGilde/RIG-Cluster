@@ -31,9 +31,11 @@
 # certificaat van een wegwerp-sink heeft geen enkele waarde om te beschermen, en het is
 # beter dan een sleutel in de repository: er valt niets te roteren en niets te lekken.
 # Stalwart vertrouwt het niet (hij gaat af op zijn ingebouwde webpki-roots en leest de
-# trust store van het besturingssysteem niet), en daarom zet de sandboxed-local-overlay
-# MAIL_UPSTREAM_ALLOW_INVALID_CERTS om. Dat is ook precies waarom de sink verder niets
-# hoeft te bewijzen: hij moet STARTTLS AANBIEDEN, niet vertrouwd worden.
+# trust store van het besturingssysteem niet), en daarom moet wie deze sink inlaadt ook
+# MAIL_UPSTREAM_ALLOW_INVALID_CERTS omzetten. Laad deze map daarom niet rechtstreeks in
+# maar via ../as-upstream: die component levert de sink en die schakelaar samen. Dat is ook
+# precies waarom de sink verder niets hoeft te bewijzen: hij moet STARTTLS AANBIEDEN, niet
+# vertrouwd worden.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

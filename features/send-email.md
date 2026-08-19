@@ -289,7 +289,7 @@ Tot die tweede upstream er is, kiest het cluster en niet de service. Elk scenari
 
 ## De sandbox: een sink in plaats van een echte mailserver
 
-`infrastructure/bootstrap/infrastructure/mail/sink/` bevat Mailpit, ingeladen door alleen de overlays `local` en `sandboxed-local`. Op ODCN staat hij er niet, dus dat image hoeft niet langs de registry en het signature-beleid daar.
+`infrastructure/bootstrap/infrastructure/mail/sink/` bevat Mailpit, ingeladen door alleen de overlays `local` en `sandboxed-local`. Op ODCN staat hij er niet, dus dat image hoeft niet langs de registry en het signature-beleid daar. Ingeladen wordt hij via de component `sink/as-upstream` en niet via `sink/base` rechtstreeks: die component levert de sink samen met `MAIL_UPSTREAM_ALLOW_INVALID_CERTS: "true"`, want de sink draagt een zelfondertekend certificaat en zonder die schakelaar blijft elke bezorging steken op `invalid peer certificate`. Zo kan een cluster de sink niet krijgen zonder de schakelaar.
 
 Hij doet precies twee dingen: hij neemt SMTP aan en bezorgt niets, en hij geeft elk bericht integraal terug via een HTTP-API (`/api/v1/messages`, `/api/v1/message/{id}` met `From` en `ReturnPath`, en `/api/v1/message/{id}/headers`). Niets wordt bewaard, want er is geen `MP_DATABASE` gezet: een herstart is de manier om schoon te beginnen.
 
