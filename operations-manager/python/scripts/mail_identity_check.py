@@ -40,6 +40,11 @@ import requests
 
 VAST_ADRES = "noreply-rijksapp@rijksoverheid.nl"
 
+#: Waaraan de Received-regel van de ONTVANGER te herkennen is: elke MTA noemt zichzelf
+#: achter "by", en de ontvanger is hier de sink. Zonder deze eis zou een keten van precies
+#: een regel ook slagen als die regel van de relay zelf was - zie received_fouten().
+ONTVANGER_IN_RECEIVED = "by rig-mail-sink"
+
 #: Headers die er onder geen beding uit mogen komen: ze dragen het account en de client.
 VERBODEN_HEADERS = (
     "X-Originating-IP",
@@ -61,9 +66,19 @@ def received_fouten(ontvangen: list[str]) -> list[str]:
     Wat de regel WEL betekent: de relay geeft zijn EIGEN keten niet door. De hop waarmee
     de applicatie bij de relay binnenkwam draagt het pod-IP en de namespace van de
     inzender, en die hoort eraf. Blijft die staan, dan staan er twee.
+
+    Tellen alleen is niet genoeg: gaf de relay precies een eigen hop door en schreef de
+    ontvanger er geen, dan is het er ook een. Daarom moet die ene regel aantoonbaar van de
+    ONTVANGER zijn - hij noemt zichzelf achter "by". Gemeten op de sandbox op 19 augustus
+    2026: "... by rig-mail-sink-6c6d994744-qzqp9 (Mailpit) with SMTP for <...>".
     """
     if len(ontvangen) != 1:
         return [f"Received-keten telt {len(ontvangen)} regels, verwacht alleen die van de ontvanger: {ontvangen}"]
+    if ONTVANGER_IN_RECEIVED not in ontvangen[0]:
+        return [
+            f"de enige Received-regel is niet die van de ontvanger "
+            f"(geen {ONTVANGER_IN_RECEIVED!r} erin): {ontvangen[0]!r}"
+        ]
     return []
 
 

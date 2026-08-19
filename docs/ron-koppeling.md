@@ -152,10 +152,13 @@ zijn geheel uitzet. Dat is het scenario om in de gaten te houden bij een certifi
 aan hun kant.
 
 Daarom komt `allow-invalid-certs` sinds RC-140 uit de omgeving
-(`MAIL_UPSTREAM_ALLOW_INVALID_CERTS`), met `"false"` in de basis van het Deployment. Alleen
-de `sandboxed-local`-overlay zet hem om, want de sink daar draagt een zelfondertekend
-certificaat en kan per definitie niet door webpki-validatie komen. `local` en `odcn` staan
-strikt.
+(`MAIL_UPSTREAM_ALLOW_INVALID_CERTS`), met `"false"` in de basis van het Deployment. Omgezet
+wordt hij door de component `mail/sink/as-upstream`, en dat is geen toeval: die component
+levert de sink en de schakelaar samen, want de sink draagt een zelfondertekend certificaat
+en kan per definitie niet door webpki-validatie komen. Wie de sink inlaadt, kan de
+schakelaar dus niet vergeten. In de praktijk betekent dat: `local` en `sandboxed-local` -
+de twee ontwikkelclusters, allebei met een sink - zetten hem om, en `odcn`, met de
+mailserver van de Rijksoverheid als upstream en zonder sink, staat strikt.
 
 ## Het afzenderadres is `noreply-rijksapp@rijksoverheid.nl`
 

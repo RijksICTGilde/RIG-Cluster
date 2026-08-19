@@ -254,8 +254,11 @@ data:
     # Die schakelaar staat er om precies EEN reden: in een ontwikkelcluster is de upstream
     # een sink met een zelfondertekend certificaat, en die kan per definitie niet door
     # webpki-validatie komen. Hij hoort dus op false te staan en doet dat ook overal waar
-    # de overlay hem niet aanzet: de waarde komt uit de omgeving en de basis van het
-    # Deployment zet hem op "false". Alleen de sandboxed-local-overlay zet hem om.
+    # de sink niet meekomt: de waarde komt uit de omgeving en de basis van het Deployment
+    # zet hem op "false". Omgezet wordt hij door de component mail/sink/as-upstream, die de
+    # sink en deze schakelaar samen levert - een cluster dat de sink inlaadt (local en
+    # sandboxed-local) kan de schakelaar dus niet vergeten, en odcn, dat de sink niet
+    # inlaadt, blijft strikt.
     [remote.upstream.tls]
     implicit = false
     allow-invalid-certs = "%{env:MAIL_UPSTREAM_ALLOW_INVALID_CERTS}%"
