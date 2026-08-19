@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  # De default van de chart is /opt/local-path-provisioner, en /opt staat op de
+  # rootpartitie van 24 GB. /var/lib zit op de grote partitie met 2,7 TB vrij, waar
+  # kubelet en containerd ook staan.
+  - target:
+      kind: ConfigMap
+      name: local-path-config
+      namespace: local-path-storage
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: local-path-config
+        namespace: local-path-storage
+      data:
+        config.json: |-
+          {
+            "nodePathMap":[
+              {
+                "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
+                "paths":["/var/lib/local-path-provisioner"]
+              }
+            ]
+          }
