@@ -11,16 +11,17 @@ spec:
     repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     path: infrastructure/bootstrap/infrastructure/storage/controller/overlays/fundament-poc
     targetRevision: main
-    plugin:
-      name: kustomize-sops-v1.0
-      env:
-        - name: SOPS_KEY_SECRET
-          value: "sops-age-key"
-        - name: KUSTOMIZE_FOLDERS
-          value: "current"
+    # Bewust zonder de kustomize-sops plugin: deze component bevat geen versleutelde
+    # inhoud, en de plugin eist dat de doel-namespace al bestaat en dat sops-age-key
+    # daar staat. Beide gelden hier niet; die namespace wordt juist door dit manifest
+    # aangemaakt. ArgoCD's eigen kustomize doet ook geen namespace-injectie, dus de
+    # kube-system-resources van cert-manager blijven waar ze horen.
   destination:
     server: https://kubernetes.default.svc
-    namespace: rig-system
+    # De CMP-plugin injecteert deze namespace in de kustomization die hij rendert, dus
+    # een Application kan er maar een bedienen. Deze operator installeert in zijn eigen
+    # namespace; stond hier rig-system, dan werd alles daarheen platgeslagen.
+    namespace: local-path-storage
   syncPolicy:
     automated:
       # Een lege render is altijd een fout en nooit een gewenste toestand. Zonder deze
