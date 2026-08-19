@@ -2,7 +2,7 @@
 Web routes for serving HTML pages (non-API endpoints).
 """
 
-import asyncio  # noqa: TC003  # used at runtime by the module-level _background_tasks annotation
+import asyncio
 import copy
 import logging
 from typing import TYPE_CHECKING, Any
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 from datetime import UTC, datetime
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.dns_config import ROUTER_HOSTNAMES, ROUTER_IPV4, ROUTER_IPV6
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
@@ -61,6 +62,7 @@ from opi.web.lotc_switch import (
     tab_from_path,
 )
 from opi.web.menu import get_menu_items
+from opi.web.navigation_lotc import get_navigation
 from opi.web.project_actions import build_project_action
 from opi.web.stap_labels import stap_label
 from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
@@ -150,7 +152,27 @@ async def root(request: Request):
 
     Doorverwijzen en niet hier renderen, zodat de introductie een eigen adres houdt dat je
     kunt delen en dat ook werkt voor iemand die al ingelogd is.
+
+    OP DE ROUTERNAMEN IETS ANDERS. ``router.<zone>`` is de kale ingang van het cluster waar
+    elke andere naam met een CNAME naartoe wijst. Wie die naam opvraagt kwam hem tegen in
+    een DNS-record en heeft een andere vraag dan een ZAD-gebruiker, dus die krijgt de uitleg
+    over het aanwijzen van een eigen domein. Op de host en niet op een pad, want de bezoeker
+    typt de naam en geen pad.
     """
+    if request.url.hostname in ROUTER_HOSTNAMES:
+        gebruiker = get_current_user(request)
+        return render(
+            request,
+            template="bg/router.html.j2",
+            context={
+                "request": request,
+                "menu_items": get_menu_items(gebruiker),
+                "navigation": get_navigation(gebruiker, current_path="/"),
+                "router_host": request.url.hostname,
+                "router_ipv4": ROUTER_IPV4,
+                "router_ipv6": ROUTER_IPV6,
+            },
+        )
     if get_current_user(request) is None:
         return RedirectResponse(url="/introductie", status_code=302)
     return RedirectResponse(url="/dashboard", status_code=302)
@@ -1548,24 +1570,34 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so
         # the page and the API can never disagree about what a component's variables are.
-        for deployment in project_data_decrypted.get("deployments", []):
-            for dep_component in deployment.get("components", []):
-                if dep_component.get("user-env-vars"):
-                    dep_component["user-env-vars"] = await read_user_env_vars(
-                        dep_component["user-env-vars"],
-                        project_private_key,
-                        where=f"deployment component '{dep_component.get('reference')}'",
-                    )
+        #
+        # NAAST ELKAAR, NIET ERACHTER. Elke ontsleuteling is een eigen `age`-proces (zie
+        # opi/utils/age.py), en die stonden hier in een lus achter elkaar te wachten: een
+        # project met achttien deployments betaalde achttien keer een procesfork op ELKE
+        # tabwissel, netjes een voor een. De aanroepen zijn onderling onafhankelijk - elke
+        # taak schrijft in zijn eigen dict - dus asyncio.gather zet ze naast elkaar zonder
+        # dat er iets aan de uitkomst verandert.
+        async def _lees_env_vars(houder: dict[str, Any], waar: str) -> None:
+            houder["user-env-vars"] = await read_user_env_vars(houder["user-env-vars"], project_private_key, where=waar)
+
+        env_var_taken = [
+            _lees_env_vars(dep_component, f"deployment component '{dep_component.get('reference')}'")
+            for deployment in project_data_decrypted.get("deployments", [])
+            for dep_component in deployment.get("components", [])
+            if dep_component.get("user-env-vars")
+        ]
 
         logger.info(f"Processing {len(project_data_decrypted.get('components', []))} components for user-env-vars")
+        env_var_taken += [
+            _lees_env_vars(component, f"component '{component.get('name', 'unknown')}'")
+            for component in project_data_decrypted.get("components", [])
+            if component.get("user-env-vars")
+        ]
+        if env_var_taken:
+            await asyncio.gather(*env_var_taken)
+
         for component in project_data_decrypted.get("components", []):
             component_name = component.get("name", "unknown")
-            if component.get("user-env-vars"):
-                component["user-env-vars"] = await read_user_env_vars(
-                    component["user-env-vars"],
-                    project_private_key,
-                    where=f"component '{component_name}'",
-                )
             # Aliassen ook, en om dezelfde reden: de kaart toont ze en zonder dit staat er
             # een AGE-blok op het scherm. Sinds RC-106 is dat hetzelfde blok als hierboven,
             # en het is dezelfde decoder als de leesendpoints gebruiken, zodat de pagina en
@@ -1574,8 +1606,13 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             # is_verwijzing.
             if component.get("aliases"):
                 try:
-                    component["aliases"] = decode_component_values(
-                        component["aliases"], project_data_decrypted, project_private_key
+                    # In een thread, want decode_component_values is synchroon en draait
+                    # `age` met subprocess.run. Dat zette niet alleen deze pagina stil maar
+                    # de hele worker, per component - en bij de oude mapping-vorm zelfs per
+                    # alias. De decoder zelf blijft synchroon: hij wordt ook door de
+                    # leesendpoints gebruikt en daar hoort een tweede vorm niet thuis.
+                    component["aliases"] = await asyncio.to_thread(
+                        decode_component_values, component["aliases"], project_data_decrypted, project_private_key
                     )
                 except (ComponentValuesError, ValueError) as error:
                     # Een onleesbaar blok levert geen namen op om te tonen; laat het weg in
