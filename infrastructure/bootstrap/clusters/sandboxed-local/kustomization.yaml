@@ -11,19 +11,16 @@ resources:
   - ../../infrastructure/minio/controller/overlays/sandboxed-local
   - ../../infrastructure/prometheus/controller/overlays/sandboxed-local
   - ../../infrastructure/redis/controller/overlays/sandboxed-local
-  # De mailrelay in zijn eigen RON-namespace (RC-114), aan op sandboxed-local sinds RC-138.
-  # De reden om hem uit te laten - een onbewezen route naar de upstream - is hier
-  # vervallen: op dit clustertype IS de upstream de SMTP-sink die in dezelfde overlay
-  # meekomt (infrastructure/mail/sink), en die route ligt binnen de eigen namespace. De
-  # identiteitsregels zijn met die sink doorgemeten; de uitslag staat in
-  # docs/ron-koppeling.md en bij regel 2 in de configmap van de relay.
+  # De mailrelay in zijn eigen RON-namespace (RC-114) staat hier bewust NIET aan. De
+  # CMP-plugin forceert `namespace: rig-system` op deze hele build, en dat platte de
+  # rig-ron-resources van de mail-overlay tot rig-system - gemeten 19 augustus 2026 als
+  # ID-conflict op een dubbele mail-relay-credentials Secret. De relay draait daarom via
+  # zijn eigen ArgoCD Application ron-infrastructure (destination rig-ron, zie
+  # bootstrap/rig-system/kustomize/overlays/sandboxed-local).
   #
-  # Deze regel werkt alleen samen met twee andere stukken uit
-  # features/send-email.md ("Wat er bij het aanzetten werkelijk moet gebeuren"): het
-  # mail-relay-geheim in secrets/config/overlays/sandboxed-local (deze overlay rendert er
-  # een tweede keer, in de namespace van de relay) en MAIL_RELAY_API_URL in de deployment
-  # van OPI.
-  - ../../infrastructure/mail/controller/overlays/sandboxed-local
+  # Wat hier WEL bij hoort: de eerste rendering van het mail-relay-geheim, in rig-system
+  # voor OPI (secrets-overlay hierboven; de relay krijgt zijn tweede rendering via de
+  # eigen overlay), en MAIL_RELAY_API_URL in de deployment van OPI, aan sinds RC-138.
   - ../../infrastructure/registry/controller/overlays/sandboxed-local
 
 # Sandbox-CPU-beleid: minimale requests, geen cpu-limits.
