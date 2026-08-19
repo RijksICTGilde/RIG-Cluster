@@ -1,18 +1,35 @@
 # De mailrelay draaien in de sandbox en de identiteitsregels bewijzen
 
-**Prefix**: RC-114 (vervolg)
+**Prefix**: RC-114 (vervolg) — tweede poging, na RC-138
 **Basis**: `claude/mailrelay-ready`
 **Doel**: de relay en zijn testupstream draaiend krijgen op de sandbox, en met een bestaand
 script bewijzen dat de identiteitsregels doen wat ze beloven.
 
-## Waarom dit een taak is en geen handeling
+## Wat er al staat, en dus NIET opnieuw hoeft
 
-De dienst `send-email` is af, gemerged met de basis, en ruff, pyright en 9323 tests zijn
-schoon. Wat ontbreekt is het enige dat er werkelijk toe doet: **er heeft nog nooit een
-bericht doorheen gelopen.** De regels waarop het hele ontwerp rust zijn regels in een
-sieve-script, en een sieve-script dat stilletjes niets doet ziet er precies zo uit als een
-script dat werkt. De rest van de relayconfiguratie is destijds nagespeeld tegen een
-draaiende Stalwart; het overschrijven van de `From:` in zijn huidige vorm niet.
+RC-138 is vier keer omgevallen doordat zijn worker-container verdween, maar het werk dat hij
+wél afmaakte is in deze basis opgenomen:
+
+- de mailrelay-overlay staat **aan** in `infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml`
+- `MAIL_RELAY_API_URL` staat **aan** in de OPI-deployment van datzelfde clustertype
+
+Begin dus niet daar. Eén ding uit die commit is wél rechtgezet en dat is leerzaam: er stond
+in een toelichting geschreven dat de identiteitsregels waren doorgemeten en dat de uitslag in
+`docs/ron-koppeling.md` stond, terwijl geen van beide bestanden was aangeraakt. **Schrijf
+geen uitkomst op die je niet hebt gemeten.** De assertie hieronder is de exitcode van een
+script, niet een zin in een commit.
+
+## Werk in kleine stappen en commit na elke stap
+
+De worker van de vorige poging verdween telkens na drie tot elf minuten. Dat is een
+omgevingsprobleem waar jij niets aan kunt doen, maar je kunt er wel omheen werken:
+
+- **Commit na elke stap hieronder.** Een volgende dispatch begint dan waar jij ophield in
+  plaats van bij nul.
+- **Zet niet zelf een sandbox op als het even kan.** `task sandbox:setup` duurt vijf tot tien
+  minuten en dat is langer dan de vorige workers leefden. Kijk eerst met
+  `kubectl get ns` of er al een draait. Is die er niet en lukt het opzetten niet binnen jouw
+  levensduur, commit dan wat je hebt en meld dat in het verslag.
 
 ## De assertie
 
@@ -24,15 +41,15 @@ foute envelope, en toetst:
    weergavenaam waar de applicatie er een zette
 2. ook zonder weergavenaam, en ook bij een kaal adres zonder punthaken
 3. de envelope is `noreply-rijksapp+<account>@rijksoverheid.nl` en blijft in hetzelfde
-   domein als de `From:` (dit is de belangrijkste: `rijksoverheid.nl` publiceert
-   `p=reject` en wij ondertekenen niet met DKIM, dus SPF-uitlijning is het enige dat een
-   bericht door DMARC krijgt)
+   domein als de `From:` (de belangrijkste: `rijksoverheid.nl` publiceert `p=reject` en wij
+   ondertekenen niet met DKIM, dus SPF-uitlijning is het enige dat een bericht door DMARC
+   krijgt)
 4. de `Received`-keten en de verklikkerheaders zijn eraf
 
-## Drie dingen die je zonder waarschuwing verkeerd doet
+## Twee dingen die je zonder waarschuwing verkeerd doet
 
-**1. Het relay-secret bestaat voor geen enkel cluster, en je mag NIET alles regenereren.**
-`infrastructure/bootstrap/infrastructure/secrets/config/overlays/<cluster>/mail-relay-secret.yaml.sops.yaml`
+**1. Het relay-geheim bestaat voor geen enkel cluster, en je mag NIET alles regenereren.**
+`infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/mail-relay-secret.yaml.sops.yaml`
 ontbreekt. `task generate-secrets-for-cluster` stopt met `exit 0` zodra er één `.sops.yaml`
 in die map staat, en de enige manier om dat te omzeilen is elk bestaand geheim van dat
 cluster weggooien en opnieuw genereren. Dat roteert Keycloak, MinIO, PostgreSQL en pgadmin
@@ -47,13 +64,7 @@ waarden voor `sandboxed-local` in en versleutel het met `task encrypt-secret`. D
   `@secret-gen:random:24`-merkteken wordt alleen door de generatietaak ingevuld en blijft
   bij handmatig versleutelen letterlijk staan
 
-**2. De overlay staat uitgecommentarieerd.** In
-`infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml` staat de regel
-`#  - ../../infrastructure/mail/controller/overlays/sandboxed-local` met een toelichting
-erboven waarom. Die reden (bereikbaarheid van de upstream niet bewezen) is vervallen, dus
-die regel gaat aan en de toelichting wordt bijgewerkt.
-
-**3. De database van de relay moet bestaan.** De relay bewaart zijn accounts en wachtrij in
+**2. De database van de relay moet bestaan.** De relay bewaart zijn accounts en wachtrij in
 PostgreSQL (`MAIL_DB_NAME: mailrelay`), niet op een PVC. Bestaat die database of die
 gebruiker niet, dan start Stalwart niet op en zie je dat pas in de podlog.
 
@@ -61,22 +72,22 @@ gebruiker niet, dan start Stalwart niet op en zie je dat pas in de podlog.
 
 1. **Claim de sandbox**: `orch sandbox claim`. Aan het eind `orch sandbox release`, ook als
    het misgaat.
-2. **Sandbox opzetten**: `task sandbox:setup` (~5 tot 10 minuten). Bestaat er al een, dan
-   is dat prima; sla deze stap dan over.
-3. **Het geheim maken** volgens punt 1 hierboven → verifieer: `sops --decrypt` op het
-   resultaat toont de vier waarden.
-4. **De overlay aanzetten** volgens punt 2 → verifieer:
+2. **Het geheim maken** volgens punt 1 hierboven → verifieer: `sops --decrypt` op het
+   resultaat toont de vier waarden. **Commit.**
+3. **De build controleren**:
    `SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" kustomize build --enable-alpha-plugins --enable-exec --load-restrictor LoadRestrictionsNone infrastructure/bootstrap/clusters/sandboxed-local`
-   bouwt zonder fout en bevat de relay, de sink en het netwerkbeleid.
-5. **Synchroniseren**: `task sandbox:sync`, en wachten tot ArgoCD de namespace `rig-ron`
+   → verifieer: bouwt zonder fout en bevat `rig-mail-relay`, `rig-mail-sink` en het
+   netwerkbeleid. Faalt hij op iets anders dan het geheim, dan is dat een bevinding.
+4. **Synchroniseren**: `task sandbox:sync`, en wachten tot ArgoCD de namespace `rig-ron`
    heeft aangemaakt → verifieer: `kubectl -n rig-ron get pods` toont `rig-mail-relay` en
-   `rig-mail-sink` allebei Running.
-6. **Een account maken.** OPI maakt bij het opstarten zijn eigen platformaccount aan
+   `rig-mail-sink` allebei Running. Start de relay niet op, lees dan zijn log: dat is
+   vrijwel zeker de database uit punt 2. **Commit wat je onderweg moest aanpassen.**
+5. **Een account**: OPI maakt bij het opstarten zijn eigen platformaccount aan
    (`ensure_platform_mail_account`) en bewaart het wachtwoord in de Secret uit
-   `MAIL_PLATFORM_SECRET_NAME` in de namespace van OPI → verifieer: die Secret bestaat en
-   de log zegt dat het account klaarstaat. Lukt dat niet, maak dan een projectaccount door
-   een testproject de dienst `send-email` te geven en het goed te keuren.
-7. **De toets draaien**:
+   `MAIL_PLATFORM_SECRET_NAME` in de namespace van OPI → verifieer: die Secret bestaat en de
+   log zegt dat het account klaarstaat. Lukt dat niet, maak dan een projectaccount door een
+   testproject de dienst `send-email` te geven en het goed te keuren.
+6. **De toets draaien**:
    ```bash
    kubectl -n rig-ron port-forward svc/rig-mail-relay 1587:587 &
    kubectl -n rig-ron port-forward svc/rig-mail-sink 8025:8025 &
@@ -84,32 +95,38 @@ gebruiker niet, dan start Stalwart niet op en zie je dat pas in de podlog.
    uv run python scripts/mail_identity_check.py --user <account> --password <geheim>
    ```
    → verifieer: exitcode 0 en drie regels met het vaste adres en het juiste plusdeel.
-8. **De TLS-vraag beantwoorden.** De sink biedt geen STARTTLS aan, terwijl de relay
+7. **De TLS-vraag beantwoorden.** De sink biedt geen STARTTLS aan, terwijl de relay
    `[remote.upstream.tls]` op STARTTLS met strikte certificaatcontrole heeft staan. Komt er
    post aan, dan valt Stalwart dus terug op platte tekst en is `allow-invalid-certs = false`
    een voorkeur; komt er niets aan, dan is het een garantie. **Schrijf de uitkomst op in
-   `docs/ron-koppeling.md`**, want dat verschil bepaalt of er op productie een tweede slot
-   op zit.
-9. **De markering weghalen.** Slaagt de toets, haal dan het blok "NOG NIET GEMETEN" weg bij
+   `docs/ron-koppeling.md`.**
+8. **De markering weghalen.** Slaagt de toets, haal dan het blok "NOG NIET GEMETEN" weg bij
    identiteitsregel 2 in
    `infrastructure/bootstrap/infrastructure/mail/controller/base/configmap.yaml` en zet
-   ervoor in de plaats wat er gemeten is, in dezelfde stijl als de regels eromheen.
-10. `orch sandbox release`.
+   ervoor in de plaats wat er gemeten is, in dezelfde stijl als de regels eromheen. Werk ook
+   de toelichting bij in `infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml`,
+   want daar staat nu dat de toets nog niet gedraaid is.
+9. `orch sandbox release`.
 
 ## Wat niet de bedoeling is
 
 - **Niets naar productie.** Deze taak raakt `sandboxed-local` en verder niets. De
   odcn-overlay blijft uitgecommentarieerd.
 - **Geen bestaande geheimen regenereren**, zie punt 1.
-- **De identiteitsregels niet aanpassen om de toets te laten slagen.** Faalt de toets, dan
-  is dat de uitkomst en hoort hij in het verslag: welk van de vier punten faalde, met de
+- **De identiteitsregels niet aanpassen om de toets te laten slagen.** Faalt de toets, dan is
+  dat de uitkomst en hoort hij in het verslag: welk van de vier punten faalde, met de
   werkelijke `From:`, envelope en headers erbij. Een regel bijbuigen tot het groen is, maakt
   de toets waardeloos.
 - Het script niet verbouwen behalve als het zelf stuk is; het is de assertie.
+- **Blijf van de limieten af.** Er staan vier bekende vervolgpunten open (een burst-limiter
+  naast de daglimiet, het besluit of het spamfilter aan gaat, `messages = 10` per sessie dat
+  te laag is, en of een outbound throttle op `sender` het plusdeel meeneemt). Die horen bij
+  een volgende taak, niet bij deze. Kom je onderweg een gegeven tegen dat er iets over zegt,
+  schrijf het op in het verslag maar verander niets.
 
 ## Verslag
 
-Wat er in de PR moet staan: de uitslag van de toets (alle vier de punten), het antwoord op
-de TLS-vraag uit stap 8, en alles wat onderweg anders bleek dan hierboven beschreven. Dat
-laatste is het waardevolste deel, want dit plan is geschreven zonder dat er ooit een relay
-heeft gedraaid.
+Wat er in de PR moet staan: de uitslag van de toets (alle vier de punten), het antwoord op de
+TLS-vraag uit stap 7, en alles wat onderweg anders bleek dan hierboven beschreven. Dat laatste
+is het waardevolste deel, want dit plan is geschreven zonder dat er ooit een relay heeft
+gedraaid.
