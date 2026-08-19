@@ -428,3 +428,44 @@ def test_de_migratie_van_een_oud_bestand_levert_iets_geldigs_op() -> None:
     migrated, _changed = migrate_to_latest(oud)
 
     poorten(migrated)
+
+
+# ---------------------------------------------------------------------------
+# Mailaccounts: wat de mailmanager onder de dienst send-email wegschrijft
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_een_mailaccount_blijft_geldig() -> None:
+    """``mail_manager`` schrijft per cluster een account onder ``send-email``.
+
+    De echte schrijver, niet een met de hand nagebouwd item: het wachtwoord gaat
+    AGE-versleuteld het bestand in, en juist die vorm (een blokstring met een patroonregel)
+    is wat een zelfverzonnen voorbeeld niet zou raken. Precies de klasse fout waar dit
+    bestand voor bestaat.
+    """
+    from opi.connectors.mail import MailAccount
+    from opi.manager.mail_manager import MailManager
+    from opi.services.project import Project
+
+    project = _basis_project()
+    project["services"].append({"name": ServiceType.SEND_EMAIL.value, "config": {"from-name": "Schrijvers"}})
+    poorten(project)
+
+    afzender, bounce = MailManager._addresses("odcn-production", "project-schrijvers")
+    manager = MailManager(MagicMock(save_and_commit_project=AsyncMock()))
+    await manager._store_account(
+        Project(project),
+        project,
+        "schrijvers",
+        "odcn-production",
+        MailAccount(
+            username="project-schrijvers",
+            from_address=afzender,
+            bounce_address=bounce,
+            messages_per_day=500,
+        ),
+        "een-wachtwoord-dat-versleuteld-wordt",
+    )
+
+    poorten(project)
