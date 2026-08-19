@@ -18,9 +18,9 @@ resources:
   # zijn eigen ArgoCD Application ron-infrastructure (destination rig-ron, zie
   # bootstrap/rig-system/kustomize/overlays/sandboxed-local).
   #
-  # De identiteitsregels zijn met die relay nog NIET doorgemeten; dat is de opdracht in
-  # plans/mailrelay-sandboxtoets.md. Zolang die toets niet gedraaid is, blijft de
-  # markering bij regel 2 in de configmap van de relay staan.
+  # De identiteitsregels zijn op 19 augustus 2026 met die relay doorgemeten en alle vier
+  # kloppen ze; scripts/mail_identity_check.py eindigt met exitcode 0. De uitslag staat
+  # bij regel 2 in de configmap van de relay en in docs/ron-koppeling.md.
   #
   # Wat hier WEL bij hoort: de eerste rendering van het mail-relay-geheim, in rig-system
   # voor OPI (secrets-overlay hierboven; de relay krijgt zijn tweede rendering via de
