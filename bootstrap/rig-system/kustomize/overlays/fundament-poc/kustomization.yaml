@@ -29,22 +29,18 @@ components:
 - ../../components/sops-plugin
 
 patches:
-  # De branch op een plaats, net als in de app-of-apps. Op fundament-poc lezen we van
-  # `fundament` en niet van `main`. Twee vormen, want de infrastructuur-Application
-  # gebruikt `source` en die voor user-applications `sources`.
+  # De branch-override geldt alleen voor onze eigen infrastructuurcode in RIG-Cluster.
+  # Die leest fundament-poc van de branch `fundament` zolang dit werk daar leeft.
+  #
+  # NIET voor user-applications: die leest argo-applications, en dat is een datarepo waar
+  # OPI zelf in schrijft, op main. Daar bestaat geen fundament-branch. Zelfde geldt voor
+  # rig-cluster-projects en zad-deployments; die staan op main in de OPI-configmap.
   - target:
       kind: Application
       name: fundament-poc-infrastructure
     patch: |-
       - op: replace
         path: /spec/source/targetRevision
-        value: fundament
-  - target:
-      kind: Application
-      name: user-applications
-    patch: |-
-      - op: replace
-        path: /spec/sources/0/targetRevision
         value: fundament
 
   # De sops-plugin component doet `op: replace` op /spec/repo, dus alles wat echt moet
