@@ -15,8 +15,10 @@ resources:
   # De reden om hem uit te laten - een onbewezen route naar de upstream - is hier
   # vervallen: op dit clustertype IS de upstream de SMTP-sink die in dezelfde overlay
   # meekomt (infrastructure/mail/sink), en die route ligt binnen de eigen namespace. De
-  # identiteitsregels zijn met die sink doorgemeten; de uitslag staat in
-  # docs/ron-koppeling.md en bij regel 2 in de configmap van de relay.
+  # identiteitsregels zijn hiermee NOG NIET doorgemeten: dat is precies wat er met deze
+  # overlay aan mogelijk wordt, en het is de opdracht die in
+  # plans/mailrelay-sandboxtoets.md staat. Zolang die toets niet gedraaid is, blijft de
+  # markering bij regel 2 in de configmap van de relay staan.
   #
   # Deze regel werkt alleen samen met twee andere stukken uit
   # features/send-email.md ("Wat er bij het aanzetten werkelijk moet gebeuren"): het
