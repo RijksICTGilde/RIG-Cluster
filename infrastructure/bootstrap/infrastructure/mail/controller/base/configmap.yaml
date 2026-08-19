@@ -229,16 +229,30 @@ data:
     protocol = "smtp"
 
     # implicit = false betekent STARTTLS op een platte verbinding, en dat is precies wat
-    # deze upstream aanbiedt. allow-invalid-certs blijft uit, dus strikte certificaatcontrole.
+    # deze upstream aanbiedt.
     #
-    # NIET GEVERIFIEERD, en het is de moeite waard: de documentatie zegt nergens wat er
-    # gebeurt als STARTTLS mislukt of het certificaat wordt afgekeurd. Valt Stalwart dan
-    # terug op platte tekst, of mislukt de bezorging? Dat verschil bepaalt of dit een
-    # garantie is of een voorkeur. Te meten door de upstream tijdelijk een certificaat te
-    # laten aanbieden dat niet valideert en te kijken of het bericht alsnog vertrekt.
+    # GEMETEN op 19 augustus 2026 op de sandbox, en het antwoord is: dit is een GARANTIE,
+    # geen voorkeur. Stalwart valt NIET terug op platte tekst.
+    #   - upstream zonder STARTTLS: "STARTTLS was not advertised by host" en een
+    #     PERMANENTE fout; het bericht wordt gebounced.
+    #   - upstream met een certificaat dat niet valideert: "invalid peer certificate" en
+    #     een TIJDELIJKE fout; het bericht blijft in de wachtrij en wordt herhaald.
+    # In geen van beide gevallen vertrekt er iets onversleuteld.
+    #
+    # OOK GEMETEN, en belangrijk voor productie: Stalwart leest de trust store van het
+    # besturingssysteem NIET. Een eigen CA in /etc/ssl/certs/ca-certificates.crt hangen
+    # verandert niets (de fout blijft "UnknownIssuer"); hij gaat af op de ingebouwde
+    # webpki-roots. Presenteert de upstream ooit een certificaat van een interne CA, dan
+    # is er geen knop om die te vertrouwen - dan blijft alleen de schakelaar hieronder.
+    #
+    # Die schakelaar staat er om precies EEN reden: in een ontwikkelcluster is de upstream
+    # een sink met een zelfondertekend certificaat, en die kan per definitie niet door
+    # webpki-validatie komen. Hij hoort dus op false te staan en doet dat ook overal waar
+    # de overlay hem niet aanzet: de waarde komt uit de omgeving en de basis van het
+    # Deployment zet hem op "false". Alleen de sandboxed-local-overlay zet hem om.
     [remote.upstream.tls]
     implicit = false
-    allow-invalid-certs = false
+    allow-invalid-certs = "%{env:MAIL_UPSTREAM_ALLOW_INVALID_CERTS}%"
 
     # --- Limieten (plans/mailrelay.md, "Limieten en uitgaande controle") --------
     #

@@ -75,6 +75,12 @@ spec:
                 secretKeyRef:
                   name: mail-relay-credentials
                   key: MAIL_UPSTREAM_HOST
+            # Strikte certificaatcontrole op de sprong naar de upstream. Staat hier op
+            # "false" zodat elk cluster hem strikt heeft zonder iets te hoeven zeggen;
+            # alleen de sandboxed-local-overlay zet hem om, want de sink daar draagt een
+            # zelfondertekend certificaat. Zie de toelichting in configmap.yaml.
+            - name: MAIL_UPSTREAM_ALLOW_INVALID_CERTS
+              value: "false"
             - name: MAIL_RELAY_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
