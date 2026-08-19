@@ -310,6 +310,7 @@ tasks:
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       BOOTSTRAP_DIR: 'bootstrap/rig-system/kustomize/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
       OPI_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
+      FORCE: '{{default "false" .FORCE}}'
     preconditions:
       - sh: '[ -n "{{.KEY_FILE}}" ]'
         msg: "AGE_KEY_FILE is niet gezet. Draai 'task select-cluster'."
@@ -340,7 +341,22 @@ tasks:
         # Wie liever niet typt kan de tokens vooraf in de omgeving zetten:
         #   RIG_READ_TOKEN=... RIG_WRITE_TOKEN=... task set-git-credentials
         if [ -z "${RIG_READ_TOKEN:-}" ] || [ -z "${RIG_WRITE_TOKEN:-}" ]; then
-          printf 'GitHub-token (voor ArgoCD en OPI): '
+          # Niets meer in te vullen? Dan niets vragen. Zo kan deze stap in de
+        # bootstrap-reeks staan zonder dat je bij elke herhaling opnieuw moet typen.
+        if [ "{{.FORCE}}" != "true" ]; then
+          NOG_TE_DOEN=0
+          grep -q 'TODO-encrypt-with-task-encrypt-value-age-base64' "{{.OPI_DIR}}/configmap.yaml" 2>/dev/null && NOG_TE_DOEN=1
+          for f in "{{.BOOTSTRAP_DIR}}"/argocd-repo-*.sops.yaml; do
+            [ -f "$f" ] || continue
+            sops --decrypt "$f" 2>/dev/null | grep -q 'PLACEHOLDER' && NOG_TE_DOEN=1
+          done
+          if [ "$NOG_TE_DOEN" = "0" ]; then
+            echo "Git-credentials staan al ingevuld. Opnieuw zetten: task set-git-credentials FORCE=true"
+            exit 0
+          fi
+        fi
+
+        printf 'GitHub-token (voor ArgoCD en OPI): '
           stty -echo 2>/dev/null || true
           read -r RIG_GIT_TOKEN
           stty echo 2>/dev/null || true
@@ -379,6 +395,40 @@ tasks:
 
         echo ""
         echo "Klaar. Controleer met 'git diff' dat er geen platte tekst in staat, en commit."
+    silent: true
+
+  cluster:bootstrap:
+    desc: "Bootstrap the selected cluster: everything ArgoCD needs before it can take over"
+    vars:
+      CTX: '{{.KUBE_CONTEXT}}'
+    preconditions:
+      # Niet op CLUSTER_TYPE toetsen: die heeft bovenaan de Taskfile een default van
+      # "local", dus hij is altijd gezet. Het bestaan van .env-taskfile-current is het
+      # enige echte teken dat er bewust een cluster gekozen is.
+      - sh: '[ -f .env-taskfile-current ]'
+        msg: "Geen cluster geselecteerd. Draai eerst 'task select-cluster'."
+    cmds:
+      - |
+        echo "Bootstrap van {{.CLUSTER_TYPE}}{{if .CTX}} (context {{.CTX}}){{end}}"
+        echo ""
+      # Sleutels en secrets. Dit moet eerst: zonder de AGE-sleutel valt er niets te
+      # versleutelen, en zonder secrets heeft ArgoCD niets om te ontsleutelen.
+      - task: generate-age-key
+      - task: generate-infrastructure-secrets-for-cluster
+      - task: generate-bootstrap-secrets-for-cluster
+      # De git-credential kan per definitie niet uit git komen, want het is juist de
+      # sleutel waarmee ArgoCD git leest. Slaat zichzelf over als hij al ingevuld is.
+      - task: set-git-credentials
+      # In het cluster: de namespace en de sleutel waarmee ArgoCD de secrets uit git leest.
+      - task: create-namespace
+      - task: create-sops-age-secret
+      # De motor zelf, en daarna neemt git het over.
+      - task: prepare-argocd-operator
+      - task: bootstrap-argo-system
+      - |
+        echo ""
+        echo "Bootstrap klaar. Vanaf hier komt alles uit git."
+        echo "Volgen: kubectl {{if .CTX}}--context {{.CTX}} {{end}}-n {{.RIG_NAMESPACE}} get applications -w"
     silent: true
 
   create-namespace:
