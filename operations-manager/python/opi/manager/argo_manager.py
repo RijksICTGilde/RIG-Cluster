@@ -62,6 +62,19 @@ def terminal_condition_message(status_data: dict[str, Any]) -> str | None:
 #: ververst zelf ook niet sneller, en het kost ArgoCD wel verzoeken.
 POLL_INTERVAL_SECONDEN = 2
 
+#: De bewaker die `user-applications` blijft prikken loopt op het ANTWOORD van de refresh,
+#: niet op de klok: die call blijft hangen tot er een reconcile is afgerond (op productie
+#: zo'n tien seconden), en juist op dat moment is te zien of die reconcile onze revisie had.
+#: Deze ondergrens is er alleen voor het geval de call wél meteen terugkomt, zodat het geen
+#: hete lus wordt. Er zit dus een mens op te wachten en dat mag je merken.
+UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 5
+
+#: Hoe vaak we dat hoogstens proberen. Een refresh op de umbrella is duur, want de
+#: applicatie mist de `manifest-generate-paths`-annotatie (issue #130) en hertekent dus
+#: circa 90 child-apps. Staat de revisie na zoveel rondes nog niet goed, dan is er iets
+#: anders aan de hand dan een verloren wekker en helpt doorprikken niet meer.
+UMBRELLA_REFRESH_MAX_POGINGEN = 6
+
 
 class ArgoManager:
     """Manager for ArgoCD-related operations and resources."""
@@ -74,6 +87,15 @@ class ArgoManager:
             project_manager: The main ProjectManager instance for accessing shared resources
         """
         self.project_manager = project_manager
+        #: De commit die `create_argocd_resources` als laatste naar de argo-applications
+        #: repo pushte. De wachters gebruiken hem als het enige harde bewijs dat de
+        #: umbrella onze wijziging gezien heeft: een tijdstempel zegt niets, een revisie
+        #: wel. None zolang er in deze taak niets gepusht is.
+        self.last_pushed_argo_commit: str | None = None
+        #: Wat er als laatste van `user-applications` gelezen is, puur voor de diagnose in
+        #: de timeoutmelding hieronder.
+        self.last_umbrella_revision: str | None = None
+        self.last_umbrella_reconciled_at: str | None = None
 
     async def create_argocd_resources(
         self, deployment_name: str | None = None, deployment_names: list[str] | None = None
@@ -102,9 +124,18 @@ class ArgoManager:
         # The kustomization is a single shared per-project file that must enumerate
         # every manifest, so it intentionally stays project-wide.
         await self.create_kustomization_files(project_data, deployment_name)
-        await (await self.project_manager.get_git_connector_for_argocd()).commit_and_push(
+        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
+        await git_connector_for_argocd.commit_and_push(
             f"Added ArgoCD resources for project {project_name} on cluster {settings.CLUSTER_MANAGER}"
         )
+        # Onthoud welke commit we net gepusht hebben; de wachter kan daarmee zien of de
+        # umbrella-applicatie onze wijziging al vergeleken heeft.
+        try:
+            self.last_pushed_argo_commit = await git_connector_for_argocd.get_local_commit_hash()
+        except RuntimeError as e:
+            # Zonder hash valt er niets te bewijzen; de wachter gedraagt zich dan als voorheen.
+            logger.warning(f"Kon de gepushte ArgoCD-commit niet bepalen: {e}")
+            self.last_pushed_argo_commit = None
 
     async def create_repository_secrets(
         self,
@@ -789,6 +820,15 @@ class ArgoManager:
 
             logger.info(f"Successfully committed ArgoCD infrastructure resources for project '{project_name}'")
 
+            # Zelfde reden als in create_argocd_resources: de wachter op de
+            # infrastructuur-applicatie moet kunnen zien of de umbrella onze commit al
+            # vergeleken heeft.
+            try:
+                self.last_pushed_argo_commit = await git_connector_for_argocd.get_local_commit_hash()
+            except RuntimeError as e:
+                logger.warning(f"Kon de gepushte ArgoCD-commit niet bepalen: {e}")
+                self.last_pushed_argo_commit = None
+
             return True
 
         except Exception as e:
@@ -860,8 +900,15 @@ class ArgoManager:
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
 
-        # Timeout reached
-        error_msg = f"Timeout waiting for ArgoCD application '{app_name}' to be created after {timeout}s"
+        # Timeout reached. Noem in dezelfde regel wat de umbrella vergeleken heeft: als die
+        # revisie niet onze gepushte commit is, wachtten we op een reconcile die onze
+        # wijziging nog helemaal niet gezien had.
+        error_msg = (
+            f"Timeout waiting for ArgoCD application '{app_name}' to be created after {timeout}s "
+            f"(gepushte commit: {self.last_pushed_argo_commit or 'onbekend'}, "
+            f"user-applications revisie: {self.last_umbrella_revision or 'onbekend'}, "
+            f"reconciledAt: {self.last_umbrella_reconciled_at or 'onbekend'})"
+        )
         logger.error(error_msg)
         raise TimeoutError(error_msg)
 

@@ -99,7 +99,8 @@
       ],
       "default": null,
       "description": "Current generation, incremented on each clone. Written by the platform.",
-      "title": "Generation"
+      "title": "Generation",
+      "x-platform-managed": true
     },
     "revisions": {
       "default": [],
@@ -108,7 +109,8 @@
         "$ref": "#/$defs/Revision"
       },
       "title": "Revisions",
-      "type": "array"
+      "type": "array",
+      "x-platform-managed": true
     }
   },
   "title": "StorageCloneState",

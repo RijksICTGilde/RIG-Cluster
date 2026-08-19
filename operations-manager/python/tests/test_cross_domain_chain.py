@@ -137,11 +137,11 @@ def _deployment_submission(peer_deployment: str) -> dict[str, Any]:
     }
 
 
-def _manifests(project: dict[str, Any]) -> list[Any]:
+def _manifests(project: dict[str, Any], deployment_index: int = 0) -> list[Any]:
     ctx = DeploymentManifestContext(
         project_name="me",
         project_data=project,
-        deployment=project["deployments"][0],
+        deployment=project["deployments"][deployment_index],
         cluster=_CLUSTER,
         namespace="rig-prd-me",
     )
@@ -328,3 +328,124 @@ class TestFormContextNeverReachesTheProjectFile:
 
         source = inspect.getsource(router_wizard)
         assert 'for key in [key for key in final_data if key.startswith("_")]' in source
+
+
+#: What the project-level step posts for a peer inside the OWN project: dev/web calls
+#: other/api on 8080, both deployments of project 'me'.
+_OWN_PROJECT_SUBMISSION: dict[str, Any] = {
+    "_services-config": {
+        "cross-domain-access": {
+            "config": {
+                "inbound": [
+                    {
+                        "name": "van-dev",
+                        "from": {"project": "me", "deployment": "dev", "component": "web"},
+                        "to": {"component": "api", "port": "8080"},
+                    }
+                ],
+                "outbound": [
+                    {
+                        "name": "naar-other",
+                        "from": {"component": "web"},
+                        "to": {"project": "me", "deployment": "other", "component": "api", "port": "8080"},
+                    }
+                ],
+            }
+        }
+    }
+}
+
+
+class TestAPeerInTheOwnProject:
+    """Two deployments of ONE project reaching each other.
+
+    The tenant baseline isolates per DEPLOYMENT, not per project, so this needs a rule
+    exactly as much as a rule pointing at someone else's project. It used to be impossible
+    to express: the peer-project select hid the own project and the resolver dropped any
+    rule that named it, so the customer got a form that produced nothing.
+
+    Both rules sit at the PROJECT layer, and each lands on the deployment that owns its own
+    component: the outbound on the caller, the inbound on the callee. That is the whole
+    contract, so it is asserted from both sides.
+    """
+
+    def _project(self) -> dict[str, Any]:
+        return {
+            "name": "me",
+            "_cross_domain_projects": ["me", "regelrecht"],
+            "services": [{"name": "cross-domain-access", "config": {}}],
+            "components": [
+                {"name": "web", "ports": {"inbound": [3000]}},
+                {"name": "api", "ports": {"inbound": [8080]}},
+            ],
+            "deployments": [
+                {
+                    "name": "dev",
+                    "cluster": _CLUSTER,
+                    "namespace": "me",
+                    "services": [],
+                    "components": [{"reference": "web"}],
+                },
+                {
+                    "name": "other",
+                    "cluster": _CLUSTER,
+                    "namespace": "me",
+                    "services": [],
+                    "components": [{"reference": "api"}],
+                },
+            ],
+        }
+
+    @pytest.fixture(autouse=True)
+    def _store_knows_the_own_project(self, monkeypatch):
+        """In production ``lookup()`` reads the peer from the store, and the store knows the
+        own project like any other. The module fixture only stubs 'regelrecht'."""
+        import opi.services.project_store as store_mod
+
+        project = self._project()
+
+        class _Summary:
+            data = project
+
+        class _Store:
+            def get(self, name: str):
+                return _Summary() if name == "me" else None
+
+        monkeypatch.setattr(store_mod, "get_project_store", lambda: _Store())
+
+    @pytest.mark.asyncio
+    async def test_the_caller_gets_an_egress_rule_to_the_other_deployment(self) -> None:
+        project = await _submit(
+            _service().config_form_section(ConfigLayer.PROJECT), _OWN_PROJECT_SUBMISSION, self._project()
+        )
+
+        [spec] = _manifests(project, deployment_index=0)
+        doc = _policy(spec)
+        assert doc["spec"]["podSelector"]["matchLabels"] == {"app": "dev-web"}
+        # Same namespace as the caller: peering inside one project is a normal peer entry.
+        assert _peers(doc["spec"]["egress"], "to") == [("rig-prd-me", "other-api", [8080])]
+        assert "ingress" not in doc["spec"]
+
+    @pytest.mark.asyncio
+    async def test_the_callee_gets_the_matching_ingress_rule(self) -> None:
+        project = await _submit(
+            _service().config_form_section(ConfigLayer.PROJECT), _OWN_PROJECT_SUBMISSION, self._project()
+        )
+
+        [spec] = _manifests(project, deployment_index=1)
+        doc = _policy(spec)
+        assert doc["spec"]["podSelector"]["matchLabels"] == {"app": "other-api"}
+        assert _peers(doc["spec"]["ingress"], "from") == [("rig-prd-me", "dev-web", [8080])]
+        assert "egress" not in doc["spec"]
+
+    @pytest.mark.asyncio
+    async def test_the_peer_pods_must_still_carry_the_project_label(self) -> None:
+        # The second gate stays intact for an own-project peer: a namespace that happens to
+        # carry the same name but belongs to someone else matches nothing.
+        project = await _submit(
+            _service().config_form_section(ConfigLayer.PROJECT), _OWN_PROJECT_SUBMISSION, self._project()
+        )
+
+        doc = _policy(_manifests(project, deployment_index=0)[0])
+        [peer] = doc["spec"]["egress"][0]["to"]
+        assert peer["podSelector"]["matchLabels"] == {"app": "other-api", "project": "me"}

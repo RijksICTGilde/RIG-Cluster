@@ -123,5 +123,11 @@ class InviteConfig(BaseModel):
         description="Language the invitation page opens in when the visitor expresses no preference.",
     )
     active: list[InviteEntry] = Field(
-        default_factory=list, description="The invitations that can currently be redeemed."
+        default_factory=list,
+        description=(
+            "The invitations that can currently be redeemed. Over the API this is presented as "
+            "ONE entry rather than a list, because in practice there is one; add a second with the "
+            "PATCH on this field. Roles go in 'realm-roles' -- 'roles' is the older spelling of the "
+            "same thing and only still exists so older project files keep validating."
+        ),
     )

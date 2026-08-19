@@ -38,6 +38,10 @@ dependencies = [
     "python-multipart>=0.0.27", # CVE-2026-42561 DoS via unbounded headers
     "mako>=1.3.12", # CVE-2026-44307 path traversal in TemplateLookup
     "aiohttp>=3.12.13",
+    # Directly imported by connectors/transip.py to sign the TransIP API request, and
+    # that module hangs off startup.py. Declared rather than inherited from authlib:
+    # a transitive dependency that disappears would take the whole boot down with it.
+    "cryptography>=48.0.0",
     "gitpython>=3.1.50", # CVE-2026-42215/42284/44243/44244 + GHSA-mv93-w799-cj2w
     "deepdiff>=8.0.1",
     "jsonpath-ng>=1.7.0",

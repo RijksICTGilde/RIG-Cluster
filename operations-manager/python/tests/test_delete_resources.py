@@ -167,15 +167,54 @@ class TestDeleteResourcesForDeployment:
         assert len(result["errors"]) == 0
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_postgresql_service(self):
-        """Should skip deletion when deployment doesn't use PostgreSQL."""
+    async def test_deletes_even_when_project_file_no_longer_declares_postgresql(self):
+        """Cleanup must not trust the current project file about past provisioning.
+
+        Regression for mpfoa-e01 and mpfoa-e2w (odcn-production, 2026): the deployment
+        was rewired to components that no longer declared postgresql-database, so the
+        old gate reported "skipped" as success and the database outlived the project.
+        """
         db_manager = _make_database_manager(uses_postgresql=False)
         project_data = _make_project_data()
         deployment = _make_deployment()
 
+        mock_connector = AsyncMock(spec=PostgresConnector)
+        mock_connector.delete_database = AsyncMock(return_value={"status": "deleted", "message": "ok"})
+        mock_connector.delete_user = AsyncMock(return_value={"status": "deleted", "message": "ok"})
+        db_manager._postgres_connector = mock_connector
+
         result = await db_manager.delete_resources_for_deployment(project_data, deployment)
 
-        assert result["operations"][0]["status"] == "skipped"
+        deleted = [call.kwargs["database_name"] for call in mock_connector.delete_database.call_args_list]
+        assert "test_project_pr_123" in deleted
+        assert [call.kwargs["username"] for call in mock_connector.delete_user.call_args_list] == [
+            "test_project_pr_123",
+            "test_project_pr_123_ro",
+        ]
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_absent_database_is_not_an_error(self):
+        """Probing a deployment that never had a database must stay silent.
+
+        This is what makes the ungated cleanup safe: delete_database is idempotent.
+        """
+        db_manager = _make_database_manager(uses_postgresql=False)
+        project_data = _make_project_data()
+        deployment = _make_deployment()
+
+        mock_connector = AsyncMock(spec=PostgresConnector)
+        mock_connector.delete_database = AsyncMock(
+            return_value={"status": "not_found", "message": "Database does not exist"}
+        )
+        mock_connector.delete_user = AsyncMock(return_value={"status": "not_found", "message": "User does not exist"})
+        db_manager._postgres_connector = mock_connector
+
+        result = await db_manager.delete_resources_for_deployment(project_data, deployment)
+
+        assert result["success"] is True
+        assert result["errors"] == []
+        assert all(op["status"] == "not_found" for op in result["operations"])
 
 
 # --- KeycloakConnector deletion tests ---

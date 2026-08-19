@@ -106,22 +106,23 @@ def resolve_rules(
     rules: list[MergedRule],
     *,
     cluster: str,
-    self_project: str,
     lookup_project: Callable[[str], dict | None],
 ) -> list[ResolvedRule]:
     """Resolve each rule's peer to a namespace + pod selector on this cluster.
 
-    Every edge case from the design (self-reference, a missing deployment/component in a
-    project that IS known, a deployment on another cluster) is logged with the rule name and
-    skipped -- resolution never raises. An unknown peer project is not skipped but resolved by
+    Every edge case from the design (a missing deployment/component in a project that IS
+    known, a deployment on another cluster) is logged with the rule name and skipped --
+    resolution never raises. An unknown peer project is not skipped but resolved by
     convention (``_conventional_peer``). The result is deduplicated and sorted so the render
     is stable.
+
+    A rule may name the resolving project itself. The tenant baseline isolates per
+    DEPLOYMENT, not per project, so one deployment reaching another deployment of the same
+    project needs a rule exactly as much as reaching someone else's. Such a peer resolves
+    along the normal path, against the project's own data.
     """
     resolved: dict[tuple, ResolvedRule] = {}
     for rule in rules:
-        if rule.peer_project == self_project:
-            logger.warning("cross-domain rule '%s': references own project, skipped", rule.name)
-            continue
         project_data = lookup_project(rule.peer_project)
         if project_data is None:
             logger.warning(

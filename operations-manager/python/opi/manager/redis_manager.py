@@ -252,11 +252,16 @@ class RedisManager:
             "errors": [],
         }
 
-        if not await self._deployment_uses_redis(project_data, deployment_name):
+        # Broad check on purpose: see the note in MinIOManager.delete_resources_for_deployment.
+        # A deployment that stopped referencing a Redis-using component still owns its ACL
+        # user, so only a project that never declared Redis at all is skipped.
+        if not self.project_manager._project_file_handler.project_declares_service(
+            project_data, [ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value]
+        ):
             deletion_results["operations"].append(
-                {"type": "redis_cleanup", "status": "skipped", "reason": "Deployment does not use Redis service"}
+                {"type": "redis_cleanup", "status": "skipped", "reason": "Project does not declare the Redis service"}
             )
-            logger.debug(f"Deployment {deployment_name} does not use Redis service, skipping Redis cleanup")
+            logger.debug(f"Project {project_name} does not declare Redis anywhere, skipping Redis cleanup")
             return deletion_results
 
         logger.info(f"Redis cleanup for project: {project_name}, deployment: {deployment_name}")

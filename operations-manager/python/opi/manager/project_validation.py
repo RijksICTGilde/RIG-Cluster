@@ -21,6 +21,7 @@ from opi.handlers.project_file_handler import validate_attachment_couplings, val
 from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
 from opi.services.registry import SERVICES, get_service, property_owning_services
@@ -38,6 +39,15 @@ if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
 
 logger = logging.getLogger(__name__)
+
+#: This module validates a project file that ALREADY EXISTS -- on every save, and on
+#: every reprocess and replay of a file nobody touched. A rule about how large a new
+#: volume may be does not belong here: applying it to stored data would turn an older
+#: project with a larger mount into a file that can no longer be saved at all, and a
+#: PVC cannot shrink, so its owner could not comply either. Ceilings are enforced where
+#: the value ARRIVES (the config API's request bodies and the form field); here the
+#: shape is checked and the value is taken as it stands.
+STORED_PROJECT_CONTEXT: dict[str, Any] = {STORED_CONTEXT_KEY: True}
 
 
 def _accepted_config_fields(provider: Service, layer: ConfigLayer) -> list[str]:
@@ -60,6 +70,22 @@ def _accepted_config_fields(provider: Service, layer: ConfigLayer) -> list[str]:
         leaves = editable.children or [editable]
         names.extend(child.yaml_path.rsplit("/", 1)[-1] for child in leaves)
     return names
+
+
+def validation_reasons(error: ValidationError) -> str:
+    """De redenen van een ValidationError, zoals ze aan een gebruiker getoond mogen worden.
+
+    ``str(e)`` van pydantic is uitvoer voor een ontwikkelaar: hij zet er
+    ``[type=value_error, input_value=..., input_type=dict]`` achter en een link naar
+    errors.pydantic.dev. Dat kwam zo op het scherm van iemand die een webadres wilde
+    wijzigen, met de afgekeurde waarde erin -- en die waarde kan een geheim zijn.
+
+    ``error["msg"]`` draagt alleen de reden. Het voorvoegsel ``Value error, `` dat pydantic
+    voor een ``model_validator`` zet valt eraf: de zin eromheen zegt al dat er iets ongeldig
+    is, en "Value error" voegt daar niets aan toe wat de lezer verder helpt.
+    """
+    reasons = [error_entry["msg"].removeprefix("Value error, ") for error_entry in error.errors()]
+    return "; ".join(reasons) or "waarde voldoet niet aan het model"
 
 
 def _validate_one_config(
@@ -85,7 +111,7 @@ def _validate_one_config(
         return  # service takes no typed config at this layer
     try:
         if model is provider.config_model:
-            provider.validate_config(raw, from_version=from_version)
+            provider.validate_config(raw, from_version=from_version, context=STORED_PROJECT_CONTEXT)
         else:
             # A layer-specific model (per-mount clone state). OPI writes it, so there is no
             # stamped version to migrate from; validate the shape directly.
@@ -94,7 +120,8 @@ def _validate_one_config(
         accepted = _accepted_config_fields(provider, layer)
         hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
         raise ProjectIntegrityError(
-            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: {e}.{hint}"
+            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: "
+            f"{validation_reasons(e)}.{hint}"
         ) from e
 
 
@@ -117,7 +144,7 @@ def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str
     try:
         model.model_validate(raw)
     except ValidationError as e:
-        reasons = "; ".join(error["msg"] for error in e.errors()) or "waarde voldoet niet aan het model"
+        reasons = validation_reasons(e)
         raise ProjectIntegrityError(
             f"Project '{project_name}': gegevens van service '{name}' {where} zijn ongeldig: {reasons}."
         ) from None
@@ -296,7 +323,7 @@ def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any,
     try:
         model.model_validate(raw)
     except ValidationError as e:
-        reasons = "; ".join(error["msg"] for error in e.errors()) or "waarde voldoet niet aan het model"
+        reasons = validation_reasons(e)
         raise ProjectIntegrityError(
             f"Project '{project_name}': '{service.owned_property}' {where} is ongeldig: {reasons}."
         ) from None
@@ -329,7 +356,7 @@ def validate_component_references(project_data: dict, components: list, context:
         available_components = list(component_names) if component_names else ["none"]
         project_name = project_data.get("name", "unknown")
         error_msg = f"Invalid component references in {context} for project '{project_name}': {invalid_references}. Available components: {available_components}"
-        logger.error(error_msg)
+        logger.warning(error_msg)
         return {"success": False, "error": error_msg, "invalid_references": invalid_references}
 
     return {"success": True, "error": None, "invalid_references": None}

@@ -249,22 +249,17 @@ def _mr(**kw) -> MergedRule:
 
 class TestResolve:
     def test_selector_carries_both_pod_labels(self) -> None:
-        [rule] = resolve_rules([_mr()], cluster=_CLUSTER, self_project="me", lookup_project=_lookup)
+        [rule] = resolve_rules([_mr()], cluster=_CLUSTER, lookup_project=_lookup)
         assert rule.peer.pod_labels == {"app": "prod-api", "project": "regelrecht"}
         assert rule.peer.namespace == "rig-prd-regelrecht"
         assert rule.local_component == "web"
         assert rule.port == 8080
 
-    def test_self_reference_is_dropped(self) -> None:
-        assert (
-            resolve_rules([_mr(peer_project="me")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup) == []
-        )
-
     def test_an_unknown_project_resolves_by_convention_instead_of_being_dropped(self) -> None:
         # RC-42: cross-domain means the peer may live elsewhere or not exist yet. Dropping the
         # rule would turn a declared rule into no policy at all; naming the peer grants it
         # nothing, because the receiver decides with its own policy what it lets in.
-        [rule] = resolve_rules([_mr(peer_project="nope")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup)
+        [rule] = resolve_rules([_mr(peer_project="nope")], cluster=_CLUSTER, lookup_project=_lookup)
         assert rule.peer.namespace == "rig-prd-nope"  # the convention: namespace = project name
         assert rule.peer.pod_labels == {"app": "prod-api", "project": "nope"}
         assert rule.port == 8080
@@ -273,7 +268,6 @@ class TestResolve:
         resolved = resolve_rules(
             [_mr(name="unknown", peer_project="nope"), _mr(name="known")],
             cluster=_CLUSTER,
-            self_project="me",
             lookup_project=_lookup,
         )
         assert [r.peer.namespace for r in resolved] == ["rig-prd-nope", "rig-prd-regelrecht"]
@@ -281,28 +275,17 @@ class TestResolve:
     def test_a_known_project_still_uses_its_own_namespace(self) -> None:
         # The convention is the FALLBACK only: 'dev' deploys to regelrecht-dev, which no
         # convention would have guessed.
-        [rule] = resolve_rules(
-            [_mr(peer_deployment="dev")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup
-        )
+        [rule] = resolve_rules([_mr(peer_deployment="dev")], cluster=_CLUSTER, lookup_project=_lookup)
         assert rule.peer.namespace == "rig-prd-regelrecht-dev"
 
     def test_missing_deployment_is_dropped(self) -> None:
-        assert (
-            resolve_rules([_mr(peer_deployment="ghost")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup)
-            == []
-        )
+        assert resolve_rules([_mr(peer_deployment="ghost")], cluster=_CLUSTER, lookup_project=_lookup) == []
 
     def test_other_cluster_is_dropped(self) -> None:
-        assert (
-            resolve_rules([_mr(peer_deployment="elders")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup)
-            == []
-        )
+        assert resolve_rules([_mr(peer_deployment="elders")], cluster=_CLUSTER, lookup_project=_lookup) == []
 
     def test_component_not_in_deployment_is_dropped(self) -> None:
-        assert (
-            resolve_rules([_mr(peer_component="ghost")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup)
-            == []
-        )
+        assert resolve_rules([_mr(peer_component="ghost")], cluster=_CLUSTER, lookup_project=_lookup) == []
 
     def test_dedup_and_sort(self) -> None:
         rules = [
@@ -310,7 +293,7 @@ class TestResolve:
             _mr(name="a", peer_component="api"),
             _mr(name="dup", peer_component="api"),  # same selector+port as 'a' -> deduped
         ]
-        resolved = resolve_rules(rules, cluster=_CLUSTER, self_project="me", lookup_project=_lookup)
+        resolved = resolve_rules(rules, cluster=_CLUSTER, lookup_project=_lookup)
         # api (port 8080) sorts before events by pod_labels; the duplicate api collapses.
         assert [(r.peer.pod_labels["app"], r.port) for r in resolved] == [("prod-api", 8080), ("prod-events", 8080)]
 
@@ -471,6 +454,25 @@ class TestOptionsProviders:
         assert "regelrecht" in values
         assert "dp-bn7" in values
         assert "gone" in values  # stored-but-unknown kept selectable
+
+    def test_project_provider_shows_the_display_name_with_the_code(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
+
+        provider = CrossDomainProjectOptionsProvider(
+            yaml_data={
+                "_cross_domain_projects": ["regelrecht", "dp-bn7"],
+                "_cross_domain_project_labels": {
+                    "regelrecht": "Regelrecht (regelrecht)",
+                    "dp-bn7": "Digitaal Paspoort (dp-bn7)",
+                },
+            },
+            current_value="gone",
+        )
+        labels = {o["value"]: o["label"] for o in provider.get_options()}
+        assert labels["regelrecht"] == "Regelrecht (regelrecht)"
+        assert labels["dp-bn7"] == "Digitaal Paspoort (dp-bn7)"
+        # Stored-but-gone has no label to look up: bare code plus the reason.
+        assert labels["gone"] == "gone (niet meer beschikbaar)"
 
     def test_project_provider_empty_shows_explanation(self) -> None:
         from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
@@ -664,32 +666,64 @@ class TestSharedFormContext:
     """One builder for both flows, so "works when editing, empty in the create wizard" -- the
     state that made this step unusable -- cannot come back."""
 
-    def _build(self, monkeypatch, project_name: str) -> dict:
+    class _Summary:
+        def __init__(self, name: str, data: dict | None = None) -> None:
+            self.name = name
+            self.data = data
+
+    def _build(self, monkeypatch, summaries: list | None = None) -> dict:
         import opi.services.catalog.cross_domain_access.context as context_mod
 
-        class _Summary:
-            def __init__(self, name: str) -> None:
-                self.name = name
-
+        projects = summaries or [self._Summary(name) for name in ("regelrecht", "me", "verboden")]
         monkeypatch.setattr(
             context_mod,
             "get_project_store",
-            lambda: type(
-                "S", (), {"get_all": lambda self: [_Summary("regelrecht"), _Summary("me"), _Summary("verboden")]}
-            )(),
+            lambda: type("S", (), {"get_all": lambda self: projects})(),
         )
         monkeypatch.setattr(context_mod, "is_user_authorized_for_project", lambda name, email: name != "verboden")
-        return context_mod.build_cross_domain_context(project_name, "u@example.com")
+        return context_mod.build_cross_domain_context("u@example.com")
 
-    def test_lists_authorized_peers_without_the_own_project(self, monkeypatch) -> None:
-        assert self._build(monkeypatch, "me")["_cross_domain_projects"] == ["regelrecht"]
+    def test_lists_authorized_peers(self, monkeypatch) -> None:
+        assert self._build(monkeypatch)["_cross_domain_projects"] == ["me", "regelrecht"]
 
     def test_unauthorized_projects_are_not_named(self, monkeypatch) -> None:
-        assert "verboden" not in self._build(monkeypatch, "me")["_cross_domain_projects"]
+        assert "verboden" not in self._build(monkeypatch)["_cross_domain_projects"]
 
-    def test_create_wizard_has_no_own_project_to_exclude(self, monkeypatch) -> None:
-        # The create wizard passes an empty name: the project does not exist yet.
-        assert self._build(monkeypatch, "")["_cross_domain_projects"] == ["me", "regelrecht"]
+    def test_the_own_project_is_selectable(self, monkeypatch) -> None:
+        # The tenant baseline isolates per DEPLOYMENT, so reaching another deployment of your
+        # own project needs a rule too. Hiding the own project left that with no way to say it.
+        assert "me" in self._build(monkeypatch)["_cross_domain_projects"]
+
+    def test_sorted_on_display_name_ignoring_case(self, monkeypatch) -> None:
+        # Sorting on the code, or case-sensitively on the name, would put "Banaan" first.
+        context = self._build(
+            monkeypatch,
+            [
+                self._Summary("p3", {"display-name": "citroen"}),
+                self._Summary("p1", {"display-name": "Banaan"}),
+                self._Summary("p2", {"display-name": "appel"}),
+            ],
+        )
+        assert context["_cross_domain_projects"] == ["p2", "p1", "p3"]
+        assert context["_cross_domain_project_labels"] == {
+            "p1": "Banaan (p1)",
+            "p2": "appel (p2)",
+            "p3": "citroen (p3)",
+        }
+
+    def test_falls_back_to_the_code_without_a_display_name(self, monkeypatch) -> None:
+        context = self._build(
+            monkeypatch,
+            [
+                self._Summary("zonder-data"),  # data is None
+                self._Summary("leeg", {"display-name": "   "}),  # aanwezig maar blanco
+                self._Summary("mist", {"name": "mist"}),  # geen display-name in de data
+            ],
+        )
+        labels = context["_cross_domain_project_labels"]
+        # Geen weergavenaam -> alleen de code, geen lege haakjes.
+        assert labels == {"zonder-data": "zonder-data", "leeg": "leeg", "mist": "mist"}
+        assert context["_cross_domain_projects"] == ["leeg", "mist", "zonder-data"]
 
     def test_both_flows_call_the_same_builder(self) -> None:
         import inspect

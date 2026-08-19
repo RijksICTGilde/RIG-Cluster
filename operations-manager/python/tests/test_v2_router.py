@@ -304,8 +304,15 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             for service_type, service in SERVICES.items()
             if any(service.platform_managed_fields(layer) for layer in ConfigLayer)
         }
+        # De kloonstatus staat erbij sinds punt 28 van de zad-cli: ``generation`` en
+        # ``revisions`` zeiden alleen in hun beschrijving dat het platform ze schrijft, en
+        # proza is geen regel. Ze komen uit ``CloneState``, dus elke dienst die dat
+        # meemengt staat hier, op elke laag waar dat model dienstdoet.
         assert declared == {
             "keycloak": ["realms"],
+            "minio-storage": ["generation", "revisions"],
+            "persistent-storage": ["generation", "revisions"],
+            "postgresql-database": ["generation", "revisions"],
             "publish-on-web": ["domains"],
             # RC-114: the SMTP account and its password are written by the mail manager,
             # and the approval by the approver flow -- a project that could set its own
@@ -313,6 +320,7 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             # sender-address field to protect: every project sends from one fixed address
             # that the relay writes into the From: header itself.
             "send-email": ["accounts", "approval"],
+            "temp-storage": ["generation", "revisions"],
         }
 
         # keycloak answers "realms" at every layer because it serves one model to all of
@@ -324,10 +332,18 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             for layer in ConfigLayer
             if "put" in spec["paths"].get(f"/api/v2/projects/{{project_name}}/services/{name}/config/{layer.value}", {})
         }
-        # publish-on-web has no project-level PUT (its config lives per deployment);
-        # keycloak and send-email do, and both carry a platform-managed field in that
-        # very block -- which is exactly the case the refusal has to cover.
-        assert with_a_put == {("keycloak", "project"), ("send-email", "project")}
+        # publish-on-web heeft geen PUT op projectniveau (zijn config leeft per deployment).
+        # minio-storage en postgresql-database staan erbij omdat hun projectlaag die wel
+        # heeft: daar zet een gebruiker zijn eigen instellingen, en de kloonstatus uit
+        # CloneState reist met hetzelfde model mee. send-email hoort in datzelfde rijtje:
+        # ook die draagt een platform-managed veld in een blok waar een PUT op zit, en dat
+        # is precies het geval dat de weigering moet dekken.
+        assert with_a_put == {
+            ("keycloak", "project"),
+            ("minio-storage", "project"),
+            ("postgresql-database", "project"),
+            ("send-email", "project"),
+        }
 
     def test_a_service_without_platform_fields_is_unaffected(
         self, v2_client: TestClient, mock_task_service: AsyncMock
@@ -393,11 +409,11 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
 LIST_SHAPED_CONFIGS: dict[str, dict[str, Any]] = {
     "persistent-storage": {
         "put": [{"name": "data", "size": "1Gi", "mount-path": "/data"}],
-        "add": [{"name": "extra", "size": "2Gi", "mount-path": "/extra"}],
+        "add": [{"name": "extra", "size": "500Mi", "mount-path": "/extra"}],
     },
     "temp-storage": {
         "put": [{"name": "scratch", "size": "1Gi", "mount-path": "/scratch"}],
-        "add": [{"name": "cache", "size": "2Gi", "mount-path": "/cache"}],
+        "add": [{"name": "cache", "size": "500Mi", "mount-path": "/cache"}],
     },
     "attachments": {
         "put": [{"reference": "cert", "provide-as": "file", "path": "/etc/ssl/cert.pem"}],
@@ -627,6 +643,18 @@ class TestListInsideObjectConfigPatch:
         mock_task_service.create_task.assert_not_called()
 
 
+def _store_with_components(names: list[str]) -> Any:
+    """A project store whose project file has exactly these components."""
+    store = MagicMock(spec=GitProjectStore)
+    store.get = lambda name: ProjectSummary(
+        name=name,
+        api_key=API_KEY,
+        filename=f"{name}.yaml",
+        data={"name": name, "components": [{"name": n} for n in names]},
+    )
+    return store
+
+
 class TestV2UpsertDeployment:
     """Tests for POST /api/v2/projects/{project_name}/:upsert-deployment."""
 
@@ -716,6 +744,38 @@ class TestV2UpsertDeployment:
             headers={"X-API-Key": API_KEY},
         )
         assert response.status_code == 422
+
+    def test_unknown_component_returns_400(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        """Een verwijzing naar een onbekend component is een fout van de aanroeper, geen taak."""
+        with patch("opi.api.v2.router.get_project_store", return_value=_store_with_components(["web"])):
+            response = v2_client.post(
+                "/api/v2/projects/test-project/:upsert-deployment",
+                headers={"X-API-Key": API_KEY},
+                json={
+                    "deploymentName": "production",
+                    "components": [{"reference": "logius-fscbootstrap", "image": "nginx:1.21"}],
+                },
+            )
+
+        assert response.status_code == 400
+        assert "logius-fscbootstrap" in response.json()["detail"]
+        mock_task_service.create_task.assert_not_awaited()
+
+    def test_known_component_still_returns_202(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
+
+        with patch("opi.api.v2.router.get_project_store", return_value=_store_with_components(["web"])):
+            response = v2_client.post(
+                "/api/v2/projects/test-project/:upsert-deployment",
+                headers={"X-API-Key": API_KEY},
+                json={
+                    "deploymentName": "production",
+                    "components": [{"reference": "web", "image": "nginx:1.21"}],
+                },
+            )
+
+        _assert_accepted(response, "upsert_deployment")
+        mock_task_service.create_task.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1313,20 +1373,23 @@ class TestServiceConfigWritesOnlyWhatWasSent:
 
         assert self._payload_config(mock_task_service) == {"enable-versioning": True}
 
-    def test_another_field_does_not_drag_versioning_along(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
-        """Het geval waarin een standaard normaal binnenglipt: een deelbericht.
+    def test_de_kloonstatus_is_niet_van_de_aanroeper(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        """``generation`` was hier het deelbericht waarmee dit geval werd gemeten, en dat
+        kan niet meer: sinds punt 28 van de zad-cli dragen ``generation`` en ``revisions``
+        de markering ``x-platform-managed``. OPI schrijft ze, dus een schrijfactie erop
+        wordt geweigerd in plaats van uitgevoerd.
 
-        Wie alleen de kloonstatus zet, zegt niets over versiebeheer -- dus staat die
-        sleutel er daarna ook niet.
+        Het oorspronkelijke onderwerp (een deelbericht materialiseert geen standaard) staat
+        hierboven al op ``test_empty_body_writes_no_field``; wat hier overblijft is de
+        weigering zelf, op de laag waar de kloonstatus werkelijk staat.
         """
         mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
 
-        v2_client.put(
+        response = v2_client.put(
             "/api/v2/projects/test-project/services/minio-storage/config/deployment/main?rollout=false",
             headers={"X-API-Key": API_KEY},
             json={"generation": 2},
         )
 
-        assert self._payload_config(mock_task_service) == {"generation": 2}
+        assert response.status_code == 422, response.text
+        mock_task_service.create_task.assert_not_called()

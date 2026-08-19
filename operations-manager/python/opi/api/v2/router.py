@@ -85,9 +85,14 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
-from opi.connectors.subdomain import validate_base_domain, validate_subdomain
+from opi.connectors.subdomain import get_supported_base_domains, validate_base_domain, validate_subdomain
 from opi.core.auth_decorators import get_current_user
-from opi.core.cluster_config import get_ingress_postfix, get_selectable_clusters, supports_custom_domain_certificates
+from opi.core.cluster_config import (
+    get_domain_supports_dots,
+    get_ingress_postfix,
+    get_selectable_clusters,
+    supports_custom_domain_certificates,
+)
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
@@ -96,6 +101,7 @@ from opi.handlers.project_file_handler import (
     ProjectFileHandler,
     component_usage_sites,
 )
+from opi.manager.project_validation import validate_component_references
 from opi.services.approvals import collect_deployment_approval_notices
 from opi.services.catalog.actions import (
     ActionContext,
@@ -484,13 +490,9 @@ async def list_clusters_v2(
     heeft een keuzelijst die per cluster verschilt, dus het OpenAPI-document kan die niet
     opsommen. Het verwees daarom naar een endpoint, en dat endpoint was er niet.
 
-    De domeinen komen uit dezelfde provider die het formulier zijn keuzelijst geeft
-    (``ClusterBaseDomainOptionsProvider``), zodat portal en API niet uit elkaar kunnen lopen.
-    Op één punt wijken ze af, en met opzet: de optie ``__custom__`` is een SCHAKELAAR in het
-    formulier ("ik vul zelf een domein in") en geen waarde die je kunt opslaan, dus hier
-    hoort ze niet thuis. Ze stond er wel, en een client die haar overnam liep vast op de
-    schrijfactie. Zie ``CUSTOM_DOMAIN_SENTINEL``; een eigen domein zet je door de domeinnaam
-    zelf in ``base-domain`` te schrijven.
+    ``base-domains`` is geen gesloten verzameling: een eigen domein zet je door de domeinnaam
+    zelf in ``base-domain`` te schrijven, en ``custom-domain-certificates`` zegt wat dat op
+    dit cluster oplevert.
 
     ``default-domain`` staat erbij omdat de lijst zelf niet verraadt welke keuze meteen in
     gebruik gaat: alleen het domein van het cluster zelf (en een leeg ``base-domain``) gaat
@@ -516,8 +518,28 @@ async def list_clusters_v2(
                 # Hij stond alleen als vrije tekst in het label van de lege optie, dus
                 # een client kon de twee gevallen niet uit elkaar houden zonder te parsen.
                 "default-domain": get_ingress_postfix(cluster).lstrip("."),
+                # De keuzelijst komt uit dezelfde provider als die van het formulier, zodat
+                # portal en API niet uit elkaar lopen. Op één punt wijken ze af: de sentinel
+                # is een SCHAKELAAR in het formulier ("ik vul zelf een domein in") en geen
+                # waarde die je kunt opslaan. Hij hoort dus niet in een API-antwoord, en de
+                # reden waarom staat hier en niet in de beschrijving: een client kan met een
+                # formulierdetail niets, en een sentinel bij naam noemen nodigt uit om hem
+                # alsnog te sturen. Wat hij WEL moet weten (schrijf de domeinnaam zelf) staat
+                # in de beschrijving van base-domain.
                 "base-domains": [
-                    ClusterDomainOption(value=str(option["value"]), label=str(option["label"]))
+                    # model_validate om dezelfde reden als hierboven: het veld heet in het
+                    # antwoord "supports-dots" en met een streepje is dat geen geldige
+                    # parameternaam. De waarde komt uit dezelfde clusterconfiguratie als de
+                    # lijst zelf; zonder dit veld is de regel achter domain-format (punt-
+                    # varianten alleen op een domein dat punten aankan) wel beschreven en
+                    # nergens uit af te leiden.
+                    ClusterDomainOption.model_validate(
+                        {
+                            "value": str(option["value"]),
+                            "label": str(option["label"]),
+                            "supports-dots": get_domain_supports_dots(cluster, str(option["value"])),
+                        }
+                    )
                     for option in ClusterBaseDomainOptionsProvider(cluster=cluster).get_options()
                     if option["value"] != CUSTOM_DOMAIN_SENTINEL
                 ],
@@ -549,6 +571,14 @@ async def check_subdomain_availability_v2(
     base_domain: str,
 ) -> SubdomainCheckResponse:
     """Of *subdomain* nog vrij is onder *base_domain*, over alle projecten heen.
+
+    **Waar de controle wel en niet over gaat.** Hij zegt of deze subdomeinnaam binnen ZAD
+    nog niet vergeven is. Hij zegt niets over eigendom van het basisdomein en niets over
+    DNS: elk syntactisch geldig domein wordt hier geaccepteerd, want een project mag zijn
+    eigen domein meebrengen. Een vrije naam onder een domein dat niet van dit cluster is,
+    is dus nog geen werkend adres. Daarvoor staat ``cluster_domain`` in het antwoord: is
+    die waar, dan bedient dit cluster het domein zelf en kun je de naam meteen gebruiken;
+    is die onwaar, dan moet het domein daarnaast nog aangevraagd en goedgekeurd worden.
 
     De projectnaam staat in het pad omdat de vraag bij een project hoort: je vraagt dit
     omdat je het subdomein voor een deployment van dit project wilt claimen, en de
@@ -588,12 +618,19 @@ async def check_subdomain_availability_v2(
 
     _project_data_or_404(project_name)
 
+    # Of dit cluster het basisdomein zelf bedient. Reist mee in elk antwoord, ook in een
+    # afwijzing: het is een eigenschap van het domein en niet van de uitkomst, en juist bij
+    # "niet beschikbaar" wil een aanroeper weten welk van de twee dingen hij aan het
+    # oplossen is.
+    cluster_domain = base_domain.lower() in get_supported_base_domains(settings.CLUSTER_MANAGER)
+
     is_valid, validation_error = validate_subdomain(subdomain)
     if not is_valid:
         return SubdomainCheckResponse(
             subdomain=subdomain.lower(),
             base_domain=base_domain.lower(),
             available=False,
+            cluster_domain=cluster_domain,
             validation_error=validation_error,
         )
 
@@ -605,6 +642,7 @@ async def check_subdomain_availability_v2(
             subdomain=subdomain.lower(),
             base_domain=base_domain.lower(),
             available=False,
+            cluster_domain=cluster_domain,
             validation_error=domain_error,
         )
 
@@ -615,6 +653,7 @@ async def check_subdomain_availability_v2(
         subdomain=subdomain.lower(),
         base_domain=base_domain.lower(),
         available=is_available,
+        cluster_domain=cluster_domain,
         validation_error=None,
     )
 
@@ -1028,6 +1067,17 @@ async def upsert_deployment_v2(
             {"newImageUrl": comp.image},
             UPDATE_IMAGE_VALIDATORS,
         )
+
+    # Een verwijzing naar een component dat niet in de catalogus staat is een fout van de
+    # aanroeper, geen storing: dan hoort hier een 400 terug te komen in plaats van een 202
+    # met een taak die daarna alsnog faalt. Dezelfde functie als de taak gebruikt, zodat er
+    # geen tweede bewoording ontstaat. Staat het project niet in de store, dan doet de taak
+    # de controle; hier niets verzinnen.
+    project = get_project_store().get(project_name)
+    if project is not None and project.data is not None:
+        reference_result = validate_component_references(project.data, deployment_data.components, "deployment")
+        if not reference_result["success"]:
+            raise HTTPException(status_code=400, detail=reference_result["error"])
 
     task = await create_async_task(
         request=request,

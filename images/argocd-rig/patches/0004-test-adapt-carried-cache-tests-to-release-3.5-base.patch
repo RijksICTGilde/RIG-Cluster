@@ -1,7 +1,7 @@
 From dc3081b0f2be485390a0f2c2129ce8057e9e10bb Mon Sep 17 00:00:00 2001
 From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
 Date: Thu, 13 Aug 2026 23:39:32 +0200
-Subject: [PATCH 4/4] test: adapt carried cache tests to release-3.5 base
+Subject: [PATCH 4/7] test: adapt carried cache tests to release-3.5 base
 
 The kubetest helper moved under the vendored gitops-engine module path,
 and the carried cluster tests use strings.Join while the release-3.5

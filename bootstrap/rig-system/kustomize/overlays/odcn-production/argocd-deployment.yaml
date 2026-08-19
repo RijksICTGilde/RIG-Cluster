@@ -15,7 +15,7 @@ spec:
   # Een echte versietag en geen 'latest': dan is het uitrolbesluit een commit die je kunt
   # terugdraaien, en weet je achteraf welke build er draait.
   image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig
-  version: v3.5.1-rig1
+  version: v3.5.1-rig2
   extraConfig:
     timeout.reconciliation: "15m"
     timeout.hard.reconciliation: "0s"
@@ -112,7 +112,7 @@ spec:
   repo:
     env:
       - name: ARGOCD_EXEC_TIMEOUT
-        value: "180"
+        value: "180s"
       - name: ARGOCD_GIT_ATTEMPTS_COUNT
         value: "3"
       - name: ARGOCD_HELM_ALLOW_CONCURRENCY
@@ -133,7 +133,7 @@ spec:
         imagePullPolicy: IfNotPresent
         env:
           - name: ARGOCD_EXEC_TIMEOUT
-            value: "180"
+            value: "180s"
           - name: KUSTOMIZE_PLUGIN_HOME
             value: /etc/kustomize/plugin
         resources:

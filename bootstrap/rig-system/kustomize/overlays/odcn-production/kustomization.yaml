@@ -9,6 +9,7 @@ generators:
 resources:
 - namespace.yaml
 - argocd-deployment.yaml
+- argocd-pull-secrets.yaml
 - network-policies/argocd-network-policy.yaml
 - network-policies/emergency-restore-allow-all.yaml
 - ../../operations-manager/overlays/odcn-production
@@ -30,7 +31,7 @@ patches:
         path: /spec/repo/env
         value:
         - name: ARGOCD_EXEC_TIMEOUT
-          value: "180"
+          value: "180s"
         - name: ARGOCD_GIT_ATTEMPTS_COUNT
           value: "3"
         - name: ARGOCD_HELM_ALLOW_CONCURRENCY
@@ -64,7 +65,7 @@ patches:
         path: /spec/repo/sidecarContainers/0/env
         value:
         - name: ARGOCD_EXEC_TIMEOUT
-          value: "180"
+          value: "180s"
         - name: KUSTOMIZE_PLUGIN_HOME
           value: /etc/kustomize/plugin
         - name: KUBERNETES_SERVICE_HOST
