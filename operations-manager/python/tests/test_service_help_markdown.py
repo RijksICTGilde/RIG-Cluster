@@ -196,3 +196,30 @@ def test_the_two_value_services_say_that_they_carry_the_other_half(service: Serv
 def test_a_help_reference_that_resolves_to_nothing_raises() -> None:
     with pytest.raises(FileNotFoundError):
         render_service_help("does_not_exist/help.md")
+
+
+def test_de_uitleg_zit_in_een_stack() -> None:
+    """Zonder stack raken de blokken elkaar.
+
+    Een gap bestaat in dit systeem alleen waar een stack de OUDER is (zie de kop van
+    bg/_patterns.html.j2), en de popup zet deze markup in een kale <div>. Zonder deze
+    omhulling stonden de koppen strak tegen de alinea erboven en eronder, wat op het scherm
+    las als te grote koppen terwijl het de ontbrekende witruimte was.
+    """
+    markup = markdown_to_components("# Titel\n\nEen alinea.\n\n## Kop\n\nNog een alinea.")
+
+    assert markup.startswith('<c-stack gap="md">')
+    assert markup.endswith("</c-stack>")
+
+
+def test_een_link_wordt_een_component() -> None:
+    markup = markdown_to_components("Zie [de uitleg](/eigen-domein).")
+
+    assert '<c-link href="/eigen-domein" label="de uitleg" />' in markup
+
+
+def test_alleen_een_intern_pad_of_https_wordt_een_link() -> None:
+    """Dezelfde markdown gaat ongewijzigd naar API-clients, dus geen javascript:-href."""
+    for bron in ("[x](javascript:alert(1))", "[x](data:text/html,y)", "[x](ftp://host/f)"):
+        markup = markdown_to_components(bron)
+        assert "c-link" not in markup, bron
