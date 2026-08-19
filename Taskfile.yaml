@@ -283,6 +283,83 @@ tasks:
         echo "⚠️  For production use, consider storing the key in a secure vault or HSM."
     silent: true
 
+  set-git-credentials:
+    desc: "Ask for the cluster's git tokens and store them encrypted (ArgoCD read, OPI write)"
+    vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      BOOTSTRAP_DIR: 'bootstrap/rig-system/kustomize/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
+      OPI_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "AGE_KEY_FILE is niet gezet. Draai 'task select-cluster'."
+      - sh: '[ -d "{{.BOOTSTRAP_DIR}}" ]'
+        msg: "{{.BOOTSTRAP_DIR}} bestaat niet. Draai eerst 'task generate-bootstrap-secrets-for-cluster'."
+    cmds:
+      - |
+        # Deze credential kan niet uit git komen: het is juist de sleutel waarmee ArgoCD
+        # git leest. Vandaar dat de sjablonen er @secret-gen:skip op hebben en er hier om
+        # gevraagd wordt.
+        #
+        # Twee tokens, want ArgoCD hoeft alleen te lezen en OPI moet schrijven. Dezelfde
+        # waarde twee keer invullen mag, maar dan draagt ArgoCD een schrijfrecht dat hij
+        # niet nodig heeft. Gebruik een eigen token per cluster: raakt hij gelekt en wordt
+        # hij ingetrokken, dan gaat niet meteen elk ander cluster mee onderuit.
+        set -eu
+        [ -f "{{.KEY_FILE}}" ] || { echo "Sleutelbestand {{.KEY_FILE}} bestaat niet."; exit 1; }
+        AGE_PUBLIC_KEY=$(sed -n '2p' "{{.KEY_FILE}}" | sed 's/# public key: //')
+        SOPS_AGE_KEY="$(sed -n '3p' "{{.KEY_FILE}}")"
+        export SOPS_AGE_KEY
+
+        # Task's ingebouwde shell kent `read -s` niet, dus de echo gaat via stty uit.
+        # Wie liever niet typt kan de tokens vooraf in de omgeving zetten:
+        #   RIG_READ_TOKEN=... RIG_WRITE_TOKEN=... task set-git-credentials
+        if [ -z "${RIG_READ_TOKEN:-}" ]; then
+          printf 'Token voor ArgoCD (alleen lezen): '
+          stty -echo 2>/dev/null || true
+          read -r RIG_READ_TOKEN
+          stty echo 2>/dev/null || true
+          echo
+        fi
+        if [ -z "${RIG_WRITE_TOKEN:-}" ]; then
+          printf 'Token voor OPI (lezen en schrijven): '
+          stty -echo 2>/dev/null || true
+          read -r RIG_WRITE_TOKEN
+          stty echo 2>/dev/null || true
+          echo
+        fi
+        export RIG_READ_TOKEN
+        [ -n "$RIG_READ_TOKEN" ] && [ -n "$RIG_WRITE_TOKEN" ] || { echo "Beide tokens zijn verplicht."; exit 1; }
+
+        # sops wil een JSON-waarde. Zelf aanhalingstekens eromheen plakken breekt op een
+        # token met een " of \ erin, dus jq codeert het. Via de omgeving en niet via argv,
+        # zodat het token niet in de procestabel verschijnt.
+        JSON_READ=$(jq -n --arg t "$RIG_READ_TOKEN" '$t')
+
+        for f in "{{.BOOTSTRAP_DIR}}"/argocd-repo-*.sops.yaml; do
+          [ -f "$f" ] || continue
+          printf '%s' "$JSON_READ" | sops set --value-stdin "$f" '["stringData"]["password"]'
+          echo "  gezet: $(basename "$f")"
+        done
+
+        # OPI-configmap: base64+age:, dezelfde vorm als odcn gebruikt. Base64 bevat geen
+        # | of &, dus die zijn veilig als sed-scheidingsteken en in de vervangtekst.
+        ENC="base64+age:$(printf '%s' "$RIG_WRITE_TOKEN" | age -r "$AGE_PUBLIC_KEY" -a | base64 | tr -d '\n')"
+        CM="{{.OPI_DIR}}/configmap.yaml"
+        if [ -f "$CM" ]; then
+          # Vervangen op sleutelnaam en niet op de TODO-markering. Bij een tweede run is
+          # die markering weg, en dan zou de configmap overgeslagen worden terwijl de
+          # ArgoCD-secrets wel een nieuw token krijgen: dan draagt ArgoCD een ander token
+          # dan OPI en werkt een van beide niet meer.
+          for k in GIT_PROJECTS_SERVER_PASSWORD GIT_ARGO_APPLICATIONS_PASSWORD PROJECT_REPO_PASSWORD; do
+            sed -i '' -E "s|^([[:space:]]*)${k}=.*|\1${k}=${ENC}|" "$CM"
+            echo "  gezet: configmap $k"
+          done
+        fi
+
+        echo ""
+        echo "Klaar. Controleer met 'git diff' dat er geen platte tekst in staat, en commit."
+    silent: true
+
   create-namespace:
     desc: "Create the selected cluster's platform namespace"
     vars:
