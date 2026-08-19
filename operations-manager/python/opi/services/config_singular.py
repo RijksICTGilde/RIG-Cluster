@@ -29,8 +29,21 @@ ongeldig voor iedereen die hem al had.
 
 ``overflowing_list`` is die detectie. De aanroepers (de leesroute en de PUT in
 ``opi/api/v2/router.py``) weigeren erop met een 409 die vertelt wat er aan de hand is en
-welke weg wel werkt: de PATCH op de lijst, die entries één voor één toevoegt en
-verwijdert en van dit enkelvoud geen last heeft.
+welke weg wel werkt: de PATCH op de lijst, die entries één voor één aanpakt.
+
+De PATCH mag er daarom zelf geen tweede bij zetten
+--------------------------------------------------
+
+Dat kon aanvankelijk wel, en dan was de gevel binnen twee geldige aanroepen onwaar: twee
+keer een invite toevoegen is allebei een prima verzoek, en pas de VOLGENDE lezer kreeg de
+409 -- met een uitweg die vroeg wat die read hem zou vertellen, namelijk welke sleutel hij
+moet weghalen (gemeld door de zad-cli, punt 13). De grens ligt nu bij de handeling die de
+tweede entry maakt: ``ServiceAdapter.patch_service_config_list`` weigert een TOEVOEGING die
+de lijst boven één brengt.
+
+Verwijderen blijft altijd toegestaan, en dat is de reden dat een bestand dat er al meer
+heeft niet vastloopt: haal er een weg en de gevel klopt weer. Vervangen mag ook, want dat
+verandert het aantal niet.
 
 De DELETE valt hier bewust buiten. Die zegt "wis dit configblok" en doet dat ook, met of
 zonder gevel; hij houdt zich niet voor dat er één entry is. Hem óók weigeren zou een

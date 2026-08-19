@@ -12,7 +12,7 @@ from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.persistent_storage.editables import PERSISTENT_STORAGE_SEQUENCE_EDITABLE
 from opi.services.catalog.persistent_storage.variables import PersistentStorageVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
-from opi.services.catalog.shared.storage import StorageConfig
+from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE, StorageConfig
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
 
@@ -27,9 +27,9 @@ class PersistentStorageService(BackupsPageMixin, Service):
         color="grijs-600",
         binding=ServiceBinding.COMPONENT,
         backup_label="pvc",
-        # 100Mi, gelijk aan temp-storage: een startwaarde, geen inschatting. Een PVC kan wel
+        # Gelijk aan temp-storage: een startwaarde, geen inschatting. Een PVC kan wel
         # groeien en niet krimpen, dus te ruim beginnen is duurder dan te krap beginnen.
-        storage_config={"name": "data", "type": "persistent", "size": "100Mi", "mount-path": "/data"},
+        storage_config={"name": "data", "type": "persistent", "size": DEFAULT_STORAGE_SIZE, "mount-path": "/data"},
         variables=[var.value for var in PersistentStorageVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
     )

@@ -40,8 +40,7 @@
     "Jij bouwt de applicatie. Wij de rest.",
     "Zelfservice Applicatie Deployment (ZAD): van een eenvoudige statische website tot een
      applicatie met een database, objectopslag en authenticatie. Je zet neer wat je nodig
-     hebt, en het platform richt het in, houdt het draaiend en laat je zien hoe het ervoor
-     staat."
+     hebt, en het platform regelt het voor je."
 ) }}
 {% endmacro %}
 
@@ -55,10 +54,9 @@
 #}
 {% macro wat_het_is(aantal_zelf, aantal_achtergrond) %}
 <c-paragraph>
-    ZAD is een deploymentplatform voor RIG-projecten binnen ODC-Noord. Het is zelfservice:
-    je beschrijft je project, en je krijgt er een draaiende omgeving voor terug. Er zit
-    geen aanvraagtraject tussen en je hoeft niemand te vragen of er een database voor je
-    aangemaakt kan worden.
+    ZAD is een deploymentplatform op overheidsclouds. Het is zelfservice met extra service:
+    je beschrijft je project via click-ops of cli, en alles wordt voor je klaargezet. Behalve je applicatie,
+    die moet je natuurlijk wel zelf nog even bouwen.
 </c-paragraph>
 <c-paragraph>
     De opzet is dat je in alle scenario's terechtkunt. Een statische site is een component
@@ -93,8 +91,7 @@
 </c-paragraph>
 <c-paragraph>
     Die puzzel is hier al gelegd. Elk stukje ligt op zijn plaats, en wat jij toevoegt is je
-    applicatie. Zeg je dat je een database wilt, dan wordt die aangemaakt, staat het
-    wachtwoord versleuteld klaar en staan de gegevens als omgevingsvariabelen in je
+    applicatie. Zeg je dat je een database wilt, dan wordt die aangemaakt en staan de gegevens als omgevingsvariabelen in je
     component, zonder dat je ze ergens overtypt.
 </c-paragraph>
 {% endmacro %}
@@ -199,7 +196,6 @@
         href="https://github.com/RijksICTGilde/zad-actions" />
 </c-columns>
 {% endmacro %}
-
 
 {% macro aan_de_slag() %}
 <c-paragraph>

@@ -347,6 +347,18 @@ class Settings(BaseSettings):
     # Deletion grace period (days before marked resources are purged by reconciliation)
     DELETION_GRACE_PERIOD_DAYS: int = 7
 
+    # Nightly reconciliation. Without this the job only ever ran when an admin called
+    # POST /api/v2/admin/reconciliation/trigger by hand, so marked resources were never
+    # actually purged. Runs after the resource tuner's window.
+    #
+    # Dry-run is the DEFAULT on purpose: the first thing this scheduler must earn is
+    # trust. It logs what it would purge without touching anything, so a night or two of
+    # logs shows exactly which marks are in play before unattended deletion is switched
+    # on with RECONCILIATION_DRY_RUN=false in the cluster overlay.
+    RECONCILIATION_SCHEDULER_ENABLED: bool = True
+    RECONCILIATION_HOUR: int = 3  # local time (Europe/Amsterdam)
+    RECONCILIATION_DRY_RUN: bool = True
+
     # Async task worker settings
     TASK_WORKER_ENABLED: bool = True
     TASK_WORKER_POLL_INTERVAL: float = 2.0
@@ -531,6 +543,12 @@ class Settings(BaseSettings):
     # since docker.io/ghcr are blocked on ODCN.
     DB_CONSOLE_PGWEB_IMAGE: str = "sosedoff/pgweb:0.16.2"
     DB_CONSOLE_DBGATE_IMAGE: str = "dbgate/dbgate:6.6.1"
+
+    # TransIP DNS API, used to keep CAA records on the zones we administer.
+    # Their presence is the on/off switch: without credentials the CAA reconciler
+    # skips, so sandbox and local do nothing by themselves.
+    TRANSIP_ACCOUNT_NAME: str | None = None
+    TRANSIP_PRIVATE_KEY: str | None = None  # PEM, the whole key
 
     # Ad-hoc job runs (run an image + command once; a "run" like the console).
     # Independently toggleable and TTL'd; the shared run reaper sweeps both kinds.

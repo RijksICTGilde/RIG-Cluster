@@ -43,7 +43,12 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
             )
             progress.fail_task(validate_task, error_msg)
             progress.fail_project(error_msg)
-            return {"component_name": component_name, "status": "failed", "error": error_msg}
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "invalid_project_name",
+            }
 
         sanitized_name = sanitize_kubernetes_name(component_name)
         if sanitized_name != component_name.lower():
@@ -52,7 +57,12 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
             )
             progress.fail_task(validate_task, error_msg)
             progress.fail_project(error_msg)
-            return {"component_name": component_name, "status": "failed", "error": error_msg}
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "validation_error",
+            }
 
         progress.complete_task(validate_task)
 
@@ -166,7 +176,12 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
         error_msg = f"Error adding component: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
-        return {"component_name": component_name, "status": "failed", "error": error_msg}
+        return {
+            "component_name": component_name,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "internal_error",
+        }
     finally:
         if project_manager:
             await project_manager.close()
@@ -195,7 +210,12 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
             )
             progress.fail_task(validate_task, error_msg)
             progress.fail_project(error_msg)
-            return {"component_name": component_name, "status": "failed", "error": error_msg}
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "invalid_project_name",
+            }
         progress.complete_task(validate_task)
 
         update_task = progress.add_task("Component bijwerken")
@@ -277,7 +297,12 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
         error_msg = f"Error updating component: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
-        return {"component_name": component_name, "status": "failed", "error": error_msg}
+        return {
+            "component_name": component_name,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "internal_error",
+        }
     finally:
         if project_manager:
             await project_manager.close()
@@ -311,7 +336,12 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
             )
             progress.fail_task(validate_task, error_msg)
             progress.fail_project(error_msg)
-            return {"component_name": component_name, "status": "failed", "error": error_msg}
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "invalid_project_name",
+            }
 
         sanitized_name = sanitize_kubernetes_name(component_name)
         if sanitized_name != component_name.lower():
@@ -320,7 +350,12 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
             )
             progress.fail_task(validate_task, error_msg)
             progress.fail_project(error_msg)
-            return {"component_name": component_name, "status": "failed", "error": error_msg}
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "validation_error",
+            }
 
         progress.complete_task(validate_task)
 
@@ -429,6 +464,7 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
             "deployment_name": deployment_name,
             "status": "failed",
             "error": error_msg,
+            "error_type": "internal_error",
         }
     finally:
         if project_manager:
@@ -462,7 +498,12 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
             )
             progress.fail_task(validate_task, error_msg)
             progress.fail_project(error_msg)
-            return {"service": service_name, "status": "failed", "error": error_msg}
+            return {
+                "service": service_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "invalid_project_name",
+            }
 
         progress.complete_task(validate_task)
 
@@ -552,7 +593,7 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
         error_msg = f"Error adding service: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
-        return {"service": service_name, "status": "failed", "error": error_msg}
+        return {"service": service_name, "status": "failed", "error": error_msg, "error_type": "internal_error"}
     finally:
         if project_manager:
             await project_manager.close()
@@ -588,7 +629,13 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             )
             progress.fail_task(validate_task, error_msg)
             progress.fail_project(error_msg)
-            return {"service": service_name, "target": target, "status": "failed", "error": error_msg}
+            return {
+                "service": service_name,
+                "target": target,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "invalid_project_name",
+            }
         progress.complete_task(validate_task)
 
         write_task = progress.add_task("Dienstconfiguratie schrijven")
@@ -689,7 +736,13 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
         error_msg = f"Error configuring service: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
-        return {"service": service_name, "target": target, "status": "failed", "error": error_msg}
+        return {
+            "service": service_name,
+            "target": target,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "internal_error",
+        }
     finally:
         if project_manager:
             await project_manager.close()
@@ -985,4 +1038,8 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
         # and dependency declarations were changed instead of only that the component is gone.
         "uncoupled_from": result.get("uncoupled_from", []),
         "processing": refresh_result.get("processing") if isinstance(refresh_result, dict) else None,
+        # De reden komt van de herverwerking die faalde, niet van hier: dit is dezelfde
+        # mislukking, doorgegeven. Zonder dit stond er wel status "failed" en geen reden,
+        # en dan kan een client hem niet toeschrijven.
+        **({"error_type": refresh_result.get("error_type", "processing_failed")} if failed else {}),
     }

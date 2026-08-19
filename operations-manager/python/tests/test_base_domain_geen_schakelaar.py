@@ -27,6 +27,7 @@ beschrijving van het veld en van de lijst.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -110,6 +111,17 @@ class TestDeApiPubliceertHemNietMeer:
         optie = spec["components"]["schemas"]["ClusterDomainOption"]["properties"]["value"]
 
         assert CUSTOM_DOMAIN_SENTINEL not in optie["description"]
+
+    def test_hij_komt_nergens_in_de_spec_voor(self, spec: dict[str, Any]) -> None:
+        """Ook niet in een beschrijving die uitlegt wat hij is.
+
+        Zo stond hij er na de eerste opruiming nog: de endpointtekst van de clusterlijst
+        legde uit dat het een schakelaar in het formulier is. Goed bedoeld en toch verkeerd,
+        want een client kan met een formulierdetail niets, en een sentinel bij naam noemen in
+        een contract nodigt uit om hem alsnog te sturen. Wat een lezer WEL moet weten (schrijf
+        de domeinnaam zelf) staat in de beschrijving van het veld; het waarom staat in de code.
+        """
+        assert CUSTOM_DOMAIN_SENTINEL not in json.dumps(spec)
 
 
 class TestHetFormulierHoudtHem:

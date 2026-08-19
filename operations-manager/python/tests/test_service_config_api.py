@@ -313,14 +313,14 @@ class TestPatchServiceConfigList:
             data,
             ServiceType.PERSISTENT_STORAGE.value,
             ConfigLayer.COMPONENT,
-            add=[{"name": "data2", "size": "2Gi", "mount-path": "/data2"}],
+            add=[{"name": "data2", "size": "500Mi", "mount-path": "/data2"}],
             remove=[],
             component_name="backend",
         )
         entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "persistent-storage")
         assert service_entry_config(entry) == [
             {"name": "data1", "size": "1Gi", "mount-path": "/data1"},
-            {"name": "data2", "size": "2Gi", "mount-path": "/data2"},
+            {"name": "data2", "size": "500Mi", "mount-path": "/data2"},
         ]
         assert counts["updated"] == 1
         assert counts["added"] == 0
@@ -376,12 +376,12 @@ class TestPatchServiceConfigList:
             data,
             ServiceType.PERSISTENT_STORAGE.value,
             ConfigLayer.COMPONENT,
-            add=[{"name": "data1", "size": "4Gi", "mount-path": "/data1"}],
+            add=[{"name": "data1", "size": "1Gi", "mount-path": "/data1"}],
             remove=["data1"],
             component_name="backend",
         )
         entry = next(e for e in self._backend(data)["services"] if service_entry_name(e) == "persistent-storage")
-        assert service_entry_config(entry) == [{"name": "data1", "size": "4Gi", "mount-path": "/data1"}]
+        assert service_entry_config(entry) == [{"name": "data1", "size": "1Gi", "mount-path": "/data1"}]
         assert counts == {"added": 1, "updated": 0, "removed": 1}
 
     def test_invalid_entry_is_refused_before_anything_is_written(self) -> None:
@@ -488,7 +488,7 @@ class TestListShapedConfigOnBothComponentStates:
                         "reference": service_name,
                         "config": [
                             {"name": "oud", "size": "1Gi", "mount-path": "/oud"},
-                            {"name": "ouder", "size": "2Gi", "mount-path": "/ouder"},
+                            {"name": "ouder", "size": "500Mi", "mount-path": "/ouder"},
                         ],
                     }
                 ],
@@ -751,11 +751,16 @@ class TestPatchListInsideAnObjectConfig:
         entry = next(e for e in data["services"] if service_entry_name(e) == service)
         return service_entry_config(entry)
 
-    def test_a_second_invite_leaves_the_first_and_its_key_alone(self) -> None:
-        """Vraag 3: a PUT rewrites the whole list, so in a PUT-only world adding a second
-        invite meant resending the first -- and whoever did not know that lost it. The key
-        is readable (a deliberate decision, see the invite service's module docstring), so
-        resending is possible in principle; the PATCH is what makes it unnecessary."""
+    def test_de_ene_uitnodiging_wisselen_laat_het_buurveld_staan(self) -> None:
+        """Vraag 3: a PUT rewrites the whole list, so in a PUT-only world changing the
+        invite meant resending the sibling fields too -- and whoever did not know that lost
+        them. The PATCH is what makes that unnecessary.
+
+        Adding a SECOND invite is what this test used to do, and that is refused since
+        zad-cli point 13: the API presents ``active`` as one entry, so the write that would
+        make that untrue is the one that stops (see
+        ``tests/test_singular_list_blijft_enkelvoudig.py``). Swapping in one call is the way
+        that works, and it exercises the same merge."""
         data = _project()
         data["services"].append(
             {
@@ -771,16 +776,13 @@ class TestPatchListInsideAnObjectConfig:
             ServiceType.INVITE.value,
             ConfigLayer.PROJECT,
             add=[{"key": "tweede-geheim", "realm-roles": ["editor"]}],
-            remove=[],
+            remove=["eerste-geheim"],
             list_field="active",
         )
         config = self._project_config(data, "invite")
-        assert config["active"] == [
-            {"key": "eerste-geheim", "realm-roles": ["viewer"], "contact-email": "a@b.nl"},
-            {"key": "tweede-geheim", "realm-roles": ["editor"]},
-        ]
+        assert config["active"] == [{"key": "tweede-geheim", "realm-roles": ["editor"]}]
         assert config["default-language"] == "en"  # the sibling field is not rewritten
-        assert counts == {"added": 1, "updated": 0, "removed": 0}
+        assert counts == {"added": 1, "updated": 0, "removed": 1}
         validate_service_configs(data)
 
     def test_removing_one_invite_keeps_the_other(self) -> None:

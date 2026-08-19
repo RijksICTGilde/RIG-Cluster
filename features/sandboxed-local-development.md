@@ -49,16 +49,18 @@ task sandbox:update-dns
 
 ### TLS Certificate (every ~90 days, by one team member)
 
-Generate a wildcard certificate:
+The wildcard cert for `*.sandbox.rijksapp.dev` is committed AGE-encrypted at
+`security/tls/sandbox-wildcard/{fullchain,privkey}.pem.age`. It's a real Let's
+Encrypt cert obtained via the DNS-01 challenge, and the public domain has A
+records to `127.0.0.1`, so the cert is valid for the loopback Kind cluster.
+
+To renew (one team member, every ~90 days):
+
 ```bash
-certbot certonly --manual --preferred-challenges dns -d "*.sandbox.rijksapp.dev"
+task sandbox:renew-wildcard-cert
 ```
 
-Copy the certificate files to:
-```
-security/tls/sandbox-wildcard/fullchain.pem
-security/tls/sandbox-wildcard/privkey.pem
-```
+See **[docs/sandbox-wildcard-cert-renewal.md](../docs/sandbox-wildcard-cert-renewal.md)** for the full runbook, prerequisites, and how it works (TransIP API + IP-whitelisted `kubectl exec` via the production `operations-manager` pod).
 
 ## How to Use
 

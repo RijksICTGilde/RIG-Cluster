@@ -16,6 +16,7 @@ resources:
   # Additional hostname zad.rijksapp.nl with Let's Encrypt (transition period)
   - issuer-letsencrypt.yaml
   - ingress-rijksapp.yaml
+  - ingress-router.yaml
 
 patches:
   - path: patches/deployment.yaml

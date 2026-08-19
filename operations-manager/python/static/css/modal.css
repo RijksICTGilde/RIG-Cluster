@@ -68,7 +68,16 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%) scale(0.95);
-    background: var(--rvo-color-wit);
+    /* Het VLAK van de dialoog komt uit het thema en niet uit --rvo-color-wit.
+       Die variabele is een vaste waarde (#FFFFFF in lotc-app.css) en beweegt dus niet mee
+       met de licht/donker-stand, terwijl de TEKST in de dialoog dat wel doet: die erft de
+       kleur van het thema. In de donkere weergave gaf dat lichtgrijs op wit - gemeten
+       #D9DEE5 op #FFFFFF, contrast 1,35 voor de kop "Projectgegevens bewerken", de labels
+       "Weergavenaam" en "Projectomschrijving" en de knop "Annuleren". Het token hieronder
+       is precies wat <c-card> ook gebruikt en is in de lichte weergave #FFFFFF, dus daar
+       verandert er niets. De terugval is de oude waarde, voor het geval de themastylesheet
+       niet geladen is. */
+    background: var(--semantics-surfaces-base-background-color, var(--rvo-color-wit));
     /* Vaste waarde: --rvo-border-radius-lg staat niet in lotc-app.css en leverde dus
        geen hoekstraal op. 8px is wat die token in het oude thema was. */
     border-radius: 8px;
@@ -106,7 +115,11 @@
 .edit-section-loading {
     text-align: center;
     padding: var(--rvo-space-xl);
-    color: var(--rvo-color-grijs-500);
+    /* Gedempte tekst uit het thema en niet uit de vaste --rvo-color-grijs-500 (#64748B).
+       Dat grijs is gekozen voor een wit vlak; op het donkere vlak van de dialoog haalde
+       "Laden..." 3,24:1 en dus WCAG AA niet. Het themotoken is dezelfde bedoeling -
+       secundaire tekst - maar dan per weergave. */
+    color: var(--semantics-content-secondary-color, var(--rvo-color-grijs-500));
 }
 
 /* De laadtoestand van de goedkeuringsdialoog (/admin/approvals), aangestuurd door htmx.

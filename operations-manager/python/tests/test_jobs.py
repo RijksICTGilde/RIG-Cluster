@@ -74,7 +74,9 @@ def test_tasks_tab_lists_runs_and_tasks():
     # A running task shows its live step + progress.
     assert "Deployments aanmaken" in html
     assert "45%" in html
-    assert "2026-06-28 09:00" in html  # T replaced, truncated to minutes
+    # Sinds RC-133 gaat de datum door het gedeelde datumfilter: leesbaar, compacte maand,
+    # en in onze eigen tijdzone. 09:00 UTC is in juni 11:00 in Amsterdam.
+    assert "28 jun 2026 11:00" in html
 
 
 def test_normalize_run_and_task():

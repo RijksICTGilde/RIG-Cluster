@@ -2,7 +2,7 @@
 Web routes for serving HTML pages (non-API endpoints).
 """
 
-import asyncio  # noqa: TC003  # used at runtime by the module-level _background_tasks annotation
+import asyncio
 import copy
 import logging
 from typing import TYPE_CHECKING, Any
@@ -16,9 +16,10 @@ if TYPE_CHECKING:
 
     from opi.manager.project_manager import ProjectManager
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.dns_config import ROUTER_HOSTNAMES, ROUTER_IPV4, ROUTER_IPV6, router_hostname_for
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
@@ -61,16 +62,18 @@ from opi.web.lotc_switch import (
     tab_from_path,
 )
 from opi.web.menu import get_menu_items
+from opi.web.navigation_lotc import get_navigation
 from opi.web.project_actions import build_project_action
 from opi.web.stap_labels import stap_label
 from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
 
-from ..utils.age import decrypt_age_content
+from ..utils.age import decrypt_age_content, is_age_encrypted
 from .metrics_explorer_router import metrics_explorer_router
 from .router_approvals import approvals_router
 from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
 from .router_self_service import check_subdomain_availability_web
+from .router_shared_services import shared_services_router
 from .router_tasks import tasks_router
 from .router_usage import usage_router
 from .router_user_admin import user_admin_router
@@ -91,6 +94,7 @@ web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
 web_router.include_router(usage_router)
+web_router.include_router(shared_services_router)
 web_router.include_router(approvals_router)
 web_router.include_router(attachments_router)
 web_router.include_router(wizard_attachments_router)
@@ -103,6 +107,72 @@ for _service_router in collect_service_routers():
     web_router.include_router(_service_router)
 
 
+async def ontsleutel_helm_values(items: list[dict[str, Any]], naam_sleutel: str, waar: str, private_key: str) -> None:
+    """Maak de ``helm-values`` van helm-chart- of helmfile-items leesbaar voor de pagina.
+
+    Het veld heeft in het schema geen type (``"helm-values": {}``) en komt in de
+    projectbestanden in twee vormen voor: als AGE-blok en als gewone boom. In
+    ``mb-docs-helmfile`` staan ze zelfs allebei -- versleuteld op de deployment, in
+    platte tekst op het project. De generatie leest beide vormen
+    (``_decrypt_with_private_key`` ontsleutelt alleen strings), maar deze
+    weergaveweg ontsleutelde onvoorwaardelijk. Een boom viel dan in de ``except``
+    en werd ``None``, en omdat het sjabloon het blok alleen toont ``if ... is
+    mapping`` verdween het van het scherm zonder melding.
+
+    Daarom kijken we eerst wat er staat: alleen een AGE-blok gaat door de
+    ontsleuteling, de rest blijft zoals hij is.
+    """
+    for item in items:
+        waarde = item.get("helm-values")
+        if not waarde:
+            continue
+        naam = item.get(naam_sleutel, "unknown")
+        if not isinstance(waarde, str):
+            # Al een boom: niets te ontsleutelen, en niets te verliezen.
+            continue
+        if not is_age_encrypted(waarde):
+            # Een string die geen AGE-blok is, is YAML in platte tekst.
+            item["helm-values"] = load_yaml_from_string(waarde)
+            continue
+        try:
+            item["helm-values"] = load_yaml_from_string(await decrypt_age_content(waarde, private_key))
+            logger.info(f"Decrypted helm-values for {waar} '{naam}'")
+        except Exception as e:
+            logger.warning(f"Failed to decrypt helm-values for {waar} '{naam}': {e}")
+            item["helm-values"] = None
+
+
+def _render_eigen_domein(request: Request, *, current_path: str) -> Response:
+    """De uitleg over het aanwijzen van een eigen domein.
+
+    Twee ingangen, een pagina: de kale routernaam (waar de bezoeker binnenvalt vanuit
+    andermans DNS-record) en /eigen-domein in het menu (waar een projecteigenaar hem
+    opzoekt). De genoemde routernaam volgt de zone waarop je kijkt.
+    """
+    gebruiker = get_current_user(request)
+    return render(
+        request,
+        template="bg/router.html.j2",
+        context={
+            "request": request,
+            "menu_items": get_menu_items(gebruiker),
+            "navigation": get_navigation(gebruiker, current_path=current_path),
+            "router_host": router_hostname_for(request.url.hostname),
+            "router_ipv4": ROUTER_IPV4,
+            "router_ipv6": ROUTER_IPV6,
+        },
+    )
+
+
+@web_router.get("/eigen-domein", response_class=HTMLResponse)
+async def eigen_domein(request: Request) -> Response:
+    """BEWUST ZONDER ``@requires_sso``: wie een domein aanwijst is vaak een DNS-beheerder
+    van een andere organisatie, zonder account hier. Een inlogmuur zou de pagina precies
+    voor zijn publiek onbereikbaar maken. ``tests/test_routerpagina.py`` bewaakt dat.
+    """
+    return _render_eigen_domein(request, current_path="/eigen-domein")
+
+
 @web_router.get("/")
 async def root(request: Request):
     """De voordeur: het dashboard als je ingelogd bent, anders de introductie.
@@ -113,7 +183,15 @@ async def root(request: Request):
 
     Doorverwijzen en niet hier renderen, zodat de introductie een eigen adres houdt dat je
     kunt delen en dat ook werkt voor iemand die al ingelogd is.
+
+    OP DE ROUTERNAMEN IETS ANDERS. ``router.<zone>`` is de kale ingang van het cluster waar
+    elke andere naam met een CNAME naartoe wijst. Wie die naam opvraagt kwam hem tegen in
+    een DNS-record en heeft een andere vraag dan een ZAD-gebruiker, dus die krijgt de uitleg
+    over het aanwijzen van een eigen domein. Op de host en niet op een pad, want de bezoeker
+    typt de naam en geen pad.
     """
+    if request.url.hostname in ROUTER_HOSTNAMES:
+        return _render_eigen_domein(request, current_path="/")
     if get_current_user(request) is None:
         return RedirectResponse(url="/introductie", status_code=302)
     return RedirectResponse(url="/dashboard", status_code=302)
@@ -881,7 +959,7 @@ async def _sum_by_namespace(prom: Any, promql: str) -> dict[str, float]:
     try:
         result = await prom.custom_query(promql)
     except Exception as e:
-        logger.debug(f"Dashboard per-namespace query failed: {e}")
+        logger.warning(f"Dashboard per-namespace query failed: {e}")
         return {}
 
     values: dict[str, float] = {}
@@ -934,7 +1012,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         cpu_usage_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard CPU usage query failed: {e}")
+                    logger.warning(f"Dashboard CPU usage query failed: {e}")
 
                 try:
                     result = await prom.custom_query(
@@ -943,7 +1021,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         cpu_limit_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard CPU limits query failed: {e}")
+                    logger.warning(f"Dashboard CPU limits query failed: {e}")
 
                 # Memory usage and limits
                 mem_usage_val = 0.0
@@ -955,7 +1033,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         mem_usage_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard memory usage query failed: {e}")
+                    logger.warning(f"Dashboard memory usage query failed: {e}")
 
                 try:
                     result = await prom.custom_query(
@@ -964,7 +1042,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         mem_limit_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard memory limits query failed: {e}")
+                    logger.warning(f"Dashboard memory limits query failed: {e}")
 
                 # Storage usage and capacity
                 storage_used_val = 0.0
@@ -974,7 +1052,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         storage_used_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard storage usage query failed: {e}")
+                    logger.warning(f"Dashboard storage usage query failed: {e}")
 
                 try:
                     result = await prom.custom_query(
@@ -983,7 +1061,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         storage_cap_val = float(result[0]["value"][1])
                 except Exception as e:
-                    logger.debug(f"Dashboard storage capacity query failed: {e}")
+                    logger.warning(f"Dashboard storage capacity query failed: {e}")
 
                 # Pod count
                 try:
@@ -991,7 +1069,7 @@ async def collect_dashboard_metrics(
                     if result and result[0].get("value"):
                         pod_count = int(float(result[0]["value"][1]))
                 except Exception as e:
-                    logger.debug(f"Dashboard pod count query failed: {e}")
+                    logger.warning(f"Dashboard pod count query failed: {e}")
 
                 # Network traffic time-series (last 30min, 5min step)
                 network_in_data: list[dict] = []
@@ -1030,7 +1108,7 @@ async def collect_dashboard_metrics(
                                 }
                             )
                 except Exception as e:
-                    logger.debug(f"Dashboard network query failed: {e}")
+                    logger.warning(f"Dashboard network query failed: {e}")
 
                 # Compute display values
                 def _pct(used: float, total: float) -> int:
@@ -1511,24 +1589,34 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so
         # the page and the API can never disagree about what a component's variables are.
-        for deployment in project_data_decrypted.get("deployments", []):
-            for dep_component in deployment.get("components", []):
-                if dep_component.get("user-env-vars"):
-                    dep_component["user-env-vars"] = await read_user_env_vars(
-                        dep_component["user-env-vars"],
-                        project_private_key,
-                        where=f"deployment component '{dep_component.get('reference')}'",
-                    )
+        #
+        # NAAST ELKAAR, NIET ERACHTER. Elke ontsleuteling is een eigen `age`-proces (zie
+        # opi/utils/age.py), en die stonden hier in een lus achter elkaar te wachten: een
+        # project met achttien deployments betaalde achttien keer een procesfork op ELKE
+        # tabwissel, netjes een voor een. De aanroepen zijn onderling onafhankelijk - elke
+        # taak schrijft in zijn eigen dict - dus asyncio.gather zet ze naast elkaar zonder
+        # dat er iets aan de uitkomst verandert.
+        async def _lees_env_vars(houder: dict[str, Any], waar: str) -> None:
+            houder["user-env-vars"] = await read_user_env_vars(houder["user-env-vars"], project_private_key, where=waar)
+
+        env_var_taken = [
+            _lees_env_vars(dep_component, f"deployment component '{dep_component.get('reference')}'")
+            for deployment in project_data_decrypted.get("deployments", [])
+            for dep_component in deployment.get("components", [])
+            if dep_component.get("user-env-vars")
+        ]
 
         logger.info(f"Processing {len(project_data_decrypted.get('components', []))} components for user-env-vars")
+        env_var_taken += [
+            _lees_env_vars(component, f"component '{component.get('name', 'unknown')}'")
+            for component in project_data_decrypted.get("components", [])
+            if component.get("user-env-vars")
+        ]
+        if env_var_taken:
+            await asyncio.gather(*env_var_taken)
+
         for component in project_data_decrypted.get("components", []):
             component_name = component.get("name", "unknown")
-            if component.get("user-env-vars"):
-                component["user-env-vars"] = await read_user_env_vars(
-                    component["user-env-vars"],
-                    project_private_key,
-                    where=f"component '{component_name}'",
-                )
             # Aliassen ook, en om dezelfde reden: de kaart toont ze en zonder dit staat er
             # een AGE-blok op het scherm. Sinds RC-106 is dat hetzelfde blok als hierboven,
             # en het is dezelfde decoder als de leesendpoints gebruiken, zodat de pagina en
@@ -1537,8 +1625,13 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             # is_verwijzing.
             if component.get("aliases"):
                 try:
-                    component["aliases"] = decode_component_values(
-                        component["aliases"], project_data_decrypted, project_private_key
+                    # In een thread, want decode_component_values is synchroon en draait
+                    # `age` met subprocess.run. Dat zette niet alleen deze pagina stil maar
+                    # de hele worker, per component - en bij de oude mapping-vorm zelfs per
+                    # alias. De decoder zelf blijft synchroon: hij wordt ook door de
+                    # leesendpoints gebruikt en daar hoort een tweede vorm niet thuis.
+                    component["aliases"] = await asyncio.to_thread(
+                        decode_component_values, component["aliases"], project_data_decrypted, project_private_key
                     )
                 except (ComponentValuesError, ValueError) as error:
                     # Een onleesbaar blok levert geen namen op om te tonen; laat het weg in
@@ -1546,65 +1639,28 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                     logger.warning(f"Aliases of component '{component_name}' could not be read: {error}")
                     component["aliases"] = {}
 
-        # Decrypt helm-charts base helm-values
-        for helm_chart in project_data_decrypted.get("helm-charts", []):
-            chart_name = helm_chart.get("name", "unknown")
-            if helm_chart.get("helm-values"):
-                try:
-                    decrypted_yaml = await decrypt_age_content(helm_chart["helm-values"], project_private_key)
-                    helm_chart["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                    logger.info(f"Decrypted helm-values for helm-chart '{chart_name}'")
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt helm-values for helm-chart '{chart_name}': {e}")
-                    helm_chart["helm-values"] = None
-
-        # Decrypt helmfile base helm-values
-        for helmfile in project_data_decrypted.get("helmfile", []):
-            helmfile_name = helmfile.get("name", "unknown")
-            if helmfile.get("helm-values"):
-                try:
-                    decrypted_yaml = await decrypt_age_content(helmfile["helm-values"], project_private_key)
-                    helmfile["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                    logger.info(f"Decrypted helm-values for helmfile '{helmfile_name}'")
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt helm-values for helmfile '{helmfile_name}': {e}")
-                    helmfile["helm-values"] = None
-
-        # Decrypt deployment-level helm-charts and helmfile helm-values
+        # helm-values leesbaar maken: op projectniveau (de catalogus) en op
+        # deploymentniveau (de verwijzing), voor helm-charts zowel als helmfile.
+        await ontsleutel_helm_values(
+            project_data_decrypted.get("helm-charts", []), "name", "helm-chart", project_private_key
+        )
+        await ontsleutel_helm_values(
+            project_data_decrypted.get("helmfile", []), "name", "helmfile", project_private_key
+        )
         for deployment in project_data_decrypted.get("deployments", []):
             deployment_name = deployment.get("name", "unknown")
-
-            # Decrypt deployment helm-charts helm-values
-            for helm_chart in deployment.get("helm-charts", []):
-                chart_ref = helm_chart.get("reference", "unknown")
-                if helm_chart.get("helm-values"):
-                    try:
-                        decrypted_yaml = await decrypt_age_content(helm_chart["helm-values"], project_private_key)
-                        helm_chart["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                        logger.info(
-                            f"Decrypted helm-values for deployment '{deployment_name}' helm-chart '{chart_ref}'"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to decrypt helm-values for deployment '{deployment_name}' helm-chart '{chart_ref}': {e}"
-                        )
-                        helm_chart["helm-values"] = None
-
-            # Decrypt deployment helmfile helm-values
-            for helmfile in deployment.get("helmfile", []):
-                helmfile_ref = helmfile.get("reference", "unknown")
-                if helmfile.get("helm-values"):
-                    try:
-                        decrypted_yaml = await decrypt_age_content(helmfile["helm-values"], project_private_key)
-                        helmfile["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                        logger.info(
-                            f"Decrypted helm-values for deployment '{deployment_name}' helmfile '{helmfile_ref}'"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to decrypt helm-values for deployment '{deployment_name}' helmfile '{helmfile_ref}': {e}"
-                        )
-                        helmfile["helm-values"] = None
+            await ontsleutel_helm_values(
+                deployment.get("helm-charts", []),
+                "reference",
+                f"deployment '{deployment_name}' helm-chart",
+                project_private_key,
+            )
+            await ontsleutel_helm_values(
+                deployment.get("helmfile", []),
+                "reference",
+                f"deployment '{deployment_name}' helmfile",
+                project_private_key,
+            )
 
         # Process services to add display information
         services_with_info = []
@@ -1938,7 +1994,6 @@ def _argocd_unavailable_result(app_name: str, message: str, source: str = "Appli
 
 def _annotate_argocd_error_ages(errors: list[dict[str, Any]]) -> None:
     """Add the Dutch ``age`` field in-place for entries that carry a timestamp."""
-    from datetime import datetime
 
     now = datetime.now(UTC)
     for error in errors:

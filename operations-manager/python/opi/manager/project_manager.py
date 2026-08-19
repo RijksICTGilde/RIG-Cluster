@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 import shutil
+import time
 from collections.abc import Callable  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -56,6 +57,7 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.core.task_errors import TaskInputError
 from opi.extensions import load_extensions
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import (
@@ -79,6 +81,7 @@ from opi.handlers.project_file_handler import (
     remove_component_references,
 )
 from opi.handlers.sops import SopsHandler
+from opi.manager.argo_manager import UMBRELLA_REFRESH_MAX_POGINGEN, UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
@@ -181,6 +184,7 @@ from opi.utils.yaml_util import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from opi.connectors.argo import ArgoConnector
     from opi.core.persistent_task_progress import AnyTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
 
@@ -2558,7 +2562,7 @@ class ProjectManager:
 
             logger.info(f"Successfully created ArgoCD infrastructure application for project '{project_name}'")
 
-            # STEP 7: Refresh ArgoCD user-applications to detect new infrastructure folder
+            # STEP 7: ArgoCD-verbinding voor de verversbewaker hieronder en voor STEP 9
             logger.info(
                 f"Refreshing ArgoCD user-applications to create infrastructure application for '{project_name}'"
             )
@@ -2576,22 +2580,32 @@ class ProjectManager:
             if not await argo_connector.login():
                 raise RuntimeError("Failed to login to ArgoCD")
 
-            # Refresh user-applications app to pick up the new {project_name}-infrastructure folder
-            if not await argo_connector.refresh_application("user-applications"):
-                raise RuntimeError("Failed to refresh ArgoCD user-applications")
-
-            logger.info("ArgoCD user-applications refreshed, waiting for infrastructure application to be created")
-
             # STEP 8: Wait for infrastructure application to be created by ArgoCD
             infra_app_name = f"{project_name}-infrastructure"
             if progress_manager and infra_task:
                 progress_manager.update_task(infra_task, "Wachten tot ArgoCD de infrastructuur aanmaakt")
 
-            await self._argo_manager.wait_for_application_created(
-                app_name=infra_app_name,
-                timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
-                poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
+            # Dezelfde bewaker als bij de deployment-applicaties: de refresh die de umbrella
+            # onze infrastructuurmap moet laten zien kan opgaan in een reconcile die zijn
+            # revisie al had opgehaald, en dan gebeurt er tot de volgende reconcile niets.
+            umbrella_watcher = asyncio.create_task(
+                self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
             )
+            try:
+                await self._argo_manager.wait_for_application_created(
+                    app_name=infra_app_name,
+                    timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
+                    poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
+                )
+            finally:
+                umbrella_watcher.cancel()
+                try:
+                    await umbrella_watcher
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    # De bewaker is een vangnet en mag het wachten nooit meeslepen.
+                    logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
 
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
 
@@ -2736,6 +2750,64 @@ class ProjectManager:
                 logger.info("No deployments found in current project configuration")
 
         return deployment_changes
+
+    async def _keep_umbrella_refreshed(self, argo_connector: ArgoConnector, pushed_commit: str | None) -> None:
+        """Prik `user-applications` opnieuw zolang die onze commit nog niet gezien heeft.
+
+        Een refresh is geen opdracht in een wachtrij maar een vlaggetje op de Application:
+        liep er al een reconcile, dan wist die het vlaggetje als hij klaar is, terwijl hij
+        zijn revisie ophaalde voordat wij pushten. Onze wijziging zit er dan niet in en er
+        gebeurt tot de volgende reconcile (op odcn-production `timeout.reconciliation: 15m`)
+        niets meer.
+
+        Het enige harde bewijs is de revisie: `reconciledAt` kan best na onze push liggen
+        terwijl de vergeleken revisie van ervoor is. Zonder bekende commit valt er niets te
+        bewijzen en blijft het bij de eerste refresh, zoals voorheen.
+
+        De lus loopt op het antwoord van de refresh en niet op een tijdklok: die call blijft
+        hangen tot er een reconcile is afgerond, en juist dan is te zien of die de goede
+        revisie had. Zo niet, dan is dat het bewijs dat ons vlaggetje in andermans run is
+        opgegaan en heeft meteen opnieuw prikken zin.
+
+        Bedoeld om naast de wachters te draaien en door de aanroeper geannuleerd te worden.
+        """
+        for poging in range(1, UMBRELLA_REFRESH_MAX_POGINGEN + 1):
+            gestart = time.monotonic()
+            if not await argo_connector.refresh_application("user-applications"):
+                logger.warning(
+                    "Refresh van user-applications leverde niets op; een volgende ronde probeert het opnieuw"
+                )
+            if not pushed_commit:
+                return
+
+            status_data = await argo_connector.get_application_status("user-applications") or {}
+            status = status_data.get("status", {}) or {}
+            revision = status.get("sync", {}).get("revision")
+            self._argo_manager.last_umbrella_revision = revision
+            self._argo_manager.last_umbrella_reconciled_at = status.get("reconciledAt")
+
+            if revision == pushed_commit:
+                logger.info(f"user-applications heeft onze commit {pushed_commit} vergeleken; niet opnieuw verversen")
+                return
+
+            if poging == UMBRELLA_REFRESH_MAX_POGINGEN:
+                break
+
+            logger.info(
+                f"user-applications staat nog op revisie {revision or 'onbekend'} in plaats van {pushed_commit}; "
+                "de vorige refresh is verloren gegaan, opnieuw verversen"
+            )
+            # De refresh hierboven wachtte zelf al op een reconcile; kwam hij toch meteen
+            # terug, dan houdt deze ondergrens het een lus in plaats van een storm.
+            rest = UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN - (time.monotonic() - gestart)
+            if rest > 0:
+                await asyncio.sleep(rest)
+
+        logger.warning(
+            f"user-applications staat na {UMBRELLA_REFRESH_MAX_POGINGEN} refreshes nog op revisie "
+            f"{self._argo_manager.last_umbrella_revision or 'onbekend'} in plaats van {pushed_commit}; "
+            "hier is meer aan de hand dan een verloren wekker, doorprikken helpt niet"
+        )
 
     async def process_project_from_git(
         self,
@@ -3081,7 +3153,6 @@ class ProjectManager:
                         f"Refreshing user-applications: {len(apps_to_create)} application(s) not yet present "
                         f"({', '.join(apps_to_create)})"
                     )
-                    await argo_connector.refresh_application("user-applications")
 
                     async def _wait_created(app_name: str) -> str | None:
                         try:
@@ -3093,7 +3164,25 @@ class ProjectManager:
                             logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
                             return f"{app_name}: timed out waiting for application to be created"
 
-                    created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
+                    # Eén bewaker naast alle wachters, niet één per applicatie: die zou bij
+                    # drie nieuwe applicaties drie keer tegelijk verversen. Hij doet de
+                    # eerste refresh en herhaalt die alleen zolang de umbrella onze commit
+                    # aantoonbaar nog niet vergeleken heeft.
+                    umbrella_watcher = asyncio.create_task(
+                        self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
+                    )
+                    try:
+                        created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
+                    finally:
+                        umbrella_watcher.cancel()
+                        try:
+                            await umbrella_watcher
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            # De bewaker is een vangnet; als hij zelf omvalt, mag dat het
+                            # wachten op de applicaties niet meeslepen.
+                            logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
                     sync_failures.extend(result for result in created_results if result)
                 else:
                     logger.info(
@@ -6991,7 +7080,10 @@ class ProjectManager:
             project_data = await self.get_contents()
             project_name = await self.get_name()
 
-            # Validate that all component references exist in the project
+            # Validate that all component references exist in the project.
+            # Bewust dubbel: het v2-endpoint doet dezelfde controle synchroon om een fout van
+            # de aanroeper als 400 terug te geven, maar tussen aanname en uitvoering van de
+            # taak kan het projectbestand veranderen, dus hier blijft het vangnet staan.
             validation_result = self._validate_component_references(project_data, components, "deployment")
             if not validation_result["success"]:
                 return {
@@ -8728,7 +8820,14 @@ class ProjectManager:
             None,
         )
         if not deployment:
-            raise ValueError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+            # TaskInputError en geen ValueError: dit is geen storing maar een verzoek dat
+            # niet kan, en de worker maakt er daardoor een blijvende mislukking van MET een
+            # reden die de aanroeper kan lezen. Hetzelfde woord dat de andere paden hier al
+            # gebruiken (add_component_to_deployment geeft 'deployment_not_found' terug).
+            raise TaskInputError(
+                f"Deployment '{deployment_name}' not found in project '{project_name}'",
+                error_type="deployment_not_found",
+            )
 
         # 3. Find component in deployment
         component_found = False
@@ -8744,8 +8843,9 @@ class ProjectManager:
                 break
 
         if not component_found:
-            raise ValueError(
-                f"Component '{component_name}' not found in deployment '{deployment_name}' of project '{project_name}'"
+            raise TaskInputError(
+                f"Component '{component_name}' not found in deployment '{deployment_name}' of project '{project_name}'",
+                error_type="component_not_found",
             )
 
         logger.info(f"Updated image: {old_image} -> {new_image_url}")

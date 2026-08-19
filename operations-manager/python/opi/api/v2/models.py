@@ -50,11 +50,64 @@ class ErrorCategory(StrEnum):
     # pipeline can stop retrying a typo (RC-82). Only ever set when the caller supplied
     # the destination; a restore into the project's own service can never be this.
     InvalidTarget = "InvalidTarget"
+    # What the caller sent cannot be acted on: a name that does not exist, a service that
+    # needs a project-level decision first, a value the schema rejects. Retrying it changes
+    # nothing, and that is the point of separating it out (gemeld door zad-cli, punt 26):
+    # without a category a client must treat every failure as unattributable, so a plain
+    # input mistake came out of the CLI as "could not be attributed" instead of "your call
+    # was wrong". Distinct from ``InvalidTarget``, which stays what it was: the restore
+    # destination the caller supplied.
+    InvalidInput = "InvalidInput"
     OutOfMemory = "OutOfMemory"
     HealthCheck = "HealthCheck"
     SyncFailed = "SyncFailed"
     ComparisonError = "ComparisonError"
     Unknown = "Unknown"
+
+
+#: ``error_type`` values that mean "the request itself was wrong". The field is a free
+#: string written at a couple of dozen call sites, so this is the translation into the
+#: closed set a client can switch on. Everything not in here stays ``Unknown``: a category
+#: is a promise about attribution, and guessing one is worse than admitting we do not know.
+#: Deliberately absent: ``conflict`` (two writers raced, which is nobody's mistake and may
+#: well succeed on a retry), ``internal_error`` (ours, but there is no member that says so
+#: yet) and ``processing_failed`` (the rollout itself did not come up healthy, which can be
+#: the user's image or the cluster; ``component_failures`` carries which one, so a category
+#: here would be a guess).
+_CALLER_ERROR_TYPES: frozenset[str] = frozenset(
+    {
+        "already_exists",
+        "ambiguous_cluster",
+        "ambiguous_repository",
+        "component_not_found",
+        "deployment_not_found",
+        "domain_validation",
+        "duplicate_component",
+        "duplicate_component_in_deployment",
+        "in_use",
+        "invalid_component_references",
+        "invalid_deployments",
+        "invalid_project_name",
+        "invalid_request",
+        "invalid_services",
+        "invalid_values",
+        "not_found",
+        "validation_error",
+    }
+)
+
+
+def error_category_for(error_type: str | None) -> ErrorCategory:
+    """Translate a task's free-form ``error_type`` into a category a client can act on.
+
+    ``invalid_target`` maps to the member that already exists for it, the caller-supplied
+    restore destination; the rest of the caller's mistakes land on ``InvalidInput``.
+    """
+    if not error_type:
+        return ErrorCategory.Unknown
+    if error_type == "invalid_target":
+        return ErrorCategory.InvalidTarget
+    return ErrorCategory.InvalidInput if error_type in _CALLER_ERROR_TYPES else ErrorCategory.Unknown
 
 
 class AsyncTaskAcceptedResponse(BaseModel):
@@ -428,6 +481,19 @@ class ClusterDomainOption(BaseModel):
         examples=["rijksapp.nl"],
     )
     label: str = Field(description="Hoe de portal deze keuze toont.", examples=["rijksapp.nl"])
+    supports_dots: bool = Field(
+        default=False,
+        alias="supports-dots",
+        description=(
+            "Of dit domein losse subdomeinen met punten aankan. Dat bepaalt welke waarden van "
+            "'domain-format' hier passen: de streepjes-varianten kunnen altijd, de punt-varianten "
+            "alleen als dit waar is. Zonder dit veld was die regel wel beschreven en nergens uit "
+            "af te leiden."
+        ),
+        examples=[True],
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ClusterInfo(BaseModel):
@@ -479,7 +545,26 @@ class SubdomainCheckResponse(BaseModel):
 
     subdomain: str = Field(description="The subdomain that was checked", examples=["myapp"])
     base_domain: str = Field(description="The base domain it was checked under", examples=["rijksapp.nl"])
-    available: bool = Field(description="Whether the subdomain is free to claim", examples=[True])
+    available: bool = Field(
+        description=(
+            "Whether this subdomain is still free WITHIN ZAD, under the given base domain. "
+            "It says nothing about who owns that base domain or whether DNS for it exists: "
+            "any syntactically valid domain is accepted here, because a project may bring "
+            "its own. Read 'cluster_domain' alongside it to know whether the address can go "
+            "live without a domain request."
+        ),
+        examples=[True],
+    )
+    cluster_domain: bool = Field(
+        default=False,
+        description=(
+            "Whether the base domain is one this cluster serves itself. True means a free "
+            "name here is an address you can use straight away; false means it is a domain "
+            "of your own, so claiming the name is only the first half and the domain still "
+            "has to be requested and approved."
+        ),
+        examples=[True],
+    )
     validation_error: str | None = Field(
         default=None,
         description="Why the answer is 'not available' when it is the value itself that is wrong.",

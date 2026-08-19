@@ -1,7 +1,7 @@
 From 376adb8d9703758e9f5cbc28e6513ea62cd900c2 Mon Sep 17 00:00:00 2001
 From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
 Date: Thu, 23 Jul 2026 18:14:49 +0200
-Subject: [PATCH 2/4] fix: drop stranded GVK on error and cap sync warnings
+Subject: [PATCH 2/7] fix: drop stranded GVK on error and cap sync warnings
 
 ---
  gitops-engine/pkg/cache/cluster.go            | 26 +++++-

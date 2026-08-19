@@ -438,8 +438,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 
         # The same peer-project list the edit flow gets. Without it the cross-domain step had
         # three required fields whose select was empty, so the step could not be saved at all.
-        # The project does not exist yet, hence the empty name: nothing to exclude.
-        state.base_data.update(build_cross_domain_context("", user_email))
+        state.base_data.update(build_cross_domain_context(user_email))
         if user_email:
             state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
 

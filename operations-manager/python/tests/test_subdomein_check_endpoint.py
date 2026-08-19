@@ -128,6 +128,44 @@ class TestDeRouteIsBereikbaar:
         connector.check_availability.assert_not_awaited()
 
 
+class TestWatDeControleBelooft:
+    """zad-cli, punt 29: ``available: true`` voor een domein dat van niemand is.
+
+    Dat klopt en is niet te repareren met een strengere controle, want een project mag zijn
+    eigen domein meebrengen en ``validate_base_domain`` laat daarom elk syntactisch geldig
+    domein toe. Wat ontbrak was dat het antwoord zei waar het over gaat. ``cluster_domain``
+    zegt het nu: een vrije naam onder een domein van dit cluster is een bruikbaar adres, een
+    vrije naam onder je eigen domein is alleen een gereserveerde naam.
+    """
+
+    def test_een_domein_van_dit_cluster_is_er_een_van_ons(self, client: TestClient) -> None:
+        """``local`` staat in de nice_url-domeinen van dit testcluster, en dat is dezelfde
+        lijst die bepaalt welk domein een certificaat van het platform krijgt."""
+        response = client.get(PATH, params={"base_domain": "local"}, headers=HEADERS)
+
+        assert response.status_code == 200
+        assert response.json()["cluster_domain"] is True
+
+    def test_een_eigen_domein_is_dat_niet(self, client: TestClient) -> None:
+        """Het geval uit de melding: de naam is vrij, het adres werkt daarmee nog niet."""
+        response = client.get(PATH, params={"base_domain": "speeltuin-vlam.nl"}, headers=HEADERS)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["available"] is True
+        assert body["cluster_domain"] is False
+
+    def test_ook_een_afwijzing_zegt_om_welk_soort_domein_het_ging(self, client: TestClient) -> None:
+        """Juist bij 'niet beschikbaar' wil je weten wat je aan het oplossen bent."""
+        response = client.get(
+            f"/api/v2/projects/{PROJECT}/subdomains/check/Niet Geldig",
+            params={"base_domain": "local"},
+            headers=HEADERS,
+        )
+
+        assert response.json()["cluster_domain"] is True
+
+
 class TestDeControleBlijftEenControle:
     """De decorator eraf halen was de andere uitweg, en die kost de afscherming."""
 

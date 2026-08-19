@@ -2,7 +2,7 @@
 
 import uuid
 
-from opi.core.async_task_service import AsyncTaskService
+from opi.core.async_task_service import MAX_ERROR_MESSAGE_CHARS, AsyncTaskService
 from opi.core.db import session_scope
 from opi.services.persistence.async_tasks import AsyncTask
 from sqlalchemy import func, update
@@ -167,12 +167,26 @@ async def test_fail_permanent(orm_db):
     assert task["completed_at"]
 
 
-async def test_fail_truncates_long_error(orm_db):
+async def test_een_gewone_foutzin_blijft_heel(orm_db):
+    """Een foutmelding van 300 tekens werd afgeknipt op 255, midden in een woord, terwijl
+    de subtaak dezelfde zin voluit droeg. De kolom is TEXT, dus die 255 hoorde nergens bij
+    (zad-cli, punt 26)."""
     svc = _svc()
     created = await _create(svc)
-    await svc.fail_task(created["task_id"], error_message="e" * 300, attempt_count=3, max_attempts=3)
+    lange_zin = "e" * 300
+    await svc.fail_task(created["task_id"], error_message=lange_zin, attempt_count=3, max_attempts=3)
+    assert (await svc.get_task(created["task_id"]))["error_message"] == lange_zin
+
+
+async def test_een_dump_wordt_alsnog_begrensd(orm_db):
+    """Het vangnet blijft bestaan voor een exceptie die een dump meesleept."""
+    svc = _svc()
+    created = await _create(svc)
+    await svc.fail_task(
+        created["task_id"], error_message="e" * (MAX_ERROR_MESSAGE_CHARS + 100), attempt_count=3, max_attempts=3
+    )
     msg = (await svc.get_task(created["task_id"]))["error_message"]
-    assert len(msg) == 255
+    assert len(msg) == MAX_ERROR_MESSAGE_CHARS
     assert msg.endswith("...")
 
 
