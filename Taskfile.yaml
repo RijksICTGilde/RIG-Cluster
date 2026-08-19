@@ -300,10 +300,15 @@ tasks:
         # git leest. Vandaar dat de sjablonen er @secret-gen:skip op hebben en er hier om
         # gevraagd wordt.
         #
-        # Twee tokens, want ArgoCD hoeft alleen te lezen en OPI moet schrijven. Dezelfde
-        # waarde twee keer invullen mag, maar dan draagt ArgoCD een schrijfrecht dat hij
-        # niet nodig heeft. Gebruik een eigen token per cluster: raakt hij gelekt en wordt
-        # hij ingetrokken, dan gaat niet meteen elk ander cluster mee onderuit.
+        # Een token voor zowel ArgoCD als OPI. Die staan op dit cluster in hetzelfde
+        # vertrouwensdomein, dus splitsen levert hier weinig op.
+        #
+        # Wie ze toch wil scheiden zet ze vooraf in de omgeving; dan wordt er niets
+        # gevraagd. ArgoCD hoeft namelijk alleen te lezen en OPI moet schrijven:
+        #   RIG_READ_TOKEN=... RIG_WRITE_TOKEN=... task set-git-credentials
+        #
+        # Gebruik hoe dan ook een eigen token per cluster: raakt hij gelekt en wordt hij
+        # ingetrokken, dan gaat niet meteen elk ander cluster mee onderuit.
         set -eu
         [ -f "{{.KEY_FILE}}" ] || { echo "Sleutelbestand {{.KEY_FILE}} bestaat niet."; exit 1; }
         AGE_PUBLIC_KEY=$(sed -n '2p' "{{.KEY_FILE}}" | sed 's/# public key: //')
@@ -313,22 +318,17 @@ tasks:
         # Task's ingebouwde shell kent `read -s` niet, dus de echo gaat via stty uit.
         # Wie liever niet typt kan de tokens vooraf in de omgeving zetten:
         #   RIG_READ_TOKEN=... RIG_WRITE_TOKEN=... task set-git-credentials
-        if [ -z "${RIG_READ_TOKEN:-}" ]; then
-          printf 'Token voor ArgoCD (alleen lezen): '
+        if [ -z "${RIG_READ_TOKEN:-}" ] || [ -z "${RIG_WRITE_TOKEN:-}" ]; then
+          printf 'GitHub-token (voor ArgoCD en OPI): '
           stty -echo 2>/dev/null || true
-          read -r RIG_READ_TOKEN
+          read -r RIG_GIT_TOKEN
           stty echo 2>/dev/null || true
           echo
-        fi
-        if [ -z "${RIG_WRITE_TOKEN:-}" ]; then
-          printf 'Token voor OPI (lezen en schrijven): '
-          stty -echo 2>/dev/null || true
-          read -r RIG_WRITE_TOKEN
-          stty echo 2>/dev/null || true
-          echo
+          RIG_READ_TOKEN="${RIG_READ_TOKEN:-$RIG_GIT_TOKEN}"
+          RIG_WRITE_TOKEN="${RIG_WRITE_TOKEN:-$RIG_GIT_TOKEN}"
         fi
         export RIG_READ_TOKEN
-        [ -n "$RIG_READ_TOKEN" ] && [ -n "$RIG_WRITE_TOKEN" ] || { echo "Beide tokens zijn verplicht."; exit 1; }
+        [ -n "$RIG_READ_TOKEN" ] && [ -n "$RIG_WRITE_TOKEN" ] || { echo "Een token is verplicht."; exit 1; }
 
         # sops wil een JSON-waarde. Zelf aanhalingstekens eromheen plakken breekt op een
         # token met een " of \ erin, dus jq codeert het. Via de omgeving en niet via argv,
