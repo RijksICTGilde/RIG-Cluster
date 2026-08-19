@@ -56,6 +56,9 @@ De aanroep in `run_startup_tasks()` staat achter een `except Exception`. Dat is 
 plaats: publieke DNS mag de boot van het portaal niet tegenhouden, en elke herstart
 repareert de drift alsnog.
 
+Dezelfde connector en dezelfde twee poorten worden gebruikt door de no-mail-reconciler, die
+SPF, een null MX en DMARC op onze router-namen zet. Zie `features/no-mail-dns-records.md`.
+
 ## Configuratie
 
 ```
