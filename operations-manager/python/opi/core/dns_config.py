@@ -91,12 +91,40 @@ def desired_caa_contents(zone: str) -> list[str]:
 #
 # Afgeleid uit MANAGED_DNS_ZONES en niet nog een keer uitgeschreven: een tweede lijst die
 # hetzelfde bedoelt loopt uit elkaar zodra er een zone bijkomt.
-ROUTER_HOSTNAMES: frozenset[str] = frozenset(f"router.{zone}" for zone in MANAGED_DNS_ZONES)
+# De sandbox staat er los bij: `sandbox.rijksapp.dev` is geen eigen zone bij TransIP maar
+# een stuk van `rijksapp.dev` (zie de kop van dit bestand), dus afleiden uit MANAGED_DNS_ZONES
+# levert hem niet op. Zonder deze regel toont de sandbox de uitleg met productienamen erin.
+SANDBOX_ROUTER_HOSTNAME = "router.sandbox.rijksapp.dev"
+
+ROUTER_HOSTNAMES: frozenset[str] = frozenset(
+    [f"router.{zone}" for zone in MANAGED_DNS_ZONES] + [SANDBOX_ROUTER_HOSTNAME]
+)
+
+# De zones achter die namen, LANGSTE EERST: `zad.sandbox.rijksapp.dev` eindigt op allebei
+# `sandbox.rijksapp.dev` en `rijksapp.dev`, en moet de eerste krijgen.
+ROUTER_ZONES: tuple[str, ...] = tuple(
+    sorted((naam.removeprefix("router.") for naam in ROUTER_HOSTNAMES), key=len, reverse=True)
+)
 
 # De adressen waar die namen naar wijzen. Ze staan op de uitlegpagina omdat iemand ze
 # overtypt in zijn eigen zone, dus ze moeten kloppen met wat er in TransIP staat.
 ROUTER_IPV4 = "147.181.48.71"
 ROUTER_IPV6 = "2a04:9a00:1007:4000:0:2:0:8"
+
+# Per routernaam, want ze gelden niet overal. De SANDBOX staat er bewust niet in:
+# router.sandbox.rijksapp.dev wijst naar 127.0.0.1 (gemeten 19 augustus 2026), en de
+# productieadressen tonen op een pagina die belooft alleen te zeggen wat waar is, is erger
+# dan ze weglaten. Zonder adressen toont de pagina alleen de CNAME-vorm, en die klopt daar.
+ROUTER_ADDRESSES: dict[str, tuple[str, str]] = {
+    "router.rijksapp.nl": (ROUTER_IPV4, ROUTER_IPV6),
+    "router.rijks.app": (ROUTER_IPV4, ROUTER_IPV6),
+    "router.rijksapp.dev": (ROUTER_IPV4, ROUTER_IPV6),
+}
+
+
+def router_addresses_for(router_host: str) -> tuple[str, str] | None:
+    """De A- en AAAA-waarde bij een routernaam, of None als we ze voor die naam niet kennen."""
+    return ROUTER_ADDRESSES.get(router_host)
 
 
 # De routernaam die het portaal noemt als iemand de uitleg opvraagt op een gewone naam.
@@ -115,7 +143,7 @@ def router_hostname_for(host: str | None) -> str:
         return DEFAULT_ROUTER_HOSTNAME
     if host in ROUTER_HOSTNAMES:
         return host
-    for zone in MANAGED_DNS_ZONES:
+    for zone in ROUTER_ZONES:
         if host == zone or host.endswith(f".{zone}"):
             return f"router.{zone}"
     return DEFAULT_ROUTER_HOSTNAME
