@@ -83,3 +83,17 @@ def desired_caa_contents(zone: str) -> list[str]:
                 raise ValueError(msg)
             contents.append(f'0 {tag} "{identifier}"')
     return contents
+
+
+# De kale ingangen van het cluster: elke andere naam die wij publiceren is een CNAME naar
+# een van deze. Ze dragen geen applicatie, dus wie ze in een browser opvraagt krijgt de
+# uitleg over het aanwijzen van een eigen domein (zie opi/web/router.py).
+#
+# Afgeleid uit MANAGED_DNS_ZONES en niet nog een keer uitgeschreven: een tweede lijst die
+# hetzelfde bedoelt loopt uit elkaar zodra er een zone bijkomt.
+ROUTER_HOSTNAMES: frozenset[str] = frozenset(f"router.{zone}" for zone in MANAGED_DNS_ZONES)
+
+# De adressen waar die namen naar wijzen. Ze staan op de uitlegpagina omdat iemand ze
+# overtypt in zijn eigen zone, dus ze moeten kloppen met wat er in TransIP staat.
+ROUTER_IPV4 = "147.181.48.71"
+ROUTER_IPV6 = "2a04:9a00:1007:4000:0:2:0:8"
