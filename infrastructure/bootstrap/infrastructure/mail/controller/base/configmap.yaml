@@ -130,10 +130,16 @@ data:
     #    op een ander adres lijkt. Wie "beveiliging@bank.nl" als naam zet, krijgt dat ook
     #    te zien in menig mailprogramma. Dat is hier aanvaard omdat elk project langs een
     #    goedkeuring komt; wordt dat ooit zelfbediening, dan hoort hier een filter op.
-    #    NOG NIET GEMETEN, in tegenstelling tot de rest van dit bestand. De vorige vorm van
-    #    regel 2 (weigeren) is nagespeeld tegen v0.11.8; deze overschrijvende vorm is dat
-    #    niet. Te toetsen bij het aanzetten, met drie berichten: From met weergavenaam,
-    #    From zonder weergavenaam, en From met een kaal adres zonder punthaken.
+    #    GEMETEN op 19 augustus 2026 op de sandbox, met scripts/mail_identity_check.py
+    #    tegen v0.11.8. Drie berichten met een expres foute From: en een expres foute
+    #    envelope, en alle drie kwamen ze zo bij de ontvanger aan:
+    #      "Iemand Anders <spoof@evil.example>" -> noreply-rijksapp@rijksoverheid.nl,
+    #                                             weergavenaam "Iemand Anders" behouden
+    #      "<spoof@evil.example>"               -> noreply-rijksapp@rijksoverheid.nl
+    #      "spoof@evil.example" (kaal)          -> noreply-rijksapp@rijksoverheid.nl
+    #    De envelope was in alle drie de gevallen noreply-rijksapp+zad-platform@
+    #    rijksoverheid.nl, dus in hetzelfde domein als de From: en daarmee SPF-uitgelijnd.
+    #    X-Mailer en X-Originating-IP, allebei meegestuurd, waren eraf.
     if header :matches "From" "*<*>" {
         deleteheader "From";
         addheader :last "From" "${1}<${afzender}>";
