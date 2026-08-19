@@ -19,8 +19,9 @@ text in one of the two readers is worse than a syntax that does not exist.
     # Title             -> <c-heading type="h2"> with the service's own icon
     ## Section          -> <c-heading type="h3">
     A paragraph.        -> <c-paragraph>
-    - a bullet          -> <c-list><c-list-item>
+    - a bullet          -> <c-rich-text><ul><li>
     **bold**            -> <c-b>
+    [label](/pad)       -> <c-link>
 
 The icon is not in the markdown. It is on the service definition, where it already is for
 the card and the picker, so the popup and the card cannot show different icons.
@@ -48,6 +49,10 @@ _ROOTS = (
 )
 
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
+#: Een inline link. ALLEEN een intern pad of een https-adres: dezelfde markdown gaat
+#: ongewijzigd naar API-clients, en een ``javascript:``- of ``data:``-href in een
+#: dienstuitleg heeft geen eerlijk gebruik. Wat niet matcht blijft gewoon tekst.
+_LINK = re.compile(r"\[([^\]\n]+)\]\((/[^)\s]*|https://[^)\s]+)\)")
 #: A backslash escape, so a literal ``*`` can sit next to the emphasis markers.
 _ESCAPE = re.compile(r"\\(.)")
 
@@ -109,16 +114,26 @@ def _inline(raw: str) -> str:
     character and the wildcard silently disappears.
     """
     protected: dict[str, str] = {}
+    links: dict[str, str] = {}
 
     def hide(match: re.Match[str]) -> str:
         token = f"\x00{len(protected)}\x00"
         protected[token] = match.group(1)
         return token
 
+    def hide_link(match: re.Match[str]) -> str:
+        # Het label als PLATTE tekst: het gaat een attribuut in, en opmaak in een
+        # attribuutwaarde overleeft de componentlaag niet.
+        token = f"\x01{len(links)}\x01"
+        links[token] = f'<c-link href="{_text(match.group(2))}" label="{_text(match.group(1))}" />'
+        return token
+
     rendered = _BOLD.sub(
         lambda match: f"<c-b>{_text(match.group(1))}</c-b>",
-        _text(_ESCAPE.sub(hide, raw)),
+        _LINK.sub(hide_link, _text(_ESCAPE.sub(hide, raw))),
     )
+    for token, markup in links.items():
+        rendered = rendered.replace(token, markup)
     for token, character in protected.items():
         rendered = rendered.replace(token, _text(character))
     return rendered
