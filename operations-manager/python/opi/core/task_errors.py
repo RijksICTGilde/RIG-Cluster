@@ -27,6 +27,18 @@ NOT_FOUND_ERROR_TYPE = "not_found"
 #: Wat elke andere 4xx betekent: het verzoek zelf deugt niet.
 INVALID_REQUEST_ERROR_TYPE = "invalid_request"
 
+#: De ``error_type``-waarden die zeggen: de aanroeper vroeg iets wat niet kan. Een taak die
+#: hierop faalt is geen storing, dus hij wordt op WARNING gelogd en niet op ERROR. Dit is de
+#: enige lijst; de types zelf komen uit de managers, er wordt er hier geen bedacht.
+CLIENT_ERROR_TYPES = frozenset(
+    {
+        "validation_error",
+        "invalid_component_references",
+        NOT_FOUND_ERROR_TYPE,
+        INVALID_REQUEST_ERROR_TYPE,
+    }
+)
+
 
 class TaskInputError(Exception):
     """De aanroeper vroeg iets wat niet kan; opnieuw proberen verandert daar niets aan.
