@@ -1271,6 +1271,9 @@ class CrossDomainProjectOptionsProvider:
     cannot see is a peer you cannot name here. That does narrow cross-domain access to
     projects you are a member of; widening it would disclose the platform's project names to
     every user and is a separate decision.
+
+    The label shows the display name with the code between brackets, from
+    ``_cross_domain_project_labels``; a project without a display name shows its code alone.
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
@@ -1294,6 +1297,7 @@ class CrossDomainProjectOptionsProvider:
             empty_label="Geen andere projecten beschikbaar waar u toegang op heeft",
             choose_label="-- Kies een project --",
             stale_suffix="(niet meer beschikbaar)",
+            labels=self.yaml_data.get("_cross_domain_project_labels") or None,
         )
 
 
