@@ -815,6 +815,15 @@ class ArgoManager:
 
             logger.info(f"Successfully committed ArgoCD infrastructure resources for project '{project_name}'")
 
+            # Zelfde reden als in create_argocd_resources: de wachter op de
+            # infrastructuur-applicatie moet kunnen zien of de umbrella onze commit al
+            # vergeleken heeft.
+            try:
+                self.last_pushed_argo_commit = await git_connector_for_argocd.get_local_commit_hash()
+            except RuntimeError as e:
+                logger.warning(f"Kon de gepushte ArgoCD-commit niet bepalen: {e}")
+                self.last_pushed_argo_commit = None
+
             return True
 
         except Exception as e:
