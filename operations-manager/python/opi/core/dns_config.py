@@ -97,3 +97,25 @@ ROUTER_HOSTNAMES: frozenset[str] = frozenset(f"router.{zone}" for zone in MANAGE
 # overtypt in zijn eigen zone, dus ze moeten kloppen met wat er in TransIP staat.
 ROUTER_IPV4 = "147.181.48.71"
 ROUTER_IPV6 = "2a04:9a00:1007:4000:0:2:0:8"
+
+
+# De routernaam die het portaal noemt als iemand de uitleg opvraagt op een gewone naam.
+DEFAULT_ROUTER_HOSTNAME = "router.rijksapp.nl"
+
+
+def router_hostname_for(host: str | None) -> str:
+    """De routernaam die bij een hostnaam hoort.
+
+    De uitlegpagina noemt een concrete naam die de bezoeker overtypt in zijn eigen zone, en
+    die moet bij de zone horen waarop hij kijkt: wie op rijks.app zit heeft niets aan
+    router.rijksapp.nl. Op de routernaam zelf is het antwoord die naam; op elke andere naam
+    de router van dezelfde zone, en anders de standaard.
+    """
+    if not host:
+        return DEFAULT_ROUTER_HOSTNAME
+    if host in ROUTER_HOSTNAMES:
+        return host
+    for zone in MANAGED_DNS_ZONES:
+        if host == zone or host.endswith(f".{zone}"):
+            return f"router.{zone}"
+    return DEFAULT_ROUTER_HOSTNAME
