@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 from datetime import UTC, datetime
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.dns_config import ROUTER_HOSTNAMES, ROUTER_IPV4, ROUTER_IPV6, router_hostname_for
+from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
@@ -150,6 +150,8 @@ def _render_eigen_domein(request: Request, *, current_path: str) -> Response:
     opzoekt). De genoemde routernaam volgt de zone waarop je kijkt.
     """
     gebruiker = get_current_user(request)
+    router_host = router_hostname_for(request.url.hostname)
+    adressen = router_addresses_for(router_host)
     return render(
         request,
         template="bg/router.html.j2",
@@ -157,9 +159,11 @@ def _render_eigen_domein(request: Request, *, current_path: str) -> Response:
             "request": request,
             "menu_items": get_menu_items(gebruiker),
             "navigation": get_navigation(gebruiker, current_path=current_path),
-            "router_host": router_hostname_for(request.url.hostname),
-            "router_ipv4": ROUTER_IPV4,
-            "router_ipv6": ROUTER_IPV6,
+            "router_host": router_host,
+            # Leeg als we ze voor deze naam niet kennen (de sandbox): dan toont de pagina
+            # alleen de CNAME-vorm in plaats van adressen die daar niet kloppen.
+            "router_ipv4": adressen[0] if adressen else "",
+            "router_ipv6": adressen[1] if adressen else "",
         },
     )
 
@@ -184,14 +188,16 @@ async def root(request: Request):
     Doorverwijzen en niet hier renderen, zodat de introductie een eigen adres houdt dat je
     kunt delen en dat ook werkt voor iemand die al ingelogd is.
 
-    OP DE ROUTERNAMEN IETS ANDERS. ``router.<zone>`` is de kale ingang van het cluster waar
-    elke andere naam met een CNAME naartoe wijst. Wie die naam opvraagt kwam hem tegen in
-    een DNS-record en heeft een andere vraag dan een ZAD-gebruiker, dus die krijgt de uitleg
-    over het aanwijzen van een eigen domein. Op de host en niet op een pad, want de bezoeker
-    typt de naam en geen pad.
+    OP DE ROUTERNAMEN BEGINT HET ERGENS ANDERS. ``router.<zone>`` is de kale ingang van het
+    cluster waar elke andere naam met een CNAME naartoe wijst. Wie die naam intypt kwam hem
+    tegen in andermans DNS-record en heeft een andere vraag dan een ZAD-gebruiker, dus die
+    begint bij de uitleg over het aanwijzen van een eigen domein.
+
+    Doorverwijzen en niet hier renderen, om dezelfde reden als hierboven: het is gewoon ZAD,
+    alleen met een ander beginpunt, en de pagina houdt een adres dat je kunt delen.
     """
     if request.url.hostname in ROUTER_HOSTNAMES:
-        return _render_eigen_domein(request, current_path="/")
+        return RedirectResponse(url="/eigen-domein", status_code=302)
     if get_current_user(request) is None:
         return RedirectResponse(url="/introductie", status_code=302)
     return RedirectResponse(url="/dashboard", status_code=302)

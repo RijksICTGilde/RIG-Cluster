@@ -6,11 +6,16 @@ over HTTPS opvroeg het wildcardcertificaat van de ODCN-zone terug, dat niet op d
 slaat. De internet.nl-toets zakte daarop, en de bezoeker kreeg geen antwoord op de enige
 vraag die hij heeft: wat is dit en wat moet ik ermee.
 
-Twee dingen kunnen hier stil kapotgaan:
+Het is gewoon ZAD, alleen met een ander beginpunt: op een routernaam stuurt `/` je naar
+`/eigen-domein` in plaats van naar de introductie of het dashboard. Drie dingen kunnen daar
+stil kapotgaan:
 
-1. **De pagina lekt naar het portaal.** De host bepaalt wat je krijgt. Raakt die voorwaarde
-   los, dan krijgt elke ZAD-bezoeker de DNS-uitleg in plaats van zijn dashboard.
-2. **De adressen verouderen.** Ze staan op de pagina omdat iemand ze overtypt in zijn eigen
+1. **Het beginpunt lekt naar het portaal.** De host beslist. Raakt die voorwaarde los, dan
+   komt elke ZAD-bezoeker op de DNS-uitleg in plaats van op zijn dashboard.
+2. **De sandbox valt eruit.** `sandbox.rijksapp.dev` is geen eigen zone bij TransIP maar een
+   stuk van `rijksapp.dev`, dus wie de namen uit de zones afleidt mist hem, en wie de
+   kortste achtervoegselmatch neemt toont er productienamen.
+3. **De adressen verouderen.** Ze staan op de pagina omdat iemand ze overtypt in zijn eigen
    zone. Lopen ze uit de pas met wat er in TransIP staat, dan wijst iemand zijn domein naar
    een adres dat van ons was.
 """
@@ -23,6 +28,7 @@ from opi.core.dns_config import (
     ROUTER_HOSTNAMES,
     ROUTER_IPV4,
     ROUTER_IPV6,
+    SANDBOX_ROUTER_HOSTNAME,
 )
 from opi.web.menu import get_menu_items
 from opi.web.router import eigen_domein
@@ -32,27 +38,43 @@ if TYPE_CHECKING:
 
 
 def test_elke_beheerde_zone_heeft_een_routernaam() -> None:
-    """Afgeleid uit de zones, zodat een nieuwe zone niet vergeten wordt."""
-    assert {f"router.{zone}" for zone in MANAGED_DNS_ZONES} == ROUTER_HOSTNAMES
+    """Afgeleid uit de zones, plus de sandbox die geen eigen zone bij TransIP is."""
+    verwacht = {f"router.{zone}" for zone in MANAGED_DNS_ZONES} | {SANDBOX_ROUTER_HOSTNAME}
+
+    assert verwacht == ROUTER_HOSTNAMES
     assert "router.rijksapp.nl" in ROUTER_HOSTNAMES
+    assert "router.sandbox.rijksapp.dev" in ROUTER_HOSTNAMES
 
 
-def test_de_routernaam_toont_de_dns_uitleg(test_client: TestClient) -> None:
-    """Zonder sessie, op de routerhost: 200 met de uitleg, geen doorverwijzing."""
+def test_de_routernaam_begint_bij_de_uitleg(test_client: TestClient) -> None:
+    """Het is gewoon ZAD, alleen met een ander beginpunt."""
     response = test_client.get("/", headers={"host": "router.rijksapp.nl"}, follow_redirects=False)
 
-    assert response.status_code == 200, response.text
-    assert "router.rijksapp.nl" in response.text
-    assert ROUTER_IPV4 in response.text
-    assert ROUTER_IPV6 in response.text
+    assert response.status_code == 302
+    assert response.headers["location"] == "/eigen-domein"
 
 
-def test_alle_drie_de_routernamen_werken(test_client: TestClient) -> None:
-    """De pagina toont de naam waarop hij is opgevraagd, niet een vaste."""
+def test_elke_routernaam_begint_bij_de_uitleg(test_client: TestClient) -> None:
+    """Ook de sandbox, die een subzone is en niet uit MANAGED_DNS_ZONES volgt."""
     for host in sorted(ROUTER_HOSTNAMES):
         response = test_client.get("/", headers={"host": host}, follow_redirects=False)
+        assert response.status_code == 302, f"{host}: {response.text}"
+        assert response.headers["location"] == "/eigen-domein"
+
+
+def test_de_pagina_toont_de_naam_van_de_host_waarop_je_kijkt(test_client: TestClient) -> None:
+    for host in sorted(ROUTER_HOSTNAMES):
+        response = test_client.get("/eigen-domein", headers={"host": host})
         assert response.status_code == 200, f"{host}: {response.text}"
         assert host in response.text
+
+
+def test_de_sandbox_wint_van_de_bovenliggende_zone(test_client: TestClient) -> None:
+    """`zad.sandbox.rijksapp.dev` eindigt ook op `rijksapp.dev`; de langste telt."""
+    response = test_client.get("/eigen-domein", headers={"host": "zad.sandbox.rijksapp.dev"})
+
+    assert response.status_code == 200
+    assert SANDBOX_ROUTER_HOSTNAME in response.text
 
 
 def test_het_portaal_blijft_doorverwijzen(test_client: TestClient) -> None:
@@ -118,3 +140,24 @@ def test_het_menu_wijst_naar_de_uitleg() -> None:
 
     assert "/eigen-domein" in links
     assert links.index("/eigen-domein") == links.index("/docs") + 1
+
+
+def test_de_sandbox_toont_geen_productieadressen(test_client: TestClient) -> None:
+    """router.sandbox.rijksapp.dev wijst naar 127.0.0.1, dus de productie-IP's zijn daar onwaar.
+
+    De pagina belooft alleen te tonen wat waar is; zonder adressen blijft de CNAME-vorm over,
+    en die klopt daar wel.
+    """
+    response = test_client.get("/eigen-domein", headers={"host": SANDBOX_ROUTER_HOSTNAME})
+
+    assert response.status_code == 200
+    assert SANDBOX_ROUTER_HOSTNAME in response.text
+    assert ROUTER_IPV4 not in response.text
+    assert ROUTER_IPV6 not in response.text
+
+
+def test_productienamen_tonen_de_adressen_wel(test_client: TestClient) -> None:
+    for host in ("router.rijksapp.nl", "router.rijks.app", "router.rijksapp.dev"):
+        response = test_client.get("/eigen-domein", headers={"host": host})
+        assert ROUTER_IPV4 in response.text, host
+        assert ROUTER_IPV6 in response.text, host
