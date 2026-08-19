@@ -62,13 +62,18 @@ def terminal_condition_message(status_data: dict[str, Any]) -> str | None:
 #: ververst zelf ook niet sneller, en het kost ArgoCD wel verzoeken.
 POLL_INTERVAL_SECONDEN = 2
 
-#: Hoe vaak de app-of-apps `user-applications` opnieuw geprikt mag worden zolang die onze
-#: net gepushte commit nog niet vergeleken heeft. Een refresh op de umbrella is duur: de
-#: applicatie mist de `manifest-generate-paths`-annotatie (issue #130), dus elke refresh
-#: hertekent circa 90 child-apps. Vandaar dit grove interval; het is een vangnet tegen een
-#: verloren wekker (ArgoCD wist het refresh-vlaggetje als een al lopende reconcile klaar
-#: is, en die run had zijn revisie opgehaald voordat wij pushten), niet een pollfrequentie.
-UMBRELLA_REFRESH_INTERVAL_SECONDEN = 90
+#: De bewaker die `user-applications` blijft prikken loopt op het ANTWOORD van de refresh,
+#: niet op de klok: die call blijft hangen tot er een reconcile is afgerond (op productie
+#: zo'n tien seconden), en juist op dat moment is te zien of die reconcile onze revisie had.
+#: Deze ondergrens is er alleen voor het geval de call wél meteen terugkomt, zodat het geen
+#: hete lus wordt. Er zit dus een mens op te wachten en dat mag je merken.
+UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 5
+
+#: Hoe vaak we dat hoogstens proberen. Een refresh op de umbrella is duur, want de
+#: applicatie mist de `manifest-generate-paths`-annotatie (issue #130) en hertekent dus
+#: circa 90 child-apps. Staat de revisie na zoveel rondes nog niet goed, dan is er iets
+#: anders aan de hand dan een verloren wekker en helpt doorprikken niet meer.
+UMBRELLA_REFRESH_MAX_POGINGEN = 6
 
 
 class ArgoManager:
