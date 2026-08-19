@@ -520,12 +520,20 @@ class MinioManager:
             "errors": [],
         }
 
-        # Check if this deployment uses MinIO service
-        if not await self._deployment_uses_minio(project_data, deployment_name):
+        # Cleanup asks the BROAD question: the narrow "does this deployment currently use
+        # MinIO" reads the current project file, while the bucket was created under an
+        # earlier one. Rewiring a deployment to components that no longer declare the
+        # service made the cleanup skip and the resources outlive the project (the
+        # mpfoa-* PostgreSQL case). Deleting is idempotent, so err inclusive; only a
+        # project that never declared MinIO anywhere is skipped, which keeps us from
+        # opening a MinIO connection for every unrelated deployment delete.
+        if not self.project_manager._project_file_handler.project_declares_service(
+            project_data, [ServiceType.MINIO_STORAGE.value]
+        ):
             deletion_results["operations"].append(
-                {"type": "minio_cleanup", "status": "skipped", "reason": "Deployment does not use MinIO service"}
+                {"type": "minio_cleanup", "status": "skipped", "reason": "Project does not declare the MinIO service"}
             )
-            logger.debug(f"Deployment {deployment_name} does not use MinIO service, skipping MinIO cleanup")
+            logger.debug(f"Project {project_name} does not declare MinIO anywhere, skipping MinIO cleanup")
             return deletion_results
 
         logger.info(f"Deleting MinIO resources for project: {project_name}, deployment: {deployment_name}")

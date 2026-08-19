@@ -1,0 +1,2037 @@
+From 77be0354bff08cc89fe6ee284027475de583b076 Mon Sep 17 00:00:00 2001
+From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
+Date: Tue, 18 Aug 2026 00:05:00 +0200
+Subject: [PATCH 5/7] cherry-pick PR 25229 (incremental namespace sync)
+
+Squashed from upstream argoproj/argo-cd#25229 (still open, base master
+46ffedca2) plus our review fix locking the namespaceCancels write.
+
+Conflict resolution against our PR-27528 carry, in gitops-engine/pkg/cache:
+- One per-namespace SSAR helper remains: checkNamespacePermission (includes
+  the API group in the review). The PR's checkPermissionForNamespace and
+  handleRestrictedListError are dropped; the incremental path now runs
+  through the same handleNamespacedListError policy as the full sync
+  (NotFound -> skip with recorded warning, Forbidden -> SSAR, warnings
+  capped), so both paths skip and report identically.
+- startMissingWatches now also initializes watchCtx and namespaceCancels on
+  apiMeta; upstream only does so in sync(), which would panic on the first
+  incremental namespace add for an API discovered after the full sync
+  (e.g. a CRD created later).
+- The PR's checkPermissionForNamespace test is carried as
+  Test_checkNamespacePermission_AllowedAndErrors against the kept helper.
+---
+ .../commands/argocd_application_controller.go |   3 +
+ cmd/argocd/commands/admin/app.go              |   2 +-
+ common/common.go                              |   2 +
+ controller/appcontroller.go                   |   3 +-
+ controller/appcontroller_test.go              |   1 +
+ controller/cache/cache.go                     | 105 +++++-
+ controller/cache/cache_test.go                | 210 +++++++++++
+ .../operator-manual/argocd-cmd-params-cm.yaml |   6 +
+ docs/operator-manual/feature-maturity.md      |   4 +
+ .../incremental-namespace-sync.md             | 137 +++++++
+ .../argocd-application-controller.md          |   1 +
+ gitops-engine/pkg/cache/cluster.go            | 201 +++++++++-
+ .../cluster_incremental_concurrent_test.go    |  56 +++
+ .../cache/cluster_incremental_sync_test.go    | 344 ++++++++++++++++++
+ gitops-engine/pkg/cache/cluster_test.go       |  75 ++++
+ gitops-engine/pkg/cache/mocks/ClusterCache.go | 102 ++++++
+ gitops-engine/pkg/cache/settings.go           |   8 +
+ ...cd-application-controller-statefulset.yaml |   6 +
+ manifests/core-install-with-hydrator.yaml     |   6 +
+ manifests/core-install.yaml                   |   6 +
+ manifests/ha/install-with-hydrator.yaml       |   6 +
+ manifests/ha/install.yaml                     |   6 +
+ .../ha/namespace-install-with-hydrator.yaml   |   6 +
+ manifests/ha/namespace-install.yaml           |   6 +
+ manifests/install-with-hydrator.yaml          |   6 +
+ manifests/install.yaml                        |   6 +
+ .../namespace-install-with-hydrator.yaml      |   6 +
+ manifests/namespace-install.yaml              |   6 +
+ mkdocs.yml                                    |   1 +
+ test/e2e/cluster_test.go                      | 139 ++++++-
+ test/e2e/fixture/cluster/context.go           |   5 +
+ test/e2e/fixture/context.go                   |   8 +-
+ 32 files changed, 1460 insertions(+), 19 deletions(-)
+ create mode 100644 docs/operator-manual/incremental-namespace-sync.md
+ create mode 100644 gitops-engine/pkg/cache/cluster_incremental_concurrent_test.go
+ create mode 100644 gitops-engine/pkg/cache/cluster_incremental_sync_test.go
+
+diff --git a/cmd/argocd-application-controller/commands/argocd_application_controller.go b/cmd/argocd-application-controller/commands/argocd_application_controller.go
+index e088a71db..8b22df2fa 100644
+--- a/cmd/argocd-application-controller/commands/argocd_application_controller.go
++++ b/cmd/argocd-application-controller/commands/argocd_application_controller.go
+@@ -90,6 +90,7 @@ func NewCommand() *cobra.Command {
+ 		persistResourceHealth            bool
+ 		shardingAlgorithm                string
+ 		enableDynamicClusterDistribution bool
++		enableIncrementalNamespaceSync   bool
+ 		serverSideDiff                   bool
+ 		ignoreNormalizerOpts             normalizers.IgnoreNormalizerOpts
+ 
+@@ -217,6 +218,7 @@ func NewCommand() *cobra.Command {
+ 				&workqueueRateLimit,
+ 				serverSideDiff,
+ 				enableDynamicClusterDistribution,
++				enableIncrementalNamespaceSync,
+ 				ignoreNormalizerOpts,
+ 				enableK8sEvent,
+ 				hydratorEnabled,
+@@ -302,6 +304,7 @@ func NewCommand() *cobra.Command {
+ 	command.Flags().DurationVar(&workqueueRateLimit.MaxDelay, "wq-maxdelay-ns", time.Duration(env.ParseInt64FromEnv("WORKQUEUE_MAX_DELAY_NS", time.Second.Nanoseconds(), 1*time.Millisecond.Nanoseconds(), (24*time.Hour).Nanoseconds())), "Set Workqueue Per Item Rate Limiter Max Delay duration in nanoseconds, default 1000000000 (1s)")
+ 	command.Flags().Float64Var(&workqueueRateLimit.BackoffFactor, "wq-backoff-factor", env.ParseFloat64FromEnv("WORKQUEUE_BACKOFF_FACTOR", 1.5, 0, math.MaxFloat64), "Set Workqueue Per Item Rate Limiter Backoff Factor, default is 1.5")
+ 	command.Flags().BoolVar(&enableDynamicClusterDistribution, "dynamic-cluster-distribution-enabled", env.ParseBoolFromEnv(common.EnvEnableDynamicClusterDistribution, false), "Enables dynamic cluster distribution.")
++	command.Flags().BoolVar(&enableIncrementalNamespaceSync, "incremental-namespace-sync-enabled", env.ParseBoolFromEnv(common.EnvEnableIncrementalNamespaceSync, false), "Enables incremental namespace sync in cluster cache for performance optimization. Default (\"false\")")
+ 	command.Flags().BoolVar(&serverSideDiff, "server-side-diff-enabled", env.ParseBoolFromEnv(common.EnvServerSideDiff, false), "Feature flag to enable ServerSide diff. Default (\"false\")")
+ 	command.Flags().DurationVar(&ignoreNormalizerOpts.JQExecutionTimeout, "ignore-normalizer-jq-execution-timeout-seconds", env.ParseDurationFromEnv("ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT", 0*time.Second, 0, math.MaxInt64), "Set ignore normalizer JQ execution timeout")
+ 	// argocd k8s event logging flag
+diff --git a/cmd/argocd/commands/admin/app.go b/cmd/argocd/commands/admin/app.go
+index 334400fea..494ef596a 100644
+--- a/cmd/argocd/commands/admin/app.go
++++ b/cmd/argocd/commands/admin/app.go
+@@ -480,5 +480,5 @@ func reconcileApplications(
+ }
+ 
+ func newLiveStateCache(argoDB db.ArgoDB, appInformer kubecache.SharedIndexInformer, settingsMgr *settings.SettingsManager, server *metrics.MetricsServer) cache.LiveStateCache {
+-	return cache.NewLiveStateCache(argoDB, appInformer, settingsMgr, server, func(_ map[string]bool, _ corev1.ObjectReference) {}, &sharding.ClusterSharding{}, argo.NewResourceTracking())
++	return cache.NewLiveStateCache(argoDB, appInformer, settingsMgr, server, func(_ map[string]bool, _ corev1.ObjectReference) {}, &sharding.ClusterSharding{}, argo.NewResourceTracking(), false)
+ }
+diff --git a/common/common.go b/common/common.go
+index 4406da6ef..db3733697 100644
+--- a/common/common.go
++++ b/common/common.go
+@@ -296,6 +296,8 @@ const (
+ 	EnvControllerShardingAlgorithm = "ARGOCD_CONTROLLER_SHARDING_ALGORITHM"
+ 	// EnvEnableDynamicClusterDistribution enables dynamic sharding (ALPHA)
+ 	EnvEnableDynamicClusterDistribution = "ARGOCD_ENABLE_DYNAMIC_CLUSTER_DISTRIBUTION"
++	// EnvEnableIncrementalNamespaceSync enables incremental namespace sync in cluster cache
++	EnvEnableIncrementalNamespaceSync = "ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC"
+ 	// EnvEnableGRPCTimeHistogramEnv enables gRPC metrics collection
+ 	EnvEnableGRPCTimeHistogramEnv = "ARGOCD_ENABLE_GRPC_TIME_HISTOGRAM"
+ 	// EnvGithubAppCredsExpirationDuration controls the caching of Github app credentials. This value is in minutes (default: 60)
+diff --git a/controller/appcontroller.go b/controller/appcontroller.go
+index 41641a4f5..6112499c5 100644
+--- a/controller/appcontroller.go
++++ b/controller/appcontroller.go
+@@ -182,6 +182,7 @@ func NewApplicationController(
+ 	rateLimiterConfig *ratelimiter.AppControllerRateLimiterConfig,
+ 	serverSideDiff bool,
+ 	dynamicClusterDistributionEnabled bool,
++	enableIncrementalNamespaceSync bool,
+ 	ignoreNormalizerOpts normalizers.IgnoreNormalizerOpts,
+ 	enableK8sEvent []string,
+ 	hydratorEnabled bool,
+@@ -332,7 +333,7 @@ func NewApplicationController(
+ 			return nil, err
+ 		}
+ 	}
+-	stateCache := statecache.NewLiveStateCache(db, appInformer, ctrl.settingsMgr, ctrl.metricsServer, ctrl.handleObjectUpdated, clusterSharding, argo.NewResourceTracking())
++	stateCache := statecache.NewLiveStateCache(db, appInformer, ctrl.settingsMgr, ctrl.metricsServer, ctrl.handleObjectUpdated, clusterSharding, argo.NewResourceTracking(), enableIncrementalNamespaceSync)
+ 	appStateManager := NewAppStateManager(db, applicationClientset, repoClientset, namespace, kubectl, ctrl.onKubectlRun, ctrl.settingsMgr, stateCache, ctrl.metricsServer, argoCache, ctrl.statusRefreshTimeout, argo.NewResourceTracking(), persistResourceHealth, repoErrorGracePeriod, serverSideDiff, ignoreNormalizerOpts)
+ 	ctrl.appInformer = appInformer
+ 	ctrl.appLister = appLister
+diff --git a/controller/appcontroller_test.go b/controller/appcontroller_test.go
+index 54657f660..6cabcfb66 100644
+--- a/controller/appcontroller_test.go
++++ b/controller/appcontroller_test.go
+@@ -227,6 +227,7 @@ func newFakeControllerWithResync(ctx context.Context, data *fakeData, appResyncP
+ 		nil,
+ 		false,
+ 		false,
++		false,
+ 		normalizers.IgnoreNormalizerOpts{},
+ 		testEnableEventList,
+ 		false,
+diff --git a/controller/cache/cache.go b/controller/cache/cache.go
+index dc66e786a..c4a94b5a7 100644
+--- a/controller/cache/cache.go
++++ b/controller/cache/cache.go
+@@ -194,16 +194,18 @@ func NewLiveStateCache(
+ 	onObjectUpdated ObjectUpdatedHandler,
+ 	clusterSharding sharding.ClusterShardingCache,
+ 	resourceTracking argo.ResourceTracking,
++	enableIncrementalNamespaceSync bool,
+ ) LiveStateCache {
+ 	return &liveStateCache{
+-		appInformer:      appInformer,
+-		db:               db,
+-		clusters:         make(map[string]clustercache.ClusterCache),
+-		onObjectUpdated:  onObjectUpdated,
+-		settingsMgr:      settingsMgr,
+-		metricsServer:    metricsServer,
+-		clusterSharding:  clusterSharding,
+-		resourceTracking: resourceTracking,
++		appInformer:                    appInformer,
++		db:                             db,
++		clusters:                       make(map[string]clustercache.ClusterCache),
++		onObjectUpdated:                onObjectUpdated,
++		settingsMgr:                    settingsMgr,
++		metricsServer:                  metricsServer,
++		clusterSharding:                clusterSharding,
++		resourceTracking:               resourceTracking,
++		enableIncrementalNamespaceSync: enableIncrementalNamespaceSync,
+ 	}
+ }
+ 
+@@ -228,6 +230,8 @@ type liveStateCache struct {
+ 	clusterSharding      sharding.ClusterShardingCache
+ 	resourceTracking     argo.ResourceTracking
+ 	ignoreNormalizerOpts normalizers.IgnoreNormalizerOpts
++	// enableIncrementalNamespaceSync configures all cluster caches with incremental namespace sync
++	enableIncrementalNamespaceSync bool
+ 
+ 	clusters      map[string]clustercache.ClusterCache
+ 	cacheSettings cacheSettings
+@@ -586,6 +590,7 @@ func (c *liveStateCache) getCluster(cluster *appv1.Cluster) (clustercache.Cluste
+ 		clustercache.SetRespectRBAC(respectRBAC),
+ 		clustercache.SetBatchEventsProcessing(clusterCacheBatchEventsProcessing),
+ 		clustercache.SetEventProcessingInterval(clusterCacheEventsProcessingInterval),
++		clustercache.WithIncrementalNamespaceSync(c.enableIncrementalNamespaceSync),
+ 	}
+ 
+ 	clusterCache = clustercache.NewClusterCache(clusterCacheConfig, clusterCacheOpts...)
+@@ -845,6 +850,78 @@ func (c *liveStateCache) handleAddEvent(cluster *appv1.Cluster) {
+ 	}
+ }
+ 
++// namespaceDiff calculates the added and removed namespaces between old and new lists.
++func namespaceDiff(oldNamespaces, newNamespaces []string) (added, removed []string) {
++	oldNsSet := make(map[string]bool)
++	for _, ns := range oldNamespaces {
++		oldNsSet[ns] = true
++	}
++
++	newNsSet := make(map[string]bool)
++	for _, ns := range newNamespaces {
++		newNsSet[ns] = true
++	}
++
++	// Find added namespaces
++	for _, ns := range newNamespaces {
++		if !oldNsSet[ns] {
++			added = append(added, ns)
++		}
++	}
++
++	// Find removed namespaces
++	for _, ns := range oldNamespaces {
++		if !newNsSet[ns] {
++			removed = append(removed, ns)
++		}
++	}
++
++	return added, removed
++}
++
++// handleNamespaceChanges processes namespace changes and returns update settings if needed.
++// Returns nil if no updates are required (incremental sync succeeded or no changes).
++// Returns update settings for full invalidation if incremental sync is disabled or failed.
++func (c *liveStateCache) handleNamespaceChanges(
++	cluster clustercache.ClusterCache,
++	oldNamespaces, newNamespaces []string,
++) []clustercache.UpdateSettingsFunc {
++	added, removed := namespaceDiff(oldNamespaces, newNamespaces)
++	if len(added) == 0 && len(removed) == 0 {
++		return nil
++	}
++
++	if !c.enableIncrementalNamespaceSync {
++		return []clustercache.UpdateSettingsFunc{
++			clustercache.SetNamespaces(newNamespaces),
++		}
++	}
++
++	hasErrors := false
++	for _, ns := range added {
++		if err := cluster.AddNamespace(ns); err != nil {
++			log.Warnf("Failed to incrementally add namespace %s for cluster %s: %v", ns, cluster.GetClusterInfo().Server, err)
++			hasErrors = true
++		}
++	}
++
++	for _, ns := range removed {
++		if err := cluster.RemoveNamespace(ns); err != nil {
++			log.Warnf("Failed to incrementally remove namespace %s for cluster %s: %v", ns, cluster.GetClusterInfo().Server, err)
++			hasErrors = true
++		}
++	}
++
++	if hasErrors {
++		log.Warnf("Incremental namespace sync failed for cluster %s, falling back to full cache invalidation", cluster.GetClusterInfo().Server)
++		return []clustercache.UpdateSettingsFunc{
++			clustercache.SetNamespaces(newNamespaces),
++		}
++	}
++
++	return nil
++}
++
+ func (c *liveStateCache) handleModEvent(oldCluster *appv1.Cluster, newCluster *appv1.Cluster) {
+ 	c.clusterSharding.Update(oldCluster, newCluster)
+ 	c.lock.Lock()
+@@ -860,6 +937,8 @@ func (c *liveStateCache) handleModEvent(oldCluster *appv1.Cluster, newCluster *a
+ 		}
+ 
+ 		var updateSettings []clustercache.UpdateSettingsFunc
++
++		// handle config changes
+ 		if !reflect.DeepEqual(oldCluster.Config, newCluster.Config) {
+ 			newClusterRESTConfig, err := newCluster.RESTConfig()
+ 			if err == nil {
+@@ -868,12 +947,18 @@ func (c *liveStateCache) handleModEvent(oldCluster *appv1.Cluster, newCluster *a
+ 				log.Errorf("error getting cluster REST config: %v", err)
+ 			}
+ 		}
+-		if !reflect.DeepEqual(oldCluster.Namespaces, newCluster.Namespaces) {
+-			updateSettings = append(updateSettings, clustercache.SetNamespaces(newCluster.Namespaces))
++
++		// Handle namespace changes
++		if namespaceSettings := c.handleNamespaceChanges(cluster, oldCluster.Namespaces, newCluster.Namespaces); namespaceSettings != nil {
++			updateSettings = append(updateSettings, namespaceSettings...)
+ 		}
++
++		// Handle cluster resources changes
+ 		if !reflect.DeepEqual(oldCluster.ClusterResources, newCluster.ClusterResources) {
+ 			updateSettings = append(updateSettings, clustercache.SetClusterResources(newCluster.ClusterResources))
+ 		}
++
++		// Handle forced refresh
+ 		forceInvalidate := false
+ 		if newCluster.RefreshRequestedAt != nil &&
+ 			cluster.GetClusterInfo().LastCacheSyncTime != nil &&
+diff --git a/controller/cache/cache_test.go b/controller/cache/cache_test.go
+index 87daa8496..7ded2c973 100644
+--- a/controller/cache/cache_test.go
++++ b/controller/cache/cache_test.go
+@@ -149,6 +149,216 @@ func TestHandleModEvent_NoChanges(_ *testing.T) {
+ 	})
+ }
+ 
++func TestNamespaceDiff(t *testing.T) {
++	tests := []struct {
++		name          string
++		oldNamespaces []string
++		newNamespaces []string
++		wantAdded     []string
++		wantRemoved   []string
++	}{
++		{
++			name:          "no changes - identical lists",
++			oldNamespaces: []string{"ns1", "ns2"},
++			newNamespaces: []string{"ns1", "ns2"},
++			wantAdded:     nil,
++			wantRemoved:   nil,
++		},
++		{
++			name:          "no changes - different order",
++			oldNamespaces: []string{"ns1", "ns2"},
++			newNamespaces: []string{"ns2", "ns1"},
++			wantAdded:     nil,
++			wantRemoved:   nil,
++		},
++		{
++			name:          "namespace added",
++			oldNamespaces: []string{"ns1"},
++			newNamespaces: []string{"ns1", "ns2"},
++			wantAdded:     []string{"ns2"},
++			wantRemoved:   nil,
++		},
++		{
++			name:          "namespace removed",
++			oldNamespaces: []string{"ns1", "ns2"},
++			newNamespaces: []string{"ns1"},
++			wantAdded:     nil,
++			wantRemoved:   []string{"ns2"},
++		},
++		{
++			name:          "namespace added and removed",
++			oldNamespaces: []string{"ns1", "ns2"},
++			newNamespaces: []string{"ns1", "ns3"},
++			wantAdded:     []string{"ns3"},
++			wantRemoved:   []string{"ns2"},
++		},
++		{
++			name:          "multiple namespaces added",
++			oldNamespaces: []string{"ns1"},
++			newNamespaces: []string{"ns1", "ns2", "ns3"},
++			wantAdded:     []string{"ns2", "ns3"},
++			wantRemoved:   nil,
++		},
++		{
++			name:          "multiple namespaces removed",
++			oldNamespaces: []string{"ns1", "ns2", "ns3"},
++			newNamespaces: []string{"ns1"},
++			wantAdded:     nil,
++			wantRemoved:   []string{"ns2", "ns3"},
++		},
++		{
++			name:          "empty to non-empty",
++			oldNamespaces: []string{},
++			newNamespaces: []string{"ns1", "ns2"},
++			wantAdded:     []string{"ns1", "ns2"},
++			wantRemoved:   nil,
++		},
++		{
++			name:          "non-empty to empty",
++			oldNamespaces: []string{"ns1", "ns2"},
++			newNamespaces: []string{},
++			wantAdded:     nil,
++			wantRemoved:   []string{"ns1", "ns2"},
++		},
++		{
++			name:          "both empty",
++			oldNamespaces: []string{},
++			newNamespaces: []string{},
++			wantAdded:     nil,
++			wantRemoved:   nil,
++		},
++		{
++			name:          "nil old namespaces",
++			oldNamespaces: nil,
++			newNamespaces: []string{"ns1"},
++			wantAdded:     []string{"ns1"},
++			wantRemoved:   nil,
++		},
++		{
++			name:          "nil new namespaces",
++			oldNamespaces: []string{"ns1"},
++			newNamespaces: nil,
++			wantAdded:     nil,
++			wantRemoved:   []string{"ns1"},
++		},
++		{
++			name:          "both nil",
++			oldNamespaces: nil,
++			newNamespaces: nil,
++			wantAdded:     nil,
++			wantRemoved:   nil,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			added, removed := namespaceDiff(tt.oldNamespaces, tt.newNamespaces)
++			assert.ElementsMatch(t, tt.wantAdded, added, "added namespaces don't match")
++			assert.ElementsMatch(t, tt.wantRemoved, removed, "removed namespaces don't match")
++		})
++	}
++}
++
++func TestHandleModEvent_IncrementalNamespaceSync(t *testing.T) {
++	tests := []struct {
++		name                           string
++		enableIncrementalNamespaceSync bool
++		oldNamespaces                  []string
++		newNamespaces                  []string
++		setupMocks                     func(*mocks.ClusterCache)
++	}{
++		{
++			name:                           "namespace added with incremental sync enabled",
++			enableIncrementalNamespaceSync: true,
++			oldNamespaces:                  []string{"existing-namespace"},
++			newNamespaces:                  []string{"existing-namespace", "new-namespace"},
++			setupMocks: func(clusterCache *mocks.ClusterCache) {
++				clusterCache.EXPECT().AddNamespace("new-namespace").Return(nil).Once()
++			},
++		},
++		{
++			name:                           "namespace removed with incremental sync enabled",
++			enableIncrementalNamespaceSync: true,
++			oldNamespaces:                  []string{"existing-namespace", "removed-namespace"},
++			newNamespaces:                  []string{"existing-namespace"},
++			setupMocks: func(clusterCache *mocks.ClusterCache) {
++				clusterCache.EXPECT().RemoveNamespace("removed-namespace").Return(nil).Once()
++			},
++		},
++		{
++			name:                           "namespace added and removed with incremental sync enabled",
++			enableIncrementalNamespaceSync: true,
++			oldNamespaces:                  []string{"existing-namespace", "removed-namespace"},
++			newNamespaces:                  []string{"existing-namespace", "added-namespace"},
++			setupMocks: func(clusterCache *mocks.ClusterCache) {
++				clusterCache.EXPECT().AddNamespace("added-namespace").Return(nil).Once()
++				clusterCache.EXPECT().RemoveNamespace("removed-namespace").Return(nil).Once()
++			},
++		},
++		{
++			name:                           "add namespace fails and falls back to full invalidate",
++			enableIncrementalNamespaceSync: true,
++			oldNamespaces:                  []string{"existing-namespace"},
++			newNamespaces:                  []string{"existing-namespace", "new-namespace"},
++			setupMocks: func(clusterCache *mocks.ClusterCache) {
++				clusterCache.EXPECT().AddNamespace("new-namespace").Return(errors.New("simulated error")).Once()
++				clusterCache.EXPECT().Invalidate(mock.Anything).Return().Once()
++				clusterCache.EXPECT().EnsureSynced().Return(nil).Maybe()
++				clusterCache.EXPECT().GetClusterInfo().Return(cache.ClusterInfo{}).Maybe()
++			},
++		},
++		{
++			name:                           "remove namespace fails and falls back to full invalidate",
++			enableIncrementalNamespaceSync: true,
++			oldNamespaces:                  []string{"existing-namespace", "removed-namespace"},
++			newNamespaces:                  []string{"existing-namespace"},
++			setupMocks: func(clusterCache *mocks.ClusterCache) {
++				clusterCache.EXPECT().RemoveNamespace("removed-namespace").Return(errors.New("simulated error")).Once()
++				clusterCache.EXPECT().Invalidate(mock.Anything).Return().Once()
++				clusterCache.EXPECT().EnsureSynced().Return(nil).Maybe()
++				clusterCache.EXPECT().GetClusterInfo().Return(cache.ClusterInfo{}).Maybe()
++			},
++		},
++		{
++			name:                           "namespace changed with incremental sync disabled still works",
++			enableIncrementalNamespaceSync: false,
++			oldNamespaces:                  []string{"old-namespace"},
++			newNamespaces:                  []string{"new-namespace"},
++			setupMocks: func(clusterCache *mocks.ClusterCache) {
++				clusterCache.EXPECT().Invalidate(mock.Anything).Return().Once()
++				clusterCache.EXPECT().EnsureSynced().Return(nil).Maybe()
++				clusterCache.EXPECT().GetClusterInfo().Return(cache.ClusterInfo{}).Maybe()
++			},
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			clusterCache := &mocks.ClusterCache{}
++			tt.setupMocks(clusterCache)
++			db := &dbmocks.ArgoDB{}
++			db.EXPECT().GetApplicationControllerReplicas().Return(1)
++			clustersCache := liveStateCache{
++				clusters: map[string]cache.ClusterCache{
++					"https://mycluster": clusterCache,
++				},
++				clusterSharding:                sharding.NewClusterSharding(db, 0, 1, common.DefaultShardingAlgorithm),
++				enableIncrementalNamespaceSync: tt.enableIncrementalNamespaceSync,
++			}
++
++			clustersCache.handleModEvent(&appv1.Cluster{
++				Server:     "https://mycluster",
++				Namespaces: tt.oldNamespaces,
++			}, &appv1.Cluster{
++				Server:     "https://mycluster",
++				Namespaces: tt.newNamespaces,
++			})
++
++			clusterCache.AssertExpectations(t)
++		})
++	}
++}
++
+ func TestHandleAddEvent_ClusterExcluded(t *testing.T) {
+ 	t.Parallel()
+ 	db := &dbmocks.ArgoDB{}
+diff --git a/docs/operator-manual/argocd-cmd-params-cm.yaml b/docs/operator-manual/argocd-cmd-params-cm.yaml
+index 725accca4..8d7ebe681 100644
+--- a/docs/operator-manual/argocd-cmd-params-cm.yaml
++++ b/docs/operator-manual/argocd-cmd-params-cm.yaml
+@@ -135,6 +135,12 @@ data:
+   # _grpc_config.<hostname> are disabled to prevent excessive DNS queries that can cause timeouts in dual-stack environments.
+   # See https://github.com/argoproj/argo-cd/issues/24991
+   controller.grpc.enable.txt.service.config: "false"
++  # Enables incremental namespace sync in cluster cache for performance optimization. When enabled, only changed
++  # namespaces are synced instead of performing a full cluster cache rebuild. This significantly improves sync
++  # performance for clusters with many namespaces. (default "false")
++  #
++  # Feature state: Alpha (since v3.3.0)
++  controller.incremental.namespace.sync.enabled: "false"
+ 
+   ## Server properties
+   # Listen on given address for incoming connections (default "0.0.0.0")
+diff --git a/docs/operator-manual/feature-maturity.md b/docs/operator-manual/feature-maturity.md
+index d4e140fe7..d692441e4 100644
+--- a/docs/operator-manual/feature-maturity.md
++++ b/docs/operator-manual/feature-maturity.md
+@@ -26,6 +26,7 @@ to indicate their stability and maturity. These are the statuses of non-stable f
+ | [Service Account Impersonation][10]       | v2.13.0    | Beta   |
+ | [Source Hydrator][11]                     | v2.14.0    | Beta   |
+ | [ApplicationSet Web UI][12]               | v3.5.0     | Alpha  |
++| [Incremental Namespace Sync][13]          | v3.5.1     | Alpha  |
+ 
+ ## Unstable Configurations
+ 
+@@ -60,6 +61,8 @@ to indicate their stability and maturity. These are the statuses of non-stable f
+ | [Proxy Extensions][3]                     | `ConfigMap/argocd-cm`                         | `extension.config`                                          | Beta   |
+ | [Dynamic Cluster Distribution][7]         | `Deployment/argocd-application-controller`    | `ARGOCD_ENABLE_DYNAMIC_CLUSTER_DISTRIBUTION`                | Alpha  |
+ | [Dynamic Cluster Distribution][7]         | `Deployment/argocd-application-controller`    | `ARGOCD_CONTROLLER_HEARTBEAT_TIME`                          | Alpha  |
++| [Incremental Namespace Sync][12]          | `StatefulSet/argocd-application-controller`   | `ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC`                  | Alpha  |
++| [Incremental Namespace Sync][12]          | `ConfigMap/argocd-cmd-params-cm`              | `controller.incremental.namespace.sync.enabled`             | Alpha  |
+ | [Cluster Sharding: round-robin][6]        | `ConfigMap/argocd-cmd-params-cm`              | `controller.sharding.algorithm: round-robin`                | Alpha  |
+ | [Cluster Sharding: round-robin][6]        | `StatefulSet/argocd-application-controller`   | `ARGOCD_CONTROLLER_SHARDING_ALGORITHM=round-robin`          | Alpha  |
+ | [Cluster Sharding: consistent-hashing][9] | `ConfigMap/argocd-cmd-params-cm`              | `controller.sharding.algorithm: consistent-hashing`         | Alpha  |
+@@ -79,3 +82,4 @@ to indicate their stability and maturity. These are the statuses of non-stable f
+ [10]: app-sync-using-impersonation.md
+ [11]: ../user-guide/source-hydrator.md
+ [12]: ../user-guide/application-set-ui.md
++[13]: incremental-namespace-sync.md
+diff --git a/docs/operator-manual/incremental-namespace-sync.md b/docs/operator-manual/incremental-namespace-sync.md
+new file mode 100644
+index 000000000..c091ef93e
+--- /dev/null
++++ b/docs/operator-manual/incremental-namespace-sync.md
+@@ -0,0 +1,137 @@
++# Incremental Namespace Sync
++
++> [!WARNING]
++> **Alpha Feature (Since v3.3.0)**
++>
++> This is an experimental,
++> [alpha-quality](https://github.com/argoproj/argoproj/blob/main/community/feature-status.md#alpha)
++> feature. It may be removed in future releases or modified in
++> backwards-incompatible ways.
++
++*Current Status: [Alpha][1] (Since v3.3.0)*
++
++By default, when Argo CD detects namespace changes in a cluster configuration,
++it invalidates the entire cluster cache and performs a full resync of all
++namespaces. For clusters with many namespaces this can be slow and
++resource-intensive, as it requires listing all resources across all namespaces
++and re-establishing watches. During this time, cluster cache synchronization
++blocks all reconciliation operations, preventing applications from reconciling
++until the sync completes.
++
++Starting with v3.3.0, Argo CD supports incremental namespace synchronization.
++When namespaces are added or removed from the cluster configuration, only the
++affected namespaces are synchronized instead of triggering a full cluster cache
++rebuild.
++
++## Benefits
++
++- **Faster sync times**: Only sync the changed namespace instead of all namespaces
++- **Faster application reconciliation**: Cache sync blocks reconciliation, so faster sync means less downtime for application updates
++- **Reduced API calls**: Avoid listing resources in unchanged namespaces (10-50x reduction)
++- **Better scalability**: Enables managing clusters with many (100+) namespaces efficiently
++- **Reduced API server load**: Fewer LIST requests to the Kubernetes API server
++
++## Enabling Incremental Namespace Sync
++
++This feature is disabled by default while it is in alpha status. You can enable
++it using either a ConfigMap or environment variable.
++
++### Method 1: Via ConfigMap (Recommended)
++
++Update the `argocd-cmd-params-cm` ConfigMap:
++
++```bash
++kubectl patch configmap argocd-cmd-params-cm -n argocd --type merge \
++  -p '{"data":{"controller.incremental.namespace.sync.enabled":"true"}}'
++```
++
++Restart the controller:
++
++```bash
++kubectl rollout restart statefulset argocd-application-controller -n argocd
++```
++
++### Method 2: Via Environment Variable
++
++Edit the controller StatefulSet:
++
++```bash
++kubectl edit statefulset argocd-application-controller -n argocd
++```
++
++Add the environment variable:
++
++```yaml
++spec:
++  template:
++    spec:
++      containers:
++      - name: argocd-application-controller
++        env:
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          value: "true"
++```
++
++The controller pods will automatically restart to apply the change.
++
++### Method 3: Using kubectl set env
++
++Set the environment variable directly:
++
++```bash
++kubectl set env statefulset/argocd-application-controller \
++  ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC=true -n argocd
++```
++
++This will trigger a rolling update of the controller pods.
++
++## How It Works
++
++When incremental namespace sync is enabled, the application controller uses a
++diff-based approach to detect namespace changes:
++
++1. **Compare namespace lists**: The controller compares the desired namespace set
++   (from cluster configuration) with the currently tracked namespace set (in cache)
++
++2. **Calculate additions and removals**:
++   - **Added namespaces**: Namespaces in the desired set but not in the current set
++   - **Removed namespaces**: Namespaces in the current set but not in the desired set
++
++3. **Apply incremental updates**:
++   - **For added namespaces**: Start watches and sync resources only in the new namespace
++   - **For removed namespaces**: Stop watches and remove cached resources only for that namespace
++   - **For unchanged namespaces**: No action taken - existing watches and cache remain
++
++This approach avoids the need to rebuild the entire cluster cache, which traditionally
++requires re-listing all resources across all namespaces.
++
++## When to Use This Feature
++
++Consider enabling this feature if:
++
++- ✅ You manage many namespaces per cluster
++- ✅ You frequently **add or remove namespaces** from cluster configurations
++- ✅ You experience **slow cluster sync times**
++- ✅ You see **API server rate limiting** or performance issues
++
++## Limitations and Considerations
++
++- **Alpha status**: The feature may change in future versions
++- **Namespace changes only**: Only optimizes namespace additions/removals, not other
++  cluster configuration changes (e.g., resource exclusions, API groups)
++- **Requires restart**: Enabling/disabling the feature requires controller restart
++- **Fallback behavior**: If incremental sync fails, the controller falls back to full
++    cluster cache invalidation to maintain consistency.
++
++## Monitoring
++
++You can monitor the feature's impact using:
++
++### Log-based Monitoring
++
++Parse controller logs to track namespace sync events:
++
++```bash
++kubectl logs -n argocd statefulset/argocd-application-controller | \
++  grep -E "syncing namespace|Namespace successfully synced|Failed to sync namespace"
++```
+diff --git a/docs/operator-manual/server-commands/argocd-application-controller.md b/docs/operator-manual/server-commands/argocd-application-controller.md
+index 86fa25091..813ec68b9 100644
+--- a/docs/operator-manual/server-commands/argocd-application-controller.md
++++ b/docs/operator-manual/server-commands/argocd-application-controller.md
+@@ -38,6 +38,7 @@ argocd-application-controller [flags]
+       --hydration-processors int                                  Number of manifest hydration processors (only relevant when the Source Hydrator is enabled) (default 5)
+       --hydrator-enabled                                          Feature flag to enable Hydrator. Default ("false")
+       --ignore-normalizer-jq-execution-timeout-seconds duration   Set ignore normalizer JQ execution timeout
++      --incremental-namespace-sync-enabled                        Enables incremental namespace sync in cluster cache for performance optimization. Default ("false")
+       --insecure-skip-tls-verify                                  If true, the server's certificate will not be checked for validity. This will make your HTTPS connections insecure
+       --kubeconfig string                                         Path to a kube config. Only required if out-of-cluster
+       --kubectl-parallelism-limit int                             Number of allowed concurrent kubectl fork/execs. Any value less than 1 means no limit. (default 20)
+diff --git a/gitops-engine/pkg/cache/cluster.go b/gitops-engine/pkg/cache/cluster.go
+index ec67f91b5..45855558f 100644
+--- a/gitops-engine/pkg/cache/cluster.go
++++ b/gitops-engine/pkg/cache/cluster.go
+@@ -28,6 +28,7 @@ import (
+ 	"context"
+ 	"errors"
+ 	"fmt"
++	"maps"
+ 	"runtime/debug"
+ 	"slices"
+ 	"sync"
+@@ -112,6 +113,11 @@ type apiMeta struct {
+ 	// watchCancel stops the watch of all resources for this API. This gets called when the cache is invalidated or when
+ 	// the watched API ceases to exist (e.g. a CRD gets deleted).
+ 	watchCancel context.CancelFunc
++	// watchCtx is the parent context for all watches of this API. Used to derive per-namespace contexts.
++	watchCtx context.Context
++	// namespaceCancels tracks per-namespace watch cancellation for incremental namespace operations.
++	// Only populated when using incremental namespace sync.
++	namespaceCancels map[string]context.CancelFunc
+ }
+ 
+ type eventMeta struct {
+@@ -168,6 +174,10 @@ type ClusterCache interface {
+ 	GetGVKParser() *managedfields.GvkParser
+ 	// Invalidate cache and executes callback that optionally might update cache settings
+ 	Invalidate(opts ...UpdateSettingsFunc)
++	// AddNamespace incrementally syncs a new namespace to the cluster cache if incremental sync is enabled, otherwise falls back to full invalidation
++	AddNamespace(namespace string) error
++	// RemoveNamespace incrementally removes a namespace from the cluster cache if incremental sync is enabled, otherwise falls back to full invalidation
++	RemoveNamespace(namespace string) error
+ 	// FindResources returns resources that matches given list of predicates from specified namespace or everywhere if specified namespace is empty
+ 	FindResources(namespace string, predicates ...func(r *Resource) bool) map[kube.ResourceKey]*Resource
+ 	// IterateHierarchyV2 iterates resource tree starting from the specified top level resources and executes callback for each resource in the tree.
+@@ -279,6 +289,9 @@ type clusterCache struct {
+ 	clusterResources bool
+ 	settings         Settings
+ 
++	// incrementalNamespaceSync enables incremental namespace syncing instead of full cache invalidation
++	incrementalNamespaceSync bool
++
+ 	handlersLock                sync.Mutex
+ 	handlerKey                  uint64
+ 	populateResourceInfoHandler OnPopulateResourceInfoHandler
+@@ -642,6 +655,176 @@ func (c *clusterCache) Invalidate(opts ...UpdateSettingsFunc) {
+ 	c.log.Info("Invalidated cluster")
+ }
+ 
++// AddNamespace incrementally syncs a new namespace to the cluster cache if incremental sync is enabled,
++// otherwise falls back to full cluster cache invalidation
++func (c *clusterCache) AddNamespace(namespace string) error {
++	if !c.incrementalNamespaceSync {
++		c.Invalidate(func(cache *clusterCache) {
++			cache.namespaces = append(cache.namespaces, namespace)
++		})
++
++		return nil
++	}
++
++	// Feature enabled: incremental sync
++	c.log.Info("Start syncing namespace", "namespace", namespace)
++
++	c.lock.Lock()
++	c.namespaces = append(c.namespaces, namespace)
++	apisToSync := c.snapshotApisMeta()
++	c.lock.Unlock()
++
++	err := c.syncNamespaceResources(namespace, apisToSync)
++	if err != nil {
++		c.log.Error(err, "Failed to sync namespace", "namespace", namespace)
++		return err
++	}
++
++	c.log.Info("Namespace successfully synced", "namespace", namespace)
++
++	return nil
++}
++
++// RemoveNamespace incrementally removes a namespace from the cluster cache if incremental sync is enabled,
++// otherwise falls back to full cluster cache invalidation
++func (c *clusterCache) RemoveNamespace(namespace string) error {
++	if !c.incrementalNamespaceSync {
++		c.Invalidate(func(cache *clusterCache) {
++			cache.namespaces = removeNamespaceFromList(cache.namespaces, namespace)
++		})
++		return nil
++	}
++
++	// Feature enabled: incremental removal
++	c.lock.Lock()
++	c.namespaces = removeNamespaceFromList(c.namespaces, namespace)
++
++	// Remove all resources from the removed namespace
++	for key := range c.resources {
++		if key.Namespace == namespace {
++			delete(c.resources, key)
++		}
++	}
++
++	// Cancel watches for the removed namespace
++	for _, meta := range c.apisMeta {
++		if cancel, exists := meta.namespaceCancels[namespace]; exists {
++			cancel()
++			delete(meta.namespaceCancels, namespace)
++		}
++	}
++
++	c.lock.Unlock()
++
++	return nil
++}
++
++func removeNamespaceFromList(namespaces []string, namespace string) []string {
++	result := make([]string, 0, len(namespaces)-1)
++	for _, ns := range namespaces {
++		if ns != namespace {
++			result = append(result, ns)
++		}
++	}
++	return result
++}
++
++func (c *clusterCache) snapshotApisMeta() map[schema.GroupKind]*apiMeta {
++	snapshot := make(map[schema.GroupKind]*apiMeta)
++	maps.Copy(snapshot, c.apisMeta)
++	return snapshot
++}
++
++// syncNamespaceResources lists and caches resources for the given namespace across all watched APIs
++func (c *clusterCache) syncNamespaceResources(namespace string, apisToSync map[schema.GroupKind]*apiMeta) error {
++	client, err := c.kubectl.NewDynamicClient(c.config)
++	if err != nil {
++		return fmt.Errorf("failed to create client: %w", err)
++	}
++
++	clientset, err := kubernetes.NewForConfig(c.config)
++	if err != nil {
++		return fmt.Errorf("failed to create clientset: %w", err)
++	}
++
++	apiMap, err := c.buildAPIMap()
++	if err != nil {
++		return err
++	}
++
++	for gk, meta := range apisToSync {
++		if !meta.namespaced {
++			continue
++		}
++
++		api, exists := apiMap[gk]
++		if !exists {
++			continue
++		}
++
++		// Create per-namespace context derived from the API's parent context
++		nsCtx, nsCancel := context.WithCancel(meta.watchCtx)
++		// namespaceCancels is shared across goroutines, lock the write
++		c.lock.Lock()
++		meta.namespaceCancels[namespace] = nsCancel
++		c.lock.Unlock()
++
++		if err := c.loadNamespaceResources(nsCtx, client, clientset, api, namespace); err != nil {
++			return fmt.Errorf("failed to load resources for %s in namespace %s: %w", gk.String(), namespace, err)
++		}
++	}
++
++	return nil
++}
++
++// buildAPIMap creates a lookup map from GroupKind to APIResourceInfo
++func (c *clusterCache) buildAPIMap() (map[schema.GroupKind]kube.APIResourceInfo, error) {
++	apis, err := c.kubectl.GetAPIResources(c.config, true, c.settings.ResourcesFilter)
++	if err != nil {
++		return nil, fmt.Errorf("failed to get api resources: %w", err)
++	}
++
++	apiMap := make(map[schema.GroupKind]kube.APIResourceInfo)
++	for _, api := range apis {
++		apiMap[api.GroupKind] = api
++	}
++	return apiMap, nil
++}
++
++// loadNamespaceResources lists and caches all resources for a given API in a specific namespace,
++// and starts watching for changes
++func (c *clusterCache) loadNamespaceResources(ctx context.Context, client dynamic.Interface, clientset kubernetes.Interface, api kube.APIResourceInfo, namespace string) error {
++	resClient := client.Resource(api.GroupVersionResource).Namespace(namespace)
++
++	resourceVersion, err := c.listResources(ctx, resClient, func(listPager *pager.ListPager) error {
++		return listPager.EachListItem(ctx, metav1.ListOptions{}, func(obj runtime.Object) error {
++			un, ok := obj.(*unstructured.Unstructured)
++			if !ok {
++				return fmt.Errorf("object has unexpected type: %T", obj)
++			}
++			newRes := c.newResource(un)
++			c.lock.Lock()
++			c.setNode(newRes)
++			c.lock.Unlock()
++			return nil
++		})
++	})
++	if err != nil {
++		// Same policy as the full sync path: a namespace that is gone or RBAC-restricted is
++		// skipped with a recorded warning instead of failing the whole incremental sync;
++		// skipping also means no watch is started for it.
++		nsErr := c.handleNamespacedListError(ctx, clientset.AuthorizationV1().SelfSubjectAccessReviews(), api, namespace, err)
++		if errors.Is(nsErr, errSkipNamespace) {
++			return nil
++		}
++		return nsErr
++	}
++
++	go c.watchEvents(ctx, api, resClient, namespace, resourceVersion)
++
++	return nil
++}
++
+ // clusterCacheSync's lock should be held before calling this method
+ func (syncStatus *clusterCacheSync) synced(clusterRetryTimeout time.Duration) bool {
+ 	syncTime := syncStatus.syncTime
+@@ -690,7 +873,12 @@ func (c *clusterCache) startMissingWatches() error {
+ 		namespacedResources[api.GroupKind] = api.Meta.Namespaced
+ 		if _, ok := c.apisMeta[api.GroupKind]; !ok {
+ 			ctx, cancel := context.WithCancel(context.Background())
+-			c.apisMeta[api.GroupKind] = &apiMeta{namespaced: api.Meta.Namespaced, watchCancel: cancel}
++			// watchCtx and namespaceCancels must be set on every apiMeta creation site:
++			// syncNamespaceResources derives per-namespace contexts from watchCtx and writes
++			// into namespaceCancels, so an apiMeta created here (an API that appeared after
++			// the full sync, e.g. a new CRD) would otherwise panic on the first incremental
++			// namespace add. Upstream PR 25229 only initializes them in sync().
++			c.apisMeta[api.GroupKind] = &apiMeta{namespaced: api.Meta.Namespaced, watchCancel: cancel, watchCtx: ctx, namespaceCancels: make(map[string]context.CancelFunc)}
+ 
+ 			err := c.processApi(client, api, func(resClient dynamic.ResourceInterface, ns string) error {
+ 				resourceVersion, err := c.loadInitialState(ctx, api, resClient, ns, false) // don't lock here, we are already in a lock before startMissingWatches is called inside watchEvents
+@@ -796,7 +984,7 @@ func (c *clusterCache) loadInitialState(ctx context.Context, api kube.APIResourc
+ 	resourceVersion, err := c.listResources(ctx, resClient, func(listPager *pager.ListPager) error {
+ 		return listPager.EachListItem(ctx, metav1.ListOptions{}, func(obj runtime.Object) error {
+ 			if un, ok := obj.(*unstructured.Unstructured); !ok {
+-				return fmt.Errorf("object %s/%s has an unexpected type", un.GroupVersionKind().String(), un.GetName())
++				return fmt.Errorf("object has unexpected type: %T", obj)
+ 			} else {
+ 				items = append(items, c.newResource(un))
+ 			}
+@@ -1261,7 +1449,12 @@ func (c *clusterCache) sync() error {
+ 
+ 		lock.Lock()
+ 		ctx, cancel := context.WithCancel(context.Background())
+-		info := &apiMeta{namespaced: api.Meta.Namespaced, watchCancel: cancel}
++		info := &apiMeta{
++			namespaced:       api.Meta.Namespaced,
++			watchCancel:      cancel,
++			watchCtx:         ctx,
++			namespaceCancels: make(map[string]context.CancelFunc),
++		}
+ 		c.apisMeta[api.GroupKind] = info
+ 		c.namespacedResources[api.GroupKind] = api.Meta.Namespaced
+ 		lock.Unlock()
+@@ -1270,7 +1463,7 @@ func (c *clusterCache) sync() error {
+ 			resourceVersion, err := c.listResources(ctx, resClient, func(listPager *pager.ListPager) error {
+ 				return listPager.EachListItem(context.Background(), metav1.ListOptions{}, func(obj runtime.Object) error {
+ 					if un, ok := obj.(*unstructured.Unstructured); !ok {
+-						return fmt.Errorf("object %s/%s has an unexpected type", un.GroupVersionKind().String(), un.GetName())
++						return fmt.Errorf("object has unexpected type: %T", obj)
+ 					} else {
+ 						newRes := c.newResource(un)
+ 						lock.Lock()
+diff --git a/gitops-engine/pkg/cache/cluster_incremental_concurrent_test.go b/gitops-engine/pkg/cache/cluster_incremental_concurrent_test.go
+new file mode 100644
+index 000000000..2c1e0b5e2
+--- /dev/null
++++ b/gitops-engine/pkg/cache/cluster_incremental_concurrent_test.go
+@@ -0,0 +1,56 @@
++package cache
++
++import (
++	"fmt"
++	"sync"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++	"k8s.io/client-go/rest"
++)
++
++// TestAddNamespaceConcurrent runs concurrent AddNamespace calls under -race to
++// guard against unsynchronized writes to the shared apiMeta.namespaceCancels map.
++func TestAddNamespaceConcurrent(t *testing.T) {
++	existingPod := createPod("existing-pod", "existing-namespace")
++	_, mockKubectl := setupFakeCluster(existingPod)
++	cache := NewClusterCache(
++		&rest.Config{},
++		SetKubectl(mockKubectl),
++		SetNamespaces([]string{"existing-namespace"}),
++		WithIncrementalNamespaceSync(true),
++	)
++	require.NoError(t, cache.EnsureSynced())
++
++	const goroutines = 16
++	var wg sync.WaitGroup
++	for i := 0; i < goroutines; i++ {
++		wg.Add(1)
++		ns := fmt.Sprintf("ns-%d", i)
++		go func() { defer wg.Done(); _ = cache.AddNamespace(ns) }()
++	}
++	wg.Wait()
++}
++
++// TestAddRemoveNamespaceConcurrent runs concurrent adds and removes under -race.
++func TestAddRemoveNamespaceConcurrent(t *testing.T) {
++	existingPod := createPod("existing-pod", "existing-namespace")
++	_, mockKubectl := setupFakeCluster(existingPod)
++	cache := NewClusterCache(
++		&rest.Config{},
++		SetKubectl(mockKubectl),
++		SetNamespaces([]string{"existing-namespace"}),
++		WithIncrementalNamespaceSync(true),
++	)
++	require.NoError(t, cache.EnsureSynced())
++
++	const goroutines = 16
++	var wg sync.WaitGroup
++	for i := 0; i < goroutines; i++ {
++		wg.Add(2)
++		ns := fmt.Sprintf("ns-%d", i)
++		go func() { defer wg.Done(); _ = cache.AddNamespace(ns) }()
++		go func() { defer wg.Done(); _ = cache.RemoveNamespace(ns) }()
++	}
++	wg.Wait()
++}
+diff --git a/gitops-engine/pkg/cache/cluster_incremental_sync_test.go b/gitops-engine/pkg/cache/cluster_incremental_sync_test.go
+new file mode 100644
+index 000000000..4dc438ec0
+--- /dev/null
++++ b/gitops-engine/pkg/cache/cluster_incremental_sync_test.go
+@@ -0,0 +1,344 @@
++package cache
++
++import (
++	"context"
++	"fmt"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++	corev1 "k8s.io/api/core/v1"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/runtime"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/client-go/dynamic/fake"
++	"k8s.io/client-go/kubernetes/scheme"
++	"k8s.io/client-go/rest"
++	testcore "k8s.io/client-go/testing"
++
++	"github.com/argoproj/argo-cd/gitops-engine/pkg/utils/kube"
++	"github.com/argoproj/argo-cd/gitops-engine/pkg/utils/kube/kubetest"
++)
++
++func TestAddNamespace(t *testing.T) {
++	t.Run("feature disabled invalidates cache and adds namespace", func(t *testing.T) {
++		// Given: cache previously synced
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(&kubetest.MockKubectlCmd{}),
++			SetNamespaces([]string{"existing-namespace"}),
++		)
++		setSyncTime(cache, time.Now())
++
++		// When: adding a namespace
++		err := cache.AddNamespace("new-namespace")
++
++		// Then: cache is invalidated, namespace is added
++		assert.NoError(t, err)
++		assert.Nil(t, getSyncTime(cache), "syncTime should be nil (invalidated)")
++		assert.Contains(t, cache.namespaces, "new-namespace", "new namespace added")
++		assert.Contains(t, cache.namespaces, "existing-namespace", "existing namespace preserved")
++	})
++
++	t.Run("feature enabled preserves cache and adds namespace", func(t *testing.T) {
++		// Given: cache previously synced
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(&kubetest.MockKubectlCmd{}),
++			SetNamespaces([]string{"existing-namespace"}),
++			WithIncrementalNamespaceSync(true),
++		)
++		now := time.Now()
++		setSyncTime(cache, time.Now())
++
++		// When: adding a namespace
++		err := cache.AddNamespace("new-namespace")
++
++		// Then: cache is preserved, namespace is added
++		assert.NoError(t, err)
++		assert.NotNil(t, getSyncTime(cache), "syncTime should not be nil")
++		assert.Equal(t, now.Unix(), getSyncTime(cache).Unix(), "syncTime should be unchanged")
++		assert.Contains(t, cache.namespaces, "new-namespace", "new namespace added")
++		assert.Contains(t, cache.namespaces, "existing-namespace", "existing namespace preserved")
++	})
++
++	t.Run("feature enabled preserves existing resources when adding namespace", func(t *testing.T) {
++		// Given: cache synced with existing pod
++		existingPod := createPod("existing-pod", "existing-namespace")
++		_, mockKubectl := setupFakeCluster(existingPod)
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(mockKubectl),
++			SetNamespaces([]string{"existing-namespace"}),
++			WithIncrementalNamespaceSync(true),
++		)
++		require.NoError(t, cache.EnsureSynced())
++
++		// When: adding new namespace
++		err := cache.AddNamespace("new-namespace")
++
++		// Then: existing resources are preserved
++		assert.NoError(t, err)
++		assertPodInCache(t, cache, "existing-namespace", "existing-pod", "existing pod preserved")
++	})
++
++	t.Run("feature enabled watches new namespace for changes", func(t *testing.T) {
++		// Given: cache synced, new namespace added
++		existingPod := createPod("existing-pod", "existing-namespace")
++		client, mockKubectl := setupFakeCluster(existingPod)
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(mockKubectl),
++			SetNamespaces([]string{"existing-namespace"}),
++			WithIncrementalNamespaceSync(true),
++		)
++		require.NoError(t, cache.EnsureSynced())
++		require.NoError(t, cache.AddNamespace("new-namespace"))
++		time.Sleep(50 * time.Millisecond) // Allow watch goroutines to start
++
++		// When: creating pod in new namespace
++		newPod := createPod("new-pod", "new-namespace")
++		podClient := client.Resource(schema.GroupVersionResource{
++			Group: "", Version: "v1", Resource: "pods",
++		}).Namespace("new-namespace")
++		_, err := podClient.Create(context.Background(), mustToUnstructured(newPod), metav1.CreateOptions{})
++		require.NoError(t, err)
++		time.Sleep(50 * time.Millisecond) // Allow watch to process event
++
++		// Then: watch detects the new pod
++		assertPodInCache(t, cache, "new-namespace", "new-pod", "new pod detected by watch")
++	})
++
++	t.Run("feature enabled returns error for non-RBAC errors", func(t *testing.T) {
++		// Given: cluster returns non-RBAC errors
++		client := fake.NewSimpleDynamicClient(scheme.Scheme)
++		client.PrependReactor("list", "pods", func(action testcore.Action) (handled bool, ret runtime.Object, err error) {
++			listAction := action.(testcore.ListAction)
++			if listAction.GetNamespace() == "error-namespace" {
++				return true, nil, apierrors.NewInternalError(fmt.Errorf("internal server error"))
++			}
++			return false, nil, nil
++		})
++		apiResources := []kube.APIResourceInfo{{
++			GroupKind:            schema.GroupKind{Group: "", Kind: "Pod"},
++			GroupVersionResource: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"},
++			Meta:                 metav1.APIResource{Namespaced: true},
++		}}
++		mockKubectl := &kubetest.MockKubectlCmd{
++			DynamicClient: client,
++			APIResources:  apiResources,
++			Version:       "v1.28.0",
++		}
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(mockKubectl),
++			SetNamespaces([]string{"existing-namespace"}),
++			WithIncrementalNamespaceSync(true),
++			SetRespectRBAC(RespectRbacNormal),
++		)
++		err := cache.EnsureSynced()
++		require.NoError(t, err)
++
++		// When: adding namespace that returns non-RBAC error
++		err = cache.AddNamespace("error-namespace")
++
++		// Then: error is propagated
++		assert.Error(t, err, "non-RBAC errors should be returned")
++	})
++
++	t.Run("feature enabled watches are canceled on Invalidate", func(t *testing.T) {
++		// Given: cache synced with namespace added
++		pod := createPod("test-pod", "new-namespace")
++		_, mockKubectl := setupFakeCluster(pod)
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(mockKubectl),
++			SetNamespaces([]string{"existing-namespace"}),
++			WithIncrementalNamespaceSync(true),
++		)
++		require.NoError(t, cache.EnsureSynced())
++		require.NoError(t, cache.AddNamespace("new-namespace"))
++
++		// Given: namespace watch context exists
++		cache.lock.RLock()
++		podMeta, exists := cache.apisMeta[schema.GroupKind{Group: "", Kind: "Pod"}]
++		cache.lock.RUnlock()
++		require.True(t, exists, "Pod apiMeta must exist")
++		require.NotNil(t, podMeta.watchCtx, "watchCtx must exist")
++
++		// When: invalidating cache
++		cache.Invalidate()
++
++		// Then: watch context is canceled
++		select {
++		case <-podMeta.watchCtx.Done():
++			// Success - context was canceled
++		case <-time.After(100 * time.Millisecond):
++			t.Fatal("watch context should be canceled after Invalidate")
++		}
++	})
++}
++
++func TestRemoveNamespace(t *testing.T) {
++	t.Run("feature disabled invalidates cache and removes namespace", func(t *testing.T) {
++		// Given: cache previously synced
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(&kubetest.MockKubectlCmd{}),
++			SetNamespaces([]string{"ns-1", "ns-2"}),
++		)
++		setSyncTime(cache, time.Now())
++
++		// When: removing a namespace
++		err := cache.RemoveNamespace("ns-2")
++
++		// Then: cache is invalidated, namespace is removed
++		assert.NoError(t, err)
++		assert.Nil(t, getSyncTime(cache), "syncTime should be nil (invalidated)")
++		assert.NotContains(t, cache.namespaces, "ns-2", "removed namespace")
++		assert.Contains(t, cache.namespaces, "ns-1", "remaining namespace preserved")
++	})
++
++	t.Run("feature enabled preserves cache and removes namespace", func(t *testing.T) {
++		// Given: cache previously synced
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(&kubetest.MockKubectlCmd{}),
++			SetNamespaces([]string{"ns-1", "ns-2"}),
++			WithIncrementalNamespaceSync(true),
++		)
++		now := time.Now()
++		setSyncTime(cache, now)
++
++		// When: removing a namespace
++		err := cache.RemoveNamespace("ns-2")
++
++		// Then: cache is preserved, namespace is removed
++		assert.NoError(t, err)
++		assert.NotNil(t, getSyncTime(cache), "syncTime should not be nil")
++		assert.Equal(t, now.Unix(), getSyncTime(cache).Unix(), "syncTime should be unchanged")
++		assert.NotContains(t, cache.namespaces, "ns-2", "removed namespace")
++		assert.Contains(t, cache.namespaces, "ns-1", "remaining namespace preserved")
++	})
++
++	t.Run("feature enabled removes resources from removed namespace", func(t *testing.T) {
++		// Given: cache synced with pods in both namespaces
++		pod1 := createPod("pod-1", "ns-1")
++		pod2 := createPod("pod-2", "ns-2")
++		_, mockKubectl := setupFakeCluster(pod1, pod2)
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(mockKubectl),
++			SetNamespaces([]string{"ns-1", "ns-2"}),
++			WithIncrementalNamespaceSync(true),
++		)
++		require.NoError(t, cache.EnsureSynced())
++		assertPodInCache(t, cache, "ns-1", "pod-1", "pod-1 in cache before removal")
++		assertPodInCache(t, cache, "ns-2", "pod-2", "pod-2 in cache before removal")
++
++		// When: removing ns-2
++		err := cache.RemoveNamespace("ns-2")
++
++		// Then: resources from removed namespace are deleted
++		assert.NoError(t, err)
++		cache.lock.RLock()
++		_, exists := cache.resources[kube.NewResourceKey("", "Pod", "ns-2", "pod-2")]
++		cache.lock.RUnlock()
++		assert.False(t, exists, "pod-2 removed from cache")
++		assertPodInCache(t, cache, "ns-1", "pod-1", "pod-1 still in cache")
++	})
++
++	t.Run("feature enabled cancels watches when namespace removed", func(t *testing.T) {
++		// Given: cache synced with ns-2 added incrementally
++		pod1 := createPod("pod-1", "ns-1")
++		pod2 := createPod("pod-2", "ns-2")
++		_, mockKubectl := setupFakeCluster(pod1, pod2)
++		cache := NewClusterCache(
++			&rest.Config{},
++			SetKubectl(mockKubectl),
++			SetNamespaces([]string{"ns-1"}),
++			WithIncrementalNamespaceSync(true),
++		)
++		require.NoError(t, cache.EnsureSynced())
++		require.NoError(t, cache.AddNamespace("ns-2"))
++
++		// Given: watch context exists
++		cache.lock.RLock()
++		podMeta, exists := cache.apisMeta[schema.GroupKind{Group: "", Kind: "Pod"}]
++		cache.lock.RUnlock()
++		require.True(t, exists, "Pod apiMeta must exist")
++		_, hasNs2Cancel := podMeta.namespaceCancels["ns-2"]
++		require.True(t, hasNs2Cancel, "ns-2 cancel must exist")
++
++		// When: removing ns-2
++		err := cache.RemoveNamespace("ns-2")
++
++		// Then: ns-2 watch is canceled and removed
++		assert.NoError(t, err)
++		_, hasNs2Cancel = podMeta.namespaceCancels["ns-2"]
++		assert.False(t, hasNs2Cancel, "ns-2 removed from namespaceCancels")
++	})
++}
++
++func setupFakeCluster(objs ...runtime.Object) (*fake.FakeDynamicClient, *kubetest.MockKubectlCmd) {
++	client := fake.NewSimpleDynamicClient(scheme.Scheme, objs...)
++	reactor := client.ReactionChain[0]
++	client.PrependReactor("list", "*", func(action testcore.Action) (handled bool, ret runtime.Object, err error) {
++		handled, ret, err = reactor.React(action)
++		if err != nil || !handled {
++			return handled, ret, err
++		}
++		ret.(metav1.ListInterface).SetResourceVersion("123")
++		return handled, ret, err
++	})
++
++	apiResources := []kube.APIResourceInfo{{
++		GroupKind:            schema.GroupKind{Group: "", Kind: "Pod"},
++		GroupVersionResource: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"},
++		Meta:                 metav1.APIResource{Namespaced: true},
++	}}
++
++	mockKubectl := &kubetest.MockKubectlCmd{
++		DynamicClient: client,
++		APIResources:  apiResources,
++		Version:       "v1.28.0",
++	}
++
++	return client, mockKubectl
++}
++
++func assertPodInCache(t *testing.T, cache *clusterCache, namespace, name, message string) {
++	t.Helper()
++	podKey := kube.NewResourceKey("", "Pod", namespace, name)
++	cache.lock.RLock()
++	cachedPod, exists := cache.resources[podKey]
++	cache.lock.RUnlock()
++
++	assert.True(t, exists, message)
++	assert.NotNil(t, cachedPod, "cached pod should not be nil")
++	if cachedPod != nil {
++		assert.Equal(t, name, cachedPod.Ref.Name)
++		assert.Equal(t, namespace, cachedPod.Ref.Namespace)
++	}
++}
++
++func setSyncTime(cache *clusterCache, t time.Time) {
++	cache.syncStatus.lock.Lock()
++	cache.syncStatus.syncTime = &t
++	cache.syncStatus.lock.Unlock()
++}
++
++func getSyncTime(cache *clusterCache) *time.Time {
++	cache.syncStatus.lock.Lock()
++	defer cache.syncStatus.lock.Unlock()
++	return cache.syncStatus.syncTime
++}
++
++func createPod(name, namespace string) *corev1.Pod {
++	return &corev1.Pod{
++		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
++		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, ResourceVersion: "789"},
++	}
++}
+diff --git a/gitops-engine/pkg/cache/cluster_test.go b/gitops-engine/pkg/cache/cluster_test.go
+index 793d862fd..1102c8b5c 100644
+--- a/gitops-engine/pkg/cache/cluster_test.go
++++ b/gitops-engine/pkg/cache/cluster_test.go
+@@ -3349,3 +3349,78 @@ func TestCheckNamespacePermission_SSARIsGVKSpecific(t *testing.T) {
+ 		})
+ 	}
+ }
++func Test_checkNamespacePermission_AllowedAndErrors(t *testing.T) {
++	api := kube.APIResourceInfo{
++		GroupKind:            schema.GroupKind{Group: "", Kind: "Pod"},
++		GroupVersionResource: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"},
++		Meta:                 metav1.APIResource{Namespaced: true},
++	}
++
++	tests := []struct {
++		name            string
++		ssarResponse    *authorizationv1.SelfSubjectAccessReview
++		ssarError       error
++		expectedAllowed bool
++		expectError     bool
++		errorContains   string
++	}{
++		{
++			name: "returns true when SSAR allows",
++			ssarResponse: &authorizationv1.SelfSubjectAccessReview{
++				Status: authorizationv1.SubjectAccessReviewStatus{
++					Allowed: true,
++				},
++			},
++			expectedAllowed: true,
++			expectError:     false,
++		},
++		{
++			name: "returns false when SSAR denies",
++			ssarResponse: &authorizationv1.SelfSubjectAccessReview{
++				Status: authorizationv1.SubjectAccessReviewStatus{
++					Allowed: false,
++				},
++			},
++			expectedAllowed: false,
++			expectError:     false,
++		},
++		{
++			name:            "returns error when SSAR API call fails",
++			ssarError:       fmt.Errorf("API server error"),
++			expectedAllowed: false,
++			expectError:     true,
++			errorContains:   "failed to create self subject access review",
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			// Given: fake clientset with SSAR mock
++			fakeClient := kubefake.NewSimpleClientset()
++			fakeClient.PrependReactor("create", "selfsubjectaccessreviews", func(action testcore.Action) (handled bool, ret runtime.Object, err error) {
++				if tt.ssarError != nil {
++					return true, nil, tt.ssarError
++				}
++				return true, tt.ssarResponse, nil
++			})
++
++			cache := &clusterCache{}
++
++			// When: checking permission for specific namespace
++			allowed, err := cache.checkNamespacePermission(
++				context.Background(),
++				fakeClient.AuthorizationV1().SelfSubjectAccessReviews(),
++				api,
++				"test-namespace",
++			)
++
++			// Then: verify results
++			if tt.expectError {
++				assert.ErrorContains(t, err, tt.errorContains)
++			} else {
++				assert.NoError(t, err)
++			}
++			assert.Equal(t, tt.expectedAllowed, allowed)
++		})
++	}
++}
+diff --git a/gitops-engine/pkg/cache/mocks/ClusterCache.go b/gitops-engine/pkg/cache/mocks/ClusterCache.go
+index ba5c0b475..ace24131f 100644
+--- a/gitops-engine/pkg/cache/mocks/ClusterCache.go
++++ b/gitops-engine/pkg/cache/mocks/ClusterCache.go
+@@ -41,6 +41,57 @@ func (_m *ClusterCache) EXPECT() *ClusterCache_Expecter {
+ 	return &ClusterCache_Expecter{mock: &_m.Mock}
+ }
+ 
++// AddNamespace provides a mock function for the type ClusterCache
++func (_mock *ClusterCache) AddNamespace(namespace string) error {
++	ret := _mock.Called(namespace)
++
++	if len(ret) == 0 {
++		panic("no return value specified for AddNamespace")
++	}
++
++	var r0 error
++	if returnFunc, ok := ret.Get(0).(func(string) error); ok {
++		r0 = returnFunc(namespace)
++	} else {
++		r0 = ret.Error(0)
++	}
++	return r0
++}
++
++// ClusterCache_AddNamespace_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AddNamespace'
++type ClusterCache_AddNamespace_Call struct {
++	*mock.Call
++}
++
++// AddNamespace is a helper method to define mock.On call
++//   - namespace string
++func (_e *ClusterCache_Expecter) AddNamespace(namespace interface{}) *ClusterCache_AddNamespace_Call {
++	return &ClusterCache_AddNamespace_Call{Call: _e.mock.On("AddNamespace", namespace)}
++}
++
++func (_c *ClusterCache_AddNamespace_Call) Run(run func(namespace string)) *ClusterCache_AddNamespace_Call {
++	_c.Call.Run(func(args mock.Arguments) {
++		var arg0 string
++		if args[0] != nil {
++			arg0 = args[0].(string)
++		}
++		run(
++			arg0,
++		)
++	})
++	return _c
++}
++
++func (_c *ClusterCache_AddNamespace_Call) Return(err error) *ClusterCache_AddNamespace_Call {
++	_c.Call.Return(err)
++	return _c
++}
++
++func (_c *ClusterCache_AddNamespace_Call) RunAndReturn(run func(namespace string) error) *ClusterCache_AddNamespace_Call {
++	_c.Call.Return(run)
++	return _c
++}
++
+ // EnsureSynced provides a mock function for the type ClusterCache
+ func (_mock *ClusterCache) EnsureSynced() error {
+ 	ret := _mock.Called()
+@@ -767,3 +818,54 @@ func (_c *ClusterCache_OnResourceUpdated_Call) RunAndReturn(run func(handler cac
+ 	_c.Call.Return(run)
+ 	return _c
+ }
++
++// RemoveNamespace provides a mock function for the type ClusterCache
++func (_mock *ClusterCache) RemoveNamespace(namespace string) error {
++	ret := _mock.Called(namespace)
++
++	if len(ret) == 0 {
++		panic("no return value specified for RemoveNamespace")
++	}
++
++	var r0 error
++	if returnFunc, ok := ret.Get(0).(func(string) error); ok {
++		r0 = returnFunc(namespace)
++	} else {
++		r0 = ret.Error(0)
++	}
++	return r0
++}
++
++// ClusterCache_RemoveNamespace_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RemoveNamespace'
++type ClusterCache_RemoveNamespace_Call struct {
++	*mock.Call
++}
++
++// RemoveNamespace is a helper method to define mock.On call
++//   - namespace string
++func (_e *ClusterCache_Expecter) RemoveNamespace(namespace interface{}) *ClusterCache_RemoveNamespace_Call {
++	return &ClusterCache_RemoveNamespace_Call{Call: _e.mock.On("RemoveNamespace", namespace)}
++}
++
++func (_c *ClusterCache_RemoveNamespace_Call) Run(run func(namespace string)) *ClusterCache_RemoveNamespace_Call {
++	_c.Call.Run(func(args mock.Arguments) {
++		var arg0 string
++		if args[0] != nil {
++			arg0 = args[0].(string)
++		}
++		run(
++			arg0,
++		)
++	})
++	return _c
++}
++
++func (_c *ClusterCache_RemoveNamespace_Call) Return(err error) *ClusterCache_RemoveNamespace_Call {
++	_c.Call.Return(err)
++	return _c
++}
++
++func (_c *ClusterCache_RemoveNamespace_Call) RunAndReturn(run func(namespace string) error) *ClusterCache_RemoveNamespace_Call {
++	_c.Call.Return(run)
++	return _c
++}
+diff --git a/gitops-engine/pkg/cache/settings.go b/gitops-engine/pkg/cache/settings.go
+index d7b30d752..e0d041bb6 100644
+--- a/gitops-engine/pkg/cache/settings.go
++++ b/gitops-engine/pkg/cache/settings.go
+@@ -74,6 +74,14 @@ func SetClusterResources(val bool) UpdateSettingsFunc {
+ 	}
+ }
+ 
++// WithIncrementalNamespaceSync enables or disables incremental namespace syncing.
++// When enabled, adding a namespace syncs only that namespace instead of invalidating the entire cache.
++func WithIncrementalNamespaceSync(enabled bool) UpdateSettingsFunc {
++	return func(cache *clusterCache) {
++		cache.incrementalNamespaceSync = enabled
++	}
++}
++
+ // SetConfig updates cluster rest config
+ func SetConfig(config *rest.Config) UpdateSettingsFunc {
+ 	return func(cache *clusterCache) {
+diff --git a/manifests/base/application-controller/argocd-application-controller-statefulset.yaml b/manifests/base/application-controller/argocd-application-controller-statefulset.yaml
+index d162c3caf..804c83372 100644
+--- a/manifests/base/application-controller/argocd-application-controller-statefulset.yaml
++++ b/manifests/base/application-controller/argocd-application-controller-statefulset.yaml
+@@ -322,6 +322,12 @@ spec:
+               name: argocd-cmd-params-cm
+               key: controller.diff.server.side
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              name: argocd-cmd-params-cm
++              key: controller.incremental.namespace.sync.enabled
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/core-install-with-hydrator.yaml b/manifests/core-install-with-hydrator.yaml
+index 40e173214..29b9ea328 100644
+--- a/manifests/core-install-with-hydrator.yaml
++++ b/manifests/core-install-with-hydrator.yaml
+@@ -32735,6 +32735,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/core-install.yaml b/manifests/core-install.yaml
+index 1ebba3ba6..e6717241d 100644
+--- a/manifests/core-install.yaml
++++ b/manifests/core-install.yaml
+@@ -32563,6 +32563,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/ha/install-with-hydrator.yaml b/manifests/ha/install-with-hydrator.yaml
+index 5baacede5..8340d8019 100644
+--- a/manifests/ha/install-with-hydrator.yaml
++++ b/manifests/ha/install-with-hydrator.yaml
+@@ -34975,6 +34975,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/ha/install.yaml b/manifests/ha/install.yaml
+index cf2aa8011..60833e058 100644
+--- a/manifests/ha/install.yaml
++++ b/manifests/ha/install.yaml
+@@ -34805,6 +34805,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/ha/namespace-install-with-hydrator.yaml b/manifests/ha/namespace-install-with-hydrator.yaml
+index 6ed10f75c..06fdec3db 100644
+--- a/manifests/ha/namespace-install-with-hydrator.yaml
++++ b/manifests/ha/namespace-install-with-hydrator.yaml
+@@ -3893,6 +3893,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/ha/namespace-install.yaml b/manifests/ha/namespace-install.yaml
+index be43b61c0..cb2857335 100644
+--- a/manifests/ha/namespace-install.yaml
++++ b/manifests/ha/namespace-install.yaml
+@@ -3723,6 +3723,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/install-with-hydrator.yaml b/manifests/install-with-hydrator.yaml
+index 1c58288f3..16706c5e8 100644
+--- a/manifests/install-with-hydrator.yaml
++++ b/manifests/install-with-hydrator.yaml
+@@ -33943,6 +33943,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/install.yaml b/manifests/install.yaml
+index e7238840f..066d61f2d 100644
+--- a/manifests/install.yaml
++++ b/manifests/install.yaml
+@@ -33771,6 +33771,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/namespace-install-with-hydrator.yaml b/manifests/namespace-install-with-hydrator.yaml
+index 7831fe1b7..b6f19cb8f 100644
+--- a/manifests/namespace-install-with-hydrator.yaml
++++ b/manifests/namespace-install-with-hydrator.yaml
+@@ -2861,6 +2861,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/manifests/namespace-install.yaml b/manifests/namespace-install.yaml
+index 2a236aada..2bc4bdcdb 100644
+--- a/manifests/namespace-install.yaml
++++ b/manifests/namespace-install.yaml
+@@ -2689,6 +2689,12 @@ spec:
+               key: controller.diff.server.side
+               name: argocd-cmd-params-cm
+               optional: true
++        - name: ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC
++          valueFrom:
++            configMapKeyRef:
++              key: controller.incremental.namespace.sync.enabled
++              name: argocd-cmd-params-cm
++              optional: true
+         - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
+           valueFrom:
+             configMapKeyRef:
+diff --git a/mkdocs.yml b/mkdocs.yml
+index f2bcd8da4..84a757383 100644
+--- a/mkdocs.yml
++++ b/mkdocs.yml
+@@ -52,6 +52,7 @@ nav:
+   - operator-manual/mtls.md
+   - operator-manual/cluster-management.md
+   - operator-manual/cluster-bootstrapping.md
++  - operator-manual/incremental-namespace-sync.md
+   - operator-manual/secret-management.md
+   - operator-manual/disaster_recovery.md
+   - operator-manual/reconcile.md
+diff --git a/test/e2e/cluster_test.go b/test/e2e/cluster_test.go
+index cf0eadaab..f7a9c732d 100644
+--- a/test/e2e/cluster_test.go
++++ b/test/e2e/cluster_test.go
+@@ -6,13 +6,15 @@ import (
+ 	"testing"
+ 	"time"
+ 
++	"github.com/argoproj/argo-cd/gitops-engine/pkg/health"
++	. "github.com/argoproj/argo-cd/gitops-engine/pkg/sync/common"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ 
+ 	. "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+ 	"github.com/argoproj/argo-cd/v3/test/e2e/fixture"
+ 	accountFixture "github.com/argoproj/argo-cd/v3/test/e2e/fixture/account"
+-	"github.com/argoproj/argo-cd/v3/test/e2e/fixture/app"
++	. "github.com/argoproj/argo-cd/v3/test/e2e/fixture/app"
+ 	clusterFixture "github.com/argoproj/argo-cd/v3/test/e2e/fixture/cluster"
+ 	"github.com/argoproj/argo-cd/v3/util/errors"
+ )
+@@ -30,7 +32,7 @@ https://kubernetes.default.svc  in-cluster  %v  Successful           `, fixture.
+ 
+ 	// We need an application targeting the cluster, otherwise the test will
+ 	// fail if run isolated.
+-	app.GivenWithSameState(ctx).
++	GivenWithSameState(ctx).
+ 		Path(guestbookPath).
+ 		When().
+ 		CreateApp()
+@@ -167,6 +169,139 @@ func TestClusterSet(t *testing.T) {
+ 		})
+ }
+ 
++func TestClusterIncrementalAddNamespace(t *testing.T) {
++	// Given: cluster with 1 deployed app in 1 namespace and incremental
++	// namespace sync is enabled
++	testCtx := fixture.EnsureCleanState(t)
++	existingNs := testCtx.DeploymentNamespace()
++	newNs := "new-ns"
++	t.Setenv("ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC", "true")
++	clusterFixture.
++		GivenWithSameState(testCtx).
++		Project(fixture.ProjectName).
++		Name("in-cluster").
++		Namespaces([]string{existingNs}).
++		Server(KubernetesInternalAPIServerAddr).
++		When().
++		SetNamespaces()
++	GivenWithSameState(testCtx).
++		Name("app-1").
++		Path(guestbookPath).
++		When().
++		CreateApp().
++		Sync().
++		Then().
++		Expect(OperationPhaseIs(OperationSucceeded)).
++		Expect(SyncStatusIs(SyncStatusCodeSynced)).
++		Expect(HealthIs(health.HealthStatusHealthy))
++
++	// When: A new namespace is created and added to the cluster and a new
++	// app is deployed to it
++	errors.NewHandler(t).FailOnErr(fixture.Run("", "kubectl", "create", "namespace", newNs))
++	t.Cleanup(func() {
++		errors.NewHandler(t).FailOnErr(fixture.Run("", "kubectl", "delete", "namespace", newNs, "--ignore-not-found=true"))
++	})
++	clusterFixture.
++		GivenWithSameState(testCtx).
++		Project(fixture.ProjectName).
++		Name("in-cluster").
++		Namespaces([]string{existingNs, newNs}).
++		Server(KubernetesInternalAPIServerAddr).
++		When().
++		SetNamespaces()
++	GivenWithSameState(testCtx).
++		Name("app-2").
++		Path(guestbookPath).
++		When().
++		CreateWithNoNameSpace("--dest-namespace", newNs).
++		Sync()
++
++	// Then: both the new app and the existing app are healthy and synced
++	GivenWithSameState(testCtx).
++		Name("app-2").
++		When().
++		Then().
++		Expect(OperationPhaseIs(OperationSucceeded)).
++		Expect(SyncStatusIs(SyncStatusCodeSynced)).
++		Expect(HealthIs(health.HealthStatusHealthy))
++	GivenWithSameState(testCtx).
++		Name("app-1").
++		When().
++		Then().
++		Expect(SyncStatusIs(SyncStatusCodeSynced)).
++		Expect(HealthIs(health.HealthStatusHealthy))
++}
++
++func TestClusterIncrementalRemoveNamespace(t *testing.T) {
++	// Given: cluster with 2 namespaces, each with a deployed app and
++	// incremental namespace sync is enabled
++	testCtx := fixture.EnsureCleanState(t)
++	existingNs := testCtx.DeploymentNamespace()
++	removableNs := "removable-ns"
++	t.Setenv("ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC", "true")
++	errors.NewHandler(t).FailOnErr(fixture.Run("", "kubectl", "create", "namespace", removableNs))
++	t.Cleanup(func() {
++		errors.NewHandler(t).FailOnErr(fixture.Run("", "kubectl", "delete", "namespace", removableNs, "--ignore-not-found=true"))
++	})
++	clusterFixture.
++		GivenWithSameState(testCtx).
++		Project(fixture.ProjectName).
++		Name("in-cluster").
++		Namespaces([]string{existingNs, removableNs}).
++		Server(KubernetesInternalAPIServerAddr).
++		When().
++		SetNamespaces()
++	GivenWithSameState(testCtx).
++		Name("app-1").
++		Path(guestbookPath).
++		When().
++		CreateApp().
++		Sync().
++		Then().
++		Expect(OperationPhaseIs(OperationSucceeded)).
++		Expect(SyncStatusIs(SyncStatusCodeSynced)).
++		Expect(HealthIs(health.HealthStatusHealthy))
++	GivenWithSameState(testCtx).
++		Name("app-2").
++		Path(guestbookPath).
++		When().
++		CreateWithNoNameSpace("--dest-namespace", removableNs).
++		Sync().
++		Then().
++		Expect(OperationPhaseIs(OperationSucceeded)).
++		Expect(SyncStatusIs(SyncStatusCodeSynced)).
++		Expect(HealthIs(health.HealthStatusHealthy))
++
++	// When: One namespace is removed from the cluster configuration
++	clusterFixture.
++		GivenWithSameState(testCtx).
++		Project(fixture.ProjectName).
++		Name("in-cluster").
++		Namespaces([]string{existingNs}).
++		Server(KubernetesInternalAPIServerAddr).
++		When().
++		SetNamespaces()
++
++	// Then: the namespace is removed from config and the app in the
++	// remaining namespace is still healthy and synced
++	clusterFixture.
++		GivenWithSameState(testCtx).
++		Name("in-cluster").
++		When().
++		GetByName().
++		Then().
++		AndCLIOutput(func(output string, _ error) {
++			assert.Contains(t, output, existingNs)
++			assert.NotContains(t, output, removableNs)
++		})
++	GivenWithSameState(testCtx).
++		Name("app-1").
++		When().
++		Then().
++		Expect(SyncStatusIs(SyncStatusCodeSynced)).
++		Expect(HealthIs(health.HealthStatusHealthy))
++}
++
+ func TestClusterGet(t *testing.T) {
+ 	fixture.SkipIfAlreadyRun(t)
+ 	fixture.EnsureCleanState(t)
+diff --git a/test/e2e/fixture/cluster/context.go b/test/e2e/fixture/cluster/context.go
+index c178ec5c6..663e78a4e 100644
+--- a/test/e2e/fixture/cluster/context.go
++++ b/test/e2e/fixture/cluster/context.go
+@@ -4,6 +4,7 @@ import (
+ 	"testing"
+ 	"time"
+ 
++	"github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+ 	"github.com/argoproj/argo-cd/v3/test/e2e/fixture"
+ )
+ 
+@@ -33,6 +34,10 @@ func GivenWithSameState(ctx fixture.TestContext) *Context {
+ }
+ 
+ func (c *Context) Name(name string) *Context {
++	if name == v1alpha1.KubernetesInClusterName {
++		c.SetNameRaw(name)
++		return c
++	}
+ 	c.SetName(name)
+ 	return c
+ }
+diff --git a/test/e2e/fixture/context.go b/test/e2e/fixture/context.go
+index 2d46b9430..f078f8f23 100644
+--- a/test/e2e/fixture/context.go
++++ b/test/e2e/fixture/context.go
+@@ -73,7 +73,7 @@ func NewTestStateFromContext(ctx TestContext) *TestState {
+ 	}
+ }
+ 
+-// Name sets the DNS-friendly name for this context
++// SetName sets the DNS-friendly name for this context, appending the short ID suffix.
+ func (s *TestState) SetName(name string) {
+ 	if name == "" {
+ 		s.name = ""
+@@ -83,6 +83,12 @@ func (s *TestState) SetName(name string) {
+ 	s.name = DnsFriendly(strings.TrimSuffix(name, suffix), suffix)
+ }
+ 
++// SetNameRaw sets the name without appending a suffix.
++// Use this for well-known names (e.g. "in-cluster") that must not be modified.
++func (s *TestState) SetNameRaw(name string) {
++	s.name = name
++}
++
+ // GetName returns the DNS-friendly name for this context
+ func (s *TestState) GetName() string {
+ 	return s.name

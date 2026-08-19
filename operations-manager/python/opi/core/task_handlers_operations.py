@@ -407,6 +407,8 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             return {
                 "status": "failed",
                 "message": error_msg,
+                "error": error_msg,
+                "error_type": "processing_failed",
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
@@ -524,6 +526,8 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
             return {
                 "status": "failed",
                 "message": error_msg,
+                "error": error_msg,
+                "error_type": "processing_failed",
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",

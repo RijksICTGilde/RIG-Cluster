@@ -194,8 +194,15 @@ class PublishOnWebComponentConfig(BaseModel):
     def _provided_needs_an_attachment(self) -> PublishOnWebComponentConfig:
         # Mirrors the if/then in $defs/publish-on-web-config: without the PEM there is
         # nothing to terminate with, and the failure would surface at render time.
+        #
+        # De tekst zegt wat je moet DOEN en niet alleen wat er mis is: hij komt via
+        # ``project_validation.validation_reasons`` ongewijzigd op het scherm van iemand
+        # die een webadres wijzigt, en die stond eerder met een afkeuring zonder uitweg.
         if self.tls == "provided" and not self.attachment:
-            raise ValueError("tls 'provided' requires an 'attachment' naming the certificate")
+            raise ValueError(
+                "tls 'provided' vereist een 'attachment' met het certificaat: kies 'Standaard certificaat', "
+                "of upload eerst een certificaat bij Bijlagen en kies die hier"
+            )
         return self
 
 

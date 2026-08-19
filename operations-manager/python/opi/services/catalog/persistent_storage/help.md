@@ -14,6 +14,8 @@ Een schijf die aan je component gekoppeld wordt en waarvan de inhoud bewaard bli
 
 ## Wat wordt er ingesteld?
 
-Er wordt een volume (een PVC) aangemaakt en in je pod gekoppeld. Per volume geef je een naam, een grootte en een koppelpad op; standaard is dat 1Gi op **/data**. Je component krijgt de variabele **DATA_PATH**.
+Er wordt een volume (een PVC) aangemaakt en in je pod gekoppeld. Per volume geef je een naam, een grootte en een koppelpad op; standaard is dat 100Mi op **/data**. Je component krijgt de variabele **DATA_PATH**.
+
+Je kunt kiezen uit 50Mi, 100Mi, 250Mi, 500Mi en 1Gi; 1Gi is het maximum per volume. Begin klein: een volume kan wel groeien en niet krimpen.
 
 Bij het verwijderen van deze service wordt de opslag niet meteen weggegooid, maar gemarkeerd voor uitgestelde verwijdering, zodat een vergissing te herstellen is.

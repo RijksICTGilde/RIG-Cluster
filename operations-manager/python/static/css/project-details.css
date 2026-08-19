@@ -58,9 +58,12 @@
 /* Metrics Section */
 .deployment-select {
     padding: var(--rvo-space-sm) var(--rvo-space-md);
-    border: 1px solid var(--rvo-color-grijs-300);
+    /* Vlak en rand uit het thema: dit is een ECHTE <select> (native="true"), dus hij krijgt
+       de kleuren niet van een component. Met een vaste witte achtergrond stond hij als wit
+       vak in een donkere pagina, met thema-tekst eroverheen (RC-134). */
+    border: 1px solid var(--semantics-dividers-color, var(--rvo-color-grijs-300));
     border-radius: 4px;
-    background: white;
+    background: var(--semantics-surfaces-base-background-color, white);
     font-size: 0.875rem;
     cursor: pointer;
     min-width: 200px;
@@ -318,7 +321,10 @@
     padding: var(--rvo-space-md);
     border: 1px solid var(--rvo-color-grijs-200);
     border-radius: 4px;
-    background: #F8FAFC;  /* grijs-25 staat niet in lotc-app.css; gelijk aan grijs-050 */
+    /* Gedempt vlak uit het thema. Hier stond een vaste #F8FAFC omdat grijs-25 niet in
+       lotc-app.css staat; die volgde de licht/donker-stand niet, terwijl de tekst
+       erop dat wel doet (RC-134). */
+    background: var(--semantics-surfaces-tinted-background-color, #F8FAFC);
 }
 
 .config-label {

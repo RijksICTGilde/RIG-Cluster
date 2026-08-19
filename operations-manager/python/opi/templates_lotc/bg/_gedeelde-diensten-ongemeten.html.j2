@@ -1,0 +1,24 @@
+{#
+  Wat er hierboven NIET in beeld staat.
+
+  Dit blok is met opzet geen leeg vak: een leeg vak leest als "in orde", en over deze
+  diensten weten we de toestand simpelweg niet.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% call panel("Wat er niet gemeten wordt", "exclamation-triangle") %}
+    <c-stack gap="md">
+        <c-paragraph>
+            Deze diensten staan hierboven NIET in beeld. Dat is geen oordeel over hun toestand:
+            we weten die simpelweg niet. Er is hier met opzet geen leeg vak voor gemaakt, want
+            een leeg vak leest als "in orde".
+        </c-paragraph>
+        {% for dienst in ongemeten %}
+            <c-alert type="warning" heading="{{ dienst.naam }} is niet in beeld">
+                <c-stack gap="xs">
+                    <c-paragraph>{{ dienst.reden }}</c-paragraph>
+                    <c-paragraph size="sm">Nodig: {{ dienst.nodig }}</c-paragraph>
+                </c-stack>
+            </c-alert>
+        {% endfor %}
+    </c-stack>
+{% endcall %}

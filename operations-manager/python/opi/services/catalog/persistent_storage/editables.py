@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import KubernetesNameValidator, PathValidator
+from opi.forms.editables.validators import KubernetesNameValidator, PathValidator, StorageSizeValidator
+from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE
 
 PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config[*]/name",
@@ -15,7 +16,8 @@ PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
 PERSISTENT_STORAGE_SIZE_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config[*]/size",
     values_provider="StorageSizeOptionsProvider",
-    default="100Mi",
+    validator=StorageSizeValidator(),
+    default=DEFAULT_STORAGE_SIZE,
 )
 
 PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE = Editable(

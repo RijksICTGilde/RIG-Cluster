@@ -1370,18 +1370,6 @@ tasks:
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           PLATFORMS: linux/amd64,linux/arm64
 
-  build-waker-image:
-    desc: "Build and load the zad-waker (sleep-mode) image into kind (sandbox tag)"
-    cmds:
-      - |
-        echo "Building zad-waker image..."
-        docker build -t ghcr.io/minbzk/base-images/zad-waker:sandbox -f images/zad-waker/Dockerfile images/zad-waker/
-      - |
-        echo "Loading image into kind cluster..."
-        kind load docker-image ghcr.io/minbzk/base-images/zad-waker:sandbox --name {{.KIND_CLUSTER_NAME}}
-      - echo -e "✅ zad-waker image built and loaded (tag :sandbox, matches SLEEP_MODE_WAKER_IMAGE in the sandboxed-local overlay)."
-    silent: true
-
   build-job-test-image:
     desc: "Build and load the tiny job-test image into kind (for testing the job runner)"
     cmds:
@@ -2469,6 +2457,11 @@ tasks:
 
         echo "Overlays configured for local images"
     silent: true
+
+  sandbox:renew-wildcard-cert:
+    desc: "Renew the *.sandbox.rijksapp.dev wildcard Let's Encrypt cert (every ~90 days). See docs/sandbox-wildcard-cert-renewal.md."
+    cmds:
+      - scripts/renew-sandbox-cert.sh
 
   sandbox:import-wildcard-cert:
     desc: "Import wildcard TLS certificate for *.sandbox.rijksapp.dev"

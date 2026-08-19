@@ -43,3 +43,47 @@ De verleiding is de tests samen te voegen tot één, want dan kunnen ze elkaar n
 
 - Nieuwe functionaliteit in de cross-domain-dienst.
 - De andere e2e-tests; als de reparatie een gedeelde fixture raakt, meld dan wat dat elders doet, maar ga niet de hele suite herbouwen.
+
+---
+
+## Uitvoering (RC-125, PR #122)
+
+**Gemeten oorzaak: er loopt niets over.** `auth_page`/`authenticated_context` staan per test
+(verse browsercontext, eigen koekjespot, dus een eigen wizardtoken); de serverkant is tussen
+de twee tests ongewijzigd (met een probe rond elke test gemeten: projectregister,
+e-mailtoelating, wizardstaatbestanden); en met de besmetting bewust aangezet -- twee
+wizardgangen achter elkaar op dezelfde pagina en in dezelfde context -- begint de tweede
+gang alsnog leeg.
+
+De isolatie loopt daarbij langs TWEE wegen: de indiening van een gang wist de wizardstaat
+zelf (`clear_wizard_state`, `opi/web/router_wizard.py`), en het openen van de volgende gang
+wist hem nog eens via `/forms/wizard/restart` in `open_create_wizard`.
+
+Wat wel omviel: korte vangnetten (10 s) op wachtregels die een VOLLEDIGE serverronde moeten
+dekken, plus een vaste `wait_for_timeout(600)` die volgens de meting nooit iets afdekte
+(elke cascaderende keuze geeft precies twee `htmx:afterSettle`, de laatste 9-52 ms VOOR de
+bestaande voorwaarde, ook op een machine op een kern). Belasting dus, geen koppeling -- en
+daarom sprong het rood heen en weer tussen de twee tests in plaats van altijd de tweede te
+raken.
+
+**Gedaan:** vangnet naar 30 s met de reden erbij dat het een vangnet is, sprekende meldingen
+op de wachtregels (veld, waarde, wat de lijst wel bood), `wait_for_htmx_quiet` in plaats van
+de vaste sleep, een isolatiepoort die een achtergebleven regel zelf meldt, de `xfail` en de
+stale "open bevinding" eruit, en
+`test_a_second_wizard_in_the_same_browser_session_starts_without_a_rule` erbij die de
+isolatiebewering vastlegt langs de weg die hem waarmaakt. De twee beweringen zijn niet
+samengevoegd.
+
+**Rework (review r1).** De nieuwe test bewaakte die weg eerst niet: hij liet de eerste gang
+INDIENEN, en de indiening wist de wizardstaat zelf, dus met de restart eruit bleef hij groen.
+De eerste gang stopt nu zodra de regel staat (en toetst dat de staat er dan ook echt is), zodat
+de restart het enige overgebleven mechanisme is. Negatieve controle daarna zelf gedraaid: met
+de `goto("/forms/wizard/restart")` uit `open_create_wizard` valt de test om op "Wizard is on
+step 'Cross-domain toegang', expected 'Projectgegevens'"; met de restart erin is hij groen.
+Verder vertaalt `_wacht` nu alleen nog een `TimeoutError` naar een sprekende melding -- een
+echte JS-fout gaat ongemoeid door in plaats van als time-out te verschijnen.
+
+**Uitkomst:** tien opeenvolgende runs van het bestand groen (`3 passed`, ~33 s per run),
+zonder `xpassed`/`xfailed`. De twee volledige `-m e2e`-runs zijn op verzoek afgebroken: die
+kosten ~50 minuten per keer (521 browsertests, elk een echte pagina) en stonden bij het
+afbreken op 24/521 zonder rood.

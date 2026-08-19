@@ -11,6 +11,12 @@ user setting: nothing in the forms layer edits it, and it has no editables or vi
 Modelling it anyway is the point of the service contract, that a service can say what may
 appear in its config block.
 
+Both fields therefore carry ``x-platform-managed``. Saying "Written by the platform" in a
+description was not enough: prose is not a rule, so the API still accepted these fields and
+``service describe`` still listed the required fields of a revision as though a caller had
+to supply them (gemeld door zad-cli, punt 28). With the marking the API refuses them, the
+read side leaves them out of a config response, and the schema fragment says so as well.
+
 **The layer is the composing service's choice.** Both services put it on the deployment
 today, but nothing here assumes that. A service that needs per-component clone state adds
 ``CloneState`` to its component-level model instead. Two things still stand in the way of
@@ -25,6 +31,8 @@ carry: everything except ``superseded_at``, which only appears once a revision i
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from opi.services.config_managed import PLATFORM_MANAGED
 
 
 class RevisionAction(BaseModel):
@@ -62,8 +70,12 @@ class CloneState(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     generation: int | None = Field(
-        default=None, description="Current generation, incremented on each clone. Written by the platform."
+        default=None,
+        description="Current generation, incremented on each clone. Written by the platform.",
+        json_schema_extra={PLATFORM_MANAGED: True},
     )
     revisions: list[Revision] = Field(
-        default=[], description="Every generation this resource has had, newest last. Written by the platform."
+        default=[],
+        description="Every generation this resource has had, newest last. Written by the platform.",
+        json_schema_extra={PLATFORM_MANAGED: True},
     )

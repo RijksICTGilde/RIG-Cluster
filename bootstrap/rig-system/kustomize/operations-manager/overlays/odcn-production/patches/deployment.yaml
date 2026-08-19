@@ -9,7 +9,7 @@ spec:
       - name: ghcr-rig-robot-pull-secret
       containers:
       - name: operations-manager
-        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.07.27.0941-9d9c0764-dirty
+        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.08.18.2228-60fab4e2-dirty
         resources:
           limits:
             cpu: "3"
@@ -80,6 +80,26 @@ spec:
             secretKeyRef:
               name: mail-relay-credentials
               key: MAIL_RELAY_ADMIN_PASSWORD
+              optional: true
+        # TransIP DNS API, for the CAA records on rijks.app / rijksapp.nl / rijksapp.dev
+        # and the no-mail records on the router names in those zones.
+        # The secret already exists in this namespace: external-dns uses it.
+        #
+        # Optional on purpose. Both DNS reconcilers are non-critical by design and skip
+        # themselves when the credentials are absent, but a required secretKeyRef fails the
+        # container before Python ever runs: a missing or renamed secret would hold the
+        # whole portal in CreateContainerConfigError over DNS hygiene.
+        - name: TRANSIP_ACCOUNT_NAME
+          valueFrom:
+            secretKeyRef:
+              name: transip-credentials
+              key: TRANSIP_ACCOUNT_NAME
+              optional: true
+        - name: TRANSIP_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: transip-credentials
+              key: TRANSIP_PRIVATE_KEY
               optional: true
         - name: LOG_ERRORS_TO_FILE
           value: "true"

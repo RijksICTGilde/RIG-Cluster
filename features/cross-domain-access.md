@@ -2,10 +2,14 @@
 
 **Status**: Geïmplementeerd (RC-15)
 
-Een platform-service waarmee een project declaratief vastlegt welke *andere* projecten,
-deployments of componenten zijn pods mogen bereiken (**inbound**) en waar het zelf heen mag
+Een platform-service waarmee een project declaratief vastlegt welke projecten, deployments
+of componenten zijn pods mogen bereiken (**inbound**) en waar het zelf heen mag
 (**outbound**), telkens op een expliciet benoemde poort. Het effect is een eigen
 NetworkPolicy per deployment, naast de tenant-baseline.
+
+De tegenpartij mag ook het eigen project zijn. De tenant-baseline scheidt namelijk op
+**deployment**, niet op project: twee deployments van hetzelfde project kunnen elkaar net zo
+min bereiken als twee losse projecten. Zie *Binnen je eigen project* hieronder.
 
 > **"Domain" gaat hier over netwerktoegang tussen projecten, niet over DNS-domeinen.** De
 > DNS-kant (hostnames, certificaten, subdomein-goedkeuringen) is van `publish-on-web`. De term
@@ -35,6 +39,29 @@ wordt.
 
 In de UI: *"de ontvanger bepaalt wie binnen mag; zet aan jouw kant ook de uitgaande regel,
 anders is alleen verkeer op poort 80 en 443 mogelijk."*
+
+## Binnen je eigen project
+
+De tenant-baseline selecteert op het pod-label `deployment: <naam>` en laat alleen pods met
+datzelfde label bij elkaar binnen. Deployments van één project delen wel een namespace, maar
+staan daarmee net zo goed los van elkaar als deployments van twee verschillende projecten.
+Verkeer van deployment `test` naar deployment `acceptatie` binnen één project heeft dus een
+regel nodig, en het symptoom zonder die regel is een timeout (het pakket wordt gedropt), niet
+een geweigerde verbinding.
+
+Kies daarvoor gewoon je eigen project als tegenpartij. Er is geen apart mechanisme en geen
+uitzondering in de resolutie: de peer-namespace is dan je eigen namespace en de pod-labels
+zijn `app: <peer-deployment>-<peer-component>` + `project: <eigen project>`, precies zoals bij
+een vreemde peer.
+
+Wat wél anders voelt: je bent nu zelf ook de ontvanger, dus je schrijft beide regels in
+hetzelfde projectbestand. Een outbound-regel bij het bellende component en een inbound-regel
+bij het gebelde component. Zet je er maar één, dan blijft het verkeer hangen. Staan beide
+regels op de projectlaag, dan komt elke regel vanzelf terecht bij de deployment die het
+genoemde eigen component bevat.
+
+Componenten binnen één deployment hebben hier niets voor nodig: die dragen hetzelfde
+`deployment`-label en mogen elkaar op elke poort bereiken.
 
 ## De YAML-vorm
 
@@ -119,9 +146,8 @@ bereikbare poort.
 ## Beperkingen
 
 - **Kapotte verwijzingen falen nooit de generatie.** Bestaat het doeldeployment of -component
-  niet (meer) in een project dat deze cluster wél kent, draait het op een andere cluster, of
-  verwijst een regel naar het eigen project, dan wordt die regel met een WARNING overgeslagen —
-  de manifest-generatie gaat door.
+  niet (meer) in een project dat deze cluster wél kent, of draait het op een andere cluster,
+  dan wordt die regel met een WARNING overgeslagen — de manifest-generatie gaat door.
 - **Een peer-project dat deze cluster niet kent, is geen kapotte verwijzing.** Cross-*domain*
   betekent dat de andere kant elders beheerd kan worden of nog niet bestaat (project A wordt
   ingericht vóór project B). Zo'n regel levert wél een policy op, met een WARNING; de namespace

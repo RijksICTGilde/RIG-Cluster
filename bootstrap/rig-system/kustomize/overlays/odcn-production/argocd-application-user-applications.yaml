@@ -32,6 +32,12 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=false
+      # Alleen OutOfSync-resources toepassen. Deze app beheert uitsluitend Application-CR's
+      # die opi genereert (opi is de enige schrijver, geen webhooks die eraan muteren), dus
+      # het diff-oordeel is hier betrouwbaar. Zonder deze optie past elke sync alle ~138
+      # Applications opnieuw toe; dat kostte ~45s per projectaanmaak voordat het nieuwe
+      # Application-object uberhaupt bestond.
+      - ApplyOutOfSyncOnly=true
     retry:
       limit: -1                    # Number of retry attempts
       backoff:
