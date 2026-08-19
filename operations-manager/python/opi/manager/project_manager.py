@@ -80,6 +80,7 @@ from opi.handlers.project_file_handler import (
     remove_component_references,
 )
 from opi.handlers.sops import SopsHandler
+from opi.manager.argo_manager import UMBRELLA_REFRESH_INTERVAL_SECONDEN
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
@@ -182,6 +183,7 @@ from opi.utils.yaml_util import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from opi.connectors.argo import ArgoConnector
     from opi.core.persistent_task_progress import AnyTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
 
@@ -2736,6 +2738,44 @@ class ProjectManager:
 
         return deployment_changes
 
+    async def _keep_umbrella_refreshed(self, argo_connector: ArgoConnector, pushed_commit: str | None) -> None:
+        """Prik `user-applications` opnieuw zolang die onze commit nog niet gezien heeft.
+
+        Een refresh is geen opdracht in een wachtrij maar een vlaggetje op de Application:
+        liep er al een reconcile, dan wist die het vlaggetje als hij klaar is, terwijl hij
+        zijn revisie ophaalde voordat wij pushten. Onze wijziging zit er dan niet in en er
+        gebeurt tot de volgende reconcile (op odcn-production `timeout.reconciliation: 15m`)
+        niets meer.
+
+        Het enige harde bewijs is de revisie: `reconciledAt` kan best na onze push liggen
+        terwijl de vergeleken revisie van ervoor is. Zonder bekende commit valt er niets te
+        bewijzen en blijft het bij de eerste refresh, zoals voorheen.
+
+        Bedoeld om naast de wachters te draaien en door de aanroeper geannuleerd te worden.
+        """
+        await argo_connector.refresh_application("user-applications")
+        if not pushed_commit:
+            return
+
+        while True:
+            await asyncio.sleep(UMBRELLA_REFRESH_INTERVAL_SECONDEN)
+
+            status_data = await argo_connector.get_application_status("user-applications") or {}
+            status = status_data.get("status", {}) or {}
+            revision = status.get("sync", {}).get("revision")
+            self._argo_manager.last_umbrella_revision = revision
+            self._argo_manager.last_umbrella_reconciled_at = status.get("reconciledAt")
+
+            if revision == pushed_commit:
+                logger.info(f"user-applications heeft onze commit {pushed_commit} vergeleken; niet opnieuw verversen")
+                return
+
+            logger.info(
+                f"user-applications staat nog op revisie {revision or 'onbekend'} in plaats van {pushed_commit}; "
+                "de vorige refresh is verloren gegaan, opnieuw verversen"
+            )
+            await argo_connector.refresh_application("user-applications")
+
     async def process_project_from_git(
         self,
         relative_project_file_path: str,
@@ -3080,7 +3120,6 @@ class ProjectManager:
                         f"Refreshing user-applications: {len(apps_to_create)} application(s) not yet present "
                         f"({', '.join(apps_to_create)})"
                     )
-                    await argo_connector.refresh_application("user-applications")
 
                     async def _wait_created(app_name: str) -> str | None:
                         try:
@@ -3092,7 +3131,25 @@ class ProjectManager:
                             logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
                             return f"{app_name}: timed out waiting for application to be created"
 
-                    created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
+                    # Eén bewaker naast alle wachters, niet één per applicatie: die zou bij
+                    # drie nieuwe applicaties drie keer tegelijk verversen. Hij doet de
+                    # eerste refresh en herhaalt die alleen zolang de umbrella onze commit
+                    # aantoonbaar nog niet vergeleken heeft.
+                    umbrella_watcher = asyncio.create_task(
+                        self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
+                    )
+                    try:
+                        created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
+                    finally:
+                        umbrella_watcher.cancel()
+                        try:
+                            await umbrella_watcher
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            # De bewaker is een vangnet; als hij zelf omvalt, mag dat het
+                            # wachten op de applicaties niet meeslepen.
+                            logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
                     sync_failures.extend(result for result in created_results if result)
                 else:
                     logger.info(
