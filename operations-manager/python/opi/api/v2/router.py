@@ -101,6 +101,7 @@ from opi.handlers.project_file_handler import (
     ProjectFileHandler,
     component_usage_sites,
 )
+from opi.manager.project_validation import validate_component_references
 from opi.services.approvals import collect_deployment_approval_notices
 from opi.services.catalog.actions import (
     ActionContext,
@@ -1066,6 +1067,17 @@ async def upsert_deployment_v2(
             {"newImageUrl": comp.image},
             UPDATE_IMAGE_VALIDATORS,
         )
+
+    # Een verwijzing naar een component dat niet in de catalogus staat is een fout van de
+    # aanroeper, geen storing: dan hoort hier een 400 terug te komen in plaats van een 202
+    # met een taak die daarna alsnog faalt. Dezelfde functie als de taak gebruikt, zodat er
+    # geen tweede bewoording ontstaat. Staat het project niet in de store, dan doet de taak
+    # de controle; hier niets verzinnen.
+    project = get_project_store().get(project_name)
+    if project is not None and project.data is not None:
+        reference_result = validate_component_references(project.data, deployment_data.components, "deployment")
+        if not reference_result["success"]:
+            raise HTTPException(status_code=400, detail=reference_result["error"])
 
     task = await create_async_task(
         request=request,

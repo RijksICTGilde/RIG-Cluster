@@ -356,7 +356,7 @@ def validate_component_references(project_data: dict, components: list, context:
         available_components = list(component_names) if component_names else ["none"]
         project_name = project_data.get("name", "unknown")
         error_msg = f"Invalid component references in {context} for project '{project_name}': {invalid_references}. Available components: {available_components}"
-        logger.error(error_msg)
+        logger.warning(error_msg)
         return {"success": False, "error": error_msg, "invalid_references": invalid_references}
 
     return {"success": True, "error": None, "invalid_references": None}

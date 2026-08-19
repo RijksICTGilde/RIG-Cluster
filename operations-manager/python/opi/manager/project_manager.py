@@ -6989,7 +6989,10 @@ class ProjectManager:
             project_data = await self.get_contents()
             project_name = await self.get_name()
 
-            # Validate that all component references exist in the project
+            # Validate that all component references exist in the project.
+            # Bewust dubbel: het v2-endpoint doet dezelfde controle synchroon om een fout van
+            # de aanroeper als 400 terug te geven, maar tussen aanname en uitvoering van de
+            # taak kan het projectbestand veranderen, dus hier blijft het vangnet staan.
             validation_result = self._validate_component_references(project_data, components, "deployment")
             if not validation_result["success"]:
                 return {
