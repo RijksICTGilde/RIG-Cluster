@@ -208,7 +208,13 @@ def markdown_to_components(source: str, *, icon: str | None = None, color: str |
                 flush()
             paragraph.append(_inline(stripped))
     flush()
-    return "\n".join(out)
+    # IN EEN STACK, want zonder stack raken de blokken elkaar. Dat is geen smaak maar de
+    # regel van dit systeem: een gap bestaat alleen waar een stack de OUDER is (zie de kop
+    # van bg/_patterns.html.j2). De popup zet deze markup in een kale <div>, dus stonden de
+    # koppen strak tegen de alinea erboven en eronder, en dat las als "te grote koppen"
+    # terwijl het de ontbrekende witruimte was.
+    inhoud = "\n".join(out)
+    return f'<c-stack gap="md">\n{inhoud}\n</c-stack>'
 
 
 def render_service_help(help_template: str) -> str:
