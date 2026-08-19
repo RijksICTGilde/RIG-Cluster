@@ -239,12 +239,18 @@ class PersistentTaskProgressManager:
             )
             self._mark_dirty()
 
-    def fail_task(self, task_id: str, error: str) -> None:
-        """Mark a task/subtask as failed."""
+    def fail_task(self, task_id: str, error: str, client_error: bool = False) -> None:
+        """Mark a task/subtask as failed.
+
+        ``client_error`` zegt dat de aanroeper iets vroeg wat niet kan (een onbekend
+        component, een ongeldige naam). Dat is geen storing van ZAD, dus dan gaat dezelfde
+        boodschap op WARNING in plaats van ERROR en komt hij niet in de alertering terecht.
+        """
         if task_id in self._subtasks:
             self._subtasks[task_id]["status"] = TaskStatus.FAILED.value
             self._subtasks[task_id]["error"] = error
-            logger.error(
+            log = logger.warning if client_error else logger.error
+            log(
                 "Task %s: Failed task: %s (%s): %s",
                 self._task_id,
                 self._subtasks[task_id]["name"],
