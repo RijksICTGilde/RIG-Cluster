@@ -407,6 +407,29 @@ class AllowedValuesValidator:
         return []
 
 
+class StorageSizeValidator:
+    """Validates the size of one storage mount against the platform ceiling.
+
+    The rule itself lives with the storage config model
+    (``catalog/shared/storage.check_storage_size``), which is what types the config
+    API's request bodies. This wrapper puts the SAME rule on the form field, because
+    a dropdown is not a check: the size editable declares a ``values_provider`` and
+    nothing validated the value that came back, so a hand-made POST set any size it
+    liked.
+    """
+
+    def validate(self, value: Any) -> list[str]:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return []
+        from opi.services.catalog.shared.storage import check_storage_size
+
+        try:
+            check_storage_size(str(value))
+        except ValueError as e:
+            return [str(e)]
+        return []
+
+
 class MemoryRangeValidator:
     """Validates that a K8s memory string falls within a min/max range.
 

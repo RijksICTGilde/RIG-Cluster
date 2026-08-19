@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
+from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
 
@@ -445,15 +446,21 @@ class StorageSizeOptionsProvider:
     # De lijst ligt vast: elk project krijgt deze keuzes.
     options_source: ClassVar[OptionsSource | None] = None
 
+    #: Alleen het label per maat. De maten zelf staan in ``STORAGE_SIZES``, want daar
+    #: hangt ook de bovengrens aan die het configmodel afdwingt; twee lijsten die uit
+    #: elkaar lopen is precies hoe een keuzelijst iets anders gaat beloven dan de API
+    #: accepteert.
+    LABELS: ClassVar[dict[str, str]] = {
+        "50Mi": "50 MB",
+        "100Mi": "100 MB",
+        "250Mi": "250 MB",
+        "500Mi": "500 MB",
+        "1Gi": "1 GB",
+    }
+
     def get_options(self) -> list[dict[str, Any]]:
         """Get available storage size options."""
-        return [
-            {"value": "50Mi", "label": "50 MB"},
-            {"value": "100Mi", "label": "100 MB"},
-            {"value": "250Mi", "label": "250 MB"},
-            {"value": "500Mi", "label": "500 MB"},
-            {"value": "1Gi", "label": "1 GB"},
-        ]
+        return [{"value": size, "label": self.LABELS.get(size, size)} for size in STORAGE_SIZES]
 
 
 class KeycloakTemplateOptionsProvider:
@@ -829,8 +836,11 @@ class DomainFormatOptionsProvider:
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
             "Hangt af van het gekozen base-domain: de streepjes-varianten kunnen altijd, de "
-            "punt-varianten alleen als dat domein losse subdomeinen met punten ondersteunt."
+            "punt-varianten alleen als dat domein losse subdomeinen met punten ondersteunt. "
+            "Welk domein dat kan staat als 'supports-dots' bij het domein in de clusterlijst."
         ),
+        endpoint="GET /api/v2/projects/{project_name}/clusters",
+        path="clusters[].base-domains[].supports-dots",
     )
 
     def __init__(self, base_domain: str | None = None, cluster: str | None = None) -> None:
@@ -948,15 +958,55 @@ _PUBLISH_TLS_MODE_OPTIONS = [
     {"value": "provided", "label": "Eigen certificaat op de ingress (aangeleverd)"},
 ]
 
+#: Wat 'aangeleverd' heet zolang het project geen bijlage heeft om aan te leveren.
+#: ``PublishOnWebComponentConfig`` weigert ``tls: provided`` zonder ``attachment``, en het
+#: bijlageveld dat ernaast verschijnt heeft bij een lege catalogus geen enkele waarde om te
+#: kiezen -- dus wie de modus toch koos kwam in een scherm dat hij niet kon opslaan en niet
+#: kon herstellen. De optie blijft STAAN en wordt uitgeschakeld: wie ernaar zoekt vindt hem
+#: met de reden erbij, waar een optie die stil verdwijnt alleen een tweede raadsel geeft.
+_PROVIDED_WITHOUT_CERTIFICATE = "Eigen certificaat op de ingress - upload eerst een certificaat bij Bijlagen"
+
+
+def publish_tls_mode_options(yaml_data: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """De drie TLS-modi, met 'provided' uitgeschakeld zolang er geen bijlage is.
+
+    Eén helper voor beide lagen (component en de per-deployment override): een modus die
+    op het component niet te kiezen is, moet dat op de override ook niet zijn.
+
+    Zonder project (een kale render, een voorbeeld) blijft alles staan. Dat is dezelfde
+    keuze als bij het erf-label van ``PublishTlsOverrideOptionsProvider``: geen gegevens is
+    geen reden om te gokken, en een lege catalogus concluderen uit een ontbrekende context
+    zou de modus uitschakelen op een scherm dat er niets over weet.
+    """
+    # Lokaal, zoals bij AttachmentOptionsProvider hieronder: project_file_handler importeert
+    # deze module langs de vormenlaag terug.
+    from opi.handlers.project_file_handler import extract_attachment_catalog
+
+    kan_aangeleverd = not yaml_data or bool(extract_attachment_catalog(yaml_data))
+    return [
+        {**option, "label": _PROVIDED_WITHOUT_CERTIFICATE, "disabled": True}
+        if option["value"] == "provided" and not kan_aangeleverd
+        else dict(option)
+        for option in _PUBLISH_TLS_MODE_OPTIONS
+    ]
+
 
 class PublishTlsModeOptionsProvider:
-    """Static options for how TLS is handled on a published component."""
+    """Options for how TLS is handled on a published component.
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    ``yaml_data`` is handed to every provider that accepts it (see
+    ``bridge._resolve_options``); zonder project valt de lijst terug op alle drie de modi.
+    """
+
+    # De WAARDEN liggen vast: elk project krijgt deze drie. Alleen of 'provided' te kiezen
+    # is hangt van de bijlagencatalogus af, en dat verandert niets aan wat de API accepteert.
     options_source: ClassVar[OptionsSource | None] = None
 
+    def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
+        self._yaml_data = yaml_data or {}
+
     def get_options(self) -> list[dict[str, Any]]:
-        return list(_PUBLISH_TLS_MODE_OPTIONS)
+        return publish_tls_mode_options(self._yaml_data)
 
 
 class PublishTlsOverrideOptionsProvider:
@@ -999,7 +1049,7 @@ class PublishTlsOverrideOptionsProvider:
         return f"Erven van het component: {labels.get(mode, mode)}"
 
     def get_options(self) -> list[dict[str, Any]]:
-        return [{"value": "", "label": self._inherited_label()}, *_PUBLISH_TLS_MODE_OPTIONS]
+        return [{"value": "", "label": self._inherited_label()}, *publish_tls_mode_options(self._yaml_data)]
 
 
 class YesNoOptionsProvider:
@@ -1212,15 +1262,18 @@ class CrossDomainProjectOptionsProvider:
     """Peer projects a cross-domain rule may reference.
 
     Reads ``_cross_domain_projects`` from ``yaml_data`` -- a precomputed list of project
-    names the logged-in user is authorized for (set by ``build_cross_domain_context``),
-    excluding the own project. Empty (no context at all) shows an explanatory option instead
-    of a blank select. A stored value that is no longer in the list is kept selectable so a
-    save does not silently drop it.
+    names the logged-in user is authorized for (set by ``build_cross_domain_context``), the
+    own project included. Empty (no context at all) shows an explanatory option instead of a
+    blank select. A stored value that is no longer in the list is kept selectable so a save
+    does not silently drop it.
 
     This list is deliberately limited to projects the user is authorized for: a peer you
     cannot see is a peer you cannot name here. That does narrow cross-domain access to
     projects you are a member of; widening it would disclose the platform's project names to
     every user and is a separate decision.
+
+    The label shows the display name with the code between brackets, from
+    ``_cross_domain_project_labels``; a project without a display name shows its code alone.
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
@@ -1244,6 +1297,7 @@ class CrossDomainProjectOptionsProvider:
             empty_label="Geen andere projecten beschikbaar waar u toegang op heeft",
             choose_label="-- Kies een project --",
             stale_suffix="(niet meer beschikbaar)",
+            labels=self.yaml_data.get("_cross_domain_project_labels") or None,
         )
 
 
@@ -1496,6 +1550,8 @@ class CrossDomainPortOptionsProvider:
         description=(
             "De inkomende poorten van het ontvangende component, plus 4180 als daar een authorization-wall voor staat."
         ),
+        endpoint="GET /api/v2/projects/{project_name}/components",
+        path="components[].ports",
     )
 
     def __init__(
@@ -1659,8 +1715,10 @@ class InviteAuthMethodOptionsProvider:
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
             "sso kan altijd; local alleen als het keycloak-template van dit project lokale "
-            "accounts toestaat (services/keycloak/config/template is dan niet sso-only)."
+            "accounts toestaat (het template is dan niet sso-only)."
         ),
+        endpoint="GET /api/v2/projects/{project_name}/services/keycloak/config",
+        path="configurations[].config.template",
     )
 
     def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
@@ -1788,13 +1846,34 @@ class InviteApplicationUrlOptionsProvider:
             logger.debug("Could not derive public URLs for the invite destination", exc_info=True)
             urls = []
 
+        # Een component MAG meerdere paden publiceren, en dat zijn dan evenzoveel adressen.
+        # Het label noemde alleen deployment en component, dus die adressen kwamen als twee
+        # regels "production / frontend" in de lijst: niet te onderscheiden, terwijl je er
+        # wel een van moet kiezen. De ontdubbeling hieronder pakt ze niet, en terecht, want
+        # de URL's verschillen echt. Het pad komt er dus bij, maar alleen waar het iets
+        # oplost: bij een component met een enkel pad is "/" achter de naam alleen ruis.
         seen: set[str] = set()
+        gekozen: list[dict[str, str]] = []
         for entry in urls:
             url = entry.get("url")
             if not url or url in seen:
                 continue
             seen.add(url)
-            options.append({"value": url, "label": f"{entry['deployment_name']} / {entry['component_name']}"})
+            gekozen.append(entry)
+
+        meervoudig: set[tuple[str, str]] = set()
+        geteld: set[tuple[str, str]] = set()
+        for entry in gekozen:
+            sleutel = (entry["deployment_name"], entry["component_name"])
+            if sleutel in geteld:
+                meervoudig.add(sleutel)
+            geteld.add(sleutel)
+
+        for entry in gekozen:
+            label = f"{entry['deployment_name']} / {entry['component_name']}"
+            if (entry["deployment_name"], entry["component_name"]) in meervoudig:
+                label = f"{label} ({entry.get('path') or '/'})"
+            options.append({"value": entry["url"], "label": label})
 
         if self.current_value and self.current_value not in seen:
             options.append({"value": self.current_value, "label": f"{self.current_value} (niet meer afleidbaar)"})

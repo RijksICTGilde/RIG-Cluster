@@ -2965,6 +2965,50 @@ class ProjectFileHandler:
 
         return False
 
+    def project_declares_service(
+        self,
+        project_data: dict[str, Any],
+        service_types: list[str],
+    ) -> bool:
+        """Check if the project declares any of these services ANYWHERE.
+
+        Deliberately broader than :meth:`deployment_uses_service`, which resolves only
+        the components a deployment currently references. Cleanup must not use that
+        narrow answer: a deployment rewired to other components stops "using" the
+        service while its provisioned resources live on, and the delete then skips them
+        (mpfoa-e01, mpfoa-e2w on odcn-production, 2026). For deletion the question is
+        "could this project ever have provisioned this?", so project-level services,
+        every catalog component and every deployment block all count.
+
+        Args:
+            project_data: The parsed project data
+            service_types: Service type values to look for
+
+        Returns:
+            True if any part of the project declares one of the services
+        """
+        wanted = set(service_types)
+
+        for service_item in project_data.get("services") or []:
+            if service_entry_name(service_item) in wanted:
+                return True
+
+        for component in project_data.get("components") or []:
+            if any(s in wanted for s in extract_service_names_from_component(component)):
+                return True
+
+        for deployment in project_data.get("deployments") or []:
+            if not isinstance(deployment, dict):
+                continue
+            for service_item in deployment.get("services") or []:
+                if service_entry_name(service_item) in wanted:
+                    return True
+            for component in deployment.get("components") or []:
+                if any(s in wanted for s in extract_service_names_from_component(component)):
+                    return True
+
+        return False
+
     def get_deployment_backup_labels(
         self,
         project_data: dict[str, Any],

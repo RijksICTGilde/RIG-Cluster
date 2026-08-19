@@ -703,7 +703,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # that carry its section. Template-only: no editable names it, so it falls outside the
     # write set and never reaches the saved project.
     if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
-        state.base_data.update(build_cross_domain_context(project_name, _user_email))
+        state.base_data.update(build_cross_domain_context(_user_email))
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
@@ -1366,15 +1366,25 @@ async def _process_and_save_modal_edit(
         if isinstance(entry, dict) and entry.get("content")
     }
 
-    existing_data = await apply_modal_edit(
-        existing_data,
-        merged_data,
-        flow=flow,
-        active_sections=active_sections,
-        state=state,
-        project_name=project_name,
-        original_attachment_content=original_attachment_content,
-    )
+    # De merge zit in dezelfde rij als het opslaan hieronder: ook hij kan de bewerking
+    # WEIGEREN (het doel van een index-flow wijst niet meer dezelfde deployment aan, zie
+    # guard_target_still_points_at_the_same_item). Buiten de try was dat een kale 500,
+    # terwijl de weigering juist een uitleg voor de gebruiker draagt.
+    try:
+        existing_data = await apply_modal_edit(
+            existing_data,
+            merged_data,
+            flow=flow,
+            active_sections=active_sections,
+            state=state,
+            project_name=project_name,
+            original_attachment_content=original_attachment_content,
+        )
+    except ProjectIntegrityError as e:
+        logger.warning("Modal wizard merge rejected for %s (flow=%s): %s", project_name, flow.flow_id, e)
+        return existing_data, _render_modal_review(
+            request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
+        )
 
     # Save through the single validated path: schema + structural integrity
     # validation, canonical dumper, commit + push, and cache refresh in one shot.

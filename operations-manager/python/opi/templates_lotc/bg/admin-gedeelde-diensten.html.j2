@@ -1,0 +1,52 @@
+{#
+  Services status: hoe vol en hoe druk de diensten zijn die WIJ aanbieden.
+
+  Wat een gebruiker in zijn eigen project doet staat hier NIET; dat hoort op de
+  projectpagina. De meetlaag trekt de projectnamespaces er daarom af.
+
+  De pagina zelf meet NIETS. De twee blokken worden lui opgehaald, elk met een eigen
+  verzoek, zoals het dashboard en de projectdetailpagina dat al doen: zo staat de pagina
+  er meteen, houdt een trage metriekbron hem niet op, en kost een kapot blok alleen dat
+  blok in plaats van de hele pagina.
+
+  DE VOLGORDE IS EEN KEUZE. Opslag bovenaan, want daar komt de eerste echte melding
+  vandaan. Daarna de databases. Daarna - en nadrukkelijk NIET weggelaten - wat er niet
+  gemeten wordt: zonder dat blok leest de afwezigheid van Redis en MinIO als "die zijn in
+  orde". En onderaan de drempels, zodat een rode rij hierboven navraagbaar is.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import page_head %}
+
+{% block page_title %}Services status - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "Services status",
+        "Hoe vol de databases en volumes van het platform zitten en hoeveel verbindingen er openstaan. Wat gebruikers in hun eigen project draaien staat hier niet."
+    ) }}
+
+    <div id="diensten-opslag"
+         hx-get="/admin/diensten/opslag"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <c-paragraph>Opslag wordt opgehaald...</c-paragraph>
+    </div>
+
+    <div id="diensten-databases"
+         hx-get="/admin/diensten/databases"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <c-paragraph>Databases worden opgehaald...</c-paragraph>
+    </div>
+
+    <div id="diensten-keycloak"
+         hx-get="/admin/diensten/keycloak"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <c-paragraph>Keycloak wordt opgehaald...</c-paragraph>
+    </div>
+
+    {% include "bg/_gedeelde-diensten-ongemeten.html.j2" %}
+
+    {% include "bg/_gedeelde-diensten-drempels.html.j2" %}
+{% endblock %}

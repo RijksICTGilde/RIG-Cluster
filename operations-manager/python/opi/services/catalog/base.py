@@ -808,7 +808,10 @@ class Service(ABC):
         return config
 
     def validate_config(
-        self, raw_config: ServiceConfigData | None = None, from_version: str | None = None
+        self,
+        raw_config: ServiceConfigData | None = None,
+        from_version: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> BaseModel:
         """Migrate (if needed) then validate this service's config; fail closed.
 
@@ -821,6 +824,12 @@ class Service(ABC):
         ``raw_config`` may be a dict (most services) or a list (sequence configs
         such as storage mounts). ``None`` defaults to an empty dict, which suits
         dict-config services; list-config services are always passed their list.
+
+        ``context`` is handed to Pydantic as validation context, for the one thing a
+        model cannot see for itself: whether it is looking at a value someone is
+        submitting now or at one that has been in the project file for a year. The
+        storage services use it for their size ceiling (see
+        ``catalog/shared/storage.STORED_CONTEXT_KEY``); every other model ignores it.
         """
         if self.config_model is None:
             raise TypeError(f"Service '{self.service_type.value}' takes no config")
@@ -829,7 +838,7 @@ class Service(ABC):
             raise TypeError(msg)
         config: ServiceConfigData = {} if raw_config is None else raw_config
         migrated = self.migrate_config(config, from_version or self.config_schema_version)
-        return self.config_model.model_validate(migrated)
+        return self.config_model.model_validate(migrated, context=context)
 
     # --- config field ownership (RC-5 "service owns its fields") ----------------
     # A service owns the fields it needs and exposes them per layer + per consumer.

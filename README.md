@@ -67,6 +67,7 @@ Feature-specific documentation is in the [`features/`](features/) directory. Key
 - [Backup System](features/backup-system.md) - PVC backup and restore
 - [Bootstrap API Actions](features/bootstrap-api-actions.md) - API operations
 - [Namespace PostgreSQL Database](features/namespace-postgresql-database.md) - per-project database provisioning
+- [CAA Records](features/caa-records.md) - keeps our DNS zones locked to the CA we actually use
 
 ## Tools
 
