@@ -43,7 +43,9 @@ spec:
           command: ["/usr/local/bin/stalwart-mail"]
           args: ["--config", "/etc/mail/config.toml"]
           ports:
-            - containerPort: 587
+            # 2525 in plaats van 587: zie de toelichting bij de submission-listener in
+            # configmap.yaml. De Service blijft 587 aanbieden.
+            - containerPort: 2525
               name: submission
             - containerPort: 8080
               name: management
@@ -121,12 +123,12 @@ spec:
               mountPath: /tmp
           livenessProbe:
             tcpSocket:
-              port: 587
+              port: 2525
             initialDelaySeconds: 20
             periodSeconds: 10
           readinessProbe:
             tcpSocket:
-              port: 587
+              port: 2525
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:

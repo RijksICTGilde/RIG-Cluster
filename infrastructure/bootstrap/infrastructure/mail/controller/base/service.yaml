@@ -10,9 +10,10 @@ spec:
   selector:
     app: rig-mail-relay
   ports:
+    # De container luistert op 2525 (zie configmap.yaml), het contract blijft 587.
     - name: submission
       port: 587
-      targetPort: 587
+      targetPort: 2525
     - name: management
       port: 8080
       targetPort: 8080
