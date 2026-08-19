@@ -80,15 +80,29 @@ async def test_ververst_niet_opnieuw_als_de_umbrella_al_bij_is(sleeps: list[floa
     assert connector.refreshes == 1, "alleen de eerste ronde"
 
 
-async def test_hoogstens_een_refresh_per_interval(sleeps: list[float]) -> None:
-    from opi.manager.project_manager import UMBRELLA_REFRESH_INTERVAL_SECONDEN
+async def test_wacht_hoogstens_de_ondergrens_tussen_twee_refreshes(sleeps: list[float]) -> None:
+    """De lus loopt op het antwoord van de refresh; de ondergrens is alleen een rem."""
+    from opi.manager.project_manager import UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN
 
     connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
 
     await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
 
-    assert sleeps == [UMBRELLA_REFRESH_INTERVAL_SECONDEN] * 3, "elke ronde wacht het volle interval"
-    assert connector.refreshes == len(sleeps), "nooit twee refreshes binnen één interval"
+    assert len(sleeps) == connector.refreshes - 1, "alleen tússen twee refreshes wordt gewacht"
+    assert all(0 < wachttijd <= UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN for wachttijd in sleeps), (
+        "nooit langer dan de ondergrens, want de refresh wachtte zelf al op een reconcile"
+    )
+
+
+async def test_stopt_na_het_maximum_aantal_pogingen(sleeps: list[float]) -> None:
+    """Blijft de revisie verkeerd, dan is er iets anders aan de hand dan een verloren wekker."""
+    from opi.manager.project_manager import UMBRELLA_REFRESH_MAX_POGINGEN
+
+    connector = FakeArgoConnector(["oude-revisie"])
+
+    await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
+
+    assert connector.refreshes == UMBRELLA_REFRESH_MAX_POGINGEN, "niet eindeloos doorprikken"
 
 
 async def test_zonder_bekende_commit_blijft_het_bij_een_refresh(sleeps: list[float]) -> None:

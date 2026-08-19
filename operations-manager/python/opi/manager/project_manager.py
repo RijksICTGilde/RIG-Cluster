@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 import shutil
+import time
 from collections.abc import Callable  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -80,7 +81,7 @@ from opi.handlers.project_file_handler import (
     remove_component_references,
 )
 from opi.handlers.sops import SopsHandler
-from opi.manager.argo_manager import UMBRELLA_REFRESH_INTERVAL_SECONDEN
+from opi.manager.argo_manager import UMBRELLA_REFRESH_MAX_POGINGEN, UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
@@ -2761,15 +2762,21 @@ class ProjectManager:
         terwijl de vergeleken revisie van ervoor is. Zonder bekende commit valt er niets te
         bewijzen en blijft het bij de eerste refresh, zoals voorheen.
 
+        De lus loopt op het antwoord van de refresh en niet op een tijdklok: die call blijft
+        hangen tot er een reconcile is afgerond, en juist dan is te zien of die de goede
+        revisie had. Zo niet, dan is dat het bewijs dat ons vlaggetje in andermans run is
+        opgegaan en heeft meteen opnieuw prikken zin.
+
         Bedoeld om naast de wachters te draaien en door de aanroeper geannuleerd te worden.
         """
-        if not await argo_connector.refresh_application("user-applications"):
-            logger.warning("Refresh van user-applications leverde niets op; een volgende ronde probeert het opnieuw")
-        if not pushed_commit:
-            return
-
-        while True:
-            await asyncio.sleep(UMBRELLA_REFRESH_INTERVAL_SECONDEN)
+        for poging in range(1, UMBRELLA_REFRESH_MAX_POGINGEN + 1):
+            gestart = time.monotonic()
+            if not await argo_connector.refresh_application("user-applications"):
+                logger.warning(
+                    "Refresh van user-applications leverde niets op; een volgende ronde probeert het opnieuw"
+                )
+            if not pushed_commit:
+                return
 
             status_data = await argo_connector.get_application_status("user-applications") or {}
             status = status_data.get("status", {}) or {}
@@ -2781,14 +2788,24 @@ class ProjectManager:
                 logger.info(f"user-applications heeft onze commit {pushed_commit} vergeleken; niet opnieuw verversen")
                 return
 
+            if poging == UMBRELLA_REFRESH_MAX_POGINGEN:
+                break
+
             logger.info(
                 f"user-applications staat nog op revisie {revision or 'onbekend'} in plaats van {pushed_commit}; "
                 "de vorige refresh is verloren gegaan, opnieuw verversen"
             )
-            if not await argo_connector.refresh_application("user-applications"):
-                logger.warning(
-                    "Refresh van user-applications leverde niets op; een volgende ronde probeert het opnieuw"
-                )
+            # De refresh hierboven wachtte zelf al op een reconcile; kwam hij toch meteen
+            # terug, dan houdt deze ondergrens het een lus in plaats van een storm.
+            rest = UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN - (time.monotonic() - gestart)
+            if rest > 0:
+                await asyncio.sleep(rest)
+
+        logger.warning(
+            f"user-applications staat na {UMBRELLA_REFRESH_MAX_POGINGEN} refreshes nog op revisie "
+            f"{self._argo_manager.last_umbrella_revision or 'onbekend'} in plaats van {pushed_commit}; "
+            "hier is meer aan de hand dan een verloren wekker, doorprikken helpt niet"
+        )
 
     async def process_project_from_git(
         self,
