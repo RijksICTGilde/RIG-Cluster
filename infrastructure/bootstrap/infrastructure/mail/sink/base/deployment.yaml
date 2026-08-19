@@ -54,7 +54,9 @@ spec:
           env:
             # Geen MP_DATABASE, dus alles blijft in het geheugen. Een sink hoort niets te
             # bewaren: een herstart is de manier om schoon te beginnen, en er is geen PVC
-            # nodig die met readOnlyRootFilesystem zou botsen.
+            # nodig die met readOnlyRootFilesystem zou botsen. Wel schrijft Mailpit een
+            # tijdelijke sqlite-klad in /tmp (gemeten 19 augustus 2026: "open
+            # /tmp/mailpit-<n>.db: read-only file system"), dus /tmp is een emptyDir.
             - name: MP_SMTP_BIND_ADDR
               value: "[::]:1025"
             - name: MP_UI_BIND_ADDR
@@ -89,3 +91,9 @@ spec:
               port: 1025
             initialDelaySeconds: 2
             periodSeconds: 5
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

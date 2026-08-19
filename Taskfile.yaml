@@ -2790,6 +2790,32 @@ tasks:
           --dry-run=client -o yaml | kubectl apply -f -
 
         echo "sops-age-key secret created in rig-system"
+
+        # De RON-namespace (mailrelay) krijgt hetzelfde geheim: de CMP-plugin die de
+        # ron-infrastructure-app rendert, controleert op de namespace en leest dit secret
+        # in de namespace van de app. De namespace zelf kan NIET via GitOps (de ArgoCD op
+        # dit clustertype draait in namespaced mode en weigert Namespace-resources), dus
+        # hij wordt hier handmatig aangemaakt, met het label dat de argocd-operator de
+        # beheer-RBAC voor de namespace laat aanmaken. Zonder deze twee blijft de app
+        # hangen op "Namespace 'rig-ron' does not exist" / "SOPS secret not found".
+        kubectl apply -f - <<'EOF'
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: rig-ron
+          labels:
+            app.kubernetes.io/name: operations-ron
+            app.kubernetes.io/component: mail
+            app.kubernetes.io/part-of: rig-platform
+            argocd.argoproj.io/managed-by: rig-system
+        EOF
+
+        kubectl create secret generic sops-age-key \
+          --from-file=key=security/sandbox-key.txt \
+          -n rig-ron \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "namespace rig-ron en sops-age-key secret created"
     silent: true
 
   sandbox:deploy-postgresql-direct:
