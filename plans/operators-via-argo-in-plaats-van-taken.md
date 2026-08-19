@@ -79,7 +79,19 @@ Voorstel, op basis van wat waarvan afhangt:
 
 De CRD's van cert-manager en CloudNativePG zijn te groot voor de annotatie die client-side apply gebruikt (`metadata.annotations: Too long`). Die Applications hebben `syncOptions: [ServerSideApply=true]` nodig. Dat staat nu nergens in de repo.
 
-### 4.4 Per cluster aan of uit
+### 4.4 De scope van ArgoCD, en welk cluster de uitzondering is
+
+Dit stond eerst omgekeerd in dit plan: alsof fundament een bijzonder geval was dat extra rechten kreeg. Dat klopt niet. Een kaal Kubernetes-cluster is het normale geval, en de sandbox is er ook een. Daar beheert ArgoCD alles inclusief de operators, en dat vraagt het recht om namespaces, CRD's en cluster-brede RBAC aan te maken.
+
+ODCN is de uitzondering, en niet omdat ArgoCD daar anders werkt maar omdat het cluster het niet toelaat: daar praat ArgoCD via de Capsule-proxy en is hij tenant-scoped.
+
+Dat recht komt niet van de ArgoCD-resource maar van de operator. Zonder `ARGOCD_CLUSTER_CONFIG_NAMESPACES` geeft de argocd-operator elke instantie alleen een Role in zijn eigen namespace. `prepare-argocd-operator` zet die variabele daarom bij het toepassen, met `ARGOCD_CLUSTER_SCOPED` uit het env-bestand als knop en `true` als default; odcn-production zet hem op false.
+
+De variabele wordt bewust bij het toepassen gezet en niet in het gegenereerde operator-manifest, zodat dat bestand voor elk cluster gelijk blijft.
+
+Daaruit volgt ook dat er geen aparte bootstrap-stap voor service accounts nodig is. OPI's ServiceAccount, ClusterRole en ClusterRoleBinding zitten in zijn eigen Application en komen dus uit git zodra ArgoCD cluster-scoped is. ArgoCD's eigen service account maakt de operator aan bij het reconcilieren van de ArgoCD-resource. En de operator brengt zijn eigen service account mee in zijn installatiemanifest, dat een mens met cluster-admin toepast. Daar houdt de keten op, en dat is de enige echte bodem.
+
+### 4.5 Per cluster aan of uit
 
 De operator-Applications komen in de clusterlijst van sandboxed-local en fundament-poc, en **niet** in die van odcn. Daar blijven ze buitenom geïnstalleerd, precies zoals nu. De ODCN-overlay verandert dus niet.
 

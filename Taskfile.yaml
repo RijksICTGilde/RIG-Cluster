@@ -142,6 +142,12 @@ tasks:
       VERSION: '{{default "v0.14.0" .VERSION}}'
       OUTPUT_DIR: '{{default "bootstrap/crd/operator" .OUTPUT_DIR}}'
       APPLY: '{{default "true" .APPLY}}'
+      # Een kaal Kubernetes-cluster is het normale geval: ArgoCD beheert daar ook de
+      # operators, en dat vraagt namespaces, CRD's en cluster-brede RBAC. Vandaar true als
+      # default. ODCN zet dit op false, want daar praat ArgoCD via de Capsule-proxy en is
+      # hij tenant-scoped; de operators worden daar buiten GitOps geinstalleerd.
+      CLUSTER_SCOPED: '{{default "true" .ARGOCD_CLUSTER_SCOPED}}'
+      NS: '{{default "rig-system" .RIG_NAMESPACE}}'
     cmds:
       - |
         echo "Preparing ArgoCD Operator version {{.VERSION}}..."
@@ -225,6 +231,21 @@ tasks:
           echo "Applying ArgoCD operator to cluster..."
           kubectl replace --force -f "$OUTPUT_FILE"
           echo "✅ ArgoCD operator applied to cluster"
+
+          # De scope wordt hier gezet en niet in het gegenereerde manifest, zodat dat
+          # bestand voor elk cluster gelijk blijft. Zonder deze variabele geeft de operator
+          # elke ArgoCD-instantie alleen een Role in zijn eigen namespace, en dan kan
+          # ArgoCD geen namespaces, CRD's of ClusterRoles aanmaken.
+          OP_NS=argocd-operator-system
+          OP_DEPLOY=deployment/argocd-operator-controller-manager
+          if [[ "{{.CLUSTER_SCOPED}}" == "true" ]]; then
+            kubectl set env -n "$OP_NS" "$OP_DEPLOY" ARGOCD_CLUSTER_CONFIG_NAMESPACES={{.NS}}
+            kubectl rollout status -n "$OP_NS" "$OP_DEPLOY" --timeout=120s
+            echo "✅ operator cluster-scoped voor namespace {{.NS}}"
+          else
+            kubectl set env -n "$OP_NS" "$OP_DEPLOY" ARGOCD_CLUSTER_CONFIG_NAMESPACES-
+            echo "ℹ️  operator namespace-scoped gelaten (dit cluster staat cluster-brede rechten niet toe)"
+          fi
         else
           echo "To apply this to your cluster, run:"
           echo "kubectl replace --force -f {{.OUTPUT_DIR}}/argocd-operator-install.yaml"
