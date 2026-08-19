@@ -24,8 +24,10 @@ spec:
             matchLabels:
               created-by: operations-manager
       ports:
+        # 2525, niet 587: dat is de podpoort (de Service vertaalt 587 -> 2525,
+        # zie configmap.yaml), en een NetworkPolicy kijkt naar de poort van de pod.
         - protocol: TCP
-          port: 587
+          port: 2525
     # OPI zelf: post versturen namens het platform (587) en accounts aanmaken op de
     # management-API (8080).
     - from:
@@ -33,8 +35,10 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: rig-prd-operations
       ports:
+        # 2525, niet 587: dat is de podpoort (de Service vertaalt 587 -> 2525,
+        # zie configmap.yaml), en een NetworkPolicy kijkt naar de poort van de pod.
         - protocol: TCP
-          port: 587
+          port: 2525
         - protocol: TCP
           port: 8080
   egress:
