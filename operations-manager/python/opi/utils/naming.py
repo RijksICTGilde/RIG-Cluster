@@ -739,26 +739,58 @@ def generate_mail_account_name(project_name: str) -> str:
         >>> generate_mail_account_name("algor-odc")
         'project-algor-odc'
     """
-    return _truncate_if_needed(f"{MAIL_PROJECT_ACCOUNT_PREFIX}{_sanitize_for_lowercase(project_name)}", 63)
+    return f"{MAIL_PROJECT_ACCOUNT_PREFIX}{mail_project_label(project_name)}"
 
 
 #: Longest local part an e-mail address may carry (RFC 5321, section 4.5.3.1.1).
 MAIL_LOCAL_PART_MAX_LENGTH = 64
+
+#: The bare sender address every cluster uses, minus its domain. Only used to work out the
+#: label ceiling below; the address itself comes from ``cluster_config``.
+_MAIL_SENDER_LOCAL_PART = "noreply-rijksapp"
+
+#: How much of a project name fits in BOTH the account name and the sender address.
+#:
+#: The two have to agree, character for character, and that is the whole reason this is a
+#: constant instead of two truncations that happen to be equal today. The relay works the
+#: sender address out by taking the authenticated account name and cutting the
+#: ``project-`` prefix off it (identity rule 1 in its configmap) -- it cannot look the
+#: address up per account, so it derives it. If OPI cut the label at a different length
+#: than it puts in the account name, the address OPI reports as ``SMTP_FROM`` would not be
+#: the address the relay composes, and only a project with a long name would find out.
+#:
+#: The ceiling itself: ``noreply-rijksapp+`` is seventeen characters and a local part may
+#: be sixty-four. A cluster whose bare address has a LONGER local part than that would need
+#: a smaller number here; ``test_mail_sender_address_fits_every_cluster`` fails if one ever
+#: appears.
+MAIL_PROJECT_LABEL_MAX_LENGTH = MAIL_LOCAL_PART_MAX_LENGTH - len(_MAIL_SENDER_LOCAL_PART) - 1
+
+
+def mail_project_label(project_name: str) -> str:
+    """The project's label in mail: the part that follows ``project-`` and ``+``.
+
+    One label, two users -- the account name and the sender address -- so that cutting the
+    account's prefix off yields exactly the plus part of the address. That equality is what
+    lets the relay derive an address it was never told.
+    """
+    return _truncate_if_needed(_sanitize_for_lowercase(project_name), MAIL_PROJECT_LABEL_MAX_LENGTH)
 
 
 def generate_mail_sender_address(base_address: str, project_name: str) -> str:
     """
     Generate the address a project sends from: ``<local>+<project>@<domain>``.
 
-    The ONE place this address is composed. The relay does not compose it a second time --
-    it reads it back from a lookup table OPI fills -- precisely because a second composer
-    would disagree with this one the moment something is truncated.
+    What OPI hands the application as ``SMTP_FROM`` and writes into the project file. The
+    relay composes the same address itself, out of the account name (see
+    ``MAIL_PROJECT_LABEL_MAX_LENGTH`` for why the two cannot disagree): it has no way to
+    look up a value per account at MAIL FROM time, which is the one thing Stalwart v0.11.8
+    turned out not to offer. So this is a REPORT of what will happen, and
+    ``tests/test_send_email_service.py`` pins it against the relay's own rule.
 
     Truncation is the reason this is not an f-string at the call site. ``noreply-rijksapp+``
     is seventeen characters and a local part may be sixty-four, so a project name over
-    forty-seven characters runs past the limit and the upstream refuses an address nobody
-    measured. Cutting the PROJECT part (like ``generate_mail_account_name`` cuts the account
-    name) keeps the address deliverable and keeps the plus part recognisable.
+    forty-seven characters would run past the limit and the upstream would refuse an address
+    nobody measured.
 
     Args:
         base_address: The cluster's bare sender address, e.g. ``noreply-rijksapp@rijksoverheid.nl``
@@ -772,9 +804,7 @@ def generate_mail_sender_address(base_address: str, project_name: str) -> str:
         'noreply-rijksapp+algor-odc@rijksoverheid.nl'
     """
     local_part, _, domain = base_address.partition("@")
-    ruimte = MAIL_LOCAL_PART_MAX_LENGTH - len(local_part) - 1
-    project = _truncate_if_needed(_sanitize_for_lowercase(project_name), ruimte)
-    return f"{local_part}+{project}@{domain}"
+    return f"{local_part}+{mail_project_label(project_name)}@{domain}"
 
 
 def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:

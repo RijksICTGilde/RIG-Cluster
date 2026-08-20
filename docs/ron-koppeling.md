@@ -169,7 +169,7 @@ From:         <from-name uit de projectconfiguratie> <noreply-rijksapp+<project>
 Return-Path:  noreply-rijksapp+<project>@rijksoverheid.nl
 ```
 
-De relay schrijft die hele `From:` zelf en gooit weg wat de applicatie meestuurde, naam en adres allebei; een applicatie kan er niet omheen en hoeft er niets voor te doen. De `Reply-To:` blijft wel van de applicatie. Houdt de relay voor een account geen afzender, dan is de terugval het kale `noreply-rijksapp@rijksoverheid.nl` zonder naam — dat is ook wat het platformaccount van ZAD zelf gebruikt, dat geen project is.
+De relay schrijft die hele `From:` zelf en gooit weg wat de applicatie meestuurde, naam en adres allebei; een applicatie kan er niet omheen en hoeft er niets voor te doen. De `Reply-To:` blijft wel van de applicatie. Het adres leidt de relay af uit de accountnaam (`project-<project>`, voorvoegsel eraf); de weergavenaam komt uit een klein sieve-script dat OPI genereert en via de management-API wegschrijft. Een account zonder dat voorvoegsel is geen project — dat is het platformaccount van ZAD zelf — en krijgt het kale `noreply-rijksapp@rijksoverheid.nl` zonder naam.
 
 Waarom het niet anders kan, en dit is het stuk dat je moet onthouden:
 
