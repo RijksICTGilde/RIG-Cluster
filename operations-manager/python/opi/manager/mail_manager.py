@@ -24,13 +24,7 @@ from typing import TYPE_CHECKING, Any
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
-from opi.connectors.mail import (
-    MailAccount,
-    MailConnector,
-    MailRelayNotConfiguredError,
-    MailSenderIdentity,
-    create_mail_connector,
-)
+from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
 from opi.core.cluster_config import get_mail_from_address, get_mail_relay_host, get_mail_relay_port, get_namespace
 from opi.core.config import settings
 from opi.services import ServiceType
@@ -153,26 +147,16 @@ class MailManager:
         else:
             await connector.update_principal(name=username, password=password)
 
-        # The sender is a SECOND thing the relay has to be told, and the reason is worth a
-        # sentence: a principal carries no sender, and no sieve expression in v0.11.8 can
-        # read one off it, so the ``From:`` this account gets is looked up in a table this
-        # is the only writer of. Written only on a difference, so processing a project
-        # twice makes no settings write and no reload -- and a changed ``from-name`` takes
-        # effect on the very next run, because that IS a difference.
-        identity = MailSenderIdentity(address=from_address, display_name=from_name)
-        stored = await connector.get_sender_identity(username)
-        if stored != identity:
-            if existing is not None and not stored.address:
-                # The account is on the relay and the relay does not know who it sends as:
-                # every message from it leaves under the bare platform address until this
-                # write lands. Nothing breaks, but it is a state that should not exist, and
-                # the sieve script cannot report it (v0.11.8 has no log command), so it is
-                # reported here.
-                logger.warning(
-                    f"Mailaccount {username} bestond op de relay zonder afzender; "
-                    f"tot nu toe vertrok zijn post onder het kale platformadres"
-                )
-            await connector.set_sender_identity(username, identity)
+        # The display NAME is a second thing the relay has to be told; the address it works
+        # out itself from this very account name (see ``_sender_address``). Written only on
+        # a difference, so processing a project twice makes no settings write and no
+        # reload -- and a changed ``from-name`` takes effect on the very next run, because
+        # that IS a difference.
+        #
+        # Nothing to warn about when it is absent: no display name is a legal outcome, and a
+        # project whose name has not been written yet sends from the right ADDRESS with no
+        # name next to it. That is the whole failure mode.
+        await connector.set_sender_name(username, from_name)
 
         return MailAccount(
             username=username,
@@ -460,10 +444,10 @@ class MailManager:
             connector = await create_mail_connector()
         except MailRelayNotConfiguredError:
             return None
-        # The sender goes with the account. Leaving it would keep a project's name and
-        # address in the relay's configuration after the project is gone, and hand them to
-        # whoever next gets an account by that name.
-        await connector.delete_sender_identity(username)
+        # The display name goes with the account. Leaving it would keep a project's name in
+        # the relay's configuration after the project is gone, and hand it to whoever next
+        # gets an account by that name.
+        await connector.delete_sender_name(username)
         return await connector.delete_principal(username)
 
     async def _revoke(self, project_data: dict[str, Any], cluster: str) -> None:
@@ -514,10 +498,17 @@ class MailManager:
         relay falls back to when it holds no sender for an account, so the two coincide by
         construction instead of by coincidence.
 
-        What is returned is not a request but a REPORT of what the relay will do: it reads
-        the same value back out of its own lookup table (``set_sender_identity``) and
-        overwrites the header with it. It is handed to the application as ``SMTP_FROM`` so
-        a developer can see what the recipient gets.
+        What is returned is not a request but a REPORT of what the relay will do. The relay
+        composes this address ITSELF, by cutting the ``project-`` prefix off the
+        authenticated account name, because Stalwart v0.11.8 turned out to have no way at
+        all to look a value up per account while a message is being accepted (measured; see
+        the identity rules in the relay's configmap). The two cannot disagree: both are
+        built from ``mail_project_label``, so the account name always carries exactly the
+        label the address puts after the ``+``.
+
+        It is handed to the application as ``SMTP_FROM`` so a developer can see what the
+        recipient gets, and written into the project file so the file answers "who does this
+        project send as".
         """
         base_address = get_mail_from_address(cluster)
         if project_name is None:

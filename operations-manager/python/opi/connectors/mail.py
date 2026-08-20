@@ -13,6 +13,7 @@ which is provisioning by side effect.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -54,26 +55,41 @@ class MailAccount:
     messages_per_day: int
 
 
-#: Settings prefix of the lookup table that holds each account's sender ADDRESS.
-#: Read by the sieve script as ``key_get('zad-afzenderadres', <account>)``.
-MAIL_SENDER_ADDRESS_LOOKUP = "lookup.zad-afzenderadres"
+#: Settings prefix under which each account's display name is stored, one key per
+#: account. This is the DATA: OPI reads it back to see what it wrote, and writes a key only
+#: when it changes.
+MAIL_SENDER_NAME_PREFIX = "zad.afzender.naam"
 
-#: Settings prefix of the lookup table that holds each account's display NAME. A key is
-#: absent for an account without one, and absent and empty mean the same thing to the
-#: script: send without a display name.
-MAIL_SENDER_NAME_LOOKUP = "lookup.zad-afzendernaam"
+#: The sieve script OPI generates from those keys, and the reason the data cannot simply BE
+#: the script: to change one account you would have to parse the generated code to keep the
+#: others. The script is a projection, the keys are the truth.
+#:
+#: Why a generated script and not a lookup table, which is what this started out as: an
+#: in-memory lookup store built from settings (``lookup.<naam>.<sleutel>``) is only ever
+#: built ONCE. A ``POST /api/reload`` does not refresh it -- measured on 20 August 2026
+#: against v0.11.8: the first account written got its value, every account added afterwards
+#: read as empty until the relay was RESTARTED. A sieve script written through the same API
+#: IS recompiled on every reload (measured in both directions: changing the value of an
+#: existing account took effect on the very next message, without a restart), so this is
+#: the one shape that stays current while the relay keeps running.
+MAIL_SENDER_TABLE_KEY = "sieve.trusted.scripts.zad-afzenders.contents"
+
+#: What an account name may look like before it is written into that generated script.
+#: Belt and braces around a value that is already computed by ``generate_mail_account_name``
+#: -- it ends up inside a sieve string literal, and this is the layer that would have to
+#: hold if it ever stopped being computed.
+_ACCOUNT_PATROON = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+#: Same for a display name. The form and the API refuse these characters already
+#: (``SendEmailConfig.from_name``); refusing them here too means the generated script cannot
+#: be broken open by a value that reached this connector some other way. Note ``$``: a sieve
+#: string interpolates ``${...}``, so a name containing it would read a variable instead of
+#: being text.
+_NAAM_VERBODEN = re.compile(r'[@<>"\\$\x00-\x1F\x7F]')
 
 
-@dataclass(frozen=True)
-class MailSenderIdentity:
-    """The ``From:`` the relay puts on this account's mail: an address and maybe a name."""
-
-    #: The address, in both the ``From:`` header and the envelope. Empty when the relay
-    #: holds nothing for this account, which is the state the fallback in the sieve script
-    #: covers and the one nobody should ever be in.
-    address: str = ""
-    #: The display name, or empty for "no display name" -- a valid outcome, not a fallback.
-    display_name: str = ""
+class MailSenderNameError(ValueError):
+    """A display name or account name that may not be written into the relay's script."""
 
 
 class MailConnector:
@@ -201,97 +217,135 @@ class MailConnector:
         logger.info(f"Mailaccount {name} verwijderd van de relay")
         return True
 
-    # --- the sender identity of an account -------------------------------------
+    # --- the display name of an account ------------------------------------------
     #
-    # The relay cannot work out who an account sends as. A sieve script knows only
-    # ``authenticated_as`` -- the ACCOUNT name -- and v0.11.8 has no expression function
-    # that reads a principal (measured: ``principal_get``, ``directory_query`` and
-    # ``sql_query`` do not exist; ``key_get``, ``key_set``, ``key_exists``, ``query`` and
-    # ``dns_query`` do). So the address and the display name are handed to the relay here,
-    # as two entries in a lookup table the script reads with ``key_get``.
+    # The relay works the sender ADDRESS out for itself, by cutting the ``project-`` prefix
+    # off the authenticated account name (identity rule 1 in its configmap). It has to:
+    # v0.11.8 offers nothing that can look a value up per account while a message is being
+    # accepted -- there is no expression function that reads a principal (``principal_get``,
+    # ``directory_query``, ``sql_query`` all do not exist), the lookup store that CAN be read
+    # live cannot be written through the management API, and the one that can be written is
+    # only built at startup. All measured on 20 August 2026.
     #
-    # Through the settings API and not through some file: it is the same admin credential
-    # this connector already authenticates with, the values land in the relay's own config
-    # store (PostgreSQL, so they survive a pod swap), and a written key is visible to the
-    # script right after a reload -- no restart. All measured on 20 August 2026 against
-    # v0.11.8.
+    # The display name cannot be derived from anything, so it is the one value that has to
+    # travel: OPI keeps it per account in the relay's settings and renders those settings
+    # into a small sieve script the identity rules include.
 
-    async def get_sender_identity(self, name: str) -> MailSenderIdentity:
-        """What the relay currently holds as this account's sender.
+    async def get_sender_names(self) -> dict[str, str]:
+        """Every account's display name, as the relay currently holds it.
 
-        Read per TABLE and then indexed on the account, not with the account in the query
-        prefix: the settings API matches on PREFIX, so asking for ``...naam.project-foo``
-        would also answer for ``project-foobar``.
+        The whole table in one call, and that is on purpose: the generated script is
+        rendered from ALL of them, so writing one name means knowing the others.
         """
-        return MailSenderIdentity(
-            address=await self._lookup_value(MAIL_SENDER_ADDRESS_LOOKUP, name),
-            display_name=await self._lookup_value(MAIL_SENDER_NAME_LOOKUP, name),
-        )
-
-    async def _lookup_value(self, table: str, name: str) -> str:
-        result = await self._request("GET", f"/api/settings/list?prefix={table}.")
+        result = await self._request("GET", f"/api/settings/list?prefix={MAIL_SENDER_NAME_PREFIX}.")
         items = ((result or {}).get("data") or {}).get("items") or {}
-        return items.get(name) or ""
+        return {account: naam for account, naam in items.items() if naam}
 
-    async def set_sender_identity(self, name: str, identity: MailSenderIdentity) -> None:
-        """Make the relay send this account's mail as ``identity``.
+    async def set_sender_name(self, account: str, display_name: str) -> bool:
+        """Give this account the display name recipients see. Returns whether anything changed.
 
-        Written in ONE call, so the address and the name can never briefly disagree, and
-        followed by a reload because the lookup tables are built when the configuration is
-        built. An empty display name is a DELETE and not an empty value: a key that says
-        nothing is one an administrator reading the settings does not have to interpret.
+        Idempotent by comparison and not by luck: a project is processed again on every
+        change it makes, and every write here drags a rebuild of the relay's whole
+        configuration behind it.
+
+        An empty name is a REMOVAL, not an empty value: no display name is a valid outcome
+        (the message then leaves with a bare address), and a key that says nothing is one an
+        administrator reading the settings has to interpret.
         """
-        changes: list[dict[str, Any]] = [
-            {
-                "type": "insert",
-                "values": [[f"{MAIL_SENDER_ADDRESS_LOOKUP}.{name}", identity.address]],
-                "assert_empty": False,
-            }
-        ]
-        if identity.display_name:
-            changes.append(
-                {
-                    "type": "insert",
-                    "values": [[f"{MAIL_SENDER_NAME_LOOKUP}.{name}", identity.display_name]],
-                    "assert_empty": False,
-                }
-            )
+        _controleer_naam(account, display_name)
+        namen = await self.get_sender_names()
+        if namen.get(account, "") == display_name:
+            return False
+        if display_name:
+            namen[account] = display_name
         else:
-            changes.append({"type": "delete", "keys": [f"{MAIL_SENDER_NAME_LOOKUP}.{name}"]})
-        await self._request("POST", "/api/settings", payload=changes)
-        await self.reload()
-        logger.info(f"Afzender van mailaccount {name} vastgelegd op de relay: {identity.address}")
+            namen.pop(account, None)
+        await self._write_sender_names(account, display_name, namen)
+        return True
 
-    async def delete_sender_identity(self, name: str) -> None:
-        """Remove this account's sender from the relay. Replay-safe: a missing key is fine."""
-        await self._request(
-            "POST",
-            "/api/settings",
-            payload=[
-                {
-                    "type": "delete",
-                    "keys": [
-                        f"{MAIL_SENDER_ADDRESS_LOOKUP}.{name}",
-                        f"{MAIL_SENDER_NAME_LOOKUP}.{name}",
-                    ],
-                }
-            ],
+    async def delete_sender_name(self, account: str) -> None:
+        """Forget this account's display name. Replay-safe: a missing key is fine."""
+        await self.set_sender_name(account, "")
+
+    async def _write_sender_names(self, account: str, display_name: str, namen: dict[str, str]) -> None:
+        """The key and the generated script in ONE request, then a reload.
+
+        One request, because the key is the data and the script is what the relay actually
+        reads: two requests could leave the relay reading a table that no longer matches
+        what OPI thinks it wrote.
+        """
+        sleutel = f"{MAIL_SENDER_NAME_PREFIX}.{account}"
+        wijzigingen: list[dict[str, Any]] = []
+        if display_name:
+            wijzigingen.append({"type": "insert", "values": [[sleutel, display_name]], "assert_empty": False})
+        else:
+            wijzigingen.append({"type": "delete", "keys": [sleutel]})
+        wijzigingen.append(
+            {"type": "insert", "values": [[MAIL_SENDER_TABLE_KEY, render_sender_table(namen)]], "assert_empty": False}
         )
+        await self._request("POST", "/api/settings", payload=wijzigingen)
         await self.reload()
-        logger.info(f"Afzender van mailaccount {name} verwijderd van de relay")
+        logger.info(f"Weergavenaam van mailaccount {account} bijgewerkt op de relay: {display_name!r}")
 
     async def reload(self) -> None:
-        """Rebuild the relay's configuration, so a written lookup value takes effect.
+        """Rebuild the relay's configuration, so a written value takes effect.
 
-        A build error on ANY key leaves the whole rebuild where it was -- measured, and it
-        is the trap in this path: a value written correctly stays invisible because
-        something entirely unrelated does not compile. The errors the relay reports are
-        therefore logged rather than swallowed, even though none of them is ours to fix.
+        A build error on ANY key leaves the whole rebuild where it was -- measured, and it is
+        the trap in this path: a value written correctly stays invisible because something
+        entirely unrelated does not compile. The errors the relay reports are therefore
+        logged rather than swallowed, even when none of them is ours.
         """
         result = await self._request("GET", "/api/reload")
         errors = ((result or {}).get("data") or {}).get("errors") or {}
         if errors:
             logger.warning(f"De mailrelay meldt configuratiefouten bij het herladen: {list(errors)}")
+
+
+def _controleer_naam(account: str, display_name: str) -> None:
+    """Refuse anything that would not be text inside the generated sieve script.
+
+    Raises:
+        MailSenderNameError: The account name or the display name carries a character that
+            would end the string it is written into.
+    """
+    if not _ACCOUNT_PATROON.match(account):
+        raise MailSenderNameError(
+            f"Mailaccountnaam {account!r} hoort alleen kleine letters, cijfers en streepjes te bevatten"
+        )
+    if _NAAM_VERBODEN.search(display_name):
+        raise MailSenderNameError(
+            f"Weergavenaam {display_name!r} bevat een teken dat niet in een mailheader hoort "
+            "(regeleinde, @, punthaak, aanhalingsteken, backslash of dollarteken)"
+        )
+    if len(display_name) > 64:
+        raise MailSenderNameError(f"Weergavenaam {display_name!r} is langer dan 64 tekens")
+
+
+def render_sender_table(namen: dict[str, str]) -> str:
+    """The sieve script the identity rules include, rendered from the stored names.
+
+    Deliberately dull: one ``if`` per account, no expressions, no data structures. It is
+    generated code, so the only thing it may do is be obvious -- and the reader of a relay
+    configuration should be able to see at a glance that this file cannot do anything except
+    set one variable.
+
+    ``global`` is what makes the value visible to the including script (RFC 6609: an included
+    script shares only variables declared global), and it is declared in both.
+    """
+    regels = [
+        "# Gegenereerd door ZAD (RC-145). Niet met de hand bewerken: elke wijziging van een",
+        "# project schrijft dit script opnieuw, uit de sleutels onder " + MAIL_SENDER_NAME_PREFIX + ".",
+        'require ["variables"];',
+        'global "naam";',
+    ]
+    for account in sorted(namen):
+        naam = namen[account]
+        if not naam:
+            # Geen naam is geen regel: een leeg item zou een regel opleveren die niets doet.
+            continue
+        _controleer_naam(account, naam)
+        regels.append(f'if string :is "${{env.authenticated_as}}" "{account}" {{ set "naam" "{naam}"; }}')
+    return "\n".join(regels) + "\n"
 
 
 async def create_mail_connector() -> MailConnector:
