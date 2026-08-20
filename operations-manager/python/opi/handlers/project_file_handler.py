@@ -16,6 +16,7 @@ from deepdiff import DeepDiff
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 
+from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
@@ -304,6 +305,42 @@ def _remove_flat_resources(target: dict[str, Any], fields: Iterable[str]) -> lis
     if not res:
         del target["resources"]
     return sorted(removed)
+
+
+def _drop_inverted_pair_overrides(catalog: dict[str, str], comp: dict[str, Any]) -> list[str]:
+    """Keep every request/limit pair on one side of the merge, in place.
+
+    Manifest generation merges the catalog and the deployment override PER FIELD
+    (``project_manager``), so taking one half of a pair out of the override pairs the
+    tuner's remaining half with the catalog's. That can leave a request above its limit
+    -- catalog 64Mi/256Mi, tuner override 600Mi/900Mi, a user setting the memory limit to
+    512Mi gives requests 600Mi with limits 512Mi -- and the apiserver refuses such a
+    Deployment, so the ArgoCD sync fails right after the edit. The modal shows the
+    CATALOG value, so the request the tuner put on the deployment is not even visible to
+    whoever makes the change.
+
+    The other half therefore goes too: the whole pair comes from the catalog again, and
+    the catalog pair is guarded on the way in (``ComponentServicesEnforcer`` for memory,
+    the allowed CPU values for CPU).
+
+    Returns the fields that were removed, sorted.
+    """
+    override = _parse_resources_block_partial(comp.get("resources"))
+    if not override:
+        return []
+    merged = {**catalog, **override}
+    drop: list[str] = []
+    for kind, to_number in (("memory", _k8s_memory_to_mb), ("cpu", parse_k8s_cpu_to_m)):
+        request_key, limit_key = f"requests_{kind}", f"limits_{kind}"
+        if request_key not in merged or limit_key not in merged:
+            continue
+        try:
+            inverted = to_number(merged[request_key]) > to_number(merged[limit_key])
+        except ValueError:
+            continue  # an unparsable quantity is not ours to judge here
+        if inverted:
+            drop += [key for key in (request_key, limit_key) if key in override]
+    return _remove_flat_resources(comp, drop)
 
 
 def _flat_fields_from_history_entry(entry: dict[str, Any] | None) -> dict[str, str]:
@@ -1502,6 +1539,43 @@ class ProjectFileHandler:
         )
         return False
 
+    def _oom_protected_fields(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_name: str,
+        standing: dict[str, str],
+    ) -> set[str]:
+        """The standing fields whose deployment override survives this edit, per deployment.
+
+        Clearing the standing fields as well keeps the newest entry from claiming a wish
+        that manifest generation overrules. That reasoning holds for an override the
+        TUNER wrote. It does not hold for the one the OOM exception wrote: a memory limit
+        the oom-watcher raised above the wish is the one place where the platform
+        deliberately overrules the user (``resource_tuning_service``), and wiping it on an
+        unrelated CPU edit drops the pod back to a limit that already proved too small --
+        at request == limit, so without burst headroom either. Nothing puts it back: while
+        the wish lives the tuner keeps the limit where it is, and ``has_oom_kills`` is only
+        true again once the pod falls over anew.
+
+        Only a floor ABOVE the standing value counts; below it the override adds nothing.
+        Whether that floor has expired is deliberately not judged here -- that needs the
+        measurements only the tuner has -- so the override stays and the tuner lowers it
+        on the first sweep after the floor expires.
+        """
+        value = standing.get("limits_memory")
+        if value is None:
+            return set()
+        floor = self.get_resource_history_floor(project_data, deployment_name, component_name)
+        if floor is None or floor.floor_mb <= _k8s_memory_to_mb(value):
+            return set()
+        logger.info(
+            f"Keeping the OOM limit for component '{component_name}' in deployment "
+            f"'{deployment_name}': the oom-watcher floor ({floor.floor_mb}MB, set {floor.set_at}) "
+            f"stands above the standing wish of {value}"
+        )
+        return {"limits_memory"}
+
     def apply_user_resource_intent(
         self,
         project_data: dict[str, Any],
@@ -1601,9 +1675,12 @@ class ProjectFileHandler:
 
         # The standing fields go too: an entry that claims a wish while a tuner override
         # still outranks it at manifest generation is the split brain this path exists
-        # to close.
-        clear = sorted(set(changed) | set(standing))
+        # to close. Per deployment, because the OOM exception below is per deployment.
+        catalog_after = _parse_resources_block(component.get("resources"))
         for deployment in project_data.get("deployments", []) or []:
+            deployment_name = str(deployment.get("name", ""))
+            keep = self._oom_protected_fields(project_data, deployment_name, component_name, standing)
+            clear = sorted((set(changed) | set(standing)) - keep)
             for comp in deployment.get("components", []) or []:
                 if comp.get("reference") != component_name:
                     continue
@@ -1611,7 +1688,17 @@ class ProjectFileHandler:
                 if removed_fields:
                     logger.info(
                         f"Dropped tuner override {removed_fields} for component '{component_name}' "
-                        f"in deployment '{deployment.get('name')}': the user set these by hand"
+                        f"in deployment '{deployment_name}': the user set these by hand"
+                    )
+                # Removing one half of a pair can pair the tuner's other half with the
+                # catalog's, and requests above limits is a Deployment the apiserver
+                # refuses. The other half then goes too.
+                repaired = _drop_inverted_pair_overrides(catalog_after, comp)
+                if repaired:
+                    logger.info(
+                        f"Also dropped tuner override {repaired} for component '{component_name}' "
+                        f"in deployment '{deployment_name}': keeping it would have left a "
+                        f"request above its limit after the merge"
                     )
 
         entry: dict[str, Any] = {"timestamp": datetime.now(UTC).isoformat(), "source": "manual"}
