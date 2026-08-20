@@ -20,8 +20,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from opi.services.services import service_entry_name
+
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from opi.services.services_enums import ServiceType
 
 
 class ApprovalStatus(StrEnum):
@@ -60,6 +64,9 @@ class ApproverScope(StrEnum):
 #:   ``service``        -- the ServiceType value of the owning service (routing)
 #:   ``type``           -- the owning ``ApprovalSpec.key`` (routing + display)
 #:   ``domain``/``name``-- display identity of the item
+#:   ``subject``        -- WHAT is being asked for, written by the service that knows
+#:                         (``example.nl``, ``foo.example.nl``, "Gebruik van de dienst").
+#:                         Display only: it does not travel back through the modal form.
 #:   ``current_status`` -- the stored status string
 #:   ``status``         -- the approver's verdict ("skip" until decided)
 #:   ``history``        -- prior verdict entries
@@ -131,3 +138,180 @@ class ApprovalSpec:
     def is_approved(self, project_data: dict[str, Any], value: Any) -> bool:
         """Whether ``value`` is approved -- the common yes/no check for gating."""
         return self.status_of(project_data, value) is ApprovalStatus.APPROVED
+
+
+#: Wat er in de lijst staat als ONDERWERP van een goedkeuring die over de dienst zelf gaat.
+#: Er is er per project maar een, en waar het over gaat is niet een waarde maar de dienst:
+#: "mag dit project deze dienst gebruiken".
+SERVICE_USE_SUBJECT = "Gebruik van de dienst"
+
+
+@dataclass(frozen=True)
+class ServiceUseApproval:
+    """De complete vorm van "ja, dit project mag deze dienst gebruiken".
+
+    Wat :func:`service_use_approval` teruggeeft. Drie dingen, en niet meer, want dat is
+    precies wat een dienst met deze vorm nodig heeft:
+
+    Attributes:
+        spec: de :class:`ApprovalSpec` voor ``config_approvals()`` -- lezen, lijsten,
+            vastleggen en de mededeling aan de aanvrager.
+        is_approved: DE POORT. Alles wat de dienst aanzet hangt hieraan, zodat de
+            onderdelen het nooit oneens kunnen zijn.
+        ensure_requested: de dienst aanzetten IS de aanvraag; dit legt hem vast.
+            Toestandsvormig en dus idempotent.
+    """
+
+    spec: ApprovalSpec
+    is_approved: Callable[[dict[str, Any]], bool]
+    ensure_requested: Callable[[dict[str, Any]], None]
+
+
+def service_use_approval(
+    service_type: ServiceType,
+    *,
+    label: str,
+    activity: str,
+    consequence: str,
+    approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
+) -> ServiceUseApproval:
+    """De booleaanse goedkeuring: mag dit project deze dienst gebruiken, ja of nee.
+
+    Deze vorm komt vaker terug dan bij een dienst alleen, en hij is met de hand ongeveer
+    negentig regels: de status lezen, het item voor de beheerpagina, het oordeel
+    vastleggen, de mededeling aan de aanvrager en de aanvraag zelf. De tweede dienst die
+    hem nodig heeft kopieert dat, en vanaf dat moment lopen de twee uit elkaar. Vandaar
+    een declaratie.
+
+    De toestand staat onder de dienst zelf, op ``services/[<dienst>]/config/approval``,
+    met ``status`` en ``history``. Er is er EEN per project: wat wordt goedgekeurd is
+    "dit project mag deze dienst gebruiken", niet een afzonderlijke waarde.
+
+    Args:
+        service_type: de dienst waar de goedkeuring bij hoort.
+        label: het opschrift van de aanvraag in de beheerpagina.
+        activity: waar het besluit over gaat, als onderwerp van een zin -- bijvoorbeeld
+            "Het versturen van e-mail". De drie zinnen (afgewezen, aangevraagd, nog niet
+            aangevraagd) worden ermee gebouwd, zodat ze niet uit elkaar kunnen lopen.
+        consequence: wat het voor de deployment BETEKENT zolang er geen goedkeuring is.
+            Dit is de helft die je makkelijk overslaat en duur overslaat: een dienst die
+            aanstaat en stil niets doet is precies de storing die hier is uitgeroeid.
+        approver: wie mag beslissen.
+    """
+    naam = service_type.value
+
+    def _entry(project_data: dict[str, Any]) -> dict[str, Any] | None:
+        """De service-entry van deze dienst, als hij als dict in het project staat."""
+        for entry in project_data.get("services", []) or []:
+            if service_entry_name(entry) == naam and isinstance(entry, dict):
+                return entry
+        return None
+
+    def _selected(project_data: dict[str, Any]) -> bool:
+        """Of het project de dienst uberhaupt in zijn dienstenlijst heeft staan."""
+        return naam in [service_entry_name(entry) for entry in project_data.get("services", []) or []]
+
+    def _block(project_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Het opgeslagen goedkeuringsblok, of None als er nooit iets is aangevraagd."""
+        entry = _entry(project_data)
+        config = entry.get("config") if entry else None
+        approval = config.get("approval") if isinstance(config, dict) else None
+        return approval if isinstance(approval, dict) else None
+
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+        """De CHECK. ``value`` wordt niet gelezen: er is EEN goedkeuring per project."""
+        approval = _block(project_data)
+        if approval is None:
+            return ApprovalStatus.NONE
+        try:
+            return ApprovalStatus(approval.get("status", ""))
+        except ValueError:
+            return ApprovalStatus.NONE
+
+    def _is_approved(project_data: dict[str, Any]) -> bool:
+        return _status_of(project_data, project_data.get("name", "")) is ApprovalStatus.APPROVED
+
+    def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
+        """De LIJST. Een item per project dat het gevraagd heeft."""
+        approval = _block(project_data)
+        if approval is None:
+            return []
+        return [
+            {
+                "type": naam,
+                "subject": SERVICE_USE_SUBJECT,
+                "domain": "",
+                "name": project_data.get("name", ""),
+                "current_status": approval.get("status", ""),
+                "status": "skip",
+                "history": approval.get("history", []),
+            }
+        ]
+
+    def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
+        """De RECORD. Schrijft het oordeel in het configblok van de dienst zelf."""
+        entry = _entry(project_data)
+        if entry is None:
+            return
+        config = entry.setdefault("config", {})
+        if not isinstance(config, dict):
+            return
+        approval = config.setdefault("approval", {})
+        approval["status"] = item.get("status", "skip")
+        approval.setdefault("history", []).append(history_entry)
+
+    def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
+        """De NOTICE. Wat de eigenaar te horen krijgt zolang er geen goedkeuring is."""
+        if not _selected(project_data):
+            return []
+        status = _status_of(project_data, project_data.get("name", ""))
+        if status is ApprovalStatus.APPROVED:
+            return []
+        if status is ApprovalStatus.DENIED:
+            text = f"{activity} is afgewezen. {consequence}"
+        elif status is ApprovalStatus.REQUESTED:
+            text = f"{activity} is aangevraagd en wacht op goedkeuring. {consequence}"
+        else:
+            text = f"{activity} is nog niet aangevraagd. {consequence}"
+        history = (_block(project_data) or {}).get("history") or []
+        verdict = history[-1] if isinstance(history, list) and history and isinstance(history[-1], dict) else {}
+        return [
+            {
+                "subject": project_data.get("name", ""),
+                "status": status.value,
+                "text": text,
+                "by": verdict.get("by"),
+                "date": verdict.get("date"),
+                "message": verdict.get("message"),
+            }
+        ]
+
+    def _ensure_requested(project_data: dict[str, Any]) -> None:
+        """De dienst aanzetten IS de aanvraag.
+
+        Toestandsvormig en niet gebeurtenisvormig: lees het project zoals het staat en
+        vul aan wat ontbreekt. Zo landt een aanvraag via de API op dezelfde plek als een
+        vinkje in de wizard, en verandert een tweede keer draaien niets.
+        """
+        if not _selected(project_data) or _block(project_data) is not None:
+            return
+        entry = _entry(project_data)
+        if entry is None:
+            return
+        config = entry.setdefault("config", {})
+        if isinstance(config, dict):
+            config["approval"] = {"status": ApprovalStatus.REQUESTED.value, "history": []}
+
+    return ServiceUseApproval(
+        spec=ApprovalSpec(
+            key=naam,
+            label=label,
+            approver=approver,
+            status_of=_status_of,
+            list_items=_items,
+            record=_record,
+            notices_for=_notices,
+        ),
+        is_approved=_is_approved,
+        ensure_requested=_ensure_requested,
+    )
