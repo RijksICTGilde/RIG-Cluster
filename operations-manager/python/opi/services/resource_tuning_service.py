@@ -25,12 +25,18 @@ from opi.core.cluster_config import (
     supports_vpa,
 )
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler, ResourceFloor, is_oom_disable_reason
+from opi.handlers.project_file_handler import (
+    ProjectFileHandler,
+    ResourceFloor,
+    UserResourceIntent,
+    is_oom_disable_reason,
+)
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.catalog.resource_tuning.config import resource_tuning_config
 from opi.services.project_store import get_project_store
 from opi.services.resource_analyzer import (
     _k8s_memory_to_mb,
+    _m_to_k8s_cpu,
     _mb_to_k8s_memory,
     compute_cpu_recommendation,
     compute_memory_recommendation,
@@ -196,6 +202,142 @@ def _floor_is_expired(floor: ResourceFloor, max_observed_mb: float, has_oom_kill
         return False
     stable_threshold_mb = floor.floor_mb * cfg.oom_floor_stable_percent / 100
     return 0 < max_observed_mb < stable_threshold_mb
+
+
+def _entry_is_old_enough(set_at: str | None, min_age_days: int) -> bool:
+    """Whether *set_at* is at least *min_age_days* old. Unusable timestamps say no.
+
+    Same fail-safe as ``_floor_is_expired``: a timestamp that cannot be read never
+    ages, so protection stays on rather than silently lapsing.
+    """
+    if not set_at:
+        return False
+    try:
+        moment = datetime.fromisoformat(set_at)
+    except ValueError:
+        return False
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - moment).days >= min_age_days
+
+
+def _intent_field_is_expired(name: str, value: str, set_at: str | None, measured: float | None) -> bool:
+    """Whether a hand-set resource value is stale and may be tuned again.
+
+    One rule, two metrics, mirroring the OOM floor: the entry is old enough AND the
+    component has since been measured running well below what the user set. Memory is
+    measured by the observed max, CPU by the VPA target; without a measurement nothing
+    expires (fail safe: keep respecting the user).
+    """
+    cfg = resource_tuning_config()
+    if not _entry_is_old_enough(set_at, cfg.user_intent_min_age_days):
+        return False
+    if measured is None or measured <= 0:
+        return False
+    set_value = _k8s_memory_to_mb(value) if name.endswith("_memory") else parse_k8s_cpu_to_m(value)
+    return measured < set_value * cfg.user_intent_stable_percent / 100
+
+
+def _live_intent_fields(
+    intent: UserResourceIntent,
+    max_observed_mb: float,
+    target_cpu_m: float | None,
+    has_oom_kills: bool,
+    component_ref: str,
+    dep_name: str,
+) -> set[str]:
+    """The resource fields the tuner must leave alone for this component.
+
+    A field drops out when its entry has expired (see ``_intent_field_is_expired``), and
+    ``limits_memory`` drops out while the component is being OOM-killed: a pod dying right
+    now is the one case where the tuner overrules the user, because the alternative is a
+    component that stays down. Both exits are logged; the fields that stay are logged by
+    ``_honour_user_intent``, at the moment they actually hold a recommendation back.
+    """
+    live: set[str] = set()
+    for name, value in intent.fields.items():
+        measured = max_observed_mb if name.endswith("_memory") else target_cpu_m
+        if _intent_field_is_expired(name, value, intent.set_at, measured):
+            logger.info(
+                f"User-set {name}={value} for {component_ref} in {dep_name} expired "
+                f"(set {intent.set_at}, measured {measured}) -- tuning it again"
+            )
+            continue
+        if name == "limits_memory" and has_oom_kills:
+            logger.info(
+                f"User-set limits_memory={value} for {component_ref} in {dep_name} is being "
+                f"overruled: the component is OOM-killed right now and the limit must rise"
+            )
+            continue
+        live.add(name)
+    return live
+
+
+def _honour_user_intent(
+    live: set[str],
+    current_resources: dict[str, str],
+    new_limit: str,
+    new_request: str,
+    new_cpu_limit: str | None,
+    new_cpu_request: str | None,
+    cluster: str,
+    set_at: str | None = None,
+    component_ref: str = "",
+    dep_name: str = "",
+) -> tuple[str, str, str | None, str | None]:
+    """Put the hand-set fields back to their current value and repair the invariants.
+
+    Every field that actually holds a recommendation back is logged on INFO with the
+    timestamp of the entry that set it, so a value that refuses to move is explainable
+    from the logs alone.
+
+    Restoring one half of a pair can leave a request above its limit, so what the user
+    did NOT pin gives way: with a pinned limit the request is clamped down to it, with a
+    pinned request the limit is raised to fit. Are both pinned, then the pair is exactly
+    what the user set and nothing is touched.
+    """
+
+    def restore(name: str, proposed: str) -> str:
+        kept = current_resources[name]
+        if kept != proposed:
+            logger.info(
+                f"Skipping {name} for {component_ref} in {dep_name}: kept at {kept} "
+                f"(user set it {set_at}), recommendation was {proposed}"
+            )
+        return kept
+
+    if "limits_memory" in live:
+        new_limit = restore("limits_memory", new_limit)
+    if "requests_memory" in live:
+        new_request = restore("requests_memory", new_request)
+    if live & {"limits_memory", "requests_memory"}:
+        limit_mb = _k8s_memory_to_mb(new_limit)
+        request_mb = _k8s_memory_to_mb(new_request)
+        if request_mb > limit_mb:
+            if "limits_memory" in live:
+                new_request = new_limit
+            else:
+                new_limit = _mb_to_k8s_memory(
+                    min(
+                        request_mb + float(resource_tuning_config().min_limit_headroom_mi),
+                        float(get_max_memory_limit_mi(cluster)),
+                    )
+                )
+
+    if new_cpu_limit is not None and new_cpu_request is not None:
+        if "limits_cpu" in live:
+            new_cpu_limit = restore("limits_cpu", new_cpu_limit)
+        if "requests_cpu" in live:
+            new_cpu_request = restore("requests_cpu", new_cpu_request)
+        limit_m = parse_k8s_cpu_to_m(new_cpu_limit)
+        request_m = parse_k8s_cpu_to_m(new_cpu_request)
+        if request_m > limit_m:
+            if "limits_cpu" in live:
+                new_cpu_request = new_cpu_limit
+            else:
+                new_cpu_limit = _m_to_k8s_cpu(min(request_m, float(get_max_cpu_limit_m(cluster))))
+
+    return new_limit, new_request, new_cpu_limit, new_cpu_request
 
 
 async def _analyze_component_resources(
@@ -542,6 +684,35 @@ async def _analyze_component_resources(
     new_request_mb = _k8s_memory_to_mb(new_request)
     if _k8s_memory_to_mb(new_limit) < new_request_mb + margin_mb:
         new_limit = _mb_to_k8s_memory(min(new_request_mb + margin_mb, float(get_max_memory_limit_mi(cluster))))
+
+    # A value the user set by hand wins over the tuner for exactly the fields they set,
+    # for as long as that intent lives (RC-141). Applied here, at the end: everything
+    # above may compute freely, this puts the pinned fields back before anything is
+    # written. The one exception is an active OOM on the memory limit; see
+    # _live_intent_fields.
+    intent = file_handler.get_user_resource_intent(project_data, dep_name, component_ref)
+    if intent is not None:
+        live = _live_intent_fields(
+            intent,
+            max_observed_mb,
+            vpa_rec.target_cpu_m if vpa_rec is not None else None,
+            has_oom_kills,
+            component_ref,
+            dep_name,
+        )
+        if live:
+            new_limit, new_request, new_cpu_limit, new_cpu_request = _honour_user_intent(
+                live,
+                current_resources,
+                new_limit,
+                new_request,
+                new_cpu_limit,
+                new_cpu_request,
+                cluster,
+                set_at=intent.set_at,
+                component_ref=component_ref,
+                dep_name=dep_name,
+            )
 
     # Nothing worth changing for either resource — signal "unchanged".
     memory_unchanged = (
