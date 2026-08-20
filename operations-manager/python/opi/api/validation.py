@@ -68,12 +68,23 @@ ADD_COMPONENT_VALIDATORS: dict[str, Editable] = {
     "env_vars": COMPONENT_USER_ENV_VARS_EDITABLE,
 }
 
-#: The partial update of a component. Same two editables as the add side, so a path or
-#: a rewrite is judged by one rule no matter which endpoint writes it; both are optional
-#: here because a PATCH only carries the fields it changes.
+#: The partial update of a component. The SAME editables as the add side, so a field is
+#: judged by one rule no matter which endpoint writes it; all optional here because a
+#: PATCH only carries the fields it changes (an absent value validates clean).
+#:
+#: The two resource limits belong here for a reason that is easy to lose: the platform
+#: ceiling (``max_memory_limit_mi`` / ``max_cpu_limit_m``) used to be enforced twice over
+#: -- once by these editables on the add side and on the form, and once by the auto-tuner,
+#: which clamped anything too generous back on its next sweep. This profile validated
+#: neither limit, so a PATCH with ``{"memory_limit": "64Gi"}`` went straight through and
+#: the tuner put it right that night. Since RC-141 a hand-set value is pinned and the
+#: tuner leaves it alone, so that second line is gone and this profile is the only place
+#: the ceiling still gets checked on this route.
 UPDATE_COMPONENT_VALIDATORS: dict[str, Editable] = {
     "path": _optional(COMPONENT_PATH_MATCH_EDITABLE),
     "rewrite": COMPONENT_PATH_REWRITE_EDITABLE,
+    "cpu_limit": COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
+    "memory_limit": COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
 }
 
 ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS: dict[str, Editable] = {
