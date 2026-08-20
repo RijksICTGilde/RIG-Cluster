@@ -31,6 +31,7 @@ from typing import Any
 
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.visualizers.bridge import resolve_options_for_editable
+from opi.forms.wizard.services_merge import merge_service_lists
 from opi.services.services import ServiceAdapter, service_entry_name
 
 #: The project-wide service selection.
@@ -88,10 +89,31 @@ def apply_selection_mutation(
     - a name in *base* that the form did NOT offer is untouched: it survives.
 
     Entries keep their base form (string or config-carrying dict), so a surviving
-    service keeps its configuration.
+    service keeps its configuration. That sentence used to be a promise the code
+    did not keep: ``result = list(submitted)`` let the checklist's bare name WIN
+    from the base's config record, so config without a form field in the flow
+    (the domain approvals under publish-on-web, a send-email approval) silently
+    fell out of the project on every services-save -- after which an approval
+    hook cheerfully re-requested what had already been approved. The base entry
+    is the configuration carrier; the submission is the selection, plus at most
+    a config overlay (attachments' restored catalog). ``merge_service_lists``
+    folds the two, normalizing record/legacy shape differences along the way.
     """
+    base_by_name: dict[str, Any] = {}
+    for entry in base:
+        name = service_entry_name(entry)
+        if name is not None and name not in base_by_name:
+            base_by_name[name] = entry
     submitted_names = {name for entry in submitted if (name := service_entry_name(entry)) is not None}
-    result = list(submitted)
+
+    result: list[Any] = []
+    for entry in submitted:
+        name = service_entry_name(entry)
+        base_entry = base_by_name.get(name) if name is not None else None
+        if base_entry is None:
+            result.append(copy.deepcopy(entry))
+        else:
+            result.extend(merge_service_lists([base_entry], [entry]))
     for entry in base:
         name = service_entry_name(entry)
         if name is None or name in submitted_names or name in offered:
