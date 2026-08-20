@@ -82,10 +82,12 @@ spec:
       # wachtrij hier en niet op een PVC. Rol en database komen declaratief mee (zie ook
       # databases.yaml), zodat ze op een al draaiend cluster verschijnen zonder handmatige
       # CREATE DATABASE.
+      # Limiet 20 en niet krapper: de relay pint zijn pool op 8 (zie de configmap van de
+      # mailcomponent), en bij een podwissel draaien er even TWEE pods met elk zo'n pool.
       - name: mailrelay
         ensure: present
         login: true
-        connectionLimit: 10
+        connectionLimit: 20
         passwordSecret:
           name: mail-db-credentials  # This must exist
 

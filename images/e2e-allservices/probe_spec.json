@@ -2,11 +2,6 @@
   "targets": [
     {
       "bound_when_any": [
-        "APP_SMTP_FROM",
-        "APP_SMTP_HOST",
-        "APP_SMTP_PASSWORD",
-        "APP_SMTP_PORT",
-        "APP_SMTP_USERNAME",
         "SMTP_FROM",
         "SMTP_HOST",
         "SMTP_PASSWORD",
@@ -14,11 +9,6 @@
         "SMTP_USERNAME"
       ],
       "env_vars": [
-        "APP_SMTP_FROM",
-        "APP_SMTP_HOST",
-        "APP_SMTP_PASSWORD",
-        "APP_SMTP_PORT",
-        "APP_SMTP_USERNAME",
         "SMTP_FROM",
         "SMTP_HOST",
         "SMTP_PASSWORD",
