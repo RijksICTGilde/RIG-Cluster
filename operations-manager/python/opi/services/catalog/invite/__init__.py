@@ -84,7 +84,6 @@ class InviteService(Service):
         name="Uitnodiging",
         description=(
             "Nodig gebruikers uit voor het Keycloak-realm van dit project via een deelbare link. "
-            "De link is de enige toegangsdrempel: wie hem heeft kan een account aanmaken. "
             "Vereist de Keycloak-service."
         ),
         help_template="invite/help.md",
@@ -221,10 +220,7 @@ class InviteService(Service):
                     Fieldset(legend="Algemeen", children=[cp("default-language")]),
                     Fieldset(
                         legend="Actieve uitnodigingen",
-                        description=(
-                            "Elke uitnodiging krijgt een eigen link. De link is de enige toegangsdrempel: "
-                            "wie hem heeft kan een account aanmaken in het realm van dit project."
-                        ),
+                        description="Elke uitnodiging krijgt een eigen link.",
                         children=[Sequence(field_name=cp("active"))],
                     ),
                 ],
