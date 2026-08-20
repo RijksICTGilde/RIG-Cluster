@@ -39,6 +39,8 @@ from opi.services.services_enums import ServiceType
 from tests.e2e.helpers import cluster
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from opi.services.catalog.vlam.endpoint import VlamEndpoint
 
 #: Het antwoord dat de stub op /v1/models geeft. Dezelfde vorm als VLAM: een `data`-lijst,
@@ -256,7 +258,7 @@ def ensure(cluster_name: str, endpoint: VlamEndpoint) -> None:
     assert status == 200, f"de vlam-stub antwoordt zelf niet op /healthz (status {status})"
 
 
-def without_the_open_rule(cluster_name: str, endpoint: VlamEndpoint, call):
+def without_the_open_rule(cluster_name: str, endpoint: VlamEndpoint, call: Callable[[], str]) -> str:
     """Haal de wildcard-regel weg, doe ``call()``, en zet hem terug.
 
     Dit is de meting die uitwijst of dit cluster NetworkPolicies HANDHAAFT. Komt de
