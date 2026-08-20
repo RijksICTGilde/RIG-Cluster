@@ -137,10 +137,14 @@
                     <c-stack gap="sm">
                         {# Het icoon staat NAAST de kop en niet erin: binnen een <c-heading>
                            lijnt het op de tekstbasislijn uit en zakt het uit de lijn. Bewaakt
-                           door tests/test_lotc_icoon_in_kop.py. #}
+                           door tests/test_lotc_icoon_in_kop.py.
+
+                           h5 en niet h3: de projectkop erboven komt uit panel() en is een h4,
+                           dus een h3 hier zou de dienst boven het project zetten in de
+                           koppenboom. `size` is de VISUELE maat en staat los van de tag. #}
                         <c-cluster gap="sm" align="center">
                             <c-icon :icon="groep.icoon | nldd_icon" size="md" />
-                            <c-heading type="h3" size="5" label="{{ groep.naam }}" />
+                            <c-heading type="h5" size="5" label="{{ groep.naam }}" />
                         </c-cluster>
                         {# c-table-head IS de kopregel; daar hoort geen c-table-row in. En zonder
                            columns stapelen de cellen, want NLDD maakt er een CSS-grid van.
