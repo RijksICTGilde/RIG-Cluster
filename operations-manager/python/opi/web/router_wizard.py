@@ -24,7 +24,7 @@ from opi.forms.editables.service_path import (
 )
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
-from opi.forms.wizard.mutation import apply_services_mutation
+from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
@@ -968,6 +968,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # aanleiding is dat deze regel eerst aan de sectienaam "services" hing en de bewerk-flow
     # "services-edit" heet, dus daar liep hij nooit.
     apply_services_mutation(section.editables, yaml_data, submitted_yaml)
+    apply_component_services_mutation(section.editables, yaml_data, submitted_yaml)
 
     # Forward navigation (Next / Review): block on field-level validation errors
     if is_forward and errors:
@@ -1616,6 +1617,11 @@ def _extract_section_data(
     service_config_leaves: list[str] = []
     # top_key -> field name -> service names, for a service list INSIDE an indexed item
     indexed_services: dict[str, dict[str, set[str]]] = {}
+    # top_key -> plain per-item fields the section renders WHOLE (an editable sits at
+    # ``components[0]/services`` itself, not only at ``services{X}/...``). For such a
+    # field the submission IS the selection, so pruning it to this section's configured
+    # services would throw away what the user just ticked.
+    selection_fields: dict[str, set[str]] = {}
     # real_key -> virtual_key for virtualized editables
     virt_mapping: dict[str, str] = {}
 
@@ -1665,6 +1671,8 @@ def _extract_section_data(
                 if "{" in parts[1]:
                     service = parts[1].split("{", 1)[1].split("}", 1)[0]
                     indexed_services.setdefault(top_key, {}).setdefault(field_name, set()).add(service)
+                elif len(parts) == 2:
+                    selection_fields.setdefault(top_key, set()).add(field_name)
 
     _collect_leaf_paths(editables)
 
@@ -1691,14 +1699,25 @@ def _extract_section_data(
                         # Keep only this section's own service entries, and never tombstone
                         # the list: an item without them simply says nothing about it.
                         #
-                        # On identity, not on shape: a bare string entry of ANOTHER service
-                        # is that service's selection, which this section has no business
-                        # carrying either. Dropping it is safe because the merge is additive
-                        # by name (``merge_service_lists``), so an entry this section does
-                        # not mention keeps whatever the base data holds.
+                        # UNLESS the section renders the whole selection (the component
+                        # form's services checklist): then the submitted list IS the
+                        # user's decision and every ticked name must survive. "The merge
+                        # restores the rest from base" only holds for what already stood
+                        # there -- a newly ticked service exists in no other copy, so
+                        # pruning it here erased the user's add (the send-email bug).
+                        # Foreign config dicts are still demoted to their bare name: the
+                        # selection is this section's, another service's config is not.
                         entries = pruned_item.get(field_name)
                         if isinstance(entries, list):
-                            kept = [entry for entry in entries if service_entry_name(entry) in services]
+                            if field_name in selection_fields.get(key, set()):
+                                kept = [
+                                    copy.deepcopy(entry)
+                                    if not isinstance(entry, dict) or service_entry_name(entry) in services
+                                    else (service_entry_name(entry) or copy.deepcopy(entry))
+                                    for entry in entries
+                                ]
+                            else:
+                                kept = [entry for entry in entries if service_entry_name(entry) in services]
                             pruned_item[field_name] = kept
                         else:
                             pruned_item.pop(field_name, None)

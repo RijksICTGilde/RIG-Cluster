@@ -858,13 +858,19 @@ def _fixup_flat_resources(entity: dict[str, Any]) -> bool:
     return changed
 
 
-def _normalize_service_entry(entry: Any, id_key: str) -> Any:
+def _normalize_service_entry(entry: Any, id_key: str, *, keep_attachments_legacy: bool = True) -> Any:
     """Convert a legacy name-as-key service entry to the uniform record form.
 
     ``{X: {config: ...}}`` -> ``{id_key: X, config: ...}``. Bare strings and entries
     already in record form (they carry ``name``/``reference``) are returned as-is.
     ``id_key`` is ``"name"`` for project-level definitions, ``"reference"`` for
     component-level references.
+
+    ``keep_attachments_legacy`` is the migration default. The services-list merge
+    (``services_merge``) passes False: it normalizes an entry only when its merge
+    partner already carries the record form, and merging two shapes into one dict is
+    worse than converting -- that is how a component entry ended up with BOTH
+    ``reference`` and its name as keys.
     """
     if not isinstance(entry, dict):
         return entry
@@ -874,7 +880,7 @@ def _normalize_service_entry(entry: Any, id_key: str) -> Any:
     if len(keys) != 1:
         return entry
     name = keys[0]
-    if name == "attachments":
+    if name == "attachments" and keep_attachments_legacy:
         # Deferred hard case: attachments has its own project-level 'data' catalog and
         # dedicated $defs. Leave it in the legacy name-as-key form (readers handle it).
         return entry
