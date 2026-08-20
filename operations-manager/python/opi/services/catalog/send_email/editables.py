@@ -1,14 +1,16 @@
 """Editable definitions for the send-email service (project-level).
 
 Two fields, and only two: what the recipient sees as the sender NAME, and the daily
-budget. The address itself is not here and is not a field anywhere -- every project sends
-from one fixed address and the relay overwrites the ``From:`` header with it, so there is
-nothing to configure and nothing to get wrong.
+budget. The address is not here and is not a field anywhere -- it is composed by the
+platform from the project name (``noreply-rijksapp+<project>@rijksoverheid.nl``) and the
+relay overwrites the ``From:`` header with it, so there is nothing to configure and
+nothing to get wrong.
 
 That is not tidiness, it is the only arrangement that delivers. Mail leaves over the
-Rijksoverheid mail server and therefore carries their domain, which publishes
+Rijksoverheid mail server and therefore carries their DOMAIN, which publishes
 ``p=reject``; we sign nothing with DKIM, so SPF alignment between envelope and ``From:``
-is the single thing that can pass DMARC. An address per project would break exactly that.
+is the single thing that can pass DMARC. A self-chosen domain would break exactly that.
+The project in the plus part does not: same domain, and a bounce stays traceable.
 See docs/ron-koppeling.md.
 """
 

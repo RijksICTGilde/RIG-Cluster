@@ -14,8 +14,10 @@ start instead of repaired afterwards (aanvulling 5 in the plan). ``approval`` in
 a project that could set its own status to ``approved`` would be no approval at all.
 
 There is no field for the sender ADDRESS, and there deliberately is not going to be one:
-every project sends from one fixed address that the relay writes into the ``From:`` header
-itself. ``from-name`` (the display name) is all a project chooses.
+the platform composes it from the project name and the relay writes it into the ``From:``
+header itself. ``from-name`` (the display name) is all a project chooses -- and since
+RC-145 it is actually READ, which is why it now carries validation: it goes straight into
+a mail header.
 """
 
 from __future__ import annotations

@@ -23,7 +23,17 @@ De stand van je aanvraag staat op de projectpagina bij de deployment, en komt oo
 
 Na goedkeuring wordt er een SMTP-account voor je project aangemaakt op de relay. Je component krijgt **SMTP_HOST**, **SMTP_PORT**, **SMTP_USERNAME**, **SMTP_PASSWORD** en **SMTP_FROM**. Ook wordt het netwerkverkeer van je component naar de relay opengezet; naar de mailserver van de organisatie hoeft je project zelf geen verbinding te hebben.
 
-Het afzenderadres ligt vast: alle projecten versturen vanaf `noreply-rijksapp@rijksoverheid.nl`, en de relay schrijft dat adres zelf in de `From:` van elk bericht. Je kiest alleen de naam die de ontvanger ernaast ziet staan, bijvoorbeeld die van je applicatie. Dat is geen betutteling maar techniek: onze post gaat de deur uit via de mailserver van de Rijksoverheid, en die deelt de afzenderidentiteit. Een ander afzenderadres haalt de controles van de ontvangende mailserver niet en komt eenvoudigweg niet aan. Zet je applicatie zelf een `From:`, dan hoeft dat geen fout te geven: de relay vervangt het adres en laat de naam staan.
+Het afzenderadres ligt vast en draagt de naam van je project: `noreply-rijksapp+<jouw project>@rijksoverheid.nl`. De relay schrijft die `From:` zelf, met de naam die je hieronder invult ernaast:
+
+    Algoritmeregister <noreply-rijksapp+algor-odc@rijksoverheid.nl>
+
+Zet je applicatie zelf een `From:`, dan hoeft dat geen fout te geven: de relay gooit hem weg en zet de zijne ervoor in de plaats — adres en naam allebei. Wat de ontvanger ziet, komt dus uit het veld hieronder en nergens anders. Vul je niets in, dan verstuur je met een kaal projectadres en zonder naam; dat mag.
+
+Waarom je het adres niet zelf kiest, is techniek en geen betutteling: onze post gaat de deur uit via de mailserver van de Rijksoverheid, en die deelt de afzenderidentiteit. Een ander afzenderdomein haalt de controles van de ontvangende mailserver niet en komt eenvoudigweg niet aan.
+
+Je `Reply-To:` blijft wel van jou en wordt niet aangeraakt. Wil je dat een antwoord bij je eigen postbus terechtkomt, zet die dan in je applicatie — het antwoord komt niet terug op het afzenderadres.
+
+Voor de naam gelden een paar grenzen, omdat hij rechtstreeks in de kopregels van het bericht terechtkomt: geen regeleindes, geen `@`, geen punthaken of aanhalingstekens, en hoogstens 64 tekens. Een naam die op een e-mailadres lijkt, wordt bij veel ontvangers gelezen alsof het het afzenderadres is, en dat is precies wat we niet willen.
 
 De relay zet ook de dingen recht die je applicatie niet hoort te regelen: het adres waarop een onbestelbaar bericht terugkomt, de digitale handtekening op je post, en het weghalen van technische kopregels waar de interne namen van het cluster in staan.
 
