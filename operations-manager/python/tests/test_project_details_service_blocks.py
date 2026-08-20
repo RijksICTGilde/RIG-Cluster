@@ -16,10 +16,11 @@ tabblad Componenten dat de route WEL rendert is ``bg/project-tabs.html.j2``; daa
 lijst nu doorheen, met de voorbeeldgegevens van de proefopstelling en een eigen
 componentenlijst erin.
 
-Wat het herontwerp anders doet: een dienst is daar een ``<c-chip>`` met een vraagteken
-ernaast, geen kaart met icoon en omschrijving. De naam en de hulptekst zijn dus nog te
-meten, het icoon en de omschrijving niet - die claim hoorde bij de oude vormgeving en
-staat als keuze genoteerd in ``docs/opruiming-inventarisatie-rc97.md``.
+Wat het herontwerp anders doet: de diensten van een component staan in een INGEKLAPTE
+lijst met per dienst een rij (naam plus de omschrijving als ondertitel) en een vraagteken
+als rijbediening. Dat was eerst een rij chips, en die liep bij veertien diensten over drie
+regels door. De naam en de hulptekst zijn dus nog te meten; het icoon niet, en die claim
+hoorde bij de oude vormgeving (genoteerd in ``docs/opruiming-inventarisatie-rc97.md``).
 """
 
 from __future__ import annotations
@@ -58,18 +59,23 @@ def _render(services: list[Any]) -> str:
     return templates.env.get_template("bg/project-tabs.html.j2").render(request=request, navigation=[], **data)
 
 
-def _chips(html: str) -> list[str]:
+def _dienstnamen(html: str) -> list[str]:
     """De dienstnamen van het component, zoals ze op het tabblad staan.
 
-    Vanaf "<b>Services:</b>", want dat is de enige plek op dit tabblad waar chips staan.
-    ``<c-chip>`` levert een ``<span class="lotc-layer-chip">`` op; er wordt op het
-    ANTWOORD gemeten en niet op de tag, anders zou de meting stil meeveranderen met wat
-    het thema ervan maakt.
+    Vanaf de kop "Services (", want daar begint de lijst met de diensten van het
+    component. Ze stonden hier als ``<c-chip>`` op een rij; veertien chips met achter elke
+    chip een los vraagteken liepen over drie regels door en waren niet te lezen, dus het
+    is een ingeklapte lijst geworden met per dienst een rij. De namen zitten sindsdien in
+    het ``text``-attribuut van een ``<nldd-text-cell>``: die cel tekent zijn tekst in zijn
+    SCHADUWBOOM, dus er valt in de uitgestuurde HTML geen tekst tussen tags te vinden.
+
+    Er wordt op het ANTWOORD gemeten en niet op de componenttag, anders zou de meting stil
+    meeveranderen met wat het thema ervan maakt.
     """
-    start = html.find("<b>Services:</b>")
+    start = html.find("Services (")
     if start == -1:
         return []
-    return [naam.strip() for naam in re.findall(r'class="lotc-layer-chip"[^>]*>([^<]*)</span>', html[start:])]
+    return [naam.strip() for naam in re.findall(r'<nldd-text-cell[^>]*?text="([^"]*)"', html[start:])]
 
 
 # ---------------------------------------------------------------------------
@@ -108,14 +114,14 @@ def test_a_service_shows_its_name_and_its_explanation() -> None:
     definition = ServiceAdapter.get_service_definition(ServiceType.KEYCLOAK)
     html = _render([{"reference": "keycloak"}])
 
-    assert _chips(html) == [definition.name]
+    assert _dienstnamen(html) == [definition.name]
     assert f"openServiceHelp('{definition.help_template}')" in html
 
 
-def test_every_service_of_a_component_gets_its_own_chip() -> None:
+def test_every_service_of_a_component_gets_its_own_row() -> None:
     html = _render(["keycloak", "publish-on-web", {"postgresql-database": {"config": {}}}])
 
-    assert _chips(html) == [
+    assert _dienstnamen(html) == [
         ServiceAdapter.get_service_definition(ServiceType.KEYCLOAK).name,
         ServiceAdapter.get_service_definition(ServiceType.PUBLISH_ON_WEB).name,
         ServiceAdapter.get_service_definition(ServiceType.POSTGRESQL_DATABASE).name,
@@ -127,7 +133,7 @@ def test_an_unknown_service_is_still_shown() -> None:
     """It is in the project file, so hiding it would hide the problem."""
     html = _render(["iets-wat-niet-bestaat"])
 
-    assert _chips(html) == ["iets-wat-niet-bestaat"]
+    assert _dienstnamen(html) == ["iets-wat-niet-bestaat"]
     # Geen definitie, dus ook geen vraagteken: er valt niets uit te leggen.
     assert "openServiceHelp(" not in html
 
