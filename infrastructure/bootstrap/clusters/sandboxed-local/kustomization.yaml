@@ -11,6 +11,20 @@ resources:
   - ../../infrastructure/minio/controller/overlays/sandboxed-local
   - ../../infrastructure/prometheus/controller/overlays/sandboxed-local
   - ../../infrastructure/redis/controller/overlays/sandboxed-local
+  # De mailrelay in zijn eigen RON-namespace (RC-114) staat hier bewust NIET aan. De
+  # CMP-plugin forceert `namespace: rig-system` op deze hele build, en dat platte de
+  # rig-ron-resources van de mail-overlay tot rig-system - gemeten 19 augustus 2026 als
+  # ID-conflict op een dubbele mail-relay-credentials Secret. De relay draait daarom via
+  # zijn eigen ArgoCD Application ron-infrastructure (destination rig-ron, zie
+  # bootstrap/rig-system/kustomize/overlays/sandboxed-local).
+  #
+  # De identiteitsregels zijn op 19 augustus 2026 met die relay doorgemeten en alle vier
+  # kloppen ze; scripts/mail_identity_check.py eindigt met exitcode 0. De uitslag staat
+  # bij regel 2 in de configmap van de relay en in docs/ron-koppeling.md.
+  #
+  # Wat hier WEL bij hoort: de eerste rendering van het mail-relay-geheim, in rig-system
+  # voor OPI (secrets-overlay hierboven; de relay krijgt zijn tweede rendering via de
+  # eigen overlay), en MAIL_RELAY_API_URL in de deployment van OPI, aan sinds RC-138.
   - ../../infrastructure/registry/controller/overlays/sandboxed-local
 
 # Sandbox-CPU-beleid: minimale requests, geen cpu-limits.

@@ -86,6 +86,11 @@ INVENTARIS: dict[str, Schrijver] = {
         "Deels: registries en bijlagen worden gedraaid; de andere methoden hebben elk hun eigen test "
         "in tests/test_component_*.py en tests/test_*_api.py, die het resultaat nog niet langs de poorten leggen.",
     ),
+    "opi/manager/mail_manager.py": Schrijver(
+        "services/send-email/config/accounts: per cluster de gebruikersnaam, het AGE-versleutelde "
+        "wachtwoord, het afzender- en het bounce-adres; en het intrekken haalt datzelfde item weg",
+        "test_een_mailaccount_blijft_geldig",
+    ),
     "opi/manager/keycloak_manager.py": Schrijver(
         "services/keycloak/config/realms: host, realm, gebruikersnaam, versleuteld wachtwoord en totp_secret",
         None,

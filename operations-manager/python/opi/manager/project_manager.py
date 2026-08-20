@@ -531,6 +531,7 @@ class ProjectManager:
         from opi.manager.bootstrap_manager import BootstrapManager
         from opi.manager.delete_project_manager import DeleteProjectManager
         from opi.manager.keycloak_manager import KeycloakManager
+        from opi.manager.mail_manager import MailManager
         from opi.manager.minio_manager import MinioManager
         from opi.manager.pvc_manager import PVCManager
         from opi.manager.redis_manager import RedisManager
@@ -541,6 +542,7 @@ class ProjectManager:
         self._minio_manager = MinioManager(self)
         self._keycloak_manager = KeycloakManager(self)
         self._redis_manager = RedisManager(self)
+        self._mail_manager = MailManager(self)
         self._argo_manager = ArgoManager(self)
         self._bootstrap_manager = BootstrapManager(self)
         self._delete_project_manager = DeleteProjectManager(self)
@@ -5109,6 +5111,7 @@ class ProjectManager:
                         minio_manager=self._minio_manager,
                         keycloak_manager=self._keycloak_manager,
                         redis_manager=self._redis_manager,
+                        mail_manager=self._mail_manager,
                     )
                     for provider in provisioning_services():
                         await provider.provision(provision_ctx)

@@ -384,6 +384,37 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = "changeMe123!"
 
+    # SMTP relay configuration (send-email service).
+    # The relay is the only thing on the platform that talks to the upstream mail
+    # server; everything else gets an account on it. Empty MAIL_RELAY_API_URL means
+    # the relay is not deployed on this cluster and the service refuses to provision
+    # rather than handing out credentials that lead nowhere.
+    MAIL_RELAY_API_URL: str = ""  # Stalwart management API, e.g. http://rig-mail-relay.rig-prd-ron:8080
+    MAIL_RELAY_ADMIN_USERNAME: str = "admin"
+    MAIL_RELAY_ADMIN_PASSWORD: str = ""  # supports age:/base64+age:/plain: prefixes
+    MAIL_RELAY_VERIFY_TLS: bool = True
+
+    # ZAD's own account on the relay. It is an ORDINARY account on the relay, made by the
+    # same connector call a project account is made by; only the caller differs (the boot
+    # instead of a project run). So there is no password setting here: the password does
+    # not exist until OPI generates it, which is after the relay is up. Where it is then
+    # kept is ``MAIL_PLATFORM_SECRET_NAME`` below.
+    # A stricter limit than a project account gets, because it carries password-reset
+    # tokens: a bug in the project side must not be able to eat this account's budget.
+    # It stands in the SAME flat namespace as the project accounts, so it must stay out of
+    # their prefix (``MAIL_PROJECT_ACCOUNT_PREFIX``): a name inside it is reachable from
+    # the project path again, and MailManager refuses that path rather than allow it.
+    MAIL_PLATFORM_ACCOUNT: str = "zad-platform"
+    MAIL_PLATFORM_MESSAGES_PER_DAY: int = 2000
+    # The Secret in OPI's OWN namespace that holds the platform account's credentials.
+    # A Secret and not an environment variable: OPI generates this password itself, and a
+    # pod reads its environment once at start, so a value made after that start would only
+    # arrive on a restart -- a boot order nobody can follow afterwards.
+    MAIL_PLATFORM_SECRET_NAME: str = "zad-platform-mail-account"
+
+    # Default daily message budget for a project account when it sets none itself.
+    MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY: int = 500
+
     # Metrics backend configuration
     # "prometheus" = direct Prometheus access (local/dev)
     # "grafana" = query via Grafana API (ODCN production)
