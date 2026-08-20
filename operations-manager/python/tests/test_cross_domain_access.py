@@ -478,7 +478,7 @@ class TestOptionsProviders:
         from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
 
         options = CrossDomainProjectOptionsProvider(yaml_data={}).get_options()
-        assert options == [{"value": "", "label": "Geen andere projecten beschikbaar waar u toegang op heeft"}]
+        assert options == [{"value": "", "label": "Geen andere projecten beschikbaar waar je toegang op hebt"}]
 
     def test_local_component_provider_reads_own_components(self) -> None:
         from opi.forms.visualizers.providers import CrossDomainLocalComponentOptionsProvider
@@ -977,3 +977,177 @@ class TestDeWallPoortLegtZichzelfUit:
         """Een component mag 4180 gewoon zelf als inbound-poort hebben; dan is dat label onwaar."""
         opties = self._opties({"name": "web", "ports": {"inbound": [8080, 4180]}, "services": []})
         assert opties["4180"] == "4180"
+
+
+# --- de wildcard-peer: "geen projectlimiet" (RC-142) --------------------------------------
+
+
+class TestDeWildcardPeer:
+    """``from: {project: '*'}`` op een inbound-regel: de poort staat open voor elke bron.
+
+    Vier eigenschappen dragen dit, en elke ontbrekende maakt de regel breder dan hij zegt:
+
+    1. De wildcard mag ALLEEN op het peer-project van een INKOMENDE regel. Een uitgaande
+       regel die "overal heen" zou zeggen is een gat, geen voorziening.
+    2. Een wildcard die tOch een deployment of component noemt wordt GEWEIGERD, niet stil
+       genegeerd: zo'n regel leest als beperkt tot dat component en is dat niet.
+    3. Hij rendert als ingress-regel zonder ``from``-selector, en alleen op die poort.
+    4. De keuzelijst BIEDT hem niet aan, maar laat een opgeslagen wildcard wel zien -- een
+       select die een waarde stil laat vallen verandert de configuratie zonder dat iemand
+       hem aanraakt.
+    """
+
+    def _open_rule(self, **overrides) -> dict:
+        rule = {"name": "iedereen", "from": {"project": "*"}, "to": {"component": "proxy", "port": 8081}}
+        rule.update(overrides)
+        return rule
+
+    def test_een_wildcard_regel_wordt_aanvaard(self) -> None:
+        config = CrossDomainAccessConfig.model_validate({"inbound": [self._open_rule()]})
+        assert config.inbound[0].from_ is not None
+        assert config.inbound[0].from_.project == "*"
+
+    def test_een_wildcard_met_een_component_wordt_geweigerd(self) -> None:
+        with pytest.raises(ValidationError) as error:
+            CrossDomainAccessConfig.model_validate(
+                {"inbound": [self._open_rule(**{"from": {"project": "*", "component": "api"}})]}
+            )
+        assert "geen projectlimiet" in str(error.value)
+
+    def test_een_wildcard_met_een_deployment_wordt_geweigerd(self) -> None:
+        with pytest.raises(ValidationError) as error:
+            CrossDomainAccessConfig.model_validate(
+                {"inbound": [self._open_rule(**{"from": {"project": "*", "deployment": "prod"}})]}
+            )
+        assert "geen projectlimiet" in str(error.value)
+
+    def test_uitgaand_kent_de_wildcard_niet(self) -> None:
+        """Anders zou een project zichzelf een weg naar buiten geven die niets uitsluit."""
+        with pytest.raises(ValidationError):
+            CrossDomainAccessConfig.model_validate(
+                {
+                    "outbound": [
+                        {
+                            "name": "overal",
+                            "from": {"component": "web"},
+                            "to": {"project": "*", "component": "x", "port": 80},
+                        }
+                    ]
+                }
+            )
+
+    def test_de_merge_levert_een_regel_zonder_peer(self) -> None:
+        merged = to_merged_rule(self._open_rule(), direction="inbound")
+        assert merged is not None
+        assert merged.is_open is True
+        assert (merged.peer_project, merged.peer_deployment, merged.peer_component) == (None, None, None)
+        assert (merged.local_component, merged.port) == ("proxy", 8081)
+
+    def test_een_wildcard_regel_wacht_nooit_op_een_peer_deployment(self) -> None:
+        """Een gewone regel zonder peer-deployment wordt overgeslagen; deze niet, want er
+        is geen peer om op te wachten."""
+        assert (
+            to_merged_rule(
+                {
+                    "name": "gewoon",
+                    "from": {"project": "regelrecht", "component": "api"},
+                    "to": {"component": "p", "port": 1},
+                },
+                direction="inbound",
+            )
+            is None
+        )
+        assert to_merged_rule(self._open_rule(), direction="inbound") is not None
+
+    def test_resolve_zoekt_niets_op_en_levert_geen_peer(self) -> None:
+        def _explode(name: str) -> dict | None:
+            raise AssertionError(f"een wildcard-regel hoort niets op te zoeken, deed dat wel voor '{name}'")
+
+        [resolved] = resolve_rules(
+            [_mr(peer_project=None, peer_deployment=None, peer_component=None, local_component="proxy", is_open=True)],
+            cluster=_CLUSTER,
+            lookup_project=_explode,
+        )
+        assert resolved.peer is None
+        assert resolved.local_component == "proxy"
+
+    def test_de_gerenderde_regel_heeft_geen_from_en_alleen_die_poort(self) -> None:
+        doc = _render(ingress=[{"peer": None, "ports": [8081]}])
+        [rule] = doc["spec"]["ingress"]
+        assert "from" not in rule, "een open regel mag geen bron-selector dragen"
+        assert [port["port"] for port in rule["ports"]] == [8081]
+        assert doc["spec"]["policyTypes"] == ["Ingress"]
+        assert doc["spec"]["podSelector"]["matchLabels"] == {"app": "dev-web"}
+
+    def test_open_en_benoemde_peers_staan_naast_elkaar(self) -> None:
+        """De open poort sluit de andere regels niet uit en overschrijft ze niet."""
+        doc = _render(ingress=[{"peer": None, "ports": [8081]}, {"peer": _peer("prod-api"), "ports": [8080]}])
+        open_rule, peered = doc["spec"]["ingress"]
+        assert "from" not in open_rule
+        assert peered["from"][0]["podSelector"]["matchLabels"]["app"] == "prod-api"
+
+    def test_een_open_ingress_en_een_egress_in_hetzelfde_document(self) -> None:
+        """De open tak schrijft ``ports:`` op een andere inspringing dan de peer-tak; de
+        egress-sectie die erop volgt mag daar niet in meelopen."""
+        doc = _render(
+            ingress=[{"peer": None, "ports": [8081]}],
+            egress=[{"peer": _peer("prod-worker"), "ports": [9090]}],
+        )
+        assert doc["spec"]["policyTypes"] == ["Ingress", "Egress"]
+        [open_rule] = doc["spec"]["ingress"]
+        assert "from" not in open_rule
+        assert [port["port"] for port in open_rule["ports"]] == [8081]
+        [egress_rule] = doc["spec"]["egress"]
+        assert egress_rule["to"][0]["podSelector"]["matchLabels"]["app"] == "prod-worker"
+        assert [port["port"] for port in egress_rule["ports"]] == [9090]
+
+    def test_de_keuzelijst_biedt_de_wildcard_niet_aan(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
+
+        options = CrossDomainProjectOptionsProvider(yaml_data={"_cross_domain_projects": ["regelrecht"]}).get_options()
+        assert "*" not in [option["value"] for option in options]
+
+    def test_een_opgeslagen_wildcard_blijft_zichtbaar_en_krijgt_een_naam(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
+
+        options = CrossDomainProjectOptionsProvider(
+            yaml_data={"_cross_domain_projects": ["regelrecht"]}, current_value="*"
+        ).get_options()
+        wildcard = [option for option in options if option["value"] == "*"]
+        assert wildcard, "een opgeslagen wildcard mag niet stil uit de keuzelijst vallen"
+        assert wildcard[0]["label"] == "Geen projectlimiet (elke bron)"
+
+    def test_de_peervelden_verdwijnen_bij_een_wildcard(self) -> None:
+        """Anders blokkeert het verplichte peer-component het opslaan van zo'n regel."""
+        from opi.forms.visualizers.bridge import should_render_editable
+        from opi.services.catalog.cross_domain_access.visualizers import INBOUND_SEQUENCE
+
+        children = INBOUND_SEQUENCE.children or []
+        peer_fields = [
+            child
+            for child in children
+            if "/from/" in child.editable.yaml_path and child.editable.yaml_path.endswith(("deployment", "component"))
+        ]
+        assert len(peer_fields) == 2, "verwacht bron-deployment en bron-component"
+
+        def _rows(project: str) -> dict:
+            return {
+                "_services-config": {
+                    "cross-domain-access": {"config": {"inbound": [{"name": "r", "from": {"project": project}}]}}
+                }
+            }
+
+        for field in peer_fields:
+            assert should_render_editable(field, _rows("regelrecht"), index=0, siblings=children), (
+                f"{field.editable.yaml_path} hoort zichtbaar te zijn bij een gewoon peer-project"
+            )
+            assert not should_render_editable(field, _rows("*"), index=0, siblings=children), (
+                f"{field.editable.yaml_path} hoort te verdwijnen bij een wildcard-peer"
+            )
+
+    def test_een_rij_zonder_peer_project_toont_de_velden_gewoon(self) -> None:
+        """Een verse rij heeft nog geen project; dan is het zeker geen wildcard."""
+        from opi.forms.visualizers.bridge import should_render_editable
+        from opi.services.catalog.cross_domain_access.visualizers import INBOUND_PEER_COMPONENT, INBOUND_SEQUENCE
+
+        assert should_render_editable(INBOUND_PEER_COMPONENT, {}, index=0, siblings=INBOUND_SEQUENCE.children or [])

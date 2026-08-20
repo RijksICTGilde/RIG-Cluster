@@ -86,6 +86,12 @@ KIND_MAP: dict[ServiceType, tuple[str, str, tuple[str, ...]]] = {
     # variabelen daadwerkelijk geinjecteerd worden; wat niet bewaakt wordt is of ze
     # ook werken. Dat verschil is de moeite van een vervolgstap waard.
     ServiceType.SEND_EMAIL: ("metadata", "mail", ()),
+    # vlam is metadata om dezelfde reden als send-email, plus een die alleen voor deze
+    # dienst geldt: er staat in de sandbox helemaal geen VLAM achter het adres (de
+    # clusterconfiguratie draagt daar een plaatshouder). Een round-trip zou dus altijd
+    # falen op de omgeving en nooit op de dienst. Wat hier wel bewaakt wordt is dat
+    # VLAM_API_URL daadwerkelijk in de pod aankomt.
+    ServiceType.VLAM: ("metadata", "vlam", ()),
 }
 
 # Services that legitimately inject no connection variables and so have no probe.

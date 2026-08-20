@@ -42,10 +42,16 @@ class PeerSelector:
 
 @dataclass(frozen=True)
 class ResolvedRule:
-    """A rule ready to render: my component may talk to/from ``peer`` on ``port``."""
+    """A rule ready to render: my component may talk to/from ``peer`` on ``port``.
+
+    ``peer`` is None for an OPEN inbound rule (RC-142): the port is opened to every source,
+    so there is no selector to build. Only an inbound rule whose peer project is the
+    wildcard (``from: {project: "*"}``) can produce this; a peer that could not be resolved
+    is skipped, never turned into None.
+    """
 
     local_component: str
-    peer: PeerSelector
+    peer: PeerSelector | None
     port: int
 
 
@@ -64,16 +70,28 @@ def _component_in_deployment(deployment: dict, component_name: str) -> bool:
 
 
 def _key(entry: ResolvedRule) -> tuple:
-    """Identity of a resolved rule: dedup key and sort key in one, so both stay in step."""
+    """Identity of a resolved rule: dedup key and sort key in one, so both stay in step.
+
+    An open rule (no peer) sorts before every peered rule of the same component, which is
+    also how it reads in the rendered policy: the open port first, then who else may in.
+    """
     return (
         entry.local_component,
-        entry.peer.namespace,
-        tuple(sorted(entry.peer.pod_labels.items())),
+        "" if entry.peer is None else entry.peer.namespace,
+        () if entry.peer is None else tuple(sorted(entry.peer.pod_labels.items())),
         entry.port,
     )
 
 
 def _selector(cluster: str, rule: MergedRule, namespace: str) -> PeerSelector:
+    """The peer selector of a rule that HAS a peer.
+
+    A wildcard rule never reaches here: it is turned into a peerless ``ResolvedRule`` before
+    resolution starts, which is what these three narrowings record.
+    """
+    assert rule.peer_deployment is not None  # noqa: S101
+    assert rule.peer_component is not None  # noqa: S101
+    assert rule.peer_project is not None  # noqa: S101
     return PeerSelector(
         namespace=get_prefixed_namespace(cluster, namespace),
         pod_labels={
@@ -99,6 +117,7 @@ def _conventional_peer(cluster: str, rule: MergedRule) -> PeerSelector:
     must carry ``project: <peer>``, so a namespace that happens to be named after the peer but
     belongs to someone else still matches nothing.
     """
+    assert rule.peer_project is not None  # noqa: S101 - a wildcard rule has no peer to resolve
     return _selector(cluster, rule, namespace=rule.peer_project)
 
 
@@ -116,6 +135,9 @@ def resolve_rules(
     convention (``_conventional_peer``). The result is deduplicated and sorted so the render
     is stable.
 
+    An OPEN rule (RC-142) resolves to a rule with no peer: there is nothing to look up, and
+    it can never be skipped for a reference that does not exist.
+
     A rule may name the resolving project itself. The tenant baseline isolates per
     DEPLOYMENT, not per project, so one deployment reaching another deployment of the same
     project needs a rule exactly as much as reaching someone else's. Such a peer resolves
@@ -123,6 +145,12 @@ def resolve_rules(
     """
     resolved: dict[tuple, ResolvedRule] = {}
     for rule in rules:
+        if rule.is_open:
+            # Nothing to look up: an open rule names no peer on purpose (RC-142).
+            entry = ResolvedRule(local_component=rule.local_component, peer=None, port=rule.port)
+            resolved.setdefault(_key(entry), entry)
+            continue
+        assert rule.peer_project is not None  # noqa: S101 - not open means the model filled the peer
         project_data = lookup_project(rule.peer_project)
         if project_data is None:
             logger.warning(
@@ -135,6 +163,8 @@ def resolve_rules(
             )
             resolved.setdefault(_key(entry), entry)
             continue
+        assert rule.peer_deployment is not None  # noqa: S101 - to_merged_rule dropped the open ones
+        assert rule.peer_component is not None  # noqa: S101 - required on a complete rule
         deployment = _find_deployment(project_data, rule.peer_deployment)
         if deployment is None:
             logger.warning(
