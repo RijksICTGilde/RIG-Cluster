@@ -269,6 +269,24 @@ uv run ruff check . --fix && uv run ruff format . && uv run pyright
   meetrekken van een ontbrekend geheugen-request.
 - **De sectiestroom `modal-edit-components` blijft buiten schot**: die heeft geen `target`,
   bewerkt de hele lijst en is niet vanuit het scherm te openen.
-- **Sandboxvalidatie kon niet.** Het wildcardcertificaat van de sandbox is op 18-08 06:51 UTC
-  verlopen; elke nieuwe pod blijft daardoor 0/1 op de Keycloak-readinessmeting. Gemeld op de
-  PR, lock direct weer vrijgegeven.
+- **Sandboxvalidatie kon niet.** Een verse pod blijft 0/1 op de Keycloak-readinessmeting.
+  Niet door een verlopen certificaat -- dat was de eerste, foute diagnose -- maar door de
+  truststore van de pod: `REQUESTS_CA_BUNDLE` en `SSL_CERT_FILE` wijzen allebei naar
+  `/etc/rig-ca/rig-sandbox-dev-ca.crt`, dat alleen de zelfondertekende RIG Sandbox Dev CA
+  bevat, terwijl de ingress een Let's Encrypt-certificaat serveert. Vandaar de KETENfout
+  `unable to get local issuer certificate`. Gemeld op de PR, lock direct weer vrijgegeven.
+
+## Reparaties na de review (r1)
+
+- **Het nieuwste `manual`-item draagt de VOLLEDIGE staande wens.** De lezer neemt per niveau
+  precies het nieuwste item, dus een item met alleen de velden van die ene bewerking liet elke
+  tweede bewerking de eerste wens stil weggooien -- de gewone flow, niet een randgeval. Elk
+  nieuw item neemt nu de nog staande velden van het vorige item mee (velden die deze bewerking
+  niet overschrijft en waarvan de waarde nog in de catalogus staat), inclusief het opruimen van
+  hun deployment-override. Een meegenomen veld krijgt de nieuwe tijdstempel, dus zijn
+  vervaltermijn gaat opnieuw lopen; dat staat in `features/handmatig-gezette-resources.md`.
+- **`_prune_resource_history` reserveert de slots vooraf** in plaats van achteraf een
+  niet-beschermd item te vervangen. In een venster dat volledig uit beschermde items bestaat
+  (een OOM-storm) vond die vervanging geen vrij slot en viel de wens alsnog weg.
+- **De sandboxdiagnose is gecorrigeerd** (zie hierboven): het certificaat in het cluster is
+  geldig tot 16-11-2026; de eerste meting keek naar poort 443, en dat is de Caddy-rand.
