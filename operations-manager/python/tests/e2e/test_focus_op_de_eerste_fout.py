@@ -98,7 +98,9 @@ def test_wie_ergens_staat_te_typen_wordt_niet_weggetrokken(app_server: str, auth
 
     # En dan komt er een swap voorbij terwijl de fout nog openstaat. Rechtstreeks de
     # gebeurtenis, want dat is precies waar de twee luisteraars om vechten.
-    auth_page.evaluate("() => document.dispatchEvent(new CustomEvent('htmx:afterSettle', {detail: {target: document}}))")
+    auth_page.evaluate(
+        "() => document.dispatchEvent(new CustomEvent('htmx:afterSettle', {detail: {target: document}}))"
+    )
     auth_page.wait_for_timeout(300)
 
     assert _actief(auth_page)["naam"] == naam_voor, (

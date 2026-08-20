@@ -614,7 +614,9 @@ class FormRenderer:
             self._resolve_checkbox_group_defaults(seq_children, yaml_data, item_context, index=index)
 
             for child_editable in seq_children:
-                if not should_render_editable(child_editable, yaml_data, index=index, siblings=seq_children, edit_mode=edit_mode):
+                if not should_render_editable(
+                    child_editable, yaml_data, index=index, siblings=seq_children, edit_mode=edit_mode
+                ):
                     continue
                 if child_editable.widget == WidgetType.SEQUENCE:
                     nested_seq = self._build_nested_sequence_field(
