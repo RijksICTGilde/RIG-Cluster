@@ -30,7 +30,12 @@ from opi.core.config import settings
 from opi.services import ServiceType
 from opi.services.catalog.send_email import is_approved
 from opi.services.project import Project
-from opi.utils.age import decrypt_password_smart_auto, encrypt_age_content, get_project_public_key
+from opi.utils.age import (
+    decrypt_password_smart,
+    encrypt_age_content,
+    get_decoded_project_private_key,
+    get_project_public_key,
+)
 from opi.utils.naming import MAIL_PROJECT_ACCOUNT_PREFIX, generate_mail_account_name
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import SendEmailSecret
@@ -175,7 +180,7 @@ class MailManager:
         from_address, bounce_address = self._addresses(cluster, username)
         messages_per_day = config.get("messages-per-day") or settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
 
-        entry, password = await self._existing_account_entry(view, cluster)
+        entry, password = await self._existing_account_entry(view, project_data, cluster)
         if password is None:
             password = generate_secure_password()
             entry = None
@@ -459,13 +464,23 @@ class MailManager:
         local_part, _, domain = from_address.partition("@")
         return from_address, f"{local_part}+{username}@{domain}"
 
-    async def _existing_account_entry(self, view: Project, cluster: str) -> tuple[dict[str, Any] | None, str | None]:
-        """The stored account for this cluster and its decrypted password, if any."""
+    async def _existing_account_entry(
+        self, view: Project, project_data: dict[str, Any], cluster: str
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """The stored account for this cluster and its decrypted password, if any.
+
+        Met de PROJECTsleutel, niet de platformsleutel: ``_store_account`` versleutelt het
+        wachtwoord met de publieke sleutel van het project (net als het Keycloak-blok), dus
+        lezen met ``decrypt_password_smart_auto`` (de platformsleutel) strandt op "no
+        identity matched any of the recipients" - en dat pas bij de TWEEDE run, want de
+        eerste heeft nog niets te lezen. Gemeten 20 augustus 2026 op ai1-uit.
+        """
         accounts = view.get(f"{_CONFIG_BASE}/accounts") or []
         entry = next((item for item in accounts if item.get("cluster") == cluster), None)
         if entry is None or not entry.get("password"):
             return None, None
-        return entry, await decrypt_password_smart_auto(entry["password"])
+        project_private_key = await get_decoded_project_private_key(project_data)
+        return entry, await decrypt_password_smart(entry["password"], project_private_key)
 
     @staticmethod
     def _entry_is_stale(entry: dict[str, Any], account: MailAccount) -> bool:

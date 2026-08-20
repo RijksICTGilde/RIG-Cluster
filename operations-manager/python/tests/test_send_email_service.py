@@ -33,7 +33,7 @@ from opi.core.config import settings
 from opi.manager.mail_manager import MailManager
 from opi.services.catalog.approval import ApproverScope
 from opi.services.catalog.base import ConfigLayer, DeploymentManifestContext
-from opi.services.catalog.send_email import RELAY_POD_LABELS, SendEmailService
+from opi.services.catalog.send_email import RELAY_POD_LABELS, RELAY_POD_PORT, SendEmailService
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
@@ -173,7 +173,10 @@ class TestTheNetworkPolicy:
         egress = specs[0].values["egress"]
         assert egress[0]["peer"]["namespace"] == get_mail_relay_namespace("sandboxed-local")
         assert egress[0]["peer"]["pod_labels"] == RELAY_POD_LABELS
-        assert egress[0]["ports"] == [get_mail_relay_port("sandboxed-local")]
+        # De PODpoort, niet get_mail_relay_port (de servicepoort, 587): een NetworkPolicy
+        # wordt na de service-DNAT beoordeeld en ziet dus 2525. Met 587 matchte de regel
+        # niets en liep elke verbinding vanuit een component stuk op een timeout.
+        assert egress[0]["ports"] == [RELAY_POD_PORT]
 
     def test_it_opens_nothing_inbound(self) -> None:
         """One direction only: the relay never has to reach into a project namespace."""
