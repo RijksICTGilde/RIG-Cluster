@@ -278,32 +278,32 @@ _FLAT_RESOURCE_FIELDS: dict[str, tuple[str, str]] = {
 }
 
 
-def _remove_flat_resources(target: dict[str, Any], fields: Iterable[str]) -> bool:
+def _remove_flat_resources(target: dict[str, Any], fields: Iterable[str]) -> list[str]:
     """Remove the named flat resource keys from *target*'s nested resources block.
 
     Only the named fields go; anything else in the block stays, ``history`` included.
     Empty ``requests``/``limits`` dicts (and an empty ``resources`` block) are cleaned
     up so no empty scaffolding is left behind in the project file.
 
-    Returns True if anything was removed.
+    Returns the fields that were actually removed, sorted.
     """
     res = target.get("resources")
     if not isinstance(res, dict):
-        return False
-    removed = False
+        return []
+    removed: list[str] = []
     for field in fields:
         block, key = _FLAT_RESOURCE_FIELDS[field]
         section = res.get(block)
         if isinstance(section, dict) and key in section:
             del section[key]
-            removed = True
+            removed.append(field)
     for block in ("requests", "limits"):
         section = res.get(block)
         if isinstance(section, dict) and not section:
             del res[block]
     if not res:
         del target["resources"]
-    return removed
+    return sorted(removed)
 
 
 def _prune_resource_history(history: list[dict[str, Any]], max_entries: int) -> list[dict[str, Any]]:
@@ -1545,9 +1545,10 @@ class ProjectFileHandler:
             for comp in deployment.get("components", []) or []:
                 if comp.get("reference") != component_name:
                     continue
-                if _remove_flat_resources(comp, changed):
+                removed_fields = _remove_flat_resources(comp, changed)
+                if removed_fields:
                     logger.info(
-                        f"Dropped tuner override {sorted(changed)} for component '{component_name}' "
+                        f"Dropped tuner override {removed_fields} for component '{component_name}' "
                         f"in deployment '{deployment.get('name')}': the user set these by hand"
                     )
 
