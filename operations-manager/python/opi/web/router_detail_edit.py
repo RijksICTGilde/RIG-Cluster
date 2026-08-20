@@ -253,6 +253,12 @@ def _fully_owned_list_keys(flow: Any) -> set[str]:
     owned: set[str] = set()
     for section in flow.sections:
         for vis in section.editables:
+            # A readonly visualizer never writes, so it owns nothing: in a flow
+            # where only such a carrier references the list (modal-edit-attachments),
+            # base_data must keep it or the renderer has no data at all --
+            # _split_data_across_sections skips readonly carriers for the same reason.
+            if vis.readonly:
+                continue
             path = vis.editable.yaml_path
             if "/" not in path and "[" not in path:
                 owned.add(path)

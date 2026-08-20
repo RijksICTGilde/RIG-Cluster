@@ -623,6 +623,13 @@ def _split_data_across_sections(
     for section in flow.sections:
         section_data: dict[str, Any] = {}
         for editable in section.editables:
+            # A readonly visualizer (e.g. the attachments services carrier) never
+            # writes its path; renderers read it from the merged data. Storing a
+            # copy here makes that copy authoritative-but-stale: the by-name union
+            # in merge_service_lists would re-add a service the user deselected
+            # in another section.
+            if editable.readonly:
+                continue
             ed = editable.editable
             value = smart_get_value(project_data, ed.yaml_path)
             if value is not None:
