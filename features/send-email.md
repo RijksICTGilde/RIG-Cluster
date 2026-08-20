@@ -69,7 +69,7 @@ Een component dat de dienst aanvinkt krijgt vijf variabelen uit de projectsecret
 | `SMTP_PORT` | 587 (submission) |
 | `SMTP_USERNAME` | het account van dit project |
 | `SMTP_PASSWORD` | het wachtwoord van dat account |
-| `SMTP_FROM` | het afzenderadres dat de relay afdwingt |
+| `SMTP_FROM` | het afzenderadres dat de relay afdwingt: `noreply-rijksapp+<project>@rijksoverheid.nl` |
 
 Elke variabele heeft ook een `APP_`-alias, net als bij de andere diensten.
 
@@ -82,35 +82,55 @@ Op projectniveau, in de wizard of via de API:
 | `from-name` | de naam die de ontvanger boven het bericht ziet |
 | `messages-per-day` | het dagbudget van dit project, maximaal 5000. Zie de kanttekening hieronder: de relay dwingt vandaag één plafond af voor elk account |
 
-Dat is de hele lijst, en het ontbrekende veld is het punt: **het afzenderadres is niet
-instelbaar.** Elk project verstuurt vanaf `noreply-rijksapp@rijksoverheid.nl`, en de relay
-schrijft dat adres zelf in de `From:` van elk bericht. Zet een applicatie er zelf een in, dan
-wordt die vervangen; de weergavenaam blijft wel staan, dus de ontvanger ziet
-`Algoritmeregister <noreply-rijksapp@rijksoverheid.nl>`.
+Dat is de hele lijst, en het ontbrekende veld is het punt: **het afzenderadres kies je
+niet zelf.** Het platform stelt het samen uit de naam van je project:
+
+```
+From:         <from-name> <noreply-rijksapp+<project>@rijksoverheid.nl>
+Return-Path:  noreply-rijksapp+<project>@rijksoverheid.nl
+```
+
+De relay schrijft die hele `From:` zelf. Zet je applicatie er een eigen in, dan wordt die
+weggegooid — adres én naam. Wat de ontvanger ziet komt dus uit `from-name` en nergens
+anders; tot augustus 2026 bleef de naam van de applicatie staan, en die stond dan boven de
+post van je project.
 
 Overschrijven en niet weigeren, want vrijwel elke maillibrary zet standaard een `From:`. Een
 550 op iets waar de ontwikkelaar niets aan kan doen is geen regel maar een val.
+
+**`Reply-To:` blijft wel van jou** en wordt niet aangeraakt. Dat is de scheiding: de `From:`
+is identiteit en ligt vast omdat wij op de mailserver van de organisatie zitten, de
+`Reply-To:` zegt alleen waar een antwoord heen moet.
 
 Waarom een domein dat niet van ons is: onze post gaat de deur uit via de mailserver van de
 Rijksoverheid, dus hij draagt hun identiteit. Dat is ook de enige opzet die aankomt.
 `rijksoverheid.nl` publiceert `p=reject`, en wij ondertekenen niet met DKIM omdat wij in die
 zone geen sleutel kunnen publiceren. Daarmee is SPF-uitlijning tussen envelope en `From:` het
 enige dat een bericht door DMARC krijgt, en die uitlijning bestaat alleen zolang beide in
-`rijksoverheid.nl` zitten. Een afzenderadres per project breekt precies dat, en dan komt er
-bij elke ontvanger buiten de Rijksoverheid niets meer aan.
+`rijksoverheid.nl` zitten. Een eigen afzenderDOMEIN breekt precies dat, en dan komt er bij
+elke ontvanger buiten de Rijksoverheid niets meer aan. Het project in het plusdeel raakt de
+uitlijning niet: het domein blijft hetzelfde, en een bounce blijft herleidbaar.
 
-De envelope draagt het project wel, in het plusdeel:
-`noreply-rijksapp+<project>@rijksoverheid.nl`. Zo blijft een bounce herleidbaar zonder het
-domein te verlaten.
+Wat `from-name` mag zijn: geen regeleindes of andere stuurtekens, geen `@`, geen punthaken,
+geen aanhalingstekens of backslash, en hoogstens 64 tekens. Dat is geen willekeur — de naam
+gaat rechtstreeks een mailheader in, en een naam die op een adres lijkt
+(`beveiliging@bank.nl`) wordt bij menig ontvanger als het afzenderadres gelezen. Een komma
+of een punt mag wel; de relay zet aanhalingstekens om de naam heen, zodat die de `From:`
+niet in tweeën knipt.
+
+Laat je `from-name` weg, dan verstuurt je project met een kaal projectadres en zonder naam.
+Dat is een geldige uitkomst, geen storing.
 
 ### Voorbeeld
+
+Voor een project dat `algor-odc` heet:
 
 ```yaml
 services:
   - name: send-email
     config:
       from-name: Algoritmeregister   # de ontvanger ziet
-                                     # Algoritmeregister <noreply-rijksapp@rijksoverheid.nl>
+                                     # Algoritmeregister <noreply-rijksapp+algor-odc@rijksoverheid.nl>
       messages-per-day: 750
       # accounts: door het platform geschreven, zie hieronder
 ```
