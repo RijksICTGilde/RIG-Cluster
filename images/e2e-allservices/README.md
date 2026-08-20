@@ -29,6 +29,7 @@ fails the build otherwise). Each bound service maps to one reusable *probe kind*
 | `oidc` | GET discovery doc (assert `issuer` + `token_endpoint`), then a client-credentials token grab (falls back to discovery-only, clearly marked) |
 | `path` | write a file, `fsync`, read back, compare, delete for each mounted path |
 | `metadata` | assert presence and echo (e.g. `DEPLOYMENT_NAME`, `PUBLIC_HOST`) |
+| `vlam` | `GET {VLAM_API_URL}/v1/models`; a models document passes, a 401/403 passes too (only VLAM itself can answer that, so the path stands), anything else fails with the suspect hop named |
 
 For every bound service it also asserts **all** injected env vars are present and
 non-empty — a dropped or renamed variable is itself a provisioning bug.

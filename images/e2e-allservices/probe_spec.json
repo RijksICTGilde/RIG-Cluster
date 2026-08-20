@@ -197,7 +197,7 @@
         "VLAM_API_URL"
       ],
       "id": "vlam",
-      "kind": "metadata",
+      "kind": "vlam",
       "services": [
         "vlam"
       ]
