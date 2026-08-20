@@ -13,11 +13,12 @@ Three things are deliberately the way they are:
   off the RON link, which exists on exactly one cluster, and the proxy is a component of a
   tenant project (``vlam-wt8``) that may one day move. What a cluster has is a ``vlam``
   entry (``opi/core/cluster_config.py``); what it does not have is the service.
-* **Switching the service on does NOT open the path by itself.** It writes the egress half
-  -- this project's pods may connect out. The ingress half is an explicit
-  ``cross-domain-access`` inbound rule in ``vlam-wt8``, which the VLAM team adds. The
-  receiver decides who gets in, exactly as with cross-domain-access; a consumer that could
-  grant itself access would be no permission at all.
+* **This service writes the EGRESS half only.** The ingress half lives once in
+  ``vlam-wt8``: a ``cross-domain-access`` inbound rule with the WILDCARD peer
+  (``from: {project: "*"}``, RC-142) that opens port 8081 of the proxy to every source. So
+  taking the service is enough for a consumer, and the owner of a shared facility is not
+  made the gatekeeper of a self-service platform. What the caller may then DO is authorized
+  by VLAM itself, on its API key -- the network rule decides reachability, not identity.
 * **No config fields.** There is nothing to choose: one endpoint, one variable, one rule.
   A config block would only be a place for a value to go stale.
 
@@ -28,9 +29,9 @@ Deliberately absent, so the next reader does not go looking:
 * ``manifest_secret_class`` / ``build_secret_files`` -- the address is not a secret, so it
   is a plain env var. Encrypting a public cluster address would only hide from its owner
   what their pod was told.
-* ``config_approvals`` -- the approval IS the inbound rule at the VLAM side, which is a
-  human step in another project's file. A second, ZAD-internal approval would have to be
-  kept in step with it by hand.
+* ``config_approvals`` -- there is nothing per project to judge: the VLAM side is open to
+  the cluster and VLAM authorizes its own callers. An approval here would gate reachability
+  while the thing that actually protects VLAM is its API key.
 """
 
 from __future__ import annotations

@@ -180,6 +180,7 @@ def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool
     Supported operators:
     - ``{"contains": "value"}`` - dep_value is a list containing "value"
     - ``{"contains_any": [...]}`` - dep_value is a list containing any value
+    - ``{"not_equals": "value"}`` - dep_value is anything BUT "value"
     - ``{"field": "value"}`` - dep_value equals "value"
     - ``{"field": ["v1", "v2"]}`` - dep_value is in the list
     """
@@ -187,7 +188,13 @@ def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool
         return bool(dep_value)
 
     for key, expected in show_when.items():
-        if key == "contains":
+        if key == "not_equals":
+            # "Everything except this one value" (RC-142: every peer project except the
+            # wildcard). Listing the allowed values is not an option when the allowed set
+            # is open-ended, and an absent value is not the excluded one, so it shows.
+            if dep_value == expected:
+                return False
+        elif key == "contains":
             if not isinstance(dep_value, list):
                 return False
             names = _extract_names_from_list(dep_value)

@@ -24,32 +24,36 @@ Er zijn geen instellingen. Er valt niets te kiezen: een endpoint, een variabele,
 
 Verwacht je bibliotheek een andere naam dan `VLAM_API_URL`, gebruik dan een alias op je component.
 
-## Aanzetten opent het pad NIET
+## Toegang: eenmalig aan de VLAM-kant, daarna is afnemen genoeg
 
-Dit is het deel dat het vaakst wordt overgeslagen. De dienst regelt jouw kant: je pods mogen naar
-buiten, naar de proxy. De andere kant is een toestemming in het projectbestand van `vlam-wt8`, en
-die geeft het VLAM-team:
+De VLAM-proxy is een gedeelde voorziening: wie hem mag gebruiken is niet een korte, bekende
+lijst maar "ieder project dat de dienst aanzet". Daarom staat er aan de VLAM-kant EEN regel,
+eenmalig gezet, die poort 8081 van `vlam-proxy-intern` zonder projectlimiet openzet:
 
 ```yaml
   - name: cross-domain-access
-    schema-version: "1.0"
+    schema-version: "1.1"
     config:
       inbound:
-        - name: van-<jouw-project>
-          from: { project: <jouw-project>, deployment: <jouw-deployment>, component: <jouw-component> }
+        - name: iedereen-in-het-cluster
+          from: { project: "*" }        # geen projectlimiet
           to: { component: vlam-proxy-intern, port: 8081 }
 ```
 
-Dat is met opzet zo: de ONTVANGER bepaalt wie er binnen mag. Een afnemer die zichzelf toegang kan
-verlenen heeft geen toestemming maar een formaliteit. Het is hetzelfde model als
-`cross-domain-access`, en het gebruikt letterlijk dezelfde dienst.
+Voor een afnemer betekent dat: **de dienst aanzetten is genoeg**. Je krijgt het adres en de
+uitgaande regel, en de proxy laat je binnen. Er hoeft niemand meer een regel per afnemer bij
+te houden -- dat zou de eigenaar van een gedeelde voorziening tot poortwachter van een
+zelfbedieningsplatform maken.
 
-Zolang die regel er niet is, krijgt je applicatie geen foutmelding maar een verbinding die blijft
-hangen tot hij afloopt. Zo werken netwerkregels; het is geen storing.
+Wat dat kost, expliciet: op poort 8081 is de proxy bereikbaar voor elke bron die er een
+netwerkpad heen heeft. De grens die overblijft is de uitgaande kant (zonder de dienst heeft
+je pod geen weg naar die namespace) en, daarachter, **de autorisatie van VLAM zelf**: VLAM
+controleert de API-sleutel van de aanroeper. De netwerkregel is dus niet meer de
+authenticatie; hij is de bereikbaarheid.
 
-Let op de asymmetrie: de dienst is deployment-breed (elk component krijgt het adres en valt onder de
-uitgaande regel), maar een inbound-regel benoemt EEN component. Wie meerdere componenten echt naar
-VLAM laat praten, vraagt per component een regel aan.
+De wildcard geldt alleen voor die ene poort van dat ene component, alleen INKOMEND en alleen
+op een inbound-regel. Uitgaand bestaat hij niet: een project dat zichzelf "overal heen" zou
+geven is een gat, geen voorziening.
 
 ## Twee smaken, en waarom deze zo is
 
@@ -60,7 +64,7 @@ Er zijn twee paden naar VLAM, en ze bestaan naast elkaar:
 | voor | mensen op een laptop | workloads in het cluster |
 | TLS | end-to-end, niet getermineerd | getermineerd op de proxy |
 | CA-probleem | lost de gebruiker zelf op | een keer opgelost, op de proxy |
-| toegang | Keycloak-login met rolfilter | netwerkregel, per afnemer |
+| toegang | Keycloak-login met rolfilter | netwerkregel + de API-sleutel van VLAM |
 
 De keuze voor terminatie is de kern van deze dienst. Het certificaat van `vlam-api.rijksweb.nl` komt
 van `Rijksdienst Issuing CA2` en zit in geen enkele publieke bundel, dus zonder terminatie moet elke
@@ -106,6 +110,23 @@ een platformbeheerde opzet, dan verandert alleen dat blok.
 | netwerkregel | `contribute_deployment_manifests`, één `NetworkPolicy` per deployment, egress-only, `podSelector` op `deployment` + `project` |
 | uitzetten | de bestandsnaam draagt het prune-voorvoegsel `{deployment}-vlam-`, dus de generieke opruiming haalt de regel weg zodra de dienst niet meer bijdraagt |
 | aanzetten | de PROJECTselectie, niet een vinkje per component (`manifest_activated_by_project`) — de dienst is deployment-gebonden, dus geen enkel component vinkt hem ooit aan |
+
+## Wat er in cross-domain-access voor bij moest
+
+De open kant vroeg om iets dat `cross-domain-access` nog niet kon: een inbound-regel zonder
+peer. Dat is er nu, als **wildcard-peer** (`config_schema_version` 1.1):
+
+- `from: { project: "*" }` op een INBOUND-regel betekent "geen projectlimiet"; de regel
+  rendert als ingress-entry zonder `from`-selector, op alleen de genoemde poort.
+- `deployment` en `component` moeten dan LEEG zijn. Een wildcard die er toch een noemt wordt
+  geweigerd, niet stil genegeerd: zo'n regel leest als beperkt tot dat component en is dat
+  niet.
+- Uitgaand kent de wildcard niet; het model weigert hem daar.
+- De keuzelijst in het formulier BIEDT de wildcard niet aan -- dit is een besluit van de
+  eigenaar van een gedeelde voorziening, via de API of het projectbestand, geen menu-item.
+  Een regel die hem al draagt wordt wel getoond, als "Geen projectlimiet (elke bron)", en de
+  velden voor peer-deployment en peer-component verdwijnen dan uit die rij. Anders zou het
+  verplichte peer-component het opslaan van elke andere regel van dat project blokkeren.
 
 ## Open punten
 

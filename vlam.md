@@ -395,19 +395,25 @@ bestemming niet bepaalt. Redirects worden teruggegeven, niet gevolgd.
 De RON-egress werkt vanzelf mee: de `rig-ron`-annotatie staat op de NAMESPACE, niet op een
 component.
 
-**Toegang verlenen aan een afnemer.** De dienst `vlam` aanzetten regelt alleen de uitgaande kant
-bij de afnemer. De toestemming is een `cross-domain-access` inbound-regel in `vlam-wt8`, per
-component van de afnemer:
+**Toegang.** Eenmalig, en daarna nooit meer per afnemer. In `vlam-wt8` staat EEN
+cross-domain-access-regel die poort 8081 van `vlam-proxy-intern` zonder projectlimiet
+openzet:
 
 ```yaml
   - name: cross-domain-access
-    schema-version: "1.0"
+    schema-version: "1.1"
     config:
       inbound:
-        - name: van-<afnemer-project>
-          from: { project: <afnemer-project>, deployment: <afnemer-deployment>, component: <afnemer-component> }
+        - name: iedereen-in-het-cluster
+          from: { project: "*" }        # geen projectlimiet, alleen deze poort
           to: { component: vlam-proxy-intern, port: 8081 }
 ```
+
+Een afnemer heeft daarna genoeg aan de ZAD-dienst `vlam` (uitgaande regel plus
+`VLAM_API_URL`). De autorisatie zit bij VLAM zelf, op de API-sleutel; de netwerkregel regelt
+alleen nog de bereikbaarheid. De wildcard geldt alleen inkomend, alleen op die ene poort van
+dat ene component, en `deployment`/`component` moeten er leeg blijven -- het model weigert
+een wildcard die er toch een noemt.
 
 **CA-rotatie.** De keten zit in een `subPath`-mount, en die wordt NOOIT vanzelf ververst: de pod
 draait stil door op de oude inhoud, zonder foutmelding. Roteren is dus bijlage vervangen EN alleen
