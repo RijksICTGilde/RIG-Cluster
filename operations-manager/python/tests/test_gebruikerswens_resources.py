@@ -29,6 +29,12 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
+from opi.api.validation import (
+    ADD_COMPONENT_VALIDATORS,
+    UPDATE_COMPONENT_VALIDATORS,
+    validate_api_payload,
+)
 from opi.connectors.vpa import VpaContainerRecommendation, parse_k8s_cpu_to_m
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.resource_analyzer import _k8s_memory_to_mb
@@ -701,3 +707,134 @@ async def test_zonder_oom_blijft_de_geheugenwens_staan() -> None:
     changes = await _draai_tuner(project, max_mb=120, oom=False)
 
     assert changes == []
+
+
+# ---------------------------------------------------------------------------
+# 8. De platformcap blijft gelden nu de tuner niet meer corrigeert
+# ---------------------------------------------------------------------------
+#
+# De per-component cap (max_memory_limit_mi / max_cpu_limit_m) werd tot nu toe op twee
+# plaatsen afgedwongen: door de editables op de aanmaakweg en op het formulier, en door de
+# tuner, die een te ruime waarde bij de eerstvolgende sweep terugklemde via een
+# deployment-override. Het bijwerkprofiel van de API valideerde geen van beide limieten, dus
+# `PATCH .../components/{c}` met `{"memory_limit": "64Gi"}` ging erdoor en de tuner zette het
+# 's nachts recht.
+#
+# Dit mechanisme haalt die tweede lijn weg: een handmatig gezette waarde wordt gepind en de
+# tuner laat hem staan. Een pin boven de cap loopt bovendien niet vanzelf af, want
+# `_intent_field_is_expired` eist ouderdom EN gebruik onder de helft van de gezette waarde --
+# een workload die zijn eigen pin vol houdt, houdt hem onbeperkt. Daarom moet het profiel op
+# de bijwerkweg dezelfde regel toetsen als de aanmaakweg. Er is geen derde lijn: er staat geen
+# ResourceQuota of LimitRange in manifests/, en het projectschema typeert `resources` kaal als
+# string.
+
+
+async def _bewerk_component(project_data: dict[str, Any], lichaam: dict[str, str]) -> list[str]:
+    """De twee stappen die ``update_component`` in beide routers achter elkaar zet.
+
+    Eerst het profiel, dan het gedeelde schrijfpad -- de API kent alleen de twee limieten en
+    vertaalt ze naar de vlakke sleutels. ``test_beide_routers_valideren_de_bijwerkweg``
+    hieronder pint dat de routers die volgorde ook echt aanhouden.
+    """
+    await validate_api_payload(lichaam, UPDATE_COMPONENT_VALIDATORS)
+    return ProjectFileHandler().apply_user_resource_intent(
+        project_data,
+        "api",
+        {"limits_memory": lichaam["memory_limit"], "limits_cpu": lichaam["cpu_limit"]},
+        origin="api",
+    )
+
+
+@pytest.mark.parametrize(
+    ("veld", "waarde"),
+    [
+        ("memory_limit", "64Gi"),
+        ("cpu_limit", "16"),
+    ],
+)
+async def test_de_bijwerkweg_weigert_een_limiet_boven_de_platformcap(veld: str, waarde: str) -> None:
+    """Dezelfde regel als de aanmaakweg, dus ook dezelfde melding."""
+    editable = ADD_COMPONENT_VALIDATORS[veld]
+    verwacht = editable.validator.validate(waarde)
+    assert verwacht, "de aanmaakweg moet deze waarde al afkeuren, anders meet deze test niets"
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_api_payload({veld: waarde}, UPDATE_COMPONENT_VALIDATORS)
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["field_errors"][veld] == verwacht
+
+
+async def test_een_limiet_binnen_de_cap_komt_gewoon_door() -> None:
+    """De negatieve controle: het profiel weigert niet zomaar alles."""
+    lichaam = {"memory_limit": "512Mi", "cpu_limit": "1"}
+
+    assert await validate_api_payload(lichaam, UPDATE_COMPONENT_VALIDATORS) == lichaam
+
+
+async def test_een_bewerking_zonder_resourcevelden_blijft_toegestaan() -> None:
+    """Een PATCH draagt alleen wat hij wijzigt; de twee limieten zijn niet verplicht."""
+    lichaam = {"image": "img:v2"}
+
+    assert await validate_api_payload(lichaam, UPDATE_COMPONENT_VALIDATORS) == lichaam
+
+
+def test_de_aanmaakweg_en_de_bijwerkweg_delen_de_regel() -> None:
+    """Een tweede kopie van de regel is precies hoe de twee profielen uiteen liepen."""
+    for veld in ("cpu_limit", "memory_limit"):
+        assert UPDATE_COMPONENT_VALIDATORS[veld] is ADD_COMPONENT_VALIDATORS[veld], veld
+
+
+async def test_een_geweigerde_waarde_legt_geen_wens_vast() -> None:
+    """De volgorde van het endpoint: eerst valideren, dan pas schrijven.
+
+    Zonder die volgorde belandt 64Gi in de catalogus, verdwijnt de tuner-override op dat
+    veld en draagt de historie een ``manual``-item dat de tuner voorgoed van het veld weg
+    houdt. Deze test meet het projectbestand na afloop, niet alleen de 422.
+    """
+    project = _project(overrides={"productie": {"requests": {"memory": "600Mi"}, "limits": {"memory": "900Mi"}}})
+    voor = _effectieve_resources(project, "productie", "api")
+
+    with pytest.raises(HTTPException):
+        await _bewerk_component(project, {"memory_limit": "64Gi", "cpu_limit": "16"})
+
+    assert "history" not in project["components"][0]["resources"]
+    assert ProjectFileHandler().get_user_resource_intent(project, "productie", "api") is None
+    assert _effectieve_resources(project, "productie", "api") == voor
+
+
+async def test_een_waarde_binnen_de_cap_legt_de_wens_wel_vast() -> None:
+    """De negatieve controle bij de test hierboven: de weg zelf werkt nog."""
+    project = _project(overrides={"productie": {"requests": {"memory": "600Mi"}, "limits": {"memory": "900Mi"}}})
+
+    gewijzigd = await _bewerk_component(project, {"memory_limit": "512Mi", "cpu_limit": "1"})
+
+    assert "limits_memory" in gewijzigd
+    wens = ProjectFileHandler().get_user_resource_intent(project, "productie", "api")
+    assert wens is not None
+    assert wens.fields["limits_memory"] == "512Mi"
+
+
+@pytest.mark.parametrize("module", ["opi/api/router.py", "opi/api/v2/router.py"])
+def test_beide_routers_valideren_de_bijwerkweg(module: str) -> None:
+    """Het profiel beschermt niets zolang een router het niet draait.
+
+    Beide routers voeren dezelfde bewerking uit (v1 sync en async, v2 async), dus beide
+    moeten het profiel langs ``validate_api_payload`` halen.
+    """
+    bron = (OPI_DIR.parent / module).read_text(encoding="utf-8")
+    boom = ast.parse(bron)
+
+    functies = {
+        knoop.name
+        for knoop in ast.walk(boom)
+        if isinstance(knoop, ast.FunctionDef | ast.AsyncFunctionDef)
+        for binnen in ast.walk(knoop)
+        if isinstance(binnen, ast.Call)
+        and getattr(binnen.func, "id", None) == "validate_api_payload"
+        and any(getattr(arg, "id", None) == "UPDATE_COMPONENT_VALIDATORS" for arg in binnen.args)
+    }
+
+    assert any(naam.startswith("update_component") for naam in functies), (
+        f"{module} draait UPDATE_COMPONENT_VALIDATORS niet op de bijwerkweg"
+    )
