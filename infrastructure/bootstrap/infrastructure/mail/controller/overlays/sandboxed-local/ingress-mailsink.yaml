@@ -1,0 +1,30 @@
+# De web-UI van de SMTP-sink (Mailpit): alles wat de relay "bezorgd" heeft, in de
+# browser in plaats van via een port-forward. Alleen op dit clustertype: de sink
+# bestaat uitsluitend in local en sandboxed-local, op ODCN is de upstream de echte
+# mailserver en is er niets te tonen.
+#
+# Geen secretName in het tls-blok: het wildcard-certificaat staat als
+# --default-ssl-certificate op de ingresscontroller (rig-system/sandbox-wildcard-tls)
+# en dat secret bestaat niet in rig-ron. Een tls-blok zonder secretName laat nginx
+# de default gebruiken.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rig-mail-sink
+  namespace: rig-ron
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: mailsink.sandbox.rijksapp.dev
+      http:
+        paths:
+          - backend:
+              service:
+                name: rig-mail-sink
+                port:
+                  number: 8025
+            path: /
+            pathType: Prefix
+  tls:
+    - hosts:
+        - mailsink.sandbox.rijksapp.dev
