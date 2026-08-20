@@ -75,6 +75,15 @@ logger = logging.getLogger(__name__)
 #: workload and not the whole RON namespace (which also hosts the VLAM gateway).
 RELAY_POD_LABELS = {"app": "rig-mail-relay"}
 
+#: The relay's POD port (containerPort ``submission``), for the egress NetworkPolicy.
+#: NOT ``get_mail_relay_port()``: that is the Service port (587), which is what an
+#: application dials and what goes into SMTP_PORT. A NetworkPolicy is evaluated AFTER
+#: the Service DNAT, so it sees the pod port; a rule on 587 matches nothing and the
+#: connect times out (measured 20 August 2026 on ai1-uit). Same trap as the relay ->
+#: sink hop (1025, not 25) and the ingress side of the relay's own policy (2525).
+#: Change the containerPort in mail/controller/base/deployment.yaml, change this too.
+RELAY_POD_PORT = 2525
+
 #: Key of this service's one approval, used to route a verdict back to the spec.
 APPROVAL_KEY = "send-email"
 
@@ -384,7 +393,6 @@ class SendEmailService(Service):
             return []
 
         relay_namespace = get_mail_relay_namespace(ctx.cluster)
-        relay_port = get_mail_relay_port(ctx.cluster)
         return [
             DeploymentManifestSpec(
                 filename=f"{deployment_name}-{self.service_type.value}-{component}-network-policy",
@@ -397,7 +405,8 @@ class SendEmailService(Service):
                     "egress": [
                         {
                             "peer": {"namespace": relay_namespace, "pod_labels": RELAY_POD_LABELS},
-                            "ports": [relay_port],
+                            # De PODpoort, niet de servicepoort: zie RELAY_POD_PORT.
+                            "ports": [RELAY_POD_PORT],
                         }
                     ],
                 },
