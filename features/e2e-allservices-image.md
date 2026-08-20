@@ -37,7 +37,14 @@ Each bound service maps to one reusable *probe kind*:
 | `s3` | minio-storage | `PutObject`/`GetObject`/compare/`RemoveObject` in `OBJECT_STORE_BUCKET_NAME` |
 | `oidc` | keycloak | GET `OIDC_DISCOVERY_URL` (assert `issuer` + `token_endpoint`), then a **client-credentials token grab** with `OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` (falls back to discovery-only if the grant is unavailable, clearly marked - never a silent pass) |
 | `path` | persistent-storage, temp-storage | for each of `DATA_PATH` / `TEMP_PATH`: write a file, `fsync`, read back, compare, delete |
-| `metadata` | publish-on-web, metrics-scraper, platform | assert presence and echo (`DEPLOYMENT_NAME`, `PUBLIC_HOST`, ...); secret-looking values are redacted |
+| `metadata` | publish-on-web, metrics-scraper, platform, send-email | assert presence and echo (`DEPLOYMENT_NAME`, `PUBLIC_HOST`, ...); secret-looking values are redacted |
+
+The mail probe stays `metadata` on purpose: a real send counts against the
+project's daily budget on the relay, so the check round never sends. Instead the
+status page carries a manual **"Stuur testmail"** form (`POST /send-testmail`)
+when send-email is bound: STARTTLS + AUTH as the injected account, one message
+to an address you choose, and the subject line in the response so you can find
+it at the receiving end (sandbox: Mailpit on the sink, port 8025).
 
 Beyond the round-trip, for every **bound** service it asserts that **all** env
 vars the platform injects for it are actually injected (the key exists) - a
