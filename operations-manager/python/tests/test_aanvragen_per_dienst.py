@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from opi.core.templates_lotc import templates_lotc
 from opi.services.approvals import collect_approval_items
+from opi.web.lotc_fixtures import page_data
 from opi.web.router_approvals import APPROVAL_STATUSSEN, filter_op_status, groepeer_per_dienst
 
 #: Een project met alle drie de soorten aanvraag die het platform vandaag kent: een domein
@@ -243,16 +244,55 @@ class TestWatErOpHetSchermStaat:
         assert "3 van 3" in html
 
 
-@pytest.mark.parametrize("titel", ["Domeinbeheer", "Domein- en subdomeingoedkeuring"])
+@pytest.mark.parametrize("titel", ["domeinbeheer", "domein- en subdomeingoedkeuring"])
 def test_de_domeinnamen_zijn_uit_de_broncode_verdwenen(titel: str) -> None:
-    """Een naam die niet meer klopt blijft anders in een hoek staan die niemand rendert."""
+    """Een naam die niet meer klopt blijft anders in een hoek staan die niemand rendert.
+
+    ZONDER HOOFDLETTER vergeleken, en ook over de stijlbladen: de eerste vorm van deze
+    poort keek alleen naar "Domeinbeheer" met een hoofdletter in .py en .j2, en liet
+    daarmee twee achterblijvers staan die allebei in een commentaar zonder hoofdletter
+    stonden (opi/web/lotc_switch.py en static/css/admin-approvals.css).
+    """
     from pathlib import Path
 
     wortel = Path(__file__).resolve().parent.parent
-    treffers = [
-        pad
-        for pad in list(wortel.rglob("opi/**/*.py")) + list(wortel.rglob("opi/**/*.j2"))
-        if titel in pad.read_text(encoding="utf-8")
+    # Per MAP en niet met rglob("opi/**"): dat laatste zoekt vanaf elke tussenmap en loopt
+    # dus ook door .venv, met de kans op een treffer in een pakket dat wij niet schrijven.
+    bestanden = [
+        *(wortel / "opi").rglob("*.py"),
+        *(wortel / "opi").rglob("*.j2"),
+        *(wortel / "static").rglob("*.css"),
     ]
+    treffers = [pad for pad in bestanden if titel in pad.read_text(encoding="utf-8").lower()]
 
     assert treffers == [], f"{titel} staat nog in: {treffers}"
+
+
+class TestDeProefopstelling:
+    """``/lotc/bg/admin-approvals`` toont dezelfde pagina met verzonnen gegevens.
+
+    Dat is de TWEEDE schrijver van deze context, en die liep uiteen: het sjabloon ging van
+    ``approval_items`` naar ``approval_groups`` en de proefopstelling schreef die sleutel
+    niet, dus draaide de for-lus nul keer en bleef er een lege tabel over. De
+    screenshottest merkte daar niets van (die eist alleen een antwoord), dus staat de toets
+    hier: de context van de proefopstelling levert RIJEN op.
+    """
+
+    def test_de_context_levert_groepen_uit_dezelfde_functie(self) -> None:
+        project = page_data("admin-approvals")["projects_data"][0]
+
+        assert [groep["service"] for groep in project["approval_groups"]] == ["publish-on-web", "send-email"]
+        assert sum(len(groep["aanvragen"]) for groep in project["approval_groups"]) == len(project["approval_items"])
+
+    def test_de_proefopstelling_rendert_een_dienstaanvraag_en_geen_lege_tabel(self) -> None:
+        html = templates_lotc.env.get_template("bg/admin-approvals.html.j2").render(
+            request=SimpleNamespace(cookies={}, url=SimpleNamespace(path="/admin/approvals"), state=SimpleNamespace()),
+            navigation={},
+            menu_items=[],
+            **page_data("admin-approvals"),
+        )
+
+        assert html.count("nldd-table-row") > 0, "de proefopstelling toont geen enkele regel"
+        assert "E-mail versturen" in html
+        assert "Gebruik van de dienst" in html
+        assert "voorbeeld.nl" in html
