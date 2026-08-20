@@ -32,7 +32,9 @@ Two validation levels, because the deployment layer is a *patch* on the project 
 
 The typing does the shape validation for free: ``project`` on the own side and ``port`` on
 the ``from`` side simply do not exist in the relevant model and are rejected by
-``extra="forbid"``.
+``extra="forbid"``. The same trick keeps the WILDCARD peer (``project: "*"``, see
+``WILDCARD_PROJECT``) to the inbound side: only ``PeerRef``/``PeerRefPatch`` carry the
+pattern that allows it, and those are the inbound peer.
 """
 
 from __future__ import annotations
