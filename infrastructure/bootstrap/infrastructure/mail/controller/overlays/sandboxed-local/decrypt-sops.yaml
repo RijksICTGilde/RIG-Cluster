@@ -19,3 +19,6 @@ metadata:
     config.kubernetes.io/function: "exec:\n  path: ksops\n"
 files:
   - ../../../../secrets/config/overlays/sandboxed-local/mail-relay-secret.yaml.sops.yaml
+  # Zelfde constructie voor de databasegebruiker: CNPG leest hem in rig-system (de rol en
+  # de database komen daaruit voort), de relay leest hem hier als MAIL_DB_USER/PASSWORD.
+  - ../../../../secrets/config/overlays/sandboxed-local/mail-db-credentials-secret.yaml.sops.yaml
