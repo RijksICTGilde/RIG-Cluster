@@ -229,9 +229,20 @@
 }
 
 
-.component-card {
-    border-left: 4px solid #6B4C9A;  /* --rvo-color-paars staat niet in lotc-app.css */
-}
+/* De paarse balk op .component-card is WEG.
+ *
+ * Hij was een vaste kleur (#6B4C9A) die de licht/donker-stand niet volgde, en hij bakende
+ * op de hertekende pagina niets meer af dat niet al afgebakend was.
+ *
+ * Er komt geen eigen regel voor terug. Wat een component van het volgende scheidt komt uit
+ * het componentensysteem: de kaart is een <c-card outline> en de ruimte ertussen staat op
+ * <c-stack gap="lg">. De kaarten zijn bovendien kort geworden - services,
+ * omgevingsvariabelen en aliassen staan ingeklapt in <c-list-item>-rijen - en daarmee was
+ * het probleem dat de balk moest oplossen er niet meer.
+ *
+ * .component-card zelf blijft in de sjablonen staan, als HAAK: tests/e2e zoekt de kaart van
+ * een component ermee op. Grep de lezers voordat een klasse verdwijnt; tests zijn ook
+ * lezers. */
 
 .component-header {
     display: flex;
