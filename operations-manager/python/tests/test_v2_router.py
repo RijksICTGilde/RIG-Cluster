@@ -314,6 +314,12 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             "persistent-storage": ["generation", "revisions"],
             "postgresql-database": ["generation", "revisions"],
             "publish-on-web": ["domains"],
+            # RC-114: the SMTP account and its password are written by the mail manager,
+            # and the approval by the approver flow -- a project that could set its own
+            # status to approved would make the approval no approval at all. There is no
+            # sender-address field to protect: every project sends from one fixed address
+            # that the relay writes into the From: header itself.
+            "send-email": ["accounts", "approval"],
             "temp-storage": ["generation", "revisions"],
         }
 
@@ -326,14 +332,17 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             for layer in ConfigLayer
             if "put" in spec["paths"].get(f"/api/v2/projects/{{project_name}}/services/{name}/config/{layer.value}", {})
         }
-        # minio-storage en postgresql-database staan erbij omdat hun projectlaag wel een
-        # PUT heeft: daar zet een gebruiker zijn eigen instellingen, en de kloonstatus uit
-        # CloneState reist met hetzelfde model mee. Dat is precies de reden dat de weigering
-        # bestaat, want zonder markering was die tak schrijfbaar via een route die er wel is.
+        # publish-on-web heeft geen PUT op projectniveau (zijn config leeft per deployment).
+        # minio-storage en postgresql-database staan erbij omdat hun projectlaag die wel
+        # heeft: daar zet een gebruiker zijn eigen instellingen, en de kloonstatus uit
+        # CloneState reist met hetzelfde model mee. send-email hoort in datzelfde rijtje:
+        # ook die draagt een platform-managed veld in een blok waar een PUT op zit, en dat
+        # is precies het geval dat de weigering moet dekken.
         assert with_a_put == {
             ("keycloak", "project"),
             ("minio-storage", "project"),
             ("postgresql-database", "project"),
+            ("send-email", "project"),
         }
 
     def test_a_service_without_platform_fields_is_unaffected(

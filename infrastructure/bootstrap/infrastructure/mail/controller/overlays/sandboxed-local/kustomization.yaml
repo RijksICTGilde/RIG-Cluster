@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-ron
+
+generators:
+  - decrypt-sops.yaml
+
+resources:
+  - ../../base
+  - network-policies/mail-relay-networkpolicy.yaml
+
+# De SMTP-sink als testupstream, MET de schakelaar die de relay zijn zelfondertekende
+# certificaat laat aannemen - de component levert die twee samen, zodat de ene niet zonder
+# de andere kan worden ingeladen. Staat alleen in local en sandboxed-local: op ODCN is de
+# upstream de mailserver van de Rijksoverheid en heeft een sink niets te zoeken.
+components:
+  - ../../../sink/as-upstream
+
+patches:
+  # De Namespace uit de base kan hier niet meedoen: de ArgoCD op dit clustertype draait
+  # in namespaced mode en weigert cluster-scoped resources ('cluster level Namespace
+  # "rig-ron" can not be managed when in namespaced mode', gemeten 19 augustus 2026).
+  # De namespace rig-ron wordt op dit clustertype HANDMATIG aangemaakt door
+  # task sandbox:create-sops-age-secret - de CMP van deze app heeft hem bij het renderen
+  # toch al nodig, dus GitOps kon hem nooit zelf brengen. (Een losse file-referentie
+  # naar base naast de map-referentie kan ook niet: de load restrictor van de CMP laat
+  # alleen mappen buiten de overlay-root toe, geen losse bestanden.)
+  - target:
+      kind: Namespace
+      name: rig-ron
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: rig-ron

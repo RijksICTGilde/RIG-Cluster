@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-ron
+
+generators:
+  - decrypt-sops.yaml
+
+resources:
+  - ../../base
+  - network-policies/mail-relay-networkpolicy.yaml
+
+# De SMTP-sink als testupstream, MET de schakelaar die de relay zijn zelfondertekende
+# certificaat laat aannemen - de component levert die twee samen, zodat de ene niet zonder
+# de andere kan worden ingeladen. Staat alleen in local en sandboxed-local: op ODCN is de
+# upstream de mailserver van de Rijksoverheid en heeft een sink niets te zoeken.
+components:
+  - ../../../sink/as-upstream

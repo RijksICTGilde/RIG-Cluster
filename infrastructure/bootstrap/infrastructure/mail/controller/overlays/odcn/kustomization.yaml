@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-prd-ron
+
+generators:
+  - decrypt-sops.yaml
+
+resources:
+  - ../../base
+  - network-policies/mail-relay-networkpolicy.yaml
+
+patches:
+  # De RON-koppeling. Deze annotatie is de reden dat de relay een eigen namespace heeft:
+  # ze neemt exact een waarde, dus RON en internet kunnen niet allebei op dezelfde
+  # namespace staan. Zie plans/mailrelay.md, aanvulling 2, en docs/ron-koppeling.md.
+  - target:
+      kind: Namespace
+      name: rig-ron
+    patch: |-
+      # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus
+      # rig-ron kan daar niet bestaan. De onderbouwing verandert niet, alleen de naam.
+      - op: replace
+        path: /metadata/name
+        value: rig-prd-ron
+      - op: add
+        path: /metadata/annotations
+        value:
+          egress.projectcalico.org/egressGatewayPolicy: rig-ron
+  # OpenShift kent de UID/GID zelf toe uit het toegestane bereik.
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsGroup
+      - op: remove
+        path: /spec/template/spec/securityContext/fsGroup

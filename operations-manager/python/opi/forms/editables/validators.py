@@ -29,7 +29,13 @@ class ModelFieldValidator:
 
     def __init__(self, model: type[BaseModel], field_name: str, message: str) -> None:
         field = model.model_fields[field_name]
-        self._adapter: TypeAdapter[Any] = TypeAdapter(Annotated[(field.annotation, *field.metadata)])
+        # A field carries its constraints in ``metadata`` only when they sit directly on
+        # the field. On an OPTIONAL field they sit inside the union member instead
+        # (``SomeConstrainedType | None``), so ``metadata`` is empty and ``Annotated[(X,)]`` --
+        # one argument -- is a TypeError at import time. The annotation alone already
+        # carries the rule in that case, so use it as-is.
+        annotation = Annotated[(field.annotation, *field.metadata)] if field.metadata else field.annotation
+        self._adapter: TypeAdapter[Any] = TypeAdapter(annotation)
         self._message = message
 
     def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
