@@ -726,7 +726,9 @@ class EditableFormProcessor:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
-                if not should_render_editable(child_vis, result, index=index, siblings=seq_children_json, edit_mode=edit_mode):
+                if not should_render_editable(
+                    child_vis, result, index=index, siblings=seq_children_json, edit_mode=edit_mode
+                ):
                     continue
                 if child_vis.widget == WidgetType.SEQUENCE:
                     self._process_nested_sequence_json(
