@@ -26,13 +26,19 @@ by any services-step save.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
+from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.visualizers.bridge import resolve_options_for_editable
 from opi.services.services import ServiceAdapter, service_entry_name
 
 #: The project-wide service selection.
 SERVICES_PATH = "services"
+
+#: A component's own service selection: the checklist editable's yaml_path, either
+#: materialized (``components[0]/services``) or the wildcard template form.
+_COMPONENT_SERVICES_PATH = re.compile(r"^components\[(\d+|\*)\]/services$")
 
 
 def _walk(editables: list[Any]) -> list[Any]:
@@ -132,3 +138,52 @@ def apply_services_mutation(
         submitted = apply_selection_mutation(base, submitted, offered)
 
     submitted_yaml[SERVICES_PATH] = ServiceAdapter.resolve_service_dependencies(submitted)
+
+
+def apply_component_services_mutation(
+    editables: list[Any],
+    base_data: dict[str, Any],
+    submitted_yaml: dict[str, Any],
+) -> None:
+    """Reconcile a component's submitted service selection with its base, in place.
+
+    The component form's checklist (``components[i]/services``) is the same kind of
+    selection as the project-wide one, and follows the same rule: a name the picker
+    offered and the submission omits was unticked and goes; a name the picker never
+    showed (a service the project disabled meanwhile, a hidden entry) survives from
+    the base. Does nothing for sections that do not carry the checklist -- a config
+    section speaking only through ``services{X}/...`` paths says nothing about the
+    selection.
+
+    The offered set comes from the same provider the renderer used
+    (``FilteredServiceOptionsProvider``), fed with the base's project services, so
+    "offered" means what the user actually saw.
+    """
+    for vis in _walk(editables):
+        editable = getattr(vis, "editable", None)
+        if editable is None:
+            continue
+        match = _COMPONENT_SERVICES_PATH.match(editable.yaml_path)
+        if not match:
+            continue
+
+        project_service_names = ServiceAdapter.extract_service_names_from_project_services(
+            base_data.get(SERVICES_PATH) or []
+        )
+        options = resolve_options_for_editable(vis, {"project_services": project_service_names})
+        offered = {str(option["value"]) for option in options if option.get("value")}
+
+        components = submitted_yaml.get("components")
+        if not isinstance(components, list):
+            return
+        indexes = range(len(components)) if match.group(1) == "*" else [int(match.group(1))]
+        for idx in indexes:
+            path = f"components[{idx}]/services"
+            submitted = smart_get_value(submitted_yaml, path)
+            if not isinstance(submitted, list):
+                continue
+            base = smart_get_value(base_data, path)
+            if isinstance(base, list):
+                submitted = apply_selection_mutation(base, submitted, offered)
+            smart_set_value(submitted_yaml, path, submitted)
+        return
