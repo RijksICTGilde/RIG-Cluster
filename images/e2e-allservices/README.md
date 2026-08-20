@@ -40,6 +40,12 @@ the same image works for a project that binds only some services.
 
 - `GET /` — a plain human page: a `Hello, world` banner plus a live table of
   service -> OK/FAIL/skipped + latency.
+- `POST /send-testmail` — sends one real message through the platform relay
+  (STARTTLS + AUTH, so it counts against the project's daily budget). Manual by
+  design: the periodic mail probe stays `metadata` (presence only) so the check
+  round never spends budget. The page shows a "Stuur testmail" form when the
+  send-email service is bound; the redirect carries the subject line so you can
+  find the message at the receiving end (sandbox: Mailpit on the sink, port 8025).
 - `GET /healthz` — `200 OK` once the process is listening (liveness only).
 - `GET /status` — JSON, the payload the E2E suite asserts on: per-service
   `bound` / `ok` / `latency_ms` / details, plus an overall `all_ok`. Add
