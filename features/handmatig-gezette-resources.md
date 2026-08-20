@@ -52,6 +52,34 @@ Alle gebruikersgerichte schrijvers lopen nu via één functie,
 Wijzigt een bewerking niets, dan gebeurt er ook niets: geen historie-item, geen
 commit-ruis.
 
+### Het nieuwste item draagt de hele staande wens
+
+Een bewerking raakt meestal maar één veld, maar de wens gaat over het component als
+geheel. De lezer neemt per niveau precies het **nieuwste** `manual`-item, dus een item dat
+alleen de velden van die ene bewerking draagt zou de wens van de vorige bewerking stil
+laten vallen: zet je maandag de CPU vast en dinsdag het geheugen, dan mag de tuner die CPU
+dinsdagnacht weer verzetten. Precies de stille no-op die dit schrijfpad moet voorkomen,
+één bewerking later terug.
+
+Daarom neemt elk nieuw item de nog **staande** velden van het vorige item mee: elk veld dat
+deze bewerking niet zelf overschrijft en waarvan de waarde nog in de catalogus staat. Die
+velden worden ook uit de deployment-overrides gehaald, want een wens die het manifest niet
+haalt is geen wens. In de `reason` staan ze apart genoemd:
+
+```
+Set by hand via portal: limits.memory -> 900Mi; still standing: limits.cpu -> 1
+```
+
+Twee gevolgen om te kennen:
+
+- Een veld waarvan de waarde langs een andere weg is gewijzigd (bijvoorbeeld de
+  sectiestroom over de hele componentenlijst, die geen wens vastlegt) staat niet meer en
+  gaat niet mee.
+- De vervaltermijn gaat voor die meegenomen velden opnieuw lopen: het nieuwe item heeft een
+  nieuwe tijdstempel. Dat is verdedigbaar -- de modal post alle vier de velden, dus wie
+  opslaat bevestigt de waarde die hij ziet -- maar het betekent dat iemand die het
+  component regelmatig bewerkt een wens onbeperkt levend houdt.
+
 ### De tuner tegenover een wens
 
 `_analyze_component_resources` haalt de wens op met `get_user_resource_intent` en slaat
@@ -85,8 +113,10 @@ precies wat de gebruiker zette en blijft het onaangeroerd.
 
 De historie is een venster van vijf items. `_prune_resource_history` beschermde al het
 nieuwste `oom-watcher`-item (dat is de OOM-vloer) en beschermt nu ook het nieuwste
-`manual`-item. Valt zo'n item buiten het venster, dan vervangt het het oudste
-niet-beschermde item; `max_entries` blijft hard. `_compact_resource_history_list` vouwt
+`manual`-item. De beschermde items claimen hun slot vóórdat het venster met de nieuwste
+overige items wordt volgemaakt; `max_entries` blijft hard. Die volgorde is nodig: wie de
+redding als een vervanging achteraf doet, vindt in een venster dat volledig uit beschermde
+items bestaat (een OOM-storm) geen vrij slot en gooit het item alsnog weg. `_compact_resource_history_list` vouwt
 alleen runs van identieke `auto-tune`-items, dus een `manual`-item breekt zo'n run en
 blijft vanzelf staan.
 
@@ -111,7 +141,8 @@ leggen is; ze staan los zodat ze apart bij te draaien zijn.
   gedeelde functie accepteert partiële invoer, dus dat kan zo blijven.
 - **Tonen dat een waarde vaststaat.** Er is nog geen scherm dat laat zien dat een veld
   vastligt, en geen knop om de wens los te laten. Je raakt hem kwijt door hem te
-  overschrijven of door hem te laten vervallen.
+  overschrijven, door hem te laten vervallen, of door de waarde langs een weg te wijzigen
+  die geen wens vastlegt (zie hierboven).
 - **De CPU-freeze vervangen.** `compute_cpu_recommendation` leidt intentie nog steeds af
   uit `limit != request` voor componenten zónder vastgelegde wens. Die heuristiek raadt,
   maar blunt weghalen zou de tuner in één nachtelijke sweep de limiet van zo goed als elk
