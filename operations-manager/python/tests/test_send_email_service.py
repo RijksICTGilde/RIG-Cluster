@@ -15,6 +15,7 @@ Four things are worth holding down, and they are the four the plan argues hardes
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import AsyncMock
@@ -24,11 +25,14 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from opi.connectors.mail import (
+    MAIL_SENDER_NAME_PREFIX,
+    MAIL_SENDER_TABLE_KEY,
     MailAccount,
     MailConnector,
     MailRelayNotConfiguredError,
-    MailSenderIdentity,
+    MailSenderNameError,
     create_mail_connector,
+    render_sender_table,
 )
 from opi.core.cluster_config import (
     get_mail_from_address,
@@ -44,7 +48,11 @@ from opi.services.catalog.send_email import RELAY_POD_LABELS, RELAY_POD_PORT, Se
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
-from opi.utils.naming import generate_mail_account_name
+from opi.utils.naming import (
+    MAIL_LOCAL_PART_MAX_LENGTH,
+    MAIL_PROJECT_ACCOUNT_PREFIX,
+    generate_mail_account_name,
+)
 from opi.utils.secrets import SendEmailSecret
 from pydantic import ValidationError
 from ruamel.yaml import YAML
@@ -230,11 +238,9 @@ class TestTheOneAccountPath:
         connector.get_principal = AsyncMock(return_value=existing)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
-        # De afzender is de tweede helft van "dit account bestaat": de relay kan hem niet
-        # afleiden, dus ``ensure_account`` schrijft hem erbij. Leeg terug betekent hier
-        # "de relay houdt nog niets".
-        connector.get_sender_identity = AsyncMock(return_value=MailSenderIdentity())  # type: ignore[method-assign]
-        connector.set_sender_identity = AsyncMock()  # type: ignore[method-assign]
+        # De weergavenaam is het tweede dat de relay moet horen: het ADRES leidt hij zelf
+        # af uit de accountnaam, de naam valt nergens uit af te leiden.
+        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
         return connector
 
     @pytest.mark.asyncio
@@ -322,9 +328,8 @@ class TestHetPlatformaccountIsGeenProjectaccount:
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
         connector.delete_principal = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        connector.get_sender_identity = AsyncMock(return_value=MailSenderIdentity())  # type: ignore[method-assign]
-        connector.set_sender_identity = AsyncMock()  # type: ignore[method-assign]
-        connector.delete_sender_identity = AsyncMock()  # type: ignore[method-assign]
+        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.delete_sender_name = AsyncMock()  # type: ignore[method-assign]
         return connector
 
     def test_a_project_account_never_carries_the_platform_name(self) -> None:
@@ -471,6 +476,54 @@ class TestTheAddresses:
         """De keerzijde van de vorige toets: afkappen mag alleen gebeuren als het moet."""
         adres = MailManager._sender_address("sandboxed-local", "a" * 47)
         assert adres.partition("@")[0] == "noreply-rijksapp+" + "a" * 47
+
+    def test_de_relay_leidt_hetzelfde_adres_af_als_opi(self) -> None:
+        """DE INVARIANT WAAR ALLES OP RUST, en de reden dat het label een constante is.
+
+        De relay kan tijdens het aannemen van een bericht niets per account opzoeken - geen
+        enkele weg in Stalwart v0.11.8 kan dat, gemeten - dus hij LEIDT het adres af: hij
+        knipt ``project-`` van de accountnaam en plakt dat achter het plusdeel. Wat OPI
+        hier uitrekent is daarmee een mededeling aan de ontwikkelaar (SMTP_FROM), en die
+        mededeling moet kloppen.
+
+        Kapt OPI het label in de accountnaam op een andere lengte dan in het adres, dan
+        lopen ze uiteen zodra een projectnaam lang genoeg is - en merkt niemand het, want
+        alleen dat ene project ziet het.
+        """
+        for naam in ("ai1-uit", "a", "p" * 47, "p" * 80, "Hoofdletters-Erin"):
+            account = generate_mail_account_name(naam)
+            adres = MailManager._sender_address("sandboxed-local", naam)
+            afgeleid = account.removeprefix(MAIL_PROJECT_ACCOUNT_PREFIX)
+            assert adres.partition("+")[2].partition("@")[0] == afgeleid, (
+                f"voor {naam!r} leidt de relay een ander adres af dan OPI meldt"
+            )
+
+    def test_het_adres_past_op_elk_cluster_binnen_het_lokale_deel(self) -> None:
+        """De grens die niemand narekent: een lokaal deel mag 64 tekens.
+
+        Het label is op 47 gekapt omdat ``noreply-rijksapp+`` zeventien tekens is. Krijgt
+        een cluster ooit een langer basisadres, dan loopt het adres eroverheen en weigert de
+        upstream het - deze toets valt dan om in plaats van de post.
+        """
+        for cluster in ("local", "sandboxed-local", "odcn-production"):
+            adres = MailManager._sender_address(cluster, "p" * 200)
+            assert len(adres.partition("@")[0]) <= MAIL_LOCAL_PART_MAX_LENGTH, f"{cluster}: lokaal deel te lang"
+
+    def test_de_relayconfiguratie_knipt_hetzelfde_voorvoegsel(self) -> None:
+        """De afleiding staat in een andere taal in een ander bestand, dus hier is de
+        grendel: verandert het voorvoegsel in Python, dan valt deze toets om tot de
+        configmap meeverhuist.
+
+        Zonder deze toets zou een hernoeming van ``MAIL_PROJECT_ACCOUNT_PREFIX`` elk
+        afzenderadres op het platform stil veranderen in iets dat OPI niet meldt.
+        """
+        configmap = (
+            Path(__file__).resolve().parents[3]
+            / "infrastructure/bootstrap/infrastructure/mail/controller/base/configmap.yaml"
+        ).read_text()
+        assert f"strip_prefix(authenticated_as, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in configmap
+        assert f"strip_prefix(account, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in configmap
+        assert f"starts_with(authenticated_as, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in configmap
 
     def test_alle_clusters_gebruiken_hetzelfde_basisadres(self) -> None:
         """Het BASISadres blijft overal gelijk; alleen het plusdeel verschilt per project.
@@ -1041,7 +1094,7 @@ class TestIntrekkenRuimtOp:
 
         connector = MailConnector("http://relay", "admin", "geheim")
         connector.delete_principal = AsyncMock(side_effect=lambda naam: verwijderd.append(naam) or True)  # type: ignore[method-assign]
-        connector.delete_sender_identity = AsyncMock()  # type: ignore[method-assign]
+        connector.delete_sender_name = AsyncMock()  # type: ignore[method-assign]
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         saved: list[str] = []
@@ -1194,18 +1247,24 @@ class TestDeRelayAntwoordtGeen404:
         assert "limits" not in payload
 
 
-class TestDeAfzenderStaatOpDeRelay:
-    """De relay kan niet weten als wie een account verstuurt, dus OPI zegt het hem.
+class TestDeWeergavenaamStaatOpDeRelay:
+    """De relay kan het ADRES zelf afleiden, de weergavenaam niet.
 
-    Een sieve-script kent alleen ``authenticated_as`` - de ACCOUNTnaam - en Stalwart
-    v0.11.8 heeft geen enkele expressiefunctie die een principal uitleest (gemeten:
-    ``principal_get``, ``directory_query`` en ``sql_query`` bestaan niet). Het adres en de
-    weergavenaam gaan daarom als twee opzoeksleutels naar de settings-API, en het script
-    leest ze met ``key_get``.
+    Wat er in Stalwart v0.11.8 allemaal NIET kan, want dat is waarom dit de vorm heeft die
+    het heeft (alles gemeten op 20 augustus 2026 tegen de sandbox): geen expressiefunctie
+    leest een principal uit, dus het description-veld dat OPI al zet is onbereikbaar;
+    ``config_get`` neemt alleen een LETTERLIJKE sleutel en wordt bij het bouwen van de
+    configuratie opgelost, niet per bericht; een opzoektabel in het geheugen wordt maar EEN
+    KEER gebouwd en een reload ververst hem niet, dus het eerste project kreeg zijn waarde
+    en elk volgend project las leeg tot een HERSTART; en de opzoekopslag die wel live is,
+    heeft geen schrijfweg in de management-API.
+
+    Wat wel kan: een sieve-script dat via de settings-API wordt geschreven, wordt bij elke
+    herbouw opnieuw gecompileerd. Daarom is de tabel een gegenereerd script.
 
     Deze suite draait tegen een echte HTTP-server en niet tegen een mock op ``_request``,
-    om dezelfde reden als de suite hierboven: de vorm van het lichaam IS de afspraak met
-    de relay, en die vorm is precies wat een mock zou overslaan.
+    om dezelfde reden als de suite hierboven: de vorm van het lichaam IS de afspraak met de
+    relay, en die vorm is precies wat een mock zou overslaan.
     """
 
     def _app(self, geschreven: list[dict], herladen: list[int], opgeslagen: dict[str, str]) -> web.Application:
@@ -1241,117 +1300,140 @@ class TestDeAfzenderStaatOpDeRelay:
         return MailConnector(str(server.make_url("")).rstrip("/"), "admin", "geheim", verify_tls=False), server
 
     @pytest.mark.asyncio
-    async def test_adres_en_naam_gaan_samen_naar_de_relay_en_hij_herlaadt(self) -> None:
-        """In EEN aanroep, en met een herlaadmoment erachteraan.
+    async def test_de_naam_en_de_tabel_gaan_samen_en_de_relay_herlaadt(self) -> None:
+        """De sleutel EN het gegenereerde script in een verzoek, met een reload erachter.
 
-        Samen, want twee aanroepen kunnen elkaar even tegenspreken en dan vertrekt er post
-        met de naam van gisteren naast het adres van vandaag. En herladen, want de
-        opzoektabellen worden gebouwd wanneer de configuratie wordt gebouwd: zonder reload
-        staat de waarde wel in de opslag maar ziet het script hem niet (gemeten).
+        Samen, want de sleutel is de gegevensbron en het script is wat de relay werkelijk
+        leest; twee verzoeken kunnen de relay even iets anders laten lezen dan OPI denkt te
+        hebben geschreven. En herladen, want zonder herbouw wordt het script niet opnieuw
+        gecompileerd en geldt de oude tabel nog.
         """
         geschreven: list[dict] = []
         herladen: list[int] = []
         connector, server = await self._connector(geschreven, herladen, {})
         try:
-            await connector.set_sender_identity(
-                "project-ai1-uit",
-                MailSenderIdentity(address="noreply-rijksapp+ai1-uit@rijksoverheid.nl", display_name="Vrije Naam"),
-            )
+            gewijzigd = await connector.set_sender_name("project-ai1-uit", "Vrije Naam")
         finally:
             await server.close()
 
-        assert len(geschreven) == 2, "adres en naam horen in een enkel verzoek te gaan"
-        assert geschreven[0]["values"] == [
-            ["lookup.zad-afzenderadres.project-ai1-uit", "noreply-rijksapp+ai1-uit@rijksoverheid.nl"]
-        ]
-        assert geschreven[1]["values"] == [["lookup.zad-afzendernaam.project-ai1-uit", "Vrije Naam"]]
+        assert gewijzigd is True
+        assert len(geschreven) == 2, "de sleutel en de tabel horen in een enkel verzoek te gaan"
+        assert geschreven[0]["values"] == [[f"{MAIL_SENDER_NAME_PREFIX}.project-ai1-uit", "Vrije Naam"]]
+        assert geschreven[1]["values"][0][0] == MAIL_SENDER_TABLE_KEY
+        assert 'set "naam" "Vrije Naam"' in geschreven[1]["values"][0][1]
         assert herladen == [1]
 
     @pytest.mark.asyncio
-    async def test_zonder_weergavenaam_wordt_de_sleutel_verwijderd(self) -> None:
-        """Geen naam is een geldige uitkomst, geen terugval.
+    async def test_de_tabel_houdt_de_andere_projecten(self) -> None:
+        """Het gegenereerde script wordt uit ALLE sleutels opgebouwd.
 
-        Verwijderen en niet leeg schrijven: een sleutel die niets zegt is er een die een
-        beheerder die de instellingen leest niet hoeft te duiden. Voor het script maakt het
-        niets uit - afwezig en leeg lezen allebei als "geen naam".
+        Dit is waarom de sleutels de gegevensbron zijn en het script een afgeleide: wie de
+        tabel als bron zou nemen, moet gegenereerde code parsen om er een project bij te
+        zetten - en is bij de eerste vergissing de andere projecten kwijt.
         """
         geschreven: list[dict] = []
-        opgeslagen = {"lookup.zad-afzendernaam.project-zonder": "Oude Naam"}
+        opgeslagen = {f"{MAIL_SENDER_NAME_PREFIX}.project-eerste": "Eerste"}
         connector, server = await self._connector(geschreven, [], opgeslagen)
         try:
-            await connector.set_sender_identity(
-                "project-zonder", MailSenderIdentity(address="noreply-rijksapp+zonder@rijksoverheid.nl")
-            )
+            await connector.set_sender_name("project-tweede", "Tweede")
         finally:
             await server.close()
 
-        assert geschreven[1]["type"] == "delete"
-        assert geschreven[1]["keys"] == ["lookup.zad-afzendernaam.project-zonder"]
-        assert "lookup.zad-afzendernaam.project-zonder" not in opgeslagen
+        tabel = geschreven[1]["values"][0][1]
+        assert 'set "naam" "Eerste"' in tabel
+        assert 'set "naam" "Tweede"' in tabel
 
     @pytest.mark.asyncio
-    async def test_de_opzoeking_matcht_op_het_account_en_niet_op_het_voorvoegsel(self) -> None:
-        """De settings-API matcht op PREFIX, en accountnamen zijn elkaars voorvoegsel.
-
-        Wie ``...naam.project-foo`` als prefix opvraagt, krijgt ``project-foobar`` erbij en
-        leest dus de afzender van een ANDER project - hier zou een project de naam van zijn
-        buurman kunnen erven zodra die er eerder stond.
-        """
-        opgeslagen = {
-            "lookup.zad-afzenderadres.project-foo": "noreply-rijksapp+foo@rijksoverheid.nl",
-            "lookup.zad-afzendernaam.project-foo": "Foo",
-            "lookup.zad-afzenderadres.project-foobar": "noreply-rijksapp+foobar@rijksoverheid.nl",
-            "lookup.zad-afzendernaam.project-foobar": "Foo Bar",
-        }
-        connector, server = await self._connector([], [], opgeslagen)
-        try:
-            identiteit = await connector.get_sender_identity("project-foo")
-        finally:
-            await server.close()
-
-        assert identiteit == MailSenderIdentity(address="noreply-rijksapp+foo@rijksoverheid.nl", display_name="Foo")
-
-    @pytest.mark.asyncio
-    async def test_een_account_zonder_afzender_leest_als_leeg(self) -> None:
-        """De toestand waar de terugval van de relay voor bestaat, hier als lege waarde."""
-        connector, server = await self._connector([], [], {})
-        try:
-            assert await connector.get_sender_identity("project-nieuw") == MailSenderIdentity()
-        finally:
-            await server.close()
-
-    @pytest.mark.asyncio
-    async def test_het_verwijderen_haalt_beide_sleutels_weg(self) -> None:
-        """Anders houdt de relay de naam en het adres van een verdwenen project, en erft
-        het volgende project met diezelfde naam ze."""
+    async def test_dezelfde_naam_nog_eens_schrijft_niets(self) -> None:
+        """Herhaalbaarheid, en het is geen schoonheidsfoutje: elke schrijfactie sleept een
+        herbouw van de hele relayconfiguratie mee, en een project wordt bij elke wijziging
+        opnieuw verwerkt."""
         geschreven: list[dict] = []
         herladen: list[int] = []
-        opgeslagen = {
-            "lookup.zad-afzenderadres.project-weg": "noreply-rijksapp+weg@rijksoverheid.nl",
-            "lookup.zad-afzendernaam.project-weg": "Weg",
-        }
+        opgeslagen = {f"{MAIL_SENDER_NAME_PREFIX}.project-ai1-uit": "Vrije Naam"}
         connector, server = await self._connector(geschreven, herladen, opgeslagen)
         try:
-            await connector.delete_sender_identity("project-weg")
+            gewijzigd = await connector.set_sender_name("project-ai1-uit", "Vrije Naam")
         finally:
             await server.close()
 
-        assert opgeslagen == {}
-        assert herladen == [1]
+        assert gewijzigd is False
+        assert geschreven == []
+        assert herladen == []
+
+    @pytest.mark.asyncio
+    async def test_zonder_naam_verdwijnt_de_sleutel_en_de_regel(self) -> None:
+        """Geen naam is een geldige uitkomst, geen terugval: dan vertrekt de post met een
+        kaal PROJECTadres. De sleutel gaat weg in plaats van leeg te worden, zodat een
+        beheerder die de instellingen leest niets hoeft te duiden."""
+        geschreven: list[dict] = []
+        opgeslagen = {f"{MAIL_SENDER_NAME_PREFIX}.project-zonder": "Oude Naam"}
+        connector, server = await self._connector(geschreven, [], opgeslagen)
+        try:
+            await connector.delete_sender_name("project-zonder")
+        finally:
+            await server.close()
+
+        assert geschreven[0]["type"] == "delete"
+        assert geschreven[0]["keys"] == [f"{MAIL_SENDER_NAME_PREFIX}.project-zonder"]
+        assert "project-zonder" not in geschreven[1]["values"][0][1]
+
+
+class TestDeGegenereerdeTabelIsGeenInvoerkanaal:
+    """De tabel is CODE die uit projectdata wordt opgebouwd, en dat is de plek om streng te
+    zijn.
+
+    De validatie op het configmodel houdt dit al tegen op allebei de schrijfwegen (formulier
+    en API); deze laag houdt stand als een waarde de connector ooit langs een derde weg
+    bereikt. Precies de reden waarom een validator op het VELD niet genoeg is: een veld kan
+    van eigenaar wisselen, de connector blijft de laatste die de waarde in code zet.
+    """
+
+    def test_een_gewone_tabel_ziet_er_saai_uit(self) -> None:
+        tabel = render_sender_table({"project-b": "Bee", "project-a": "Aa"})
+        assert 'require ["variables"];' in tabel
+        assert 'global "naam";' in tabel
+        # Op alfabet, zodat dezelfde gegevens dezelfde tabel opleveren en een run die niets
+        # verandert ook echt niets verandert.
+        assert tabel.index("project-a") < tabel.index("project-b")
+
+    def test_een_lege_naam_levert_geen_regel_op(self) -> None:
+        assert "project-leeg" not in render_sender_table({"project-leeg": ""})
+
+    @pytest.mark.parametrize(
+        "naam",
+        [
+            'Zeg "hoi"',
+            "pad\\weg",
+            "Kwaad\r\nBcc: iedereen@example.org",
+            "beveiliging@bank.nl",
+            "Iemand <spoof@evil.example>",
+            "${adres}",
+            "a" * 65,
+        ],
+    )
+    def test_een_naam_die_de_code_zou_openbreken_wordt_geweigerd(self, naam: str) -> None:
+        """Let op ``${adres}``: sieve vult ``${...}`` in een string in, dus een naam met een
+        dollarteken zou een VARIABELE lezen in plaats van tekst zijn."""
+        with pytest.raises(MailSenderNameError):
+            render_sender_table({"project-x": naam})
+
+    @pytest.mark.parametrize("account", ["project-x; set", 'project-"x', "PROJECT-X", "project x", ""])
+    def test_een_accountnaam_buiten_de_vorm_wordt_geweigerd(self, account: str) -> None:
+        with pytest.raises(MailSenderNameError):
+            render_sender_table({account: "Naam"})
 
 
 class TestDeAfzenderWordtVastgelegdBijHetAccount:
     """``ensure_account`` is de ENE plek waar een account ontstaat, en dus ook de ene plek
-    waar zijn afzender wordt vastgelegd. Twee plekken zouden betekenen dat een account kan
-    bestaan zonder dat de relay weet als wie het verstuurt."""
+    waar zijn weergavenaam wordt vastgelegd."""
 
-    def _connector(self, existing: dict | None, stored: MailSenderIdentity) -> MailConnector:
+    def _connector(self, existing: dict | None) -> MailConnector:
         connector = MailConnector("http://relay", "admin", "geheim")
         connector.get_principal = AsyncMock(return_value=existing)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.get_sender_identity = AsyncMock(return_value=stored)  # type: ignore[method-assign]
-        connector.set_sender_identity = AsyncMock()  # type: ignore[method-assign]
+        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
         return connector
 
     async def _ensure(self, connector: MailConnector, from_name: str = "Vrije Naam") -> None:
@@ -1366,60 +1448,27 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
         )
 
     @pytest.mark.asyncio
-    async def test_een_nieuw_account_krijgt_meteen_zijn_afzender(self) -> None:
-        connector = self._connector(existing=None, stored=MailSenderIdentity())
+    async def test_een_nieuw_account_krijgt_meteen_zijn_weergavenaam(self) -> None:
+        connector = self._connector(existing=None)
         await self._ensure(connector)
-        connector.set_sender_identity.assert_awaited_once()
-        _, identiteit = connector.set_sender_identity.await_args.args
-        assert identiteit == MailSenderIdentity(
-            address="noreply-rijksapp+ai1-uit@rijksoverheid.nl", display_name="Vrije Naam"
-        )
+        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "Vrije Naam")
 
     @pytest.mark.asyncio
-    async def test_dezelfde_waarde_nog_eens_verandert_niets(self) -> None:
-        """Herhaalbaarheid, en het is geen schoonheidsfoutje: elke schrijfactie sleept een
-        herlaadmoment van de hele relayconfiguratie mee, en een project wordt bij elke
-        wijziging opnieuw verwerkt."""
-        connector = self._connector(
-            existing={"name": "project-ai1-uit"},
-            stored=MailSenderIdentity(address="noreply-rijksapp+ai1-uit@rijksoverheid.nl", display_name="Vrije Naam"),
-        )
-        await self._ensure(connector)
-        connector.set_sender_identity.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_een_gewijzigde_weergavenaam_gaat_wel_mee(self) -> None:
-        """De weg die bestond maar niets deed: ``from-name`` had tot nu toe geen lezer."""
-        connector = self._connector(
-            existing={"name": "project-ai1-uit"},
-            stored=MailSenderIdentity(address="noreply-rijksapp+ai1-uit@rijksoverheid.nl", display_name="Oude Naam"),
-        )
+    async def test_een_bestaand_account_ook(self) -> None:
+        """Replay-veilig: een gewijzigde ``from-name`` moet op de volgende verwerking gelden,
+        en dat is precies wat er tot RC-145 NIET gebeurde - het veld had geen enkele lezer.
+        Of er dan echt iets naar de relay gaat, beslist de connector op een verschil."""
+        connector = self._connector(existing={"name": "project-ai1-uit"})
         await self._ensure(connector, from_name="Nieuwe Naam")
-        _, identiteit = connector.set_sender_identity.await_args.args
-        assert identiteit.display_name == "Nieuwe Naam"
+        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "Nieuwe Naam")
 
     @pytest.mark.asyncio
-    async def test_een_bestaand_account_zonder_afzender_wordt_gemeld(self, caplog) -> None:
-        """Punt 4 van het plan: de terugval is stil op de relay, dus de waarschuwing hoort
-        hier.
-
-        Het sieve-script kan niets loggen (v0.11.8 kent geen log-commando, gemeten:
-        "Expected token command but found log"), dus de enige plek waar deze toestand
-        gemeld kan worden is de kant die hem kan repareren.
-        """
-        connector = self._connector(existing={"name": "project-ai1-uit"}, stored=MailSenderIdentity())
-        with caplog.at_level("WARNING", logger="opi.manager.mail_manager"):
-            await self._ensure(connector)
-        assert any("zonder afzender" in bericht for bericht in caplog.messages)
-
-    @pytest.mark.asyncio
-    async def test_een_nieuw_account_levert_geen_waarschuwing_op(self, caplog) -> None:
-        """De keerzijde: bij een eerste aanmaak is "de relay houdt nog niets" juist de
-        normale toestand, en een waarschuwing die altijd komt leest niemand meer."""
-        connector = self._connector(existing=None, stored=MailSenderIdentity())
-        with caplog.at_level("WARNING", logger="opi.manager.mail_manager"):
-            await self._ensure(connector)
-        assert not [bericht for bericht in caplog.messages if "zonder afzender" in bericht]
+    async def test_zonder_naam_gaat_er_een_lege_naam_heen(self) -> None:
+        """En dat is een OPDRACHT, geen overslaan: een project dat zijn naam weghaalt moet
+        hem ook op de relay kwijtraken."""
+        connector = self._connector(existing={"name": "project-ai1-uit"})
+        await self._ensure(connector, from_name="")
+        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "")
 
 
 class TestDeWeergavenaamWordtGetoetst:
@@ -1539,19 +1588,13 @@ class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
         connector = MailConnector("http://relay", "admin", "geheim")
         connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.get_sender_identity = AsyncMock(return_value=MailSenderIdentity())  # type: ignore[method-assign]
-        connector.set_sender_identity = AsyncMock()  # type: ignore[method-assign]
+        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         manager = self._manager(secrets, monkeypatch)
         await manager.create_resources_for_deployment(project, project["deployments"][0])
 
-        account, identiteit = connector.set_sender_identity.await_args.args
-        assert account == "project-ai1-uit", "de opzoeking wordt gesleuteld op het ACCOUNT"
-        assert identiteit == MailSenderIdentity(
-            address="noreply-rijksapp+ai1-uit@rijksoverheid.nl",
-            display_name="Robbert Uittenbroek",
-        )
+        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "Robbert Uittenbroek")
 
         # En de applicatie krijgt hetzelfde adres te zien, want SMTP_FROM is een mededeling
         # over wat de ontvanger krijgt en niet iets waar de applicatie iets aan verandert.
@@ -1568,12 +1611,12 @@ class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
         connector = MailConnector("http://relay", "admin", "geheim")
         connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.get_sender_identity = AsyncMock(return_value=MailSenderIdentity())  # type: ignore[method-assign]
-        connector.set_sender_identity = AsyncMock()  # type: ignore[method-assign]
+        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         await self._manager(secrets, monkeypatch).create_resources_for_deployment(project, project["deployments"][0])
 
-        _, identiteit = connector.set_sender_identity.await_args.args
-        assert identiteit.display_name == ""
-        assert identiteit.address == "noreply-rijksapp+ai1-uit@rijksoverheid.nl"
+        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "")
+        # En het adres dat de applicatie te zien krijgt, is het adres dat de relay zelf
+        # samenstelt uit de accountnaam - zie TestHetAdresWordtEenKeerSamengesteld.
+        assert secrets[0][2].from_address == "noreply-rijksapp+ai1-uit@rijksoverheid.nl"

@@ -97,11 +97,15 @@ def received_fouten(ontvangen: list[str]) -> list[str]:
     return []
 
 
-def _stuur(host: str, poort: int, user: str, password: str, from_header: str, onderwerp: str) -> None:
+def _stuur(host: str, poort: int, user: str, password: str, from_header: str, onderwerp: str, ontvanger: str) -> None:
     """Biedt een bericht aan met een expres afwijkende From:."""
     bericht = EmailMessage()
     bericht["Subject"] = onderwerp
-    bericht["To"] = "ontvanger@example.org"
+    # Een EIGEN ontvanger per bericht, want Stalwart telt standaard 25 berichten per uur per
+    # (afzenderdomein, ontvanger) - `queue.limiter.inbound.sender`. Met een vaste ontvanger
+    # loopt deze toets bij de derde keer draaien vast op "452 4.4.5 Rate limit exceeded", en
+    # dat leest als een storing terwijl het de teller van de toets zelf is.
+    bericht["To"] = ontvanger
     # Precies het punt van de toets: dit adres MOET verdwijnen, en sinds RC-145 ook de
     # weergavenaam die eraan vastzit.
     bericht["From"] = from_header
@@ -166,9 +170,10 @@ def main() -> int:
     ]
 
     fouten: list[str] = []
-    for naam, from_header in gevallen:
+    for volgnummer, (naam, from_header) in enumerate(gevallen):
         onderwerp = f"identiteitstoets {naam} {stempel}"
-        _stuur(args.relay_host, args.relay_port, args.user, args.password, from_header, onderwerp)
+        ontvanger = f"ontvanger-{stempel}-{volgnummer}@example.org"
+        _stuur(args.relay_host, args.relay_port, args.user, args.password, from_header, onderwerp, ontvanger)
         bericht = _haal_bericht(args.api, onderwerp)
 
         # 1 en 2: adres en weergavenaam komen allebei van het platform. Wat de applicatie

@@ -73,38 +73,48 @@ data:
     #    From:        <from-name uit de projectconfiguratie> <noreply-rijksapp+<project>@rijksoverheid.nl>
     #    Return-Path: noreply-rijksapp+<project>@rijksoverheid.nl
     #
-    # Waar die twee waarden vandaan komen is de niet voor de hand liggende helft. Het
-    # sieve-script kent alleen ${env.authenticated_as}, en dat is de ACCOUNTnaam
-    # (project-<project>): daar volgt de projectnaam niet uit zonder het voorvoegsel weg te
-    # knippen, en de weergavenaam volgt er helemaal niet uit. De relay heeft dus per account
-    # een waarde nodig die hij zelf niet kan afleiden, en die staat in twee OPZOEKtabellen
-    # die OPI vult via de management-API:
+    # Waar die twee waarden vandaan komen is de niet voor de hand liggende helft, en het
+    # antwoord is per waarde anders. GEMETEN op 20 augustus 2026 tegen v0.11.8 (RC-145),
+    # want er is in deze versie geen enkele manier om tijdens het aannemen van een bericht
+    # iets PER ACCOUNT op te zoeken:
     #
-    #    lookup.zad-afzenderadres.<account> = noreply-rijksapp+<project>@rijksoverheid.nl
-    #    lookup.zad-afzendernaam.<account>  = de weergavenaam, of AFWEZIG als het project er geen koos
+    #   - er is geen expressiefunctie die een principal uitleest, dus het description-veld
+    #     dat OPI al zet is onbereikbaar (principal_get, directory_query en sql_query
+    #     bestaan geen van drieen: "Invalid variable or function name"; wel key_get,
+    #     key_set, key_exists, query, dns_query, config_get, starts_with, strip_prefix);
+    #   - config_get() leest wel een instelling, maar alleen met een LETTERLIJKE sleutel:
+    #     config_get('server.hostname') werkt, config_get(concat('...', authenticated_as))
+    #     levert niets. Het wordt bij het bouwen van de configuratie opgelost, niet per
+    #     bericht;
+    #   - een opzoektabel in het geheugen (lookup.<naam>.<sleutel> in de instellingen) wordt
+    #     maar EEN KEER gebouwd. Een POST /api/reload ververst hem niet: het eerste account
+    #     kreeg zijn waarde, elk account dat erna werd toegevoegd las leeg tot de relay was
+    #     HERSTART. Onbruikbaar voor een platform waar elke dag een project bij komt;
+    #   - de opzoekopslag die wel live is (key_get('db', ...)) heeft geen schrijfweg in de
+    #     management-API - /api/store bestaat niet, en de binary kent alleen
+    #     /api/management/{principal,settings,queue,reload,report,spam,dkim,dns,log,stores,
+    #     troubleshoot}.
     #
-    # OPI schrijft ze met POST /api/settings en laat daarna herladen (POST /api/reload);
-    # key_get leest ze dan meteen, zonder herstart. GEMETEN op 20 augustus 2026 tegen
-    # v0.11.8 (RC-145): een via de settings-API weggeschreven sleutel is na een reload
-    # zichtbaar in het script en overleeft een podwissel, want de configuratieopslag van de
-    # relay is de PostgreSQL-store onderaan dit bestand. LET OP bij die reload: een
-    # build-error op WELKE sleutel dan ook laat de hele herbouw staan waar hij stond - een
-    # kapot proefscript hield tijdens de meting de nieuwe opzoekwaarden onzichtbaar zonder
-    # dat er iets aan die waarden mankeerde.
+    # Wat overblijft, en wat hieronder staat:
     #
-    # Twee eenvoudiger wegen zijn gemeten en afgevallen. Het description-veld van de
-    # principal (dat OPI al zet) is vanuit sieve niet te lezen: v0.11.8 heeft geen enkele
-    # expressiefunctie die een principal opvraagt - principal_get, directory_query en
-    # sql_query bestaan geen van drieen ("Invalid variable or function name"), wel key_get,
-    # key_set, key_exists, query en dns_query. En het adres afleiden uit authenticated_as
-    # door het voorvoegsel weg te knippen kan wel, maar dan stelt de relay het adres samen
-    # NAAST OPI, en die twee lopen uiteen zodra er wordt afgekapt: een accountnaam wordt op
-    # 63 tekens gekapt, het lokale deel van een adres mag er 64 en draagt bovendien het
-    # voorvoegsel noreply-rijksapp+ al. Samenstellen hoort op een plek te gebeuren.
+    # 1. HET ADRES WORDT AFGELEID, niet opgezocht. De accountnaam is project-<project>, dus
+    #    het voorvoegsel eraf knippen levert precies het plusdeel op. Dat OPI hetzelfde
+    #    adres uitrekent en als SMTP_FROM meegeeft is geen tweede waarheid maar een
+    #    mededeling: beide kanten bouwen op hetzelfde label, dat OPI op 47 tekens kapt
+    #    (mail_project_label in naming.py) juist zodat noreply-rijksapp+<label> binnen de
+    #    64 tekens van een lokaal deel blijft. Een account zonder dat voorvoegsel is geen
+    #    project - dat is het platformaccount van ZAD zelf - en krijgt het kale adres.
+    # 2. DE WEERGAVENAAM WORDT INGELADEN. Die valt nergens uit af te leiden, dus OPI
+    #    genereert er een klein sieve-script voor (zad-afzenders: een regel per account) en
+    #    schrijft dat via POST /api/settings, gevolgd door POST /api/reload. Een sieve-script
+    #    wordt bij ELKE herbouw opnieuw gecompileerd - gemeten in beide richtingen: een
+    #    gewijzigde naam gold bij het eerstvolgende bericht, zonder herstart. Dat is precies
+    #    wat de opzoektabel niet kon.
+    #    LET OP bij die reload: een build-error op WELKE sleutel dan ook laat de hele herbouw
+    #    staan waar hij stond - een kapot proefscript hield tijdens de meting nieuwe waarden
+    #    onzichtbaar zonder dat er iets aan die waarden mankeerde.
     #
-    # 1. De envelope-afzender wordt de opgezochte waarde, en dat is nu HETZELFDE adres als
-    #    de From:. Die twee verschilden eerder een voorvoegsel en dat verschil diende niets:
-    #    SPF-uitlijning kijkt naar het domein en dat verandert er niet van.
+    # De envelope volgt regel 1 hieronder, de From: volgt regel 1 en 2 in het script.
     #
     #    - DMARC. `rijksoverheid.nl` publiceert `p=reject` met ontspannen uitlijning
     #      (`aspf=r`). Uitgaande mail haalt DMARC alleen als het envelope-domein uitlijnt
@@ -115,18 +125,12 @@ data:
     #    - Attributie. Het plusdeel houdt zichtbaar bij welk project een bounce hoort,
     #      zonder het domein te verlaten en dus zonder de uitlijning te breken.
     #
-    #    De terugval is het KALE adres en geen weigering. Een account zonder opgezochte
-    #    waarde - een relaydatabase die net leeg is, een project dat nog niet opnieuw is
-    #    verwerkt - verstuurt als noreply-rijksapp@rijksoverheid.nl zonder naam. De post
-    #    gaat weg, het domein klopt en geen project kan zich als een ander voordoen;
-    #    dichtklappen met een 550 zou het versturen platleggen door een configuratiehik.
-    #    Het sieve-script kan dat niet melden (v0.11.8 kent geen log-commando, gemeten:
-    #    "Expected token command but found log"), dus de waarschuwing staat waar hij wel
-    #    gelezen wordt: OPI logt op WARNING zodra het een bestaand account tegenkomt
-    #    waarvoor de relay geen afzender houdt.
+    #    Envelope en From: zijn nu HETZELFDE adres. Ze verschilden eerder een voorvoegsel
+    #    (de envelope droeg de accountnaam) en dat verschil diende niets: uitlijning kijkt
+    #    naar het domein, en de ontvanger zag het project juist niet.
     [session.mail]
     rewrite = [
-      {if = "key_get('zad-afzenderadres', authenticated_as)", ne = "", then = "key_get('zad-afzenderadres', authenticated_as)"},
+      {if = "starts_with(authenticated_as, 'project-')", eq = true, then = "'%{env:MAIL_FROM_LOCAL}%+' + strip_prefix(authenticated_as, 'project-') + '@%{env:MAIL_DOMAIN}%'"},
       {else = "'%{env:MAIL_FROM_LOCAL}%@%{env:MAIL_DOMAIN}%'"},
     ]
 
@@ -139,15 +143,28 @@ data:
 
     [sieve.trusted.scripts.identiteitsregels]
     contents = '''
-    require ["editheader", "variables", "vnd.stalwart.expressions"];
+    require ["editheader", "variables", "include", "vnd.stalwart.expressions"];
 
     set "domein" "%{env:MAIL_DOMAIN}%";
 
-    let "adres" "key_get('zad-afzenderadres', env.authenticated_as)";
-    if eval "adres == ''" {
-        let "adres" "'%{env:MAIL_FROM_LOCAL}%@%{env:MAIL_DOMAIN}%'";
+    # De weergavenaam komt uit het script dat OPI genereert. :optional, want op een cluster
+    # waar nog geen enkel project mail verstuurt bestaat dat script niet, en dan hoort er
+    # post te vertrekken zonder naam in plaats van helemaal niet. `global` is wat de waarde
+    # over de scriptgrens tilt: een ingesloten script deelt alleen variabelen die aan beide
+    # kanten global zijn (RFC 6609), en zonder die verklaring blijft de naam hier stil leeg.
+    global "naam";
+    set "naam" "";
+    include :optional :personal "zad-afzenders";
+
+    # Het adres uit de accountnaam. LET OP de vorm: een `let` BINNEN een if-blok overleeft
+    # dat blok niet (gemeten - de variabele leest daarbuiten leeg), dus de twee kandidaten
+    # worden buiten de vertakking uitgerekend en `set` kiest ertussen.
+    let "account" "env.authenticated_as";
+    let "projectadres" "'%{env:MAIL_FROM_LOCAL}%+' + strip_prefix(account, 'project-') + '@%{env:MAIL_DOMAIN}%'";
+    set "adres" "%{env:MAIL_FROM_LOCAL}%@%{env:MAIL_DOMAIN}%";
+    if eval "starts_with(account, 'project-')" {
+        set "adres" "${projectadres}";
     }
-    let "naam" "key_get('zad-afzendernaam', env.authenticated_as)";
 
     # 2. De From: wordt OVERSCHREVEN met de afzender van DIT account: het projectadres en
     #    de weergavenaam uit de projectconfiguratie. Er wordt niets uit de aangeleverde
@@ -170,8 +187,8 @@ data:
     #    mailboxen zou maken. Wat er niet in kan komen, weigert OPI al bij het formulier en
     #    bij de API: regeleindes en andere stuurtekens (header-injectie), een @ of
     #    punthaken (dan leest de naam bij menig ontvanger als het afzenderadres), een
-    #    aanhalingsteken of backslash (die zouden juist deze quoting openbreken), en meer
-    #    dan 64 tekens.
+    #    aanhalingsteken of backslash (die zouden juist deze quoting openbreken), een
+    #    dollarteken (dat begint in sieve een variabele) en meer dan 64 tekens.
     #
     #    HIER STOND een regel 2a: "precies EEN adres in de From:, anders 550". Die had een
     #    taak zolang de weergavenaam uit het AANGELEVERDE bericht werd overgenomen - bij

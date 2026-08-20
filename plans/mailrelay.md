@@ -54,9 +54,21 @@ Return-Path:  noreply-rijksapp+<project>@rijksoverheid.nl
 - Wat de applicatie in haar eigen `From:` zet wordt weggegooid, naam en adres allebei. De `Reply-To:` blijft wel van de applicatie: de `From:` is identiteit en ligt vast omdat wij op andermans mailserver zitten, de `Reply-To:` zegt alleen waar een antwoord heen moet.
 - Envelope en `From:` worden hetzelfde adres. Ze verschilden een voorvoegsel en dat verschil diende niets, want SPF-uitlijning kijkt naar het domein.
 
-**Hoe de relay dat weet**, want dat is de niet voor de hand liggende helft. Het sieve-script kent alleen `${env.authenticated_as}` (de accountnaam), en Stalwart v0.11.8 heeft geen enkele expressiefunctie die een principal uitleest — `principal_get`, `directory_query` en `sql_query` bestaan geen van drieën, gemeten. Adres en naam staan daarom in twee opzoektabellen die OPI vult via `POST /api/settings`, gevolgd door `POST /api/reload`; het script leest ze met `key_get('zad-afzenderadres', …)` en `key_get('zad-afzendernaam', …)`. De waarden leven in de configuratieopslag van de relay (PostgreSQL) en overleven een podwissel.
+**Hoe de relay dat weet**, want dat is de niet voor de hand liggende helft, en het antwoord is per waarde anders. Gemeten op 20 augustus 2026 tegen v0.11.8: er is in deze versie **geen enkele manier om tijdens het aannemen van een bericht iets per account op te zoeken.** Vier wegen geprobeerd, alle vier dood:
 
-**De terugval is het kale adres.** Houdt de relay voor een account geen afzender, dan vertrekt de post als `noreply-rijksapp@rijksoverheid.nl` zonder naam. De post gaat weg, het domein klopt en geen project kan zich als een ander voordoen; dichtklappen met een 550 zou het versturen platleggen door een configuratiehik. Het platformaccount van ZAD zelf valt hiermee samen: het is geen project, heeft geen plusdeel en geen naam.
+| weg | waarom niet |
+|---|---|
+| het `description`-veld van de principal (dat OPI al zet) | geen expressiefunctie leest een principal: `principal_get`, `directory_query` en `sql_query` bestaan geen van drieën |
+| `config_get('zad.afzender.…')` | werkt alleen met een **letterlijke** sleutel; hij wordt bij het bouwen van de configuratie opgelost, niet per bericht |
+| een opzoektabel in het geheugen (`lookup.<naam>.<sleutel>` in de instellingen) | wordt **één keer** gebouwd. Een reload ververst hem niet: het eerste project kreeg zijn waarde, elk project dat erna werd toegevoegd las leeg tot de relay was **herstart** |
+| de opzoekopslag die wel live is (`key_get('db', …)`) | heeft geen schrijfweg in de management-API — `/api/store` bestaat niet |
+
+Daarom is het opgesplitst:
+
+- **Het adres wordt afgeleid, niet opgezocht.** De accountnaam is `project-<project>`, dus het voorvoegsel eraf knippen (`strip_prefix`) levert precies het plusdeel op. Dat OPI hetzelfde adres uitrekent en als `SMTP_FROM` meegeeft is geen tweede waarheid maar een mededeling: allebei bouwen ze op hetzelfde label, dat OPI op 47 tekens kapt (`mail_project_label`) juist zodat `noreply-rijksapp+<label>` binnen de 64 tekens van een lokaal deel blijft. `tests/test_send_email_service.py` pint die gelijkheid vast, inclusief het voorvoegsel in de relayconfiguratie.
+- **De weergavenaam wordt ingeladen.** Die valt nergens uit af te leiden, dus OPI genereert er een klein sieve-script voor (`zad-afzenders`, één regel per account) en schrijft dat via `POST /api/settings` + `POST /api/reload`. Een sieve-script wordt bij élke herbouw opnieuw gecompileerd — gemeten in beide richtingen: een gewijzigde naam gold bij het eerstvolgende bericht en een nieuw project ook, zonder herstart. Dat is precies wat de opzoektabel niet kon. De sleutels onder `zad.afzender.naam.` zijn de gegevensbron; het script is de afgeleide.
+
+**Wat er misgaat als de naam ontbreekt: niets bijzonders.** Een project waarvan de naam nog niet is weggeschreven verstuurt met het juiste ADRES en zonder weergavenaam — dezelfde uitkomst als een project dat er geen koos, en dus een geldige toestand in plaats van een storing. Het platformaccount van ZAD zelf komt op hetzelfde neer: het draagt het voorvoegsel niet, dus het krijgt het kale adres en geen naam.
 
 ## Besloten op 18 augustus 2026: één vast afzenderdomein, geen eigen domein
 
