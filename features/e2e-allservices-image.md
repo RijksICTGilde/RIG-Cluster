@@ -38,6 +38,14 @@ Each bound service maps to one reusable *probe kind*:
 | `oidc` | keycloak | GET `OIDC_DISCOVERY_URL` (assert `issuer` + `token_endpoint`), then a **client-credentials token grab** with `OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` (falls back to discovery-only if the grant is unavailable, clearly marked - never a silent pass) |
 | `path` | persistent-storage, temp-storage | for each of `DATA_PATH` / `TEMP_PATH`: write a file, `fsync`, read back, compare, delete |
 | `metadata` | publish-on-web, metrics-scraper, platform, send-email | assert presence and echo (`DEPLOYMENT_NAME`, `PUBLIC_HOST`, ...); secret-looking values are redacted |
+| `vlam` | vlam | GET `{VLAM_API_URL}/v1/models`: a JSON body with a `data` list passes, and so does a **401/403** -- only VLAM itself can answer that, so the chain stands and only its own authorization is holding the door. A connection failure, a timeout, a 5xx or a 200 that is not a models document fails, with the suspect hop named (network path vs proxy vs upstream), because this gets debugged from the consumer's side |
+
+The vlam probe used to be `metadata` too, on the grounds that the sandbox has no
+VLAM behind the address. That reason is gone since RC-144: the sandbox E2E suite puts
+a stub on the placeholder coordinates, so the call has something to answer it there,
+and on production it reaches the real proxy. What it now measures is the chain --
+selected service, injected address, egress policy, the proxy's inbound policy, an
+answer -- instead of only the presence of a variable.
 
 The mail probe stays `metadata` on purpose: a real send counts against the
 project's daily budget on the relay, so the check round never sends. Instead the
