@@ -67,8 +67,44 @@ data:
 
     # --- Identiteitsregels (plans/mailrelay.md, punt 1 t/m 7) --------------------
     #
-    # 1. De envelope-afzender wordt herschreven naar het vaste afzenderadres, met het
-    #    account als plusdeel. Twee dingen tegelijk, en ze zijn allebei nodig:
+    # De afzender IS het project, en het platform bepaalt hem helemaal - adres en
+    # weergavenaam allebei. Wat de applicatie zelf in haar From: zet, wordt weggegooid:
+    #
+    #    From:        <from-name uit de projectconfiguratie> <noreply-rijksapp+<project>@rijksoverheid.nl>
+    #    Return-Path: noreply-rijksapp+<project>@rijksoverheid.nl
+    #
+    # Waar die twee waarden vandaan komen is de niet voor de hand liggende helft. Het
+    # sieve-script kent alleen ${env.authenticated_as}, en dat is de ACCOUNTnaam
+    # (project-<project>): daar volgt de projectnaam niet uit zonder het voorvoegsel weg te
+    # knippen, en de weergavenaam volgt er helemaal niet uit. De relay heeft dus per account
+    # een waarde nodig die hij zelf niet kan afleiden, en die staat in twee OPZOEKtabellen
+    # die OPI vult via de management-API:
+    #
+    #    lookup.zad-afzenderadres.<account> = noreply-rijksapp+<project>@rijksoverheid.nl
+    #    lookup.zad-afzendernaam.<account>  = de weergavenaam, of AFWEZIG als het project er geen koos
+    #
+    # OPI schrijft ze met POST /api/settings en laat daarna herladen (POST /api/reload);
+    # key_get leest ze dan meteen, zonder herstart. GEMETEN op 20 augustus 2026 tegen
+    # v0.11.8 (RC-145): een via de settings-API weggeschreven sleutel is na een reload
+    # zichtbaar in het script en overleeft een podwissel, want de configuratieopslag van de
+    # relay is de PostgreSQL-store onderaan dit bestand. LET OP bij die reload: een
+    # build-error op WELKE sleutel dan ook laat de hele herbouw staan waar hij stond - een
+    # kapot proefscript hield tijdens de meting de nieuwe opzoekwaarden onzichtbaar zonder
+    # dat er iets aan die waarden mankeerde.
+    #
+    # Twee eenvoudiger wegen zijn gemeten en afgevallen. Het description-veld van de
+    # principal (dat OPI al zet) is vanuit sieve niet te lezen: v0.11.8 heeft geen enkele
+    # expressiefunctie die een principal opvraagt - principal_get, directory_query en
+    # sql_query bestaan geen van drieen ("Invalid variable or function name"), wel key_get,
+    # key_set, key_exists, query en dns_query. En het adres afleiden uit authenticated_as
+    # door het voorvoegsel weg te knippen kan wel, maar dan stelt de relay het adres samen
+    # NAAST OPI, en die twee lopen uiteen zodra er wordt afgekapt: een accountnaam wordt op
+    # 63 tekens gekapt, het lokale deel van een adres mag er 64 en draagt bovendien het
+    # voorvoegsel noreply-rijksapp+ al. Samenstellen hoort op een plek te gebeuren.
+    #
+    # 1. De envelope-afzender wordt de opgezochte waarde, en dat is nu HETZELFDE adres als
+    #    de From:. Die twee verschilden eerder een voorvoegsel en dat verschil diende niets:
+    #    SPF-uitlijning kijkt naar het domein en dat verandert er niet van.
     #
     #    - DMARC. `rijksoverheid.nl` publiceert `p=reject` met ontspannen uitlijning
     #      (`aspf=r`). Uitgaande mail haalt DMARC alleen als het envelope-domein uitlijnt
@@ -78,10 +114,20 @@ data:
     #      weigert.
     #    - Attributie. Het plusdeel houdt zichtbaar bij welk project een bounce hoort,
     #      zonder het domein te verlaten en dus zonder de uitlijning te breken.
+    #
+    #    De terugval is het KALE adres en geen weigering. Een account zonder opgezochte
+    #    waarde - een relaydatabase die net leeg is, een project dat nog niet opnieuw is
+    #    verwerkt - verstuurt als noreply-rijksapp@rijksoverheid.nl zonder naam. De post
+    #    gaat weg, het domein klopt en geen project kan zich als een ander voordoen;
+    #    dichtklappen met een 550 zou het versturen platleggen door een configuratiehik.
+    #    Het sieve-script kan dat niet melden (v0.11.8 kent geen log-commando, gemeten:
+    #    "Expected token command but found log"), dus de waarschuwing staat waar hij wel
+    #    gelezen wordt: OPI logt op WARNING zodra het een bestaand account tegenkomt
+    #    waarvoor de relay geen afzender houdt.
     [session.mail]
     rewrite = [
-      {if = "authenticated_as", ne = "", then = "'%{env:MAIL_FROM_LOCAL}%+' + authenticated_as + '@%{env:MAIL_DOMAIN}%'"},
-      {else = false},
+      {if = "key_get('zad-afzenderadres', authenticated_as)", ne = "", then = "key_get('zad-afzenderadres', authenticated_as)"},
+      {else = "'%{env:MAIL_FROM_LOCAL}%@%{env:MAIL_DOMAIN}%'"},
     ]
 
     # 2, 5, 6 en 7 gebeuren in dit script. Stalwart v0.11 kent GEEN sleutel om kopregels
@@ -93,29 +139,20 @@ data:
 
     [sieve.trusted.scripts.identiteitsregels]
     contents = '''
-    require ["editheader", "variables", "reject", "relational", "comparator-i;ascii-numeric"];
+    require ["editheader", "variables", "vnd.stalwart.expressions"];
 
     set "domein" "%{env:MAIL_DOMAIN}%";
-    set "account" "${env.authenticated_as}";
-    set "afzender" "%{env:MAIL_FROM_LOCAL}%@%{env:MAIL_DOMAIN}%";
 
-    # 2a. Precies EEN afzenderadres in de From:. Dit staat VOOR regel 2 en is er de
-    #    voorwaarde van: 'address :all' is waar zodra EEN adres in de header matcht, dus
-    #    "From: <invoice@evil.example>, noreply.demo@${domein}" haalde regel 2 en vertrok
-    #    op naam van het slachtoffer. Nu regel 2 overschrijft in plaats van toetst, is dit
-    #    de voorwaarde die de overschrijving eenduidig maakt: bij precies een mailbox is
-    #    ondubbelzinnig welk deel de weergavenaam is. RFC 5322 laat meerdere
-    #    mailboxen in From: toe (met een Sender: erbij); wij niet - een account stuurt als
-    #    zichzelf of niet.
-    #    Gemeten tegen Stalwart v0.11.8: From met twee mailboxen -> 550, From met een
-    #    mailbox -> afgeleverd.
-    if not address :count "eq" :comparator "i;ascii-numeric" "From" "1" {
-        reject "550 5.7.1 De From:-header moet precies een adres bevatten.";
+    let "adres" "key_get('zad-afzenderadres', env.authenticated_as)";
+    if eval "adres == ''" {
+        let "adres" "'%{env:MAIL_FROM_LOCAL}%@%{env:MAIL_DOMAIN}%'";
     }
+    let "naam" "key_get('zad-afzendernaam', env.authenticated_as)";
 
-    # 2. De From: wordt OVERSCHREVEN met het vaste afzenderadres. Elk project verstuurt
-    #    onder hetzelfde adres; er is geen adres per project meer en er valt hier niets
-    #    te kiezen.
+    # 2. De From: wordt OVERSCHREVEN met de afzender van DIT account: het projectadres en
+    #    de weergavenaam uit de projectconfiguratie. Er wordt niets uit de aangeleverde
+    #    header overgenomen, naam noch adres, dus er valt hier voor een applicatie niets
+    #    te kiezen en niets te forceren.
     #
     #    OVERSCHRIJVEN EN NIET WEIGEREN, en dat is een bewuste keuze. Weigeren zou elke
     #    applicatie breken die zelf een From: zet, en dat doet vrijwel elke maillibrary
@@ -123,29 +160,32 @@ data:
     #    maar een val. Overschrijven is bovendien strikter: er is geen invoer die eraan
     #    ontsnapt, want er wordt niets getoetst.
     #
-    #    De weergavenaam van de applicatie blijft staan, het adres niet. Dat is met opzet:
-    #    "Algoritmeregister <noreply-rijksapp@rijksoverheid.nl>" leest voor de ontvanger
-    #    beter dan een kaal adres, en de weergavenaam raakt DMARC niet.
-    #    LET OP wat daarmee open blijft: een weergavenaam mag alles bevatten, ook iets dat
-    #    op een ander adres lijkt. Wie "beveiliging@bank.nl" als naam zet, krijgt dat ook
-    #    te zien in menig mailprogramma. Dat is hier aanvaard omdat elk project langs een
-    #    goedkeuring komt; wordt dat ooit zelfbediening, dan hoort hier een filter op.
-    #    GEMETEN op 19 augustus 2026 op de sandbox, met scripts/mail_identity_check.py
-    #    tegen v0.11.8. Drie berichten met een expres foute From: en een expres foute
-    #    envelope, en alle drie kwamen ze zo bij de ontvanger aan:
-    #      "Iemand Anders <spoof@evil.example>" -> noreply-rijksapp@rijksoverheid.nl,
-    #                                             weergavenaam "Iemand Anders" behouden
-    #      "<spoof@evil.example>"               -> noreply-rijksapp@rijksoverheid.nl
-    #      "spoof@evil.example" (kaal)          -> noreply-rijksapp@rijksoverheid.nl
-    #    De envelope was in alle drie de gevallen noreply-rijksapp+zad-platform@
-    #    rijksoverheid.nl, dus in hetzelfde domein als de From: en daarmee SPF-uitgelijnd.
-    #    X-Mailer en X-Originating-IP, allebei meegestuurd, waren eraf.
-    if header :matches "From" "*<*>" {
-        deleteheader "From";
-        addheader :last "From" "${1}<${afzender}>";
+    #    De Reply-To: blijft wel van de applicatie en wordt hier niet aangeraakt. Dat is de
+    #    scheiding: de From: is identiteit en ligt vast omdat wij op andermans mailserver
+    #    zitten, de Reply-To: zegt alleen waar een antwoord heen moet.
+    #
+    #    De weergavenaam gaat tussen aanhalingstekens de header in. Zo is elke naam die de
+    #    validatie doorlaat een geldige quoted-string uit RFC 5322 - ook een met een komma
+    #    of een dubbele punt erin, die zonder quotes van de From: een lijst met twee
+    #    mailboxen zou maken. Wat er niet in kan komen, weigert OPI al bij het formulier en
+    #    bij de API: regeleindes en andere stuurtekens (header-injectie), een @ of
+    #    punthaken (dan leest de naam bij menig ontvanger als het afzenderadres), een
+    #    aanhalingsteken of backslash (die zouden juist deze quoting openbreken), en meer
+    #    dan 64 tekens.
+    #
+    #    HIER STOND een regel 2a: "precies EEN adres in de From:, anders 550". Die had een
+    #    taak zolang de weergavenaam uit het AANGELEVERDE bericht werd overgenomen - bij
+    #    twee mailboxen was niet eenduidig welk deel de naam was, en "From: <invoice@
+    #    evil.example>, noreply@..." kon zo op naam van een slachtoffer vertrekken. Nu de
+    #    hele header wordt weggegooid en opnieuw opgebouwd uit onze eigen twee waarden, is
+    #    er geen invoer meer om eenduidig over te zijn: deleteheader haalt ELKE From: weg,
+    #    ook een met twee mailboxen en ook een tweede kopregel. Weigeren zou alleen nog
+    #    berichten kosten zonder iets te beschermen.
+    deleteheader "From";
+    if eval "naam == ''" {
+        addheader :last "From" "<${adres}>";
     } else {
-        deleteheader "From";
-        addheader :last "From" "${afzender}";
+        addheader :last "From" "\"${naam}\" <${adres}>";
     }
 
     # 6. Het Message-ID houdt zijn unieke deel maar krijgt ONS domein. Een applicatie zet

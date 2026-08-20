@@ -54,6 +54,28 @@ class MailAccount:
     messages_per_day: int
 
 
+#: Settings prefix of the lookup table that holds each account's sender ADDRESS.
+#: Read by the sieve script as ``key_get('zad-afzenderadres', <account>)``.
+MAIL_SENDER_ADDRESS_LOOKUP = "lookup.zad-afzenderadres"
+
+#: Settings prefix of the lookup table that holds each account's display NAME. A key is
+#: absent for an account without one, and absent and empty mean the same thing to the
+#: script: send without a display name.
+MAIL_SENDER_NAME_LOOKUP = "lookup.zad-afzendernaam"
+
+
+@dataclass(frozen=True)
+class MailSenderIdentity:
+    """The ``From:`` the relay puts on this account's mail: an address and maybe a name."""
+
+    #: The address, in both the ``From:`` header and the envelope. Empty when the relay
+    #: holds nothing for this account, which is the state the fallback in the sieve script
+    #: covers and the one nobody should ever be in.
+    address: str = ""
+    #: The display name, or empty for "no display name" -- a valid outcome, not a fallback.
+    display_name: str = ""
+
+
 class MailConnector:
     """Talks to the relay's management API over HTTP."""
 
@@ -178,6 +200,98 @@ class MailConnector:
             return False
         logger.info(f"Mailaccount {name} verwijderd van de relay")
         return True
+
+    # --- the sender identity of an account -------------------------------------
+    #
+    # The relay cannot work out who an account sends as. A sieve script knows only
+    # ``authenticated_as`` -- the ACCOUNT name -- and v0.11.8 has no expression function
+    # that reads a principal (measured: ``principal_get``, ``directory_query`` and
+    # ``sql_query`` do not exist; ``key_get``, ``key_set``, ``key_exists``, ``query`` and
+    # ``dns_query`` do). So the address and the display name are handed to the relay here,
+    # as two entries in a lookup table the script reads with ``key_get``.
+    #
+    # Through the settings API and not through some file: it is the same admin credential
+    # this connector already authenticates with, the values land in the relay's own config
+    # store (PostgreSQL, so they survive a pod swap), and a written key is visible to the
+    # script right after a reload -- no restart. All measured on 20 August 2026 against
+    # v0.11.8.
+
+    async def get_sender_identity(self, name: str) -> MailSenderIdentity:
+        """What the relay currently holds as this account's sender.
+
+        Read per TABLE and then indexed on the account, not with the account in the query
+        prefix: the settings API matches on PREFIX, so asking for ``...naam.project-foo``
+        would also answer for ``project-foobar``.
+        """
+        return MailSenderIdentity(
+            address=await self._lookup_value(MAIL_SENDER_ADDRESS_LOOKUP, name),
+            display_name=await self._lookup_value(MAIL_SENDER_NAME_LOOKUP, name),
+        )
+
+    async def _lookup_value(self, table: str, name: str) -> str:
+        result = await self._request("GET", f"/api/settings/list?prefix={table}.")
+        items = ((result or {}).get("data") or {}).get("items") or {}
+        return items.get(name) or ""
+
+    async def set_sender_identity(self, name: str, identity: MailSenderIdentity) -> None:
+        """Make the relay send this account's mail as ``identity``.
+
+        Written in ONE call, so the address and the name can never briefly disagree, and
+        followed by a reload because the lookup tables are built when the configuration is
+        built. An empty display name is a DELETE and not an empty value: a key that says
+        nothing is one an administrator reading the settings does not have to interpret.
+        """
+        changes: list[dict[str, Any]] = [
+            {
+                "type": "insert",
+                "values": [[f"{MAIL_SENDER_ADDRESS_LOOKUP}.{name}", identity.address]],
+                "assert_empty": False,
+            }
+        ]
+        if identity.display_name:
+            changes.append(
+                {
+                    "type": "insert",
+                    "values": [[f"{MAIL_SENDER_NAME_LOOKUP}.{name}", identity.display_name]],
+                    "assert_empty": False,
+                }
+            )
+        else:
+            changes.append({"type": "delete", "keys": [f"{MAIL_SENDER_NAME_LOOKUP}.{name}"]})
+        await self._request("POST", "/api/settings", payload=changes)
+        await self.reload()
+        logger.info(f"Afzender van mailaccount {name} vastgelegd op de relay: {identity.address}")
+
+    async def delete_sender_identity(self, name: str) -> None:
+        """Remove this account's sender from the relay. Replay-safe: a missing key is fine."""
+        await self._request(
+            "POST",
+            "/api/settings",
+            payload=[
+                {
+                    "type": "delete",
+                    "keys": [
+                        f"{MAIL_SENDER_ADDRESS_LOOKUP}.{name}",
+                        f"{MAIL_SENDER_NAME_LOOKUP}.{name}",
+                    ],
+                }
+            ],
+        )
+        await self.reload()
+        logger.info(f"Afzender van mailaccount {name} verwijderd van de relay")
+
+    async def reload(self) -> None:
+        """Rebuild the relay's configuration, so a written lookup value takes effect.
+
+        A build error on ANY key leaves the whole rebuild where it was -- measured, and it
+        is the trap in this path: a value written correctly stays invisible because
+        something entirely unrelated does not compile. The errors the relay reports are
+        therefore logged rather than swallowed, even though none of them is ours to fix.
+        """
+        result = await self._request("GET", "/api/reload")
+        errors = ((result or {}).get("data") or {}).get("errors") or {}
+        if errors:
+            logger.warning(f"De mailrelay meldt configuratiefouten bij het herladen: {list(errors)}")
 
 
 async def create_mail_connector() -> MailConnector:
