@@ -12,6 +12,7 @@ which is provisioning by side effect.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -86,6 +87,17 @@ _ACCOUNT_PATROON = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 #: string interpolates ``${...}``, so a name containing it would read a variable instead of
 #: being text.
 _NAAM_VERBODEN = re.compile(r'[@<>"\\$\x00-\x1F\x7F]')
+
+
+#: Serialises the read-modify-write of the generated table.
+#:
+#: Writing one account's name means rendering the table from ALL of them, so two projects
+#: being processed at the same time would both read the table as it was, and the one that
+#: writes last would drop the other one's name -- silently, and until someone happens to
+#: process that project again. OPI runs one replica per cluster, so a lock in the process is
+#: the whole of the concurrency; a second replica would need the relay to offer a conditional
+#: write, which v0.11.8 does not.
+_TABEL_SLOT = asyncio.Lock()
 
 
 class MailSenderNameError(ValueError):
@@ -253,15 +265,16 @@ class MailConnector:
         administrator reading the settings has to interpret.
         """
         _controleer_naam(account, display_name)
-        namen = await self.get_sender_names()
-        if namen.get(account, "") == display_name:
-            return False
-        if display_name:
-            namen[account] = display_name
-        else:
-            namen.pop(account, None)
-        await self._write_sender_names(account, display_name, namen)
-        return True
+        async with _TABEL_SLOT:
+            namen = await self.get_sender_names()
+            if namen.get(account, "") == display_name:
+                return False
+            if display_name:
+                namen[account] = display_name
+            else:
+                namen.pop(account, None)
+            await self._write_sender_names(account, display_name, namen)
+            return True
 
     async def delete_sender_name(self, account: str) -> None:
         """Forget this account's display name. Replay-safe: a missing key is fine."""
