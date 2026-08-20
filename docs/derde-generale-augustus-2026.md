@@ -88,7 +88,7 @@ Een skip is geen groen, dus ze zijn nageteld in plaats van weggewinkt:
 | Aantal | Wat | Waarom |
 |---|---|---|
 | 71 | tests met de `sandbox`-marker | `E2E_BASE_URL` staat in deze aanroep niet, dus ze slaan over volgens ontwerp. Ze draaien apart onder `-m sandbox` |
-| 3 | `test_lotc_domeinbeheer::...in_firefox`, `test_lotc_metrics_explorer::...in_firefox` (2x) | **Firefox stond niet op de machine.** Dat is een gat, geen ontwerp |
+| 3 | `test_lotc_aanvragenbeheer::...in_firefox`, `test_lotc_metrics_explorer::...in_firefox` (2x) | **Firefox stond niet op de machine.** Dat is een gat, geen ontwerp |
 | 1 | `test_csrf_browser::test_invite_register_has_hidden_csrf_field` | de testapp heeft geen invite-key; skip volgens ontwerp |
 
 De drie Firefox-skips zijn **dichtgezet in plaats van gemeld**: `playwright install firefox`

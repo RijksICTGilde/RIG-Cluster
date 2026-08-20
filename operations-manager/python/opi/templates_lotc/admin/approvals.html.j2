@@ -1,6 +1,6 @@
 {% extends "base_lotc.html.j2" %}
 
-{% block page_title %}Domeinbeheer - Self Service Portal{% endblock %}
+{% block page_title %}Aanvragen - Self Service Portal{% endblock %}
 
 {% block content %}
 <c-layout-flow gap="xl">
@@ -25,7 +25,7 @@
 {% block additional_scripts %}
 <script>
     function openApprovalModal(projectName) {
-        document.getElementById('approval-title-text').textContent = 'Domeingoedkeuring - ' + projectName;
+        document.getElementById('approval-title-text').textContent = 'Goedkeuring - ' + projectName;
 
         var errorEl = document.getElementById('approval-error');
         errorEl.classList.add('is-hidden');

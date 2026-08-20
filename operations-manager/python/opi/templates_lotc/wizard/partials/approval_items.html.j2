@@ -3,7 +3,7 @@
 
   Expected context (via yaml_data / wizard state):
     - _approval_items: list of dicts with keys:
-        type, label, domain, name, current_status, status, history
+        type, label, subject, domain, name, current_status, status, history
 #}
 {% set items = _approval_items | default([]) %}
 
@@ -20,10 +20,10 @@
                        er voor een lopende modalsessie van voor dat veld bestond. #}
                     {% set soort_klasse = 'approval-type-subdomain' if item.type == 'subdomain' else 'approval-type-domain' %}
                     <span class="approval-type-badge {{ soort_klasse }}">{{ item.label | default('Domein', true) }}</span>
-                    <strong>{{ item.name }}</strong>
-                    {% if item.type == 'subdomain' %}
-                        <span class="rvo-text--subtle">.{{ item.domain }}</span>
-                    {% endif %}
+                    {# WAT er gevraagd wordt komt van de dienst zelf (item.subject), zodat hier
+                       niet uit naam + domein hoeft te worden samengesteld wat alleen voor een
+                       (sub)domein klopt. De terugval dekt een modalsessie van voor dat veld. #}
+                    <strong>{{ item.subject | default(item.name, true) }}</strong>
                 </div>
                 {# De statuspil is <c-tag>: het type bepaalt de kleur. De eigen klassen
                    verwezen naar --rvo-color-geel-300/-750, namen die in lotc-app.css niet

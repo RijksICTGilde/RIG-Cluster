@@ -965,7 +965,7 @@ def _apply_approval_to_project(
 
 
 def build_domain_approval_section() -> FormSection:
-    """Build the admin domain/subdomain approval section.
+    """Build the admin approval section: every approval a service declares.
 
     Uses the same pattern as backup/restore: no editables, a TemplatePartial
     for the UI, and raw form data stored directly. The post_merge callback
@@ -973,9 +973,9 @@ def build_domain_approval_section() -> FormSection:
     """
     return FormSection(
         section_id="domain-approval",
-        title="Domein- en subdomeingoedkeuring",
+        title="Goedkeuring van aanvragen",
         icon="vinkje",
-        description="Keur domein- en subdomeinaanvragen goed of af",
+        description="Keur de aanvragen van dit project goed of af",
         editables=[],
         layout=[TemplatePartial(template="wizard/partials/approval_items.html.j2")],
         post_save_action="process_project",

@@ -29,9 +29,11 @@ from typing import Any
 import yaml
 
 from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
+from opi.services.catalog.approval import SERVICE_USE_SUBJECT
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
 from opi.web.lotc_switch import PROJECT_TABS
+from opi.web.router_approvals import APPROVAL_STATUSSEN, groepeer_per_dienst
 
 FIXTURES_DIR = Path(__file__).parent / "lotc_fixtures"
 
@@ -389,29 +391,60 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "admin-approvals":
-        # Een aanvraag per stand, zodat de drie labels op het scherm naast elkaar staan.
+        # Een aanvraag per stand, zodat de drie labels op het scherm naast elkaar staan, en
+        # TWEE diensten, want de pagina groepeert per dienst. Elk item draagt dezelfde
+        # sleutels als collect_approval_items() ze aflevert (``service``, ``label``,
+        # ``subject``), anders toont de proefopstelling een vorm die de echte pagina niet
+        # heeft.
+        aanvragen = [
+            {
+                "service": "publish-on-web",
+                "type": "subdomain",
+                "label": "Subdomein",
+                "subject": "voorbeeld.rijksapps.nl",
+                "domain": "rijksapps.nl",
+                "name": "voorbeeld",
+                "current_status": "requested",
+                "history": [{"date": datetime(2026, 8, 1, tzinfo=UTC), "by": "voorbeeldgebruiker"}],
+            },
+            {
+                "service": "publish-on-web",
+                "type": "domain",
+                "label": "Domein",
+                "subject": "voorbeeld.nl",
+                "domain": "voorbeeld.nl",
+                "name": "voorbeeld.nl",
+                "current_status": "approved",
+                "history": [{"date": datetime(2026, 7, 14, tzinfo=UTC), "by": "voorbeeldbeheerder"}],
+            },
+            {
+                "service": "send-email",
+                "type": "send-email",
+                "label": "E-mail versturen",
+                "subject": SERVICE_USE_SUBJECT,
+                "domain": "",
+                "name": projects[0]["name"],
+                "current_status": "denied",
+                "history": [{"date": datetime(2026, 8, 12, tzinfo=UTC), "by": "voorbeeldbeheerder"}],
+            },
+        ]
+        # De groepen komen uit DEZELFDE functie als op de echte pagina. Ze hier met de hand
+        # opschrijven zou een tweede waarheid zijn, en dan toont de proefopstelling iets
+        # anders dan /admin/approvals zodra de groepering verandert. Het sjabloon leest
+        # alleen ``approval_groups``; ``approval_items`` blijft ernaast staan omdat de
+        # teller AANVRAGEN telt en geen groepen.
         return {
             "projects_data": [
                 {
                     "project_name": projects[0]["name"],
-                    "approval_items": [
-                        {
-                            "type": "subdomain",
-                            "domain": "rijksapps.nl",
-                            "name": "voorbeeld",
-                            "current_status": "requested",
-                            "history": [{"date": datetime(2026, 8, 1, tzinfo=UTC), "by": "voorbeeldgebruiker"}],
-                        },
-                        {
-                            "type": "domain",
-                            "domain": "voorbeeld.nl",
-                            "name": "voorbeeld.nl",
-                            "current_status": "approved",
-                            "history": [{"date": datetime(2026, 7, 14, tzinfo=UTC), "by": "voorbeeldbeheerder"}],
-                        },
-                    ],
+                    "approval_items": aanvragen,
+                    "approval_groups": groepeer_per_dienst(aanvragen),
                 }
             ],
+            "approvals_totaal": len(aanvragen),
+            "approvals_getoond": len(aanvragen),
+            "approval_status": "",
+            "approval_statussen": APPROVAL_STATUSSEN,
             "success_message": "",
         }
 
