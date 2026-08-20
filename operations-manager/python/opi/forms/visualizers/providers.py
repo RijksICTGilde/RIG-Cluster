@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
+from opi.core.config import settings
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
@@ -173,6 +174,11 @@ class ServiceOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available service options from ServiceAdapter definitions."""
+        # Imported here, not at module scope: the registry imports the catalog, whose
+        # services import this forms module back. The catalog breaks the same cycle the
+        # same way (instructions/services.md, "Keep the catalog import-light").
+        from opi.services.registry import get_service
+
         options: list[dict[str, Any]] = []
 
         if self.include_empty:
@@ -183,6 +189,16 @@ class ServiceOptionsProvider:
 
             # Skip hidden services and system services (never user-selectable)
             if definition.hidden or definition.kind is ServiceKind.SYSTEM:
+                continue
+
+            # Skip a service this cluster cannot deliver. Asked of the service itself
+            # (Service.available_on_cluster), which answers from the cluster
+            # configuration -- no cluster name appears here. The managing cluster is the
+            # measure because an OPI instance only ever provisions its own cluster. This
+            # is presentation only: the refusal that counts is at save time, in
+            # validate_service_availability, since the API and a hand-written project
+            # file never see a card.
+            if not get_service(service_type).available_on_cluster(settings.CLUSTER_MANAGER):
                 continue
 
             # Filter by binding if specified (filter_binding is the plain string value)

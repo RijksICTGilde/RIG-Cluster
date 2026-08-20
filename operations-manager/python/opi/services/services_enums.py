@@ -55,6 +55,11 @@ class ServiceType(Enum):
     # named deployments/components of other projects on explicit ports (NetworkPolicy).
     CROSS_DOMAIN_ACCESS = "cross-domain-access"
 
+    # VLAM: the language-model API of SSC-ICT, reachable over the RON link and opened up
+    # inside the cluster by the vlam project's internal proxy. Only exists on a cluster
+    # whose configuration names a VLAM endpoint.
+    VLAM = "vlam"
+
     # A component's own environment variables and its alias map. System services: every
     # component has them, so they are never in the picker and never in the services list.
     # They own the plain component properties of the same name (see their packages).
