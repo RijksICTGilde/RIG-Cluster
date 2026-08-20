@@ -40,13 +40,31 @@ De koppeling werkt en een testbericht is aangenomen. Vier correcties op de tekst
 
 Dat maakt de paragraaf hierna niet minder waar, maar juist dwingender: zonder authenticatie aan de andere kant is er niets dat een applicatie tegenhoudt behalve ons eigen netwerkbeleid.
 
-## Besloten op 18 augustus 2026: één vast afzenderadres, geen eigen domein
+## Besloten op 20 augustus 2026: de afzender IS het project (RC-145)
+
+Dit vervangt de afspraak van 18 augustus hieronder, die zei dat elk project vanaf hetzelfde kale adres verstuurt. Het domein en de reden daarvoor blijven staan; wat verandert is dat het bericht nu herkenbaar van een PROJECT komt, wat de afspraak met het mailteam ook altijd was:
+
+```
+From:         <from-name uit de projectconfiguratie> <noreply-rijksapp+<project>@rijksoverheid.nl>
+Return-Path:  noreply-rijksapp+<project>@rijksoverheid.nl
+```
+
+- Het plusdeel draagt de PROJECTnaam, niet de accountnaam. Die laatste draagt het voorvoegsel `project-`, en dat zou zichtbaar in elk afzenderadres van het platform belanden zonder iets te zeggen.
+- De weergavenaam komt uit `services/[send-email]/config/from-name`. Tot RC-145 stond dat veld in het projectbestand zonder ook maar één lezer, en zag de ontvanger de naam die de APPLICATIE meestuurde.
+- Wat de applicatie in haar eigen `From:` zet wordt weggegooid, naam en adres allebei. De `Reply-To:` blijft wel van de applicatie: de `From:` is identiteit en ligt vast omdat wij op andermans mailserver zitten, de `Reply-To:` zegt alleen waar een antwoord heen moet.
+- Envelope en `From:` worden hetzelfde adres. Ze verschilden een voorvoegsel en dat verschil diende niets, want SPF-uitlijning kijkt naar het domein.
+
+**Hoe de relay dat weet**, want dat is de niet voor de hand liggende helft. Het sieve-script kent alleen `${env.authenticated_as}` (de accountnaam), en Stalwart v0.11.8 heeft geen enkele expressiefunctie die een principal uitleest — `principal_get`, `directory_query` en `sql_query` bestaan geen van drieën, gemeten. Adres en naam staan daarom in twee opzoektabellen die OPI vult via `POST /api/settings`, gevolgd door `POST /api/reload`; het script leest ze met `key_get('zad-afzenderadres', …)` en `key_get('zad-afzendernaam', …)`. De waarden leven in de configuratieopslag van de relay (PostgreSQL) en overleven een podwissel.
+
+**De terugval is het kale adres.** Houdt de relay voor een account geen afzender, dan vertrekt de post als `noreply-rijksapp@rijksoverheid.nl` zonder naam. De post gaat weg, het domein klopt en geen project kan zich als een ander voordoen; dichtklappen met een 550 zou het versturen platleggen door een configuratiehik. Het platformaccount van ZAD zelf valt hiermee samen: het is geen project, heeft geen plusdeel en geen naam.
+
+## Besloten op 18 augustus 2026: één vast afzenderdomein, geen eigen domein
 
 Dit vervangt de hele afzenderdomein-paragraaf verderop, en het raakt ook de tweede aanname hierboven (waar staat "ondertekend met onze DKIM-sleutel": dat gebeurt niet meer).
 
-Alle projecten versturen vanaf **`noreply-rijksapp@rijksoverheid.nl`**. De relay schrijft dat adres zelf in de `From:` van elk bericht; er is geen veld, geen keuze en geen weg eromheen. Een project kiest alleen de weergavenaam ernaast.
+Het afzenderdomein is **`rijksoverheid.nl`** en het lokale deel begint met **`noreply-rijksapp`**. Een project kiest daar niets aan: het adres wordt samengesteld door het platform (sinds RC-145 met de projectnaam in het plusdeel, zie hierboven) en de relay schrijft het zelf in de `From:` van elk bericht.
 
-Waarom: we versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit. `rijksoverheid.nl` publiceert `p=reject` en wij kunnen in hun zone geen DKIM-sleutel publiceren, dus **SPF-uitlijning tussen envelope en `From:` is het enige dat een bericht door DMARC krijgt.** Daarom wordt ook de envelope herschreven naar `noreply-rijksapp+<project>@rijksoverheid.nl`: zelfde domein, project in het plusdeel, bounce blijft herleidbaar.
+Waarom: we versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit. `rijksoverheid.nl` publiceert `p=reject` en wij kunnen in hun zone geen DKIM-sleutel publiceren, dus **SPF-uitlijning tussen envelope en `From:` is het enige dat een bericht door DMARC krijgt.** Daarom staan envelope en `From:` allebei in dat domein.
 
 Wat vervalt: het eigen maildomein, alle DNS-records die daarbij hoorden (hun SPF autoriseert de upstream al), DKIM in zijn geheel, en de velden `from-domain` en `from-local-part`.
 
