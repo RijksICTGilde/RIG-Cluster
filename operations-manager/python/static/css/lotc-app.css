@@ -131,7 +131,15 @@ nldd-page-footer {
     --nldd-color-surface: var(--semantics-surfaces-base-background-color);
     --nldd-color-text: var(--semantics-content-color);
     --nldd-color-text-subtle: var(--semantics-content-secondary-color);
-    --nldd-color-border: var(--semantics-dividers-color);
+    /* Niet --semantics-dividers-color. Een scheidingslijn tussen twee vlakken mag
+       zacht zijn; de RAND VAN EEN INVOERVELD moet het veld begrenzen. Alle vier de
+       plekken die deze naam opvragen zijn invoerachtig - <c-secret-field>,
+       .lotc-copyfield, select-field en de keuzelijst op admin-usage - en in een lijst
+       van tien velden onder elkaar liep de dividerlijn (donker: neutral-200) visueel
+       weg tegen het vlak. Gemeld als "de kaders zijn bijna niet te onderscheiden".
+       Het thema heeft hier een eigen token voor, en dat is donkerder in beide
+       weergaven: light-dark(neutral-550, neutral-650). */
+    --nldd-color-border: var(--semantics-input-fields-border-color);
     --nldd-color-focus: var(--semantics-content-accent-color);
     --nldd-color-error: var(--semantics-content-critical-color);
 
