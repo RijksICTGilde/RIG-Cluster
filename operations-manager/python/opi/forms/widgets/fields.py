@@ -214,6 +214,7 @@ class FieldWidgetAdapter(WidgetAdapter):
                     "dependents_labels": dependents_labels,
                     "help_template": str(help_template) if help_template else None,
                     "config_hint": config_hint,
+                    "requires_approval": bool(option.get("requires_approval")),
                 }
             )
 

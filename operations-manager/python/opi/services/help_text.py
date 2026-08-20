@@ -224,17 +224,34 @@ def render_service_help(help_template: str) -> str:
     route that knows only which help was asked for, and a help document that belongs to no
     service (the container-image note) simply renders without an icon.
     """
-    definition = next(
-        (d for d in ServiceAdapter.SERVICE_DEFINITIONS.values() if d.help_template == help_template),
+    owner = next(
+        (
+            (service_type, d)
+            for service_type, d in ServiceAdapter.SERVICE_DEFINITIONS.items()
+            if d.help_template == help_template
+        ),
         None,
     )
-    # De import staat binnenin om een kringloop te vermijden: de templateomgeving leunt op
-    # de dienstenregistry, en die brengt de dienstpakketten mee die deze module lezen.
+    definition = owner[1] if owner else None
+    # De imports staan binnenin om een kringloop te vermijden: de templateomgeving leunt
+    # op de dienstenregistry, en die brengt de dienstpakketten mee die deze module lezen.
     from opi.core.templates_lotc import templates_lotc
+    from opi.services.registry import get_service
 
     markup = markdown_to_components(
         read_help_markdown(help_template),
         icon=definition.icon if definition else None,
         color=definition.color if definition else None,
     )
+    # De goedkeuringswaarschuwing komt uit de DECLARATIE van de dienst (approval_specs),
+    # niet uit de uitlegtekst: zo staat hij op elke dienst die goedkeuring vereist, ook op
+    # een die het later gaat vereisen, en kan de tekst niet beweren wat de dienst niet
+    # waarmaakt. Bovenaan, want dit is wat je wilt weten voor je aanvraagt.
+    if owner and get_service(owner[0]).approval_specs():
+        waarschuwing = (
+            '<c-alert type="warning" heading="Vereist goedkeuring">'
+            "Het aanzetten van deze dienst is een aanvraag: een beheerder moet hem "
+            "goedkeuren voordat er iets gebeurt.</c-alert>"
+        )
+        markup = markup.replace('<c-stack gap="md">\n', f'<c-stack gap="md">\n{waarschuwing}\n', 1)
     return templates_lotc.env.from_string(markup).render()
