@@ -7,13 +7,15 @@ guessing for years which of the three was meant. ``plans/mailrelay.md`` argues i
 
 What it hands a component is credentials, nothing more: host, port, username, password and
 the sender address. Everything that decides whether the mail actually ARRIVES -- the
-rewritten envelope sender, the pinned ``From:`` domain, the DKIM signature, the stripped
-``Received`` chain -- is enforced on the relay and is deliberately not per project. A
-project that could set its own ``From:`` domain would simply produce mail that fails DMARC.
+envelope sender, the whole ``From:`` header, the stripped ``Received`` chain -- is enforced
+on the relay and is never the application's to choose. A project that could set its own
+``From:`` domain would simply produce mail that fails DMARC; what it DOES get is its own
+name in the plus part and its own display name, both written by the platform.
 
-The project-level block is small on purpose: a display name, the local part of the sender
-address, an optional own domain (kept in the model so the later domain flow does not need a
-schema change) and a daily budget. ``accounts`` is the platform's side and carries
+The project-level block is small on purpose: a display name and a daily budget, and that
+is all. The ADDRESS is not in it -- the platform composes it from the project name
+(``noreply-rijksapp+<project>@rijksoverheid.nl``) and hands it to the relay, which writes
+the whole ``From:`` itself. ``accounts`` is the platform's side and carries
 ``PLATFORM_MANAGED``.
 
 **Nothing happens until an administrator says yes** (aanvulling 6 in the plan). The service
@@ -118,8 +120,8 @@ class SendEmailService(Service):
         name="E-mail versturen",
         description=(
             "Verstuur e-mail vanuit je applicatie via de mailrelay van het platform. "
-            "Je krijgt een eigen SMTP-account met een eigen dagbudget; het afzenderadres "
-            "ligt vast en is voor alle projecten hetzelfde."
+            "Je krijgt een eigen SMTP-account met een eigen dagbudget en een afzenderadres "
+            "op naam van je project; de naam die de ontvanger ziet, kies je zelf."
         ),
         help_template="send_email/help.md",
         icon="envelop",
