@@ -73,7 +73,17 @@ MAIL_SENDER_NAME_PREFIX = "zad.afzender.naam"
 #: IS recompiled on every reload (measured in both directions: changing the value of an
 #: existing account took effect on the very next message, without a restart), so this is
 #: the one shape that stays current while the relay keeps running.
-MAIL_SENDER_TABLE_KEY = "sieve.trusted.scripts.zad-afzenders.contents"
+#:
+#: Its NAME is a constant because the other end of the pair is written in sieve, in
+#: ``mail/controller/base/configmap.yaml``, and drift between the two fails SILENTLY:
+#: ``include :optional`` skips a script it cannot find without a word, so every project
+#: would simply start sending without a display name and nothing would report it.
+#: ``test_de_relayconfiguratie_knipt_hetzelfde_voorvoegsel`` pins the two together, the
+#: same way it already pinned the ``project-`` prefix.
+MAIL_SENDER_SCRIPT_NAME = "zad-afzenders"
+
+#: The settings key that script is stored under, which is the only thing OPI writes.
+MAIL_SENDER_TABLE_KEY = f"sieve.trusted.scripts.{MAIL_SENDER_SCRIPT_NAME}.contents"
 
 #: What an account name may look like before it is written into that generated script.
 #: Belt and braces around a value that is already computed by ``generate_mail_account_name``
@@ -81,11 +91,14 @@ MAIL_SENDER_TABLE_KEY = "sieve.trusted.scripts.zad-afzenders.contents"
 #: hold if it ever stopped being computed.
 _ACCOUNT_PATROON = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
-#: Same for a display name. The form and the API refuse these characters already
-#: (``SendEmailConfig.from_name``); refusing them here too means the generated script cannot
-#: be broken open by a value that reached this connector some other way. Note ``$``: a sieve
-#: string interpolates ``${...}``, so a name containing it would read a variable instead of
-#: being text.
+#: Same for a display name. This list and ``FROM_NAME_PATTERN`` (the rule the form and the
+#: API validate against) hold exactly the same characters, and they have to: a character only
+#: THIS one refuses turns a name the form just approved into an exception halfway through
+#: processing a project, where nothing catches it. Refusing them here as well means the
+#: generated script cannot be broken open by a value that reached this connector some other
+#: way. Note ``$``: a sieve string interpolates ``${...}``, so a name containing it would
+#: read a variable instead of being text -- which is why it belongs in both lists, and why
+#: ``TestDeWeergavenaamWordtGetoetst`` runs its refused names past this layer too.
 _NAAM_VERBODEN = re.compile(r'[@<>"\\$\x00-\x1F\x7F]')
 
 

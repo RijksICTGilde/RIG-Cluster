@@ -33,7 +33,7 @@ Waarom je het adres niet zelf kiest, is techniek en geen betutteling: onze post 
 
 Je `Reply-To:` blijft wel van jou en wordt niet aangeraakt. Wil je dat een antwoord bij je eigen postbus terechtkomt, zet die dan in je applicatie — het antwoord komt niet terug op het afzenderadres.
 
-Voor de naam gelden een paar grenzen, omdat hij rechtstreeks in de kopregels van het bericht terechtkomt: geen regeleindes, geen `@`, geen punthaken of aanhalingstekens, en hoogstens 64 tekens. Een naam die op een e-mailadres lijkt, wordt bij veel ontvangers gelezen alsof het het afzenderadres is, en dat is precies wat we niet willen.
+Voor de naam gelden een paar grenzen, omdat hij rechtstreeks in de kopregels van het bericht terechtkomt: geen regeleindes, geen `@`, geen punthaken, aanhalingstekens, backslash of dollarteken, en hoogstens 64 tekens. Een naam die op een e-mailadres lijkt, wordt bij veel ontvangers gelezen alsof het het afzenderadres is, en dat is precies wat we niet willen.
 
 De relay zet ook de dingen recht die je applicatie niet hoort te regelen: het adres waarop een onbestelbaar bericht terugkomt, de digitale handtekening op je post, en het weghalen van technische kopregels waar de interne namen van het cluster in staan.
 

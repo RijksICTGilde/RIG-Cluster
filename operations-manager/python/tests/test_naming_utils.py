@@ -1147,9 +1147,15 @@ class TestRedisNaming:
 class TestGenerateMailSenderAddress:
     """Het afzenderadres van een project: ``<local>+<project>@<domein>``.
 
-    De ENE plek waar dit adres wordt samengesteld. De relay stelt hem niet nog eens samen
-    maar leest hem terug uit een opzoektabel die OPI vult, precies omdat een tweede
-    samensteller het bij de eerste afkapping oneens zou zijn met deze.
+    Wat OPI hier uitrekent is een MEDEDELING, geen tweede waarheid: het adres dat vertrekt
+    wordt door de relay zelf afgeleid, uit de accountnaam waarmee de applicatie inlogt
+    (``strip_prefix(authenticated_as, 'project-')`` in het sieve-script). Een opzoektabel
+    was het oorspronkelijke ontwerp en bleek niet te kunnen -- zie de PR-body van RC-145.
+
+    Twee samenstellers in twee talen zijn het bij de eerste afkapping oneens, en dat is
+    precies waarom ``generate_mail_account_name`` en deze functie hetzelfde label knippen
+    (``mail_project_label``) en waarom ``test_de_relay_leidt_hetzelfde_adres_af_als_opi``
+    dat vastpint.
     """
 
     BASIS = "noreply-rijksapp@rijksoverheid.nl"
