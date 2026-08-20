@@ -338,8 +338,14 @@ levert één aanvraag op: de functie leest de stand zoals die is en vult aan wat
 
 Wat de catalogus hiervoor kent, naast de bestaande `ApprovalSpec` (declareren, toetsen,
 opsommen, oordeel vastleggen, melden), is `Service.ensure_approval_requests(project_data)`:
-de vraag "wat vraagt dit project dat nog niemand heeft beoordeeld?". `publish-on-web` is
-vandaag de enige dienst die hem beantwoordt; een dienst die niets declareert doet niets.
+de vraag "wat vraagt dit project dat nog niemand heeft beoordeeld?". Een dienst die niets
+declareert doet niets.
+
+De beheerpagina groepeert de aanvragen **per dienst**, met de naam en het icoon uit de
+`ServiceDefinition`. Elk item draagt een `subject` — wat er wordt gevraagd, geschreven door
+de dienst zelf: `example.nl` voor een domein, `foo.example.nl` voor een subdomein. De
+soort-tag ("Domein" / "Subdomein") staat er alleen waar hij iets toevoegt, dus waar hij
+verschilt van de naam van de dienst.
 
 ### Een niet-goedgekeurd domein blokkeert de deployment niet
 

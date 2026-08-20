@@ -45,13 +45,7 @@ from opi.core.cluster_config import (
     get_mail_relay_namespace,
     get_mail_relay_port,
 )
-from opi.services.catalog.approval import (
-    ApprovalItem,
-    ApprovalNotice,
-    ApprovalSpec,
-    ApprovalStatus,
-    ApproverScope,
-)
+from opi.services.catalog.approval import service_use_approval
 from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
@@ -84,112 +78,30 @@ RELAY_POD_LABELS = {"app": "rig-mail-relay"}
 #: Change the containerPort in mail/controller/base/deployment.yaml, change this too.
 RELAY_POD_PORT = 2525
 
-#: Key of this service's one approval, used to route a verdict back to the spec.
-APPROVAL_KEY = "send-email"
+#: De goedkeuring van deze dienst, in de gedeelde vorm: EEN besluit per project over de
+#: vraag of het de dienst mag gebruiken. Alles wat die vorm nodig heeft -- de status
+#: lezen, het item voor de beheerpagina, het oordeel vastleggen, de mededeling aan de
+#: aanvrager en de aanvraag zelf -- komt uit ``service_use_approval``; hier staat alleen
+#: nog WAT er goedgekeurd wordt en wat het betekent zolang dat niet gebeurd is.
+APPROVAL = service_use_approval(
+    ServiceType.SEND_EMAIL,
+    label="E-mail versturen",
+    activity="Het versturen van e-mail",
+    consequence=(
+        "Er is nog geen SMTP-account, geen netwerktoegang naar de relay en geen SMTP_-variabelen in deze deployment."
+    ),
+)
 
-
-def _approval_block(project_data: dict[str, Any]) -> dict[str, Any] | None:
-    """The stored approval block, or None when nothing was ever requested."""
-    for entry in project_data.get("services", []) or []:
-        if service_entry_name(entry) != ServiceType.SEND_EMAIL.value:
-            continue
-        config = entry.get("config") if isinstance(entry, dict) else None
-        approval = config.get("approval") if isinstance(config, dict) else None
-        return approval if isinstance(approval, dict) else None
-    return None
-
-
-def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
-    """The CHECK. ``value`` is the project name and is not read: there is ONE approval per
-    project, not one per requested thing, because what is approved is "this project may
-    send mail" and not a particular address."""
-    approval = _approval_block(project_data)
-    if approval is None:
-        return ApprovalStatus.NONE
-    try:
-        return ApprovalStatus(approval.get("status", ""))
-    except ValueError:
-        return ApprovalStatus.NONE
-
-
-def is_approved(project_data: dict[str, Any]) -> bool:
-    """The one gate. Everything the service does hangs off this, so the four things that
-    switch on (account, network policy, envFrom secret, secret file) can never disagree --
-    which is the half state aanvulling 6 rules out."""
-    return _status_of(project_data, project_data.get("name", "")) is ApprovalStatus.APPROVED
+#: DE POORT. Alles wat de dienst aanzet hangt hieraan, zodat de vier dingen die tegelijk
+#: aangaan (account, netwerkbeleid, envFrom-secret, secretbestand) het nooit oneens kunnen
+#: zijn -- de halve toestand die aanvulling 6 uitsluit.
+is_approved = APPROVAL.is_approved
 
 
 def _selected(project_data: dict[str, Any]) -> bool:
     """Whether the project has the service in its services list at all."""
     return ServiceType.SEND_EMAIL.value in [
         service_entry_name(entry) for entry in project_data.get("services", []) or []
-    ]
-
-
-def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-    """The LIST. One item per project that asked, in the shape the approver UI renders."""
-    approval = _approval_block(project_data)
-    if approval is None:
-        return []
-    return [
-        {
-            "type": APPROVAL_KEY,
-            "domain": "",
-            "name": project_data.get("name", ""),
-            "current_status": approval.get("status", ""),
-            "status": "skip",
-            "history": approval.get("history", []),
-        }
-    ]
-
-
-def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-    """The RECORD. Writes the verdict into the service's own config block."""
-    for entry in project_data.get("services", []) or []:
-        if service_entry_name(entry) != ServiceType.SEND_EMAIL.value or not isinstance(entry, dict):
-            continue
-        config = entry.setdefault("config", {})
-        if not isinstance(config, dict):
-            return
-        approval = config.setdefault("approval", {})
-        approval["status"] = item.get("status", "skip")
-        approval.setdefault("history", []).append(history_entry)
-        return
-
-
-def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
-    """The NOTICE. What the project owner is told while the approval is not granted.
-
-    This is the half of aanvulling 6 that is easy to skip and expensive to skip: a service
-    that is switched on and silently does nothing is exactly the class of fault that was
-    removed from the domain request. So the waiting state is reported per deployment, which
-    is what puts it on the project page and in the deployment read endpoints.
-    """
-    if not _selected(project_data):
-        return []
-    status = _status_of(project_data, project_data.get("name", ""))
-    if status is ApprovalStatus.APPROVED:
-        return []
-    consequence = (
-        "Er is nog geen SMTP-account, geen netwerktoegang naar de relay en geen SMTP_-variabelen in deze deployment."
-    )
-    if status is ApprovalStatus.DENIED:
-        text = f"Het versturen van e-mail is afgewezen. {consequence}"
-    elif status is ApprovalStatus.REQUESTED:
-        text = f"Het versturen van e-mail is aangevraagd en wacht op goedkeuring. {consequence}"
-    else:
-        text = f"Het versturen van e-mail is nog niet aangevraagd. {consequence}"
-    history = (_approval_block(project_data) or {}).get("history") or []
-    verdict = history[-1] if isinstance(history, list) and history and isinstance(history[-1], dict) else {}
-    return [
-        {
-            "subject": project_data.get("name", ""),
-            "status": status.value,
-            "text": text,
-            "by": verdict.get("by"),
-            "date": verdict.get("date"),
-            "message": verdict.get("message"),
-        }
     ]
 
 
@@ -298,36 +210,11 @@ class SendEmailService(Service):
         """
         if layer is not ConfigLayer.PROJECT:
             return []
-        return [
-            ApprovalSpec(
-                key=APPROVAL_KEY,
-                label="E-mail versturen",
-                approver=ApproverScope.PLATFORM_ADMIN,
-                status_of=_status_of,
-                list_items=_items,
-                record=_record,
-                notices_for=_notices,
-            )
-        ]
+        return [APPROVAL.spec]
 
     def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
-        """Switching the service on IS the request.
-
-        State-shaped rather than event-shaped, as the contract asks: read the project as
-        it stands and add what is missing. So asking through the API lands on the same
-        request the wizard's tick creates, and running it twice changes nothing.
-        """
-        if not _selected(project_data):
-            return
-        if _approval_block(project_data) is not None:
-            return
-        for entry in project_data.get("services", []) or []:
-            if service_entry_name(entry) != ServiceType.SEND_EMAIL.value or not isinstance(entry, dict):
-                continue
-            config = entry.setdefault("config", {})
-            if isinstance(config, dict):
-                config["approval"] = {"status": ApprovalStatus.REQUESTED.value, "history": []}
-            return
+        """Switching the service on IS the request."""
+        APPROVAL.ensure_requested(project_data)
 
     async def provision(self, ctx: ProvisionContext) -> None:
         await ctx.mail_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)

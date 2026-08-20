@@ -21,7 +21,7 @@ markup, en het meet in alle drie de motoren hetzelfde.
 
 Wat er in LOTC zou moeten veranderen staat als punt 14 in ``request_for_components.md``.
 Komt dat er, dan kan deze test weg. Het gedrag in de browser wordt gemeten door
-``tests/e2e/test_lotc_domeinbeheer.py``; deze test is de goedkope poort eronder, zodat het
+``tests/e2e/test_lotc_aanvragenbeheer.py``; deze test is de goedkope poort eronder, zodat het
 patroon niet ergens anders terugkomt.
 """
 

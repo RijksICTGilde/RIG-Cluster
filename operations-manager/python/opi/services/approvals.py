@@ -68,6 +68,12 @@ def collect_approval_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
                 # that was not a subdomain, which is wrong the moment a third approvable
                 # arrives (RC-114).
                 item.setdefault("label", spec.label)
+                # WAT er gevraagd wordt, geschreven door de dienst die het weet. Zonder dit
+                # moest de beheerpagina het zelf samenstellen uit de velden die zij toevallig
+                # kende, en dat is precies waarom een dienstaanvraag daar als een LEGE
+                # domeinkolom op het scherm kwam. De terugval dekt een spec die het (nog)
+                # niet zet en een modalsessie van voor dit veld bestond.
+                item.setdefault("subject", item.get("domain") or item.get("name") or "")
                 items.append(item)
     return items
 
@@ -153,7 +159,7 @@ def apply_approval_verdicts(
 
         # A verdict is a state change: name the actor, the subject and the new status so
         # the audit log can reconstruct which item was approved/denied by whom (checklist 10).
-        subject = item.get("domain") or item.get("name") or "(onbekend)"
+        subject = item.get("subject") or item.get("domain") or item.get("name") or "(onbekend)"
         logger.info(
             f"Approval recorded: {spec.key} '{subject}' -> {new_status} in project "
             f"'{project_data.get('name', '(onbekend)')}' by {admin_email or '(onbekend)'}"

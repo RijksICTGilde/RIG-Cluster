@@ -928,9 +928,9 @@ the on-disk-glob kustomization picks them up. cross-domain-access is the referen
 ## Approvals
 
 A service can declare that a value it manages needs someone's approval before it takes
-effect (`opi/services/catalog/approval.py`). Today only publish-on-web uses it, for domains
-and subdomains, but the mechanism is generic and the approver UI needs no change to pick up
-a new one.
+effect (`opi/services/catalog/approval.py`). publish-on-web uses it for domains and
+subdomains, send-email for the use of the service itself; the mechanism is generic and the
+approver UI needs no change to pick up a new one.
 
 `ApprovalSpec` has these callbacks:
 
@@ -940,6 +940,13 @@ a new one.
 | `list_items` | What is open for the approver? | `collect_approval_items` → the admin approvals page |
 | `record` | Write down this verdict | `apply_approval_verdicts`, which builds the uniform history entry |
 | `notices_for` | What does an ungranted approval mean for this deployment? | `collect_deployment_approval_notices` → the project page |
+
+Each item `list_items` returns carries a `subject`: WHAT is being asked for, in words the
+approver reads (`example.nl`, `foo.example.nl`, "Gebruik van de dienst"). Write it — the
+service is the only thing that knows how to say it. Without one, generic code has to
+assemble the sentence from the fields it happens to know, and that is exactly how a service
+request ended up on the approver page as an empty domain column. `collect_approval_items`
+falls back to `domain` / `name` so an in-flight modal session does not break.
 
 The verdict history (`{date, status, by, message}`) is appended by the spec's `record`; the
 last status wins and the file is the audit trail. The *consequence* of a verdict is service
@@ -964,6 +971,28 @@ Report the pending state back where a caller can see it: `collect_deployment_app
 already turns it into the `approvals` field on the deployment read endpoints and on the
 task result of a config write (`features/domain-configuration.md`). A value that quietly
 does not take effect is worse than one that is refused.
+
+### "May this project use this service at all?"
+
+That yes/no is a shape, not a one-off: state under `services/[<service>]/config/approval`
+with a `status` and a `history`, one decision per project. It is written once, as
+`service_use_approval()` in `opi/services/catalog/approval.py`, and a service that needs it
+declares only what is being approved and what it means while it is not:
+
+```python
+APPROVAL = service_use_approval(
+    ServiceType.SEND_EMAIL,
+    label="E-mail versturen",
+    activity="Het versturen van e-mail",
+    consequence="Er is nog geen SMTP-account, geen netwerktoegang naar de relay en geen SMTP_-variabelen in deze deployment.",
+)
+```
+
+It returns three things: `spec` for `config_approvals()`, `is_approved(project_data)` and
+`ensure_requested(project_data)`. Hang **everything** the service switches on off that one
+`is_approved`, so the parts can never disagree — send-email gates its account, its network
+policy, its envFrom secret and its secret file on it. And keep the `consequence`: a service
+that is switched on and silently does nothing is the fault this shape exists to prevent.
 
 Note the split between blocking and enforcing: a user picking a rejected domain is stopped
 at the form field, but the save gate accepts the state, otherwise an approver could not
