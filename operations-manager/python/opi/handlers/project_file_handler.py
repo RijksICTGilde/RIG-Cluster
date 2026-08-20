@@ -306,6 +306,42 @@ def _remove_flat_resources(target: dict[str, Any], fields: Iterable[str]) -> lis
     return sorted(removed)
 
 
+def _flat_fields_from_history_entry(entry: dict[str, Any] | None) -> dict[str, str]:
+    """The flat resource keys a history entry names, as a flat dict.
+
+    An entry only carries the fields it is about, so a missing key means "this entry
+    says nothing about that field", not "empty".
+    """
+    fields: dict[str, str] = {}
+    if not isinstance(entry, dict):
+        return fields
+    for block in ("requests", "limits"):
+        values = entry.get(block)
+        if not isinstance(values, dict):
+            continue
+        for nested_key in ("cpu", "memory"):
+            value = values.get(nested_key)
+            if value:
+                fields[f"{block}_{nested_key}"] = str(value)
+    return fields
+
+
+def _newest_history_entry(component: dict[str, Any], source: str) -> dict[str, Any] | None:
+    """The newest history entry of *source* that holds for the whole component.
+
+    History is newest-first, so the first match wins. An entry naming a ``deployment``
+    is about that one deployment and is skipped here: this reads the component-wide
+    entry, the shape ``apply_user_resource_intent`` writes.
+    """
+    resources = component.get("resources")
+    if not isinstance(resources, dict):
+        return None
+    for entry in resources.get("history", []) or []:
+        if isinstance(entry, dict) and entry.get("source") == source and entry.get("deployment") is None:
+            return entry
+    return None
+
+
 def _prune_resource_history(history: list[dict[str, Any]], max_entries: int) -> list[dict[str, Any]]:
     """Prune a newest-first history to ``max_entries``, always keeping the newest
     entry of each protected source.
@@ -316,24 +352,25 @@ def _prune_resource_history(history: list[dict[str, Any]], max_entries: int) -> 
     value a user set by hand (``get_user_resource_intent``). Dropping one silently
     hands the field back to the tuner.
 
-    A protected entry that falls outside the cap replaces the oldest kept entry that
-    is not itself protected, so the total still respects ``max_entries``.
+    The protected entries are picked first and the cap is then filled up with the
+    newest of what is left, so the total still respects ``max_entries``. Reserving the
+    slots up front rather than swapping them in afterwards matters when the window is
+    itself full of protected entries (an OOM storm): a swap would find no free slot and
+    drop the very entry it was rescuing.
     """
     if len(history) <= max_entries:
         return history
-    kept = list(history[:max_entries])
+    keep: set[int] = set()
     for source in _PROTECTED_HISTORY_SOURCES:
-        if any(entry.get("source") == source for entry in kept):
-            continue
         # newest-first: the first match is the newest entry of this source
-        rescued = next((entry for entry in history if entry.get("source") == source), None)
-        if rescued is None:
-            continue
-        for index in range(len(kept) - 1, -1, -1):  # oldest kept entry first
-            if kept[index].get("source") not in _PROTECTED_HISTORY_SOURCES:
-                kept[index] = rescued
-                break
-    return kept
+        index = next((i for i, entry in enumerate(history) if entry.get("source") == source), None)
+        if index is not None and len(keep) < max_entries:
+            keep.add(index)
+    for index in range(len(history)):  # fill the rest with the newest entries
+        if len(keep) >= max_entries:
+            break
+        keep.add(index)
+    return [history[index] for index in sorted(keep)]
 
 
 def _compact_resource_history_list(history: list[dict[str, Any]], max_entries: int) -> list[dict[str, Any]]:
@@ -1487,7 +1524,9 @@ class ProjectFileHandler:
         3. One ``manual`` history entry on the catalog component records which fields
            this was, so the tuner can leave exactly those alone until they expire
            (``get_user_resource_intent``). No ``deployment`` field: the wish holds for
-           every deployment of this component.
+           every deployment of this component. That entry carries the COMPLETE standing
+           wish: fields an earlier entry pinned and this edit leaves alone come along,
+           because only the newest entry is read back.
 
         Only fields that actually differ from the current value count. The component
         modal posts all four resource fields on every save, so without that diff any
@@ -1529,7 +1568,26 @@ class ProjectFileHandler:
         # and that one is written but deliberately NOT recorded as intent: a value
         # derived from the limit is not a wish, and pinning it would keep the tuner off
         # a request nobody chose.
-        intent = dict(changed)
+        asked = dict(changed)
+        intent = dict(asked)
+
+        # A user edits one field at a time, but the wish is about the component as a
+        # whole and ``get_user_resource_intent`` reads the NEWEST manual entry only. A
+        # field the earlier entry pinned would therefore stop counting the moment a
+        # second edit writes a newer entry, and the tuner would take it back that same
+        # night -- exactly the silent no-op this write path exists to prevent. So the
+        # newest entry always carries the complete standing wish: every field of the
+        # previous entry that this edit does not overwrite and whose value is still in
+        # the catalog comes along. A field whose catalog value changed by some other
+        # route no longer stands and is dropped.
+        standing = {
+            key: value
+            for key, value in _flat_fields_from_history_entry(
+                _newest_history_entry(component, "manual"),
+            ).items()
+            if key not in intent and current.get(key) == value
+        }
+        intent.update(standing)
 
         # A limit dropping below the standing request would leave the component
         # unschedulable; apply_resource_limits pulls the request down with it. Only when
@@ -1541,11 +1599,15 @@ class ProjectFileHandler:
             if lowered is not None and lowered != current.get("requests_memory"):
                 changed["requests_memory"] = lowered
 
+        # The standing fields go too: an entry that claims a wish while a tuner override
+        # still outranks it at manifest generation is the split brain this path exists
+        # to close.
+        clear = sorted(set(changed) | set(standing))
         for deployment in project_data.get("deployments", []) or []:
             for comp in deployment.get("components", []) or []:
                 if comp.get("reference") != component_name:
                     continue
-                removed_fields = _remove_flat_resources(comp, changed)
+                removed_fields = _remove_flat_resources(comp, clear)
                 if removed_fields:
                     logger.info(
                         f"Dropped tuner override {removed_fields} for component '{component_name}' "
@@ -1557,11 +1619,18 @@ class ProjectFileHandler:
             block, nested_key = _FLAT_RESOURCE_FIELDS[key]
             entry.setdefault(block, {})[nested_key] = value
         entry["reason"] = f"Set by hand via {origin}: " + ", ".join(
-            f"{'.'.join(_FLAT_RESOURCE_FIELDS[key])} -> {value}" for key, value in sorted(intent.items())
+            f"{'.'.join(_FLAT_RESOURCE_FIELDS[key])} -> {value}" for key, value in sorted(asked.items())
         )
+        if standing:
+            entry["reason"] += "; still standing: " + ", ".join(
+                f"{'.'.join(_FLAT_RESOURCE_FIELDS[key])} -> {value}" for key, value in sorted(standing.items())
+            )
         self.append_component_resource_history(project_data, component_name, entry)
 
-        logger.info(f"Recorded user resource intent for component '{component_name}' from {origin}: {sorted(changed)}")
+        logger.info(
+            f"Recorded user resource intent for component '{component_name}' from {origin}: "
+            f"changed {sorted(changed)}, still standing {sorted(standing)}"
+        )
         return sorted(changed)
 
     def append_component_resource_history(
@@ -1742,6 +1811,10 @@ class ProjectFileHandler:
         deployment); an entry naming a deployment only counts for that one. A
         deployment-level entry is more specific and wins per field.
 
+        Reading only the newest entry is safe because ``apply_user_resource_intent``
+        makes every entry carry the complete standing wish, not just the fields of that
+        one edit.
+
         Returns:
             UserResourceIntent with the flat keys the user set and the entry timestamp,
             or None when nobody set anything by hand.
@@ -1751,14 +1824,7 @@ class ProjectFileHandler:
 
         def take(entry: dict[str, Any]) -> None:
             nonlocal set_at
-            for block in ("requests", "limits"):
-                values = entry.get(block)
-                if not isinstance(values, dict):
-                    continue
-                for nested_key in ("cpu", "memory"):
-                    value = values.get(nested_key)
-                    if value:
-                        fields[f"{block}_{nested_key}"] = str(value)
+            fields.update(_flat_fields_from_history_entry(entry))
             timestamp = entry.get("timestamp")
             if timestamp and (set_at is None or str(timestamp) > set_at):
                 set_at = str(timestamp)

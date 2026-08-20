@@ -182,6 +182,83 @@ def test_dezelfde_waarden_opnieuw_opslaan_verandert_niets() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 2b. Een tweede bewerking laat de eerste wens staan
+# ---------------------------------------------------------------------------
+
+
+def test_een_tweede_bewerking_op_een_ander_veld_laat_de_eerste_wens_staan() -> None:
+    """De gewone flow, geen randgeval: twee bewerkingen achter elkaar.
+
+    De lezer (``get_user_resource_intent``) neemt per niveau precies het NIEUWSTE
+    ``manual``-item. Draagt dat item alleen de velden van die ene bewerking, dan telt de
+    wens van de vorige bewerking niet meer mee en mag de tuner die waarde de eerstvolgende
+    nacht weer verzetten -- precies de stille no-op die dit schrijfpad moet voorkomen.
+    Dus draagt het nieuwste item altijd de VOLLEDIGE staande wens.
+    """
+    handler = ProjectFileHandler()
+    project = _project()
+
+    assert handler.apply_user_resource_intent(project, "api", {"limits_cpu": "1"}, origin="portal") == ["limits_cpu"]
+    assert handler.apply_user_resource_intent(project, "api", {"limits_memory": "900Mi"}, origin="portal") == [
+        "limits_memory"
+    ]
+
+    wens = handler.get_user_resource_intent(project, "productie", "api")
+    assert wens is not None
+    assert wens.fields == {"limits_cpu": "1", "limits_memory": "900Mi"}, (
+        "de CPU-wens uit de eerste bewerking moet blijven meetellen"
+    )
+
+    # Het nieuwste item draagt beide velden; het oudere item blijft gewoon in de historie.
+    historie = project["components"][0]["resources"]["history"]
+    assert historie[0]["limits"] == {"cpu": "1", "memory": "900Mi"}
+    assert historie[1]["limits"] == {"cpu": "1"}
+    assert "still standing" in historie[0]["reason"]
+
+
+def test_een_veld_dat_niet_meer_in_de_catalogus_staat_gaat_niet_mee() -> None:
+    """Een wens staat alleen zolang de catalogus hem nog draagt.
+
+    Is de waarde langs een andere weg gewijzigd, dan is het geen staande wens meer en
+    mag hij niet stilzwijgend meeliften op het volgende item.
+    """
+    handler = ProjectFileHandler()
+    project = _project()
+    handler.apply_user_resource_intent(project, "api", {"limits_cpu": "1"}, origin="portal")
+
+    # Langs een andere weg gewijzigd (de sectiestroom over de hele componentenlijst
+    # legt geen wens vast, zie features/handmatig-gezette-resources.md).
+    project["components"][0]["resources"]["limits"]["cpu"] = "400m"
+
+    handler.apply_user_resource_intent(project, "api", {"limits_memory": "900Mi"}, origin="portal")
+
+    wens = handler.get_user_resource_intent(project, "productie", "api")
+    assert wens is not None
+    assert wens.fields == {"limits_memory": "900Mi"}
+
+
+def test_een_tweede_bewerking_ruimt_ook_de_override_van_de_staande_wens_op() -> None:
+    """Een wens die het manifest niet haalt is geen wens.
+
+    Heeft de tuner na het vervallen van een wens weer een override op dat veld gezet, dan
+    haalt de volgende bewerking die override ook weg -- anders draagt het nieuwste item
+    een wens die bij manifestgeneratie alsnog verliest.
+    """
+    handler = ProjectFileHandler()
+    project = _project()
+    handler.apply_user_resource_intent(project, "api", {"limits_cpu": "1"}, origin="portal")
+
+    # De tuner pakte het veld weer op en zette een override terug.
+    project["deployments"][0]["components"][0]["resources"] = {"limits": {"cpu": "250m", "memory": "600Mi"}}
+
+    handler.apply_user_resource_intent(project, "api", {"limits_memory": "900Mi"}, origin="portal")
+
+    effectief = _effectieve_resources(project, "productie", "api")
+    assert effectief["limits_cpu"] == "1"
+    assert effectief["limits_memory"] == "900Mi"
+
+
+# ---------------------------------------------------------------------------
 # 3. Er is maar EEN schrijver
 # ---------------------------------------------------------------------------
 
@@ -259,6 +336,40 @@ def test_snoeien_houdt_zowel_de_handmatige_als_de_oom_entry() -> None:
     # En ze zijn allebei nog vindbaar voor de lezers die erop rekenen.
     assert handler.get_user_resource_intent(project, "productie", "api") is not None
     assert handler.get_resource_history_floor(project, "productie", "api") is None  # entry zonder deployment-veld
+
+
+def test_snoeien_redt_de_wens_ook_als_het_venster_vol_beschermde_items_staat() -> None:
+    """Een OOM-storm mag de wens niet alsnog uit het venster duwen.
+
+    Zat de redding in het VERVANGEN van een niet-beschermd item, dan vindt hij in een
+    venster dat uitsluitend uit ``oom-watcher``-items bestaat geen vrij slot en valt de
+    wens er toch uit. De slots worden daarom vooraf gereserveerd.
+    """
+    handler = ProjectFileHandler()
+    project = _project(
+        component_resources={
+            "limits": {"memory": "128Mi"},
+            "history": [{"timestamp": "2026-08-01T01:00:00+00:00", "source": "manual", "limits": {"cpu": "1"}}],
+        }
+    )
+
+    for i in range(5):
+        handler.append_component_resource_history(
+            project,
+            "api",
+            {
+                "timestamp": f"2026-08-1{i}T01:00:00+00:00",
+                "source": "oom-watcher",
+                "deployment": "productie",
+                "limits": {"memory": f"{512 + i}Mi"},
+            },
+        )
+
+    historie = project["components"][0]["resources"]["history"]
+    assert len(historie) == 5, "max_entries blijft hard"
+    assert [entry["source"] for entry in historie].count("manual") == 1
+    assert handler.get_user_resource_intent(project, "productie", "api") is not None
+    assert handler.get_resource_history_floor(project, "productie", "api") is not None
 
 
 def test_comprimeren_vouwt_een_handmatige_entry_niet_weg() -> None:
