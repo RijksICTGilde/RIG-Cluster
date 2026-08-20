@@ -20,5 +20,8 @@ COMPONENT_ALIASES = EditableVisualizer(
     # hierboven zei "gebruik $VARIABELE_NAAM" zonder ooit een naam te noemen, en die
     # staan verspreid over de dienstdefinities; niemand wist dus wat hier in moest.
     help_template="aliassen.html.j2",
-    attributes={"kv_format": "env"},
+    # kv_completions zet het aanvullen na een dollarteken aan. De lijst wordt door de
+    # widget-adapter opgehaald uit dezelfde bron als de hulpdialoog en de validatie, dus
+    # de editor kan nooit een naam voorstellen die het formulier afkeurt.
+    attributes={"kv_format": "env", "kv_completions": "aliassen"},
 )
