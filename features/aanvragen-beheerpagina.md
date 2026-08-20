@@ -57,12 +57,25 @@ Niets. Een dienst die een `ApprovalSpec` met een `list_items` declareert verschi
 met een eigen groep; zie `instructions/services.md` ("Approvals"). Geef het item wel een
 `subject`, anders staat er wat de terugval ervan maakt.
 
+## De proefopstelling
+
+`/lotc/bg/admin-approvals` toont dezelfde pagina met verzonnen gegevens, uit
+`opi/web/lotc_fixtures.py`. Dat is de **tweede schrijver** van deze context, en die twee
+horen niet uiteen te lopen: de fixture bouwt haar groepen met dezelfde
+`groepeer_per_dienst()` als de route, en haar items dragen dezelfde sleutels als
+`collect_approval_items()` ze aflevert (`service`, `label`, `subject`). Een sleutel die de
+route wel schrijft en de fixture niet levert daar geen fout op maar een LEGE lus, dus
+`tests/test_aanvragen_per_dienst.py` (`TestDeProefopstelling`) en de browsertoets
+`test_de_proefopstelling_van_aanvragen_toont_ook_echt_aanvragen` eisen allebei dat er
+rijen op staan.
+
 ## Waar het staat
 
 | Bestand | Wat |
 |---|---|
 | `opi/templates_lotc/bg/admin-approvals.html.j2` | de pagina en het beoordelingsvenster |
 | `opi/web/router_approvals.py` | de route, `filter_op_status`, `groepeer_per_dienst` |
+| `opi/web/lotc_fixtures.py` | de gegevens van de proefopstelling op `/lotc/bg/admin-approvals` |
 | `opi/services/approvals.py` | de catalogusloop: items verzamelen, oordelen toepassen |
 | `opi/services/catalog/approval.py` | `ApprovalSpec`, `ApprovalItem`, `service_use_approval()` |
 | `tests/test_aanvragen_per_dienst.py` | de gerichte poort op de weergave en de telling |
