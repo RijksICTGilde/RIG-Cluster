@@ -23,6 +23,20 @@ spec:
   owner: keycloak
 
 ---
+# De opslag van de mailrelay (Stalwart): accounts en wachtrij, geen PVC. De rol staat in
+# cluster.yaml onder managed.roles, met zijn wachtwoord in mail-db-credentials.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: mailrelay-db
+  namespace: rig-system
+spec:
+  cluster:
+    name: rig-db
+  name: mailrelay
+  owner: mailrelay
+
+---
 # OPI connects as the postgres admin user (DATABASE_ADMIN_NAME=postgres),
 # so the application database is owned by postgres. Pre-created here so the
 # operations-manager entrypoint's `alembic upgrade head` doesn't crash on a

@@ -78,6 +78,17 @@ spec:
         passwordSecret:
           name: forgejo-db-credentials  # This must exist
 
+      # De mailrelay (Stalwart, rig-ron / rig-prd-ron) bewaart zijn accounts en zijn
+      # wachtrij hier en niet op een PVC. Rol en database komen declaratief mee (zie ook
+      # databases.yaml), zodat ze op een al draaiend cluster verschijnen zonder handmatige
+      # CREATE DATABASE.
+      - name: mailrelay
+        ensure: present
+        login: true
+        connectionLimit: 10
+        passwordSecret:
+          name: mail-db-credentials  # This must exist
+
   # Enable backups if the cluster provides S3-compatible storage
   # backup:
   #   barmanObjectStore:

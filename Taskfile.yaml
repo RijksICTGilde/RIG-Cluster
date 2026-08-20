@@ -1474,13 +1474,11 @@ tasks:
         # Create output directory
         mkdir -p "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
 
-        # Check if SOPS-encrypted secrets already exist in the output directory
-        EXISTING_SOPS=$(find "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}" -name "*.sops.yaml" 2>/dev/null | head -1)
-        if [ -n "$EXISTING_SOPS" ]; then
-          echo "SOPS-encrypted secrets already exist in {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
-          echo "To regenerate, delete the *.sops.yaml files in that directory first"
-          exit 0
-        fi
+        # Bestaande geheimen worden PER BESTAND overgeslagen (zie de check in de lus), niet
+        # met een map-brede stop. Zo wordt een bestaand geheim nooit geroteerd, maar komt
+        # een NIEUWE template (zoals mail-db-credentials op een al draaiend cluster) er wel
+        # gewoon bij. De oude map-brede stop kon dat alleen door ALLES weg te gooien, en
+        # dat roteert Keycloak, MinIO en PostgreSQL mee.
 
         # Initialize overview file (overwrite if it exists from a previous incomplete run)
         OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
@@ -1503,6 +1501,13 @@ tasks:
           # Only process files that are clearly secrets (contain '-secret' or '.secret' in filename)
           if [[ "$filename" != *"-secret.yaml" ]] && [[ "$filename" != *".secret.yaml" ]]; then
             echo "Skipping non-secret file: $filename"
+            continue
+          fi
+
+          # Een geheim dat er al staat blijft staan: overslaan is de bescherming tegen
+          # ongevraagde rotatie. Opnieuw genereren = het .sops.yaml-bestand weggooien.
+          if [ -f "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/${filename}.sops.yaml" ]; then
+            echo "Skipping (already exists): ${filename}.sops.yaml"
             continue
           fi
 

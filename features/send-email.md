@@ -221,7 +221,11 @@ Dat gebeurt met **één bron en twee renderingen**: het geheim wordt één keer 
 SOPS-versleuteld weggeschreven in de namespace van OPI; de overlay van de mailcomponent
 rendert exact datzelfde versleutelde bestand nog een keer, met de namespace van de relay
 eroverheen (`decrypt-sops.yaml` in
-`infrastructure/bootstrap/infrastructure/mail/controller/overlays/*/`).
+`infrastructure/bootstrap/infrastructure/mail/controller/overlays/*/`). Hetzelfde geldt
+voor `mail-db-credentials-secret.yaml`: dat geheim heeft CNPG als eerste lezer (de rol
+`mailrelay` en de database in
+`infrastructure/bootstrap/infrastructure/postgresql/database/base/` komen eruit voort) en
+de relay als tweede, via dezelfde tweede rendering.
 
 Bewust géén leesrechten voor OPI op de secrets van de relay-namespace: rechten over een
 namespacegrens zijn moeilijker terug te draaien dan een tweede rendering van hetzelfde
@@ -326,28 +330,21 @@ uitgecommentarieerd tot de geheimen zijn aangemaakt (zie hieronder).
 
 Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi te zeggen.
 
-1. **De geheimen vullen en genereren**:
-   `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` — de
-   daarna `task generate-secrets-for-cluster <cluster>`. Er is niets meer met de hand in te
-   vullen: de upstream vraagt geen inloggegevens en er is geen DKIM-sleutel.
+1. **De geheimen genereren**: `task generate-secrets-for-cluster <cluster>`. Er zijn er
+   twee (`mail-relay-secret.yaml` en `mail-db-credentials-secret.yaml` in
+   `infrastructure/bootstrap/infrastructure/secrets/templates/`) en er is niets met de
+   hand in te vullen: de sjablonen zijn cluster-agnostisch. De per-cluster-waarden
+   (`MAIL_UPSTREAM_HOST`, `MAIL_DB_HOST`) zijn geen geheimen en staan in het Deployment
+   van de relay; de basis draagt de productiewaarden en de overlays en de sink-component
+   zetten ze om. De generatietaak slaat bestaande geheimen per bestand over, dus op een
+   cluster dat al draait komen alleen de twee nieuwe mailgeheimen erbij en roteert er
+   niets. Voor `odcn` staan beide al versleuteld in git
+   (`infrastructure/bootstrap/infrastructure/secrets/config/overlays/odcn/`).
 
-   Twee dingen die je hier op je neus laten vallen:
-
-   - **Eén waarde in dat sjabloon is per cluster, en het sjabloon is er één voor alle
-     clusters.** `MAIL_DB_HOST` staat op `rig-db-rw.rig-prd-operations`; op `local` en
-     `sandboxed-local` draait de database in `rig-system`. Pas dat aan vóór het genereren,
-     anders start de relay niet op. Het afzenderadres is wél voor elk cluster gelijk, dus
-     daar valt niets aan te verschuiven.
-   - **`generate-secrets-for-cluster` doet niets als er al geheimen liggen.** De taak stopt
-     met `exit 0` zodra er één `*.sops.yaml` in de clustermap staat ("To regenerate, delete
-     the *.sops.yaml files in that directory first"). Op `odcn` staan die er allemaal al,
-     dus deze stap levert daar géén `mail-relay-secret.sops.yaml` op en de fout uit zich pas
-     bij stap 4 als een relay zonder inloggegevens. Genereer het bestand daar apart: vul het
-     sjabloon, versleutel het met `sops --encrypt` naar
-     `infrastructure/bootstrap/infrastructure/secrets/config/overlays/<cluster>/mail-relay-secret.sops.yaml`
-     en zet het in de `kustomization.yaml` van die map. De bestaande geheimen van dat
-     cluster weggooien om te kunnen hergenereren is géén optie: dan roteren Keycloak,
-     PostgreSQL en MinIO mee.
+   De database zelf hoeft nergens te worden aangemaakt: de rol `mailrelay` (met zijn
+   wachtwoord uit `mail-db-credentials`) en de database staan declaratief in
+   `infrastructure/bootstrap/infrastructure/postgresql/database/base/`, dus CNPG maakt
+   ze ook op een al draaiend cluster aan zodra de wijziging synct.
 2. **Overlay aanzetten**: de regel `- ../../infrastructure/mail/controller/overlays/<type>`
    in `infrastructure/bootstrap/clusters/<type>/kustomization.yaml` uit het commentaar
    halen. Daarmee komt het gegenereerde geheim ook in de namespace van de relay te staan
@@ -415,5 +412,6 @@ Verder nog niet gebouwd, en bewust:
 | De connector (management-API) | `opi/connectors/mail.py` |
 | Het account van ZAD | `ensure_platform_mail_account` in `opi/core/startup.py` |
 | De relay | `infrastructure/bootstrap/infrastructure/mail/` |
-| De geheimen | `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` |
+| De geheimen | `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` en `mail-db-credentials-secret.yaml` |
+| De database (rol + Database, declaratief) | `infrastructure/bootstrap/infrastructure/postgresql/database/base/` |
 | Tests | `tests/test_send_email_service.py` |
