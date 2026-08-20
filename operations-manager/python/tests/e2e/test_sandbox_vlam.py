@@ -247,24 +247,51 @@ def test_the_consumer_reaches_the_models_endpoint(vlam_project: CreatedProject, 
     )
 
 
+@pytest.fixture(scope="module")
+def policies_are_enforced(vlam_project: CreatedProject, stub_endpoint: VlamEndpoint) -> bool:
+    """Whether THIS cluster enforces NetworkPolicies -- measured on the stub, not assumed.
+
+    The negative measurement below only says something on a cluster that actually enforces
+    policies. Two of this repo's own documents disagreed about whether the sandbox does, so
+    the suite settles it itself: take the open rule away and see whether the consumer that
+    DOES have the service still gets through. If it does, nothing is being enforced here.
+    If it does not, that open rule is demonstrably what holds the door.
+    """
+    namespace, pod = _first_running_pod(vlam_project)
+    answer = vlam_stub.without_the_open_rule(
+        _CLUSTER,
+        stub_endpoint,
+        lambda: _call_models(namespace, pod, stub_endpoint.api_url, probe="rc144-zonderregel"),
+    )
+    enforced = vlam_stub.STUB_MODEL_ID not in answer
+    logger.info("NetworkPolicy-handhaving op %s: %s (uitvoer zonder de open regel: %r)", _CLUSTER, enforced, answer)
+    return enforced
+
+
 @pytest.mark.timeout(900)
 def test_a_project_without_the_service_does_not_get_through(
-    project_without_vlam: CreatedProject, stub_endpoint: VlamEndpoint
+    project_without_vlam: CreatedProject, stub_endpoint: VlamEndpoint, policies_are_enforced: bool
 ) -> None:
     """Without the service there is no road: the tenant baseline only opens 80 and 443.
 
-    This is the half that makes the positive measurement mean something. If it fails, one
-    of two things is true and they are worth telling apart: the vlam service is not what
-    opens port 8081, or this cluster does not enforce NetworkPolicies at all -- in which
-    case the positive test above proves reachability and not the rule.
+    This is the half that makes the positive measurement mean something -- but only on a
+    cluster that enforces NetworkPolicies, which is why that is measured first rather than
+    taken for granted.
     """
+    if not policies_are_enforced:
+        pytest.skip(
+            "dit cluster handhaaft geen NetworkPolicies: met de open regel weggehaald kwam de "
+            "afnemer er nog steeds doorheen. Dat de uitgaande regel bestaat en precies de proxy "
+            "noemt staat in test_the_egress_policy_opens_only_the_proxy; dat hij ook BLOKKEERT is "
+            "alleen vast te stellen op een cluster met een handhavende CNI (ODCN/Calico)."
+        )
     namespace, pod = _first_running_pod(project_without_vlam)
 
     answer = _call_models(namespace, pod, stub_endpoint.api_url, probe="rc144-dicht")
 
     assert vlam_stub.STUB_MODEL_ID not in answer, (
-        f"een project ZONDER de vlam-dienst bereikte {stub_endpoint.api_url}/v1/models. "
-        "Of de uitgaande regel is niet wat poort 8081 opent, of dit cluster handhaaft geen "
-        f"NetworkPolicies. Uitvoer: {answer!r}"
+        f"een project ZONDER de vlam-dienst bereikte {stub_endpoint.api_url}/v1/models, terwijl dit "
+        "cluster NetworkPolicies wel handhaaft. De uitgaande regel is dan niet wat poort 8081 opent. "
+        f"Uitvoer: {answer!r}"
     )
     assert _NO_ANSWER in answer, f"verwacht dat de aanroep vastloopt zonder de dienst, maar de probe zei: {answer!r}"
