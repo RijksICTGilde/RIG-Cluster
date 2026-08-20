@@ -9,12 +9,14 @@ import base64
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from deepdiff import DeepDiff
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 
+from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
@@ -23,9 +25,12 @@ from opi.services.schema_migration import migrate_to_latest
 from opi.services.services import service_entry_name
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
+from opi.utils.project_utils import apply_resource_limits
 from opi.utils.yaml_util import load_yaml_from_string, save_yaml_to_path
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
     from opi.connectors.git import GitConnector
 
 logger = logging.getLogger(__name__)
@@ -109,6 +114,18 @@ class ResourceFloor:
     """OOM-watcher memory floor with the timestamp of the entry that set it."""
 
     floor_mb: float
+    set_at: str | None
+
+
+@dataclass
+class UserResourceIntent:
+    """A resource value a user set by hand, with the timestamp of the entry that set it.
+
+    ``fields`` holds the flat resource keys the user actually changed (only those;
+    a field the user left alone is not in here and stays tunable).
+    """
+
+    fields: dict[str, str]
     set_at: str | None
 
 
@@ -249,24 +266,148 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
         res["limits"]["cpu"] = resources["limits_cpu"]
 
 
+#: History sources whose newest entry survives pruning: both are read back later
+#: (the OOM floor and the user's own value), so losing one changes behaviour.
+_PROTECTED_HISTORY_SOURCES = ("oom-watcher", "manual")
+
+#: Flat resource key -> its place in the nested ``resources`` block.
+_FLAT_RESOURCE_FIELDS: dict[str, tuple[str, str]] = {
+    "requests_cpu": ("requests", "cpu"),
+    "requests_memory": ("requests", "memory"),
+    "limits_cpu": ("limits", "cpu"),
+    "limits_memory": ("limits", "memory"),
+}
+
+
+def _remove_flat_resources(target: dict[str, Any], fields: Iterable[str]) -> list[str]:
+    """Remove the named flat resource keys from *target*'s nested resources block.
+
+    Only the named fields go; anything else in the block stays, ``history`` included.
+    Empty ``requests``/``limits`` dicts (and an empty ``resources`` block) are cleaned
+    up so no empty scaffolding is left behind in the project file.
+
+    Returns the fields that were actually removed, sorted.
+    """
+    res = target.get("resources")
+    if not isinstance(res, dict):
+        return []
+    removed: list[str] = []
+    for field in fields:
+        block, key = _FLAT_RESOURCE_FIELDS[field]
+        section = res.get(block)
+        if isinstance(section, dict) and key in section:
+            del section[key]
+            removed.append(field)
+    for block in ("requests", "limits"):
+        section = res.get(block)
+        if isinstance(section, dict) and not section:
+            del res[block]
+    if not res:
+        del target["resources"]
+    return sorted(removed)
+
+
+def _drop_inverted_pair_overrides(catalog: dict[str, str], comp: dict[str, Any]) -> list[str]:
+    """Keep every request/limit pair on one side of the merge, in place.
+
+    Manifest generation merges the catalog and the deployment override PER FIELD
+    (``project_manager``), so taking one half of a pair out of the override pairs the
+    tuner's remaining half with the catalog's. That can leave a request above its limit
+    -- catalog 64Mi/256Mi, tuner override 600Mi/900Mi, a user setting the memory limit to
+    512Mi gives requests 600Mi with limits 512Mi -- and the apiserver refuses such a
+    Deployment, so the ArgoCD sync fails right after the edit. The modal shows the
+    CATALOG value, so the request the tuner put on the deployment is not even visible to
+    whoever makes the change.
+
+    The other half therefore goes too: the whole pair comes from the catalog again, and
+    the catalog pair is guarded on the way in (``ComponentServicesEnforcer`` for memory,
+    the allowed CPU values for CPU).
+
+    Returns the fields that were removed, sorted.
+    """
+    override = _parse_resources_block_partial(comp.get("resources"))
+    if not override:
+        return []
+    merged = {**catalog, **override}
+    drop: list[str] = []
+    for kind, to_number in (("memory", _k8s_memory_to_mb), ("cpu", parse_k8s_cpu_to_m)):
+        request_key, limit_key = f"requests_{kind}", f"limits_{kind}"
+        if request_key not in merged or limit_key not in merged:
+            continue
+        try:
+            inverted = to_number(merged[request_key]) > to_number(merged[limit_key])
+        except ValueError:
+            continue  # an unparsable quantity is not ours to judge here
+        if inverted:
+            drop += [key for key in (request_key, limit_key) if key in override]
+    return _remove_flat_resources(comp, drop)
+
+
+def _flat_fields_from_history_entry(entry: dict[str, Any] | None) -> dict[str, str]:
+    """The flat resource keys a history entry names, as a flat dict.
+
+    An entry only carries the fields it is about, so a missing key means "this entry
+    says nothing about that field", not "empty".
+    """
+    fields: dict[str, str] = {}
+    if not isinstance(entry, dict):
+        return fields
+    for block in ("requests", "limits"):
+        values = entry.get(block)
+        if not isinstance(values, dict):
+            continue
+        for nested_key in ("cpu", "memory"):
+            value = values.get(nested_key)
+            if value:
+                fields[f"{block}_{nested_key}"] = str(value)
+    return fields
+
+
+def _newest_history_entry(component: dict[str, Any], source: str) -> dict[str, Any] | None:
+    """The newest history entry of *source* that holds for the whole component.
+
+    History is newest-first, so the first match wins. An entry naming a ``deployment``
+    is about that one deployment and is skipped here: this reads the component-wide
+    entry, the shape ``apply_user_resource_intent`` writes.
+    """
+    resources = component.get("resources")
+    if not isinstance(resources, dict):
+        return None
+    for entry in resources.get("history", []) or []:
+        if isinstance(entry, dict) and entry.get("source") == source and entry.get("deployment") is None:
+            return entry
+    return None
+
+
 def _prune_resource_history(history: list[dict[str, Any]], max_entries: int) -> list[dict[str, Any]]:
     """Prune a newest-first history to ``max_entries``, always keeping the newest
-    ``oom-watcher`` entry.
+    entry of each protected source.
 
-    The most recent oom-watcher entry is the OOM floor
-    (``get_resource_history_floor``); a burst of auto-tune entries must not push it
-    out of the cap and silently drop the floor. When it falls outside the cap it
-    replaces the oldest kept entry, so the total still respects ``max_entries``.
+    Two entries carry state the tuner reads back later and a burst of auto-tune
+    entries must not push either out of the cap: the newest ``oom-watcher`` entry is
+    the OOM floor (``get_resource_history_floor``), the newest ``manual`` entry is the
+    value a user set by hand (``get_user_resource_intent``). Dropping one silently
+    hands the field back to the tuner.
+
+    The protected entries are picked first and the cap is then filled up with the
+    newest of what is left, so the total still respects ``max_entries``. Reserving the
+    slots up front rather than swapping them in afterwards matters when the window is
+    itself full of protected entries (an OOM storm): a swap would find no free slot and
+    drop the very entry it was rescuing.
     """
     if len(history) <= max_entries:
         return history
-    kept = history[:max_entries]
-    if any(entry.get("source") == "oom-watcher" for entry in kept):
-        return kept
-    for entry in history:  # newest-first: first match is the newest oom-watcher
-        if entry.get("source") == "oom-watcher":
-            return [*kept[:-1], entry]
-    return kept
+    keep: set[int] = set()
+    for source in _PROTECTED_HISTORY_SOURCES:
+        # newest-first: the first match is the newest entry of this source
+        index = next((i for i, entry in enumerate(history) if entry.get("source") == source), None)
+        if index is not None and len(keep) < max_entries:
+            keep.add(index)
+    for index in range(len(history)):  # fill the rest with the newest entries
+        if len(keep) >= max_entries:
+            break
+        keep.add(index)
+    return [history[index] for index in sorted(keep)]
 
 
 def _compact_resource_history_list(history: list[dict[str, Any]], max_entries: int) -> list[dict[str, Any]]:
@@ -274,8 +415,9 @@ def _compact_resource_history_list(history: list[dict[str, Any]], max_entries: i
 
     A run of adjacent ``auto-tune`` entries with the same ``limits`` and ``requests``
     is folded to its newest member (the older duplicates carry no information). The
-    newest oom-watcher entry is always preserved (``_prune_resource_history``). An
-    oom-watcher entry between two auto-tune entries breaks the run.
+    newest oom-watcher and the newest manual entry are always preserved
+    (``_prune_resource_history``); an entry of another source between two auto-tune
+    entries breaks the run, so a manual entry is never folded away either.
     """
     compacted: list[dict[str, Any]] = []
     for entry in history:  # newest-first
@@ -1397,6 +1539,187 @@ class ProjectFileHandler:
         )
         return False
 
+    def _oom_protected_fields(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_name: str,
+        standing: dict[str, str],
+    ) -> set[str]:
+        """The standing fields whose deployment override survives this edit, per deployment.
+
+        Clearing the standing fields as well keeps the newest entry from claiming a wish
+        that manifest generation overrules. That reasoning holds for an override the
+        TUNER wrote. It does not hold for the one the OOM exception wrote: a memory limit
+        the oom-watcher raised above the wish is the one place where the platform
+        deliberately overrules the user (``resource_tuning_service``), and wiping it on an
+        unrelated CPU edit drops the pod back to a limit that already proved too small --
+        at request == limit, so without burst headroom either. Nothing puts it back: while
+        the wish lives the tuner keeps the limit where it is, and ``has_oom_kills`` is only
+        true again once the pod falls over anew.
+
+        Only a floor ABOVE the standing value counts; below it the override adds nothing.
+        Whether that floor has expired is deliberately not judged here -- that needs the
+        measurements only the tuner has -- so the override stays and the tuner lowers it
+        on the first sweep after the floor expires.
+        """
+        value = standing.get("limits_memory")
+        if value is None:
+            return set()
+        floor = self.get_resource_history_floor(project_data, deployment_name, component_name)
+        if floor is None or floor.floor_mb <= _k8s_memory_to_mb(value):
+            return set()
+        logger.info(
+            f"Keeping the OOM limit for component '{component_name}' in deployment "
+            f"'{deployment_name}': the oom-watcher floor ({floor.floor_mb}MB, set {floor.set_at}) "
+            f"stands above the standing wish of {value}"
+        )
+        return {"limits_memory"}
+
+    def apply_user_resource_intent(
+        self,
+        project_data: dict[str, Any],
+        component_name: str,
+        resources: Mapping[str, str | None],
+        origin: str,
+        previous: dict[str, str] | None = None,
+    ) -> list[str]:
+        """Write a resource value a user set by hand, and record it as their intent.
+
+        The one write path for a user-facing resource change (portal and API). Three
+        things have to happen together or the change does not stick:
+
+        1. The value lands in the catalog component -- the wish the user expressed.
+        2. The same field is dropped from every deployment-level override that
+           references this component. Manifest generation merges catalog first and
+           deployment override on top (``project_manager``), so an override the tuner
+           wrote earlier silently wins over anything a user sets. Only the fields the
+           user touched go; a CPU edit leaves the tuned memory of that deployment alone.
+        3. One ``manual`` history entry on the catalog component records which fields
+           this was, so the tuner can leave exactly those alone until they expire
+           (``get_user_resource_intent``). No ``deployment`` field: the wish holds for
+           every deployment of this component. That entry carries the COMPLETE standing
+           wish: fields an earlier entry pinned and this edit leaves alone come along,
+           because only the newest entry is read back.
+
+        Only fields that actually differ from the current value count. The component
+        modal posts all four resource fields on every save, so without that diff any
+        edit at all would pin all four and the tuner would never move again.
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            component_name: Name of the catalog component
+            resources: Flat resource keys, partial (requests_cpu / requests_memory /
+                limits_cpu / limits_memory). A None value means "not part of this
+                change" and is ignored, so a caller that knows only limits can pass
+                them straight through.
+            origin: Where the change came from ("portal", "api"); ends up in the reason
+            previous: The catalog values as they were BEFORE this change, for callers
+                that have already merged the new values in (the wizard). Defaults to
+                what is in the catalog right now.
+
+        Returns:
+            The flat keys that actually changed in the catalog, sorted. Empty when
+            nothing changed -- no history entry is written then, and nothing is touched.
+        """
+        component = self._find_component(project_data, component_name)
+        if component is None:
+            logger.warning(f"Component '{component_name}' not found for user resource intent")
+            return []
+
+        current = previous if previous is not None else _parse_resources_block_partial(component.get("resources"))
+        wanted = {
+            key: str(value) for key, value in resources.items() if key in _FLAT_RESOURCE_FIELDS and value is not None
+        }
+        changed = {key: value for key, value in wanted.items() if current.get(key) != value}
+        if not changed:
+            logger.debug(f"No resource change for component '{component_name}' from {origin}; nothing recorded")
+            return []
+
+        self.set_component_resources(project_data, component_name, changed)
+
+        # The fields the user actually asked for. The clamp below may change one more,
+        # and that one is written but deliberately NOT recorded as intent: a value
+        # derived from the limit is not a wish, and pinning it would keep the tuner off
+        # a request nobody chose.
+        asked = dict(changed)
+        intent = dict(asked)
+
+        # A user edits one field at a time, but the wish is about the component as a
+        # whole and ``get_user_resource_intent`` reads the NEWEST manual entry only. A
+        # field the earlier entry pinned would therefore stop counting the moment a
+        # second edit writes a newer entry, and the tuner would take it back that same
+        # night -- exactly the silent no-op this write path exists to prevent. So the
+        # newest entry always carries the complete standing wish: every field of the
+        # previous entry that this edit does not overwrite and whose value is still in
+        # the catalog comes along. A field whose catalog value changed by some other
+        # route no longer stands and is dropped.
+        standing = {
+            key: value
+            for key, value in _flat_fields_from_history_entry(
+                _newest_history_entry(component, "manual"),
+            ).items()
+            if key not in intent and current.get(key) == value
+        }
+        intent.update(standing)
+
+        # A limit dropping below the standing request would leave the component
+        # unschedulable; apply_resource_limits pulls the request down with it. Only when
+        # the caller did not send a request of its own -- then that value is the wish.
+        if "limits_memory" in changed and "requests_memory" not in wanted:
+            apply_resource_limits(component["resources"], memory_limit=changed["limits_memory"])
+            after = _parse_resources_block_partial(component.get("resources"))
+            lowered = after.get("requests_memory")
+            if lowered is not None and lowered != current.get("requests_memory"):
+                changed["requests_memory"] = lowered
+
+        # The standing fields go too: an entry that claims a wish while a tuner override
+        # still outranks it at manifest generation is the split brain this path exists
+        # to close. Per deployment, because the OOM exception below is per deployment.
+        catalog_after = _parse_resources_block(component.get("resources"))
+        for deployment in project_data.get("deployments", []) or []:
+            deployment_name = str(deployment.get("name", ""))
+            keep = self._oom_protected_fields(project_data, deployment_name, component_name, standing)
+            clear = sorted((set(changed) | set(standing)) - keep)
+            for comp in deployment.get("components", []) or []:
+                if comp.get("reference") != component_name:
+                    continue
+                removed_fields = _remove_flat_resources(comp, clear)
+                if removed_fields:
+                    logger.info(
+                        f"Dropped tuner override {removed_fields} for component '{component_name}' "
+                        f"in deployment '{deployment_name}': the user set these by hand"
+                    )
+                # Removing one half of a pair can pair the tuner's other half with the
+                # catalog's, and requests above limits is a Deployment the apiserver
+                # refuses. The other half then goes too.
+                repaired = _drop_inverted_pair_overrides(catalog_after, comp)
+                if repaired:
+                    logger.info(
+                        f"Also dropped tuner override {repaired} for component '{component_name}' "
+                        f"in deployment '{deployment_name}': keeping it would have left a "
+                        f"request above its limit after the merge"
+                    )
+
+        entry: dict[str, Any] = {"timestamp": datetime.now(UTC).isoformat(), "source": "manual"}
+        for key, value in sorted(intent.items()):
+            block, nested_key = _FLAT_RESOURCE_FIELDS[key]
+            entry.setdefault(block, {})[nested_key] = value
+        entry["reason"] = f"Set by hand via {origin}: " + ", ".join(
+            f"{'.'.join(_FLAT_RESOURCE_FIELDS[key])} -> {value}" for key, value in sorted(asked.items())
+        )
+        if standing:
+            entry["reason"] += "; still standing: " + ", ".join(
+                f"{'.'.join(_FLAT_RESOURCE_FIELDS[key])} -> {value}" for key, value in sorted(standing.items())
+            )
+        self.append_component_resource_history(project_data, component_name, entry)
+
+        logger.info(
+            f"Recorded user resource intent for component '{component_name}' from {origin}: "
+            f"changed {sorted(changed)}, still standing {sorted(standing)}"
+        )
+        return sorted(changed)
+
     def append_component_resource_history(
         self,
         project_data: dict[str, Any],
@@ -1559,6 +1882,66 @@ class ProjectFileHandler:
                     break
 
         return floor
+
+    def get_user_resource_intent(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_reference: str,
+    ) -> UserResourceIntent | None:
+        """Get the resource fields a user set by hand for this deployment's component.
+
+        Reads the newest ``manual`` history entry at both levels, the same way
+        ``get_resource_history_floor`` reads the OOM floor. On the component definition
+        an entry without a ``deployment`` field holds for every deployment (that is what
+        ``apply_user_resource_intent`` writes: a wish about the component, not about one
+        deployment); an entry naming a deployment only counts for that one. A
+        deployment-level entry is more specific and wins per field.
+
+        Reading only the newest entry is safe because ``apply_user_resource_intent``
+        makes every entry carry the complete standing wish, not just the fields of that
+        one edit.
+
+        Returns:
+            UserResourceIntent with the flat keys the user set and the entry timestamp,
+            or None when nobody set anything by hand.
+        """
+        fields: dict[str, str] = {}
+        set_at: str | None = None
+
+        def take(entry: dict[str, Any]) -> None:
+            nonlocal set_at
+            fields.update(_flat_fields_from_history_entry(entry))
+            timestamp = entry.get("timestamp")
+            if timestamp and (set_at is None or str(timestamp) > set_at):
+                set_at = str(timestamp)
+
+        # Component definition first, so a deployment-level entry can overwrite it.
+        for comp in project_data.get("components", []):
+            if comp.get("name") != component_reference:
+                continue
+            for entry in comp.get("resources", {}).get("history", []):
+                if entry.get("source") != "manual":
+                    continue
+                if entry.get("deployment") not in (None, deployment_name):
+                    continue
+                take(entry)
+                break  # only the most recent manual entry
+
+        for dep in project_data.get("deployments", []):
+            if dep.get("name") != deployment_name:
+                continue
+            for comp in dep.get("components", []):
+                if comp.get("reference") != component_reference:
+                    continue
+                for entry in comp.get("resources", {}).get("history", []):
+                    if entry.get("source") == "manual":
+                        take(entry)
+                        break
+
+        if not fields:
+            return None
+        return UserResourceIntent(fields=fields, set_at=set_at)
 
     def extract_deployment_component_disabled(
         self, project_data: dict[str, Any], deployment_name: str, component_reference: str
