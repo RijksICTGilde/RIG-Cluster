@@ -8,6 +8,7 @@ to drive multi-step edit flows within the modal.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -30,7 +31,7 @@ from opi.forms.visualizers.wizard_sections import (
     _extract_services,
 )
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
-from opi.forms.wizard.mutation import apply_services_mutation
+from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
@@ -262,6 +263,36 @@ def _fully_owned_list_keys(flow: Any) -> set[str]:
             path = vis.editable.yaml_path
             if "/" not in path and "[" not in path:
                 owned.add(path)
+    return owned
+
+
+_ITEM_SELECTION_PATH = re.compile(r"^(\w[\w-]*)\[(\d+)\]/services$")
+
+
+def _owned_item_selection_paths(flow: Any) -> list[tuple[str, int]]:
+    """(list_key, index) pairs whose per-item ``services`` selection an editable owns whole.
+
+    The component form's checklist at ``components[0]/services`` renders the full
+    selection, so its step data is authoritative for that list -- the same rule
+    ``_fully_owned_list_keys`` applies to bare top-level lists, one level down. A
+    shadow copy in base_data would win it back through the by-name union in
+    ``get_merged_data`` (which never removes), so an unticked service returned on
+    every save.
+    """
+
+    def _visit(vis_list: list[Any], owned: list[tuple[str, int]]) -> None:
+        for vis in vis_list:
+            if getattr(vis, "readonly", False):
+                continue
+            match = _ITEM_SELECTION_PATH.match(vis.editable.yaml_path)
+            if match:
+                owned.append((match.group(1), int(match.group(2))))
+            if getattr(vis, "children", None):
+                _visit(vis.children, owned)
+
+    owned: list[tuple[str, int]] = []
+    for section in flow.sections:
+        _visit(list(section.editables), owned)
     return owned
 
 
@@ -664,6 +695,18 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # from the raw project before, which left the encrypted blocks in the session even
     # though step_data had been stripped of them.
     state.base_data = {k: v for k, v in session_data.items() if k not in owned}
+    # Same ownership rule one level down: a per-item selection an editable renders
+    # whole (components[0]/services) is authoritative in step_data, so base_data
+    # must not carry a shadow copy. Shallow-copy the touched item -- the values in
+    # base_data alias session_data and step_data.
+    for item_list_key, item_idx in _owned_item_selection_paths(flow):
+        items = state.base_data.get(item_list_key)
+        if isinstance(items, list) and 0 <= item_idx < len(items) and isinstance(items[item_idx], dict):
+            items = list(items)
+            slimmed = dict(items[item_idx])
+            slimmed.pop("services", None)
+            items[item_idx] = slimmed
+            state.base_data[item_list_key] = items
     state.base_data["_wizard_token"] = wizard_token
 
     # Remember that this was an add: the flow is rebuilt from its id on later
@@ -888,6 +931,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # de sectienaam "services-edit": elke andere flow met een dienstenlijst kreeg geen
         # aanvulling, en dat is dezelfde fout als 94478afb, een laag verderop.
         apply_services_mutation(section.editables, yaml_data, submitted_yaml)
+        apply_component_services_mutation(section.editables, yaml_data, submitted_yaml)
 
         # Run section-level enforcer (cross-field validation). Capture warnings
         # too: without a field_warnings dict a FieldWarning (e.g. a subdomain that
