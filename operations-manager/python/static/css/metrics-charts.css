@@ -50,9 +50,22 @@
     text-transform: uppercase;
 }
 
+/* De verhouding, niet een vaste hoogte.
+ *
+ * Deze 100px hoorde bij een raster van <c-auto-grid min="220px">: drie grafieken naast
+ * elkaar, dus ongeveer 220 bij 100 en dat leest prima. Bij commit 2bf93bab ging het
+ * raster naar min="480px" - twee naast elkaar - en bleef de hoogte staan. Een grafiek
+ * werd daarmee ruim vijf keer zo breed als hoog, en op een breed scherm nog meer, want
+ * auto-fit rekt de kolommen verder op. Gemeld als "metrics zijn nu erg plat geworden".
+ *
+ * Een verhouding lost dat op bij elke kolombreedte; de grenzen houden hem leesbaar op
+ * een smal scherm en voorkomen een halve pagina grafiek op een breed scherm. Chart.js
+ * draait hier met maintainAspectRatio:false, dus de wikkel bepaalt en het canvas volgt. */
 .chart-wrapper {
     width: 100%;
-    height: 100px;
+    aspect-ratio: 5 / 2;
+    min-height: 120px;
+    max-height: 240px;
     position: relative;
 }
 
