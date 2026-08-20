@@ -743,6 +743,7 @@ Every hook a service may implement, so a new service knows what it can own:
 | `api_singular_lists` | config lists this service shows the API as ONE entry (a temporary facade; today only `invite.active`, see `features/service-config-api.md`) |
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `allows_implicit_project_selection` / `implicit_project_config()` | whether binding the service to a component/deployment may also select it at project level, and with what project-level config (RC-84, `features/impliciete-dienstselectie.md`) |
+| `available_on_cluster(cluster)` | whether a cluster can deliver this service at all; read by the wizard's card list AND by `validate_service_availability` at save time |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
@@ -865,14 +866,31 @@ def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribut
     )
 ```
 
-`ManifestContribution` has four fields with two different merge semantics:
+`ManifestContribution` has five fields with two different merge semantics:
 
 | Field | Semantics |
 |---|---|
 | `env_from_secrets` | **Additive**, appended in `manifest_order` |
+| `env_vars` | **Additive** plain (non-secret) env vars, merged into the component's own set in `manifest_order` |
 | `sidecars` | **Additive**, appended in `manifest_order` |
 | `template_vars` | **Override**, `dict.update` on the template context (auth-wall moves `service_port` 8080 to 4180) |
 | `secret_files` | `SecretFileSpec`s the shared writer turns into SOPS secret manifests |
+
+`env_vars` is a field of its own rather than a `template_vars` entry precisely because
+`template_vars` overrides: a service handing out one variable through it would wipe every
+variable the component itself declared. Use it for a value the reader of a manifest should
+be able to see (vlam's in-cluster address); a value that IS a secret goes through
+`secret_files` + `env_from_secrets`, because encrypting a public address only makes it
+harder for its owner to see what the pod was told.
+
+**Who switches the contribution on.** By default the COMPONENT's own `services` list: each
+component decides whether it sits behind login, gets database credentials, is scraped. A
+service that is deployment-bound and has no per-component choice to make sets
+`manifest_activated_by_project = True` and is switched on by the PROJECT's selection --
+without it such a service never contributes at all, because no component ever ticks it.
+The two halves of that rule live in `collect_manifest_contributions` /
+`apply_manifest_contributions` (`opi/manager/project_manager.py`), module-level so they
+can be measured without building a whole deployment.
 
 What you get in `ManifestContext`: `deployment_name`, `project_data`, `unique_name`,
 `cluster`, `component_def` (the resolved component, for component-level config) and
@@ -998,6 +1016,11 @@ its four wiring points are listed under "Forms and wizard screens".
 
 ## Traps
 
+- **A filtered card is not validation.** A service that only some clusters can deliver
+  answers `available_on_cluster`, and BOTH consumers matter: the wizard leaves the card
+  out, and `validate_service_availability` (`opi/manager/project_validation.py`) refuses
+  the save. The API and a hand-written project file never pass a card at all. vlam is the
+  first inhabitant.
 - **A registered service has no UI.** The registry drives behaviour, not screens. A service
   without form hooks is invisible in the wizard, and `hidden=True` removes even its card.
   Neither is reported by any test, because "no UI" is a valid configuration for some services.
