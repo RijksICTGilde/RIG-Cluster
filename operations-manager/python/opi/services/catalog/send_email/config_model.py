@@ -50,12 +50,17 @@ MAX_FROM_NAME_LENGTH = 64
 #:   reader never sees;
 #: * ``"`` and ``\`` would break out of the quoting the relay puts around the name, and
 #:   that quoting is what makes a comma or a colon in a name safe instead of turning the
-#:   ``From:`` into a list of two mailboxes.
+#:   ``From:`` into a list of two mailboxes;
+#: * ``$`` is what a sieve string interpolates (``${...}``), and the relay writes the name
+#:   into a GENERATED sieve script. This character is here for the layer BELOW this one:
+#:   ``opi.connectors.mail`` refuses it when it renders that script, and a name that only
+#:   this rule let through would blow up halfway through processing a project instead of
+#:   being refused at the form. Keep the two lists identical.
 #:
 #: The rule lives HERE and not in the form: this model is what the API writes against and
 #: what a stored project file is validated with, and the form reuses it through
 #: ``ModelFieldValidator`` so there is one definition and not two that drift.
-FROM_NAME_PATTERN = r'^[^@<>"\\\x00-\x1F\x7F]*$'
+FROM_NAME_PATTERN = r'^[^@<>"$\\\x00-\x1F\x7F]*$'
 
 
 class SendEmailAccount(BaseModel):
@@ -110,8 +115,8 @@ class SendEmailConfig(BaseModel):
             description=(
                 "Display name shown to the recipient, e.g. 'Algoritmeregister'. The relay puts this "
                 "in the From: header next to the project's address, so it may not contain control "
-                "characters, an @, angle brackets, quotes or a backslash, and it is at most "
-                f"{MAX_FROM_NAME_LENGTH} characters. Leave it out to send without a display name."
+                "characters, an @, angle brackets, quotes, a backslash or a dollar sign, and it is "
+                f"at most {MAX_FROM_NAME_LENGTH} characters. Leave it out to send without a display name."
             ),
         )
     )
