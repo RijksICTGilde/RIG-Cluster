@@ -29,6 +29,7 @@ from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.wizard.secrets import restore_redacted_secrets
 from opi.forms.wizard.state import _strip_cleared_fields
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
+from opi.handlers.project_file_handler import ProjectFileHandler, _parse_resources_block_partial
 from opi.services.schema_migration import normalize_service_entries
 from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS
 
@@ -232,6 +233,54 @@ def _hook_editables(all_editables: list[Any]) -> list[EditableVisualizer]:
     ]
 
 
+def _component_resources(existing_data: dict[str, Any], target: Any | None) -> dict[str, str] | None:
+    """The stored resource values of the component this flow edits, or None.
+
+    None means "this flow is not a component edit" -- a new component included: it has
+    no stored values to compare against and no override to clear.
+    """
+    if target is None or target.is_new or target.list_key != "components":
+        return None
+    components = existing_data.get("components") or []
+    if not 0 <= target.index < len(components):
+        return None
+    return _parse_resources_block_partial(components[target.index].get("resources"))
+
+
+def _record_user_resource_intent(
+    existing_data: dict[str, Any],
+    target: Any | None,
+    resources_before: dict[str, str] | None,
+) -> None:
+    """Put a resource change from the component modal through the shared user-intent path.
+
+    The merge above already wrote the new values into the catalog component, which is
+    half the job: manifest generation merges the deployment-level override on top of the
+    catalog, so a value the tuner once wrote there keeps winning and the edit is a silent
+    no-op (RC-141). The shared path clears exactly the edited fields from those overrides
+    and records what the user set, so the tuner leaves those fields alone.
+
+    *resources_before* is what makes the diff possible: the modal posts all four resource
+    fields on every save, so without it every component edit would pin all four.
+    """
+    if resources_before is None or target is None:
+        return
+    components = existing_data.get("components") or []
+    if not 0 <= target.index < len(components):
+        return
+    component = components[target.index]
+    name = component.get("name")
+    if not name:
+        return
+    ProjectFileHandler().apply_user_resource_intent(
+        existing_data,
+        name,
+        _parse_resources_block_partial(component.get("resources")),
+        origin="portal",
+        previous=resources_before,
+    )
+
+
 async def apply_modal_edit(
     existing_data: dict[str, Any],
     merged_data: dict[str, Any],
@@ -272,6 +321,13 @@ async def apply_modal_edit(
     # collects (the cluster of a new deployment) and they must come along.
     target = flow.target
     guard_target_still_points_at_the_same_item(existing_data, state, target)
+
+    # The resource values of the component being edited, as they are BEFORE this merge.
+    # The merge below writes the new ones straight into the catalog, so this is the only
+    # moment the previous values still exist -- and without them there is no way to tell
+    # which fields the user actually moved (the modal posts all four on every save).
+    resources_before = _component_resources(existing_data, target)
+
     if target is not None and target.is_new:
         apply_list_item_merge(existing_data, merged_data, target.list_key, target.index, target.is_new)
         merged_data.pop(target.list_key, None)
@@ -339,5 +395,7 @@ async def apply_modal_edit(
     # above (e.g. via the top-level apply_form_data_to_project path) so they
     # never reach the saved project file.
     _strip_cleared_fields(existing_data)
+
+    _record_user_resource_intent(existing_data, target, resources_before)
 
     return existing_data
