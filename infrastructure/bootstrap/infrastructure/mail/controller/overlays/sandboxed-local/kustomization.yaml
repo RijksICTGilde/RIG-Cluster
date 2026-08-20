@@ -9,6 +9,7 @@ generators:
 resources:
   - ../../base
   - network-policies/mail-relay-networkpolicy.yaml
+  - ingress-mailsink.yaml
 
 # De SMTP-sink als testupstream, MET de schakelaar die de relay zijn zelfondertekende
 # certificaat laat aannemen - de component levert die twee samen, zodat de ene niet zonder
