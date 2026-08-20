@@ -29,8 +29,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.connectors.vpa import VpaContainerRecommendation
+from opi.connectors.vpa import VpaContainerRecommendation, parse_k8s_cpu_to_m
 from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.resource_tuning_service import apply_resource_tuning
 
 OPI_DIR = Path(__file__).resolve().parent.parent / "opi"
@@ -256,6 +257,161 @@ def test_een_tweede_bewerking_ruimt_ook_de_override_van_de_staande_wens_op() -> 
     effectief = _effectieve_resources(project, "productie", "api")
     assert effectief["limits_cpu"] == "1"
     assert effectief["limits_memory"] == "900Mi"
+
+
+# ---------------------------------------------------------------------------
+# 2c. Het paar request/limit blijft binnen een resource kloppen
+# ---------------------------------------------------------------------------
+
+
+def _kopie(resources: dict[str, Any]) -> dict[str, Any]:
+    """Een diepe kopie van een resources-blok; de tests schrijven erin."""
+    return {blok: dict(waarden) for blok, waarden in resources.items()}
+
+
+def _paar(effectief: dict[str, str], soort: str) -> tuple[float, float]:
+    """Het effectieve (request, limit) paar van een resourcesoort, als getallen."""
+    om = _k8s_memory_to_mb if soort == "memory" else parse_k8s_cpu_to_m
+    return om(effectief[f"requests_{soort}"]), om(effectief[f"limits_{soort}"])
+
+
+#: De catalogus voor de paar-tests. De bewerkingen hieronder posten alle vier de velden
+#: -- zoals de modal doet -- en wijken op precies EEN veld af, zodat de test echt het
+#: half opgeruimde paar meet en niet stiekem de hele override wegveegt.
+_PAAR_CATALOGUS = {"requests": {"memory": "64Mi", "cpu": "50m"}, "limits": {"memory": "256Mi", "cpu": "1"}}
+
+
+@pytest.mark.parametrize(
+    ("soort", "override", "bewerking"),
+    [
+        # De geheugenlimiet omlaag: de request van de tuner blijft anders boven de nieuwe
+        # limiet hangen. De modal toont de CATALOGUS-waarde, dus die 600Mi op het
+        # deployment is voor wie de bewerking doet niet eens zichtbaar.
+        (
+            "memory",
+            {"requests": {"memory": "600Mi"}, "limits": {"memory": "900Mi"}},
+            {"requests_memory": "64Mi", "limits_memory": "512Mi", "requests_cpu": "50m", "limits_cpu": "1"},
+        ),
+        # Dezelfde vorm andersom: de request omhoog, met de getunede limiet eronder.
+        (
+            "memory",
+            {"requests": {"memory": "100Mi"}, "limits": {"memory": "150Mi"}},
+            {"requests_memory": "200Mi", "limits_memory": "256Mi", "requests_cpu": "50m", "limits_cpu": "1"},
+        ),
+        # En voor CPU.
+        (
+            "cpu",
+            {"requests": {"cpu": "800m"}, "limits": {"cpu": "900m"}},
+            {"requests_memory": "64Mi", "limits_memory": "256Mi", "requests_cpu": "50m", "limits_cpu": "500m"},
+        ),
+    ],
+)
+def test_een_halve_override_laat_geen_request_boven_zijn_limiet_achter(
+    soort: str, override: dict[str, Any], bewerking: dict[str, str]
+) -> None:
+    """Manifestgeneratie merget PER VELD, dus een half opgeruimd paar is een kapot manifest.
+
+    Haal je alleen de limiet uit de override, dan blijft de request van de tuner staan en
+    levert de merge ``requests > limits`` op. ``deployment.yaml.jinja`` rendert dat
+    ongewijzigd en de apiserver weigert de Deployment -- de ArgoCD-sync faalt dan precies
+    na de bewerking. Er gaat daarom altijd een heel paar tegelijk uit de override.
+    """
+    project = _project(component_resources=_kopie(_PAAR_CATALOGUS), overrides={"productie": dict(override)})
+
+    gewijzigd = ProjectFileHandler().apply_user_resource_intent(project, "api", bewerking, origin="portal")
+
+    assert len(gewijzigd) == 1, f"de opzet moet precies EEN veld wijzigen, wijzigde {gewijzigd}"
+    effectief = _effectieve_resources(project, "productie", "api")
+    request, limiet = _paar(effectief, soort)
+    assert request <= limiet, f"effectief {effectief} is geen geldig {soort}-paar"
+    # En wat de gebruiker zette staat er wel degelijk.
+    for veld, waarde in bewerking.items():
+        assert effectief[veld] == waarde
+
+
+def test_de_andere_resourcesoort_blijft_gewoon_getuned() -> None:
+    """Het paar dat niets met de bewerking te maken heeft wordt niet meegesleurd."""
+    project = _project(
+        overrides={
+            "productie": {
+                "requests": {"memory": "600Mi", "cpu": "800m"},
+                "limits": {"memory": "900Mi", "cpu": "900m"},
+            }
+        }
+    )
+
+    ProjectFileHandler().apply_user_resource_intent(
+        project,
+        "api",
+        {"requests_memory": "64Mi", "limits_memory": "512Mi", "requests_cpu": "32m", "limits_cpu": "200m"},
+        origin="portal",
+    )
+
+    effectief = _effectieve_resources(project, "productie", "api")
+    assert (effectief["requests_memory"], effectief["limits_memory"]) == ("64Mi", "512Mi")
+    # De CPU stond niet in de bewerking (gelijk aan de catalogus) en blijft van de tuner.
+    assert (effectief["requests_cpu"], effectief["limits_cpu"]) == ("800m", "900m")
+
+
+# ---------------------------------------------------------------------------
+# 2d. De OOM-uitzondering overleeft een bewerking op een ander veld
+# ---------------------------------------------------------------------------
+
+
+def _project_met_verhoogde_geheugenlimiet(bron: str) -> tuple[ProjectFileHandler, dict[str, Any]]:
+    """Een levende wens van 500Mi, met een deployment-override van 900Mi van *bron*."""
+    handler = ProjectFileHandler()
+    project = _project(overrides={})
+    handler.apply_user_resource_intent(project, "api", {"limits_memory": "500Mi"}, origin="portal")
+    handler.set_deployment_component_resources(
+        project, "productie", "api", {"limits_memory": "900Mi", "requests_memory": "500Mi"}
+    )
+    handler.append_deployment_component_resource_history(
+        project,
+        "productie",
+        "api",
+        {
+            "timestamp": "2026-08-19T10:00:00+00:00",
+            "limits": {"memory": "900Mi"},
+            "requests": {"memory": "500Mi"},
+            "source": bron,
+            "reason": "test",
+        },
+    )
+    return handler, project
+
+
+def test_een_cpu_bewerking_laat_de_oom_verhoging_staan() -> None:
+    """Het opruimen van de staande wens mag de OOM-uitzondering niet meenemen.
+
+    Het nieuwste item draagt de hele staande wens, en die velden gaan ook uit de
+    overrides -- terecht voor een override die de TUNER zette, niet voor de override die
+    de expliciete OOM-uitzondering zette. Zonder deze uitzondering valt de pod na een
+    willekeurige CPU-bewerking terug op 500Mi met request == limit, en niets zet dat
+    terug: zolang de wens leeft houdt de tuner de limiet waar hij staat, en
+    ``has_oom_kills`` is pas weer waar als de pod opnieuw omvalt.
+    """
+    handler, project = _project_met_verhoogde_geheugenlimiet("oom-watcher")
+
+    handler.apply_user_resource_intent(project, "api", {"limits_cpu": "500m"}, origin="portal")
+
+    effectief = _effectieve_resources(project, "productie", "api")
+    assert effectief["limits_memory"] == "900Mi", "de OOM-verhoging moet blijven staan"
+    assert effectief["requests_memory"] == "500Mi"
+    assert effectief["limits_cpu"] == "500m"
+    # De wens zelf leeft gewoon door en draagt nog steeds beide velden.
+    wens = handler.get_user_resource_intent(project, "productie", "api")
+    assert wens is not None
+    assert wens.fields == {"limits_cpu": "500m", "limits_memory": "500Mi"}
+
+
+def test_een_gewone_tuner_override_wordt_wel_opgeruimd() -> None:
+    """Negatieve controle: zonder OOM-item is 900Mi gewoon de tuner en gaat hij weg."""
+    handler, project = _project_met_verhoogde_geheugenlimiet("auto-tune")
+
+    handler.apply_user_resource_intent(project, "api", {"limits_cpu": "500m"}, origin="portal")
+
+    assert _effectieve_resources(project, "productie", "api")["limits_memory"] == "500Mi"
 
 
 # ---------------------------------------------------------------------------

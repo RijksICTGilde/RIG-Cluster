@@ -31,7 +31,8 @@ Alle gebruikersgerichte schrijvers lopen nu via één functie,
    vier de velden vastzetten en de tuner volledig lamleggen.
 2. **Precies die velden uit elke deployment-override halen.** Niet het hele blok: een
    CPU-bewerking laat de door de tuner gezette geheugenwaarde van die deployments staan.
-   De historie van de tuner blijft ook staan.
+   De historie van de tuner blijft ook staan. Met één correctie erop: zie
+   "Een paar gaat altijd in zijn geheel" hieronder.
 3. **De wens vastleggen** als één item in de historie van de catalogus-component:
 
    ```yaml
@@ -52,6 +53,23 @@ Alle gebruikersgerichte schrijvers lopen nu via één functie,
 Wijzigt een bewerking niets, dan gebeurt er ook niets: geen historie-item, geen
 commit-ruis.
 
+### Een paar gaat altijd in zijn geheel
+
+Manifestgeneratie merget de catalogus en de deployment-override **per veld**. Haal je dan
+één helft van een paar uit de override, dan wordt de andere helft van de tuner gepaard met
+de catalogus -- en dat kan `requests > limits` opleveren, wat de apiserver weigert. Precies
+na de bewerking faalt dan de ArgoCD-sync.
+
+Het is de gewone weg, geen randgeval: de modal toont de **catalogus**-waarde, dus wat de
+tuner op deploymentniveau als request heeft staan is voor wie de bewerking doet niet eens
+zichtbaar. Catalogus `64Mi`/`256Mi`, tuner-override `600Mi`/`900Mi`, jij zet de
+geheugenlimiet op `512Mi` -- effectief `requests 600Mi` bij `limits 512Mi`.
+
+Daarom wordt na het opruimen per deployment het gemergde paar getoetst, voor geheugen en
+voor CPU. Staat de request boven de limiet, dan gaat de andere helft ook uit de override:
+het hele paar komt weer uit de catalogus, en dat paar is bij binnenkomst al bewaakt (de
+sectie-enforcer voor geheugen, de toegestane waarden voor CPU).
+
 ### Het nieuwste item draagt de hele staande wens
 
 Een bewerking raakt meestal maar één veld, maar de wens gaat over het component als
@@ -70,7 +88,7 @@ haalt is geen wens. In de `reason` staan ze apart genoemd:
 Set by hand via portal: limits.memory -> 900Mi; still standing: limits.cpu -> 1
 ```
 
-Twee gevolgen om te kennen:
+Drie gevolgen om te kennen:
 
 - Een veld waarvan de waarde langs een andere weg is gewijzigd (bijvoorbeeld de
   sectiestroom over de hele componentenlijst, die geen wens vastlegt) staat niet meer en
@@ -79,6 +97,15 @@ Twee gevolgen om te kennen:
   nieuwe tijdstempel. Dat is verdedigbaar -- de modal post alle vier de velden, dus wie
   opslaat bevestigt de waarde die hij ziet -- maar het betekent dat iemand die het
   component regelmatig bewerkt een wens onbeperkt levend houdt.
+- Eén override blijft er bij dat opruimen staan: een geheugenlimiet die de **OOM-watcher**
+  boven de wens heeft getild. Dat is de enige plek waar het platform de gebruiker bewust
+  overruled, en die verhoging wegvegen op een losstaande CPU-bewerking zet de pod terug op
+  een limiet die al te klein bleek -- met request gelijk aan limiet, dus zonder ruimte om
+  te pieken. Niets zou dat rechtzetten: zolang de wens leeft houdt de tuner de limiet waar
+  hij staat, en `has_oom_kills` is pas weer waar als de pod opnieuw omvalt. Alleen een
+  vloer **boven** de staande wens telt; of die vloer al vervallen is wordt hier niet
+  beoordeeld (daar zijn de metingen van de tuner voor nodig), dus de override blijft staan
+  en de tuner haalt hem omlaag bij de eerste sweep na het vervallen.
 
 ### De tuner tegenover een wens
 
@@ -107,7 +134,8 @@ Het geheugen-*request* en de CPU blijven ook dan staan.
 **Invarianten.** Zet je maar één helft van een paar vast, dan geeft de andere helft mee:
 met een vastgezette limiet wordt het request naar die limiet geknepen, met een vastgezet
 request wordt de limiet opgehoogd zodat het past. Zijn beide vastgezet, dan is het paar
-precies wat de gebruiker zette en blijft het onaangeroerd.
+precies wat de gebruiker zette en blijft het onaangeroerd. Dezelfde invariant bewaakt het
+schrijfpad bij het opruimen van de overrides (zie "Een paar gaat altijd in zijn geheel").
 
 ### Snoeien gooit de wens niet weg
 
