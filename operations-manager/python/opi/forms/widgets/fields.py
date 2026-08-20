@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
 from opi.forms.widgets.base import WidgetAdapter
+from opi.services.catalog.aliases.overzicht import alias_variabelen
 
 if TYPE_CHECKING:
     from opi.forms.field import FormField
@@ -222,7 +223,30 @@ class FieldWidgetAdapter(WidgetAdapter):
         return self._render_template("display_card.html.j2", {"field": field})
 
     def render_key_value_editor(self, field: FormField) -> str:
-        return self._render_template("key_value_editor.html.j2", {"field": field})
+        return self._render_template(
+            "key_value_editor.html.j2",
+            {"field": field, "completions_json": self._kv_completions_json(field)},
+        )
+
+    @staticmethod
+    def _kv_completions_json(field: FormField) -> str:
+        """De namen die de editor mag voorstellen, als JSON, of een lege tekst.
+
+        Alleen het aliassenveld vraagt hierom (``kv_completions: "aliassen"``). De lijst
+        wordt HIER opgehaald en niet in de visualizer opgeschreven: die is een constante
+        op modulehoogte, en de variabelen worden afgeleid uit de dienstdefinities. Een
+        vaste lijst zou binnen een release uit de pas lopen met de validatie.
+        """
+        if field.attributes.get("kv_completions") != "aliassen":
+            return ""
+
+        return json.dumps(
+            [
+                {"naam": variabele.naam, "dienst": dienst.label, "beschrijving": variabele.beschrijving}
+                for dienst in alias_variabelen()
+                for variabele in dienst.variabelen
+            ]
+        )
 
     def render_nested(self, field: FormField, children_html: list[str]) -> str:
         return self._render_template("nested.html.j2", {"field": field, "children_html": children_html})

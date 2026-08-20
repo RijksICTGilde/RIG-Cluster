@@ -203,11 +203,11 @@ LICHTE_EILANDEN = """() => {
       if (cs.visibility === 'hidden' || cs.display === 'none') continue;
       const doos = el.getBoundingClientRect();
       if (doos.width < 20 || doos.height < 10) continue;
-      // De CodeMirror-editor van het sleutel/waarde-veld tekent zijn eigen kantlijn uit
-      // zijn eigen basisthema (#f5f5f5). Dat is een lichte editor met donkere tekst: in
-      // zichzelf leesbaar, en niet iets wat wij met een token rechtzetten - daarvoor moet
-      // die editor een donker thema krijgen. Staat als losse eindje op de PR.
-      if ((el.getAttribute('class') || '').includes('cm-')) continue;
+      // De uitzondering voor de CodeMirror-editor (klassen cm-*) IS WEG. Die stond hier
+      // omdat de editor zijn kantlijn en zijn sleutelnamen uit zijn eigen, vaste lichte
+      // basisthema tekende - een wit vlak in een donkere pagina. Hij heeft nu een thema
+      // uit onze --semantics-tokens (static/js/codemirror-kv.js), dus hij hoort gewoon
+      // meegemeten te worden; anders zou het terugvallen van dat thema hier stil zijn.
       const c = parse(cs.backgroundColor);
       if (c.a < 0.9) continue;
       const l = lum(c.rgb);
