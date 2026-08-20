@@ -358,10 +358,24 @@ def _maker_leeft(pid_tekst: str) -> bool:
 
 @pytest.fixture(scope="session")
 def _orm_pg_container():
-    # Ryuk is testcontainers' reaper sidecar; op Docker Desktop komt hij niet overeind (zie
-    # _ruim_achtergebleven_containers_op voor het waarom, gemeten en niet aangenomen).
-    # ``setdefault`` zodat CI hem terug kan zetten, want daar werkt hij wel.
-    os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+    # Ryuk (de reaper van testcontainers) staat AAN, en dat is de eigenlijke opruiming:
+    # hij houdt een verbinding met deze run open en ruimt de containers van deze sessie op
+    # zodra die wegvalt -- ook bij kill -9, want dan sluit de kernel de socket. Zo ruimt de
+    # maker zelf op in plaats van dat een volgende run de rommel opveegt.
+    #
+    # De override is nodig op Docker Desktop: zonder wil Ryuk ``~/.docker/run/docker.sock``
+    # mounten en dat weigert de daemon ("operation not supported"). Met het pad zoals de
+    # daemon het zelf ziet start hij wel, EN doet hij zijn werk -- de oude aantekening dat
+    # zijn poort onbereikbaar zou zijn is op 20 augustus 2026 nagemeten en klopt niet meer
+    # (ryuk 0.8.1): na een kill -9 was alles binnen ~2 minuten weg. De vertraging komt van
+    # de poortproxy van Docker Desktop, die de verbroken verbinding pas laat doorgeeft.
+    # ``setdefault``, dus op Linux/CI (waar dit pad sowieso de standaard is) verandert er
+    # niets.
+    #
+    # ``_ruim_achtergebleven_containers_op`` hieronder blijft staan als vangnet voor het
+    # gat dat Ryuk zelf heeft: wordt DOCKER herstart terwijl er een wees staat, of sneuvelt
+    # Ryuk zelf, dan is er niemand meer die het opruimt behalve de volgende run.
+    os.environ.setdefault("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
 
     from testcontainers.postgres import PostgresContainer
 
