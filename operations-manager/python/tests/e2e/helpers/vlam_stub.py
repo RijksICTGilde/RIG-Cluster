@@ -30,6 +30,7 @@ import json
 import subprocess
 from typing import TYPE_CHECKING
 
+import yaml
 from opi.core.cluster_config import get_vlam_config
 from opi.generation.manifests import render_template
 from opi.services.catalog.base import DeploymentManifestContext
@@ -253,6 +254,31 @@ def ensure(cluster_name: str, endpoint: VlamEndpoint) -> None:
     pod = cluster.running_pod_names(endpoint.namespace, app)[0]
     status, _ = cluster.http_get_via_port_forward(endpoint.namespace, pod, endpoint.port, "/healthz", timeout=60.0)
     assert status == 200, f"de vlam-stub antwoordt zelf niet op /healthz (status {status})"
+
+
+def without_the_open_rule(cluster_name: str, endpoint: VlamEndpoint, call):
+    """Haal de wildcard-regel weg, doe ``call()``, en zet hem terug.
+
+    Dit is de meting die uitwijst of dit cluster NetworkPolicies HANDHAAFT. Komt de
+    afnemer er zonder de open regel nog steeds doorheen, dan doet de CNI niets met
+    NetworkPolicies (kindnet in de sandbox is zo'n geval) en zegt een negatieve
+    egress-meting niets. Komt hij er niet doorheen, dan is die open regel aantoonbaar
+    wat de deur opent -- en pas dan is "zonder de dienst geen weg" een uitspraak over
+    de regel in plaats van over bereikbaarheid.
+    """
+    policy = yaml.safe_load(wildcard_policy(cluster_name, endpoint))
+    name = policy["metadata"]["name"]
+    subprocess.run(
+        ["kubectl", "delete", "networkpolicy", name, "-n", endpoint.namespace, "--ignore-not-found"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    try:
+        return call()
+    finally:
+        _apply(wildcard_policy(cluster_name, endpoint))
 
 
 def remove(endpoint: VlamEndpoint) -> None:
