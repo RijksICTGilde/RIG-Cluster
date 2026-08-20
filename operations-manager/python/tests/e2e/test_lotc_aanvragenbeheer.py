@@ -395,7 +395,7 @@ def test_een_mislukte_aanroep_toont_een_leesbare_melding(
 def test_de_route_weigert_met_een_leesbaar_fragment(app_server: str, auth_page: Page) -> None:
     """En de weigeringen van de route zelf zijn ook leesbaar, geen JSON.
 
-    ``{"detail":"Geen domein- of subdomeinaanvragen voor dit project"}`` in een dialoog is
+    ``{"detail":"Er zijn geen aanvragen voor dit project"}`` in een dialoog is
     geen melding maar een lek van de API-vorm. Gemeten op het project van de andere
     e2e-bestanden: dat heeft geen aanvragen, dus de route weigert.
     """
@@ -404,7 +404,7 @@ def test_de_route_weigert_met_een_leesbaar_fragment(app_server: str, auth_page: 
     assert antwoord.status == 400, antwoord.status
     tekst = antwoord.text()
     assert "{" not in tekst.split("<")[0], f"dit ziet eruit als JSON: {tekst[:200]}"
-    assert "Er zijn geen domein- of subdomeinaanvragen voor dit project." in tekst, tekst[:400]
+    assert "Er zijn geen aanvragen voor dit project." in tekst, tekst[:400]
     assert "Het formulier kon niet worden geladen" in tekst, tekst[:400]
 
 

@@ -13,10 +13,27 @@ staat en hoe je het gebruikt.
 ## Eerst goedkeuring, dan alles tegelijk
 
 Het aanzetten van de dienst is een **aanvraag**. Die loopt via de generieke goedkeuringsweg
-die er al was, dezelfde die `publish-on-web` voor domeinen gebruikt: de dienst declareert
-een `ApprovalSpec` in `config_approvals(ConfigLayer.PROJECT)` en beantwoordt
-`ensure_approval_requests()`. Geen eigen scherm en geen tweede mechanisme — de aanvraag komt
-in de bestaande beheerdersinterface (`/admin/approvals`) te staan, naast de domeinaanvragen.
+die er al was, dezelfde die `publish-on-web` voor domeinen gebruikt. Geen eigen scherm en
+geen tweede mechanisme — de aanvraag komt op `/admin/approvals` te staan, in een eigen groep
+met de naam en het icoon van de dienst, naast de domeinaanvragen.
+
+De vorm zelf ("mag dit project deze dienst gebruiken") staat één keer, als
+`service_use_approval()` in `opi/services/catalog/approval.py`. Deze dienst declareert
+alleen nog wát er wordt goedgekeurd en wat het betekent zolang dat niet gebeurd is:
+
+```python
+APPROVAL = service_use_approval(
+    ServiceType.SEND_EMAIL,
+    label="E-mail versturen",
+    activity="Het versturen van e-mail",
+    consequence="Er is nog geen SMTP-account, geen netwerktoegang naar de relay en geen SMTP_-variabelen in deze deployment.",
+)
+```
+
+Dat levert de `ApprovalSpec` voor `config_approvals(ConfigLayer.PROJECT)`, de poort
+`is_approved(project_data)` en het vastleggen van de aanvraag
+(`ensure_approval_requests()`). De toestand staat op
+`services/[send-email]/config/approval`, met een `status` en een `history`.
 
 Het gedrag per status is expres saai:
 
