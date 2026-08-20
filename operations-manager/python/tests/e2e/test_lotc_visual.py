@@ -276,6 +276,37 @@ def test_redesigned_page_screenshot(app_server: str, page: Page, slug: str) -> N
     page.screenshot(path=f"{SCREENSHOT_DIR}/bg-{slug}.png", full_page=True, animations="disabled")
 
 
+def test_de_proefopstelling_van_aanvragen_toont_ook_echt_aanvragen(app_server: str, page: Page) -> None:
+    """Er staan RIJEN op /lotc/bg/admin-approvals, en de dienstaanvraag staat erbij.
+
+    De test hierboven eist alleen dat de pagina antwoordt en geen niet-geimplementeerde
+    componenten draagt. Dat is precies wat een LEGE pagina ook doet: toen het sjabloon van
+    ``approval_items`` naar ``approval_groups`` ging en de proefopstelling die sleutel niet
+    meeschreef, draaide de for-lus nul keer, bleef alleen het projectpaneel over -- en de
+    screenshottest zei niets, ze legde de lege versie gewoon vast. Deze toets is de reden
+    dat dat niet nog een keer stil kan gebeuren.
+    """
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+    response = page.goto(f"{app_server}/lotc/bg/admin-approvals")
+    assert response is not None
+    assert response.ok
+
+    _wait_for_nldd(page)
+
+    # De kopregel van een tabel is ook een <nldd-table-row>, dus een rij per aanvraag komt
+    # er BOVENOP: de ondergrens is het aantal groepen plus een.
+    rijen = page.locator("nldd-table-row")
+    assert rijen.count() >= 3, f"de proefopstelling toont {rijen.count()} tabelregels; dat is geen aanvraag"
+
+    # De dienstaanvraag is waar deze pagina om begonnen is: geen domein, dus vroeger een
+    # lege regel. Hij hoort met zijn dienstnaam en zijn onderwerp op het scherm te staan.
+    expect(page.get_by_text("E-mail versturen").first).to_be_visible()
+    expect(page.get_by_text("Gebruik van de dienst").first).to_be_visible()
+    # En de domeinkant ernaast, want het VERSCHIL tussen de twee is wat de pagina laat zien.
+    expect(page.get_by_text("Publiceren op het web").first).to_be_visible()
+    expect(page.get_by_text("voorbeeld.nl").first).to_be_visible()
+
+
 def test_open_modal_screenshot(app_server: str, page: Page) -> None:
     """Leg de bevestigingsdialoog geopend vast.
 
