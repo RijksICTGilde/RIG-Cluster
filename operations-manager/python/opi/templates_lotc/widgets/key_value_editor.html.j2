@@ -1,7 +1,7 @@
 {% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, bool_attr, optional_attr, htmx_attrs, extra_attrs %}
 {% set initial_format = field.attributes.get('kv_format', 'env') %}
 {% set editor_id = 'kv-editor-' ~ field.path %}
-<div class="kv-editor{% if field.errors %} kv-editor--error{% endif %}" id="{{ editor_id|e }}" data-format="{{ initial_format }}">
+<div class="kv-editor{% if field.errors %} kv-editor--error{% endif %}" id="{{ editor_id|e }}" data-format="{{ initial_format }}"{% if completions_json %} data-completions="{{ completions_json|e }}"{% endif %}>
     {# De hulpknop naast het label. Een sectie had er al een (zie
        bg/_modal-wizard-step.html.j2), een VELD niet, terwijl juist dit veld uitleg nodig
        heeft: bij de aliassen wist niemand welke variabelen er te gebruiken zijn. Zelfde
