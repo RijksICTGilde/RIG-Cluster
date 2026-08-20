@@ -132,14 +132,34 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+          # NIET op de submissiepoort, en dat is geen smaakkwestie maar een gemeten
+          # storing. Elke TCP-verbinding op de submissielistener telt mee in
+          # `queue.limiter.inbound.platform` (20000 per dag, gesleuteld op de listener),
+          # ook een verbinding die niets aanbiedt. Met een readiness elke 5 en een
+          # liveness elke 10 seconden zijn dat 18 gebeurtenissen per minuut: GEMETEN op
+          # 20 augustus 2026 door een minuut lang niets te versturen en de teller te
+          # tellen (34 -> 52). Dat is 25.920 per dag tegen een plafond van 20.000, dus de
+          # relay at zijn eigen dagbudget op en weigerde daarna ELKE inzending met
+          # "452 4.4.5 Rate limit exceeded ... id = platform" - en hij kwam er niet meer
+          # uit, want het verbruik van de probes ligt boven het bijvultempo. Zo lag het
+          # versturen op de sandbox plat en zou het dat op productie ook doen, ongeveer
+          # een dag na elke uitrol.
+          #
+          # De managementlistener heeft een eigen gezondheidsingang die geen mailsessie
+          # opent. GEMETEN tegen v0.11.8: /healthz/live en /healthz/ready antwoorden
+          # allebei 200 ZONDER inloggegevens, wat nodig is want een probe stuurt die niet
+          # mee. Wat we ermee opgeven: dat de probe bewijst dat poort 2525 gebonden is.
+          # Wat we ervoor terugkrijgen: een relay die na een dag nog post aanneemt.
           livenessProbe:
-            tcpSocket:
-              port: 2525
+            httpGet:
+              path: /healthz/live
+              port: 8080
             initialDelaySeconds: 20
             periodSeconds: 10
           readinessProbe:
-            tcpSocket:
-              port: 2525
+            httpGet:
+              path: /healthz/ready
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:

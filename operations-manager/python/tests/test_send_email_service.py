@@ -22,7 +22,13 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
+from opi.connectors.mail import (
+    MailAccount,
+    MailConnector,
+    MailRelayNotConfiguredError,
+    MailSenderIdentity,
+    create_mail_connector,
+)
 from opi.core.cluster_config import (
     get_mail_from_address,
     get_mail_relay_host,
@@ -37,6 +43,7 @@ from opi.services.catalog.send_email import RELAY_POD_LABELS, RELAY_POD_PORT, Se
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
+from opi.utils.naming import generate_mail_account_name
 from opi.utils.secrets import SendEmailSecret
 from pydantic import ValidationError
 from ruamel.yaml import YAML
@@ -220,6 +227,11 @@ class TestTheOneAccountPath:
         connector.get_principal = AsyncMock(return_value=existing)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
+        # De afzender is de tweede helft van "dit account bestaat": de relay kan hem niet
+        # afleiden, dus ``ensure_account`` schrijft hem erbij. Leeg terug betekent hier
+        # "de relay houdt nog niets".
+        connector.get_sender_identity = AsyncMock(return_value=MailSenderIdentity())  # type: ignore[method-assign]
+        connector.set_sender_identity = AsyncMock()  # type: ignore[method-assign]
         return connector
 
     @pytest.mark.asyncio
@@ -231,6 +243,7 @@ class TestTheOneAccountPath:
             password="geheim",
             from_address="noreply@mail.example",
             bounce_address="bounce+myproject@mail.example",
+            from_name="",
             messages_per_day=500,
         )
         connector.create_principal.assert_awaited_once()
@@ -247,6 +260,7 @@ class TestTheOneAccountPath:
             password="geheim",
             from_address="noreply@mail.example",
             bounce_address="bounce+myproject@mail.example",
+            from_name="",
             messages_per_day=800,
         )
         connector.create_principal.assert_not_awaited()
@@ -280,6 +294,7 @@ class TestTheOneAccountPath:
             password="geheim",
             from_address="noreply-rijksapp@rijksoverheid.nl",
             bounce_address="noreply-rijksapp+project-myproject@rijksoverheid.nl",
+            from_name="",
             messages_per_day=500,
         )
         assert not hasattr(MailConnector, "ensure_domain"), (
@@ -304,6 +319,9 @@ class TestHetPlatformaccountIsGeenProjectaccount:
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
         connector.delete_principal = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.get_sender_identity = AsyncMock(return_value=MailSenderIdentity())  # type: ignore[method-assign]
+        connector.set_sender_identity = AsyncMock()  # type: ignore[method-assign]
+        connector.delete_sender_identity = AsyncMock()  # type: ignore[method-assign]
         return connector
 
     def test_a_project_account_never_carries_the_platform_name(self) -> None:
@@ -330,6 +348,7 @@ class TestHetPlatformaccountIsGeenProjectaccount:
                 password="overgenomen",
                 from_address=f"noreply.{settings.MAIL_PLATFORM_ACCOUNT}@mail.example",
                 bounce_address=f"bounce+{settings.MAIL_PLATFORM_ACCOUNT}@mail.example",
+                from_name="",
                 messages_per_day=500,
             )
 
@@ -343,6 +362,7 @@ class TestHetPlatformaccountIsGeenProjectaccount:
             password="geheim",
             from_address=f"noreply.{settings.MAIL_PLATFORM_ACCOUNT}@mail.example",
             bounce_address=f"bounce+{settings.MAIL_PLATFORM_ACCOUNT}@mail.example",
+            from_name="",
             messages_per_day=2000,
             is_platform_account=True,
         )
@@ -378,46 +398,83 @@ class TestHetPlatformaccountIsGeenProjectaccount:
                 password="geheim",
                 from_address="noreply.project-demo@mail.example",
                 bounce_address="bounce+project-demo@mail.example",
+                from_name="",
                 messages_per_day=500,
             )
 
 
 class TestTheAddresses:
-    """The envelope stays on our own domain, which is what makes SPF cheap."""
+    """De afzender IS het project, en envelope en From: zijn hetzelfde adres."""
 
     def _manager(self) -> MailManager:
         return MailManager(project_manager=SimpleNamespace())  # type: ignore[arg-type]
 
-    def test_elk_project_verstuurt_van_hetzelfde_vaste_adres(self) -> None:
-        """Er is EEN afzenderadres op de hele relay, en het is niet instelbaar.
+    def test_elk_project_verstuurt_van_zijn_eigen_adres(self) -> None:
+        """Het plusdeel draagt de PROJECTnaam, dus twee projecten delen geen afzender.
 
-        De relay overschrijft de From: ermee, dus wat hier terugkomt is een mededeling aan
-        de applicatie (SMTP_FROM) en geen verzoek.
+        Dit is de kern van de afspraak met het mailteam: een bericht komt herkenbaar van
+        een project. Zolang dit adres voor iedereen gelijk was, was elke ontvanger op het
+        platform aangewezen op de weergavenaam om te zien wie schreef.
         """
-        een, _ = MailManager._addresses("sandboxed-local", "project-een")
-        twee, _ = MailManager._addresses("sandboxed-local", "project-twee")
-        assert een == twee == get_mail_from_address("sandboxed-local")
+        een = MailManager._sender_address("sandboxed-local", "een")
+        twee = MailManager._sender_address("sandboxed-local", "twee")
+        assert een == "noreply-rijksapp+een@rijksoverheid.nl"
+        assert twee == "noreply-rijksapp+twee@rijksoverheid.nl"
+        assert een != twee
 
-    def test_het_bounce_adres_draagt_het_project_in_het_plusdeel(self) -> None:
-        """Attributie zonder het domein te verlaten: een teruggekomen bericht is te
-        herleiden tot een project zonder de relay iets te vragen."""
-        _, bounce = MailManager._addresses("sandboxed-local", "myproject")
-        assert bounce == "noreply-rijksapp+myproject@rijksoverheid.nl"
+    def test_het_plusdeel_draagt_het_project_en_niet_het_account(self) -> None:
+        """Het account heet ``project-myproject``; het adres zegt ``myproject``.
 
-    def test_de_envelope_blijft_in_het_domein_van_de_afzender(self) -> None:
-        """Dit is de regel waar alles op rust en daarom staat hij hier apart.
-
-        `rijksoverheid.nl` publiceert p=reject en wij ondertekenen niet met DKIM, dus
-        SPF-uitlijning tussen envelope en From: is het ENIGE dat een bericht door DMARC
-        krijgt. Verhuist het bounce-adres ooit naar een domein van onszelf, dan weigert
-        elke ontvanger buiten de Rijksoverheid alles wat we sturen.
+        Wie hier de accountnaam neemt, zet het voorvoegsel ``project-`` in elk
+        afzenderadres van het platform - zichtbaar voor elke ontvanger, en het zegt niets.
         """
-        afzender, bounce = MailManager._addresses("sandboxed-local", "myproject")
-        assert afzender.partition("@")[2] == bounce.partition("@")[2]
+        adres = MailManager._sender_address("sandboxed-local", "myproject")
+        assert adres == "noreply-rijksapp+myproject@rijksoverheid.nl"
+        assert generate_mail_account_name("myproject") not in adres
 
-    def test_alle_clusters_gebruiken_hetzelfde_adres(self) -> None:
-        """Voorlopig een adres, overal. Wijkt een cluster af, dan zegt OPI iets anders dan
-        de relay afdwingt en ziet een ontwikkelaar een adres dat nooit vertrekt."""
+    def test_envelope_en_from_zijn_hetzelfde_adres(self) -> None:
+        """Ze verschilden een voorvoegsel en dat verschil diende niets.
+
+        SPF-uitlijning kijkt naar het DOMEIN, dus het scheelde niets voor DMARC, terwijl de
+        ontvanger in de From: geen project zag. Nu zijn ze gelijk, en dat maakt de
+        uitlijning triviaal waar dan ook.
+        """
+        adres = MailManager._sender_address("sandboxed-local", "myproject")
+        assert adres.partition("@")[2] == get_mail_from_address("sandboxed-local").partition("@")[2]
+
+    def test_het_platformaccount_krijgt_het_kale_adres(self) -> None:
+        """ZAD is geen project en heeft er dus geen om naar te wijzen.
+
+        Het kale adres valt SAMEN met de terugval van de relay (een account zonder
+        opgezochte afzender), dus het platformaccount vraagt nergens een uitzondering.
+        """
+        assert MailManager._sender_address("sandboxed-local", None) == get_mail_from_address("sandboxed-local")
+
+    def test_een_lange_projectnaam_past_nog_in_het_lokale_deel(self) -> None:
+        """De valkuil die niemand narekent: ``noreply-rijksapp+`` is zeventien tekens en
+        een lokaal deel mag er vierenzestig.
+
+        Zonder afkapping levert een projectnaam van meer dan zevenenveertig tekens een
+        adres op dat de upstream weigert, en dat merk je pas bij het eerste bericht.
+        """
+        naam = "p" * 80
+        adres = MailManager._sender_address("sandboxed-local", naam)
+        lokaal, _, domein = adres.partition("@")
+        assert len(lokaal) == 64
+        assert lokaal.startswith("noreply-rijksapp+p")
+        assert domein == "rijksoverheid.nl"
+
+    def test_een_gewone_naam_wordt_niet_afgekapt(self) -> None:
+        """De keerzijde van de vorige toets: afkappen mag alleen gebeuren als het moet."""
+        adres = MailManager._sender_address("sandboxed-local", "a" * 47)
+        assert adres.partition("@")[0] == "noreply-rijksapp+" + "a" * 47
+
+    def test_alle_clusters_gebruiken_hetzelfde_basisadres(self) -> None:
+        """Het BASISadres blijft overal gelijk; alleen het plusdeel verschilt per project.
+
+        Wijkt een cluster af, dan zegt OPI iets anders dan de relay afdwingt en ziet een
+        ontwikkelaar een adres dat nooit vertrekt.
+        """
         adressen = {get_mail_from_address(c) for c in ("local", "sandboxed-local", "odcn-production")}
         assert adressen == {"noreply-rijksapp@rijksoverheid.nl"}
 
@@ -981,6 +1038,7 @@ class TestIntrekkenRuimtOp:
 
         connector = MailConnector("http://relay", "admin", "geheim")
         connector.delete_principal = AsyncMock(side_effect=lambda naam: verwijderd.append(naam) or True)  # type: ignore[method-assign]
+        connector.delete_sender_identity = AsyncMock()  # type: ignore[method-assign]
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         saved: list[str] = []
