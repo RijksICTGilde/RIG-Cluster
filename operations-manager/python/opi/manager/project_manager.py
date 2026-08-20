@@ -91,6 +91,7 @@ from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
     ManifestContext,
+    ManifestContribution,
     ProvisionContext,
     SecretFileSpec,
 )
@@ -454,6 +455,52 @@ def _secret_labels_for(spec: SecretFileSpec) -> dict[str, str]:
     if not spec.include_in_config_hash:
         labels[CONFIG_HASH_IGNORE_LABEL_KEY] = CONFIG_HASH_IGNORE_LABEL_VALUE
     return labels
+
+
+def collect_manifest_contributions(
+    ctx: ManifestContext, *, component_services: list[str], project_services: list[str]
+) -> list[ManifestContribution]:
+    """Every contributing service's ``ManifestContribution`` for one component.
+
+    Which services are asked depends on where their selection lives. Most read the
+    COMPONENT's own ``services`` list -- each component decides whether it sits behind
+    login, gets database credentials, is scraped. A service that is deployment-bound and
+    has no per-component choice to make reads the PROJECT's list instead
+    (``manifest_activated_by_project``); no component ever ticks such a service, so a
+    component-scoped question would answer "no" for every component forever.
+
+    Module-level so both halves of that rule can be measured without building a whole
+    deployment first.
+    """
+    return [
+        provider.contribute_manifest_context(ctx)
+        for provider in manifest_services()
+        if any(
+            service_type.value in (project_services if provider.manifest_activated_by_project else component_services)
+            for service_type in provider.manifest_activation_types()
+        )
+    ]
+
+
+def apply_manifest_contributions(variables: dict[str, Any], contributions: list[ManifestContribution]) -> None:
+    """Merge the contributions into a component's template context, in ``manifest_order``.
+
+    Three merge semantics, and the difference is load-bearing:
+
+    * ``template_vars`` OVERRIDE a base key (auth-wall moves ``service_port`` 8080 ->
+      4180).
+    * ``env_vars`` are ADDITIVE: they join the component's own variables instead of
+      replacing them. That is why they are a field of their own rather than a
+      ``template_vars`` entry -- as an override, one service handing out one variable
+      would wipe every variable the component itself declared.
+    * ``sidecars`` are additive too.
+    """
+    for contribution in contributions:
+        variables.update(contribution.template_vars)
+        if contribution.env_vars:
+            variables["env_vars"] = {**variables.get("env_vars", {}), **contribution.env_vars}
+        if contribution.sidecars:
+            variables.setdefault("sidecars", []).extend(contribution.sidecars)
 
 
 class ProjectManager:
@@ -5784,11 +5831,13 @@ class ProjectManager:
                 get_secret=self._get_secret_from_map,
                 component_def=component_def,
             )
-            manifest_contributions = [
-                provider.contribute_manifest_context(manifest_ctx)
-                for provider in manifest_services()
-                if any(t.value in all_services for t in provider.manifest_activation_types())
-            ]
+            manifest_contributions = collect_manifest_contributions(
+                manifest_ctx,
+                component_services=all_services,
+                project_services=ServiceAdapter.extract_service_names_from_project_services(
+                    project_data.get("services", []) or []
+                ),
+            )
 
             # Build envFrom secrets list based on services used and user env vars
             # This list determines which secrets are referenced in the deployment manifest
@@ -5925,13 +5974,9 @@ class ProjectManager:
             # config_handler.add_custom_config(component_name, "unique_name", unique_name)
 
             # Merge each service's manifest contribution into the template context
-            # (RC-5 Phase 6b): sidecars are additive, template_vars override base keys
-            # (auth-wall sets authorization_wall + service_port 8080 -> 4180). The
-            # contributions were collected once, above, before the dict was built.
-            for contribution in manifest_contributions:
-                variables.update(contribution.template_vars)
-                if contribution.sidecars:
-                    variables.setdefault("sidecars", []).extend(contribution.sidecars)
+            # (RC-5 Phase 6b). The contributions were collected once, above, before the
+            # dict was built; the merge semantics per field live with the function.
+            apply_manifest_contributions(variables, manifest_contributions)
 
             # Auth-wall observability: the provider contributes nothing when a component
             # asks for an auth wall but no keycloak secret is provisioned (old warn path).

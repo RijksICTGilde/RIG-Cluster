@@ -1062,6 +1062,9 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "send-email": ["project"],
     "sleep-mode": ["project"],
     "temp-storage": ["component"],
+    # RC-142: er valt niets te kiezen -- een endpoint, een variabele, een regel. Geen
+    # configblok betekent geen configroute.
+    "vlam": [],
 }
 
 

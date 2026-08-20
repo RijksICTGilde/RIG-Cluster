@@ -32,12 +32,14 @@ Two validation levels, because the deployment layer is a *patch* on the project 
 
 The typing does the shape validation for free: ``project`` on the own side and ``port`` on
 the ``from`` side simply do not exist in the relevant model and are rejected by
-``extra="forbid"``.
+``extra="forbid"``. The same trick keeps the WILDCARD peer (``project: "*"``, see
+``WILDCARD_PROJECT``) to the inbound side: only ``PeerRef``/``PeerRefPatch`` carry the
+pattern that allows it, and those are the inbound peer.
 """
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -49,6 +51,51 @@ DNS1123_LABEL = r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
 _NAME_MAX_LENGTH = 40
 
 
+#: The peer project that means "no project limit" (RC-142).
+#:
+#: A normal inbound rule names ONE peer; the receiver decides per consumer. That is right
+#: when the consumers are a short, known list. It is wrong for a shared facility that any
+#: project may use, where the list is "whoever takes the service" and keeping it by hand
+#: makes the facility's owner the gatekeeper of a self-service platform.
+#:
+#: ``from: {project: "*"}`` renders as an ingress entry with no ``from`` selector, on
+#: exactly the named port: any source may reach that component there. It is a real
+#: widening, and it is spelled out rather than being what an empty ``from`` happens to
+#: mean -- a rule that lost its peer by accident would otherwise silently become open.
+#: It stays narrow in the other directions: only this port, only this component, and the
+#: caller still needs its own egress rule to get there at all. Authorizing what the caller
+#: may then DO is the receiving application's own business (VLAM checks its API key).
+WILDCARD_PROJECT = "*"
+
+#: DNS-1123 label OR the wildcard. Only the peer of an INBOUND rule takes this; the
+#: outbound peer keeps the plain label pattern, so an outbound rule can never open a way
+#: out to "anything".
+DNS1123_LABEL_OR_WILDCARD = r"^(\*|[a-z0-9]([-a-z0-9]*[a-z0-9])?)$"
+
+_WILDCARD_DESCRIPTION = (
+    " Use '*' for no project limit: the port is opened to every source instead of to one "
+    "named peer, and 'deployment' and 'component' must then be left empty."
+)
+
+
+def _check_wildcard_peer(peer: Any) -> Any:
+    """A wildcard peer names nothing else: no deployment, no component.
+
+    Refused rather than ignored. A rule reading ``{project: '*', component: 'api'}`` looks
+    like it is scoped to one component and is not -- silently dropping the component would
+    render a policy that is wider than the rule says it is.
+    """
+    if peer.project != WILDCARD_PROJECT:
+        return peer
+    named = [field for field in ("deployment", "component") if getattr(peer, field, None)]
+    if named:
+        raise ValueError(
+            f"peer-project '*' betekent geen projectlimiet; laat {' en '.join(named)} dan leeg "
+            f"(nu gezet: {', '.join(named)})"
+        )
+    return peer
+
+
 # --- full (post-merge) models: a COMPLETE rule ---------------------------------------
 
 
@@ -56,18 +103,33 @@ class PeerRef(BaseModel):
     """The peer side of an inbound rule: the peer deployment/component, in any project including this one.
 
     ``deployment`` may be open on a root rule (the second layer fills it); every other
-    field is required for a complete rule.
+    field is required for a complete rule -- unless ``project`` is the wildcard, which
+    means there is no peer to name at all (see ``WILDCARD_PROJECT``).
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    project: str = Field(pattern=DNS1123_LABEL, description="Project of the peer, as a DNS-1123 label.")
+    project: str = Field(
+        pattern=DNS1123_LABEL_OR_WILDCARD,
+        description="Project of the peer, as a DNS-1123 label." + _WILDCARD_DESCRIPTION,
+    )
     deployment: str | None = Field(
         default=None,
         pattern=DNS1123_LABEL,
         description="Deployment of the peer; may be left open on a project-level rule and filled in per deployment.",
     )
-    component: str = Field(pattern=DNS1123_LABEL, description="Component of the peer, as a DNS-1123 label.")
+    component: str | None = Field(
+        default=None,
+        pattern=DNS1123_LABEL,
+        description="Component of the peer, as a DNS-1123 label; empty only when 'project' is '*'.",
+    )
+
+    @model_validator(mode="after")
+    def _wildcard_names_nothing_else(self) -> PeerRef:
+        _check_wildcard_peer(self)
+        if self.project != WILDCARD_PROJECT and not self.component:
+            raise ValueError("peer-component is verplicht, behalve bij peer-project '*'")
+        return self
 
 
 class PeerTarget(BaseModel):
@@ -104,7 +166,11 @@ class LocalTarget(BaseModel):
 
 
 class InboundRule(BaseModel):
-    """A complete inbound rule: the peer (``from``) may reach my component (``to``)."""
+    """A complete inbound rule: the peer (``from``) may reach my component (``to``).
+
+    With ``from.project == "*"`` there is no peer at all and the port is opened to every
+    source; see ``WILDCARD_PROJECT``.
+    """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -140,7 +206,9 @@ class PeerRefPatch(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     project: str | None = Field(
-        default=None, pattern=DNS1123_LABEL, description="Project of the peer, as a DNS-1123 label."
+        default=None,
+        pattern=DNS1123_LABEL_OR_WILDCARD,
+        description="Project of the peer, as a DNS-1123 label." + _WILDCARD_DESCRIPTION,
     )
     deployment: str | None = Field(
         default=None,
@@ -150,6 +218,12 @@ class PeerRefPatch(BaseModel):
     component: str | None = Field(
         default=None, pattern=DNS1123_LABEL, description="Component of the peer, as a DNS-1123 label."
     )
+
+    @model_validator(mode="after")
+    def _wildcard_names_nothing_else(self) -> PeerRefPatch:
+        """Refused at the STORED layer too: this combination is never on its way to
+        becoming valid, whatever a deployment patch adds later."""
+        return _check_wildcard_peer(self)
 
 
 class PeerTargetPatch(BaseModel):

@@ -6,6 +6,7 @@ This module defines cluster-specific settings including ingress postfixes.
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
@@ -128,6 +129,18 @@ CLUSTER_CONFIG = {
         # certificate and runs a fake cert-manager CRD with no controller, so nothing is
         # ever issued here. See supports_custom_domain_certificates().
         "supports_custom_domain_certificates": False,
+        # Er is geen VLAM en geen RON in de sandbox: dit is een PLAATSHOUDER, alleen
+        # zodat de bedrading van de dienst (kaart, env-var, netwerkregel) hier
+        # end-to-end te doorlopen is. Het adres wijst naar een project dat hier niet
+        # bestaat, dus een pod die het probeert krijgt geen antwoord. Zie
+        # features/vlam-service.md.
+        "vlam": {
+            "project": "vlam-wt8",
+            "deployment": "productie",
+            "component": "vlam-proxy-intern",
+            "namespace": "vlam-wt8",
+            "port": 8081,
+        },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
@@ -193,6 +206,19 @@ CLUSTER_CONFIG = {
         # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
         # challenge for a domain of the user's own can complete here.
         "supports_custom_domain_certificates": True,
+        # VLAM (de taalmodel-API van SSC-ICT) is alleen hier bereikbaar: de RON-koppeling
+        # bestaat op dit cluster en nergens anders. De sleutels beschrijven WAAR de
+        # interne proxy van het vlam-project draait; de dienst leidt daar zowel het
+        # adres als de netwerkregel uit af, zodat die twee niet uiteen kunnen lopen.
+        # ``namespace`` is de onvoorvoegde naam uit het projectbestand; het cluster zet
+        # er ``rig-prd-`` voor (get_prefixed_namespace).
+        "vlam": {
+            "project": "vlam-wt8",
+            "deployment": "productie",
+            "component": "vlam-proxy-intern",
+            "namespace": "vlam-wt8",
+            "port": 8081,
+        },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
@@ -1265,3 +1291,18 @@ def get_extensions(cluster_name: str) -> list[str]:
     """
     config = get_cluster_config(cluster_name)
     return config.get("extensions", [])
+
+
+def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
+    """Where the in-cluster VLAM proxy runs on this cluster, or None when there is none.
+
+    Absent is the normal answer: VLAM hangs off the RON link, which exists on exactly one
+    cluster. A cluster without this key neither offers the ``vlam`` service in the wizard
+    nor accepts a project that selected it -- that is the whole availability mechanism,
+    and it lives here so the service itself names no cluster.
+
+    Keys: ``project`` / ``deployment`` / ``component`` / ``namespace`` (unprefixed) of the
+    proxy, plus its ``port``. The address a consumer gets and the NetworkPolicy peer it is
+    allowed to reach are BOTH derived from these, so they cannot drift apart.
+    """
+    return get_cluster_config(cluster_name).get("vlam")
