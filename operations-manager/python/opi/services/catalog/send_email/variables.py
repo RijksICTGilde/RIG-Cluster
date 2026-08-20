@@ -18,33 +18,28 @@ class SendEmailVariables(Enum):
         description="Hostname van de mailrelay binnen het cluster",
         source="secret",
         secret_key="host",
-        aliases=["APP_SMTP_HOST"],
     )
     PORT = VariableDefinition(
         name="SMTP_PORT",
         description="Submission-poort van de mailrelay (587)",
         source="secret",
         secret_key="port",
-        aliases=["APP_SMTP_PORT"],
     )
     USERNAME = VariableDefinition(
         name="SMTP_USERNAME",
         description="SMTP-account van dit project op de relay",
         source="secret",
         secret_key="username",
-        aliases=["APP_SMTP_USERNAME"],
     )
     PASSWORD = VariableDefinition(
         name="SMTP_PASSWORD",
         description="Wachtwoord van het SMTP-account van dit project",
         source="secret",
         secret_key="password",
-        aliases=["APP_SMTP_PASSWORD"],
     )
     FROM = VariableDefinition(
         name="SMTP_FROM",
         description="Afzenderadres dat de relay voor dit project afdwingt",
         source="secret",
         secret_key="from_address",
-        aliases=["APP_SMTP_FROM"],
     )

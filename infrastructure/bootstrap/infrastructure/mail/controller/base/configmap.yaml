@@ -308,6 +308,12 @@ data:
     database = "%{env:MAIL_DB_NAME}%"
     user = "%{env:MAIL_DB_USER}%"
     password = "%{env:MAIL_DB_PASSWORD}%"
+    # Zonder deze regel pakt Stalwart de deadpool-default: cpu-cores x 4, en dat blaast
+    # zo door het connectionLimit van de rol heen (gemeten 20 augustus 2026 als "FATAL:
+    # too many connections for role mailrelay" bij een podwissel). De rol staat op 20
+    # (postgresql/database/base/cluster.yaml), dus twee pods tijdens een rollover (2 x 8)
+    # passen erbinnen.
+    pool.max-connections = 8
 
     [storage]
     data = "db"
@@ -332,6 +338,28 @@ data:
     # van de open vervolgpunten in plans/mailrelay-sandboxtoets.md.
     [spam-filter]
     auto-update = false
+
+    # De webadmin-bundel. Bij de EERSTE start ontbreekt hij in de blobopslag en haalt
+    # Stalwart hem VOOR de logger-initialisatie op van GitHub (boot.rs v0.11.8; gemeten
+    # 20 augustus 2026 als een stille SYN naar 140.82.121.3:443). Ons netwerkbeleid staat
+    # geen internet-egress toe, dus die connect hangt tot de TCP-timeout en de
+    # liveness-probe kilt de pod eerder: een herstartlus ZONDER ENIGE LOGREGEL, want de
+    # logger draait dan nog niet. `auto-update = false` helpt hier niet, dat gaat alleen
+    # over latere updates. Een file://-pad dat niet bestaat faalt onmiddellijk; Stalwart
+    # registreert een build-error en start gewoon door. De webadmin-UI missen we niet:
+    # OPI praat met de management-REST-API en die zit in de binary zelf.
+    [webadmin]
+    auto-update = false
+    resource = "file:///nonexistent/webadmin-bewust-niet-opgehaald.zip"
+
+    # De ASN/Geo-download (jsdelivr) staat bij Stalwart standaard aan en is hier nutteloos:
+    # wij hebben geen inkomende vreemden om te geolokaliseren, en op ODCN wordt de fetch
+    # door het netwerkbeleid geblokkeerd (de sandbox-Kind dwingt netpols niet af, dus dat
+    # zie je daar niet). Hij draait na het binden van de listeners en blokkeert de start
+    # dus niet, maar een terugkerende fetch-fout in de log is ruis die een echte fout
+    # maskeert. Expliciet uit.
+    [asn]
+    type = "disable"
 
     [tracer.stdout]
     type = "stdout"
