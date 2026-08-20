@@ -261,8 +261,9 @@ class MailConnector:
         configuration behind it.
 
         An empty name is a REMOVAL, not an empty value: no display name is a valid outcome
-        (the message then leaves with a bare address), and a key that says nothing is one an
-        administrator reading the settings has to interpret.
+        (the message then leaves with the project's address and nothing in front of it), and
+        a key that says nothing is one an administrator reading the settings has to
+        interpret.
         """
         _controleer_naam(account, display_name)
         async with _TABEL_SLOT:
