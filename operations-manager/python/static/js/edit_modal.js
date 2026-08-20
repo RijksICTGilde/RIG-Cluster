@@ -128,6 +128,31 @@
         }
     });
 
+    /* De focus die de dialoog opende, zodat hij er bij het sluiten weer heen kan. */
+    var focusVoorDialoog = null;
+
+    /*
+     * De dialoog tonen EN de focus erin zetten.
+     *
+     * Dat tweede was er niet, en dat was de bug: de focus bleef op de knop staan waarmee
+     * je de dialoog opende, dus op een element ACHTER de dialoog. Page Up en Page Down
+     * gaan naar het scrollgebied van het element dat focus heeft, en dat was daarmee de
+     * pagina eronder - de dialoog zelf (die max-height 80vh en overflow-y:auto heeft)
+     * bewoog niet mee. Gemeld als "page-up en down werkt op de pagina achter de popup".
+     *
+     * De dialoog krijgt de focus zelf (tabindex="-1" in bg/_modals.html.j2) en niet het
+     * eerste veld erin: bij het openen staat er nog "Laden..." en het echte formulier
+     * komt pas met het antwoord van de server. Focus op de dialoog werkt in beide
+     * gevallen, en een schermlezer leest dan de kop die aria-labelledby aanwijst.
+     */
+    function toonDialoog(modal, backdrop) {
+        focusVoorDialoog = document.activeElement;
+        if (backdrop) backdrop.classList.add('is-open');
+        modal.classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+        modal.focus();
+    }
+
     function closeAnyOpenModals() {
         document
             .querySelectorAll('.edit-section-modal.is-open, .edit-section-backdrop.is-open')
@@ -135,6 +160,12 @@
                 el.classList.remove('is-open');
             });
         document.body.style.overflow = '';
+        /* Terug naar waar de gebruiker was. Zonder dit valt de focus naar <body> en
+           begint tabben weer bovenaan de pagina. */
+        if (focusVoorDialoog && typeof focusVoorDialoog.focus === 'function') {
+            focusVoorDialoog.focus();
+        }
+        focusVoorDialoog = null;
     }
 
     window.closeEditModal = function () {
@@ -197,9 +228,10 @@
             '</div>';
 
         // Show modal
-        document.getElementById('edit-section-backdrop').classList.add('is-open');
-        document.getElementById('edit-section-modal').classList.add('is-open');
-        document.body.style.overflow = 'hidden';
+        toonDialoog(
+            document.getElementById('edit-section-modal'),
+            document.getElementById('edit-section-backdrop')
+        );
 
         // Fetch first step from server-driven modal wizard.
         // When the caller needs to scope the flow to a specific deployment (e.g. backup),
@@ -240,9 +272,10 @@
             '<div class="edit-section-content">' +
                 '<div class="edit-section-loading"><p>Laden...</p></div>' +
             '</div>';
-        document.getElementById('edit-section-backdrop').classList.add('is-open');
-        document.getElementById('edit-section-modal').classList.add('is-open');
-        document.body.style.overflow = 'hidden';
+        toonDialoog(
+            document.getElementById('edit-section-modal'),
+            document.getElementById('edit-section-backdrop')
+        );
 
         fetch(endpoint, { credentials: 'same-origin' })
         .then(function(response) {

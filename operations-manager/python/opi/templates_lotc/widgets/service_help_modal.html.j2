@@ -24,7 +24,10 @@
   (die laatste zit in wizard.js).
 #}
 <div id="service-help-backdrop" class="service-help-backdrop" onclick="closeServiceHelp()"></div>
-<div id="service-help-modal" class="service-help-modal" role="dialog" aria-modal="true">
+{# tabindex="-1": zonder focus in de dialoog scrollen Page Up/Page Down de pagina
+   erachter. Dat viel hier het hardst op, want dit is de langste dialoog die we hebben -
+   de aliassenuitleg somt alle platform-variabelen op. #}
+<div id="service-help-modal" class="service-help-modal" role="dialog" aria-modal="true" tabindex="-1">
     <div class="service-help-modal__header">
         {# De aanroep BOVEN de tag: een componenttag verdraagt geen Jinja binnenin, en
            onclick/class zijn geen eigen attributen van c-icon-button. #}
