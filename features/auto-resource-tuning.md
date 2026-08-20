@@ -49,7 +49,10 @@ For each component in the target deployment(s):
 7. **Leave the fields the user set by hand alone** for as long as that intent lives (see
    `features/handmatig-gezette-resources.md`). Per field, not per component: a pinned CPU
    does not stop memory from being tuned. The one exception is an active OOM kill, which
-   may still raise the memory *limit*.
+   may still raise the memory *limit*. Only a real edit pins a field: the values a
+   component is CREATED with (the wizard prefills 1 CPU / 256Mi) record no intent, so a
+   fresh component is tuned like any other -- pinning them would freeze every new
+   component at its creation value with request == limit and no burst headroom.
 8. Write changed values to the **deployment-level override only**. The base (root) component is left exactly as the user declared it — it is not ratcheted by the tuner (see Root Component below).
 9. Commit once per project, then reprocess so ArgoCD redeploys.
 
