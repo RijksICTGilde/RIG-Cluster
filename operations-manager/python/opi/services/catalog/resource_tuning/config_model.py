@@ -37,6 +37,12 @@ class ResourceTuningConfig(BaseModel):
     oom_floor_min_age_days: int
     #: ...if the observed max stays below this percent of the floor.
     oom_floor_stable_percent: int
+    #: A value a user set by hand may expire after this many days...
+    user_intent_min_age_days: int
+    #: ...if the measured usage stays below this percent of what they set. Starts equal
+    #: to the OOM-floor pair so the two are explainable together, but stands apart so it
+    #: can be tuned on its own.
+    user_intent_stable_percent: int
     #: Apply an increase once the request grows by at least this percent.
     increase_threshold: int
     #: Apply a decrease only once the request shrinks by at least this percent.

@@ -205,6 +205,30 @@ def test_het_weer_aanzetten_na_een_nieuwe_image_blijft_geldig() -> None:
     poorten(project)
 
 
+def test_een_handmatig_gezette_waarde_blijft_geldig() -> None:
+    """De portal- en API-weg schrijven allebei via ``apply_user_resource_intent``.
+
+    Die schrijft op drie plekken tegelijk: de resources van de wortelcomponent, een
+    ``manual``-item in zijn historie (de bron die ``resource-history-entry`` als laatste
+    van de drie in zijn enum kreeg en die tot RC-141 door niemand geschreven werd) en het
+    WEGHALEN van dezelfde velden uit de deployment-override. Alle drie moeten door de
+    poorten van een save komen.
+    """
+    project = _basis_project()
+    project["deployments"][0]["components"][0]["resources"] = {
+        "requests": {"memory": "300Mi", "cpu": "32m"},
+        "limits": {"memory": "600Mi", "cpu": "1000m"},
+    }
+    poorten(project)
+
+    gewijzigd = ProjectFileHandler().apply_user_resource_intent(
+        project, "api", {"requests_cpu": "50m", "limits_cpu": "1"}, origin="portal"
+    )
+
+    assert gewijzigd, "zonder wijziging meet deze test niets"
+    poorten(project)
+
+
 def test_de_wortelcomponent_bijstellen_blijft_geldig() -> None:
     """De OOM-reparatie schrijft ook op de wortelcomponent: resources en een eigen historie."""
     project = _basis_project()
