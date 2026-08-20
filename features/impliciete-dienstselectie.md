@@ -122,6 +122,7 @@ bewaakt dat.
 | `user-env-vars` | ja | Systeemdienst waarvan de waarden een eigenschap van het component zijn. |
 | `aliases` | ja | Systeemdienst, idem. |
 | `publish-on-web` | ja (RC-103) | Draagt geen projectlaag: de domeinkeuze en de goedkeuringen (`domain`, `subdomain`) zitten op de **deployment**, niet op het project. Er was dus geen projectbesluit om op te wachten en ook geen endpoint om het te nemen - de weigering wees naar een laag die niet bestaat. De goedkeuring per deployment staat onveranderd. |
+| `vlam` | ja (RC-142) | Draagt op geen enkel niveau configuratie: een endpoint uit de clusterconfiguratie, een variabele, een netwerkregel. Er valt op projectniveau dus niets te beslissen. Of het cluster de dienst kan leveren is een andere vraag, en die weigert `available_on_cluster` bij het opslaan. |
 | `keycloak` | **nee** | Realm en template zijn een keuze; een verzonnen realm is direct zichtbaar in de authenticatie van de gebruiker. |
 | `authorization-wall` | **nee** | Een muur voor de applicatie zetten is een beveiligingsbesluit op projectniveau, niet een bijeffect van een componentwijziging. |
 | `cross-domain-access` | **nee** | Legt vast welke domeinen elkaar mogen bereiken; zonder die keuze betekent de dienst niets. |
