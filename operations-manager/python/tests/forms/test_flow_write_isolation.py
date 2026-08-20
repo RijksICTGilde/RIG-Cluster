@@ -289,6 +289,60 @@ FLOW_EDITS: list[tuple[str, str, Any, dict[str, Any]]] = [
 ]
 
 
+#: Een resource-bewerking op een component (``components[N]/resources/...``).
+_RESOURCE_EDIT_RE = re.compile(r"^components\[(\d+)\]/resources/(requests|limits)/(cpu|memory)$")
+
+
+def account_for_resource_intent(
+    result: dict[str, Any],
+    expected: dict[str, Any],
+    flow_id: str,
+    yaml_path: str,
+    new_value: Any,
+) -> None:
+    """Verreken wat een resource-bewerking BEWUST meer doet dan zijn eigen veld schrijven.
+
+    Sinds RC-141 loopt een resource-bewerking via ``apply_user_resource_intent``, want de
+    catalogus alleen bijwerken is een stille no-op zodra de tuner ooit een override heeft
+    geschreven. Die weg doet drie dingen extra, en alle drie horen hier thuis in plaats van
+    de vergelijking op te rekken:
+
+    1. hij legt de wens vast als ``manual``-historie-item -- dat is het item waar de tuner
+       later op kijkt, dus zonder dat item werkt de bescherming niet;
+    2. hij migreert een legacy platte ``cpu``/``memory``-sleutel naar ``limits`` (dat doet
+       ``_apply_flat_resources`` al jaren voor de tuner; het projectbestand hier heeft nog
+       die oude vorm);
+    3. hij trekt een ONTBREKEND geheugen-request mee met de limiet, precies zoals
+       ``apply_resource_limits`` dat op de API-weg altijd al deed. In de echte modal
+       gebeurt dat niet: die post het request zelf mee, en dan is dat de wens.
+
+    Het historie-item wordt uit *result* gehaald (de tijdstempel is per definitie niet
+    voorspelbaar) nadat is gecontroleerd dat het over het bewerkte veld gaat; de andere
+    twee worden in *expected* nagebouwd. Wat daarna overblijft moet byte voor byte gelijk
+    zijn, net als bij elke andere stroom.
+    """
+    match = _RESOURCE_EDIT_RE.match(yaml_path)
+    if match is None or not flow_id.startswith("modal-edit-component-"):
+        # De sectiestroom ``modal-edit-components`` bewerkt de hele lijst en heeft geen
+        # target; die legt dus geen wens vast (en is ook niet vanuit het scherm te openen).
+        return
+    index, block, field = int(match[1]), match[2], match[3]
+
+    resources = result["components"][index]["resources"]
+    history = resources.pop("history", [])
+    assert [entry["source"] for entry in history] == ["manual"], (
+        f"{flow_id} legde de wens van de gebruiker niet vast; zonder dat item overschrijft de tuner hem weer"
+    )
+    assert history[0][block] == {field: new_value}
+
+    verwacht = expected["components"][index]["resources"]
+    legacy = verwacht.pop("cpu", None)
+    if legacy is not None:
+        verwacht.setdefault("limits", {})["cpu"] = legacy
+    if (block, field) == ("limits", "memory"):
+        verwacht.setdefault("requests", {}).setdefault("memory", new_value)
+
+
 @pytest.mark.parametrize(
     ("flow_id", "yaml_path", "new_value", "flow_context"),
     FLOW_EDITS,
@@ -309,6 +363,7 @@ async def test_edit_touches_only_its_own_field(
     result = await run_flow_edit(project_data, flow_id, yaml_path, new_value, **flow_context)
 
     assert smart_get_value(result, yaml_path) == new_value, f"{flow_id} did not apply its own edit"
+    account_for_resource_intent(result, expected, flow_id, yaml_path, new_value)
     assert dump_yaml_to_string(result) == dump_yaml_to_string(expected), f"{flow_id} changed more than {yaml_path}"
 
 

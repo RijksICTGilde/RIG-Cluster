@@ -27,7 +27,12 @@ from typing import Any
 import pytest
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.utils.yaml_util import dump_yaml_to_string
-from tests.forms.test_flow_write_isolation import FLOW_EDITS, build_project, run_flow_edit
+from tests.forms.test_flow_write_isolation import (
+    FLOW_EDITS,
+    account_for_resource_intent,
+    build_project,
+    run_flow_edit,
+)
 
 # De helm-values op deploymentniveau staan in het echte projectbestand als AGE-blok;
 # die op projectniveau als gewone boom. Beide vormen komen hier voor, want een
@@ -100,6 +105,7 @@ async def test_bewerking_laat_het_helmfile_blok_heel(
     result = await run_flow_edit(project_data, flow_id, yaml_path, new_value, **flow_context)
 
     assert smart_get_value(result, yaml_path) == new_value, f"{flow_id} paste zijn eigen wijziging niet toe"
+    account_for_resource_intent(result, expected, flow_id, yaml_path, new_value)
     assert dump_yaml_to_string(result) == dump_yaml_to_string(expected), (
         f"{flow_id} wijzigde meer dan {yaml_path} aan een project met een helmfile"
     )

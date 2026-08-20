@@ -2,7 +2,7 @@
 
 **Status**: Implemented (on-demand + nightly, VPA-driven memory + CPU)
 **Created**: 2026-02-10
-**Updated**: 2026-06-26
+**Updated**: 2026-08-20
 
 ## Overview
 
@@ -46,8 +46,12 @@ For each component in the target deployment(s):
    - OOM kills are always read from Prometheus (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`); when OOM kills are present the VPA target is not used (the OOM path drives the limit instead).
 5. Skip if the observed max is below `min_observed_mi` (see Plausibility Floor below), unless OOM kills were detected.
 6. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps.
-7. Write changed values to the **deployment-level override only**. The base (root) component is left exactly as the user declared it — it is not ratcheted by the tuner (see Root Component below).
-8. Commit once per project, then reprocess so ArgoCD redeploys.
+7. **Leave the fields the user set by hand alone** for as long as that intent lives (see
+   `features/handmatig-gezette-resources.md`). Per field, not per component: a pinned CPU
+   does not stop memory from being tuned. The one exception is an active OOM kill, which
+   may still raise the memory *limit*.
+8. Write changed values to the **deployment-level override only**. The base (root) component is left exactly as the user declared it — it is not ratcheted by the tuner (see Root Component below).
+9. Commit once per project, then reprocess so ArgoCD redeploys.
 
 ### Recommendation Algorithm (Memory)
 
@@ -115,6 +119,15 @@ or emergency path:
 - **Limit**: mirrors the request when the two were equal (the untouched default);
   a limit already set to differ from the request is left **frozen**. Clamped to
   `max_cpu_limit_m` (4000m on odcn).
+
+That freeze is a **guess**, and it guesses wrong in both directions: a tuner-set pair that
+happens to differ looks frozen too, and a user who deliberately sets limit equal to request
+loses the protection. Since RC-141 a value the user actually set carries a `manual` history
+entry and is skipped before this function ever sees it, so the guess only applies to
+components with no recorded intent. It stays because removing it would let the tuner pull
+every limit down to its request in one sweep (in production nearly every component has
+limit != request), and it can go once intent is recorded broadly. See
+`features/handmatig-gezette-resources.md`.
 
 Note: the memory-only refinements do **not** apply to CPU. CPU keeps the
 frozen-limit rule (memory dropped it in favour of a decaying peak-based limit),
@@ -237,6 +250,8 @@ vars in practice, and a system service owns its own config. Change a value in
 | `min_delta_m` | `10` | Ignore CPU changes smaller than this in millicores (absolute deadband) |
 | `min_limit_headroom_mi` | `64` | Minimum absolute headroom the memory limit keeps above the request (so limit never equals request) |
 | `min_observed_mi` | `5.0` | Below this observed max the measurement counts as "no data" instead of as a real value |
+| `user_intent_min_age_days` | `10` | A value a user set by hand may expire after this many days... |
+| `user_intent_stable_percent` | `50` | ...if the measured usage stays below this percent of what they set |
 | `scheduler_enabled` | `true` | Run the nightly fleet-wide tuner |
 | `hour` | `1` | Hour (Europe/Amsterdam) of the nightly sweep (off-peak, before backups) |
 | `pace_seconds` | `15` | Delay after each changed project, to spread pod rollouts |
@@ -298,7 +313,8 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 | **Limit/request margin** | A written memory limit stays at least 64Mi above the request, so a container never ends up with limit == request |
 | **OOM floor (memory limit)** | A valid (recent, not-yet-stale) OOM floor is the lower bound for the memory limit, so a real past peak is never undercut; the limit only decays once the floor expires |
 | **OOM watcher net** | The reactive OOM watcher re-bumps a limit that decayed too far (e.g. an unobserved boot spike), so the peak-based limit can shrink without permanently risking startup |
-| **Frozen limit (CPU only)** | A CPU limit already set to differ from the request is left untouched; memory limits are no longer frozen (they track the peak) |
+| **Frozen limit (CPU only)** | A CPU limit already set to differ from the request is left untouched; memory limits are no longer frozen (they track the peak). This is a GUESS and only the fallback for components with no recorded intent |
+| **User intent wins** | A field a user set through the portal or API carries a `manual` history entry; the tuner skips exactly those fields until the intent expires. Only an active OOM kill may still raise the memory limit |
 | **Git-based changes** | All changes are auditable, reviewable, and reversible |
 | **Deployment-level scoping** | Tuning writes to deployment overrides, not shared definitions (except request propagation) |
 | **Fresh git reads** | Tuning reads the latest YAML from git before modifying, preventing stale cache data from overwriting concurrent changes |
@@ -357,6 +373,7 @@ for the health watcher.
 
 ## Related
 
+- `features/handmatig-gezette-resources.md` - how a hand-set value beats the tuner, and when it expires
 - `features/oom-kill-watcher.md` - the health watcher that detects OOM/image-pull/crash-loop
 - `features/futures/sidecar-resource-tuning.md` - extends tuning to sidecar containers
 - `features/futures/configurable-deployment-resources.md` - prerequisite for resource values in YAML

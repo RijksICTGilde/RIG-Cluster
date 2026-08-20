@@ -130,7 +130,7 @@ INVENTARIS: dict[str, Schrijver] = {
 
 
 #: De naamprefixen waarmee ``ProjectFileHandler`` zijn muterende functies aanduidt.
-_MUTATIEPREFIXEN = ("set_", "append_", "compact_", "reenable_", "remove_")
+_MUTATIEPREFIXEN = ("set_", "append_", "compact_", "reenable_", "remove_", "apply_")
 
 #: De gedeelde structuurschrijvers van ``ProjectFileHandler``: functies die project_data
 #: aanpassen. Ze staan los van de inventaris hierboven, want ze committen zelf niet -- de
@@ -138,6 +138,7 @@ _MUTATIEPREFIXEN = ("set_", "append_", "compact_", "reenable_", "remove_")
 HANDLER_MUTATOREN: dict[str, str] = {
     "set_component_disabled": "test_het_uitzetten_van_een_component_blijft_geldig",
     "set_component_resources": "test_de_wortelcomponent_bijstellen_blijft_geldig",
+    "apply_user_resource_intent": "test_een_handmatig_gezette_waarde_blijft_geldig",
     "append_component_resource_history": "test_de_wortelcomponent_bijstellen_blijft_geldig",
     "set_deployment_component_disabled": "test_het_uitzetten_van_een_deploymentcomponent_blijft_geldig",
     "set_deployment_component_resources": "test_de_tuner_laat_een_geldig_projectbestand_achter",

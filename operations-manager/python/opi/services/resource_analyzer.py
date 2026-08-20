@@ -156,6 +156,17 @@ def compute_cpu_recommendation(
     were equal (the untouched default); a deliberately-set limit is left frozen.
     Both are bounded by the cluster CPU ceilings.
 
+    That freeze is a GUESS, and only the fallback for a component with no recorded
+    intent (RC-141): a limit that differs from its request is read as deliberate, which
+    is wrong in both directions -- a tuner-set pair that happens to differ looks frozen
+    too, and a user who deliberately sets limit equal to request loses the protection.
+    A value the user actually set carries a ``manual`` history entry, and the caller
+    skips that field entirely before this function ever sees it
+    (``resource_tuning_service._live_intent_fields``), so the guess never applies there.
+    It is kept because removing it would let the tuner pull every limit down to its
+    request in one sweep -- in production nearly every component has limit != request --
+    and it can go once intent is recorded broadly.
+
     The caller decides whether the change is worth applying (see
     :func:`passes_deviation_gate`); this function always returns the ideal
     clamped values.
