@@ -46,8 +46,10 @@ class MergedRule:
     peer_component: str | None
     local_component: str
     port: int
-    #: Named ``is_open`` and not ``open``: the stored KEY is ``open``, but a dataclass
-    #: attribute by that name reads like the verb everywhere it is used.
+    #: Derived, never stored: nothing in the config is called "open". This is what
+    #: ``from: {project: "*"}`` becomes once ``to_merged_rule`` has recognized it, so the
+    #: resolver need not know about the wildcard. Named ``is_open`` and not ``open``
+    #: because the bare word is a Python builtin and reads like the verb.
     is_open: bool = False
 
 

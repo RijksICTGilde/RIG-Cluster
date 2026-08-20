@@ -45,8 +45,9 @@ class ResolvedRule:
     """A rule ready to render: my component may talk to/from ``peer`` on ``port``.
 
     ``peer`` is None for an OPEN inbound rule (RC-142): the port is opened to every source,
-    so there is no selector to build. Only an inbound rule that says ``open: true`` can
-    produce this; a peer that could not be resolved is skipped, never turned into None.
+    so there is no selector to build. Only an inbound rule whose peer project is the
+    wildcard (``from: {project: "*"}``) can produce this; a peer that could not be resolved
+    is skipped, never turned into None.
     """
 
     local_component: str

@@ -1086,6 +1086,21 @@ class TestDeWildcardPeer:
         assert "from" not in open_rule
         assert peered["from"][0]["podSelector"]["matchLabels"]["app"] == "prod-api"
 
+    def test_een_open_ingress_en_een_egress_in_hetzelfde_document(self) -> None:
+        """De open tak schrijft ``ports:`` op een andere inspringing dan de peer-tak; de
+        egress-sectie die erop volgt mag daar niet in meelopen."""
+        doc = _render(
+            ingress=[{"peer": None, "ports": [8081]}],
+            egress=[{"peer": _peer("prod-worker"), "ports": [9090]}],
+        )
+        assert doc["spec"]["policyTypes"] == ["Ingress", "Egress"]
+        [open_rule] = doc["spec"]["ingress"]
+        assert "from" not in open_rule
+        assert [port["port"] for port in open_rule["ports"]] == [8081]
+        [egress_rule] = doc["spec"]["egress"]
+        assert egress_rule["to"][0]["podSelector"]["matchLabels"]["app"] == "prod-worker"
+        assert [port["port"] for port in egress_rule["ports"]] == [9090]
+
     def test_de_keuzelijst_biedt_de_wildcard_niet_aan(self) -> None:
         from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
 
