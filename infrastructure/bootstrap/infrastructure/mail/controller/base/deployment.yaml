@@ -70,11 +70,14 @@ spec:
                 secretKeyRef:
                   name: mail-relay-credentials
                   key: MAIL_FROM_LOCAL
+            # DE UPSTREAM. Geen geheim en dus geen secret: een host, een poort (overal 25),
+            # TLS. De basis draagt de productiewaarde: de mailserver van de organisatie,
+            # zonder gebruikersnaam en wachtwoord - gemeten op 17 augustus 2026 adverteert
+            # die server geen AUTH en vertrouwt hij op ons uitgaande adres 145.21.227.140.
+            # Zie docs/ron-koppeling.md. De component mail/sink/as-upstream zet hem om naar
+            # de SMTP-sink, dus local en sandboxed-local krijgen de sink vanzelf mee.
             - name: MAIL_UPSTREAM_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: mail-relay-credentials
-                  key: MAIL_UPSTREAM_HOST
+              value: rmrmail.rijksweb.nl
             # Strikte certificaatcontrole op de sprong naar de upstream. Staat hier op
             # "false" zodat elk cluster hem strikt heeft zonder iets te hoeven zeggen; de
             # component mail/sink/as-upstream zet hem om, want de sink die diezelfde
@@ -92,26 +95,27 @@ spec:
                 secretKeyRef:
                   name: mail-relay-credentials
                   key: MAIL_RELAY_ADMIN_PASSWORD
+            # De gedeelde PostgreSQL. De host is geen geheim: de basis draagt de
+            # productiewaarde, en de overlays van local en sandboxed-local zetten hem om
+            # naar rig-system, want daar draait de database op die clusters.
             - name: MAIL_DB_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: mail-relay-credentials
-                  key: MAIL_DB_HOST
+              value: rig-db-rw.rig-prd-operations.svc.cluster.local
             - name: MAIL_DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: mail-relay-credentials
-                  key: MAIL_DB_NAME
+              value: mailrelay
+            # Gebruiker en wachtwoord komen uit mail-db-credentials: hetzelfde geheim waar
+            # CNPG de rol `mailrelay` uit aanmaakt (zie postgresql/database/base), hier
+            # een tweede keer gerenderd in de namespace van de relay. Een bron, dus een
+            # rotatie kan niet in de ene lezer landen en in de andere niet.
             - name: MAIL_DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: mail-relay-credentials
-                  key: MAIL_DB_USER
+                  name: mail-db-credentials
+                  key: username
             - name: MAIL_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: mail-relay-credentials
-                  key: MAIL_DB_PASSWORD
+                  name: mail-db-credentials
+                  key: password
           resources:
             requests:
               cpu: 50m

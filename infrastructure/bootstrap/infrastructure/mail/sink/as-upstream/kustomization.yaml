@@ -1,6 +1,7 @@
-# De sink ALS UPSTREAM van de relay: de sink zelf plus de schakelaar die de relay hem laat
-# aannemen. Die twee horen onlosmakelijk bij elkaar, en daarom staan ze in een component in
-# plaats van los in elke overlay: wie de sink inlaadt, krijgt de schakelaar mee. Dat is
+# De sink ALS UPSTREAM van de relay: de sink zelf, het upstream-adres dat naar de sink
+# wijst, en de schakelaar die de relay zijn zelfondertekende certificaat laat aannemen.
+# Die drie horen onlosmakelijk bij elkaar, en daarom staan ze in een component in
+# plaats van los in elke overlay: wie de sink inlaadt, krijgt de rest mee. Dat is
 # precies de fout die deze component voorkomt - de sink stond in twee overlays en de
 # schakelaar in een, waardoor `local` de sink kreeg maar er niets aan kon bezorgen.
 #
@@ -38,5 +39,10 @@ patches:
             containers:
               - name: stalwart
                 env:
+                  # Het Deployment in de basis wijst naar de mailserver van de organisatie;
+                  # hier gaat alles naar de sink. Deze component draait alleen in overlays
+                  # met namespace rig-ron, dus de FQDN klopt overal waar hij meekomt.
+                  - name: MAIL_UPSTREAM_HOST
+                    value: rig-mail-sink.rig-ron.svc.cluster.local
                   - name: MAIL_UPSTREAM_ALLOW_INVALID_CERTS
                     value: "true"
