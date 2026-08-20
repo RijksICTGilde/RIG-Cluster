@@ -388,6 +388,35 @@ class TestEditWizardServiceFlow:
         merged = state.get_merged_data()
         assert merged["services"] == []
 
+    def test_deselect_survives_attachments_carrier(self, project_data_with_services, edit_flow):
+        """De readonly services-carrier van de bijlagenstap mag een verwijderde dienst niet terugbrengen.
+
+        Met attachments geselecteerd is de bijlagensectie actief, en haar verborgen
+        carrier (yaml_path="services") kreeg bij het openen een volledige kopie van de
+        oude dienstenlijst. De naam-unie in merge_service_lists voegde de verwijderde
+        dienst daaruit weer toe: de configstap verscheen opnieuw en de save hield hem.
+        """
+        data = copy.deepcopy(project_data_with_services)
+        data["services"].extend(["attachments", "authorization-wall"])
+        step_data = _split_data_across_sections(edit_flow, data)
+
+        # User unticks authorization-wall
+        original_names = _service_names(data["services"])
+        step_data["services-edit"] = {"services": [s for s in original_names if s != "authorization-wall"]}
+
+        active = resolve_active_section_ids(edit_flow, step_data)
+        assert "auth-wall-config" not in active, "config step for the removed service came back"
+
+        state = _make_state(
+            flow_id="modal-edit-services",
+            step_data=step_data,
+            active_sections=active,
+            virt_mappings={"_services-config": "services"},
+        )
+        merged_names = _service_names(state.get_merged_data()["services"])
+        assert "authorization-wall" not in merged_names
+        assert "attachments" in merged_names
+
     def test_config_preserved_after_service_stays_selected(self, project_data_with_services, edit_flow):
         """When a service with config stays selected, its config dict is preserved."""
         step_data = _split_data_across_sections(edit_flow, project_data_with_services)
