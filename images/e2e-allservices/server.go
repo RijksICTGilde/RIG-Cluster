@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -57,13 +58,35 @@ func newMux(cache *resultCache) *http.ServeMux {
 		_ = enc.Encode(status)
 	})
 
+	// Manual, human-triggered: a real send eats from the project's daily budget on
+	// the relay, so this is a button on the page, never part of the check round.
+	// POST-redirect-GET so a refresh does not resend.
+	mux.HandleFunc("/send-testmail", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		to := strings.TrimSpace(r.FormValue("to"))
+		if to == "" || !strings.Contains(to, "@") {
+			http.Redirect(w, r, "/?testmailerr="+url.QueryEscape("vul een geldig ontvangeradres in"), http.StatusSeeOther)
+			return
+		}
+		subject, err := sendTestMail(to)
+		if err != nil {
+			logInfo("testmail to %s failed: %v", to, err)
+			http.Redirect(w, r, "/?testmailerr="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/?testmail="+url.QueryEscape(subject), http.StatusSeeOther)
+	})
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(renderHTML(cache)))
+		_, _ = w.Write([]byte(renderHTML(cache, r.URL.Query())))
 	})
 
 	return mux
@@ -71,8 +94,10 @@ func newMux(cache *resultCache) *http.ServeMux {
 
 // renderHTML is a single self-contained page: a Hello, world banner plus a live
 // table of service -> OK/FAIL/skipped, so the workload is eyeball-able in a
-// browser via the project's public ingress.
-func renderHTML(cache *resultCache) string {
+// browser via the project's public ingress. When the send-email service is bound
+// it also carries the manual testmail form; query holds the outcome of the last
+// send (set by the /send-testmail redirect).
+func renderHTML(cache *resultCache, query url.Values) string {
 	status := buildStatus(cache)
 	var rows strings.Builder
 	results, _, _ := cache.snapshot()
@@ -106,6 +131,23 @@ func renderHTML(cache *resultCache) string {
 		}
 	}
 
+	var mailSection string
+	if mailBound() {
+		outcome := ""
+		if s := query.Get("testmail"); s != "" {
+			outcome = fmt.Sprintf(`<p style="color:#137333">Verstuurd: <code>%s</code> &mdash; zoek dit onderwerp bij de ontvanger (sandbox: Mailpit).</p>`, html.EscapeString(s))
+		} else if e := query.Get("testmailerr"); e != "" {
+			outcome = fmt.Sprintf(`<p style="color:#c5221f">Mislukt: %s</p>`, html.EscapeString(e))
+		}
+		mailSection = fmt.Sprintf(`
+<h2>Testmail</h2>
+<p class="meta">Verstuurt echt een bericht via de mailrelay (STARTTLS + AUTH, telt mee in het dagbudget) als account <code>%s</code>.</p>
+<form method="post" action="/send-testmail">
+ <input type="email" name="to" value="test@example.com" size="32" required>
+ <button type="submit">Stuur testmail</button>
+</form>%s`, html.EscapeString(firstEnv("SMTP_USERNAME")), outcome)
+	}
+
 	return fmt.Sprintf(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -127,8 +169,9 @@ func renderHTML(cache *resultCache) string {
 <thead><tr><th>service</th><th>kind</th><th>verdict</th><th>latency</th><th>error</th></tr></thead>
 <tbody>%s</tbody>
 </table>
+%s
 <p class="meta">Machine-readable status at <a href="/status">/status</a>; liveness at <a href="/healthz">/healthz</a>.</p>
 </body></html>`,
 		html.EscapeString(status.Deployment), html.EscapeString(status.Component),
-		html.EscapeString(overall), rows.String())
+		html.EscapeString(overall), rows.String(), mailSection)
 }
