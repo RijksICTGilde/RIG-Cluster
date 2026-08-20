@@ -1030,13 +1030,28 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     state.store_step_data(section_id, section_data)
 
     # Run the section's post_merge reconciler against the merged view and
-    # persist affected component data back into step_data. The services step
-    # uses this to drop component-level service config when a project service
-    # is deselected; without persisting it here the components step would
-    # render stale config blocks until it was itself re-submitted (one
-    # navigation late).
+    # persist affected data back into step_data. The services step uses this to
+    # drop component-level service config when a project service is deselected;
+    # without persisting it here the components step would render stale config
+    # blocks until it was itself re-submitted (one navigation late).
     if section.post_merge is not None:
         section.post_merge(submitted_yaml, submitted_yaml)
+
+        # DE EIGEN SECTIE OOK OPNIEUW BEWAREN, en dat is waar het misging.
+        #
+        # De stapgegevens hierboven zijn bewaard VOORDAT deze hook draaide, en daarna werd
+        # alleen ``components`` opnieuw bewaard. Een hook die zijn EIGEN sectie aanvult
+        # schreef daarmee in het lucht: de aanvulling stond in de samengevoegde weergave,
+        # maar niet in de wizardstand, en die stand is wat er aan het eind opgeslagen wordt.
+        #
+        # Zichtbaar geworden bij de uitnodigingen. Het sleutelveld mag leeg blijven en
+        # wordt dan gevuld met een gegenereerde sleutel (InviteService.generate_missing_values,
+        # aangehangen als post_merge). Die sleutel haalde de wizardstand nooit, dus aan het
+        # eind stond er een uitnodiging zonder ``key`` in het bestand, en ``InviteEntry.key``
+        # is verplicht. De wizard eindigde met "Failed Git operations: configuratie van
+        # service 'invite' op projectniveau is ongeldig: Field required", en omdat het
+        # opslaan de laatste stap is, was de hele sessie weg.
+        state.store_step_data(section_id, _extract_section_data(section.editables, submitted_yaml))
         if "components" in submitted_yaml:
             state.store_step_data("components", {"components": submitted_yaml["components"]})
 
