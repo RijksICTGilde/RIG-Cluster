@@ -154,6 +154,23 @@
                     {% endif %}
 
                     <c-cluster gap="sm" align="center">
+                        {# Zelfde sprong als op de paginawizard: de flow wordt eerst in zijn
+                           geheel gevalideerd, een gemiste verplichte waarde zet je op die
+                           stap neer in plaats van op de samenvatting. #}
+                        {% if show_review and not steps.is_last %}
+                            <c-button
+                                type="tertiary"
+                                label="Naar samenvatting"
+                                icon="chevron-right"
+                                show-icon="after"
+                                hx-post="{{ _step_url_prefix }}{{ section.section_id }}{{ _token_qs }}"
+                                hx-target="#edit-section-inner"
+                                hx-swap="innerHTML"
+                                hx-include="#modal-wizard-form"
+                                hx-vals='{"_goto": "review"}'
+                                hx-ext="json-enc"
+                                hx-disabled-elt="this" />
+                        {% endif %}
                         {% if steps.is_last %}
                             {# Backup en restore slaan niets op maar starten een taak; daar
                                staat "Bezig met opslaan" dus niet. Zoals in het origineel. #}

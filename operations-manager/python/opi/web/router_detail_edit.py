@@ -451,6 +451,7 @@ def _render_modal_step(
         "step_target": "#edit-section-inner",
         "step_push_url": False,
         "step_query_params": "",
+        "show_review": flow.show_review,
         # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-sjablonen hebben de
         # NLDD-woordenschat nodig. Het roos-sjabloon raakt dit niet aan.
         "nldd_icon": to_nldd_icon,
@@ -460,6 +461,83 @@ def _render_modal_step(
         template="bg/_modal-wizard-step.html.j2",
         context=context,
     )
+
+
+async def _validate_modal_flow_for_review(
+    request: Request,
+    wizard_token: str | None,
+    state: WizardState,
+    flow_id: str,
+    project_name: str,
+    active_sections: list[FormSection],
+) -> HTMLResponse | None:
+    """Valideer de hele modalflow voor de sprong naar de samenvatting.
+
+    De modal-tegenhanger van ``router_wizard._validate_whole_flow``: alle actieve
+    secties worden tegen de samengevoegde data gevalideerd, inclusief de stappen
+    die de gebruiker met de sprong overslaat (een net aangevinkte service met een
+    lege verplichte config voorop). Geeft bij fouten de her-render van de eerste
+    falende stap terug, met de fouten gemarkeerd; anders None.
+    """
+    from opi.web.router_wizard import _collect_all_editable_paths, _section_has_errors
+
+    all_editables = [editable for section in active_sections for editable in section.editables]
+    yaml_data = state.get_merged_data()
+    processor = EditableFormProcessor()
+    processor.clear_hidden_depends_on(all_editables, yaml_data)
+
+    enforcer_ctx: dict[str, Any] = {"project_name": project_name}
+    if state.base_data and "existing_deployment_names" in state.base_data:
+        enforcer_ctx["existing_deployment_names"] = state.base_data["existing_deployment_names"]
+    if state.base_data and "existing_component_names" in state.base_data:
+        enforcer_ctx["existing_component_names"] = state.base_data["existing_component_names"]
+
+    _final, errors = await processor.process_json_submission(
+        yaml_data,
+        all_editables,
+        yaml_data,
+        edit_mode=True,
+        enforcer_context=enforcer_ctx,
+        strip_transients=False,
+    )
+    global_errors: list[str] = []
+    if not errors:
+        field_errors: dict[str, list[str]] = {}
+        global_errors = await processor.enforce_sections(
+            yaml_data, active_sections, enforcer_context=enforcer_ctx, field_errors=field_errors
+        )
+        errors = field_errors
+    if not errors and not global_errors:
+        return None
+
+    logger.warning(
+        "Modal review jump blocked for %s/%s: field_errors=%s global_errors=%s",
+        project_name,
+        flow_id,
+        errors,
+        global_errors,
+    )
+    error_section = active_sections[0]
+    for section in active_sections:
+        if _section_has_errors(_collect_all_editable_paths(section.editables), errors):
+            error_section = section
+            break
+    state.current_step = error_section.section_id
+    save_modal_state_by_token(wizard_token, state)
+    step_html = _render_section_html(error_section, yaml_data, errors=errors, locked_services=None)
+    rendered = _render_modal_step(
+        request,
+        wizard_token,
+        state,
+        flow_id,
+        error_section,
+        step_html,
+        project_name,
+        errors=errors,
+        global_errors=global_errors
+        or ["Er zijn nog verplichte velden leeg. Vul deze stap aan voordat je naar de samenvatting gaat."],
+    )
+    return HTMLResponse(content=rendered)
 
 
 def _targeted_deployment_name(flow: FormFlow, project_data: dict[str, Any]) -> str | None:
@@ -829,6 +907,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     seq_path = body.pop("_seq_path", None)
     seq_index = body.pop("_seq_index", None)
     is_rerender = bool(body.pop("_rerender", None))
+    goto = body.pop("_goto", None)
 
     if seq_action in ("add", "remove"):
         yaml_data = state.get_merged_data()
@@ -1003,6 +1082,28 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     # Determine next step
     active_sections = resolve_active_sections(flow, state.step_data)
     section_ids = [s.section_id for s in active_sections]
+
+    # De sprong "Naar samenvatting": mag stappen overslaan, maar geen verplichte
+    # waarde. Valideer de hele flow (zoals de paginawizard dat in zijn
+    # review-tak doet) en land bij fouten op de eerste stap die nog iets mist.
+    if goto == "review" and flow.show_review:
+        error_response = await _validate_modal_flow_for_review(
+            request, wizard_token, state, flow_id, project_name, active_sections
+        )
+        if error_response is not None:
+            return error_response
+        for validated in active_sections:
+            state.mark_completed(validated.section_id)
+        save_modal_state_by_token(wizard_token, state)
+        return _render_modal_review(
+            request,
+            wizard_token,
+            project_name,
+            flow_id,
+            active_sections,
+            state,
+            field_warnings=section_warnings or None,
+        )
 
     try:
         current_idx = section_ids.index(section_id)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import html
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -1084,6 +1084,17 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     # Review page
     if target_section_id == "review":
+        # De sprong "Naar samenvatting" mag stappen overslaan, maar geen verplichte
+        # waarde: valideer de HELE flow zoals de eindinzending dat doet, en land bij
+        # fouten op de eerste stap die nog iets mist (een net aangevinkte service
+        # met een lege verplichte config voorop).
+        validation = await _validate_whole_flow(request, flow_id, state)
+        if validation.error_response is not None:
+            return validation.error_response
+        # De overgeslagen stappen zijn zojuist gevalideerd; zonder dit vinkje zou de
+        # stapindicator op de samenvatting ze als onafgemaakt tonen.
+        for validated in validation.active_sections:
+            state.mark_completed(validated.section_id)
         save_wizard_state(request, state)
         return await _render_review(request, flow_id)
 
@@ -2307,19 +2318,28 @@ def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> No
         raise
 
 
-async def _do_submit(
-    request: Request,
-    flow_id: str,
-) -> HTMLResponse | RedirectResponse:
-    """Execute the final wizard submission."""
-    state = get_wizard_state(request)
-    if not state or state.flow_id != flow_id:
-        logger.warning("Wizard session lost on submit (flow=%s), redirecting to start", flow_id)
-        return RedirectResponse(
-            url=f"/forms/wizard/{flow_id}",
-            status_code=303,
-        )
+class _FlowValidation(NamedTuple):
+    """Uitkomst van een hele-flow-validatie (zie ``_validate_whole_flow``)."""
 
+    error_response: Response | None
+    final_data: dict[str, Any]
+    yaml_data: dict[str, Any]
+    all_editables: list[Any]
+    active_sections: list[Any]
+    enforcer_context: dict[str, Any]
+    processor: EditableFormProcessor
+
+
+async def _validate_whole_flow(request: Request, flow_id: str, state: Any) -> _FlowValidation:
+    """Valideer ALLE actieve secties tegen de samengevoegde wizarddata.
+
+    Het validatiedeel van de eindinzending, gedeeld met de sprong "Naar
+    samenvatting": die mag een stap overslaan, maar geen verplichte waarde. Bij
+    fouten is ``error_response`` de her-render van de eerste falende sectie
+    (met de fouten gemarkeerd) en is de rest van het resultaat niet bruikbaar;
+    anders draagt het resultaat de gevalideerde ``final_data`` en de context
+    die de eindinzending daarna nodig heeft.
+    """
     flow = get_flow(flow_id)
     active_sections = resolve_active_sections(flow, state.step_data)
 
@@ -2341,28 +2361,15 @@ async def _do_submit(
 
     enforcer_context = {"project_name": state.project_name, "edit_mode": state.is_edit}
 
-    # Validate and build final YAML in a single pass.
-    # The merged yaml_data is both the "submitted" values and the base.
-    # Process WITHOUT stripping transients first — generators may need them.
-    final_data, errors = await processor.process_json_submission(
-        yaml_data,
-        all_editables,
-        yaml_data,
-        edit_mode=state.is_edit,
-        enforcer_context=enforcer_context,
-        strip_transients=False,
-    )
-
-    if errors:
+    def _fail(errors: dict[str, list[str]], global_errors: list[str]) -> _FlowValidation:
         # Find the first section with errors and navigate there
-        logger.warning("Final validation failed: %s", errors)
         error_section = active_sections[0]
-        for section in active_sections:
-            section_paths = _collect_all_editable_paths(section.editables)
-            if _section_has_errors(section_paths, errors):
-                error_section = section
-                break
-
+        if errors:
+            for section in active_sections:
+                section_paths = _collect_all_editable_paths(section.editables)
+                if _section_has_errors(section_paths, errors):
+                    error_section = section
+                    break
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
 
@@ -2379,9 +2386,26 @@ async def _do_submit(
             error_section,
             step_html,
             errors=errors,
-            global_errors=["Er zijn nog validatiefouten. Controleer de gemarkeerde velden."],
+            global_errors=global_errors,
         )
-        return _step_response(request, context)
+        return _FlowValidation(
+            _step_response(request, context), {}, yaml_data, all_editables, active_sections, enforcer_context, processor
+        )
+
+    # Validate and build final YAML in a single pass.
+    # The merged yaml_data is both the "submitted" values and the base.
+    # Process WITHOUT stripping transients first — generators may need them.
+    final_data, errors = await processor.process_json_submission(
+        yaml_data,
+        all_editables,
+        yaml_data,
+        edit_mode=state.is_edit,
+        enforcer_context=enforcer_context,
+        strip_transients=False,
+    )
+    if errors:
+        logger.warning("Final validation failed: %s", errors)
+        return _fail(errors, ["Er zijn nog validatiefouten. Controleer de gemarkeerde velden."])
 
     # Cross-section enforcement
     enforce_field_errors: dict[str, list[str]] = {}
@@ -2390,27 +2414,33 @@ async def _do_submit(
     )
     if global_errors or enforce_field_errors:
         logger.warning("Section enforcement failed: global=%s field=%s", global_errors, enforce_field_errors)
-        # Find the section that owns the first field error
-        error_section = active_sections[0]
-        if enforce_field_errors:
-            for section in active_sections:
-                section_paths = _collect_all_editable_paths(section.editables)
-                if _section_has_errors(section_paths, enforce_field_errors):
-                    error_section = section
-                    break
-        state.current_step = error_section.section_id
-        save_wizard_state(request, state)
+        return _fail(enforce_field_errors, global_errors)
 
-        step_html = _render_step_html(request, error_section, yaml_data=yaml_data, errors=enforce_field_errors)
-        context = _build_step_context(
-            request,
-            flow_id,
-            error_section,
-            step_html,
-            errors=enforce_field_errors,
-            global_errors=global_errors,
+    return _FlowValidation(None, final_data, yaml_data, all_editables, active_sections, enforcer_context, processor)
+
+
+async def _do_submit(
+    request: Request,
+    flow_id: str,
+) -> HTMLResponse | RedirectResponse:
+    """Execute the final wizard submission."""
+    state = get_wizard_state(request)
+    if not state or state.flow_id != flow_id:
+        logger.warning("Wizard session lost on submit (flow=%s), redirecting to start", flow_id)
+        return RedirectResponse(
+            url=f"/forms/wizard/{flow_id}",
+            status_code=303,
         )
-        return _step_response(request, context)
+
+    flow = get_flow(flow_id)
+    validation = await _validate_whole_flow(request, flow_id, state)
+    if validation.error_response is not None:
+        return validation.error_response
+    final_data = validation.final_data
+    all_editables = validation.all_editables
+    active_sections = validation.active_sections
+    enforcer_context = validation.enforcer_context
+    processor = validation.processor
 
     # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)
