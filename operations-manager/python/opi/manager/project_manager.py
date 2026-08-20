@@ -160,7 +160,6 @@ from opi.utils.naming import (
 )
 from opi.utils.project_utils import (
     ComponentValidationError,
-    apply_resource_limits,
     build_component_config,
     normalize_container_image,
     validate_component_paths,
@@ -7813,8 +7812,15 @@ class ProjectManager:
                 )
 
             if cpu_limit is not None or memory_limit is not None:
-                resources = component.setdefault("resources", {})
-                apply_resource_limits(resources, cpu_limit=cpu_limit, memory_limit=memory_limit)
+                # Through the shared user-intent path: a limit set here has to beat any
+                # override the tuner wrote for this component, and be remembered as the
+                # user's own value (RC-141). The API knows limits only, never requests.
+                self._project_file_handler.apply_user_resource_intent(
+                    project_data,
+                    name,
+                    {"limits_cpu": cpu_limit, "limits_memory": memory_limit},
+                    origin="api",
+                )
 
             await self.save_and_commit_project(project_data, f"Update component '{name}' in project '{project_name}'")
 

@@ -233,10 +233,12 @@ class CrossDomainAccessConfig(BaseModel):
     ITEM_KEYS: ClassVar[dict[str, str | None]] = {"inbound": "name", "outbound": "name"}
 
     inbound: list[InboundRulePatch] = Field(
-        default_factory=list, description="Rules letting another deployment's component reach one of mine; the peer may be another project or your own."
+        default_factory=list,
+        description="Rules letting another deployment's component reach one of mine; the peer may be another project or your own.",
     )
     outbound: list[OutboundRulePatch] = Field(
-        default_factory=list, description="Rules letting one of my components reach another deployment's; the peer may be another project or your own."
+        default_factory=list,
+        description="Rules letting one of my components reach another deployment's; the peer may be another project or your own.",
     )
 
     @model_validator(mode="after")
