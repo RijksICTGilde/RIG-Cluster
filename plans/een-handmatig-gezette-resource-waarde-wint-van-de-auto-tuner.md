@@ -290,3 +290,40 @@ uv run ruff check . --fix && uv run ruff format . && uv run pyright
   (een OOM-storm) vond die vervanging geen vrij slot en viel de wens alsnog weg.
 - **De sandboxdiagnose is gecorrigeerd** (zie hierboven): het certificaat in het cluster is
   geldig tot 16-11-2026; de eerste meting keek naar poort 443, en dat is de Caddy-rand.
+
+## Reparaties na de review (r2)
+
+- **Een resourcepaar gaat altijd in zijn geheel uit de deployment-override.** Manifestgeneratie
+  merget per veld, dus alleen `limits_memory` opruimen liet het `requests_memory` van de tuner
+  staan en kon `requests > limits` opleveren -- een Deployment die de apiserver weigert, precies
+  na de bewerking waar de gebruiker op wacht. Na het opruimen wordt het gemergde paar getoetst
+  en gaat de andere helft er zo nodig ook uit.
+- **Het opruimen van de staande wens laat de OOM-verhoging staan.** Een geheugenlimiet die de
+  OOM-watcher boven de wens heeft getild is de ene plek waar het platform de gebruiker bewust
+  overruled; die override wegvegen op een niet-gerelateerde CPU-bewerking liet de pod terugvallen
+  op de limiet die hem eerder omver duwde.
+
+## Reparaties na de beveiligingsreview
+
+- **De platformcap blijft gelden op de bijwerkweg van de API.** `UPDATE_COMPONENT_VALIDATORS`
+  toetste `cpu_limit` en `memory_limit` niet, terwijl `ADD_COMPONENT_VALIDATORS` dat wel deed;
+  `PATCH .../components/{c}` met `{"memory_limit": "64Gi"}` ging er dus doorheen. Dat gat is
+  voorbestaand, maar dit plan haalt de correctie erop weg: tot nu toe klemde de tuner zo'n
+  waarde bij de eerstvolgende sweep terug, en na deze wijziging laat hij een vastgelegde wens
+  juist met rust. De vervalregel redt het niet -- die eist ouderdom **en** gebruik onder de
+  helft van de gezette waarde, dus een workload die zijn eigen pin vol houdt, houdt hem
+  onbeperkt. Er is ook geen derde lijn: geen `ResourceQuota` of `LimitRange` in `manifests/`,
+  en `resources` is in het schema kaal `type: string`.
+
+  Gekozen reparatie: de twee limieten toevoegen aan `UPDATE_COMPONENT_VALIDATORS`, met exact
+  dezelfde twee editables die de aanmaakweg al gebruikt. Dat dekt v1 en v2 (beide routers
+  draaien dat profiel), weigert met dezelfde melding als het formulier in plaats van de waarde
+  stil te klemmen, en haalt de divergentie tussen het ADD- en het UPDATE-profiel weg in plaats
+  van er een tweede regel naast te zetten. Het alternatief uit de review (klemmen in
+  `apply_user_resource_intent`) zou de gebruiker een andere waarde geven dan hij vroeg, zonder
+  dat iets dat vertelt.
+
+  **Zichtbaar gevolg**: een `PATCH` die de huidige `cpu_limit` van een component teruggeeft
+  terwijl die niet `500m` of `1` is (in productie komt dat voor, bijvoorbeeld `200m`) krijgt nu
+  een 422. Dat is hetzelfde antwoord dat de aanmaakweg en het formulier al gaven; de waarde
+  hoefde alleen niet meegestuurd te worden, want een PATCH draagt alleen wat hij wijzigt.
