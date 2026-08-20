@@ -28,6 +28,16 @@ class EditableVisualizer:
     attributes: dict[str, str] | None = None
     readonly: bool = False
     readonly_on_edit: bool = False
+    #: Alleen tonen als er BEWERKT wordt, niet bij het aanmaken.
+    #:
+    #: Voor velden die over iets gaan dat al bestaat. "Markeer voor verwijdering" bij een
+    #: databaseschema is het voorbeeld: dat stopt het beheer van een schema dat er al is en
+    #: laat de data staan. In de aanmaakwizard sta je een schema te VERZINNEN, en dan is de
+    #: vraag of je het wilt stoppen zinloos - je laat het gewoon weg.
+    #:
+    #: De poort staat in ``should_render_editable``; readonly_on_edit hierboven is de
+    #: tegenhanger (wel tonen, niet aanpasbaar).
+    alleen_bij_bewerken: bool = False
     locked_by_service: str | None = None
     htmx_trigger: str | None = None
     htmx_target: str | None = None

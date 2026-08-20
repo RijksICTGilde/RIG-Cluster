@@ -342,7 +342,7 @@ class FormRenderer:
         self._resolve_checkbox_group_defaults(editables, yaml_data, provider_context)
 
         for editable in editables:
-            if not should_render_editable(editable, yaml_data, siblings=editables):
+            if not should_render_editable(editable, yaml_data, siblings=editables, edit_mode=edit_mode):
                 continue
 
             if editable.widget == WidgetType.GROUP:
@@ -525,7 +525,7 @@ class FormRenderer:
         fields: dict[str, FormField] = {}
         group_children = editable.children or []
         for child in group_children:
-            if not should_render_editable(child, yaml_data, siblings=group_children):
+            if not should_render_editable(child, yaml_data, siblings=group_children, edit_mode=edit_mode):
                 continue
             if child.widget == WidgetType.GROUP:
                 fields.update(
@@ -614,7 +614,7 @@ class FormRenderer:
             self._resolve_checkbox_group_defaults(seq_children, yaml_data, item_context, index=index)
 
             for child_editable in seq_children:
-                if not should_render_editable(child_editable, yaml_data, index=index, siblings=seq_children):
+                if not should_render_editable(child_editable, yaml_data, index=index, siblings=seq_children, edit_mode=edit_mode):
                     continue
                 if child_editable.widget == WidgetType.SEQUENCE:
                     nested_seq = self._build_nested_sequence_field(
@@ -738,7 +738,7 @@ class FormRenderer:
                 # Honour conditional visibility (show_when) inside nested sequences too,
                 # so a field can be shown/hidden per item based on a sibling's value.
                 if not should_render_editable(
-                    resolved_editable, yaml_data, index=child_index, siblings=editable.children
+                    resolved_editable, yaml_data, index=child_index, siblings=editable.children, edit_mode=edit_mode
                 ):
                     continue
                 child_field = editable_to_form_field(
