@@ -17,6 +17,7 @@ Run: uv run pytest tests/e2e/test_locked_service_survives_submit.py -m "e2e and 
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -34,14 +35,24 @@ LOCKED = "publish-on-web"
 
 
 def _submitted_values(page: Page) -> list[str]:
-    """Wat de browser echt zou versturen voor de servicesselectie."""
+    """Wat de browser echt zou versturen voor de servicesselectie.
+
+    Via FormData en niet via een selector op ``input[name='services[]']``. Dat laatste
+    stond hier en meet sinds de dienstkaarten <c-checkbox> gebruiken niets meer: dat wordt
+    een <nldd-checkbox-field>, en de echte <input> zit twee schaduwbomen diep zonder name
+    in de lichte boom. page.evaluate gaat NIET door een schaduwboom heen (een
+    Playwright-selector wel, en juist dat verschil maakte de meting stil onwaar).
+
+    FormData is bovendien het goede antwoord op de vraag: het is precies wat de browser
+    voor een form-associated element meestuurt, en htmx wordt daar in
+    static/js/form-associated.js op rechtgezet.
+    """
     return page.evaluate(
         """() => {
             const grid = document.querySelector('.service-cards-grid');
-            const velden = grid.querySelectorAll("input[name='services[]']");
-            return Array.from(velden)
-                .filter(el => el.type === 'hidden' || (el.checked && !el.disabled))
-                .map(el => el.value);
+            const form = grid.closest('form');
+            if (!form) return [];
+            return new FormData(form).getAll('services[]');
         }"""
     )
 
@@ -97,4 +108,81 @@ def test_unlocking_it_again_leaves_no_stray_value(app_server: str, auth_page: Pa
     verstuurd = _submitted_values(auth_page)
     assert LOCKED not in verstuurd, (
         f"{LOCKED} staat uit maar wordt nog steeds meegestuurd ({verstuurd}); dan is hij niet meer uit te zetten"
+    )
+
+
+def test_een_vergrendelde_dienst_blijft_aangevinkt_na_een_klik(app_server: str, auth_page: Page) -> None:
+    """Uitvinken van een vergrendelde dienst wordt teruggedraaid, ook in het VAKJE.
+
+    Gemeld: "ik kan Publiceren op het web wel uitvinken als ik keycloak heb, ik krijg wel
+    een waarschuwing dat het niet mag, maar de selectbox is wel unchecked daarna". De
+    waarschuwing kwam dus wel en het terugzetten niet: het aanvinkvakje is een
+    Lit-component dat zijn hertekening in een microtask plant, en die schreef het
+    terugzetten dat binnen dezelfde gebeurtenis gebeurde weer weg.
+
+    Deze test klikt zoals een gebruiker klikt en kijkt daarna naar de stand van het vakje.
+    """
+    wizard = WizardHelper(auth_page, app_server)
+    wizard.open_create_wizard()
+    wizard.fill_identity(display_name="slot", description="vergrendelde dienst uitvinken")
+    wizard.click_next()
+
+    auth_page.locator(f'.service-card[data-service="{REQUIRER}"]').wait_for(state="visible")
+    auth_page.locator(f'.service-card[data-service="{REQUIRER}"] nldd-checkbox').first.click()
+
+    kaart = auth_page.locator(f'.service-card[data-service="{LOCKED}"]')
+    expect(kaart, f"{REQUIRER} hoort {LOCKED} vast te zetten").to_have_class(
+        re.compile(r"\bservice-card--locked-checked\b")
+    )
+
+    # De waarschuwing wegklikken, anders blokkeert hij de rest.
+    auth_page.on("dialog", lambda dialoog: dialoog.accept())
+    auth_page.locator(f'.service-card[data-service="{LOCKED}"] nldd-checkbox').first.click()
+
+    vakje = auth_page.locator(f'.service-card[data-service="{LOCKED}"] nldd-checkbox').first
+    expect(vakje, f"{LOCKED} is vergrendeld en hoort aangevinkt te blijven").to_have_attribute(
+        "checked", re.compile(r".*"), timeout=5000
+    )
+    assert LOCKED in _submitted_values(auth_page), f"{LOCKED} moet nog steeds meegestuurd worden"
+
+
+def test_na_een_geweigerde_klik_werkt_de_volgende_klik_meteen(app_server: str, auth_page: Page) -> None:
+    """Een geweigerde klik mag geen dode klik achterlaten.
+
+    Gemeten in de browser, met de schaduwboom erbij, VOOR de reparatie:
+
+        na de geweigerde klik : host checked=true,  eigen <input> checked=false
+        volgende klik         : <input> naar true, host blijft true -> er gebeurt NIETS
+        de klik daarna        : weer gelijk, en pas dan werkt uitvinken
+
+    Zo voelde het ook: de vergrendelde dienst leek uit te kunnen, en daarna reageerde het
+    vakje een klik lang niet. De reparatie staat in static/js/wizard.js (herstelVakje).
+    """
+    wizard = WizardHelper(auth_page, app_server)
+    wizard.open_create_wizard()
+    wizard.fill_identity(display_name="dodeklik", description="geweigerde klik")
+    wizard.click_next()
+    auth_page.locator(".service-card").first.wait_for(state="visible")
+
+    kc = f'.service-card[data-service="{REQUIRER}"] nldd-checkbox'
+    slot = f'.service-card[data-service="{LOCKED}"] nldd-checkbox'
+
+    auth_page.locator(kc).first.click()
+    auth_page.locator(".service-card--locked-checked").first.wait_for(timeout=5000)
+
+    # De geweigerde klik. De melding komt in een dialoog van het thema; die eerst wegklikken,
+    # want een <dialog> met showModal() maakt de rest van de pagina onaanklikbaar.
+    auth_page.locator(slot).first.click()
+    auth_page.get_by_text("Begrepen").first.click(timeout=5000)
+    assert LOCKED in _submitted_values(auth_page), f"{LOCKED} hoort aangevinkt te blijven"
+
+    # Het slot eraf halen, en dan moet EEN klik genoeg zijn.
+    auth_page.locator(kc).first.click()
+    expect(auth_page.locator(f'.service-card[data-service="{LOCKED}"]')).not_to_have_class(
+        re.compile(r"\bservice-card--locked-checked\b")
+    )
+    auth_page.locator(slot).first.click()
+    auth_page.wait_for_timeout(300)
+    assert LOCKED not in _submitted_values(auth_page), (
+        f"een klik op {LOCKED} deed niets; het vakje liep uit de pas met zijn eigen bediening"
     )
