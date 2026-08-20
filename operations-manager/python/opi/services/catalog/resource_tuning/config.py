@@ -20,6 +20,8 @@ _VALUES: dict[str, Any] = {
     "threshold_percent": 20,
     "oom_floor_min_age_days": 10,
     "oom_floor_stable_percent": 50,
+    "user_intent_min_age_days": 10,
+    "user_intent_stable_percent": 50,
     "increase_threshold": 10,
     "decrease_threshold": 30,
     "scheduler_enabled": True,
