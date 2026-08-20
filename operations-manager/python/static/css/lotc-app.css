@@ -242,7 +242,7 @@ nldd-sidebar-section {
  * pagina die op hetzelfde element display zet, wint dan bij gelijke specificiteit en de
  * klasse verbergt niets meer. Deze klasse doet een ding en moet dat winnen.
  *
- * Gemeten in tests/e2e/test_lotc_domeinbeheer.py: op HOOGTE, niet op het class-attribuut.
+ * Gemeten in tests/e2e/test_lotc_aanvragenbeheer.py: op HOOGTE, niet op het class-attribuut.
  */
 .is-hidden {
     display: none !important;

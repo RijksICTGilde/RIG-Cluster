@@ -23,7 +23,7 @@ onveranderd werken.
    Het sjabloon schreef ``@click="openApprovalModal('{{ project.project_name }}')"``. De
    componentlaag neemt de waarde van een ``@``-afhandelaar letterlijk over in het
    ``onclick``-attribuut, zonder hem langs Jinja te halen, dus stond er in de browser echt
-   ``{{ project.project_name }}``. Gevolg: de kop van de dialoog las "Domeingoedkeuring -
+   ``{{ project.project_name }}``. Gevolg: de kop van de dialoog las "Goedkeuring -
    {{ project.project_name }}" en het formulier werd opgehaald bij
    ``/admin/approvals/%7B%7B%20project.project_name%20%7D%7D/modal-wizard/admin-approval``,
    wat een 404 is. Twee symptomen, een oorzaak. De statische poort eronder staat in
@@ -43,9 +43,9 @@ onveranderd werken.
 
 3. De dialoog had TWEE koppen boven elkaar.
 
-   "Domeingoedkeuring - <project>" is de titel van de dialoog; daaronder stond nog een
-   "Domein- en subdomeingoedkeuring" met de ondertitel "Keur domein- en subdomeinaanvragen
-   goed of af". Die tweede is de kop van de FORMULIERSECTIE, uit
+   "Goedkeuring - <project>" is de titel van de dialoog; daaronder stond nog een
+   "Goedkeuring van aanvragen" met de ondertitel "Keur de aanvragen van dit project goed
+   of af". Die tweede is de kop van de FORMULIERSECTIE, uit
    ``bg/_modal-wizard-step.html.j2``, en die sectiekop is elders wel op zijn plek: in de
    wizard en in de bewerkdialogen van een project draagt hij het icoon, de titel en het
    hulpvraagteken van de stap. Hier niet, want deze dialoog heeft maar EEN stap en zijn
@@ -162,7 +162,7 @@ def project_met_aanvragen(app_server: str) -> Iterator[str]:
 REGELS_VAN_DE_DATUM = """() => {
     const tabel = document.querySelector('nldd-table');
     const rijen = [...tabel.querySelectorAll('nldd-table-row')];
-    const cel = rijen[1].children[4];
+    const cel = rijen[1].children[3];
     const p = cel.querySelector('p');
     const knoop = p.firstChild;
     const bereik = document.createRange();
@@ -232,7 +232,7 @@ def test_de_kop_van_de_dialoog_noemt_het_project(app_server: str, auth_page: Pag
     auth_page.locator("#approval-modal.is-open").wait_for(state="visible", timeout=10000)
 
     kop = (auth_page.locator("#approval-title-text").text_content() or "").strip()
-    assert kop == f"Domeingoedkeuring - {project_met_aanvragen}", kop
+    assert kop == f"Goedkeuring - {project_met_aanvragen}", kop
 
 
 def test_het_formulier_laadt_zonder_foutmelding(app_server: str, auth_page: Page, project_met_aanvragen: str) -> None:
@@ -289,7 +289,7 @@ def test_de_dialoog_heeft_een_kop_en_niet_twee(app_server: str, auth_page: Page,
 
     koppen = auth_page.evaluate(KOPPEN_IN_DE_DIALOOG)
 
-    assert [k["tekst"] for k in koppen] == [f"Domeingoedkeuring - {project_met_aanvragen}"], koppen
+    assert [k["tekst"] for k in koppen] == [f"Goedkeuring - {project_met_aanvragen}"], koppen
 
 
 def test_de_ondertitel_van_de_sectie_staat_er_ook_niet_meer(
@@ -304,7 +304,7 @@ def test_de_ondertitel_van_de_sectie_staat_er_ook_niet_meer(
 
     tekst = auth_page.locator("#approval-modal").inner_text()
 
-    assert "Keur domein- en subdomeinaanvragen goed of af" not in tekst, tekst
+    assert "Keur de aanvragen van dit project goed of af" not in tekst, tekst
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +433,7 @@ DE_KOP_VAN_DE_DIALOOG = """() => {
 
 
 def test_het_icoon_staat_op_een_lijn_met_de_titel(app_server: str, auth_page: Page, project_met_aanvragen: str) -> None:
-    """Het vinkje en "Domeingoedkeuring - <project>" delen hun verticale midden.
+    """Het vinkje en "Goedkeuring - <project>" delen hun verticale midden.
 
     Dit is de meting die de gemelde fout vangt, en hij kan alleen in een browser: de markup
     zag er in beide vormen normaal uit. Met het icoon BINNEN de kop stond zijn midden ruim
