@@ -185,7 +185,7 @@ def build_lotc_admin(*, user: dict[str, Any] | None, current_path: str) -> dict[
     """Wat een beheerpagina extra nodig heeft: alleen de navigatie.
 
     Een functie voor alle vier de beheerpagina's (gebruikers, het gebruikersformulier,
-    domeinbeheer en gebruik & kosten), want ze hebben alle vier hetzelfde nodig. Hun
+    aanvragen en gebruik & kosten), want ze hebben alle vier hetzelfde nodig. Hun
     routes leveren de rest al in de vorm die de sjablonen lezen; die hier omvormen zou
     een tweede vorm van dezelfde gegevens opleveren, en dan gaat de nieuwe pagina iets
     anders tonen dan de bestaande zodra er een veld bijkomt.
