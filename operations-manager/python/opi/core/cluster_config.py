@@ -24,6 +24,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        "mail_relay_namespace": "rig-ron",
+        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
@@ -88,6 +92,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        "mail_relay_namespace": "rig-ron",
+        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
@@ -146,6 +154,13 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
+        # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus daar
+        # heet hij rig-prd-ron; op local en sandbox rig-ron. Zelfde vorm als
+        # backup_namespace hierboven.
+        "mail_relay_namespace": "rig-prd-ron",
+        "mail_relay_host": "rig-mail-relay.rig-prd-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator (see the note in the other clusters).
         "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
@@ -658,6 +673,91 @@ def get_redis_server(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["redis_server"]
+
+
+def get_mail_relay_namespace(cluster_name: str) -> str:
+    """
+    Get the namespace the SMTP relay runs in.
+
+    Its own namespace and not the operations namespace: the Calico annotation
+    ``egress.projectcalico.org/egressGatewayPolicy`` takes exactly ONE value, so a
+    namespace can have RON egress or internet egress, never both. The operations
+    namespace needs internet (ArgoCD, the registry, Keycloak), so the relay lives
+    apart. See ``plans/mailrelay.md``.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Namespace name the relay and its Service live in
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_relay_namespace"]
+
+
+def get_mail_relay_host(cluster_name: str) -> str:
+    """
+    Get the in-cluster hostname of the SMTP relay.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Relay hostname for internal pod use
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_relay_host"]
+
+
+def get_mail_relay_port(cluster_name: str) -> int:
+    """
+    Get the submission port of the SMTP relay.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Submission port (587) for internal pod use
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_relay_port"]
+
+
+def get_mail_from_address(cluster_name: str) -> str:
+    """
+    The one sender address every project sends from. Not configurable per project.
+
+    The relay pins the ``From:`` header to this address and rewrites the envelope to
+    ``<local>+<project>@<domain>``. Both live in the relay's own config (MAIL_FROM_LOCAL
+    and MAIL_DOMAIN in its secret); this function is what OPI hands to the application as
+    ``SMTP_FROM``. The two must agree -- if they drift, a developer is shown one address
+    while another one leaves the building.
+
+    It is a domain we do NOT own: mail goes out over the Rijksoverheid mail server, so it
+    carries their domain. That is also the only arrangement that survives DMARC, because
+    they publish ``p=reject`` and we sign nothing with DKIM, leaving SPF alignment between
+    envelope and ``From:`` as the single thing that can pass. See docs/ron-koppeling.md.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        The fixed sender address (e.g. ``noreply-rijksapp@rijksoverheid.nl``)
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_from_address"]
 
 
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:

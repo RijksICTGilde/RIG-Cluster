@@ -339,6 +339,35 @@ class RedisSecret(BaseSecret):
 
 
 @dataclass
+class SendEmailSecret(BaseSecret):
+    """SMTP credentials for the platform mail relay.
+
+    ``from_address`` travels with the credentials on purpose: the relay pins the sender
+    to it anyway, so an application that reads it from here sends what will actually go
+    out instead of guessing and being rewritten.
+    """
+
+    host: str
+    port: int
+    username: str
+    password: str
+    from_address: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-send-email"
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SEND_EMAIL
+
+    @classmethod
+    def _convert_field_value(cls, field_name: str, value: str) -> str | int:
+        """Convert port to integer."""
+        if field_name == "port":
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
+        return value
+
+
+@dataclass
 class MetricsAuthSecret(BaseSecret):
     """Metrics scraper authentication secret.
 

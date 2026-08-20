@@ -16,6 +16,7 @@ resources:
 - argocd-repo-forgejo-secret.yaml
 - argocd-application-infrastructure.yaml
 - argocd-application-user-applications.yaml
+- argocd-application-ron-infrastructure.yaml
 - ../../operations-manager/overlays/sandboxed-local
 # Backup destination MinIO for local development/testing
 - ../../backup-destination/base

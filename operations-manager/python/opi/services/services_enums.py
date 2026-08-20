@@ -22,6 +22,11 @@ class ServiceType(Enum):
     # Object storage services
     MINIO_STORAGE = "minio-storage"
 
+    # Outgoing mail: an SMTP account on the platform relay, which authenticates once
+    # towards the upstream mail server. Named after what it does (like publish-on-web),
+    # not after the protocol or the product behind it.
+    SEND_EMAIL = "send-email"
+
     # Cache services
     REDIS = "redis"
     NAMESPACE_REDIS = "namespace-redis"
@@ -108,6 +113,7 @@ class ManagerKey(Enum):
     REDIS = "redis"
     KEYCLOAK = "keycloak"
     PVC = "pvc"
+    MAIL = "mail"
 
 
 class ServiceKind(Enum):

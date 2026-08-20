@@ -12,7 +12,7 @@
 | app                 |   | SMTP-relay               |   | upstream mailserver|
 | SMTP_HOST=...       |-->| :587 submission, AUTH    |-->| :25 STARTTLS       |
 | SMTP_USER=<project> |   | rate limit per account   |   | geen auth, ons IP  |
-| SMTP_PASS=<secret>  |   | From-policy + DKIM       |   | staat toegelaten   |
+| SMTP_PASS=<secret>  |   | vaste From, geen DKIM    |   | staat toegelaten   |
 +---------------------+   | header sanitatie         |   +--------------------+
      ClusterIP, geen      | egressGatewayPolicy:     |
      RON-egress nodig     |   rig-ron                |
@@ -39,6 +39,18 @@ De koppeling werkt en een testbericht is aangenomen. Vier correcties op de tekst
 - **30 MB** is hun grens (`SIZE 31457280`).
 
 Dat maakt de paragraaf hierna niet minder waar, maar juist dwingender: zonder authenticatie aan de andere kant is er niets dat een applicatie tegenhoudt behalve ons eigen netwerkbeleid.
+
+## Besloten op 18 augustus 2026: één vast afzenderadres, geen eigen domein
+
+Dit vervangt de hele afzenderdomein-paragraaf verderop, en het raakt ook de tweede aanname hierboven (waar staat "ondertekend met onze DKIM-sleutel": dat gebeurt niet meer).
+
+Alle projecten versturen vanaf **`noreply-rijksapp@rijksoverheid.nl`**. De relay schrijft dat adres zelf in de `From:` van elk bericht; er is geen veld, geen keuze en geen weg eromheen. Een project kiest alleen de weergavenaam ernaast.
+
+Waarom: we versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit. `rijksoverheid.nl` publiceert `p=reject` en wij kunnen in hun zone geen DKIM-sleutel publiceren, dus **SPF-uitlijning tussen envelope en `From:` is het enige dat een bericht door DMARC krijgt.** Daarom wordt ook de envelope herschreven naar `noreply-rijksapp+<project>@rijksoverheid.nl`: zelfde domein, project in het plusdeel, bounce blijft herleidbaar.
+
+Wat vervalt: het eigen maildomein, alle DNS-records die daarbij hoorden (hun SPF autoriseert de upstream al), DKIM in zijn geheel, en de velden `from-domain` en `from-local-part`.
+
+Wat het kost: er is geen tweede been. Gaat de envelope-herschrijving stuk, dan weigert elke ontvanger buiten de Rijksoverheid alles. Volledig uitgewerkt in `docs/ron-koppeling.md`.
 
 ## Waarom niet gewoon de upstream langs elke app openzetten
 
@@ -177,7 +189,7 @@ Je onderliggende punt klopt wel: `smtp-mail` zet een protocolnaam in iets dat ge
 
 ## Openstaande beslissingen
 
-1. **Bevestigen: `mail.rijksapp.nl` als platform-maildomein.** Let op het enkelvoud. `rijksapps.nl` is de zone van ODC-Noord zelf (`docs.`, `rcr.`, `cluster-api.apps.prd1.gn2.`), daar kunnen wij niets aanmaken en applicatiemail versturen vanuit het domein van onze platformleverancier is sowieso onverstandig. `rijksapp.nl`, `rijks.app` en `rijksapp.dev` zijn wel van ons en worden al door external-dns beheerd (`opi/core/cluster_config.py`). Een subdomein in plaats van de kale zone houdt een eventueel reputatieprobleem weg bij het domein waar de applicaties op draaien. Die twee namen schelen één letter en hebben verschillende eigenaren; benoem dat expliciet in de mail naar het mailteam.
+1. **VERVALLEN, 18 augustus 2026.** Hier stond dat `mail.rijksapp.nl` het platform-maildomein zou worden. Er komt geen eigen maildomein: we versturen via de mailserver van de Rijksoverheid en dragen daarom hun domein, met één vast afzenderadres `noreply-rijksapp@rijksoverheid.nl` voor alle projecten. Dat maakt de hele DNS-post overbodig (hun SPF autoriseert de upstream al) en maakt DKIM onmogelijk (wij kunnen in hun zone geen sleutel publiceren), dus SPF-uitlijning tussen envelope en From: is het enige dat een bericht door DMARC krijgt. Uitgewerkt in `docs/ron-koppeling.md`.
 2. **Kan external-dns de losse TXT- en MX-records zetten** (DNSEndpoint-CRD), of gaat dat via het DNS-beheerpaneel? Geen blokkade, wel bepalend voor wie het doet.
 3. **Bounce-mailbox**: krijgen we een account bij het mailteam dat OPI over IMAP mag legen? Nodig voor optie 2 hierboven.
 4. **Alleen verzenden, of later ook ontvangen?** Ik ga nu uit van alleen verzenden. Ontvangen is een wezenlijk ander product en moet niet stiekem meegroeien via de bounce-afhandeling.
@@ -191,7 +203,11 @@ Beslist in dit ontwerp, niet meer open: het lokale deel is per project instelbaa
 
 Vier dingen die na het oorspronkelijke ontwerp zijn gemeten of besloten. De rest van het plan hierboven blijft staan; waar deze aanvulling een openstaande beslissing invult, staat dat erbij.
 
-## 1. Bereikbaarheid: gedeeltelijk bewezen, nog niet rond
+## 1. Bereikbaarheid: ACHTERHAALD, zie de meting van 17 augustus bovenaan
+
+> **Deze paragraaf klopt niet meer en blijft staan omdat de denkfout leerzaam is.** De meting hieronder liep door het baseline-netwerkbeleid van `rig-prd-vlam-wt8`, dat egress naar buiten alleen op 443 en 80 toestaat. De SMTP-pakketten hebben de pod nooit verlaten, dus alle conclusies over de tegenpartij zijn op niets gebouwd. Met een tijdelijke NetworkPolicy erbij antwoordt poort 25 meteen en is een testbericht aangenomen. Lees dit als een waarschuwing: bij "er komt niets terug" hoort de eerste vraag te zijn of het pakket überhaupt is vertrokken.
+
+### De oorspronkelijke tekst
 
 Stap 2 van de uitrol is uitgevoerd vanuit `rig-prd-vlam-wt8` op productie, de namespace die `egress.projectcalico.org/egressGatewayPolicy: rig-ron` draagt. Gemeten met `nc` in de bestaande `productie-vlam-proxy`-pod, dus zonder iets uit te rollen:
 
@@ -300,3 +316,100 @@ Het gedrag per status is expres saai:
 Er is dus geen half werkende tussentoestand, en dat is bewust. Een account dat wel bestaat maar niet mag mailen, of een netwerkbeleid zonder account, is een toestand die niemand kan uitleggen en die bij het opruimen wordt vergeten. Alles of niets.
 
 Twee dingen om bij het bouwen scherp te houden. Het intrekken van een goedkeuring hoort hetzelfde pad te volgen als een projectverwijdering, anders blijft er een weesaccount op de relay achter. En de wachtstand moet zichtbaar zijn in het projectscherm en in de API, want een dienst die aanstaat en niets doet zonder dat iemand het ziet, is precies de klasse fout die we vandaag bij de domeinaanvraag hebben weggehaald.
+
+## 7. De identiteitsregels zijn gemeten, en drie ervan stonden er niet in
+
+Toegevoegd 15 augustus 2026, na de securityreview op PR #113. Stap 4 van de uitrol
+("identiteitsregels aanzetten, verifieerbaar met een testbericht") is uitgevoerd - niet
+tegen RON, want stap 2 staat nog open, maar tegen een echte Stalwart v0.11.8 met een
+nep-upstream die de afgeleverde post bewaart. Dat had eerder gemoeten: de configuratie die
+er lag, **laadde niet eens**.
+
+Wat de proef aan het licht bracht:
+
+| Wat het bestand zei | Wat Stalwart deed |
+|---|---|
+| `[session.data.remove-headers]` verwijdert Received, X-Mailer, X-Originating-IP | die sleutel bestaat niet; de verklikkers gingen ongemoeid naar buiten |
+| regel 2 (From vastzetten) in een comment boven `[session.data.add-headers]` | geen enkele controle op de From:; `From: attacker@vreemd-domein.nl` vertrok, ondertekend met onze DKIM-sleutel |
+| `message-id = true` dekt regel 6 af | die voegt er alleen een toe als hij ONTBREEKT; het Message-ID met de podnaam erin bleef staan |
+| `[session.throttle]` regelt de limieten | die sleutel bestaat niet in v0.11; er was geen enkele limiet |
+| `mechanisms = ["PLAIN","LOGIN"]`, `directory = "internal"`, `next-hop = "upstream"` | drie parse-fouten bij het opstarten: het zijn EXPRESSIES, dus `"[plain, login]"` en `"'internal'"` |
+| `sign = [{if = "is_local_domain", ...}]` | parse-fout; er werd niets ondertekend |
+| `image: stalwartlabs/mail-server:v0.11.5` | die tag bestaat niet (v0.11.4 -> v0.11.6): ImagePullBackOff |
+
+De les die de tak zelf al opschreef maar niet toepaste: **een sleutel die Stalwart niet
+kent wordt stil genegeerd.** Er komt geen fout, de regel doet niets, en het bestand leest
+alsof alles geregeld is. Vandaar dat elke regel in de configmap nu de gemeten uitkomst bij
+zich draagt.
+
+Wat er nu echt staat, en hoe het is aangetoond:
+
+1. **Envelope** - een applicatie die `MAIL FROM:<noreply.ander@...>` aanbiedt, levert bij
+   de upstream `MAIL FROM:<noreply-rijksapp+demo@rijksoverheid.nl>` af. De MAIL FROM van de
+   applicatie wordt weggegooid, niet getoetst; dat is meteen de sterkste vorm.
+2. **From** - een sieve-script op de DATA-fase (de enige plek waar v0.11 kopregels kan
+   aanraken) eist dat het adres in de From: het adres van dit account is. Vreemd domein:
+   `550`. Adres van een ander project: `550`. Eigen adres met eigen weergavenaam: komt
+   aan. Daarvoor draagt het afzenderadres nu de accountnaam
+   (`noreply.project-<project>@<maildomein>`) - de relay kent zijn accounts, dus de regel moet uit
+   de accountnaam af te leiden zijn. Een adres bestaat trouwens maar EEN keer op de hele
+   relay, dus een gedeelde `noreply@` was sowieso niet houdbaar.
+2a. **Precies EEN From-adres** (toegevoegd na de securityreview van 15 augustus, r8).
+   `address :all` is waar zodra EEN adres in de header matcht, dus
+   `From: <invoice@evil.example>, noreply.project-demo@<maildomein>` haalde regel 2 en
+   vertrok met onze DKIM-handtekening op naam van het slachtoffer. Het script eist nu
+   `address :count "eq" ... "1"`. Gemeten: twee mailboxen -> 550, een mailbox -> afgeleverd.
+3. **DKIM** - de afgeleverde post draagt `DKIM-Signature: ... s=zad; d=<maildomein>` met
+   From in de `h=`-lijst.
+5. **Received** - geen keten in de afgeleverde post. RFC 5293 raadt implementaties aan
+   `deleteheader "Received"` te weigeren, dus deze regel had stil niets kunnen doen; de
+   tegenproef (dezelfde relay zonder de vijf `deleteheader`-regels) levert Received,
+   X-Originating-IP, X-Mailer, X-Originating-Client en X-Authenticated-Sender wel bij de
+   upstream af. Stalwart v0.11.8 weigert het dus niet.
+6. **Message-ID** - `<12345@app-pod-7f9c.rig-prd-demo.svc.cluster.local>` komt aan als
+   `<12345@rijksoverheid.nl>`. Het unieke deel blijft, het interne domein gaat eraf.
+   Weggooien alleen kan niet: `add-headers` draait VOOR het script, dus dan vertrekt het
+   bericht zonder Message-ID.
+7. **Verklikkers** - `X-Mailer` en `X-Originating-IP` zijn weg bij de ontvanger.
+
+**Een limiet per account bestaat niet in v0.11.** De management-API weigert een
+`limits`-veld op een principal ("JSON deserialization failed"), dus het per-projectgetal
+is de vastgelegde begroting en de relay dwingt een plafond af dat voor elk account gelijk
+is (`queue.limiter.inbound.account`, gelijk aan `MAX_MESSAGES_PER_DAY`). Gemeten met
+`3/1d`: het vierde bericht krijgt `452 4.4.5 Rate limit exceeded`, een ander account merkt
+er niets van. Wil een project echt zijn eigen getal afgedwongen zien, dan is dat een
+nieuwe stap (een eigen limiter per account bij het aanmaken wegschrijven, of wachten op
+een Stalwart-versie die het op de principal kent) en geen regel die je in een comment zet.
+
+Twee dingen die de API ook anders doet dan de connector aannam, en die de dienst zonder
+reparatie onbruikbaar maakten: een onbekend account geeft **200 met
+`{"error":"notFound"}`** en geen 404 (dus las de connector "bestaat" en werkte bij in
+plaats van aanmaken), en een account zonder **rol** wordt na een geslaagde authenticatie
+alsnog geweigerd met `550 5.7.1 Your account is not authorized to use this service`.
+
+### Drie dingen die de proef er nog uit haalde (r8)
+
+- **Een platte accountnaamruimte.** Het platformaccount `zad-platform` was een geldige
+  PROJECTnaam, en de accountnaam was de projectnaam kaal. Een project met die naam kon het
+  account van ZAD overnemen (bijwerken van een bestaand principal) of het laten verwijderen.
+  Projectaccounts heten nu `project-<project>`, en de projectweg weigert de platformnaam
+  expliciet.
+- **Het image negeert `args`.** Het entrypoint start altijd met
+  `/opt/stalwart-mail/etc/config.toml` en genereert dat bestand als het ontbreekt: met
+  alleen `args` zou de relay op een standaardconfiguratie draaien. Het deployment zet nu
+  `command`.
+- **Het maildomein moet als principal bestaan** voordat er een account met een adres erin
+  kan worden gemaakt (200 + `{"error":"notFound","item":"<domein>"}`). De connector maakt
+  het domein nu aan.
+
+### Wat hiermee NIET is afgedekt
+
+- De weg naar `rmrmail.rijksweb.nl` (stap 2). Ongewijzigd blokkerend.
+- De management-API loopt binnen het cluster over **plain HTTP met Basic auth**. Het
+  beheerderswachtwoord gaat dus base64 over het podnetwerk. Wat het vandaag inperkt is het
+  NetworkPolicy: alleen de OPI-namespace mag poort 8080 aan. Wil je het echt dicht, dan
+  hoort daar een certificaat op de listener, en dat is een eigen stap.
+- **Submission heeft geen TLS** terwijl er PLAIN/LOGIN overheen gaat. Zelfde inperking,
+  zelfde antwoord: hetzelfde certificaat lost beide op.
+- Een **eigen afzenderdomein** werkt nog niet: het sieve-script kent alleen het
+  platformmaildomein. Bij het bouwen van die flow hoort daar een regel bij.

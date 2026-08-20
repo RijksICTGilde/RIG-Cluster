@@ -2376,6 +2376,7 @@ class DeleteProjectManager:
             ManagerKey.REDIS: self.project_manager._redis_manager,
             ManagerKey.KEYCLOAK: self.project_manager._keycloak_manager,
             ManagerKey.PVC: self.project_manager._pvc_manager,
+            ManagerKey.MAIL: self.project_manager._mail_manager,
         }[manager_key]
 
     async def cleanup_removed_services_from_yaml_change(
