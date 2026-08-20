@@ -38,9 +38,10 @@ spec:
       ports:
 {% else %}
     # An OPEN rule: no "from", so every source may reach these ports. Deliberate and
-    # explicit (cross-domain-access `open: true`), for a shared facility whose consumers
-    # are not a fixed list. It stays scoped to the podSelector above and to these ports,
-    # and the caller still needs its own egress rule to get here.
+    # explicit (a cross-domain-access inbound rule with `from: {project: "*"}`), for a
+    # shared facility whose consumers are not a fixed list. It stays scoped to the
+    # podSelector above and to these ports, and the caller still needs its own egress
+    # rule to get here.
     - ports:
 {% endif %}
 {% for port in rule.ports %}
