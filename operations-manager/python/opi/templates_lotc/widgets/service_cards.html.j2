@@ -118,17 +118,6 @@
                     <c-tag label="Vereist goedkeuring door een beheerder" class="service-card__hint" />
                 </c-cluster>
                 {% endif %}
-                {% if card.requires_approval %}
-                {# VEREIST GOEDKEURING, altijd zichtbaar en niet pas na het aanvinken:
-                   dit is informatie die je nodig hebt VOOR je kiest, anders lijkt de
-                   dienst kapot wanneer er na het aanzetten niets gebeurt. Dezelfde pil
-                   als de config-hint eronder; de vlag komt uit approval_specs() van de
-                   dienst zelf, dus een dienst die goedkeuring gaat vereisen draagt de
-                   waarschuwing vanzelf. #}
-                <c-cluster>
-                    <c-tag label="Vereist goedkeuring door een beheerder" class="service-card__hint" />
-                </c-cluster>
-                {% endif %}
                 {% if card.config_hint %}
                 {# EEN TAG EN GEEN ALINEA. Dit is geen lopende tekst maar een aanduiding van
                    WAAR je de dienst instelt ("per component"), en die stond er als gewone
