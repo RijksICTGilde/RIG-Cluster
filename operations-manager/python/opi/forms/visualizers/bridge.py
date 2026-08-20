@@ -214,8 +214,13 @@ def should_render_editable(
     yaml_data: dict[str, Any],
     index: int | None = None,
     siblings: list[EditableVisualizer] | None = None,
+    edit_mode: bool = False,
 ) -> bool:
     """Check if an editable should be rendered based on its dependencies.
+
+    Eerst een poort die niets met afhankelijkheden te maken heeft: een veld met
+    ``alleen_bij_bewerken`` verschijnt niet in de aanmaakwizard. Zie de toelichting bij die
+    vlag in :mod:`opi.forms.visualizers.visualizer`.
 
     Implements 4 dependency patterns:
 
@@ -229,6 +234,9 @@ def should_render_editable(
     when a converter maps stored values to sentinel display values (e.g.
     ``CustomDomainSelectConverter`` maps ``"mijnapp.nl"`` → ``"__custom__"``).
     """
+    if editable.alleen_bij_bewerken and not edit_mode:
+        return False
+
     ed = editable.editable
     depends_on = ed.depends_on
     show_when = ed.show_when
