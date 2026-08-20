@@ -212,6 +212,11 @@ def _first_running_pod(project: CreatedProject) -> tuple[str, str]:
     return namespace, cluster.running_pod_names(namespace, project.deployment_name)[0]
 
 
+#: What the probe prints when wget got nothing back (a refusal or, with egress closed, a
+#: timeout). A marker rather than an exit code, because the log is all that comes back.
+_NO_ANSWER = "GEEN-ANTWOORD"
+
+
 def _call_models(namespace: str, pod: str, api_url: str, *, probe: str) -> str:
     """GET {api_url}/v1/models from inside the pod's own network namespace.
 
@@ -223,11 +228,6 @@ def _call_models(namespace: str, pod: str, api_url: str, *, probe: str) -> str:
     """
     script = f'wget -q -T 8 -O - "{api_url}/v1/models" || echo "{_NO_ANSWER}"'
     return cluster.probe_in_pod(namespace, pod, script, probe=probe) or ""
-
-
-#: What the probe prints when wget got nothing back (a refusal or, with egress closed, a
-#: timeout). A marker rather than an exit code, because the log is all that comes back.
-_NO_ANSWER = "GEEN-ANTWOORD"
 
 
 @pytest.mark.timeout(900)
