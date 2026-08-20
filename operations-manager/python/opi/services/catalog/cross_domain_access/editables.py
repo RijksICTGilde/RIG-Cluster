@@ -22,9 +22,11 @@ from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import ModelFieldValidator
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.cross_domain_access.config_model import (
+    WILDCARD_PROJECT,
     InboundRulePatch,
     LocalTargetPatch,
     PeerRefPatch,
+    PeerTargetPatch,
 )
 from opi.services.services_enums import ServiceType
 
@@ -55,11 +57,28 @@ def _name(direction: str) -> Editable:
     )
 
 
+#: An inbound row's peer DEPLOYMENT and COMPONENT are hidden -- and so neither required
+#: nor written -- while that row's peer project is the wildcard (RC-142). The dependency is
+#: read PER ROW (the bridge materializes the ``[*]`` to the row index), and ``not_equals``
+#: is what expresses "everything except this one value": every real project name must keep
+#: showing the fields, so listing the allowed values is not an option.
+#:
+#: The wildcard itself is never OFFERED (see CrossDomainProjectOptionsProvider); a rule that
+#: carries it is set through the API or the project file. What the form must do is not break
+#: such a rule when someone edits the OTHER rules of the same project.
+_WILDCARD_DEPENDS_ON = _cp("inbound[*]", "from", "project")
+_HIDE_WHEN_WILDCARD = {"not_equals": WILDCARD_PROJECT}
+
+
 def _peer_project(direction: str, side: str) -> Editable:
+    # Validated against the model of its OWN direction: the inbound peer accepts the
+    # wildcard, the outbound peer does not, and a shared validator would have told the user
+    # that '*' was fine right up to the save that refused it.
+    model = PeerRefPatch if direction == "inbound" else PeerTargetPatch
     return Editable(
         yaml_path=_cp(f"{direction}[*]", side, "project"),
         values_provider="CrossDomainProjectOptionsProvider",
-        validator=_label(PeerRefPatch, "project", "Project"),
+        validator=_label(model, "project", "Project"),
         required=True,
         virtualize=SERVICE_VIRTUALIZE,
     )
@@ -73,6 +92,8 @@ def _peer_deployment(direction: str, side: str) -> Editable:
         values_provider="CrossDomainPeerDeploymentOptionsProvider",
         validator=_label(PeerRefPatch, "deployment", "Deployment"),
         remove_when_none=True,
+        depends_on=_WILDCARD_DEPENDS_ON if direction == "inbound" else None,
+        show_when=_HIDE_WHEN_WILDCARD if direction == "inbound" else None,
         virtualize=SERVICE_VIRTUALIZE,
     )
 
@@ -83,6 +104,8 @@ def _peer_component(direction: str, side: str) -> Editable:
         values_provider="CrossDomainPeerComponentOptionsProvider",
         validator=_label(PeerRefPatch, "component", "Component"),
         required=True,
+        depends_on=_WILDCARD_DEPENDS_ON if direction == "inbound" else None,
+        show_when=_HIDE_WHEN_WILDCARD if direction == "inbound" else None,
         virtualize=SERVICE_VIRTUALIZE,
     )
 

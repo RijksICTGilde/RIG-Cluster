@@ -19,4 +19,6 @@ Per deployment wordt een extra NetworkPolicy geschreven die precies de door jou 
 
 **De ontvanger beslist.** Een inbound-regel in het project dat benaderd wordt is de toestemming; je kunt jezelf geen toegang geven tot een ander project. Beide kanten leggen dus vast wat ze bedoelen.
 
+**Een gedeelde voorziening zonder projectlimiet.** Draai je iets waar in principe elk project bij mag -- een gedeelde API binnen de cluster -- dan is een regel per afnemer bijhouden geen toegangsbeleid maar een wachtlijst. Voor dat geval kan een inbound-regel `*` als bron-project dragen: die ene poort van dat ene component staat dan open voor elke bron, en `deployment` en `component` van de bron laat je leeg. De keuzelijst biedt dit niet aan; je zet het via de API of het projectbestand, want het is een besluit over een voorziening en niet over een tegenpartij. Denk er wel om dat je applicatie dan zelf haar bellers moet herkennen, bijvoorbeeld met een sleutel: de netwerkregel zegt vanaf dat moment alleen nog wie er bij kan, niet wie het is.
+
 Blijft ook gelden binnen je eigen project: je hebt dan twee regels nodig, een outbound bij de bellende kant en een inbound bij de gebelde kant. Ze staan allebei in hetzelfde projectbestand, dus dat is één bewerking, maar één van de twee is niet genoeg.

@@ -23,6 +23,7 @@ spec:
 {% if ingress %}
   ingress:
 {% for rule in ingress %}
+{% if rule.peer %}
     # namespaceSelector + podSelector in ONE peer entry means AND: exactly this
     # deployment's component in that namespace, never the whole namespace.
     - from:
@@ -35,6 +36,13 @@ spec:
               {{ label_key }}: "{{ label_value }}"
 {% endfor %}
       ports:
+{% else %}
+    # An OPEN rule: no "from", so every source may reach these ports. Deliberate and
+    # explicit (cross-domain-access `open: true`), for a shared facility whose consumers
+    # are not a fixed list. It stays scoped to the podSelector above and to these ports,
+    # and the caller still needs its own egress rule to get here.
+    - ports:
+{% endif %}
 {% for port in rule.ports %}
         - protocol: TCP
           port: {{ port }}
