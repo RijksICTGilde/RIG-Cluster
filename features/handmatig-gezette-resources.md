@@ -107,6 +107,27 @@ Drie gevolgen om te kennen:
   beoordeeld (daar zijn de metingen van de tuner voor nodig), dus de override blijft staan
   en de tuner haalt hem omlaag bij de eerste sweep na het vervallen.
 
+### Een nieuw component legt geen wens vast
+
+De aanmaakweg (`build_component_config`, gebruikt door de zelfbedieningswizard en door
+`POST .../components`) schrijft de twee limieten **rechtstreeks** in de geneste vorm, niet
+via `apply_user_resource_intent`. Dat is een bewuste uitzondering op "één schrijver".
+
+Een aanmaakverzoek draagt namelijk altijd twee limieten: de wizard vult 1 CPU en 256Mi
+voor, en de API valt op dezelfde waarden terug. Liep die weg door het gedeelde pad, dan
+kreeg **elk** nieuw component meteen een `manual`-item -- en dus een limiet die de tuner
+nooit meer mocht verzetten, met `requests.memory` gelijk aan `limits.memory` en dus zonder
+piekruimte (precies waar `min_limit_headroom_mi` voor is). Vervallen redt dat niet: dat
+eist ouderdom **en** gebruik onder de helft, dus alles wat boven 128Mi draait houdt zijn
+256Mi onbeperkt. De enige uitweg zou een echte OOM-kill zijn.
+
+Een voorgevulde standaard die niemand heeft gekozen is geen wens. De eerste echte
+bewerking van het component is dat wel, en die loopt nog steeds via het gedeelde pad. Er
+gaat bij het rechtstreeks schrijven ook niets verloren: een component dat nog niet bestaat
+heeft geen deployment-override om op te ruimen en geen historie om mee te dragen. De
+grendel op het ene schrijfpad noemt `build_component_config` daarom expliciet als de enige
+andere toegestane aanroeper van `apply_resource_limits`.
+
 ### De tuner tegenover een wens
 
 `_analyze_component_resources` haalt de wens op met `get_user_resource_intent` en slaat
@@ -205,7 +226,7 @@ leggen is; ze staan los zodat ze apart bij te draaien zijn.
 | `opi/api/validation.py` | `UPDATE_COMPONENT_VALIDATORS` toetst de twee limieten tegen de platformcap, met dezelfde veldregels als de aanmaakweg |
 | `opi/forms/wizard/save.py` | De portal-bewerking haakt hierin na de merge, met de vorige waarden voor de vergelijking |
 | `opi/manager/project_manager.py` | `update_component` schrijft via hetzelfde pad |
-| `opi/utils/project_utils.py` | `build_component_config` (nieuw component) idem; `apply_resource_limits` is nog de lage schrijver van de geneste vorm |
+| `opi/utils/project_utils.py` | `apply_resource_limits` (de lage schrijver van de geneste vorm); `build_component_config` schrijft daar rechtstreeks in en legt bij aanmaak geen wens vast |
 | `opi/services/resource_tuning_service.py` | `_live_intent_fields`, `_honour_user_intent`, de vervalregel |
 | `tests/test_gebruikerswens_resources.py` | De keten van bewerking tot manifest, plus de grendel op het ene schrijfpad |
 
