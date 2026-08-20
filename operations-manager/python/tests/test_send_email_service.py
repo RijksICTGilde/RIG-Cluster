@@ -1028,10 +1028,20 @@ class TestDeAanvraagStaatGoedInDeBestaandeInterface:
     )
     def test_beide_schermen_noemen_de_aanvraag_bij_naam(self, sjabloon: str) -> None:
         from opi.core.templates_lotc import templates_lotc
+        from opi.web.router_approvals import groepeer_per_dienst
 
         item = self._item()
         html = templates_lotc.env.get_template(sjabloon).render(
-            projects_data=[{"project_name": "myproject", "approval_items": [item]}],
+            # De beheerpagina leest GROEPEN (per dienst) en de wizardpartial de losse
+            # items. Allebei meegeven, want dit is een toets op twee schermen en de
+            # groepen komen uit dezelfde functie als op de echte pagina.
+            projects_data=[
+                {
+                    "project_name": "myproject",
+                    "approval_items": [item],
+                    "approval_groups": groepeer_per_dienst([item]),
+                }
+            ],
             _approval_items=[item],
         )
         assert "E-mail versturen" in html
