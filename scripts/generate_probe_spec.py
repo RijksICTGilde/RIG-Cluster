@@ -55,7 +55,7 @@ SPEC_VERSION = 1
 
 # The one deliberately hand-maintained mapping: which probe *kind* exercises each
 # service, and which stable target id it reports under. A probe kind is a reusable
-# round-trip handler in the Go binary (sql, redis, s3, oidc, path, metadata); the
+# round-trip handler in the Go binary (sql, redis, s3, oidc, path, metadata, vlam); the
 # runtime dispatches on it. Adding a variable to an existing service, or a second
 # service of an existing kind, needs NO change here - only a genuinely new *kind*
 # of resource does (one new handler + one line below). See the plan in
@@ -86,12 +86,13 @@ KIND_MAP: dict[ServiceType, tuple[str, str, tuple[str, ...]]] = {
     # variabelen daadwerkelijk geinjecteerd worden; wat niet bewaakt wordt is of ze
     # ook werken. Dat verschil is de moeite van een vervolgstap waard.
     ServiceType.SEND_EMAIL: ("metadata", "mail", ()),
-    # vlam is metadata om dezelfde reden als send-email, plus een die alleen voor deze
-    # dienst geldt: er staat in de sandbox helemaal geen VLAM achter het adres (de
-    # clusterconfiguratie draagt daar een plaatshouder). Een round-trip zou dus altijd
-    # falen op de omgeving en nooit op de dienst. Wat hier wel bewaakt wordt is dat
-    # VLAM_API_URL daadwerkelijk in de pod aankomt.
-    ServiceType.VLAM: ("metadata", "vlam", ()),
+    # vlam heeft sinds RC-144 een EIGEN probe-soort: hij haalt {VLAM_API_URL}/v1/models op.
+    # Als metadata-doel bewaakte deze dienst alleen dat het adres in de pod aankwam, en dat
+    # is precies de helft die nooit stukgaat -- de keten erachter (uitgaande netwerkregel,
+    # inkomende regel op de proxy, de proxy zelf) werd met de hand gecurled. De reden om
+    # dat toen niet te doen, "in de sandbox staat er geen VLAM achter het adres", is
+    # weggenomen: de sandbox draagt nu een stub op de plaatshoudercoordinaten.
+    ServiceType.VLAM: ("vlam", "vlam", ("VLAM_API_URL",)),
 }
 
 # Services that legitimately inject no connection variables and so have no probe.

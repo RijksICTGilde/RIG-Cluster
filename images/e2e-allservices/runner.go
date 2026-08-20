@@ -77,6 +77,8 @@ func runTarget(t Target) Result {
 		cr = checkPath(t)
 	case "metadata":
 		cr = checkMetadata(t)
+	case "vlam":
+		cr = checkVlam(ctx)
 	default:
 		cr = checkResult{err: fmt.Errorf("unknown probe kind %q", t.Kind)}
 	}
