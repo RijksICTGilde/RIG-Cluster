@@ -185,7 +185,7 @@
         "project": {
           "anyOf": [
             {
-              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "pattern": "^(\\*|[a-z0-9]([-a-z0-9]*[a-z0-9])?)$",
               "type": "string"
             },
             {
@@ -193,7 +193,7 @@
             }
           ],
           "default": null,
-          "description": "Project of the peer, as a DNS-1123 label.",
+          "description": "Project of the peer, as a DNS-1123 label. Use '*' for no project limit: the port is opened to every source instead of to one named peer, and 'deployment' and 'component' must then be left empty.",
           "title": "Project"
         }
       },
