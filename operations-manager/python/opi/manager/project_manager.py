@@ -5974,9 +5974,8 @@ class ProjectManager:
             # config_handler.add_custom_config(component_name, "unique_name", unique_name)
 
             # Merge each service's manifest contribution into the template context
-            # (RC-5 Phase 6b): sidecars are additive, template_vars override base keys
-            # (auth-wall sets authorization_wall + service_port 8080 -> 4180). The
-            # contributions were collected once, above, before the dict was built.
+            # (RC-5 Phase 6b). The contributions were collected once, above, before the
+            # dict was built; the merge semantics per field live with the function.
             apply_manifest_contributions(variables, manifest_contributions)
 
             # Auth-wall observability: the provider contributes nothing when a component
