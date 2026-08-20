@@ -220,6 +220,7 @@ async def build_component_config(
     public_key: str | None = None,
     default_port: int | None = None,
     ports: list[int] | None = None,
+    origin: str = "api",
 ) -> dict[str, Any]:
     """
     Build a complete component config dict.
@@ -243,6 +244,8 @@ async def build_component_config(
         public_key: AGE public key for encrypting env vars
         default_port: Default port if none specified (e.g., 8080 for project creation)
         ports: Inbound ports as a list (takes precedence over the single-port `port`)
+        origin: Where the request came from ("api", "portal"); recorded on the resource
+            history entry that marks these values as set by the user
 
     Returns:
         Component configuration dictionary
@@ -273,10 +276,22 @@ async def build_component_config(
         "uses-components": [],
     }
 
-    # Add resource limits if specified, in the canonical nested form.
+    # Add resource limits if specified, through the one path that writes a resource value
+    # a user asked for (RC-141). A component that does not exist yet has no deployment
+    # overrides and no history, so that path only writes the values plus the entry that
+    # records them as the user's own -- but it is the same writer, and a second writer is
+    # exactly how a portal edit ended up losing to the tuner.
+    # The handler is imported here rather than at the top because it imports this module
+    # for apply_resource_limits; same reason this module's docstring already gives.
     if cpu_limit or memory_limit:
-        component_config["resources"] = {}
-        apply_resource_limits(component_config["resources"], cpu_limit=cpu_limit, memory_limit=memory_limit)
+        from opi.handlers.project_file_handler import ProjectFileHandler
+
+        ProjectFileHandler().apply_user_resource_intent(
+            {"components": [component_config]},
+            name,
+            {"limits_cpu": cpu_limit, "limits_memory": memory_limit},
+            origin=origin,
+        )
 
     # Encrypt and add user env vars if provided
     if env_vars:
