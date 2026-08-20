@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rig-mail-relay
+  namespace: rig-ron
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rig-mail-relay
+  template:
+    metadata:
+      labels:
+        # Het NetworkPolicy-label waar de dienst send-email naar verwijst
+        # (RELAY_POD_LABELS in opi/services/catalog/send_email/__init__.py). Verander je
+        # dit label, verander het daar dan mee, anders opent het beleid van elk project
+        # niets meer.
+        app: rig-mail-relay
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: stalwart
+          # Er bestaat geen v0.11.5 op Docker Hub (de reeks springt van v0.11.4 naar
+          # v0.11.6); dat is een ImagePullBackOff bij de eerste uitrol. Deze versie is de
+          # versie waartegen de identiteitsregels in de configmap zijn gemeten.
+          image: stalwartlabs/mail-server:v0.11.8
+          # De binary rechtstreeks, NIET het entrypoint van het image. Dat entrypoint
+          # (/usr/local/bin/entrypoint.sh) negeert zijn argumenten volledig: het draait
+          # --init als /opt/stalwart-mail/etc/config.toml ontbreekt en start daarna altijd
+          # met DAT bestand. Met alleen args hierboven zou de relay dus met een zelf
+          # gegenereerde standaardconfiguratie draaien - geen identiteitsregels, geen
+          # upstream, geen limieten - of vastlopen op de read-only rootfs bij de --init.
+          # Gemeten tegen v0.11.8: met alleen args schrijft hij "Configuration file
+          # written to /opt/stalwart-mail/etc/config.toml"; met dit command laadt hij
+          # /etc/mail/config.toml.
+          command: ["/usr/local/bin/stalwart-mail"]
+          args: ["--config", "/etc/mail/config.toml"]
+          ports:
+            # 2525 in plaats van 587: zie de toelichting bij de submission-listener in
+            # configmap.yaml. De Service blijft 587 aanbieden.
+            - containerPort: 2525
+              name: submission
+            - containerPort: 8080
+              name: management
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            # Bewust zonder namespace erin: de namespace heet op ODCN rig-prd-ron en
+            # elders rig-ron, en deze naam gaat als EHLO-naam de deur uit.
+            - name: MAIL_RELAY_HOSTNAME
+              value: rig-mail-relay
+            - name: MAIL_DOMAIN
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DOMAIN
+            - name: MAIL_FROM_LOCAL
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_FROM_LOCAL
+            - name: MAIL_UPSTREAM_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_UPSTREAM_HOST
+            # Strikte certificaatcontrole op de sprong naar de upstream. Staat hier op
+            # "false" zodat elk cluster hem strikt heeft zonder iets te hoeven zeggen; de
+            # component mail/sink/as-upstream zet hem om, want de sink die diezelfde
+            # component meebrengt draagt een zelfondertekend certificaat. Zie de
+            # toelichting in configmap.yaml.
+            - name: MAIL_UPSTREAM_ALLOW_INVALID_CERTS
+              value: "false"
+            - name: MAIL_RELAY_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_RELAY_ADMIN_USERNAME
+            - name: MAIL_RELAY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_RELAY_ADMIN_PASSWORD
+            - name: MAIL_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DB_HOST
+            - name: MAIL_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DB_NAME
+            - name: MAIL_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DB_USER
+            - name: MAIL_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_DB_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+              ephemeral-storage: "256Mi"
+            limits:
+              cpu: 500m
+              memory: 512Mi
+              ephemeral-storage: "512Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mail/config.toml
+              subPath: config.toml
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            tcpSocket:
+              port: 2525
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 2525
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: rig-mail-relay-config
+        - name: tmp
+          emptyDir: {}

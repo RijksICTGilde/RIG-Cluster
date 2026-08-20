@@ -1057,6 +1057,9 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "publish-on-web": ["component", "deployment", "deployment-component"],
     "redis": ["project"],
     "resource-tuning": [],
+    # RC-114: the SMTP account belongs to the project; a component only decides whether
+    # it gets the credentials, so there is nothing to configure on any other layer.
+    "send-email": ["project"],
     "sleep-mode": ["project"],
     "temp-storage": ["component"],
 }

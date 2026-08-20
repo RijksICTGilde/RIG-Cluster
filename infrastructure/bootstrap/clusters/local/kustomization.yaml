@@ -15,6 +15,15 @@ resources:
   - ../../infrastructure/minio/controller/overlays/local
   - ../../infrastructure/prometheus/controller/overlays/local
   - ../../infrastructure/redis/controller/overlays/local
+  # De mailrelay in zijn eigen RON-namespace (RC-114). Bewust nog niet aangezet: stap 2
+  # van de uitrol is nog open - de route naar de upstream bestaat, maar er komt op geen
+  # enkele poort een banner terug, en zolang dat niet rond is draait hier een relay die
+  # niets kan bezorgen. De manifesten zijn klaar; deze regel is de eerste van de
+  # stappen in features/send-email.md ("Wat er bij het aanzetten werkelijk moet gebeuren") -
+  # de clustergeheimen moeten eerst gegenereerd zijn (deze overlay rendert er een van een
+  # tweede keer, in de namespace van de relay), en OPI heeft daarnaast MAIL_RELAY_API_URL
+  # in zijn deployment nodig.
+#  - ../../infrastructure/mail/controller/overlays/local
 #  - ../../infrastructure/pgadmin/controller/overlays/local
 #  - ../../infrastructure/pgadmin/config/overlays/local
 #  - ../../infrastructure/minio/controller/overlays/local

@@ -82,12 +82,14 @@ def test_get_provider_returns_registered_instance() -> None:
 
 
 def test_provisioning_providers_order_matches_legacy_sequence():
-    # Must reproduce today's fixed db -> minio -> keycloak -> redis order.
+    # Must reproduce today's fixed db -> minio -> keycloak -> redis order; send-email
+    # (RC-114) provisions after those, so the frozen prefix stays exactly as it was.
     assert [p.service_type.value for p in provisioning_services()] == [
         "postgresql-database",
         "minio-storage",
         "keycloak",
         "redis",
+        "send-email",
     ]
 
 
@@ -100,7 +102,7 @@ def test_namespace_variants_do_not_double_provision():
 
 
 def test_provision_delegates_to_the_right_manager():
-    db, minio, keycloak, redis = (AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock())
+    db, minio, keycloak, redis, mail = (AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock())
     ctx = ProvisionContext(
         project_data={"name": "p"},
         deployment={"name": "d"},
@@ -109,6 +111,7 @@ def test_provision_delegates_to_the_right_manager():
         minio_manager=SimpleNamespace(create_resources_for_deployment=minio),
         keycloak_manager=SimpleNamespace(create_resources_for_deployment=keycloak),
         redis_manager=SimpleNamespace(create_resources_for_deployment=redis),
+        mail_manager=SimpleNamespace(create_resources_for_deployment=mail),
     )
 
     async def run():
@@ -121,6 +124,7 @@ def test_provision_delegates_to_the_right_manager():
     minio.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True)
     keycloak.assert_awaited_once_with({"name": "p"}, {"name": "d"})
     redis.assert_awaited_once_with({"name": "p"}, {"name": "d"})
+    mail.assert_awaited_once_with({"name": "p"}, {"name": "d"})
 
 
 def test_default_provision_is_noop():
@@ -145,6 +149,9 @@ _LEGACY_SERVICE_MANAGER_KEYS = {
     ServiceType.NAMESPACE_REDIS: ManagerKey.REDIS,
     ServiceType.KEYCLOAK: ManagerKey.KEYCLOAK,
     ServiceType.PERSISTENT_STORAGE: ManagerKey.PVC,
+    # Added by RC-114: the SMTP account on the relay is a server-side resource, so it
+    # has a manager to clean it up like the others.
+    ServiceType.SEND_EMAIL: ManagerKey.MAIL,
 }
 
 
@@ -233,6 +240,7 @@ _EXPECTED_ENVFROM_ORDER = [
     ("keycloak", "mydep-keycloak"),
     ("redis", "mydep-redis"),
     ("metrics-scraper", "mydep-metrics-auth"),
+    ("send-email", "mydep-send-email"),
 ]
 
 
@@ -256,7 +264,12 @@ def _manifest_ctx(
 
 
 def test_manifest_secret_providers_order_and_names():
-    ctx = _manifest_ctx()
+    # send-email contributes nothing without an approval (RC-114), so the project handed
+    # to the context carries one; without it this test would assert the frozen order of a
+    # list that is one shorter and say nothing about the gate.
+    ctx = _manifest_ctx(
+        project_data={"services": [{"name": "send-email", "config": {"approval": {"status": "approved"}}}]}
+    )
     actual = [
         (p.service_type.value, p.contribute_manifest_context(ctx).env_from_secrets[0])
         for p in manifest_secret_services()
@@ -316,6 +329,7 @@ def test_manifest_providers_includes_auth_wall_after_secrets():
         "metrics-scraper",
         "health-check",
         "authorization-wall",
+        "send-email",
     ]
 
 
