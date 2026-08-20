@@ -18,6 +18,25 @@ components:
   - ../../../sink/as-upstream
 
 patches:
+  # Op dit cluster draait de gedeelde PostgreSQL in rig-system, niet in
+  # rig-prd-operations. Op naam en niet op index: kustomize voegt env-lijsten samen op
+  # het veld `name`, dus deze patch blijft staan als de basis een variabele erbij krijgt.
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rig-mail-relay
+      spec:
+        template:
+          spec:
+            containers:
+              - name: stalwart
+                env:
+                  - name: MAIL_DB_HOST
+                    value: rig-db-rw.rig-system.svc.cluster.local
   # De Namespace uit de base kan hier niet meedoen: de ArgoCD op dit clustertype draait
   # in namespaced mode en weigert cluster-scoped resources ('cluster level Namespace
   # "rig-ron" can not be managed when in namespaced mode', gemeten 19 augustus 2026).

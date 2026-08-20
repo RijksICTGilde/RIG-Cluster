@@ -48,32 +48,28 @@ kubectl config use-context kind-rig-sandbox
 
 1. **De drie kopieerstappen hierboven.** → verifieer: `kubectl get ns` toont `rig-system`.
 
-2. **Het geheim `mail-relay-secret` voor `sandboxed-local` met de hand maken.**
-   **Draai NIET `task generate-secrets-for-cluster`**: die stopt met `exit 0` zodra er één
-   `.sops.yaml` in de doelmap staat, en de enige manier eromheen is elk bestaand geheim van
-   dat cluster weggooien en opnieuw genereren. Dat roteert Keycloak, MinIO, PostgreSQL en
-   pgadmin mee.
+2. **De geheimen staan al klaar** (aangemaakt op 20 augustus 2026, samen met de
+   structurele fixes hieronder). Voor `sandboxed-local` staan
+   `mail-relay-secret.yaml.sops.yaml` en `mail-db-credentials-secret.yaml.sops.yaml` in
+   `infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/`
+   (gitignored, dus alleen in de hoofdcheckout op deze machine); voor `odcn` staan ze
+   versleuteld in git. Ontbreken ze ergens toch: `task generate-secrets-for-cluster`
+   slaat bestaande geheimen sinds diezelfde fix per bestand over, dus die kan nu veilig
+   draaien zonder rotatie van Keycloak, MinIO of PostgreSQL.
 
-   Neem `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml`,
-   vul in en versleutel met `task encrypt-secret` naar
-   `infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/mail-relay-secret.yaml.sops.yaml`.
-   De waarden voor de sandbox:
+   Wat er structureel is veranderd (de handstappen van dit plan zijn vervallen):
+   de sjablonen zijn cluster-agnostisch gemaakt (`MAIL_UPSTREAM_HOST` en `MAIL_DB_HOST`
+   staan nu in het Deployment; de basis draagt productie, de overlays en de
+   sink-component zetten ze om), en de databasegebruiker staat in een eigen
+   `mail-db-credentials` in de vorm die CNPG wil.
 
-   | Sleutel | Waarde |
-   |---|---|
-   | `MAIL_FROM_LOCAL` | `noreply-rijksapp` |
-   | `MAIL_DOMAIN` | `rijksoverheid.nl` |
-   | `MAIL_UPSTREAM_HOST` | `rig-mail-sink.rig-ron.svc.cluster.local` (de sink, niet rijksweb) |
-   | `MAIL_RELAY_ADMIN_USERNAME` | `admin` |
-   | `MAIL_RELAY_ADMIN_PASSWORD` | zelf kiezen; `@secret-gen:random:24` wordt alleen door de generatietaak ingevuld |
-   | `MAIL_DB_HOST` | `rig-db-rw.rig-system.svc.cluster.local` (op de sandbox, NIET rig-prd-operations) |
-   | `MAIL_DB_NAME` / `MAIL_DB_USER` | `mailrelay` |
-   | `MAIL_DB_PASSWORD` | zelf kiezen |
+   → verifieer: `sops --decrypt` op beide bestanden toont `rig-system` als namespace.
 
-   → verifieer: `sops --decrypt` op het resultaat toont die waarden.
-
-3. **De database `mailrelay` moet bestaan** in de PostgreSQL van de sandbox, met die
-   gebruiker. Bestaat hij niet, dan start Stalwart niet op en zie je dat pas in de podlog.
+3. **De database komt declaratief mee.** De rol `mailrelay` en de database staan in
+   `infrastructure/bootstrap/infrastructure/postgresql/database/base/` (managed role +
+   Database-resource, wachtwoord uit `mail-db-credentials`); CNPG maakt ze aan zodra de
+   wijziging synct, ook op een cluster dat al draait. Er is geen handmatige
+   CREATE DATABASE meer, op geen enkel cluster.
 
 4. **De overlay bouwen** → verifieer: bouwt zonder fout en bevat `rig-mail-relay`,
    `rig-mail-sink`, het geheim en het netwerkbeleid, allemaal in `rig-ron`:
