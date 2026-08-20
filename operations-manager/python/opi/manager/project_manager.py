@@ -5784,10 +5784,20 @@ class ProjectManager:
                 get_secret=self._get_secret_from_map,
                 component_def=component_def,
             )
+            # A service whose contribution is the same for every pod of the deployment
+            # (vlam) is switched on by the PROJECT's selection: no component ever ticks
+            # it, so reading only the component's list would never activate it. See
+            # Service.manifest_activated_by_project.
+            project_service_names = ServiceAdapter.extract_service_names_from_project_services(
+                project_data.get("services", []) or []
+            )
             manifest_contributions = [
                 provider.contribute_manifest_context(manifest_ctx)
                 for provider in manifest_services()
-                if any(t.value in all_services for t in provider.manifest_activation_types())
+                if any(
+                    t.value in (project_service_names if provider.manifest_activated_by_project else all_services)
+                    for t in provider.manifest_activation_types()
+                )
             ]
 
             # Build envFrom secrets list based on services used and user env vars
@@ -5930,6 +5940,10 @@ class ProjectManager:
             # contributions were collected once, above, before the dict was built.
             for contribution in manifest_contributions:
                 variables.update(contribution.template_vars)
+                if contribution.env_vars:
+                    # Additive, unlike template_vars: a service adds variables to the
+                    # component's own set instead of replacing it.
+                    variables["env_vars"] = {**variables["env_vars"], **contribution.env_vars}
                 if contribution.sidecars:
                     variables.setdefault("sidecars", []).extend(contribution.sidecars)
 
