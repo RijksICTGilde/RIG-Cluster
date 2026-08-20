@@ -15,6 +15,7 @@ Four things are worth holding down, and they are the four the plan argues hardes
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
@@ -1620,3 +1621,31 @@ class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
         # En het adres dat de applicatie te zien krijgt, is het adres dat de relay zelf
         # samenstelt uit de accountnaam - zie TestHetAdresWordtEenKeerSamengesteld.
         assert secrets[0][2].from_address == "noreply-rijksapp+ai1-uit@rijksoverheid.nl"
+
+
+class TestTweeProjectenTegelijk:
+    """De tabel wordt gelezen EN geschreven, dus twee projecten tegelijk is een echte vraag.
+
+    Zonder grendel lezen ze allebei de tabel zoals hij was en schrijft de laatste die van de
+    eerste weg - stil, en tot iemand dat project toevallig opnieuw verwerkt. Dat is precies
+    het soort verlies dat niemand meldt, want de post gaat gewoon weg, alleen zonder naam.
+    """
+
+    @pytest.mark.asyncio
+    async def test_de_naam_van_de_ander_blijft_staan(self) -> None:
+        opgeslagen: dict[str, str] = {}
+        traag = TestDeWeergavenaamStaatOpDeRelay()
+        server = TestServer(traag._app([], [], opgeslagen))
+        await server.start_server()
+        connector = MailConnector(str(server.make_url("")).rstrip("/"), "admin", "geheim", verify_tls=False)
+        try:
+            await asyncio.gather(
+                connector.set_sender_name("project-een", "Een"),
+                connector.set_sender_name("project-twee", "Twee"),
+            )
+        finally:
+            await server.close()
+
+        tabel = opgeslagen[MAIL_SENDER_TABLE_KEY]
+        assert 'set "naam" "Een"' in tabel
+        assert 'set "naam" "Twee"' in tabel
