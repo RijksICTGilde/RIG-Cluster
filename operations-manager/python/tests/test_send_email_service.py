@@ -27,6 +27,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from opi.connectors.mail import (
     MAIL_SENDER_NAME_PREFIX,
+    MAIL_SENDER_SCRIPT_NAME,
     MAIL_SENDER_TABLE_KEY,
     MailAccount,
     MailConnector,
@@ -517,6 +518,10 @@ class TestTheAddresses:
 
         Zonder deze toets zou een hernoeming van ``MAIL_PROJECT_ACCOUNT_PREFIX`` elk
         afzenderadres op het platform stil veranderen in iets dat OPI niet meldt.
+
+        Dezelfde grendel op de NAAM van het gegenereerde script, en daar is de faalstand nog
+        stiller: ``include :optional`` slaat een script dat niet bestaat woordeloos over, dus
+        bij drift verstuurt elk project gewoon zonder weergavenaam en meldt niets dat.
         """
         configmap = (
             Path(__file__).resolve().parents[3]
@@ -525,6 +530,9 @@ class TestTheAddresses:
         assert f"strip_prefix(authenticated_as, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in configmap
         assert f"strip_prefix(account, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in configmap
         assert f"starts_with(authenticated_as, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in configmap
+        assert f'include :optional :personal "{MAIL_SENDER_SCRIPT_NAME}"' in configmap, (
+            "de relay sluit een ander script in dan OPI schrijft"
+        )
 
     def test_alle_clusters_gebruiken_hetzelfde_basisadres(self) -> None:
         """Het BASISadres blijft overal gelijk; alleen het plusdeel verschilt per project.
@@ -1385,9 +1393,14 @@ class TestDeGegenereerdeTabelIsGeenInvoerkanaal:
     zijn.
 
     De validatie op het configmodel houdt dit al tegen op allebei de schrijfwegen (formulier
-    en API); deze laag houdt stand als een waarde de connector ooit langs een derde weg
-    bereikt. Precies de reden waarom een validator op het VELD niet genoeg is: een veld kan
-    van eigenaar wisselen, de connector blijft de laatste die de waarde in code zet.
+    en API) -- en dat is een afspraak die je moet TOETSEN, niet aannemen: zolang ``$`` alleen
+    hier verboden was, kwam een naam met een dollarteken door het formulier en viel hij pas
+    om in ``ensure_account``. ``TestDeWeergavenaamWordtGetoetst`` legt de twee lijsten nu
+    naast elkaar, in beide richtingen.
+
+    Deze laag houdt stand als een waarde de connector ooit langs een derde weg bereikt.
+    Precies de reden waarom een validator op het VELD niet genoeg is: een veld kan van
+    eigenaar wisselen, de connector blijft de laatste die de waarde in code zet.
     """
 
     def test_een_gewone_tabel_ziet_er_saai_uit(self) -> None:
@@ -1503,6 +1516,7 @@ class TestDeWeergavenaamWordtGetoetst:
         "punthaken": "Iemand <spoof@evil.example>",
         "aanhalingsteken": 'Zeg "hoi"',
         "backslash": "pad\\weg",
+        "dollarteken": "Aanbod $5 korting",
         "te lang": "a" * 65,
     }
 
@@ -1530,6 +1544,26 @@ class TestDeWeergavenaamWordtGetoetst:
         from opi.services.catalog.send_email.editables import SEND_EMAIL_FROM_NAME_EDITABLE
 
         assert SEND_EMAIL_FROM_NAME_EDITABLE.validator.validate(naam) == []
+
+    @pytest.mark.parametrize(("geval", "naam"), list(FOUT.items()))
+    def test_de_relay_weigert_precies_dezelfde_namen(self, geval: str, naam: str) -> None:
+        """De laatste laag is de connector, die de naam in een gegenereerd sieve-script zet.
+
+        Deze toets bestaat omdat de twee lijsten UIT ELKAAR kunnen lopen, en dat gebeurde:
+        ``$`` stond wel in ``_NAAM_VERBODEN`` en niet in ``FROM_NAME_PATTERN``, dus een naam
+        met een dollarteken kwam door het formulier en door het model heen en viel pas om in
+        ``ensure_account`` -- midden in het verwerken van een project, waar niets die fout
+        vangt. Een naam die hierboven mag, moet hier ook mogen, en andersom.
+        """
+        with pytest.raises(MailSenderNameError):
+            render_sender_table({"project-x": naam})
+
+    @pytest.mark.parametrize("naam", GOED)
+    def test_de_relay_laat_dezelfde_gewone_namen_door(self, naam: str) -> None:
+        """De andere richting: een naam die het formulier goedkeurt, moet ook echt in het
+        gegenereerde script passen, anders is de goedkeuring een belofte die de verwerking
+        niet nakomt."""
+        render_sender_table({"project-x": naam})
 
     def test_het_vastgelegde_schema_draagt_de_regel_ook(self) -> None:
         """Het schemafragment is wat externe gereedschappen lezen; drift daarin betekent

@@ -112,8 +112,8 @@ elke ontvanger buiten de Rijksoverheid niets meer aan. Het project in het plusde
 uitlijning niet: het domein blijft hetzelfde, en een bounce blijft herleidbaar.
 
 Wat `from-name` mag zijn: geen regeleindes of andere stuurtekens, geen `@`, geen punthaken,
-geen aanhalingstekens of backslash, en hoogstens 64 tekens. Dat is geen willekeur — de naam
-gaat rechtstreeks een mailheader in, en een naam die op een adres lijkt
+geen aanhalingstekens, backslash of dollarteken, en hoogstens 64 tekens. Dat is geen
+willekeur — de naam gaat rechtstreeks een mailheader in, en een naam die op een adres lijkt
 (`beveiliging@bank.nl`) wordt bij menig ontvanger als het afzenderadres gelezen. Een komma
 of een punt mag wel; de relay zet aanhalingstekens om de naam heen, zodat die de `From:`
 niet in tweeën knipt.
@@ -293,11 +293,13 @@ omgeving). Dat herstartmoment is precies wanneer het account ontstaat.
 | `MAIL_RELAY_ADMIN_USERNAME` / `MAIL_RELAY_ADMIN_PASSWORD` | waarmee OPI accounts aanmaakt |
 | `MAIL_PLATFORM_ACCOUNT` | de naam van het account van ZAD zelf (het wachtwoord is géén instelling, zie hierboven) |
 | `MAIL_PLATFORM_SECRET_NAME` | de Secret in de eigen namespace waarin OPI dat wachtwoord bewaart |
-| `MAIL_PLATFORM_MESSAGES_PER_DAY` | het budget van dat account (de afzender is geen instelling: die is voor iedereen gelijk) |
+| `MAIL_PLATFORM_MESSAGES_PER_DAY` | het budget van dat account (de afzender is geen instelling: dit account hoort bij geen project en verstuurt daarom als het kale basisadres, zonder plusdeel en zonder naam) |
 | `MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY` | het budget van een project dat er zelf geen kiest |
 
-Per cluster staan de relay-hostnaam, de poort, de namespace en het vaste afzenderadres in
-`opi/core/cluster_config.py` (`get_mail_from_address`).
+Per cluster staan de relay-hostnaam, de poort, de namespace en het BASISadres in
+`opi/core/cluster_config.py` (`get_mail_from_address`). Het adres dat een project
+daadwerkelijk gebruikt wordt daaruit samengesteld met het project in het plusdeel; dat
+gebeurt op één plek, in `MailManager._sender_address`.
 
 Is `MAIL_RELAY_API_URL` leeg, dan weigert de dienst te provisionen in plaats van
 credentials uit te delen die nergens op uitkomen. Het platformaccount wordt dan stil

@@ -34,8 +34,8 @@ SEND_EMAIL_FROM_NAME_EDITABLE = Editable(
     validator=ModelFieldValidator(
         SendEmailConfig,
         "from_name",
-        "De afzendernaam mag geen regeleindes, @, punthaken, aanhalingstekens of backslash "
-        f"bevatten en is hoogstens {MAX_FROM_NAME_LENGTH} tekens lang",
+        "De afzendernaam mag geen regeleindes, @, punthaken, aanhalingstekens, backslash of "
+        f"dollarteken bevatten en is hoogstens {MAX_FROM_NAME_LENGTH} tekens lang",
     ),
     # Empty means "no display name", which is a valid outcome, so the key is dropped
     # rather than written as null.
