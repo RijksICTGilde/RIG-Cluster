@@ -330,6 +330,9 @@ def test_manifest_providers_includes_auth_wall_after_secrets():
         "health-check",
         "authorization-wall",
         "send-email",
+        # vlam (RC-142) contributes a plain env var and joins last, so no already
+        # rendered manifest changes order because of it.
+        "vlam",
     ]
 
 

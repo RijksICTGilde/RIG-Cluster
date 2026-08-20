@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
+from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
@@ -616,6 +617,46 @@ def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> 
     return errors
 
 
+def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
+    """Services this project selected that its deployments' clusters cannot deliver.
+
+    Asked of each service (``Service.available_on_cluster``), so no cluster name and no
+    service name appears in this module. Measured per DEPLOYMENT cluster rather than
+    against the managing cluster: that is the cluster the pods will actually run on, and
+    it keeps the verdict the same file-in, file-out no matter which OPI instance reads
+    the project.
+
+    This is the refusal that counts. Leaving an unavailable service out of the wizard's
+    cards hides it from one of three roads; the API and a hand-written project file never
+    pass a card at all.
+    """
+    selected = ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []) or [])
+    if not selected:
+        return []
+
+    errors: list[str] = []
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        cluster = deployment.get("cluster")
+        if not cluster or cluster not in CLUSTER_CONFIG:
+            continue
+        for name in selected:
+            try:
+                service_type = ServiceType(name)
+            except ValueError:
+                # An unknown service name is another check's verdict, not this one's.
+                continue
+            service = SERVICES.get(service_type)
+            if service is None or service.available_on_cluster(cluster):
+                continue
+            errors.append(
+                f"deployment '{deployment.get('name')}' draait op cluster '{cluster}', en daar is de dienst "
+                f"'{name}' niet beschikbaar"
+            )
+    return errors
+
+
 async def validate_project_structure(project_data: dict[str, Any]) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
@@ -753,6 +794,13 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
     schema_errors = validate_database_schema_names(project_data)
     if schema_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(schema_errors)}")
+
+    # A service is only usable where the cluster can deliver it. Here rather than at the
+    # form field because a project reaches this point from the wizard, the API and a
+    # hand-edited file alike.
+    availability_errors = validate_service_availability(project_data)
+    if availability_errors:
+        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(availability_errors)}")
 
     # A deployment may not point at another project's tag in the shared platform
     # registry. This is the read half of the ownership the push endpoint pins.
