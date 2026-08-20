@@ -617,13 +617,13 @@ def get_flow(flow_id: str, **context: Any) -> FormFlow:
         kind, index = match
         return kind.build(index, context)
 
-    # Admin domain/subdomain approval flow
+    # Admin approval flow: every approval a service declares, not just domains
     if flow_id == "admin-approval":
         from opi.forms.visualizers.wizard_sections import build_domain_approval_section
 
         return FormFlow(
             flow_id="admin-approval",
-            title="Domein- en subdomeingoedkeuring",
+            title="Goedkeuring van aanvragen",
             mode=FlowMode.WIZARD,
             show_review=False,
             sections=[build_domain_approval_section()],

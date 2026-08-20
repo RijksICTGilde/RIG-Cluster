@@ -2,12 +2,13 @@
 
 Lists pending approval items across all projects and drives the approve/deny modal.
 The items + verdicts flow through the catalog ApprovalSpecs (opi/services/approvals.py),
-so this router is not domain-specific; domains are simply the only approvable today.
+so this router is not domain-specific: publish-on-web declares a domain and a subdomain
+approval, send-email declares one for the use of the service itself.
 Historically ``router_subdomain_admin`` at ``/admin/subdomains``.
 
-Provides a listing page of all domain/subdomain requests across projects,
-and admin-scoped modal wizard endpoints for approving/denying requests.
-Reuses the editable form framework — no custom form processing.
+Provides a listing page of all approval requests across projects, and admin-scoped modal
+wizard endpoints for approving/denying them. Reuses the editable form framework — no
+custom form processing.
 """
 
 from __future__ import annotations
@@ -36,6 +37,8 @@ from opi.forms.wizard.session import (
 )
 from opi.services.approvals import collect_approval_items
 from opi.services.project_store import get_project_store
+from opi.services.registry import get_service
+from opi.services.services_enums import ServiceType
 from opi.web.lotc_switch import render_fragment
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import to_nldd_icon
@@ -156,7 +159,7 @@ def _modal_error(request: Request, melding: str, status_code: int) -> HTMLRespon
 
 
 def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
-    """Collect domain/subdomain data across all projects for the listing page."""
+    """Collect the approval items of every project, for the listing page."""
     all_projects = get_project_store().get_all()
 
     result: list[dict[str, Any]] = []
@@ -217,10 +220,51 @@ def filter_op_status(projects_data: list[dict[str, Any]], status: str) -> list[d
     return gefilterd
 
 
+def groepeer_per_dienst(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bundel de aanvragen van een project per DIENST, met de naam en het icoon van die dienst.
+
+    Een domeinaanvraag en een dienstaanvraag zijn verschillende dingen, en de lijst hoort
+    dat te laten zien. De groepskop haalt zijn naam, icoon en kleur uit de
+    ``ServiceDefinition`` in de registry en niet uit een lijstje in het sjabloon: dan
+    verschijnt een vierde dienst met goedkeuring er vanzelf goed op.
+
+    ``toon_soort`` is de generieke vorm van "voegt de soort-tag iets toe?". Bij
+    publish-on-web onderscheidt hij domein van subdomein; bij een dienst met een enkele
+    soort herhaalt hij alleen de groepskop, en dan blijft de kolom weg.
+
+    De volgorde is die van de items zelf (dus die van de catalogus), zodat de lijst niet
+    van run tot run wisselt. De TELLING blijft over ITEMS gaan -- ``approval_items`` blijft
+    naast deze groepen bestaan, want "x van y aanvragen" telt aanvragen en geen groepen.
+    """
+    groepen: dict[str, dict[str, Any]] = {}
+    for item in items:
+        sleutel = item.get("service") or item.get("type") or ""
+        groep = groepen.get(sleutel)
+        if groep is None:
+            groep = {"service": sleutel, "naam": item.get("label") or sleutel, "icoon": "", "aanvragen": []}
+            try:
+                definitie = get_service(ServiceType(sleutel)).definition
+            except ValueError, KeyError:
+                # Een item van een dienst die de registry niet (meer) kent. Het opschrift
+                # van de spec is dan het beste dat er is; beter dan de rij weglaten.
+                logger.warning(
+                    "Goedkeuringsitem van onbekende dienst %r; groepskop valt terug op het opschrift", sleutel
+                )
+            else:
+                groep["naam"] = definitie.name
+                groep["icoon"] = definitie.icon
+            groepen[sleutel] = groep
+        groep["aanvragen"].append(item)
+
+    for groep in groepen.values():
+        groep["toon_soort"] = any(item.get("label") and item["label"] != groep["naam"] for item in groep["aanvragen"])
+    return list(groepen.values())
+
+
 @approvals_router.get("", response_class=HTMLResponse)
 @requires_sso
 async def list_subdomains(request: Request) -> Response:
-    """List all domain/subdomain requests across all projects."""
+    """List all approval requests across all projects."""
 
     user = require_platform_admin(request)
 
@@ -235,7 +279,12 @@ async def list_subdomains(request: Request) -> Response:
     # steeds in de keuzelijst omdat de server hem meerendert. Zelfde opzet als het zoeken
     # en sorteren op /projects (opi/web/lotc_switch.py).
     status = (request.query_params.get("status") or "").strip()
-    projects_data = filter_op_status(alle_projecten, status)
+    # Filteren op ITEMS, daarna pas groeperen: de teller onderaan telt aanvragen en geen
+    # groepen, en een groep die na het filteren leeg is hoort er niet te staan.
+    projects_data = [
+        {**project, "approval_groups": groepeer_per_dienst(project["approval_items"])}
+        for project in filter_op_status(alle_projecten, status)
+    ]
 
     # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py. Alleen de LIJST gaat
     # mee: het beoordelingsvenster erin haalt zijn inhoud op bij de modal-wizard hieronder,
@@ -281,7 +330,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     project_data = project.data or {}
     approval_items = collect_approval_items(project_data)
     if not approval_items:
-        return _modal_error(request, "Er zijn geen domein- of subdomeinaanvragen voor dit project.", 400)
+        return _modal_error(request, "Er zijn geen aanvragen voor dit project.", 400)
 
     flow = get_flow(flow_id)
     first_section = flow.sections[0]

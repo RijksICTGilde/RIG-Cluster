@@ -2,7 +2,7 @@
 
 Op `release-augustus-2026` falen zeven browsertests. Ze zijn door **twee** agents onafhankelijk van elkaar gemeld, en allebei hebben ze geverifieerd dat de tests ook op de basistoestand falen, dus ze horen niet bij het werk waarmee ze bezig waren.
 
-- `tests/e2e/test_lotc_domeinbeheer.py` — vier, rond de goedkeuringsdialoog
+- `tests/e2e/test_lotc_aanvragenbeheer.py` — vier, rond de goedkeuringsdialoog
 - `tests/e2e/test_shared_modal_blockade.py` — drie
 
 Dat is meer dan cosmetisch. Het raakt de **gedeelde** bewerkdialoog: hetzelfde fragment bedient de goedkeuringspagina en de bewerkdialogen van een project (`opi/web/router_detail_edit.py`). Een groep rode tests op precies dat onderdeel is niet iets om mee naar main te gaan.

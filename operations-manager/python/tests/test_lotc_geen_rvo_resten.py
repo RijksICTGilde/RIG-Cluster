@@ -73,7 +73,7 @@ NOG_MET_KLASSEN = {
     "project-creation-result.html.j2": 3,
     "project-creation-success.html.j2": 5,
     "wizard/modal_wizard_review.html.j2": 1,
-    "wizard/partials/approval_items.html.j2": 13,
+    "wizard/partials/approval_items.html.j2": 12,
     "wizard/partials/attachments_list.html.j2": 6,
     "wizard/partials/attachments_upload.html.j2": 2,
     "wizard/partials/backup_select_deployment.html.j2": 8,
