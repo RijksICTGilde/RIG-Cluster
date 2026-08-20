@@ -327,3 +327,28 @@ uv run ruff check . --fix && uv run ruff format . && uv run pyright
   terwijl die niet `500m` of `1` is (in productie komt dat voor, bijvoorbeeld `200m`) krijgt nu
   een 422. Dat is hetzelfde antwoord dat de aanmaakweg en het formulier al gaven; de waarde
   hoefde alleen niet meegestuurd te worden, want een PATCH draagt alleen wat hij wijzigt.
+
+## Reparaties na de review (r3)
+
+- **De aanmaakweg legt geen wens meer vast.** Taak 2 routeerde `build_component_config` door
+  `apply_user_resource_intent` "zodat er één schrijver is". Dat is de verkeerde afweging
+  gebleken: een aanmaakverzoek draagt ALTIJD twee limieten (de wizard vult 1 CPU / 256Mi voor,
+  de API valt op dezelfde waarden terug), dus elk nieuw component kreeg meteen een
+  `manual`-item. Gevolg, gemeten met de echte functies: een gezond component (200Mi
+  waargenomen, geen OOM) waarvoor de tuner 512Mi/300Mi wil, wordt teruggezet op 256Mi met
+  `request == limit` -- zonder piekruimte, precies waar `min_limit_headroom_mi` voor is. De
+  vervalregel redt dat niet (ouderdom EN gebruik onder de helft), dus alles boven 128Mi houdt
+  zijn 256Mi onbeperkt; alleen een echte OOM-kill komt er nog uit. Dat gold voor 100% van de
+  nieuw aangemaakte componenten, op de API-weg en op de zelfbedieningswizard.
+
+  De aanmaakweg schrijft de limieten daarom weer rechtstreeks met `apply_resource_limits`
+  (het gedrag van vóór deze tak). Een voorgevulde standaard die niemand koos is geen wens; de
+  eerste echte bewerking is dat wel en die loopt nog steeds via het gedeelde pad. Er gaat bij
+  het rechtstreeks schrijven niets verloren: een component dat nog niet bestaat heeft geen
+  override om op te ruimen en geen historie om mee te dragen. De AST-grendel noemt
+  `build_component_config` nu expliciet als de enige andere toegestane aanroeper van
+  `apply_resource_limits`; `set_component_resources` blijft op één aanroeper staan.
+
+- **De parameter `origin` op `build_component_config` is weg.** Geen enkele aanroeper gaf hem
+  mee, dus de wizardweg schreef "Set by hand via api" in de reason van een portaalproject. Nu
+  de aanmaakweg geen historie-item meer schrijft heeft de parameter geen doel (YAGNI).
