@@ -39,6 +39,7 @@ from opi.connectors.vpa import VpaContainerRecommendation, parse_k8s_cpu_to_m
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.resource_tuning_service import apply_resource_tuning
+from opi.utils.project_utils import build_component_config
 
 OPI_DIR = Path(__file__).resolve().parent.parent / "opi"
 
@@ -447,20 +448,124 @@ def _aanroepers_van(namen: set[str]) -> dict[str, set[str]]:
     return gevonden
 
 
+#: Per lage schrijver de functies die hem mogen aanroepen. ``build_component_config`` staat
+#: erbij omdat een component dat nog niet bestaat geen override heeft die de gebruiker kan
+#: overrulen -- en omdat de aanmaakwaarden GEEN wens zijn (zie sectie 3b hieronder).
+TOEGESTANE_AANROEPERS = {
+    "apply_resource_limits": {"apply_user_resource_intent", "build_component_config"},
+    "set_component_resources": {"apply_user_resource_intent"},
+}
+
+
 def test_er_is_maar_een_schrijver_van_een_gebruikerswens() -> None:
     """``apply_resource_limits`` en ``set_component_resources`` zijn de lage schrijvers.
 
-    Ze mogen alleen nog vanuit ``apply_user_resource_intent`` gedraaid worden. Komt er een
-    tweede aanroeper bij, dan schrijft die weer naar de catalogus zonder de override op te
-    ruimen -- en dan is de bewerking weer een stille no-op zodra de tuner iets heeft gezet.
+    Ze mogen alleen vanuit ``apply_user_resource_intent`` gedraaid worden (en de aanmaakweg
+    mag de geneste vorm rechtstreeks schrijven). Komt er een aanroeper bij, dan schrijft die
+    weer naar de catalogus zonder de override op te ruimen -- en dan is de bewerking weer een
+    stille no-op zodra de tuner iets heeft gezet.
     """
-    aanroepers = _aanroepers_van({"apply_resource_limits", "set_component_resources"})
+    aanroepers = _aanroepers_van(set(TOEGESTANE_AANROEPERS))
 
     for naam, plaatsen in aanroepers.items():
-        assert plaatsen == {"apply_user_resource_intent"}, (
+        assert plaatsen == TOEGESTANE_AANROEPERS[naam], (
             f"{naam} wordt aangeroepen vanuit {sorted(plaatsen)}; laat de wijziging via "
             f"ProjectFileHandler.apply_user_resource_intent lopen, anders wint de "
             f"deployment-override van de gebruiker."
+        )
+
+
+# ---------------------------------------------------------------------------
+# 3b. De aanmaakwaarden zijn GEEN wens
+# ---------------------------------------------------------------------------
+#
+# De aanmaakweg draagt altijd twee limieten: de wizard vult 1 CPU / 256Mi voor, en de API
+# valt op dezelfde waarden terug. Liep die weg door ``apply_user_resource_intent``, dan
+# kreeg ELK nieuw component meteen een ``manual``-item -- en dus een limiet die de tuner
+# nooit meer mag verzetten, met request == limit en dus zonder piekruimte. Vervallen redt
+# dat niet: dat eist ouderdom EN gebruik onder de helft, dus alles boven 128Mi houdt zijn
+# 256Mi onbeperkt. De enige uitweg zou een echte OOM-kill zijn. Een waarde die niemand
+# heeft gekozen is geen wens; de eerste echte bewerking is dat wel, en die loopt nog steeds
+# via het gedeelde pad.
+
+
+async def _vers_component(cpu_limit: str = "1", memory_limit: str = "256Mi") -> dict[str, Any]:
+    """Een component zoals de aanmaakweg hem bouwt, met de wizardstandaarden."""
+    return await build_component_config(
+        name="api",
+        component_type="single",
+        port=8080,
+        path="/",
+        services=[],
+        cpu_limit=cpu_limit,
+        memory_limit=memory_limit,
+    )
+
+
+def _project_om(component: dict[str, Any]) -> dict[str, Any]:
+    """Datzelfde component in een project met een deployment, zonder override."""
+    return {
+        "schema-version": 2,
+        "name": "wens",
+        "components": [component],
+        "deployments": [
+            {
+                "name": "productie",
+                "cluster": "odcn-production",
+                "namespace": "wens",
+                "components": [{"reference": "api", "image": "nginx:1.25"}],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_een_vers_component_legt_geen_wens_vast() -> None:
+    """De waarden landen wel, de historie blijft leeg."""
+    component = await _vers_component()
+
+    assert component["resources"]["limits"] == {"cpu": "1", "memory": "256Mi"}
+    assert "history" not in component["resources"], (
+        "de aanmaakwaarden zijn voorgevulde standaarden, geen keuze van de gebruiker"
+    )
+
+
+@pytest.mark.asyncio
+async def test_de_tuner_mag_een_vers_component_gewoon_bijstellen() -> None:
+    """De meting waar het om gaat: een gezond component houdt geen 256Mi met request == limit.
+
+    Zonder deze fix stond de tuner hier machteloos -- geen OOM, dus geen uitzondering, en
+    een wens die pas vervalt onder de helft van 256Mi.
+    """
+    project = _project_om(await _vers_component())
+
+    changes = await _draai_tuner(project, max_mb=200, vpa_memory_mi=300.0)
+
+    assert len(changes) == 1
+    assert float(changes[0]["new_limits_memory"].removesuffix("Mi")) > 256
+
+
+@pytest.mark.asyncio
+async def test_een_echte_bewerking_op_datzelfde_component_houdt_de_tuner_wel_tegen() -> None:
+    """De negatieve controle: dezelfde meting, maar nu heeft iemand de waarde zelf gezet.
+
+    Zonder deze controle bewijst de test hierboven alleen dat de tuner iets deed -- niet dat
+    het ontbreken van een wens daarvan de reden was.
+    """
+    component = await _vers_component(memory_limit="200Mi")
+    project = _project_om(component)
+    gewijzigd = ProjectFileHandler().apply_user_resource_intent(
+        project, "api", {"limits_memory": "256Mi"}, origin="portal"
+    )
+    assert "limits_memory" in gewijzigd
+
+    changes = await _draai_tuner(project, max_mb=200, vpa_memory_mi=300.0)
+
+    # De tuner schrijft het paar altijd in zijn geheel weg (de request wordt tegen de
+    # limiet geklemd), dus de meting is de WAARDE van de limiet, niet of hij is geschreven.
+    for verandering in changes:
+        assert verandering.get("new_limits_memory", "256Mi") == "256Mi", (
+            "een zelf gezette limiet mag de tuner niet verzetten"
         )
 
 
