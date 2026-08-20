@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from opi.services.catalog.cross_domain_access.config_model import InboundRule, OutboundRule
+from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT, InboundRule, OutboundRule
 
 
 class IncompleteRuleError(ValueError):
@@ -31,16 +31,24 @@ class MergedRule:
     """A complete, direction-independent cross-domain rule ready to be resolved.
 
     Inbound and outbound differ only in which side (``from``/``to``) holds the peer; once
-    merged and validated they carry exactly these six values, so the resolver treats both
-    the same.
+    merged and validated they carry exactly these values, so the resolver treats both the
+    same.
+
+    A rule with the WILDCARD peer project (inbound only) has no peer at all: ``is_open`` is
+    True and the three ``peer_*`` fields are None. Both halves are set together here, from
+    a combination only the model can produce, so "no peer" can never be a peer that quietly
+    went missing.
     """
 
     name: str
-    peer_project: str
-    peer_deployment: str
-    peer_component: str
+    peer_project: str | None
+    peer_deployment: str | None
+    peer_component: str | None
     local_component: str
     port: int
+    #: Named ``is_open`` and not ``open``: the stored KEY is ``open``, but a dataclass
+    #: attribute by that name reads like the verb everywhere it is used.
+    is_open: bool = False
 
 
 def _patch(base: dict, patch: dict) -> None:
@@ -104,6 +112,11 @@ def to_merged_rule(rule: dict, *, direction: str) -> MergedRule | None:
     leave that open and the deployment layer fill it; a rule that stays open is skipped by
     the caller with a UI-visible notice. Raises ``IncompleteRuleError`` when any other
     required field is missing or invalid.
+
+    A WILDCARD inbound rule (``from.project == "*"``) has no peer, so it returns immediately
+    and is never subject to the peer-deployment check. Mind the two meanings of "open" in
+    this module: a rule with an OPEN PEER DEPLOYMENT is incomplete and waits for a patch,
+    a wildcard rule is complete and deliberately has no peer.
     """
     model = InboundRule if direction == "inbound" else OutboundRule
     try:
@@ -116,6 +129,19 @@ def to_merged_rule(rule: dict, *, direction: str) -> MergedRule | None:
         ) from error
 
     if isinstance(validated, InboundRule):
+        if validated.from_.project == WILDCARD_PROJECT:
+            # No peer to wait for, so a wildcard rule is never held back by the
+            # peer-deployment check below. The model already refused a wildcard that
+            # also named a deployment or component.
+            return MergedRule(
+                name=validated.name,
+                peer_project=None,
+                peer_deployment=None,
+                peer_component=None,
+                local_component=validated.to.component,
+                port=validated.to.port,
+                is_open=True,
+            )
         peer = validated.from_
         local_component = validated.to.component
         port = validated.to.port
@@ -126,6 +152,7 @@ def to_merged_rule(rule: dict, *, direction: str) -> MergedRule | None:
 
     if peer.deployment is None:
         return None
+    assert peer.component is not None  # noqa: S101 - only a wildcard peer may omit it, handled above
     return MergedRule(
         name=validated.name,
         peer_project=peer.project,

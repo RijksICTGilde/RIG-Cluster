@@ -12,6 +12,7 @@ from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
+from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
@@ -1307,13 +1308,29 @@ class CrossDomainProjectOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         names = [n for n in (self.yaml_data.get("_cross_domain_projects") or []) if n]
+        labels = dict(self.yaml_data.get("_cross_domain_project_labels") or {})
+        # The wildcard is deliberately NOT offered: opening a port to every source is a
+        # decision for the owner of a shared facility, taken through the API or the project
+        # file, not a menu item next to the peer projects. A rule that already carries it is
+        # kept and NAMED, because a select that quietly drops a value it does not recognise
+        # changes the configuration with nobody touching it.
+        if self.current_value == WILDCARD_PROJECT:
+            labels[WILDCARD_PROJECT] = "Geen projectlimiet (elke bron)"
+            return _cross_domain_options(
+                [WILDCARD_PROJECT, *names],
+                self.current_value,
+                empty_label="Geen andere projecten beschikbaar waar je toegang op hebt",
+                choose_label="-- Kies een project --",
+                stale_suffix="(niet meer beschikbaar)",
+                labels=labels,
+            )
         return _cross_domain_options(
             names,
             self.current_value,
-            empty_label="Geen andere projecten beschikbaar waar u toegang op heeft",
+            empty_label="Geen andere projecten beschikbaar waar je toegang op hebt",
             choose_label="-- Kies een project --",
             stale_suffix="(niet meer beschikbaar)",
-            labels=self.yaml_data.get("_cross_domain_project_labels") or None,
+            labels=labels or None,
         )
 
 

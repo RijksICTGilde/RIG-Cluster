@@ -12,17 +12,23 @@ Je component krijgt een adres in een omgevingsvariabele en praat daar gewoon ove
 
 Werk je vanaf je eigen machine, dan is dit niet wat je zoekt: daarvoor is de VPN-tunnel. Deze dienst is er voor applicaties die in het cluster draaien.
 
-## Het VLAM-team moet je nog binnenlaten
+## Toegang
 
-Deze dienst aanzetten opent het pad nog niet. Het regelt de ene helft: jouw pods mogen naar buiten, naar de VLAM-proxy. De andere helft is een toestemming aan de kant van VLAM, en die geeft het VLAM-team. Vraag het aan bij het VLAM-team en noem daarbij je projectnaam, je deployment en de componenten die erbij moeten.
+De dienst aanzetten is genoeg. Aan de kant van VLAM staat één regel die de proxy voor het
+hele cluster bereikbaar maakt op die ene poort, dus er hoeft niemand per project iets bij te
+zetten.
 
-Zolang die toestemming er niet is, krijgt je applicatie geen foutmelding maar een verbinding die blijft hangen tot hij afloopt. Dat is hoe netwerkregels werken en het is geen storing.
+Wat je wel zelf regelt is de authenticatie bij VLAM: dat is de API-sleutel die je bij het
+VLAM-team aanvraagt en die je applicatie meestuurt. De netwerkregel bepaalt alleen of je er
+bij kunt, niet wat je mag.
 
 ## Wat wordt er ingesteld?
 
 Elk component van dit project krijgt **VLAM_API_URL**: het adres van de VLAM-proxy binnen het cluster. Zet dat adres in je eigen configuratie, of gebruik een alias als je bibliotheek een andere naam verwacht. Er komt geen sleutel of wachtwoord bij; wat VLAM zelf aan authenticatie vraagt, regel je in je applicatie.
 
 Daarnaast wordt het netwerkverkeer van je pods naar die proxy opengezet. Verder verandert er niets aan je deployment.
+
+Zet je de dienst weer uit, dan verdwijnen de variabele en de netwerkregel bij de volgende uitrol.
 
 ## Waar je op moet letten
 
