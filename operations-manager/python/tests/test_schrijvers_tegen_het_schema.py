@@ -476,7 +476,9 @@ async def test_een_mailaccount_blijft_geldig() -> None:
     project["services"].append({"name": ServiceType.SEND_EMAIL.value, "config": {"from-name": "Schrijvers"}})
     poorten(project)
 
-    afzender, bounce = MailManager._addresses("odcn-production", "project-schrijvers")
+    # Envelope en From: zijn sinds RC-145 hetzelfde adres, en het draagt de PROJECTnaam
+    # (niet de accountnaam, die het voorvoegsel project- draagt).
+    afzender = bounce = MailManager._sender_address("odcn-production", "schrijvers")
     manager = MailManager(MagicMock(save_and_commit_project=AsyncMock()))
     await manager._store_account(
         Project(project),
