@@ -27,9 +27,12 @@
  * dezelfde (of vrijwel dezelfde) waarde als de vaste kleuren die er stonden. Bewaakt door
  * tests/e2e/test_donkere_weergave_contrast.py en tests/test_donkere_weergave_vaste_kleuren.py.
  *
- * WAT HIER NIET UIT KOMT: de CodeMirror-editor van het sleutel/waarde-veld tekent zijn eigen
- * kantlijn (#f5f5f5) uit zijn eigen basisthema. Dat is een lichte editor met donkere tekst -
- * in zichzelf leesbaar, maar wel een licht vlak in een donkere pagina. Zie features/donkere-weergave-contrast.md.
+ * DE CODEMIRROR-EDITOR HOORT HIER NU OOK BIJ. Hij tekende zijn kantlijn (#f5f5f5) en zijn
+ * sleutelnamen (#219, donkerblauw) uit zijn EIGEN basisthema, dus vaste lichte waarden: een
+ * wit vlak in een donkere pagina en donkerblauwe namen op bijna-zwart. Gemeld als onleesbaar.
+ * Dat zit nu in static/js/codemirror-kv.js, dat dezelfde --semantics-tokens gebruikt als de
+ * rest van dit bestand - een editor krijgt zijn opmaak via CodeMirror-uitbreidingen, niet via
+ * CSS, want zijn klassenamen worden bij het laden gegenereerd. Zie features/donkere-weergave-contrast.md.
  */
 
 /* Helper text spacing - stack description + help_text vertically */
@@ -218,77 +221,102 @@ c-fieldset c-fieldset {
    hem de rij vullen. Op de dienstenpagina en in de wizard staan er altijd meer dan genoeg;
    op de detailpagina kan een component een enkele dienst hebben, en die kaart is dan
    breder dan eerst. */
-.service-cards-grid {
-    margin-top: 0.5rem;
+/* DE DIENSTKAARTEN TEKENEN ZICHZELF.
+ *
+ * Hier stond de hele vormgeving van een dienstkaart: de rand, het gekozen vlak, de
+ * hoverkleur, de titel, de omschrijving, en de maat en de accentkleur van het
+ * aanvinkvakje. Dat was onze eigen opmaak naast een componentensysteem, en het bleef er
+ * RVO-achtig uitzien ook nadat de kleuren naar de themategens waren gebracht. Zo ook
+ * gemeld.
+ *
+ * De kaart is nu een <c-card> in een <c-auto-grid> met een <c-checkbox> erin (zie
+ * widgets/service_cards.html.j2), en die tekenen zichzelf. De GEKOZEN STAND is het
+ * background-attribuut van de kaart (base of tinted), een eigenschap van het component;
+ * static/js/wizard.js zet hem om.
+ *
+ * Wat hieronder overblijft is geen opmaak maar GEDRAG: een regel die alleen bij een
+ * gekozen kaart hoort te staan. Daar heeft het thema niets voor, want het gaat over onze
+ * diensten en niet over een kaart. */
+
+/* GELIJKE HOOGTE, EN HET VAKJE ONDERAAN.
+ *
+ * Dit is LAYOUT van onze eigen kaartopbouw en geen opmaak van een component: er wordt hier
+ * niets van het thema overgeschilderd, er wordt alleen gezegd waar het laatste blok in de
+ * kaart terechtkomt. Het componentensysteem heeft daar niets voor - <c-stack> en <c-grid>
+ * nemen alleen een class, geen uitlijning - en zonder deze twee regels staat het
+ * aanvinkvakje bij elke kaart op een andere hoogte, afhankelijk van hoe lang de
+ * omschrijving is. Gevraagd: de vakjes van een rij horen op een lijn te staan.
+ *
+ * height:100% laat de kaart de rastercel vullen (een rasterrij is al even hoog);
+ * margin-top:auto duwt het vakje naar de onderrand van wat er over is. */
+/* HIER STOND CSS OP <nldd-container>, EN DIE IS WEG.
+ *
+ * Het doel was de aanvinkvakjes van een rij op een lijn te krijgen: de kaart op volle
+ * celhoogte, de container erin laten meegroeien, en het vakje met margin-top:auto naar de
+ * onderrand duwen. Het werkte hier ook, maar het deugde niet.
+ *
+ * Gemeten waarom: <nldd-container> HEEFT een schaduwboom, en zijn licht-DOM-kind wordt
+ * daarin geslot. De layout wordt dus bepaald door een <div> BINNEN dat component, niet
+ * door de host waar onze regels op landden. `display:flex` op de host deed daarmee niets
+ * voorspelbaars, en `flex: 1` op het geslotte kind werkte in een flexcontext die wij niet
+ * bezitten. Op de sandbox leverde dat een kaart op waarin de hele inhoud - tekst en vakje -
+ * op ongeveer de halve breedte bleef staan.
+ *
+ * Dat is precies de afspraak: geen eigen CSS op de componenten van het thema. Wat er nu
+ * overblijft is een regel op onze EIGEN klasse. Die duwt het vakje naar de onderrand als de
+ * stapel eromheen ruimte over heeft, en doet anders niets. De vakjes van een rij staan
+ * daardoor niet meer gegarandeerd op een lijn; dat was een wens, en een kaart die op elke
+ * breedte klopt weegt zwaarder. */
+/* De kaart vult zijn rastercel, en de container erin groeit mee.
+ *
+ * Alleen `flex-grow`, en dat is het verschil met de vorige poging. Die zette OOK
+ * `display: flex` op <nldd-container>, en dat is de binnenkant van een component: die
+ * plaatst zijn eigen kinderen in een schaduwboom, dus de host een flexcontainer maken
+ * verandert dingen die wij niet overzien. Op de sandbox bleef de hele inhoud daardoor op
+ * ongeveer de halve breedte staan.
+ *
+ * `flex-grow` is iets anders: dat is geen opmaak van het component maar een eigenschap die
+ * de OUDER uitleest. De kaart is intern een flexkolom die groeit (`.card` in zijn
+ * schaduwboom), en zonder deze regel is de container daarin een item dat niet meegroeit.
+ *
+ * Daarmee heeft de stapel eronder ruimte over, en duwt margin-top:auto het aanvinkvakje
+ * naar de onderrand. De vakjes van een rij staan dan op een lijn. */
+.service-cards-grid > .service-card {
+    height: 100%;
 }
-.service-card {
+/* Het vak met de padding, en de stapel erin, groeien mee met de kaart. Beide zijn onze
+   eigen elementen (een <c-box> en een <c-stack> uit de layoutlaag, gewone divs zonder
+   schaduwboom), en `flex-grow` is een eigenschap die de ouder uitleest. */
+.service-card__vak {
     display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 1rem;
-    border: 2px solid var(--semantics-dividers-color, var(--rvo-color-grijs-300, #e5e5e5));
-    border-radius: 8px;
-    background: var(--semantics-surfaces-base-background-color, white);
-    transition: border-color 0.2s, background-color 0.2s;
-    cursor: pointer;
+    flex-direction: column;
+    flex-grow: 1;
 }
-.service-card:hover {
-    border-color: var(--rvo-color-hemelblauw, #007BC7);
+/* En de stapel IN die container ook, om precies dezelfde reden: hij is daar een flexitem
+   dat uit zichzelf niet meegroeit. Eigen klasse, en `flex-grow` is een eigenschap die de
+   ouder uitleest - geen opmaak van een component. */
+.service-card__body {
+    flex-grow: 1;
 }
-.service-card--selected {
-    border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: var(--semantics-categories-accent-tinted-background-color, #E5F0F9);
+.service-card__kies {
+    margin-top: auto;
 }
-.service-card--locked-checked {
-    border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: var(--semantics-categories-accent-tinted-background-color, #E5F0F9);
-    opacity: 0.85;
-}
-/* Read-only card (project details): same look as the picker, but nothing to pick. */
-.service-card--static,
-.service-card--static:hover {
-    cursor: default;
-    border-color: var(--semantics-dividers-color, var(--rvo-color-grijs-300, #e5e5e5));
-}
-.service-card--static .service-card__content {
-    cursor: default;
-}
-.service-card__content {
-    flex: 1;
-    cursor: pointer;
-}
-.service-card__header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-}
-.service-card__title {
-    font-weight: 600;
-    color: var(--semantics-content-color, var(--rvo-color-zwart, #000));
-}
-.service-card__description {
-    font-size: 0.875rem;
-    color: var(--semantics-content-secondary-color, var(--rvo-color-grijs-700, #666));
-    margin: 0;
-    line-height: 1.4;
-}
-.service-card__hint {
-    font-size: 0.8rem;
-    color: var(--semantics-content-accent-color, var(--rvo-color-hemelblauw, #007BC7));
-    margin: 0.25rem 0 0 0;
-    font-style: italic;
-}
-/* "Deze dienst stelt u per component in": only meaningful once the card is ticked,
-   and it has to appear at that moment -- the user ticks and clicks Next, so a line
-   that needs a page reload to show up is never read. The selected class is kept in
-   sync client-side by updateAllVisuals() in wizard.js. */
+
+/* "Deze dienst stelt u per component in": alleen zinnig zodra de kaart aangevinkt is, en
+   het moet op DAT moment verschijnen - de gebruiker vinkt aan en klikt door, dus een
+   regel die een herlaadbeurt nodig heeft wordt nooit gelezen. De klasse wordt
+   client-side bijgehouden door updateAllVisuals() in static/js/wizard.js. */
 .service-card__hint--config {
-    display: none;
+    /* VISIBILITY EN GEEN DISPLAY. Met display:none neemt de regel geen ruimte in, dus
+       groeide de kaart op het moment dat je hem aanvinkte - en omdat de kaarten van een rij
+       even hoog zijn en het vakje aan de onderrand hangt, sprongen alle vakjes van die rij
+       mee. Met visibility blijft de ruimte staan en beweegt er niets; onzichtbaar is hij
+       nog steeds, ook voor een schermlezer en voor Playwright's is_visible(). */
+    visibility: hidden;
 }
 .service-card--selected .service-card__hint--config,
 .service-card--locked-checked .service-card__hint--config {
-    display: block;
+    visibility: visible;
 }
 
 /* Display field header (for display_card widget) */
@@ -306,14 +334,10 @@ c-fieldset c-fieldset {
     opacity: 0.7;
 }
 
-/* Service card help icon */
-.service-card__help-btn {
-    margin-left: auto;
-    cursor: pointer;
-}
-.service-card__help-btn:hover {
-    opacity: 0.7;
-}
+/* De hulpknop van een dienstkaart heeft hier geen regel meer: hij stond rechts door
+   margin-left:auto, en dat is wat <c-cluster justify="between"> doet. De klasse blijft
+   staan als HAAK - tests/e2e/test_lotc_pariteit.py en test_services_overview_help.py
+   zoeken hem op. */
 
 /* Service help modal */
 .service-help-backdrop {
@@ -695,31 +719,13 @@ c-fieldset c-fieldset {
     margin-top: 1rem;
 }
 
-/*
- * Het aanvinkvakje van een servicekaart.
+/* HET AANVINKVAKJE VAN DE DIENSTKAART HEEFT HIER GEEN REGEL MEER.
  *
- * Dit is een KAAL <input type="checkbox"> en dat blijft het ook: static/js/wizard.js
- * zoekt het op met card.querySelector('input[type="checkbox"]'), leest .checked en zet
- * hem. Het NLDD-component heeft helemaal geen input - het gebruikt ElementInternals -
- * dus een selector zou hem nooit vinden. Toen dit hier ooit wel een component was,
- * vinkte klikken niets aan en verstuurde het formulier ALLE diensten.
+ * Hier stonden een maat en een accent-color voor een KAAL <input type="checkbox">. Dat
+ * vakje bestaat niet meer: de kaart draagt een <c-checkbox> (zie
+ * widgets/service_cards.html.j2), hetzelfde component als de keycloak-stap in de wizard,
+ * en dat tekent zichzelf inclusief aangevinkt, focus en uitgeschakeld.
  *
- * Wat er ontbrak was niet het component maar de OPMAAK: er stond nergens een regel voor,
- * dus tekende de browser zijn standaardvakje van 13 bij 13 midden in een kaart die verder
- * helemaal van het thema is. Gemeten: appearance auto, accent-color auto.
- *
- * accent-color is precies genoeg. De browser tekent het vakje dan in onze kleur, met alle
- * toestanden (aangevinkt, focus, uitgeschakeld) die hij zelf al kent - geen nagebouwd
- * vakje van pseudo-elementen dat bij de volgende themawissel weer scheef staat.
- */
-.service-card input[type="checkbox"] {
-    width: 1.15rem;
-    height: 1.15rem;
-    accent-color: var(--rvo-color-hemelblauw, #007bc7);
-    cursor: pointer;
-    flex: none;
-}
-
-.service-card input[type="checkbox"][aria-disabled="true"] {
-    cursor: not-allowed;
-}
+ * De reden die hier stond voor het kale vakje - "wizard.js zoekt input[type=checkbox] en
+ * het component heeft er geen" - is opgelost aan de kant van wizard.js: dat zoekt nu het
+ * component, dat .checked gewoon als eigenschap draagt. Zie features/aanvinkvakje.md. */

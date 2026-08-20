@@ -1,50 +1,65 @@
 {#
   Voorinstellingskaarten voor de LOTC-bouwlijn.
 
-  De service-card-klassen blijven staan: dat is applicatie-CSS (wizard.css) en geen
-  design-systeem-markup. Alleen de componenttags zijn omgezet.
+  DEZELFDE KAART ALS DE DIENSTENKIEZER, en met opzet: een voorinstelling werkt hetzelfde
+  (je vinkt hem aan, hij heeft een naam, een icoon en een uitleg) en hoort er dus ook
+  hetzelfde uit te zien. Zo gevraagd. Wat hier stond was een eigen <div class="service-card">
+  met een kaal aanvinkvakje; de opmaak daarvoor is uit static/css/wizard.css verdwenen samen
+  met die van de dienstkaarten.
 
-  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
-  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
-  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+  Zie widgets/service_cards.html.j2 voor de afwegingen die hier ook gelden: waarom het een
+  <c-card> in een raster van drie is, waarom de gekozen stand het background-attribuut van
+  de kaart is en geen eigen klasse met een eigen kleur, en waarom het aanvinkvakje een kale
+  <nldd-checkbox> is zonder tekst ernaast.
+
+  WAT HIER ANDERS IS. Een voorinstelling stuurt bij een klik zijn EIGEN verzoek (hx-post op
+  de kaart) in plaats van een waarde mee te geven aan het formulier. Het aanvinkvakje is
+  daarom bediening en geen veld: het draagt geen `name`, want dan zou er naast dat verzoek
+  ook nog een veld met die naam meegaan.
+
+  En daarom draagt een voorinstelling ook GEEN data-service. Dat is niet alleen beschrijvend:
+  static/js/wizard.js gebruikt het als poort. Een raster zonder dienstkaarten wordt niet door
+  de dienstenlogica behandeld, en zonder die poort liep dit raster daar toch doorheen - met
+  als zichtbaar gevolg een melding "undefined is vereist en kan niet worden uitgezet" bij een
+  klik op een vergrendelde voorinstelling.
+
+  De klassen service-card en service-cards-grid blijven staan als HAAK; de e2e-tests zoeken
+  de kaarten ermee op.
 #}
+{% from "widgets/_macros.html.j2" import keuzekaart, kaart_vakje %}
 {% if preset_states %}
-{# Zelfde raster als bij de dienstkaarten: <c-auto-grid min="300px">, met de klasse
-   erop als haak voor wizard.js. #}
-<c-auto-grid min="300px" gap="md" class="service-cards-grid">
+<c-grid columns="three" gap="md" class="service-cards-grid">
     {% for state in preset_states %}
     {% set preset = state.preset %}
     {% set applied = state.applied %}
     {% set locked = state.locked %}
-    <div class="service-card{% if applied %} service-card--selected{% endif %}{% if locked %} service-card--locked-checked{% endif %}"
-         {% if not locked %}
-         hx-post="/forms/wizard/{{ flow_id|e }}/preset/{{ section_id|e }}/{{ preset.id|e }}"
-         hx-headers='{"X-CSRF-Token": "{{ csrf_token|e }}"}'
-         hx-target="#wizard-step-content"
-         hx-swap="innerHTML"
-         {% endif %}>
-        {# Een gewoon <input>, om dezelfde reden als bij de servicekaarten: <c-checkbox>
-           zet zijn invoerveld onder NLDD in de schaduwboom, en zowel wizard.js als het
-           formulier kijken daar niet. De kaart is bovendien onze eigen markup met onze
-           eigen CSS. #}
-        <input
-            type="checkbox"
-            id="preset-{{ preset.id|e }}"
-            name="_preset_{{ preset.id|e }}"
-            {% if applied %}checked{% endif %}
-            {% if locked %}disabled{% endif %}
-        />
-        <div class="service-card__content">
-            <div class="service-card__header">
+    {# De attribuutbundel BUITEN de tag: een componenttag verdraagt geen Jinja-blokken
+       binnenin, en :attrs neemt een enkele expressie. #}
+    {% set kaart_attrs = {'background': 'tinted' if applied else 'base'} %}
+    {% if not locked %}
+    {% set _ = kaart_attrs.update({
+        'hx-post': '/forms/wizard/' ~ flow_id ~ '/preset/' ~ section_id ~ '/' ~ preset.id,
+        'hx-headers': '{"X-CSRF-Token": "' ~ csrf_token ~ '"}',
+        'hx-target': '#wizard-step-content',
+        'hx-swap': 'innerHTML'
+    }) %}
+    {% endif %}
+    {# Dezelfde schil als de dienstkaart, uit dezelfde macro. #}
+    {% call keuzekaart(gekozen=applied, vergrendeld=locked, attrs=kaart_attrs) %}
+            {# Icoon en naam op een regel, net als bij een dienstkaart. Geen vraagteken:
+               een voorinstelling heeft geen eigen hulptekst. #}
+            <c-cluster gap="sm" align="center">
                 <c-icon icon="{{ preset.icon|nldd_icon|e }}" color="{{ preset.color|e }}" size="lg" />
-                <span class="service-card__title">{{ preset.label|e }}</span>
-            </div>
-            <p class="service-card__description">{{ preset.description|e }}</p>
+                <c-heading type="h3" size="6" label="{{ preset.label|e }}" />
+            </c-cluster>
+            <c-paragraph size="sm">{{ preset.description|e }}</c-paragraph>
             {% if locked and state.locked_hint %}
-            <p class="service-card__hint">{{ state.locked_hint|e }}</p>
+            <c-paragraph size="sm" class="service-card__hint">{{ state.locked_hint|e }}</c-paragraph>
             {% endif %}
-        </div>
-    </div>
+            {# Zonder naam: een voorinstelling stuurt zijn eigen verzoek, dus het vakje is
+               bediening en geen veld. Zie de macro. #}
+            {{ kaart_vakje("preset-" ~ preset.id, preset.label, gekozen=applied, uit=locked) }}
+    {% endcall %}
     {% endfor %}
-</c-auto-grid>
+</c-grid>
 {% endif %}
