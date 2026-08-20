@@ -14,11 +14,11 @@ See docs/ron-koppeling.md.
 
 from __future__ import annotations
 
+from opi.core.config import settings
 from opi.forms.editables.converters import IntegerConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import ModelFieldValidator
+from opi.forms.editables.validators import RangeValidator
 from opi.services.catalog.base import ConfigLayer, config_path
-from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
 from opi.services.services_enums import ServiceType
 
 SEND_EMAIL_FROM_NAME_EDITABLE = Editable(
@@ -32,11 +32,13 @@ SEND_EMAIL_FROM_NAME_EDITABLE = Editable(
 SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.SEND_EMAIL, "config", "messages-per-day"),
     converter=IntegerConverter(),
-    validator=ModelFieldValidator(
-        SendEmailConfig,
-        "messages_per_day",
-        f"Kies een aantal tussen 1 en {MAX_MESSAGES_PER_DAY}.",
-    ),
+    # De klant mag zichzelf alleen VERLAGEN. De grens van dit veld is de platformstandaard
+    # (500), niet het schemamaximum (5000): het budget is volume dat met het mailteam is
+    # afgesproken, en een project dat zichzelf van 500 naar 5000 opschroeft zou de
+    # goedkeuring omzeilen die "dit project mag mailen" nu juist afdekt. Meer dan de
+    # standaard is een afspraak met de beheerder, en die schrijft het schemabereik
+    # (tot 5000) buiten dit formulier om.
+    validator=RangeValidator(min_value=1, max_value=settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY),
     remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
 )
