@@ -46,16 +46,17 @@
         scrollY = window.scrollY;
     });
 
-    document.addEventListener("htmx:afterSettle", function () {
+    /* De pagina terug op de hoogte waar hij stond. In de volgende frame: de browser heeft
+       de nieuwe hoogte dan verwerkt, anders klemt hij onze waarde af op een pagina die nog
+       te kort is. */
+    function herstelDeScroll() {
         if (scrollY === null) return;
         var doel = scrollY;
         scrollY = null;
-        // In de volgende frame: de browser heeft de nieuwe hoogte dan verwerkt, anders
-        // klemt hij onze waarde af op een pagina die nog te kort is.
         requestAnimationFrame(function () {
             if (Math.abs(window.scrollY - doel) > 1) window.scrollTo(0, doel);
         });
-    });
+    }
 
     /* 3. DE FOCUS BLIJFT WAAR HIJ WAS.
      *
@@ -106,13 +107,15 @@
         cursor = el && typeof el.selectionStart === "number" ? el.selectionStart : null;
     });
 
-    document.addEventListener("htmx:afterSettle", function () {
-        if (!focusId) return;
+    /* Terug naar waar de cursor stond. Geeft true als dat gelukt is, zodat de regel
+       hieronder weet of er nog iets te beslissen valt. */
+    function herstelDeCursor() {
+        if (!focusId) return false;
         var doel = document.getElementById(focusId);
         focusId = null;
-        if (!doel) return;
+        if (!doel) return false;
         var invoer = doel.shadowRoot ? doel.shadowRoot.querySelector("input, textarea") : doel;
-        if (!invoer || !invoer.focus) return;
+        if (!invoer || !invoer.focus) return false;
         invoer.focus();
         if (cursor !== null && typeof invoer.setSelectionRange === "function") {
             try {
@@ -122,6 +125,80 @@
             }
         }
         cursor = null;
+        return true;
+    }
+
+    /* De eerste fout in beeld, en de cursor erin.
+     *
+     * Na een afgekeurde inzending stond je nergens: de knop waarop je klikte is meegeswapt,
+     * dus de focus valt op <body>. Je zag dan wel dat er een veld rood was en moest er
+     * alsnog met de muis heen.
+     *
+     * Het veld is een <nldd-text-field> met aria-invalid="true", en die componenten draaien
+     * op delegatesFocus (gemeten in de themabundel), dus focus() op de huls komt vanzelf in
+     * het echte invoerveld terecht. preventScroll omdat de regel eronder het beeld rustig
+     * verplaatst; focus() alleen springt naar de rand.
+     *
+     * Alleen een VELD krijgt de cursor. Staat er geen fout veld maar wel een foutregel of
+     * een melding, dan wordt daar alleen naartoe gescrold: in tekst kun je niet typen. */
+    function naarDeEersteFout(gebied) {
+        var veld = gebied.querySelector('[aria-invalid="true"]');
+        var doel = veld
+            || gebied.querySelector(".rvo-form-field__error-text, .lotc-form-field__error-text")
+            || gebied.querySelector('[data-roos-component="alert"]');
+        if (!doel) return false;
+        if (veld && typeof veld.focus === "function") veld.focus({ preventScroll: true });
+        doel.scrollIntoView({ behavior: "smooth", block: "center" });
+        return true;
+    }
+
+    /*
+     * WAAR DE FOCUS HEEN GAAT NA EEN SWAP, OP EEN PLEK BESLIST.
+     *
+     * Dit stond even in twee bestanden: het herstel hier, en het springen naar de eerste
+     * fout in static/js/wizard.js. Twee luisteraars op dezelfde gebeurtenis die allebei de
+     * focus zetten, waarbij de laatst geregistreerde won - en dat betekende dat je op een
+     * stap met een openstaande fout bij elke swap uit je veld werd getrokken.
+     *
+     * Het is een keuze en geen stapeling, dus staat hij hier als een keuze:
+     *
+     *   1. stond de cursor ergens en bestaat dat element nog -> terug daarheen;
+     *   2. staat de focus nog ergens anders -> daar blijven;
+     *   3. anders, is er een fout -> naar de eerste, en in beeld;
+     *   4. anders -> niets.
+     *
+     * En het SCROLLEN hoort bij diezelfde beslissing, want ook daar liepen er twee door
+     * elkaar. Standaard gaat de pagina terug naar de hoogte waar hij stond; alleen als we
+     * naar de fout springen blijft dat achterwege, want anders trekt het herstel het beeld
+     * meteen weer terug.
+     *
+     * Zoeken-tijdens-typen valt onder 1 (het veld swapt mee bij elke toetsaanslag), een
+     * afgekeurde inzending onder 3.
+     *
+     * Stap 2 lijkt overbodig naast 1 en is het niet: het herstel werkt op een ID, en een
+     * veld zonder id levert er geen. De focus staat dan gewoon nog waar hij stond - de swap
+     * raakte dat element niet - en die mag er net zo goed niet weggetrokken worden. Zonder
+     * deze stap gebeurt dat wel, en dan is de klacht terug in een geval dat lastiger te
+     * vinden is.
+     */
+    document.addEventListener("htmx:afterSettle", function (e) {
+        var gebied = e && e.detail && e.detail.target && e.detail.target.querySelector ? e.detail.target : document;
+
+        var cursorTerug = herstelDeCursor();
+        var actief = document.activeElement;
+        var iemandStaatErgens = actief && actief !== document.body && actief !== document.documentElement;
+
+        if (!cursorTerug && !iemandStaatErgens && naarDeEersteFout(gebied)) {
+            /* We zijn naar de fout gegaan. De oude hoogte NIET terugzetten: dat is precies
+               wat er misging toen deze twee nog los van elkaar liepen. Het scrollherstel
+               forceerde in de volgende frame de oude positie terug, en dat won van het
+               scrollIntoView dat een tel eerder begon - de cursor stond in het foute veld
+               en het beeld sprong terug naar waar je vandaan kwam. */
+            scrollY = null;
+            return;
+        }
+
+        herstelDeScroll();
     });
 
     /* 4. EEN THEMACOMPONENT MET width= HOUDT ZIJN BREEDTE NA EEN SWAP.
