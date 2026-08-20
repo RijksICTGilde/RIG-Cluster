@@ -8,7 +8,7 @@ TWEE FOUTEN, EEN MELDING: "de keuzelijsten liggen over elkaar heen".
    ``<c-stack>`` erin. Een cluster is flexbox zonder basismaat: de breedte van een kind
    komt uit wat de browser voor die inhoud UITREKENT. Firefox rekent dat voor een
    ``div.lotc-stack`` met een ``<nldd-form-field>`` erin uit als 0 - dezelfde misrekening
-   als in de datumkolom van ``/admin/approvals``, zie ``test_lotc_domeinbeheer.py``.
+   als in de datumkolom van ``/admin/approvals``, zie ``test_lotc_aanvragenbeheer.py``.
 
    Gemeten stond de wikkel op 0 breed en stak alleen de ``<select>`` er als een stompje
    van 46 pixels uit. Het label "Metric", de omschrijving onder de eerste lijst en de knop

@@ -32,7 +32,7 @@ draagt blijft op de kop staan: het ``id`` waar ``aria-labelledby`` naar wijst, e
 ``<span>`` waar JavaScript de projectnaam in schrijft.
 
 Deze test is de goedkope poort. Wat de browser er werkelijk van maakt wordt gemeten in
-``tests/e2e/test_lotc_domeinbeheer.py``, dat de verticale middens van icoon en titel naast
+``tests/e2e/test_lotc_aanvragenbeheer.py``, dat de verticale middens van icoon en titel naast
 elkaar legt.
 """
 
