@@ -148,6 +148,26 @@ items bestaat (een OOM-storm) geen vrij slot en gooit het item alsnog weg. `_com
 alleen runs van identieke `auto-tune`-items, dus een `manual`-item breekt zo'n run en
 blijft vanzelf staan.
 
+### De platformcap blijft de bovengrens
+
+Een wens die de tuner met rust laat mag niet boven de per-component cap uitkomen
+(`max_memory_limit_mi` 4096, `max_cpu_limit_m` 4000, uit `opi/core/cluster_config.py`). Die
+cap werd tot nu toe op twee plaatsen afgedwongen: door de veldregels op het formulier en op
+de aanmaakweg van de API, en door de tuner, die een te ruime waarde bij de eerstvolgende
+sweep terugklemde met een deployment-override. Het bijwerkprofiel van de API
+(`UPDATE_COMPONENT_VALIDATORS`) toetste geen van beide limieten, dus
+`PATCH /api/projects/{p}/components/{c}` met `{"memory_limit": "64Gi"}` ging erdoor en werd
+'s nachts stilletjes rechtgezet.
+
+Dit mechanisme haalt die tweede lijn weg -- en een pin boven de cap loopt ook niet vanzelf
+af, want vervallen eist ouderdom **en** gebruik onder de helft van de gezette waarde: een
+workload die zijn eigen pin vol houdt, houdt hem onbeperkt. Daarom toetst het bijwerkprofiel
+`cpu_limit` en `memory_limit` nu met dezelfde twee veldregels als de aanmaakweg. Een waarde
+boven de cap levert een 422 met dezelfde melding als het formulier, en er wordt niets
+geschreven: geen catalogus-waarde, geen opgeruimde override, geen `manual`-item. Er is geen
+derde lijn achter deze -- er staat geen `ResourceQuota` of `LimitRange` in `manifests/`, en
+het projectschema typeert `resources` kaal als string.
+
 ## Configuratie
 
 Naast de OOM-vloervelden, in `opi/services/catalog/resource_tuning/config.py`:
@@ -182,6 +202,7 @@ leggen is; ze staan los zodat ze apart bij te draaien zijn.
 | Bestand | Rol |
 |---|---|
 | `opi/handlers/project_file_handler.py` | `apply_user_resource_intent` (het ene schrijfpad), `get_user_resource_intent`, `_prune_resource_history` |
+| `opi/api/validation.py` | `UPDATE_COMPONENT_VALIDATORS` toetst de twee limieten tegen de platformcap, met dezelfde veldregels als de aanmaakweg |
 | `opi/forms/wizard/save.py` | De portal-bewerking haakt hierin na de merge, met de vorige waarden voor de vergelijking |
 | `opi/manager/project_manager.py` | `update_component` schrijft via hetzelfde pad |
 | `opi/utils/project_utils.py` | `build_component_config` (nieuw component) idem; `apply_resource_limits` is nog de lage schrijver van de geneste vorm |
