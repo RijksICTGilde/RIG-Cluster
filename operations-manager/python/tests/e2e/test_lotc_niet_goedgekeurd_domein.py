@@ -13,7 +13,7 @@ Er staan twee dingen op het spel en ze zijn allebei alleen in de gerenderde pagi
    niet, en dat blijkt uit niets anders dan de pagina zelf.
 
 Het project wordt in de draaiende testserver gezet en daarna weer weggehaald, net als in
-``tests/e2e/test_lotc_domeinbeheer.py``: de projectenlijst wordt elders in zijn geheel
+``tests/e2e/test_lotc_aanvragenbeheer.py``: de projectenlijst wordt elders in zijn geheel
 getoetst en een blijvertje maakt die test stuk.
 """
 
