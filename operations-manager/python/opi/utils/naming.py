@@ -742,6 +742,41 @@ def generate_mail_account_name(project_name: str) -> str:
     return _truncate_if_needed(f"{MAIL_PROJECT_ACCOUNT_PREFIX}{_sanitize_for_lowercase(project_name)}", 63)
 
 
+#: Longest local part an e-mail address may carry (RFC 5321, section 4.5.3.1.1).
+MAIL_LOCAL_PART_MAX_LENGTH = 64
+
+
+def generate_mail_sender_address(base_address: str, project_name: str) -> str:
+    """
+    Generate the address a project sends from: ``<local>+<project>@<domain>``.
+
+    The ONE place this address is composed. The relay does not compose it a second time --
+    it reads it back from a lookup table OPI fills -- precisely because a second composer
+    would disagree with this one the moment something is truncated.
+
+    Truncation is the reason this is not an f-string at the call site. ``noreply-rijksapp+``
+    is seventeen characters and a local part may be sixty-four, so a project name over
+    forty-seven characters runs past the limit and the upstream refuses an address nobody
+    measured. Cutting the PROJECT part (like ``generate_mail_account_name`` cuts the account
+    name) keeps the address deliverable and keeps the plus part recognisable.
+
+    Args:
+        base_address: The cluster's bare sender address, e.g. ``noreply-rijksapp@rijksoverheid.nl``
+        project_name: Name of the project
+
+    Returns:
+        The project's sender address
+
+    Example:
+        >>> generate_mail_sender_address("noreply-rijksapp@rijksoverheid.nl", "algor-odc")
+        'noreply-rijksapp+algor-odc@rijksoverheid.nl'
+    """
+    local_part, _, domain = base_address.partition("@")
+    ruimte = MAIL_LOCAL_PART_MAX_LENGTH - len(local_part) - 1
+    project = _truncate_if_needed(_sanitize_for_lowercase(project_name), ruimte)
+    return f"{local_part}+{project}@{domain}"
+
+
 def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:
     """
     Generate a consistent Redis key prefix (bare namespace token).

@@ -17,12 +17,24 @@ from __future__ import annotations
 from opi.core.config import settings
 from opi.forms.editables.converters import IntegerConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import RangeValidator
+from opi.forms.editables.validators import ModelFieldValidator, RangeValidator
 from opi.services.catalog.base import ConfigLayer, config_path
+from opi.services.catalog.send_email.config_model import MAX_FROM_NAME_LENGTH, SendEmailConfig
 from opi.services.services_enums import ServiceType
 
 SEND_EMAIL_FROM_NAME_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.SEND_EMAIL, "config", "from-name"),
+    # De regel staat in het model en niet hier: dit veld gaat rechtstreeks een mailheader
+    # in, en dan mag het formulier niet iets anders toelaten dan de API. ModelFieldValidator
+    # wijst naar dezelfde constraints waarmee een opgeslagen projectbestand wordt getoetst,
+    # dus er is een definitie en geen tweeling die uit elkaar loopt. De uitleg is wel van
+    # hier: de pydantic-melding is Engels en praat over patronen.
+    validator=ModelFieldValidator(
+        SendEmailConfig,
+        "from_name",
+        "De afzendernaam mag geen regeleindes, @, punthaken, aanhalingstekens of backslash "
+        f"bevatten en is hoogstens {MAX_FROM_NAME_LENGTH} tekens lang",
+    ),
     # Empty means "no display name", which is a valid outcome, so the key is dropped
     # rather than written as null.
     remove_when_none=True,
