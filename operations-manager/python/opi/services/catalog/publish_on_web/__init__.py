@@ -241,6 +241,7 @@ class PublishOnWebService(Service):
         name="Publiceren op het web",
         description="Maak de applicatie toegankelijk via het publieke internet",
         help_template="publish_on_web/help.md",
+        guide_template="publish_on_web/guide.md",
         icon="wereldbol",
         color="hemelblauw",
         binding=ServiceBinding.COMPONENT,
