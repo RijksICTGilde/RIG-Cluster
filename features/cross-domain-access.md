@@ -163,8 +163,13 @@ bereikbare poort.
 - **Helm/helmfile-workloads dragen geen `app`/`project`-label** en zijn dus nooit een peer.
 - **Cross-cluster is onmogelijk** met NetworkPolicies en met het gedistribueerde OPI-model;
   elke OPI beheert alleen zijn eigen cluster.
-- **De sandbox (kindnet) handhaaft NetworkPolicies niet.** Daar verifieer je de gegenereerde
-  YAML en het opruimen; daadwerkelijk blokkeren stel je alleen op ODCN (Calico) vast.
+- **De sandbox handhaaft NetworkPolicies WEL.** Hier stond het tegendeel ("kindnet doet niets
+  met NetworkPolicies"), en dat is niet waar: gemeten op 2026-08-20 (RC-144) haalt
+  een afnemer-pod `/v1/models` op van een stub in een andere namespace zolang de inbound-regel
+  er staat, en loopt diezelfde aanroep in een time-out zodra die regel is weggehaald. Zie
+  `tests/e2e/test_sandbox_vlam.py`, dat die handhaving eerst MEET en de negatieve meting
+  overslaat als een cluster niets afdwingt. Een blokkade in de sandbox is dus een echte
+  uitspraak; alleen de vorm van de policy blijft ook zonder cluster te toetsen.
 
 ## API
 

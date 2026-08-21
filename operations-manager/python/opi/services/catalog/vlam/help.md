@@ -16,7 +16,7 @@ Werk je vanaf je eigen machine, dan is dit niet wat je zoekt: daarvoor is de VPN
 
 De dienst aanzetten is genoeg. Aan de kant van VLAM staat één regel die de proxy voor het hele cluster bereikbaar maakt op die ene poort, dus er hoeft niemand per project iets bij te zetten.
 
-Wat je wel zelf regelt is de authenticatie bij VLAM: dat is de API-sleutel die je bij het VLAM-team aanvraagt en die je applicatie meestuurt. De netwerkregel bepaalt alleen of je erbij kunt, niet wat je mag.
+Wat je wel zelf regelt is de authenticatie bij VLAM: dat is de API-sleutel die je bij het VLAM-team aanvraagt en die je applicatie meestuurt. De netwerkregel bepaalt alleen of je erbij kunt, niet wat je mag. Die sleutel hoort bij jouw project en niet bij deze dienst: zet hem als eigen omgevingsvariabele (dienst **Eigen omgevingsvariabelen**, `user-env-vars`), bijvoorbeeld onder de naam `VLAM_KEY`.
 
 ## Wat wordt er ingesteld?
 
