@@ -234,6 +234,8 @@ REDESIGNED_PAGES = [
     "invite-success",
     "invite-error",
     "introductie",
+    "admin-gedeelde-diensten",
+    "router",
 ]
 
 
