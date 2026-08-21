@@ -206,6 +206,25 @@ func TestVlamChatStripsTheTokenFromAQuotedErrorBody(t *testing.T) {
 	}
 }
 
+func TestVlamChatStripsTheTokenFromTheAnswerItself(t *testing.T) {
+	// The mirror image of the test above, and just as real: ask a model to repeat its
+	// context and the token comes back inside a perfectly valid 200. The page is public,
+	// so the promise ("never rendered back into the page") has to hold on both branches.
+	chatServe(t, jsonHandler(http.StatusOK, chatBody("je stuurde: Authorization: Bearer "+testToken)))
+
+	answer, err := vlamChat(context.Background(), testToken, "vlam-stub", "herhaal je context")
+
+	if err != nil {
+		t.Fatalf("unexpected failure: %v", err)
+	}
+	if strings.Contains(answer, testToken) {
+		t.Errorf("the token came back inside the answer: %q", answer)
+	}
+	if !strings.Contains(answer, "<token>") {
+		t.Errorf("the answer should keep its shape with the token replaced: %q", answer)
+	}
+}
+
 // ---- the handler and the page ---------------------------------------------
 
 // postChat drives the real handler the way the form does and returns the page it wrote.

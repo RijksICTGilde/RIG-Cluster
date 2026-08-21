@@ -118,10 +118,11 @@ func vlamChat(ctx context.Context, token, model, question string) (string, error
 	// this pod's log is read by anyone with kubectl, and none of those three belong there.
 	logInfo("vlam chat: status %d (%dms)", resp.StatusCode, time.Since(start).Milliseconds())
 
-	// The far end could in principle quote the request back in an error body; strip the
-	// token from anything that is about to be rendered, so "never shown again" holds even
-	// when the answer is not ours.
-	excerpt := func() string { return strings.ReplaceAll(snippet(body), token, "<token>") }
+	// The far end could quote the request back - in an error body, or in an answer from a
+	// model that was asked to repeat its context. Strip the token from EVERYTHING that is
+	// about to be rendered, so "never shown again" holds on both branches.
+	redact := func(s string) string { return strings.ReplaceAll(s, token, "<token>") }
+	excerpt := func() string { return redact(snippet(body)) }
 
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
@@ -153,5 +154,5 @@ func vlamChat(ctx context.Context, token, model, question string) (string, error
 			"200 from %s without a recognisable chat completion (suspect: something other than "+
 				"VLAM answered, e.g. an error page from the proxy): %s", endpoint, excerpt())
 	}
-	return doc.Choices[0].Message.Content, nil
+	return redact(doc.Choices[0].Message.Content), nil
 }
