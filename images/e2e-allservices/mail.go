@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -32,6 +33,16 @@ func sendTestMail(to string) (string, error) {
 	if host == "" || port == "" || user == "" || pass == "" || from == "" {
 		return "", fmt.Errorf("send-email is not bound: missing %s", strings.Join(missingVars(mailVars), ", "))
 	}
+
+	// Parse the recipient as a real address before it goes anywhere. net/smtp already
+	// refuses CR/LF in Rcpt (so header injection through `to` cannot reach Data), but
+	// parsing first gives a clear error instead of an SMTP one, and the parsed address
+	// is what lands in the To: header - never the raw form input.
+	parsed, err := mail.ParseAddress(to)
+	if err != nil {
+		return "", fmt.Errorf("geen geldig ontvangeradres: %q", to)
+	}
+	to = parsed.Address
 
 	addr := net.JoinHostPort(host, port)
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
