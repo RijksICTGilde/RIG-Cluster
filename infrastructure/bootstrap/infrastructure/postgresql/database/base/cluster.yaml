@@ -3,6 +3,13 @@ kind: Cluster
 metadata:
   name: rig-db
   namespace: rig-system
+  annotations:
+    # NIET automatisch prunen: dit IS het platform. Verwijdering van deze resource laat
+    # CNPG de instanties en hun PVC's opruimen - alle databases (Keycloak, Forgejo, OPI
+    # en elk project) in een klap. Verdwijnt hij uit de gerenderde manifests door een
+    # kapotte kustomization, dan laat ArgoCD hem staan en toont OutOfSync; weghalen
+    # blijft mogelijk maar wordt een bewuste handeling van een mens.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:17
