@@ -40,13 +40,43 @@ De koppeling werkt en een testbericht is aangenomen. Vier correcties op de tekst
 
 Dat maakt de paragraaf hierna niet minder waar, maar juist dwingender: zonder authenticatie aan de andere kant is er niets dat een applicatie tegenhoudt behalve ons eigen netwerkbeleid.
 
-## Besloten op 18 augustus 2026: één vast afzenderadres, geen eigen domein
+## Besloten op 20 augustus 2026: de afzender IS het project (RC-145)
+
+Dit vervangt de afspraak van 18 augustus hieronder, die zei dat elk project vanaf hetzelfde kale adres verstuurt. Het domein en de reden daarvoor blijven staan; wat verandert is dat het bericht nu herkenbaar van een PROJECT komt, wat de afspraak met het mailteam ook altijd was:
+
+```
+From:         <from-name uit de projectconfiguratie> <noreply-rijksapp+<project>@rijksoverheid.nl>
+Return-Path:  noreply-rijksapp+<project>@rijksoverheid.nl
+```
+
+- Het plusdeel draagt de PROJECTnaam, niet de accountnaam. Die laatste draagt het voorvoegsel `project-`, en dat zou zichtbaar in elk afzenderadres van het platform belanden zonder iets te zeggen.
+- De weergavenaam komt uit `services/[send-email]/config/from-name`. Tot RC-145 stond dat veld in het projectbestand zonder ook maar één lezer, en zag de ontvanger de naam die de APPLICATIE meestuurde.
+- Wat de applicatie in haar eigen `From:` zet wordt weggegooid, naam en adres allebei. De `Reply-To:` blijft wel van de applicatie: de `From:` is identiteit en ligt vast omdat wij op andermans mailserver zitten, de `Reply-To:` zegt alleen waar een antwoord heen moet.
+- Envelope en `From:` worden hetzelfde adres. Ze verschilden een voorvoegsel en dat verschil diende niets, want SPF-uitlijning kijkt naar het domein.
+
+**Hoe de relay dat weet**, want dat is de niet voor de hand liggende helft, en het antwoord is per waarde anders. Gemeten op 20 augustus 2026 tegen v0.11.8: er is in deze versie **geen enkele manier om tijdens het aannemen van een bericht iets per account op te zoeken.** Vier wegen geprobeerd, alle vier dood:
+
+| weg | waarom niet |
+|---|---|
+| het `description`-veld van de principal (dat OPI al zet) | geen expressiefunctie leest een principal: `principal_get`, `directory_query` en `sql_query` bestaan geen van drieën |
+| `config_get('zad.afzender.…')` | werkt alleen met een **letterlijke** sleutel; hij wordt bij het bouwen van de configuratie opgelost, niet per bericht |
+| een opzoektabel in het geheugen (`lookup.<naam>.<sleutel>` in de instellingen) | wordt **één keer** gebouwd. Een reload ververst hem niet: het eerste project kreeg zijn waarde, elk project dat erna werd toegevoegd las leeg tot de relay was **herstart** |
+| de opzoekopslag die wel live is (`key_get('db', …)`) | heeft geen schrijfweg in de management-API — `/api/store` bestaat niet |
+
+Daarom is het opgesplitst:
+
+- **Het adres wordt afgeleid, niet opgezocht.** De accountnaam is `project-<project>`, dus het voorvoegsel eraf knippen (`strip_prefix`) levert precies het plusdeel op. Dat OPI hetzelfde adres uitrekent en als `SMTP_FROM` meegeeft is geen tweede waarheid maar een mededeling: allebei bouwen ze op hetzelfde label, dat OPI op 47 tekens kapt (`mail_project_label`) juist zodat `noreply-rijksapp+<label>` binnen de 64 tekens van een lokaal deel blijft. `tests/test_send_email_service.py` pint die gelijkheid vast, inclusief het voorvoegsel in de relayconfiguratie.
+- **De weergavenaam wordt ingeladen.** Die valt nergens uit af te leiden, dus OPI genereert er een klein sieve-script voor (`zad-afzenders`, één regel per account) en schrijft dat via `POST /api/settings` + `POST /api/reload`. Een sieve-script wordt bij élke herbouw opnieuw gecompileerd — gemeten in beide richtingen: een gewijzigde naam gold bij het eerstvolgende bericht en een nieuw project ook, zonder herstart. Dat is precies wat de opzoektabel niet kon. De sleutels onder `zad.afzender.naam.` zijn de gegevensbron; het script is de afgeleide.
+
+**Wat er misgaat als de naam ontbreekt: niets bijzonders.** Een project waarvan de naam nog niet is weggeschreven verstuurt met het juiste ADRES en zonder weergavenaam — dezelfde uitkomst als een project dat er geen koos, en dus een geldige toestand in plaats van een storing. Het platformaccount van ZAD zelf komt op hetzelfde neer: het draagt het voorvoegsel niet, dus het krijgt het kale adres en geen naam.
+
+## Besloten op 18 augustus 2026: één vast afzenderdomein, geen eigen domein
 
 Dit vervangt de hele afzenderdomein-paragraaf verderop, en het raakt ook de tweede aanname hierboven (waar staat "ondertekend met onze DKIM-sleutel": dat gebeurt niet meer).
 
-Alle projecten versturen vanaf **`noreply-rijksapp@rijksoverheid.nl`**. De relay schrijft dat adres zelf in de `From:` van elk bericht; er is geen veld, geen keuze en geen weg eromheen. Een project kiest alleen de weergavenaam ernaast.
+Het afzenderdomein is **`rijksoverheid.nl`** en het lokale deel begint met **`noreply-rijksapp`**. Een project kiest daar niets aan: het adres wordt samengesteld door het platform (sinds RC-145 met de projectnaam in het plusdeel, zie hierboven) en de relay schrijft het zelf in de `From:` van elk bericht.
 
-Waarom: we versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit. `rijksoverheid.nl` publiceert `p=reject` en wij kunnen in hun zone geen DKIM-sleutel publiceren, dus **SPF-uitlijning tussen envelope en `From:` is het enige dat een bericht door DMARC krijgt.** Daarom wordt ook de envelope herschreven naar `noreply-rijksapp+<project>@rijksoverheid.nl`: zelfde domein, project in het plusdeel, bounce blijft herleidbaar.
+Waarom: we versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit. `rijksoverheid.nl` publiceert `p=reject` en wij kunnen in hun zone geen DKIM-sleutel publiceren, dus **SPF-uitlijning tussen envelope en `From:` is het enige dat een bericht door DMARC krijgt.** Daarom staan envelope en `From:` allebei in dat domein.
 
 Wat vervalt: het eigen maildomein, alle DNS-records die daarbij hoorden (hun SPF autoriseert de upstream al), DKIM in zijn geheel, en de velden `from-domain` en `from-local-part`.
 

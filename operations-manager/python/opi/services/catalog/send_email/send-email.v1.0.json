@@ -94,6 +94,8 @@
     "from-name": {
       "anyOf": [
         {
+          "maxLength": 64,
+          "pattern": "^[^@<>\"$\\\\\\x00-\\x1F\\x7F]*$",
           "type": "string"
         },
         {
@@ -101,7 +103,7 @@
         }
       ],
       "default": null,
-      "description": "Display name shown to the recipient, e.g. 'Algoritmeregister'. The address itself is fixed.",
+      "description": "Display name shown to the recipient, e.g. 'Algoritmeregister'. The relay puts this in the From: header next to the project's address, so it may not contain control characters, an @, angle brackets, quotes, a backslash or a dollar sign, and it is at most 64 characters. Leave it out to send without a display name.",
       "title": "From-Name"
     },
     "messages-per-day": {

@@ -160,9 +160,16 @@ schakelaar dus niet vergeten. In de praktijk betekent dat: `local` en `sandboxed
 de twee ontwikkelclusters, allebei met een sink - zetten hem om, en `odcn`, met de
 mailserver van de Rijksoverheid als upstream en zonder sink, staat strikt.
 
-## Het afzenderadres is `noreply-rijksapp@rijksoverheid.nl`
+## De afzender is `noreply-rijksapp+<project>@rijksoverheid.nl`
 
-Vastgesteld op 18 augustus 2026. Er komt geen eigen maildomein. We versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit, en elk project verstuurt vanaf hetzelfde vaste adres. De relay schrijft dat adres zelf in de `From:` van elk bericht; een applicatie kan er niet omheen en hoeft er niets voor te doen.
+Vastgesteld op 18 augustus 2026, aangescherpt op 20 augustus (RC-145). Er komt geen eigen maildomein: we versturen via de mailserver van de Rijksoverheid, dus onze post draagt hun identiteit. Wat een project daarbinnen krijgt is een eigen plusdeel en een eigen weergavenaam:
+
+```
+From:         <from-name uit de projectconfiguratie> <noreply-rijksapp+<project>@rijksoverheid.nl>
+Return-Path:  noreply-rijksapp+<project>@rijksoverheid.nl
+```
+
+De relay schrijft die hele `From:` zelf en gooit weg wat de applicatie meestuurde, naam en adres allebei; een applicatie kan er niet omheen en hoeft er niets voor te doen. De `Reply-To:` blijft wel van de applicatie. Het adres leidt de relay af uit de accountnaam (`project-<project>`, voorvoegsel eraf); de weergavenaam komt uit een klein sieve-script dat OPI genereert en via de management-API wegschrijft. Een account zonder dat voorvoegsel is geen project — dat is het platformaccount van ZAD zelf — en krijgt het kale `noreply-rijksapp@rijksoverheid.nl` zonder naam.
 
 Waarom het niet anders kan, en dit is het stuk dat je moet onthouden:
 
@@ -171,7 +178,7 @@ _dmarc.rijksoverheid.nl   v=DMARC1; p=reject; adkim=r; aspf=r
 rijksoverheid.nl          v=spf1 redirect=spf-a.ssonet.nl
 ```
 
-`p=reject` betekent dat een bericht met `From: @rijksoverheid.nl` dat DMARC niet haalt, door de ontvanger wordt geweigerd. DMARC slaagt als het `From:`-domein uitlijnt met de envelope (SPF) of met de handtekening (DKIM). Wij kunnen niet ondertekenen, want daarvoor moet onze publieke sleutel in hún zone staan. **SPF-uitlijning is dus het enige been om op te staan**, en daarom wordt de envelope herschreven naar `noreply-rijksapp+<project>@rijksoverheid.nl`: hetzelfde domein als de `From:`, met het project in het plusdeel zodat een bounce herleidbaar blijft.
+`p=reject` betekent dat een bericht met `From: @rijksoverheid.nl` dat DMARC niet haalt, door de ontvanger wordt geweigerd. DMARC slaagt als het `From:`-domein uitlijnt met de envelope (SPF) of met de handtekening (DKIM). Wij kunnen niet ondertekenen, want daarvoor moet onze publieke sleutel in hún zone staan. **SPF-uitlijning is dus het enige been om op te staan**, en daarom is de envelope `noreply-rijksapp+<project>@rijksoverheid.nl`: sinds RC-145 exact hetzelfde adres als de `From:`, met het project in het plusdeel zodat een bounce herleidbaar blijft. Dat de twee eerder een voorvoegsel verschilden hielp de uitlijning niet — die kijkt naar het domein — en kostte de ontvanger het zicht op welk project schreef.
 
 Wat dat oplevert: de hele DNS-post valt weg. Hun SPF autoriseert de uitgaande IP's van de upstream al, want de upstream is hun eigen infrastructuur.
 

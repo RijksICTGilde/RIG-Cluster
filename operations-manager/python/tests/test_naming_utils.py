@@ -1142,3 +1142,56 @@ class TestRedisNaming:
         prefix = generate_redis_key_prefix("My_Project", "Prod")
         assert prefix == "prod-my_project"
         assert not prefix.endswith(":")
+
+
+class TestGenerateMailSenderAddress:
+    """Het afzenderadres van een project: ``<local>+<project>@<domein>``.
+
+    Wat OPI hier uitrekent is een MEDEDELING, geen tweede waarheid: het adres dat vertrekt
+    wordt door de relay zelf afgeleid, uit de accountnaam waarmee de applicatie inlogt
+    (``strip_prefix(authenticated_as, 'project-')`` in het sieve-script). Een opzoektabel
+    was het oorspronkelijke ontwerp en bleek niet te kunnen -- zie de PR-body van RC-145.
+
+    Twee samenstellers in twee talen zijn het bij de eerste afkapping oneens, en dat is
+    precies waarom ``generate_mail_account_name`` en deze functie hetzelfde label knippen
+    (``mail_project_label``) en waarom ``test_de_relay_leidt_hetzelfde_adres_af_als_opi``
+    dat vastpint.
+    """
+
+    BASIS = "noreply-rijksapp@rijksoverheid.nl"
+
+    def test_het_project_staat_in_het_plusdeel(self):
+        from opi.utils.naming import generate_mail_sender_address
+
+        assert generate_mail_sender_address(self.BASIS, "algor-odc") == "noreply-rijksapp+algor-odc@rijksoverheid.nl"
+
+    def test_hoofdletters_worden_kleine_letters(self):
+        """Een adres is geen plek voor de schrijfwijze van een projectnaam."""
+        from opi.utils.naming import generate_mail_sender_address
+
+        assert generate_mail_sender_address(self.BASIS, "Algor-ODC").startswith("noreply-rijksapp+algor-odc@")
+
+    def test_een_te_lange_projectnaam_wordt_afgekapt(self):
+        """De valkuil die niemand narekent: het voorvoegsel is zeventien tekens en een
+        lokaal deel mag er vierenzestig, dus vanaf achtenveertig tekens projectnaam loopt
+        het adres eroverheen en weigert de upstream het."""
+        from opi.utils.naming import MAIL_LOCAL_PART_MAX_LENGTH, generate_mail_sender_address
+
+        adres = generate_mail_sender_address(self.BASIS, "p" * 80)
+        lokaal, _, domein = adres.partition("@")
+        assert len(lokaal) == MAIL_LOCAL_PART_MAX_LENGTH
+        assert domein == "rijksoverheid.nl"
+
+    def test_precies_op_de_grens_blijft_heel(self):
+        """De keerzijde: afkappen mag alleen als het moet."""
+        from opi.utils.naming import generate_mail_sender_address
+
+        naam = "p" * 47
+        assert generate_mail_sender_address(self.BASIS, naam) == f"noreply-rijksapp+{naam}@rijksoverheid.nl"
+
+    def test_het_domein_komt_uit_het_basisadres(self):
+        """Nooit een ander domein: SPF-uitlijning is het enige dat een bericht door DMARC
+        krijgt, en die bestaat alleen zolang envelope en From: hetzelfde domein dragen."""
+        from opi.utils.naming import generate_mail_sender_address
+
+        assert generate_mail_sender_address("post@voorbeeld.example", "x").endswith("@voorbeeld.example")
