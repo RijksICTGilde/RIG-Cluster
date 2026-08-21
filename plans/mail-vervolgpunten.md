@@ -88,9 +88,8 @@ netwerk. Gemeten vanuit de relay-pod zitten github.com en cdn.jsdelivr.net alleb
 dicht: het is gewoon het egress-netwerkbeleid. Dat jsdelivr bij een podstart een keer
 WEL lukte komt doordat de netpol-handhaving van Kind (kube-network-policies in kindnet)
 asynchroon geprogrammeerd wordt: een fetch in de eerste seconde van een verse pod kan er
-doorheen glippen. De oude regel in `config.toml` ("github.com is onbereikbaar uit de
-pod, de jsdelivr-downloads lukken wel") beschrijft dat race-artefact en mag weg of
-herschreven.
+doorheen glippen. De oude regel in `config.toml` die dat race-artefact als feit
+beschreef is op 21 augustus herschreven.
 
 **Besluit tot nu toe**: webadmin blijft uit; OPI gebruikt de REST-API in de binary en
 wijzigingen via webadmin zouden driften van de declaratieve config. Wil iemand hem ooit
