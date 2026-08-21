@@ -113,10 +113,6 @@ INVENTARIS: dict[str, Schrijver] = {
         "De formulierstromen valideren hun eigen resultaat via tests/forms/; de schrijfweg zelf is enforce=True, "
         "dus een schemafout hier blokkeert de bewerking in plaats van stil te landen.",
     ),
-    "opi/web/router.py": Schrijver(
-        "de domeininstellingen van een deployment, en het terugdraaien daarvan",
-        "test_elke_domeininstelling_blijft_geldig",
-    ),
     "opi/web/router_approvals.py": Schrijver(
         "de goedkeuringsstaat van domeinen en subdomeinen onder publish-on-web",
         None,

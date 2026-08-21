@@ -7,7 +7,6 @@ from opi.utils.project_utils import (
     ComponentValidationError,
     normalize_container_image,
     parse_aliases,
-    validate_component_paths,
     validate_root_component,
 )
 
@@ -62,60 +61,34 @@ class TestNormalizeContainerImage:
         assert caplog.text == ""
 
 
-class TestValidateComponentPaths:
-    """Path uniqueness validation for shared-domain modes."""
-
-    def test_unique_paths_shared_domain_passes(self):
-        validate_component_paths(["/", "/api", "/admin"], "deployment-name")
-
-    def test_duplicate_paths_shared_domain_raises(self):
-        with pytest.raises(ComponentValidationError, match="Duplicate paths found"):
-            validate_component_paths(["/", "/api", "/"], "deployment-name")
-
-    def test_duplicate_paths_custom_mode_raises(self):
-        with pytest.raises(ComponentValidationError, match="Duplicate paths found"):
-            validate_component_paths(["/api", "/api"], "custom")
-
-    def test_duplicate_paths_component_specific_mode_allowed(self):
-        validate_component_paths(["/", "/"], "component-specific")
-
-    def test_duplicate_paths_nice_url_mode_allowed(self):
-        validate_component_paths(["/", "/"], "nice-url")
-
-    def test_empty_components_passes(self):
-        validate_component_paths([], "deployment-name")
-
-
 class TestValidateRootComponent:
     """Root component constraint validation."""
 
-    def test_valid_root_in_nice_url_passes(self):
-        validate_root_component("frontend", ["frontend", "worker"], "nice-url")
+    def test_valid_root_on_dot_format_passes(self):
+        validate_root_component("frontend", ["frontend", "worker"], "component.subdomain")
 
     def test_no_root_passes(self):
-        validate_root_component(None, ["frontend", "worker"], "nice-url")
+        validate_root_component(None, ["frontend", "worker"], "component.subdomain")
 
     def test_root_not_in_deployment_raises(self):
         with pytest.raises(ComponentValidationError, match="not a component in this deployment"):
-            validate_root_component("missing", ["frontend", "backend"], "nice-url")
+            validate_root_component("missing", ["frontend", "backend"], "component.subdomain")
 
     def test_root_on_unsupported_format_is_inert(self):
         # Dash formats don't expose a root host; root-component is ignored, not an
-        # error (e.g. a clone that inherited it from a nice-url source).
-        validate_root_component("frontend", ["frontend"], "component-specific")
-        validate_root_component("docs", ["editor"], "component-specific", "component-deployment-project")
+        # error (e.g. a clone that inherited it from a dotted-format source).
+        validate_root_component("frontend", ["frontend"], None)
+        validate_root_component("docs", ["editor"], "component-deployment-project")
 
     def test_root_on_dot_format_validates_component(self):
         # A format that supports root-component still validates the named component.
-        validate_root_component(
-            "frontend", ["frontend", "worker"], "component-specific", "component.deployment.project"
-        )
+        validate_root_component("frontend", ["frontend", "worker"], "component.deployment.project")
         with pytest.raises(ComponentValidationError, match="not a component in this deployment"):
-            validate_root_component("missing", ["frontend"], "component-specific", "component.deployment.project")
+            validate_root_component("missing", ["frontend"], "component.deployment.project")
 
     def test_none_root_always_passes(self):
-        validate_root_component(None, [], "nice-url")
-        validate_root_component(None, [], "deployment-name")
+        validate_root_component(None, [], "component.subdomain")
+        validate_root_component(None, [], None)
 
 
 class TestParseAliases:

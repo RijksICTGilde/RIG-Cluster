@@ -20,7 +20,6 @@ from opi.services.catalog.publish_on_web.editables import (
     DOMAIN_BASE_DOMAIN_EDITABLE,
     DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
     DOMAIN_FORMAT_EDITABLE,
-    DOMAIN_MODE_EDITABLE,
     DOMAIN_SUBDOMAIN_EDITABLE,
 )
 from opi.services.registry import deployment_component_service_editables, deployment_service_editables
@@ -39,7 +38,7 @@ DEPLOYMENT_REPOSITORY_EDITABLE = Editable(
     yaml_path="deployments[*]/repository", values_provider="RepositoryOptionsProvider"
 )
 # The web-address fields of a deployment are publish-on-web's (RC-60). This module used to
-# define its OWN base-domain / subdomain / domain-mode / domain-format editables, with
+# define its OWN base-domain / subdomain / domain-format editables, with
 # different providers and validators than the wizard's, for exactly the same yaml_path. Two
 # definitions for one path in two flows is how a conversion ends up half-done: whoever moves
 # one and misses the other leaves a flow writing the old shape. There is one set now, owned
@@ -47,7 +46,6 @@ DEPLOYMENT_REPOSITORY_EDITABLE = Editable(
 DEPLOYMENT_SUBDOMAIN_EDITABLE = DOMAIN_SUBDOMAIN_EDITABLE
 DEPLOYMENT_BASE_DOMAIN_EDITABLE = DOMAIN_BASE_DOMAIN_EDITABLE
 DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE = DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE
-DEPLOYMENT_DOMAIN_MODE_EDITABLE = DOMAIN_MODE_EDITABLE
 DEPLOYMENT_DOMAIN_FORMAT_EDITABLE = DOMAIN_FORMAT_EDITABLE
 DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(
     yaml_path="deployments[*]/clone-from",

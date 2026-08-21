@@ -2,8 +2,8 @@
 Tests for nice URL naming functionality.
 
 Tests the nice URL dot-separated pattern for hostnames:
-- component.subdomain.base_domain (nice-url mode)
-- subdomain.base_domain (root URL)
+- component.subdomain.base_domain (domain-format component.subdomain)
+- subdomain.base_domain (root URL, when a root-component is set)
 """
 
 import pytest
@@ -13,9 +13,7 @@ from opi.core.cluster_config import (
     is_nice_url_domain_supported,
 )
 from opi.utils.naming import (
-    HostnameFormat,
     find_root_component,
-    generate_nice_url_hostname,
     generate_nice_url_root_hostname,
     get_component_ingress_map,
     get_deployment_hostnames,
@@ -34,30 +32,6 @@ def _approved(*domains: str) -> dict:
     ``tests/test_domain_approval.py``.
     """
     return {"domains": {"allowed-domains": [{"domain": d, "status": "approved"} for d in domains]}}
-
-
-class TestGenerateNiceUrlHostname:
-    """Tests for generate_nice_url_hostname function."""
-
-    def test_basic_pattern(self):
-        """Basic nice URL pattern: component.subdomain.base_domain."""
-        result = generate_nice_url_hostname("frontend", "myapp", "rijks.app")
-        assert result == "frontend.myapp.rijks.app"
-
-    def test_different_components(self):
-        """Different component names work correctly."""
-        assert generate_nice_url_hostname("backend", "myapp", "rijksapps.nl") == "backend.myapp.rijksapps.nl"
-        assert generate_nice_url_hostname("api", "testdomain", "kind") == "api.testdomain.kind"
-
-    def test_sanitizes_component_name(self):
-        """Component names are lowercased."""
-        result = generate_nice_url_hostname("My_Frontend", "myapp", "rijks.app")
-        assert result == "my_frontend.myapp.rijks.app"
-
-    def test_sanitizes_subdomain(self):
-        """Subdomains are lowercased."""
-        result = generate_nice_url_hostname("frontend", "MyApp", "rijks.app")
-        assert result == "frontend.myapp.rijks.app"
 
 
 class TestGenerateNiceUrlRootHostname:
@@ -98,10 +72,10 @@ class TestFindRootComponent:
 
 
 class TestGetComponentIngressMapNiceUrl:
-    """Tests for get_component_ingress_map with nice-url mode."""
+    """Tests for get_component_ingress_map with the component.subdomain format."""
 
-    def test_nice_url_mode_generates_correct_hostname(self):
-        """Nice URL mode generates dot-separated hostname."""
+    def test_nice_url_format_generates_correct_hostname(self):
+        """The component.subdomain format generates a dot-separated hostname."""
         result = get_component_ingress_map(
             component_name="frontend",
             deployment_name="prod",
@@ -109,15 +83,15 @@ class TestGetComponentIngressMapNiceUrl:
             ingress_postfix=".kind",
             subdomain="mydomain",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS,
+            domain_format="component.subdomain",
             project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
         assert "prod-frontend" in result
         assert result["prod-frontend"] == "frontend.mydomain.rijks.app"
 
-    def test_nice_url_mode_different_subdomain(self):
-        """Nice URL mode uses subdomain correctly."""
+    def test_nice_url_format_different_subdomain(self):
+        """The component.subdomain format uses the subdomain correctly."""
         result = get_component_ingress_map(
             component_name="backend",
             deployment_name="staging",
@@ -125,7 +99,7 @@ class TestGetComponentIngressMapNiceUrl:
             ingress_postfix=".kind",
             subdomain="testapp",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS,
+            domain_format="component.subdomain",
             project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
@@ -139,7 +113,6 @@ class TestGetComponentIngressMapNiceUrl:
             deployment_name="prod",
             project_name="myapp",
             ingress_postfix=".cluster.example.com",
-            hostname_format=HostnameFormat.DASHES,  # Default mode,
             project_data={},
             cluster=_CLUSTER,
         )
@@ -163,10 +136,10 @@ class TestGetComponentIngressMapNiceUrl:
 
 
 class TestGetDeploymentHostnamesNiceUrl:
-    """Tests for get_deployment_hostnames with nice-url mode."""
+    """Tests for get_deployment_hostnames with the component.subdomain format."""
 
-    def test_nice_url_mode_multiple_components(self):
-        """Nice URL mode generates unique hostnames for each component plus root."""
+    def test_nice_url_format_multiple_components(self):
+        """The format generates unique hostnames for each component plus root."""
         result = get_deployment_hostnames(
             component_names=["frontend", "backend", "api"],
             deployment_name="prod",
@@ -174,7 +147,8 @@ class TestGetDeploymentHostnamesNiceUrl:
             ingress_postfix=".kind",
             subdomain="mydomain",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS,
+            domain_format="component.subdomain",
+            root_component="frontend",
             project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
@@ -185,8 +159,8 @@ class TestGetDeploymentHostnamesNiceUrl:
         assert "api.mydomain.rijks.app" in result
         assert "mydomain.rijks.app" in result  # Root hostname
 
-    def test_nice_url_mode_includes_root_hostname(self):
-        """Nice URL mode includes root hostname."""
+    def test_nice_url_format_includes_root_hostname(self):
+        """The format includes the root hostname when a root component is set."""
         result = get_deployment_hostnames(
             component_names=["frontend"],
             deployment_name="staging",
@@ -194,7 +168,8 @@ class TestGetDeploymentHostnamesNiceUrl:
             ingress_postfix=".kind",
             subdomain="testapp",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS,
+            domain_format="component.subdomain",
+            root_component="frontend",
             project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )

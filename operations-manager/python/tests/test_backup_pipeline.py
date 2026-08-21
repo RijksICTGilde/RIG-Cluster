@@ -1273,7 +1273,7 @@ class TestCreateDeploymentFromSourceYAML:
         # Asked of the service that owns them (RC-60), so the assertion says "this
         # deployment has no domain configured" rather than "this key is not in that dict".
         assert get_domain_setting(new_dep, DomainSetting.BASE_DOMAIN) is None
-        assert get_domain_setting(new_dep, DomainSetting.DOMAIN_MODE) is None
+        assert "domain-mode" not in new_dep  # retired key; a clone may not resurrect it
         assert get_domain_setting(new_dep, DomainSetting.ISSUER) is None
 
     def test_new_deployment_auto_subdomain(self, yaml_mocks) -> None:
