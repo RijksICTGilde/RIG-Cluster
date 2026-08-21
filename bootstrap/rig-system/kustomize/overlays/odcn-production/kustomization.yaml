@@ -19,15 +19,25 @@ resources:
 - ../../operations-manager/overlays/odcn-production
 - argocd-application-production-infrastructure.yaml
 - argocd-application-user-applications.yaml
-# De mailrelay in zijn eigen RON-namespace (RC-114): UIT sinds de avond van
-# 21 augustus 2026, na de stille crashlus van die middag. De relay meldt bij elke
-# herstart "listener started" maar er luistert niets, zelfs niet op loopback; de
-# settings-store op prod bevat 14 sleutels waar de sandbox er 3411 heeft, dus de
-# config-import van de eerste boot is gestrand en elke boot leunt deels op
-# productdefaults. Weer aanzetten kan pas als de RCA rond is en een verse boot
-# bewezen op onze configuratie draait; zie plans/mail-vervolgpunten.md. De
-# namespace, database en geheimen blijven staan.
-# - argocd-application-ron-infrastructure.yaml
+# De mailrelay in zijn eigen RON-namespace (RC-114). UIT gezet op de avond van
+# 21 augustus 2026 na de stille crashlus van die middag, en weer AAN zodra de RCA
+# rond was. Wat het was: Stalwart hangt 60 seconden op een spamfilter-download die
+# hij doet VOORDAT zijn logger bestaat, en de liveness-probe kilde hem 10 seconden
+# voor de listeners bonden. De 14 sleutels tegen 3411 op de sandbox waren precies
+# die niet-geimporteerde spamfilterregels, en "er luistert niets, zelfs niet op
+# loopback" was elke test die in het venster voor seconde 60 viel. Analyse en fix
+# staan in het blok [spam-filter] van
+# infrastructure/bootstrap/infrastructure/mail/controller/base/config.toml.
+#
+# GEVERIFIEERD op productie na de fix: eerste logregel 1 seconde na containerstart
+# in plaats van 60, pod 1/1 zonder herstarts, en poort 587 antwoordt met een
+# EHLO-lijst die SIZE 15728640 draagt - onze eigen waarde uit config.toml, dus de
+# relay draait op onze configuratie en niet op productdefaults.
+#
+# Via deze eigen Application en NIET via de mail-regel in
+# infrastructure/bootstrap/clusters/odcn: de CMP zou die build naar
+# rig-prd-operations platslaan, zie de kop van het Application-bestand.
+- argocd-application-ron-infrastructure.yaml
 
 components:
 - ../../components/sops-plugin
