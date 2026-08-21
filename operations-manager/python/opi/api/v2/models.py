@@ -277,6 +277,20 @@ class StatusError(BaseModel):
     timestamp: str | None = Field(default=None, description="ISO timestamp if known")
 
 
+class StatusDeviation(BaseModel):
+    """A resource that keeps the deployment away from Synced/Healthy, with the reason.
+
+    Deviations are not application problems (those are :class:`StatusError`): they explain
+    an OutOfSync or Progressing status. Example: a resource that was removed from git and
+    whose deletion the cluster cannot finish keeps the deployment OutOfSync forever, while
+    every workload runs exactly what git prescribes.
+    """
+
+    resource: str = Field(..., description="Kind/name (e.g. 'Job/production-backend-migrate-171')")
+    kind: str = Field(..., description="Kubernetes kind, for filtering/grouping")
+    reason: str = Field(..., description="Human-readable reason why this resource deviates (Dutch)")
+
+
 class PendingRolloutResponse(BaseModel):
     """Changes that were saved but deliberately not rolled out."""
 
@@ -422,6 +436,15 @@ class DeploymentDetail(BaseModel):
         description=(
             "Cluster-side error entries; populated only when status indicates a problem "
             "(Degraded, OutOfSync, Suspended, Missing). Empty otherwise."
+        ),
+    )
+    deviations: list[StatusDeviation] = Field(
+        default_factory=list,
+        description=(
+            "Resources that keep the deployment away from Synced, each with the reason. "
+            "Populated in the same problem states as 'errors'; an OutOfSync deployment "
+            "with empty 'errors' and only deviations is running fine - the deviations "
+            "tell what is still off (e.g. leftovers awaiting cleanup)."
         ),
     )
     source: str = Field(

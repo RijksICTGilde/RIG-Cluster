@@ -62,6 +62,7 @@ from opi.api.v2.models import (
     PendingRolloutResponse,
     ProjectListItem,
     ProjectListResponse,
+    StatusDeviation,
     StatusError,
     SubdomainCheckResponse,
 )
@@ -126,7 +127,7 @@ from opi.services.component_values import validate_value as validate_values_valu
 from opi.services.component_values import validate_value_for_storage as validate_values_value_for_storage
 from opi.services.config_lists import PatchableList, patchable_lists
 from opi.services.config_singular import overflowing_list, singular_config_model, to_singular, to_stored
-from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
+from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors, gather_sync_deviations
 from opi.services.help_text import service_guide_markdown, service_help_markdown
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.postgres_scope import get_postgres_schemas
@@ -202,6 +203,7 @@ class _LiveStatus(NamedTuple):
     revision: str | None
     last_synced_at: str | None
     errors: list[StatusError]
+    deviations: list[StatusDeviation]
 
 
 def _collapse_argo_status(
@@ -237,7 +239,7 @@ def _extract_live_status(status_data: dict[str, Any] | None, *, fully_disabled: 
     this function does not call out.
     """
     if not status_data:
-        return _LiveStatus(DeploymentStatus.Pending, None, None, [])
+        return _LiveStatus(DeploymentStatus.Pending, None, None, [], [])
 
     status = status_data.get("status", {}) or {}
     sync = status.get("sync", {}) or {}
@@ -249,6 +251,7 @@ def _extract_live_status(status_data: dict[str, Any] | None, *, fully_disabled: 
         revision=sync.get("revision") or None,
         last_synced_at=operation_state.get("finishedAt") or status.get("reconciledAt"),
         errors=[],
+        deviations=[],
     )
 
 
@@ -314,7 +317,16 @@ async def _fetch_one_live_status(
         for raw in raw_errors
         for cat, expl in [categorize_error(raw["resource"], raw["message"])]
     ]
-    return live._replace(errors=typed_errors)
+    # Afwijkingen naast fouten: een OutOfSync zonder errors was tot nu toe onverklaard
+    # (bijv. restanten die op opruiming wachten). Agents lezen dit via dezelfde
+    # deploymentlezer als de mens, dus lijst en detail melden hetzelfde.
+    typed_deviations = [
+        StatusDeviation(**entry)
+        for entry in gather_sync_deviations(
+            status_data or {}, deployment_name=deployment_name, disabled_components=disabled_components
+        )
+    ]
+    return live._replace(errors=typed_errors, deviations=typed_deviations)
 
 
 async def _connect_status_backend() -> tuple[ArgoConnector, KubectlConnector]:
@@ -338,7 +350,7 @@ async def _connect_status_backend() -> tuple[ArgoConnector, KubectlConnector]:
 
 def _unavailable() -> _LiveStatus:
     """The "we couldn't fetch" sentinel for lenient list mode."""
-    return _LiveStatus(DeploymentStatus.Unavailable, None, None, [])
+    return _LiveStatus(DeploymentStatus.Unavailable, None, None, [], [])
 
 
 async def _fetch_live_statuses_lenient(
@@ -434,6 +446,7 @@ def _build_deployment_detail(
         sync_revision=live.revision,
         last_synced_at=live.last_synced_at,
         errors=live.errors,
+        deviations=live.deviations,
         # Hier en niet alleen in het antwoord op de schrijfactie: een aanvraag loopt
         # dagen, het antwoord op de PUT is weg zodra de client hem heeft gelezen. Dit is
         # de ene deploymentlezer, dus lijst, detail en projectoverzicht melden hetzelfde.
