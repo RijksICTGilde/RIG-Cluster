@@ -502,6 +502,66 @@ class TestGetDeployment:
         assert cmp_err["category"] == "ComparisonError"
         assert cmp_err["explanation"] is not None
 
+    def test_out_of_sync_leftovers_populate_deviations(self, mock_settings: Any, mock_project_service: Any) -> None:
+        """Het mb-docs-geval: alles draait, twee Jobs hangen in delete - errors leeg, deviations vol.
+
+        Agents lezen dit veld om "OutOfSync maar niets stuk" van een echt probleem te
+        onderscheiden; zonder deviations was dat onderscheid niet te maken via de API.
+        """
+        from opi.server import create_app
+        from opi.utils.naming import generate_argocd_application_name
+
+        app: FastAPI = create_app()
+        app_name = generate_argocd_application_name("test-project", "production")
+        argo_status = {
+            "spec": {"syncPolicy": {"automated": {"prune": True}}},
+            "status": {
+                "sync": {"status": "OutOfSync", "revision": "deadbeefcafe"},
+                "health": {"status": "Progressing"},
+                "operationState": {
+                    "phase": "Succeeded",
+                    "finishedAt": "2026-08-20T18:10:57Z",
+                    "syncResult": {
+                        "resources": [{"kind": "Job", "name": "production-backend-migrate-171", "status": "Pruned"}]
+                    },
+                },
+                "resources": [
+                    {
+                        "kind": "Job",
+                        "name": "production-backend-migrate-171",
+                        "status": "OutOfSync",
+                        "requiresPruning": True,
+                        "health": {"status": "Progressing"},
+                    },
+                ],
+            },
+        }
+        argo_mock = _make_argo_mock(status_by_app={app_name: argo_status})
+        kubectl_mock = _make_kubectl_mock()
+        with (
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
+            patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
+            patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
+            patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="rig-test-project"),
+        ):
+            client = TestClient(app)
+            response = client.get(
+                "/api/v2/projects/test-project/deployments/production",
+                headers={"X-API-Key": API_KEY},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "OutOfSync"
+        assert data["errors"] == []
+        assert data["deviations"] == [
+            {
+                "resource": "Job/production-backend-migrate-171",
+                "kind": "Job",
+                "reason": "is verwijderd, maar het cluster maakt de verwijdering niet af",
+            }
+        ]
+
     def test_deployment_not_found(self, client: TestClient) -> None:
         response = client.get(
             "/api/v2/projects/test-project/deployments/nonexistent",
