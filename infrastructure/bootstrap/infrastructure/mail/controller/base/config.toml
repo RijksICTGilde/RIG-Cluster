@@ -388,17 +388,41 @@ store = "db"
 user = "%{env:MAIL_RELAY_ADMIN_USERNAME}%"
 secret = "%{env:MAIL_RELAY_ADMIN_PASSWORD}%"
 
-# Stalwart haalt bij elke start een bijgewerkte spamfilter-regelset op van GitHub
-# (spam-filter.auto-update, default aan). Ons egress-netwerkbeleid staat geen
-# internet-egress toe, dus die fetch strandt en levert een config.build-error op
-# namespace "*" - gemeten 19 augustus 2026. Daarom uit. (Een eerdere versie van deze
-# regel noemde github.com onbereikbaar terwijl jsdelivr wel lukte; dat bleek een race
-# in de netpol-handhaving van Kind bij een verse pod, gemeten 21 augustus 2026 -
-# allebei zitten ze dicht. Zie plans/mail-vervolgpunten.md, punt 6.)
-# NB: dit zegt niets over of het filter zelf AAN hoort - dat is een van de open
-# vervolgpunten in plans/mail-vervolgpunten.md.
+# De spamfilter-regelset. De sleutel `resource` zet de STARTHANG uit, `auto-update` doet
+# dat niet, en dat verschil heeft de relay op productie plat gelegd (21 augustus 2026).
+#
+# GELEZEN IN boot.rs VAN v0.11.8, want uit de documentatie is dit niet af te leiden.
+# Staat `version.spam-filter` niet in de configopslag, dan draait `fetch_spam_rules()`
+# ONVOORWAARDELIJK bij elke start (boot.rs:233). Zonder de sleutel hieronder pakt die
+# DEFAULT_SPAMFILTER_URL op github.com, met een HARDGECODEERDE timeout van 60 seconden
+# (manager/mod.rs:39-49). Op ODCN gaat al het uitgaande verkeer van deze namespace door
+# de RON-egressgateway - de annotatie egress.projectcalico.org/egressGatewayPolicy neemt
+# exact een waarde - dus github is onbereikbaar en die 60 seconden lopen voluit.
+#
+# Dat gebeurt VOOR telemetry.enable() (boot.rs:384), dus er komt geen enkele logregel.
+# Gemeten op productie: containerstart 14:10:26, eerste logregel 14:11:26, listeners
+# gebonden in diezelfde seconde. De liveness-probe kilt op ~50 seconden, dus de relay was
+# 10 seconden te laat en kwam nooit omhoog. En omdat de download nooit slaagt, wordt
+# `version.spam-filter` nooit weggeschreven en doet elke herstart het opnieuw:
+# zelfherstel is uitgesloten.
+#
+# `auto-update` hieronder helpt hier NIET tegen. Die sleutel wordt pas op boot.rs:410
+# gelezen, na de telemetrie, en gaat alleen over de periodieke verversing.
+#
+# LET OP BIJ HET LEZEN VAN DE LOG: spamfilter en webadmin schrijven hun bouwfout allebei
+# op sleutel "*", en `config.errors` is een AHashMap. Webadmin komt later en OVERSCHRIJFT
+# de spamfilterfout, dus je ziet alleen de download die al is afgevangen. Wie op die
+# logregel afgaat, zoekt in de verkeerde hoek. Dat is precies wat er is gebeurd.
+#
+# DIT IS EEN BLOKKADE, GEEN BESLUIT. Het filter HOORT aan te staan. Het staat nu uit
+# omdat de regels er niet zijn, niet omdat we ze niet willen, en het pad terug is het
+# bestand VENDOREN in plaats van het op te halen. Dat is haalbaar: spam-filter.toml is
+# 76 KB (past ruim in een ConfigMap) en versie 2.0.5 eist server 0.11.0, dus v0.11.8
+# voldoet. Wat er dan nog aan uitgezocht moet worden staat in
+# plans/mail-vervolgpunten.md, punt 2.
 [spam-filter]
 auto-update = false
+resource = "file:///nonexistent/spamfilter-nog-niet-gevendord.toml"
 
 # De webadmin-bundel. Bij de EERSTE start ontbreekt hij in de blobopslag en haalt
 # Stalwart hem VOOR de logger-initialisatie op van GitHub (boot.rs v0.11.8; gemeten

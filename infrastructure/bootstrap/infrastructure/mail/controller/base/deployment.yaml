@@ -150,6 +150,26 @@ spec:
           # allebei 200 ZONDER inloggegevens, wat nodig is want een probe stuurt die niet
           # mee. Wat we ermee opgeven: dat de probe bewijst dat poort 2525 gebonden is.
           # Wat we ervoor terugkrijgen: een relay die na een dag nog post aanneemt.
+
+          # De startupProbe is het VANGNET onder de twee hieronder, en hij staat er om een
+          # gemeten reden. De storing van 21 augustus 2026 was een crashloop ZONDER ook
+          # maar een logregel, omdat Stalwart een blokkerende download doet voordat zijn
+          # logger bestaat (zie het blok [spam-filter] in config.toml): de liveness-probe
+          # kilde op ~50 seconden terwijl de listeners op 60 seconden bonden, en dat
+          # herhaalde zich eindeloos.
+          #
+          # Zolang deze probe loopt, staan liveness en readiness stil. 30 x 5 seconden
+          # geeft de start 150 seconden ruimte. Daarmee wordt een trage start voortaan
+          # ZICHTBAAR traag - de pod blijft 0/1 met een oplopende teller - in plaats van
+          # een herstartlus die eruitziet als een kapotte applicatie. Op dezelfde
+          # managementpoort als de andere twee, dus ook deze opent geen mailsessie en telt
+          # niet mee in queue.limiter.inbound.platform.
+          startupProbe:
+            httpGet:
+              path: /healthz/live
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz/live
