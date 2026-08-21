@@ -13,9 +13,10 @@ resources:
 patches:
   # De Namespace uit de base kan hier niet meedoen: de ArgoCD op ODCN draait in
   # namespaced mode en weigert cluster-scoped resources, en de CMP weigert sowieso te
-  # renderen zolang de doelnamespace niet bestaat. rig-prd-ron wordt daarom VOORAF
-  # handmatig aangemaakt (zie features/send-email.md, "Wat er bij het aanzetten
-  # werkelijk moet gebeuren"), met daarop:
+  # renderen zolang de doelnamespace niet bestaat. rig-prd-ron komt daarom uit de
+  # BOOTSTRAP (namespace-ron.yaml in bootstrap/rig-system/kustomize/overlays/
+  # odcn-production, aangebracht door task bootstrap-argo-system met kubectl), met
+  # daarop:
   #   - de RON-koppeling: annotatie egress.projectcalico.org/egressGatewayPolicy:
   #     rig-ron. Die annotatie is de reden dat de relay een eigen namespace heeft: ze
   #     neemt exact een waarde, dus RON en internet kunnen niet allebei op dezelfde

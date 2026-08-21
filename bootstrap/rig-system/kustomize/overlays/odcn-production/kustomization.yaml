@@ -8,6 +8,10 @@ generators:
 
 resources:
 - namespace.yaml
+# namespace-ron.yaml staat hier BEWUST NIET bij: de namespace-transformer van deze
+# kustomization hernoemt elk Namespace-object naar rig-prd-operations (gemeten
+# 21 augustus 2026 als ID-conflict). task bootstrap-argo-system past dat bestand
+# daarom los toe, met kale kubectl.
 - argocd-deployment.yaml
 - argocd-pull-secrets.yaml
 - network-policies/argocd-network-policy.yaml

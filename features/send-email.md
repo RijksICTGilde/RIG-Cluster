@@ -384,31 +384,16 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
    wachtwoord uit `mail-db-credentials`) en de database staan declaratief in
    `infrastructure/bootstrap/infrastructure/postgresql/database/base/`, dus CNPG maakt
    ze ook op een al draaiend cluster aan zodra de wijziging synct.
-2. **De RON-namespace vooraf aanmaken (ODCN).** De ArgoCD op ODCN draait in namespaced
-   mode: hij kan geen Namespace-resource aanmaken, en de CMP weigert zelfs te renderen
-   zolang de doelnamespace of het sleutelsecret ontbreekt. Beide dus handmatig, eenmalig,
-   VOOR stap 2b:
-
-   ```yaml
-   apiVersion: v1
-   kind: Namespace
-   metadata:
-     name: rig-prd-ron
-     labels:
-       app.kubernetes.io/name: operations-ron
-       app.kubernetes.io/component: mail
-       app.kubernetes.io/part-of: rig-platform
-       # De namespaced ArgoCD krijgt hiermee (via de operator) de beheer-RBAC voor
-       # deze namespace; zonder dit label kan de app er niets aanmaken.
-       argocd.argoproj.io/managed-by: rig-prd-operations
-     annotations:
-       # DE RON-KOPPELING. Deze annotatie neemt exact een waarde, dus RON en internet
-       # kunnen niet allebei op dezelfde namespace staan; dat is de reden dat de relay
-       # een eigen namespace heeft (plans/mailrelay.md, aanvulling 2).
-       egress.projectcalico.org/egressGatewayPolicy: rig-ron
-   ```
-
-   En daarna het sleutelsecret erin (dezelfde inhoud als in `rig-prd-operations`):
+2. **De RON-namespace komt uit de bootstrap (ODCN).** De ArgoCD op ODCN draait in
+   namespaced mode: hij kan geen Namespace-resource aanmaken, en de CMP weigert zelfs te
+   renderen zolang de doelnamespace of het sleutelsecret ontbreekt. De namespace staat
+   daarom als `namespace-ron.yaml` in de bootstrap-overlay
+   (`bootstrap/rig-system/kustomize/overlays/odcn-production/`), met de RON-annotatie
+   (`egress.projectcalico.org/egressGatewayPolicy: rig-ron`) en het
+   `argocd.argoproj.io/managed-by`-label erop; `task bootstrap-argo-system` past hem met
+   kubectl toe, buiten ArgoCD om. Wat daarna nog een handeling is (de sleutel staat niet
+   in git): het sleutelsecret in de namespace zetten, dezelfde inhoud als in
+   `rig-prd-operations`:
 
    ```bash
    kubectl get secret sops-age-key -n rig-prd-operations -o yaml \

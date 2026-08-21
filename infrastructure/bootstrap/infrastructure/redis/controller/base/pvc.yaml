@@ -3,6 +3,12 @@ kind: PersistentVolumeClaim
 metadata:
   name: rig-redis-data
   namespace: rig-system
+  annotations:
+    # NIET automatisch prunen: dit is dataopslag. Verdwijnt deze resource uit de
+    # gerenderde manifests (een kapotte kustomization, een verschoven regel), dan laat
+    # ArgoCD hem staan en toont OutOfSync in plaats van hem te verwijderen; weghalen
+    # blijft mogelijk maar wordt een bewuste handeling van een mens.
+    argocd.argoproj.io/sync-options: Prune=false
   labels:
     backup.rig.nl/enabled: "true"
 spec:

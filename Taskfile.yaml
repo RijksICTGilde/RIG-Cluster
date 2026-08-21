@@ -617,6 +617,14 @@ tasks:
         # Build and apply
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
 
+        # Extra namespaces die niet DOOR de overlay-kustomization kunnen: haar
+        # namespace-transformer hernoemt elk Namespace-object naar de eigen
+        # namespace-waarde (gemeten 21 augustus 2026 als ID-conflict met rig-prd-ron).
+        # Los toegepast, zodat hij er is voordat de Applications erin gaan deployen.
+        if [ -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml" ]; then
+          kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
+        fi
+
         # Wait for ArgoCD operator to create deployments, then restart to pick up config
         if [[ "{{.DRY_RUN}}" != "true" ]]; then
           echo "Waiting for ArgoCD deployments to be created by the operator..."

@@ -3,6 +3,9 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
   name: forgejo-db
+  annotations:
+    # Niet automatisch prunen; zie de toelichting op het Cluster in cluster.yaml.
+    argocd.argoproj.io/sync-options: Prune=false
   namespace: rig-system
 spec:
   cluster:
@@ -15,6 +18,9 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
   name: keycloak-db
+  annotations:
+    # Niet automatisch prunen; zie de toelichting op het Cluster in cluster.yaml.
+    argocd.argoproj.io/sync-options: Prune=false
   namespace: rig-system
 spec:
   cluster:
@@ -29,6 +35,9 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
   name: mailrelay-db
+  annotations:
+    # Niet automatisch prunen; zie de toelichting op het Cluster in cluster.yaml.
+    argocd.argoproj.io/sync-options: Prune=false
   namespace: rig-system
 spec:
   cluster:
@@ -45,6 +54,9 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
   name: operations-manager-db
+  annotations:
+    # Niet automatisch prunen; zie de toelichting op het Cluster in cluster.yaml.
+    argocd.argoproj.io/sync-options: Prune=false
   namespace: rig-system
 spec:
   cluster:
