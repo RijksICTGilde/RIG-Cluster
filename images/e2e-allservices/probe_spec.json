@@ -189,11 +189,9 @@
     },
     {
       "bound_when_any": [
-        "APP_VLAM_API_URL",
         "VLAM_API_URL"
       ],
       "env_vars": [
-        "APP_VLAM_API_URL",
         "VLAM_API_URL"
       ],
       "id": "vlam",
