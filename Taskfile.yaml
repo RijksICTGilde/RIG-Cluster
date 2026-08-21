@@ -621,8 +621,15 @@ tasks:
         # namespace-transformer hernoemt elk Namespace-object naar de eigen
         # namespace-waarde (gemeten 21 augustus 2026 als ID-conflict met rig-prd-ron).
         # Los toegepast, zodat hij er is voordat de Applications erin gaan deployen.
+        # Het managed-by-label gaat er PAS NA de apply op: de Kyverno-policy van ODCN
+        # valideert dat label met een lookup van de namespace zelf en weigert daardoor
+        # elke create die het label al draagt - zelfde omweg als OPI bij
+        # tenant-namespaces (project_manager, "apply the label after creating").
         if [ -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml" ]; then
           kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
+          if [[ "{{.DRY_RUN}}" != "true" ]]; then
+            kubectl label namespace rig-prd-ron argocd.argoproj.io/managed-by=rig-prd-operations --overwrite
+          fi
         fi
 
         # Wait for ArgoCD operator to create deployments, then restart to pick up config
