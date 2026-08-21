@@ -27,7 +27,7 @@ import pytest
 from fastapi import HTTPException
 from opi.api.v2.router import describe_service_v2, list_configurable_services_v2
 from opi.services.catalog.base import ConfigLayer
-from opi.services.help_text import service_help_markdown
+from opi.services.help_text import service_guide_markdown, service_help_markdown
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
@@ -105,6 +105,25 @@ def test_every_service_has_a_describe_without_empty_mandatory_fields(service: Se
     assert isinstance(described.variables, list)
     assert isinstance(described.requires, list)
     assert described.cleanup_strategy is not None
+
+
+@pytest.mark.parametrize("service", _SERVICES, ids=lambda s: s.value)
+def test_the_guide_is_the_service_guide_document_or_null(service: ServiceType) -> None:
+    """`guide` mirrors `explanation`: the service's own document, never an API-only text.
+
+    A service without a guide answers null rather than an empty string, so "has no guide"
+    and "has an empty one" cannot be confused.
+    """
+    described = _describe(service.value)
+
+    assert described.guide == (service_guide_markdown(service) or None)
+    if described.guide is not None:
+        assert described.guide.startswith("# ")
+
+
+def test_publish_on_web_describe_carries_the_domain_guide() -> None:
+    """The service the guide mechanism was built for actually serves one."""
+    assert _describe(ServiceType.PUBLISH_ON_WEB.value).guide
 
 
 @pytest.mark.parametrize("service", _SERVICES, ids=lambda s: s.value)

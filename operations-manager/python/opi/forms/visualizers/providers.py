@@ -559,7 +559,10 @@ class ClusterBaseDomainOptionsProvider:
             "clusterconfiguratie). Leeg betekent het standaarddomein van het cluster. Dit is "
             "geen gesloten verzameling: een eigen domein zet je door de domeinnaam zelf in dit "
             "veld te schrijven, en 'custom-domain-certificates' in hetzelfde antwoord zegt of "
-            "dit cluster daar een certificaat voor kan uitgeven."
+            "dit cluster daar een certificaat voor kan uitgeven. Een adres op een eigen domein "
+            "is de combinatie met een subdomein-format plus 'subdomain' (mijn.domein.nl = "
+            "base-domain 'domein.nl' + subdomain 'mijn'); alleen het kale domein zelf gaat via "
+            "'expose-component-on-bare-domain'."
         ),
         endpoint="GET /api/v2/projects/{project_name}/clusters",
         path="clusters[].base-domains[].value",
