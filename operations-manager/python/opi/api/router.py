@@ -22,8 +22,6 @@ from opi.connectors.subdomain import (
     BaseDomainValidationError,
     SubdomainNotAvailableError,
     SubdomainValidationError,
-    validate_base_domain,
-    validate_subdomain,
 )
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
@@ -787,81 +785,6 @@ class CloneBucketFromExternalRequest(BaseModel):
     }
 
 
-class DeploymentDomainSettingsRequest(BaseModel):
-    """Request model for updating deployment domain settings."""
-
-    domain_mode: str = Field(
-        ...,
-        description="URL mode: 'component-specific', 'deployment-name', 'custom', or 'nice-url'",
-        examples=["nice-url"],
-        max_length=32,
-    )
-    domain_format: DomainFormatId | None = Field(
-        None,
-        description=DOMAIN_FORMAT_DESCRIPTION,
-        examples=["component-deployment-subdomain"],
-    )
-    subdomain: str | None = Field(
-        None,
-        description=(
-            "Subdomain for URL generation. Required when domain_format contains 'subdomain'. "
-            "Must be a valid DNS label: lowercase letters, digits, and hyphens, starting with a letter."
-        ),
-        examples=["myapp"],
-        max_length=63,
-    )
-    base_domain: str | None = Field(
-        None,
-        description=BASE_DOMAIN_DESCRIPTION,
-        examples=["rijks.app"],
-        max_length=255,
-    )
-    root_component: str | None = Field(
-        None,
-        description=(
-            "Component reference to mark as root. Only applicable for dot-variant domain formats "
-            "(e.g., 'component.deployment.subdomain') - the root component receives traffic at the "
-            "bare subdomain without a component prefix."
-        ),
-        examples=["frontend"],
-        max_length=63,
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "domain_mode": "nice-url",
-                    "domain_format": "component.deployment.subdomain",
-                    "subdomain": "myapp",
-                    "base_domain": "rijks.app",
-                    "root_component": "frontend",
-                },
-                {
-                    "domain_mode": "component-specific",
-                    "domain_format": "component-deployment-project",
-                },
-            ]
-        }
-    }
-
-
-class DeploymentDomainSettingsResponse(BaseModel):
-    """Response model for deployment domain settings."""
-
-    deployment_name: str = Field(..., description="Name of the deployment")
-    cluster: str = Field(..., description="Cluster where deployment runs")
-    domain_mode: str | None = Field(None, description="Current URL mode")
-    domain_format: DomainFormatId | None = Field(None, description="Current URL format template ID")
-    subdomain: str | None = Field(None, description="Current subdomain (if format uses subdomain)")
-    base_domain: str | None = Field(None, description="Current base domain")
-    root_component: str | None = Field(None, description="Component marked as root (dot-variant formats only)")
-    components: list[dict] = Field(default_factory=list, description="List of components in deployment")
-    supported_base_domains: list[dict] = Field(
-        default_factory=list, description="Supported base domains for this cluster"
-    )
-
-
 class SelfServiceComponent(BaseModel):
     type: str = Field(..., max_length=32)  # "deployment", "cronjob", "daemonset"
     port: int | None = Field(None, ge=1, le=65535)
@@ -1054,12 +977,6 @@ class SelfServiceProjectRequest(BaseModel):
     deployment_name: str = Field("main", max_length=63)  # Name for the deployment (defaults to "main")
 
     # Web Address Configuration
-    domain_mode: str = Field(
-        "component-specific",
-        max_length=32,
-        description="URL mode: 'component-specific', 'deployment-name', 'custom', or 'nice-url'",
-        examples=["component-specific"],
-    )
     domain_format: DomainFormatId | None = Field(
         None,
         description=DOMAIN_FORMAT_DESCRIPTION,
@@ -3038,88 +2955,6 @@ async def create_self_service_project(
                 },
                 CREATE_PROJECT_DOMAIN_VALIDATORS,
             )
-
-        # Validate nice-url mode requirements
-        if project_data.domain_mode == "nice-url":
-            # Check if cluster supports nice-url mode at all
-            from opi.core.cluster_config import get_nice_url_supported_domains
-
-            supported_domains = get_nice_url_supported_domains(project_data.cluster)
-            if not supported_domains:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cluster '{sanitize_for_log(project_data.cluster)}' does not support nice-url mode. "
-                    f"Please select a different domain mode or cluster.",
-                )
-
-            # Require both subdomain and base_domain for nice-url mode
-            if not project_data.subdomain:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Subdomain is required for nice-url mode",
-                )
-            if not project_data.base_domain:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Base domain is required for nice-url mode",
-                )
-
-            # Validate base domain is supported for this cluster
-            is_valid, error_message = validate_base_domain(project_data.base_domain, project_data.cluster)
-            if not is_valid:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid base domain for cluster '{sanitize_for_log(project_data.cluster)}': {error_message}",
-                )
-
-            # Validate subdomain format early to fail fast
-            if project_data.subdomain:
-                is_valid, error_message = validate_subdomain(project_data.subdomain)
-                if not is_valid:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid subdomain: {error_message}",
-                    )
-
-            # F1: Validate root component has a port when nice-url mode is enabled
-            # This is critical for proper ingress routing - the root component receives
-            # traffic at subdomain.base_domain and must have a port to route to
-            if project_data.components:
-                root_components = [c for c in project_data.components if c.root]
-                if root_components:
-                    root_comp = root_components[0]
-                    if root_comp.port is None:
-                        root_idx = project_data.components.index(root_comp)
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Root component (component {root_idx + 1}) must have a port defined for nice-url mode. "
-                            f"The root component receives traffic at {project_data.subdomain}.{project_data.base_domain}",
-                        )
-
-            # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
-            if not project_data.issuer:
-                project_data.issuer = "letsencrypt"
-                logger.info(
-                    f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{project_data.base_domain}'"
-                )
-
-            # Register subdomain BEFORE project processing to ensure atomic rollback
-            # This prevents the TOCTOU issue where subdomain_registered flag doesn't match actual state
-            if project_data.subdomain:
-                subdomain_connector = create_subdomain_connector()
-                await subdomain_connector.register(
-                    subdomain=project_data.subdomain,
-                    base_domain=project_data.base_domain,
-                    project_name=project_data.project_name,
-                    deployment_name=project_data.deployment_name,
-                    cluster=project_data.cluster,
-                    created_by=None,
-                )
-                subdomain_registered = True  # Only set after successful registration
-                logger.info(
-                    f"Pre-registered subdomain '{project_data.subdomain}.{project_data.base_domain}' "
-                    f"for project '{project_data.project_name}'"
-                )
 
         # Generate YAML content from self-service form data
         yaml_content = await generate_self_service_project_yaml(project_data)

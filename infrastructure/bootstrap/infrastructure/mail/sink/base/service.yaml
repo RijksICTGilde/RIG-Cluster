@@ -1,0 +1,25 @@
+# LET OP de poortvertaling, want die scheelt een configuratieknop.
+#
+# De relay levert af op poort 25 en dat staat vast in zijn basisconfiguratie. Mailpit
+# luistert op 1025, want een container die als niet-root draait mag geen poort onder 1024
+# binden. Deze Service overbrugt dat: 25 naar buiten, 1025 naar binnen. Daarmee hoeft de
+# upstream-poort geen waarde per cluster te worden, en dat is precies de knop die je niet
+# wilt: een numerieke instelling die via een omgevingsvariabele loopt, zou bij een
+# verkeerd type stil terugvallen op de standaard 25 -- en dan werkt productie per ongeluk
+# wel en de sandbox stil niet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rig-mail-sink
+  namespace: rig-ron
+spec:
+  selector:
+    app: rig-mail-sink
+  ports:
+    - name: smtp
+      port: 25
+      targetPort: 1025
+    - name: http
+      port: 8025
+      targetPort: 8025
+  type: ClusterIP

@@ -1,0 +1,171 @@
+{#
+  De pagina die `router.<zone>` toont.
+
+  WAAROM DEZE PAGINA BESTAAT
+
+  `router.rijksapp.nl` en zijn twee broertjes zijn kale A/AAAA-namen: de ingang van het
+  cluster, waar elke andere naam die wij publiceren met een CNAME naartoe wijst. Er draaide
+  dus niets op, en dat had twee gevolgen.
+
+  Het eerste is meetbaar: wie de naam over HTTPS opvroeg kreeg het wildcardcertificaat van
+  de ODCN-zone terug (`*.rig.prd1.gn2.quattro.rijksapps.nl`), dat niet op deze naam slaat.
+  Elke verbinding faalde op naamvalidatie, en daar zakte de internet.nl-toets op. Niet omdat
+  er niets achter zat, maar omdat het certificaat van een andere naam was.
+
+  Het tweede is menselijk: wie deze naam tegenkomt, komt hem tegen in het DNS-record van
+  iemand anders, en heeft precies een vraag: wat is dit en wat moet ik ermee? Vandaar dat
+  hier geen "niets te zien" staat maar het antwoord op die vraag.
+
+  DE HOST BEPAALT DE PAGINA, NIET HET PAD
+
+  Deze pagina hangt niet aan een eigen adres maar aan `/` op de routernamen; zie de root-
+  route in opi/web/router.py. Dat is met opzet: de bezoeker typt de naam, niet een pad, en
+  een `/router` dat alleen op deze naam iets doet zou op zad.rijksapp.nl een dode link zijn.
+
+  GEEN OPMAAK IN EEN c-list-item
+
+  <li> is onder NLDD een CSS-grid, net als <c-table>. Elk KIND-element wordt een
+  eigen kolom, dus "<strong>DNSSEC.</strong> Als je zone..." zette het label en de zin naast
+  elkaar, en een regel met zes <code>-namen werd zes kolommen met de komma's ertussen als
+  aparte kolommen. Op een screenshot is dat meteen te zien, in de broncode niet.
+
+  De regel die daaruit volgt: een c-list-item bevat PLATTE TEKST. Wil je een vetgedrukt
+  label of een <code>-naam, gebruik dan <c-paragraph>; die zet inline-opmaak gewoon in de
+  regel. Beide vormen staan hieronder, dus je kunt ze vergelijken.
+
+  ALLEEN WAT WAAR IS
+
+  Zelfde regel als op de introductiepagina. De IP-adressen en de records hieronder staan er
+  omdat iemand ze moet overtypen in zijn eigen zone; als ze verouderen is deze pagina erger
+  dan geen pagina. Ze horen bij `dns_config.ROUTER_HOSTNAMES` en bij wat er werkelijk in
+  TransIP staat.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}{{ router_host }} - een eigen domein naar ZAD laten wijzen{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "Een eigen domein naar ZAD laten wijzen",
+        "Van je eigen domeinnaam naar een applicatie op ZAD: welk DNS-record je zet, wat het
+         platform daarna zelf regelt, en welke twee punten bij je eigen organisatie blijven."
+    ) }}
+
+    {% call panel("De naam waar je heen wijst", "info") %}
+        <c-paragraph>
+            Dat is <code>{{ router_host }}</code>, de ingang van dit cluster. Elke applicatie
+            op ZAD heeft zijn eigen naam en die wijst hierheen; jouw domein doet straks
+            hetzelfde. Kwam je hier doordat je deze naam in een DNS-record tegenkwam, dan is
+            dit precies wat je zocht.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("1. Het DNS-record", "folder",
+                  info_text="Aan te vragen bij de DNS-beheerder van je eigen domein. Kies CNAME, of ALIAS/ANAME, of A en AAAA samen.") %}
+        <c-table columns="1fr 2fr">
+            <c-table-head><c-table-row>
+                <c-th>Type</c-th>
+                <c-th>Waarde</c-th>
+            </c-table-row></c-table-head>
+            <c-table-row>
+                <c-td>CNAME</c-td>
+                <c-td><code>{{ router_host }}.</code></c-td>
+            </c-table-row>
+            <c-table-row>
+                <c-td>ALIAS of ANAME</c-td>
+                <c-td><code>{{ router_host }}.</code></c-td>
+            </c-table-row>
+            {% if router_ipv4 %}
+            <c-table-row>
+                <c-td>A</c-td>
+                <c-td><code>{{ router_ipv4 }}</code></c-td>
+            </c-table-row>
+            <c-table-row>
+                <c-td>AAAA</c-td>
+                <c-td><code>{{ router_ipv6 }}</code></c-td>
+            </c-table-row>
+            {% endif %}
+        </c-table>
+
+        <c-rich-text><ul>
+            <li>Op een kaal domein is geen CNAME toegestaan; daar geldt ALIAS/ANAME of A + AAAA.</li>
+            {% if router_ipv4 %}
+            <li>Bij A en AAAA moeten beide records gezet worden, anders vervalt de IPv6-bereikbaarheid.</li>
+            <li>Bij CNAME en ALIAS/ANAME volgt een wijziging van onze IP-adressen automatisch. Bij A en AAAA is dat handwerk bij jouw DNS-beheerder.</li>
+            {% endif %}
+            <li>Voor elk subdomein is een eigen record nodig.</li>
+        </ul></c-rich-text>
+    {% endcall %}
+
+    {% call panel("De records op een rij", "square-on-square",
+                  info_text="Voorbeeld met een fictieve naam. Vervang die door je eigen domein.") %}
+        <pre class="output-code-block">{% if router_ipv4 %}a       digitaledienst.example.com.   {{ router_ipv4 }}
+aaaa    digitaledienst.example.com.   {{ router_ipv6 }}
+{% endif %}mx      digitaledienst.example.com.   0 .
+txt     digitaledienst.example.com.   v=spf1 -all
+caa     digitaledienst.example.com.   0 issue "letsencrypt.org"
+caa     digitaledienst.example.com.   0 issuewild ";"
+
+# {% if router_ipv4 %}in plaats van a + aaaa kan ook{% else %}op een kaal domein{% endif %}:
+cname   digitaledienst.example.com.   {{ router_host }}.
+aname   digitaledienst.example.com.   {{ router_host }}.</pre>
+        <c-paragraph>
+            De MX- en TXT-regel zeggen dat deze naam geen mail verstuurt en geen mail
+            aanneemt. Ze zijn niet nodig om je applicatie te laten werken, maar de mailtoets
+            van internet.nl vraagt erom, ook op een naam waar nooit mail vandaan komt.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("2. Het project in ZAD", "rectangle-stack") %}
+        <c-paragraph>
+            Maak een project aan of wijzig een bestaand project, kies bij het webadres je
+            eigen domein en vul het subdomein expliciet in. Domein en subdomein worden
+            vastgelegd als aanvraag en door ZAD-beheer goedgekeurd. Daarna accepteert het
+            platform verkeer voor die hostnaam.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("3. Het certificaat", "lock-closed") %}
+        <c-paragraph>
+            Standaard vraagt het platform een Let's Encrypt-certificaat aan en verlengt dat
+            automatisch. Daarvoor gelden twee voorwaarden:
+        </c-paragraph>
+        <c-rich-text><ul>
+            <li>de DNS staat al en werkt, vóórdat de deployment wordt uitgerold;</li>
+            <li>een CAA-record op je eigen naam staat letsencrypt.org toe. Staat er geen CAA-record, dan is er niets aan de hand: dan mag iedereen uitgeven en dus ook Let's Encrypt.</li>
+        </ul></c-rich-text>
+        <c-paragraph>
+            Een eigen certificaat kan ook: aangeleverd in ZAD en aangeboden op de ingress, of
+            doorgelaten tot in de pod. De aanvraag daarvan, bijvoorbeeld PKIoverheid, ligt bij
+            je eigen organisatie, want zo'n certificaat staat op jouw organisatiegegevens en
+            ZAD kan het niet namens een ander aanvragen. Voor internet.nl is PKIoverheid niet
+            vereist: een Let's Encrypt-certificaat scoort daar volledig.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("Wat internet.nl betreft", "check-mark-circle") %}
+        <c-paragraph>
+            Het platform levert: doorverwijzing van HTTP naar HTTPS, HSTS (een jaar,
+            includeSubDomains, preload), uitsluitend TLS 1.3, een publiek vertrouwd
+            certificaat, IPv6 op deze naam en RPKI-geldige prefixes
+            (<code>147.181.48.0/22</code> en <code>2a04:9a00:1007::/48</code>, AS202553).
+        </c-paragraph>
+        <c-paragraph>
+            Twee aandachtspunten blijven bij je eigen organisatie:
+        </c-paragraph>
+        <c-paragraph>
+            <strong>DNSSEC.</strong> Als je zone ondertekend is, is een record daarin gedekt.
+            Delegeer je naar een eigen nameserver, dan moet die subzone zelf ondertekend zijn
+            en hoort er een DS-record bij de delegatie.
+        </c-paragraph>
+        <c-paragraph>
+            <strong>Security headers in je applicatie.</strong> De router zet alleen HSTS.
+            <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code> of
+            <code>frame-ancestors</code>, <code>Referrer-Policy</code>,
+            <code>Content-Security-Policy</code> en <code>Permissions-Policy</code> moet je
+            applicatie zelf meesturen. Dit is meestal het laatste punt dat nog aandacht
+            vraagt voordat een dienst volledig scoort, dus loop het na voordat je toetst.
+        </c-paragraph>
+    {% endcall %}
+{% endblock %}

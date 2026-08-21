@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
+from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
@@ -33,7 +34,7 @@ from opi.services.services import (
 )
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_extra_database_schema, registry_tag_owner
-from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
+from opi.utils.project_utils import ComponentValidationError, validate_root_component
 
 if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
@@ -72,6 +73,22 @@ def _accepted_config_fields(provider: Service, layer: ConfigLayer) -> list[str]:
     return names
 
 
+def validation_reasons(error: ValidationError) -> str:
+    """De redenen van een ValidationError, zoals ze aan een gebruiker getoond mogen worden.
+
+    ``str(e)`` van pydantic is uitvoer voor een ontwikkelaar: hij zet er
+    ``[type=value_error, input_value=..., input_type=dict]`` achter en een link naar
+    errors.pydantic.dev. Dat kwam zo op het scherm van iemand die een webadres wilde
+    wijzigen, met de afgekeurde waarde erin -- en die waarde kan een geheim zijn.
+
+    ``error["msg"]`` draagt alleen de reden. Het voorvoegsel ``Value error, `` dat pydantic
+    voor een ``model_validator`` zet valt eraf: de zin eromheen zegt al dat er iets ongeldig
+    is, en "Value error" voegt daar niets aan toe wat de lezer verder helpt.
+    """
+    reasons = [error_entry["msg"].removeprefix("Value error, ") for error_entry in error.errors()]
+    return "; ".join(reasons) or "waarde voldoet niet aan het model"
+
+
 def _validate_one_config(
     name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str, from_version: str | None = None
 ) -> None:
@@ -104,7 +121,8 @@ def _validate_one_config(
         accepted = _accepted_config_fields(provider, layer)
         hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
         raise ProjectIntegrityError(
-            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: {e}.{hint}"
+            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: "
+            f"{validation_reasons(e)}.{hint}"
         ) from e
 
 
@@ -127,7 +145,7 @@ def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str
     try:
         model.model_validate(raw)
     except ValidationError as e:
-        reasons = "; ".join(error["msg"] for error in e.errors()) or "waarde voldoet niet aan het model"
+        reasons = validation_reasons(e)
         raise ProjectIntegrityError(
             f"Project '{project_name}': gegevens van service '{name}' {where} zijn ongeldig: {reasons}."
         ) from None
@@ -306,7 +324,7 @@ def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any,
     try:
         model.model_validate(raw)
     except ValidationError as e:
-        reasons = "; ".join(error["msg"] for error in e.errors()) or "waarde voldoet niet aan het model"
+        reasons = validation_reasons(e)
         raise ProjectIntegrityError(
             f"Project '{project_name}': '{service.owned_property}' {where} is ongeldig: {reasons}."
         ) from None
@@ -339,7 +357,7 @@ def validate_component_references(project_data: dict, components: list, context:
         available_components = list(component_names) if component_names else ["none"]
         project_name = project_data.get("name", "unknown")
         error_msg = f"Invalid component references in {context} for project '{project_name}': {invalid_references}. Available components: {available_components}"
-        logger.error(error_msg)
+        logger.warning(error_msg)
         return {"success": False, "error": error_msg, "invalid_references": invalid_references}
 
     return {"success": True, "error": None, "invalid_references": None}
@@ -599,6 +617,46 @@ def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> 
     return errors
 
 
+def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
+    """Services this project selected that its deployments' clusters cannot deliver.
+
+    Asked of each service (``Service.available_on_cluster``), so no cluster name and no
+    service name appears in this module. Measured per DEPLOYMENT cluster rather than
+    against the managing cluster: that is the cluster the pods will actually run on, and
+    it keeps the verdict the same file-in, file-out no matter which OPI instance reads
+    the project.
+
+    This is the refusal that counts. Leaving an unavailable service out of the wizard's
+    cards hides it from one of three roads; the API and a hand-written project file never
+    pass a card at all.
+    """
+    selected = ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []) or [])
+    if not selected:
+        return []
+
+    errors: list[str] = []
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        cluster = deployment.get("cluster")
+        if not cluster or cluster not in CLUSTER_CONFIG:
+            continue
+        for name in selected:
+            try:
+                service_type = ServiceType(name)
+            except ValueError:
+                # An unknown service name is another check's verdict, not this one's.
+                continue
+            service = SERVICES.get(service_type)
+            if service is None or service.available_on_cluster(cluster):
+                continue
+            errors.append(
+                f"deployment '{deployment.get('name')}' draait op cluster '{cluster}', en daar is de dienst "
+                f"'{name}' niet beschikbaar"
+            )
+    return errors
+
+
 async def validate_project_structure(project_data: dict[str, Any]) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
@@ -669,33 +727,18 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         seen_deployments.add(dep_name)
 
         refs = dep.get("components", []) or []
-        domain_mode = get_domain_setting(dep, DomainSetting.DOMAIN_MODE, "component-specific")
 
         # All component references resolve to a defined component
         reference_result = validate_component_references(project_data, refs, "deployment")
         if not reference_result["success"]:
             raise ProjectIntegrityError(reference_result["error"])
 
-        # Ingress path uniqueness within the deployment
-        paths = []
-        for ref in refs:
-            ref_name = ref.get("reference") if isinstance(ref, dict) else None
-            comp = component_by_name.get(ref_name)
-            if comp:
-                paths.append(comp.get("path", "/"))
-        try:
-            validate_component_paths(paths, domain_mode)
-        except ComponentValidationError as e:
-            raise ProjectIntegrityError(str(e)) from e
-
         # Root component constraints
         root_ref = get_domain_setting(dep, DomainSetting.ROOT_COMPONENT)
         if root_ref:
             ref_names = [name for r in refs if isinstance(r, dict) and (name := r.get("reference"))]
             try:
-                validate_root_component(
-                    root_ref, ref_names, domain_mode, get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
-                )
+                validate_root_component(root_ref, ref_names, get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT))
             except ComponentValidationError as e:
                 raise ProjectIntegrityError(str(e)) from e
 
@@ -736,6 +779,13 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
     schema_errors = validate_database_schema_names(project_data)
     if schema_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(schema_errors)}")
+
+    # A service is only usable where the cluster can deliver it. Here rather than at the
+    # form field because a project reaches this point from the wizard, the API and a
+    # hand-edited file alike.
+    availability_errors = validate_service_availability(project_data)
+    if availability_errors:
+        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(availability_errors)}")
 
     # A deployment may not point at another project's tag in the shared platform
     # registry. This is the read half of the ownership the push endpoint pins.

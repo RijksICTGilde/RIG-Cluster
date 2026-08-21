@@ -14,4 +14,12 @@ resources:
   - ../../infrastructure/minio/config/overlays/odcn
   - ../../infrastructure/prometheus/controller/overlays/odcn
   - ../../infrastructure/redis/controller/overlays/odcn
+  # De mailrelay draait NIET via deze kustomization en die regel komt hier ook niet
+  # terug: de CMP injecteert de destination-namespace (rig-prd-operations) over deze
+  # hele build, en dat zou de rig-prd-ron-resources van de mail-overlay platslaan tot
+  # een ID-conflict - gemeten op de sandbox, 19 augustus 2026. De relay krijgt een
+  # eigen Application (argocd-application-ron-infrastructure.yaml in
+  # bootstrap/rig-system/kustomize/overlays/odcn-production, nu nog uitgecommentarieerd)
+  # met destination rig-prd-ron. De aanzetstappen staan in features/send-email.md
+  # ("Wat er bij het aanzetten werkelijk moet gebeuren").
   - ../../infrastructure/external-dns/controller/overlays/odcn

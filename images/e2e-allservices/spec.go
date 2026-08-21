@@ -27,7 +27,7 @@ type Spec struct {
 // env vars the platform injects for it.
 type Target struct {
 	ID   string `json:"id"`   // stable status key, e.g. "postgres", "storage-data"
-	Kind string `json:"kind"` // probe handler: sql|redis|s3|oidc|path|metadata
+	Kind string `json:"kind"` // probe handler: sql|redis|s3|oidc|path|metadata|vlam
 	// Services contributing to this target (traceability only).
 	Services []string `json:"services"`
 	// BoundWhenAny lists the env vars whose presence marks the target bound.

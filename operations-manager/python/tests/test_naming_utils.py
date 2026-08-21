@@ -7,7 +7,6 @@ infrastructure, and URL handling.
 """
 
 from opi.utils.naming import (
-    HostnameFormat,
     ensure_fqdn,
     ensure_url_has_protocol,
     extract_domain_from_url,
@@ -678,7 +677,7 @@ class TestGetComponentIngressMap:
     """Tests for get_component_ingress_map function."""
 
     def test_dots_format(self):
-        """DOTS format generates component.subdomain.base_domain."""
+        """The component.subdomain format generates component.subdomain.base_domain."""
         result = get_component_ingress_map(
             "frontend",
             "prod",
@@ -686,7 +685,7 @@ class TestGetComponentIngressMap:
             ".kind",
             subdomain="myapp",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS,
+            domain_format="component.subdomain",
             project_data=_approved("rijks.app"),
             cluster="local",
         )
@@ -723,7 +722,7 @@ class TestGetDeploymentHostnames:
     """Tests for get_deployment_hostnames function."""
 
     def test_dots_format_includes_root(self):
-        """DOTS format includes root hostname."""
+        """The component.subdomain format with a root component includes the root hostname."""
         result = get_deployment_hostnames(
             ["frontend", "backend"],
             "prod",
@@ -731,7 +730,8 @@ class TestGetDeploymentHostnames:
             ".kind",
             subdomain="myapp",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS,
+            domain_format="component.subdomain",
+            root_component="frontend",
             project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
@@ -739,6 +739,21 @@ class TestGetDeploymentHostnames:
         assert "backend.myapp.rijks.app" in result
         assert "myapp.rijks.app" in result
         assert len(result) == 3
+
+    def test_dots_format_without_root_component_has_no_root(self):
+        """Without a root component the root hostname is not handed out."""
+        result = get_deployment_hostnames(
+            ["frontend"],
+            "prod",
+            "myapp",
+            ".kind",
+            subdomain="myapp",
+            base_domain="rijks.app",
+            domain_format="component.subdomain",
+            project_data=_approved("rijks.app"),
+            cluster=_CLUSTER,
+        )
+        assert result == ["frontend.myapp.rijks.app"]
 
     def test_dashes_format_no_root(self):
         """DASHES format does not add root hostname."""
@@ -765,26 +780,6 @@ class TestGetDeploymentHostnames:
         )
         # In subdomain mode with subdomain != deployment_name, both resolve to same hostname
         assert "myapp.dev.example.com" in result
-
-
-class TestHostnameFormat:
-    """Tests for HostnameFormat enum."""
-
-    def test_from_domain_mode_nice_url(self):
-        """'nice-url' maps to DOTS."""
-        assert HostnameFormat.from_domain_mode("nice-url") == HostnameFormat.DOTS
-
-    def test_from_domain_mode_other(self):
-        """Any other string maps to DASHES."""
-        assert HostnameFormat.from_domain_mode("something") == HostnameFormat.DASHES
-
-    def test_from_domain_mode_none(self):
-        """None maps to DASHES."""
-        assert HostnameFormat.from_domain_mode(None) == HostnameFormat.DASHES
-
-    def test_from_domain_mode_empty(self):
-        """Empty string maps to DASHES."""
-        assert HostnameFormat.from_domain_mode("") == HostnameFormat.DASHES
 
 
 class TestBackupNaming:
@@ -1142,3 +1137,56 @@ class TestRedisNaming:
         prefix = generate_redis_key_prefix("My_Project", "Prod")
         assert prefix == "prod-my_project"
         assert not prefix.endswith(":")
+
+
+class TestGenerateMailSenderAddress:
+    """Het afzenderadres van een project: ``<local>+<project>@<domein>``.
+
+    Wat OPI hier uitrekent is een MEDEDELING, geen tweede waarheid: het adres dat vertrekt
+    wordt door de relay zelf afgeleid, uit de accountnaam waarmee de applicatie inlogt
+    (``strip_prefix(authenticated_as, 'project-')`` in het sieve-script). Een opzoektabel
+    was het oorspronkelijke ontwerp en bleek niet te kunnen -- zie de PR-body van RC-145.
+
+    Twee samenstellers in twee talen zijn het bij de eerste afkapping oneens, en dat is
+    precies waarom ``generate_mail_account_name`` en deze functie hetzelfde label knippen
+    (``mail_project_label``) en waarom ``test_de_relay_leidt_hetzelfde_adres_af_als_opi``
+    dat vastpint.
+    """
+
+    BASIS = "noreply-rijksapp@rijksoverheid.nl"
+
+    def test_het_project_staat_in_het_plusdeel(self):
+        from opi.utils.naming import generate_mail_sender_address
+
+        assert generate_mail_sender_address(self.BASIS, "algor-odc") == "noreply-rijksapp+algor-odc@rijksoverheid.nl"
+
+    def test_hoofdletters_worden_kleine_letters(self):
+        """Een adres is geen plek voor de schrijfwijze van een projectnaam."""
+        from opi.utils.naming import generate_mail_sender_address
+
+        assert generate_mail_sender_address(self.BASIS, "Algor-ODC").startswith("noreply-rijksapp+algor-odc@")
+
+    def test_een_te_lange_projectnaam_wordt_afgekapt(self):
+        """De valkuil die niemand narekent: het voorvoegsel is zeventien tekens en een
+        lokaal deel mag er vierenzestig, dus vanaf achtenveertig tekens projectnaam loopt
+        het adres eroverheen en weigert de upstream het."""
+        from opi.utils.naming import MAIL_LOCAL_PART_MAX_LENGTH, generate_mail_sender_address
+
+        adres = generate_mail_sender_address(self.BASIS, "p" * 80)
+        lokaal, _, domein = adres.partition("@")
+        assert len(lokaal) == MAIL_LOCAL_PART_MAX_LENGTH
+        assert domein == "rijksoverheid.nl"
+
+    def test_precies_op_de_grens_blijft_heel(self):
+        """De keerzijde: afkappen mag alleen als het moet."""
+        from opi.utils.naming import generate_mail_sender_address
+
+        naam = "p" * 47
+        assert generate_mail_sender_address(self.BASIS, naam) == f"noreply-rijksapp+{naam}@rijksoverheid.nl"
+
+    def test_het_domein_komt_uit_het_basisadres(self):
+        """Nooit een ander domein: SPF-uitlijning is het enige dat een bericht door DMARC
+        krijgt, en die bestaat alleen zolang envelope en From: hetzelfde domein dragen."""
+        from opi.utils.naming import generate_mail_sender_address
+
+        assert generate_mail_sender_address("post@voorbeeld.example", "x").endswith("@voorbeeld.example")

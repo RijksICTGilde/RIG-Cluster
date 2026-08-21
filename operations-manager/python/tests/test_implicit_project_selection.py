@@ -51,6 +51,11 @@ IMPLICIT_SERVICES = {
     #: RC-103: no project layer, so nothing to decide there and no endpoint to decide it
     #: with. Refusing named a layer the caller could not reach.
     ServiceType.PUBLISH_ON_WEB,
+    #: RC-142: dezelfde reden als publish-on-web. vlam draagt geen configuratie op enig
+    #: niveau -- een endpoint, een variabele, een regel -- dus er valt op projectniveau
+    #: niets te beslissen. Of het cluster de dienst uberhaupt kan leveren is een aparte
+    #: vraag, en die wordt beantwoord door available_on_cluster.
+    ServiceType.VLAM,
 }
 
 

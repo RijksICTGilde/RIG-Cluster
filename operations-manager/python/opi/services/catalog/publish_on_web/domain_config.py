@@ -1,6 +1,6 @@
 """Where a deployment's web-address settings live, and the only way to reach them (RC-60).
 
-The seven fields that together describe how publish-on-web composes a hostname and with
+The fields that together describe how publish-on-web composes a hostname and with
 which certificate used to sit loose in the deployment root::
 
     deployments:
@@ -67,16 +67,17 @@ DomainFormatId = Literal[
 
 
 class DomainSetting(StrEnum):
-    """The seven deployment-level settings publish-on-web owns.
+    """The six deployment-level settings publish-on-web owns.
 
-    An enum rather than seven string literals so the set is enumerable (the migration and
+    An enum rather than six string literals so the set is enumerable (the migration and
     the "no direct root access" guard both need to walk it) and every reader names the same
-    key. The values are the on-disk key spelling, unchanged by the relocation.
+    key. The values are the on-disk key spelling, unchanged by the relocation. The legacy
+    ``domain-mode`` is no longer a member: the v2.8 migration removes it wholesale, and it
+    handles the raw key itself so retiring it here cannot orphan old files.
     """
 
     BASE_DOMAIN = "base-domain"
     SUBDOMAIN = "subdomain"
-    DOMAIN_MODE = "domain-mode"
     DOMAIN_FORMAT = "domain-format"
     ISSUER = "issuer"
     ROOT_COMPONENT = "root-component"
@@ -157,7 +158,7 @@ def has_domain_setting(deployment: dict[str, Any], setting: DomainSetting) -> bo
 
 
 def get_domain_settings(deployment: dict[str, Any]) -> dict[str, Any]:
-    """All seven settings resolved, keyed by their on-disk name (absent ones as None)."""
+    """All six settings resolved, keyed by their on-disk name (absent ones as None)."""
     return {setting.value: get_domain_setting(deployment, setting) for setting in DomainSetting}
 
 
@@ -226,7 +227,7 @@ def clear_domain_settings(deployment: dict[str, Any]) -> None:
     """Remove the whole web address from ``deployment``, wherever it is stored.
 
     For a deployment that must not carry one at all -- a clone, which uses its own
-    (target) domain setup and never the source's hostnames. Excluding the seven root keys
+    (target) domain setup and never the source's hostnames. Excluding the six root keys
     from a copy is not enough since they moved: they now travel inside the source's
     ``services`` block, which is copied as a whole.
 
@@ -235,6 +236,13 @@ def clear_domain_settings(deployment: dict[str, Any]) -> None:
     """
     for setting in DomainSetting:
         pop_domain_setting(deployment, setting)
+
+    # The retired legacy key (v2.8): a clone source can be an unmigrated dict, and the
+    # copy must not resurrect what the migration removes.
+    config = get_domain_config(deployment)
+    if config is not None:
+        config.pop("domain-mode", None)
+    deployment.pop("domain-mode", None)
 
     root, entry = _find_entry(deployment)
     if root is None or entry is None:

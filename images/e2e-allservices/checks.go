@@ -449,6 +449,87 @@ func checkPath(t Target) checkResult {
 	return checkResult{ok: true, detail: detail}
 }
 
+// ---- VLAM (in-cluster API proxy) ------------------------------------------
+
+// vlamModelsPath is the read the probe performs. It is the cheapest call VLAM
+// offers, needs no request body and changes nothing, so one round trip proves the
+// whole chain the platform is responsible for - the selected service, the injected
+// address, the egress policy on this pod and the inbound policy on the proxy -
+// without spending anything at the far end.
+const vlamModelsPath = "/v1/models"
+
+// checkVlam calls {VLAM_API_URL}/v1/models and judges the answer.
+//
+// A 401/403 counts as OK on purpose: it can only come from VLAM itself, so the
+// network path stands and only VLAM's own authorization (an API key that belongs to
+// the project, not to this probe) is holding the door. Today that endpoint is
+// key-less, but that is VLAM's choice to change, not a contract of this platform.
+//
+// The failures are worded for the side this gets debugged from - the consumer - so
+// each one names the hop that is suspect rather than only what went wrong.
+func checkVlam(ctx context.Context) checkResult {
+	base := strings.TrimRight(firstEnv("VLAM_API_URL"), "/")
+	if base == "" {
+		return checkResult{err: fmt.Errorf("VLAM_API_URL is empty")}
+	}
+	endpoint := base + vlamModelsPath
+	detail := map[string]any{"endpoint": endpoint}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return checkResult{detail: detail, err: fmt.Errorf("bad VLAM address %q: %w", base, err)}
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return checkResult{detail: detail, err: fmt.Errorf(
+			"no answer from %s (suspect: this pod's egress policy from the vlam service, "+
+				"the proxy's inbound policy, or the proxy itself): %w", endpoint, err)}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	detail["status"] = resp.StatusCode
+
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		detail["verdict"] = fmt.Sprintf("reachable, VLAM refuses (%d)", resp.StatusCode)
+		return checkResult{ok: true, detail: detail}
+	case resp.StatusCode >= 500:
+		return checkResult{detail: detail, err: fmt.Errorf(
+			"status %d from %s (suspect: the proxy or VLAM behind it, not the network path): %s",
+			resp.StatusCode, endpoint, snippet(body))}
+	case resp.StatusCode != http.StatusOK:
+		return checkResult{detail: detail, err: fmt.Errorf(
+			"status %d from %s: %s", resp.StatusCode, endpoint, snippet(body))}
+	}
+
+	var doc struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil || doc.Data == nil {
+		return checkResult{detail: detail, err: fmt.Errorf(
+			"200 from %s without a recognisable models document (suspect: something other than "+
+				"VLAM answered, e.g. an error page from the proxy): %s", endpoint, snippet(body))}
+	}
+	detail["models"] = len(doc.Data)
+	if len(doc.Data) > 0 {
+		detail["first_model"] = doc.Data[0].ID
+	}
+	return checkResult{ok: true, detail: detail}
+}
+
+// snippet folds a response body into one short single-line excerpt, so an error
+// message carries what answered without dumping a page into the log.
+func snippet(body []byte) string {
+	text := strings.Join(strings.Fields(string(body)), " ")
+	runes := []rune(text)
+	if len(runes) > 200 {
+		return string(runes[:200]) + "..."
+	}
+	return text
+}
+
 // ---- Metadata (informational) ---------------------------------------------
 
 func checkMetadata(t Target) checkResult {

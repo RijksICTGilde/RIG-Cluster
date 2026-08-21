@@ -221,8 +221,6 @@ DEFAULT_NL_TRANSLATIONS = {
     "service.minio": "MinIO Object Storage",
     "service.minio.description": "S3-compatible object storage voor documenten en bestanden",
     # Domain configuration
-    "domain.mode": "Web Adres Configuratie",
-    "domain.mode.description": "Kies hoe de URLs voor je componenten worden gegenereerd",
     "domain.subdomain": "Aangepast Subdomein",
     "domain.subdomain.description": "Specificeer een custom subdomein voor alle componenten",
     # Form titles

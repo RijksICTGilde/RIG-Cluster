@@ -19,8 +19,9 @@ text in one of the two readers is worse than a syntax that does not exist.
     # Title             -> <c-heading type="h2"> with the service's own icon
     ## Section          -> <c-heading type="h3">
     A paragraph.        -> <c-paragraph>
-    - a bullet          -> <c-list><c-list-item>
+    - a bullet          -> <c-rich-text><ul><li>
     **bold**            -> <c-b>
+    [label](/pad)       -> <c-link>
 
 The icon is not in the markdown. It is on the service definition, where it already is for
 the card and the picker, so the popup and the card cannot show different icons.
@@ -48,6 +49,10 @@ _ROOTS = (
 )
 
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
+#: Een inline link. ALLEEN een intern pad of een https-adres: dezelfde markdown gaat
+#: ongewijzigd naar API-clients, en een ``javascript:``- of ``data:``-href in een
+#: dienstuitleg heeft geen eerlijk gebruik. Wat niet matcht blijft gewoon tekst.
+_LINK = re.compile(r"\[([^\]\n]+)\]\((/[^)\s]*|https://[^)\s]+)\)")
 #: A backslash escape, so a literal ``*`` can sit next to the emphasis markers.
 _ESCAPE = re.compile(r"\\(.)")
 
@@ -87,6 +92,20 @@ def service_help_markdown(service_type: ServiceType) -> str:
     return read_help_markdown(definition.help_template)
 
 
+def service_guide_markdown(service_type: ServiceType) -> str:
+    """The application-oriented guide of one service, as markdown; empty when it has none.
+
+    Same contract as :func:`service_help_markdown`, for the ``guide_template`` a service
+    may declare next to its ``help_template``: one file, read by the API (the ``guide``
+    field of ``GET /api/v2/services/{name}``) and rendered by the portal through the same
+    help route.
+    """
+    definition = ServiceAdapter.get_service_definition(service_type)
+    if not definition.guide_template:
+        return ""
+    return read_help_markdown(definition.guide_template)
+
+
 def _text(raw: str) -> str:
     """Prose as it may be handed to the template engine.
 
@@ -109,16 +128,26 @@ def _inline(raw: str) -> str:
     character and the wildcard silently disappears.
     """
     protected: dict[str, str] = {}
+    links: dict[str, str] = {}
 
     def hide(match: re.Match[str]) -> str:
         token = f"\x00{len(protected)}\x00"
         protected[token] = match.group(1)
         return token
 
+    def hide_link(match: re.Match[str]) -> str:
+        # Het label als PLATTE tekst: het gaat een attribuut in, en opmaak in een
+        # attribuutwaarde overleeft de componentlaag niet.
+        token = f"\x01{len(links)}\x01"
+        links[token] = f'<c-link href="{_text(match.group(2))}" label="{_text(match.group(1))}" />'
+        return token
+
     rendered = _BOLD.sub(
         lambda match: f"<c-b>{_text(match.group(1))}</c-b>",
-        _text(_ESCAPE.sub(hide, raw)),
+        _LINK.sub(hide_link, _text(_ESCAPE.sub(hide, raw))),
     )
+    for token, markup in links.items():
+        rendered = rendered.replace(token, markup)
     for token, character in protected.items():
         rendered = rendered.replace(token, _text(character))
     return rendered
@@ -193,7 +222,13 @@ def markdown_to_components(source: str, *, icon: str | None = None, color: str |
                 flush()
             paragraph.append(_inline(stripped))
     flush()
-    return "\n".join(out)
+    # IN EEN STACK, want zonder stack raken de blokken elkaar. Dat is geen smaak maar de
+    # regel van dit systeem: een gap bestaat alleen waar een stack de OUDER is (zie de kop
+    # van bg/_patterns.html.j2). De popup zet deze markup in een kale <div>, dus stonden de
+    # koppen strak tegen de alinea erboven en eronder, en dat las als "te grote koppen"
+    # terwijl het de ontbrekende witruimte was.
+    inhoud = "\n".join(out)
+    return f'<c-stack gap="md">\n{inhoud}\n</c-stack>'
 
 
 def render_service_help(help_template: str) -> str:
@@ -203,17 +238,36 @@ def render_service_help(help_template: str) -> str:
     route that knows only which help was asked for, and a help document that belongs to no
     service (the container-image note) simply renders without an icon.
     """
-    definition = next(
-        (d for d in ServiceAdapter.SERVICE_DEFINITIONS.values() if d.help_template == help_template),
+    owner = next(
+        (
+            (service_type, d)
+            for service_type, d in ServiceAdapter.SERVICE_DEFINITIONS.items()
+            if help_template in (d.help_template, d.guide_template)
+        ),
         None,
     )
-    # De import staat binnenin om een kringloop te vermijden: de templateomgeving leunt op
-    # de dienstenregistry, en die brengt de dienstpakketten mee die deze module lezen.
+    definition = owner[1] if owner else None
+    # De imports staan binnenin om een kringloop te vermijden: de templateomgeving leunt
+    # op de dienstenregistry, en die brengt de dienstpakketten mee die deze module lezen.
     from opi.core.templates_lotc import templates_lotc
+    from opi.services.registry import get_service
 
     markup = markdown_to_components(
         read_help_markdown(help_template),
         icon=definition.icon if definition else None,
         color=definition.color if definition else None,
     )
+    # De goedkeuringswaarschuwing komt uit de DECLARATIE van de dienst (approval_specs),
+    # niet uit de uitlegtekst: zo staat hij op elke dienst die goedkeuring vereist, ook op
+    # een die het later gaat vereisen, en kan de tekst niet beweren wat de dienst niet
+    # waarmaakt. Bovenaan, want dit is wat je wilt weten voor je aanvraagt. Alleen op de
+    # POPUP-uitleg: een guide beschrijft per scenario zelf wat een aanvraag is en wat niet,
+    # en de generieke banner zou daar breder claimen dan waar is.
+    if owner and owner[1].help_template == help_template and get_service(owner[0]).approval_specs():
+        waarschuwing = (
+            '<c-alert type="warning" heading="Vereist goedkeuring">'
+            "Het aanzetten van deze dienst is een aanvraag: een beheerder moet hem "
+            "goedkeuren voordat er iets gebeurt.</c-alert>"
+        )
+        markup = markup.replace('<c-stack gap="md">\n', f'<c-stack gap="md">\n{waarschuwing}\n', 1)
     return templates_lotc.env.from_string(markup).render()

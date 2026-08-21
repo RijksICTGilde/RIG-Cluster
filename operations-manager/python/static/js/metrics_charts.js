@@ -161,10 +161,24 @@ function initMetricsCharts() {
             }
         }
 
-        // Calculate y-axis max to include limit/request if present
+        /* De y-as volgt de METING, en alleen de limiet als die in beeld hoort.
+         *
+         * Hiervoor rekte de as altijd op tot de limiet. Een component dat rond 2% van
+         * zijn geheugenlimiet draait - wat de meeste doen - kreeg daarmee een as van 0
+         * tot de limiet en een lijn die plat over de bodem liep. Alle beweging die je
+         * wilt zien, en waar de tuner op stuurt, viel binnen een pixel. Gemeld als
+         * "metrics zijn nu erg plat geworden".
+         *
+         * De limiet blijft meeschalen zolang hij binnen bereik van de meting ligt: dan
+         * is de afstand ertoe de informatie. Ligt hij er ver boven, dan is de vorm van
+         * de reeks de informatie en zegt de limietlijn alleen "er is nog heel veel
+         * ruimte" - dat staat al in de tooltip, die de waarde als percentage van de
+         * limiet noemt, en in het cijfer boven de grafiek. */
         const maxValue = Math.max(...values);
         const refMax = Math.max(limit || 0, request || 0);
-        const yMax = refMax ? Math.max(maxValue * 1.1, refMax * 1.1) : maxValue * 1.1;
+        const IN_BEELD_FACTOR = 2.5;
+        const refInBeeld = refMax > 0 && refMax <= maxValue * IN_BEELD_FACTOR;
+        const yMax = refInBeeld ? Math.max(maxValue, refMax) * 1.1 : maxValue * 1.1;
 
         new Chart(canvas, {
             type: 'line',

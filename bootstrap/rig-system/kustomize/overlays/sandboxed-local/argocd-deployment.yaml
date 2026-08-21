@@ -95,7 +95,7 @@ spec:
         imagePullPolicy: Always
         env:
           - name: ARGOCD_EXEC_TIMEOUT
-            value: "180"
+            value: "180s"
           - name: KUSTOMIZE_PLUGIN_HOME
             value: /etc/kustomize/plugin
         securityContext:

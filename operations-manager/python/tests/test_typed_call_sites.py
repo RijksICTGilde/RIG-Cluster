@@ -183,57 +183,6 @@ class TestValidatorContextDispatch:
             self._validate(_RaisingContextValidator(), "iets", {"allowed": "ja"})
 
 
-class TestDomainSettingsResponse:
-    """The domain-settings endpoint never filled ``domain_format`` in its response.
-
-    ``DeploymentDomainSettingsResponse`` declares the field, the deployment carries it
-    under ``domain-format``, and the sibling endpoint at the URL-settings modal passes
-    it -- this one did not, so the modal always got ``null`` and could not preselect the
-    format the deployment actually uses.
-    """
-
-    def test_domain_format_is_returned(self, mock_settings: Any) -> None:
-        from fastapi.testclient import TestClient
-        from opi.server import create_app
-
-        deployment = {
-            "name": "prod",
-            "cluster": "my-cluster",
-            "domain-mode": "custom",
-            "domain-format": "deployment-subdomain",
-            "subdomain": "shop",
-            "base-domain": "rijksapps.nl",
-            "root-component": "frontend",
-            "components": [{"reference": "frontend"}],
-        }
-        project = MagicMock()
-        project.filename = "demo.yaml"
-        project.data = {"name": "demo", "deployments": [deployment]}
-        store = MagicMock()
-        store.get.return_value = project
-
-        mock_user = {"email": "test@example.com", "name": "Test User"}
-        mock_user_service = MagicMock()
-        mock_user_service.is_email_allowed.return_value = True
-
-        with (
-            patch("opi.middleware.authorization.get_user", return_value=mock_user),
-            patch("opi.middleware.authorization.get_user_service", return_value=mock_user_service),
-            patch("opi.core.auth_decorators.get_current_user", return_value=mock_user),
-            patch("opi.web.router.get_current_user", return_value=mock_user),
-            patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-            patch("opi.web.router.get_project_store", return_value=store),
-        ):
-            client = TestClient(create_app())
-            response = client.get("/projects/demo/deployments/prod/domain-settings")
-
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["domain_format"] == "deployment-subdomain"
-        assert body["domain_mode"] == "custom"
-        assert body["subdomain"] == "shop"
-
-
 class TestFieldExamples:
     """``Field(..., example=...)`` is not a parameter of ``Field``.
 

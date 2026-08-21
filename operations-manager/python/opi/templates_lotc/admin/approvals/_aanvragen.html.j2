@@ -1,8 +1,7 @@
-{# De aanvragen per project, of de melding dat er geen zijn.
+{# De aanvragen per project, gegroepeerd per DIENST, of de melding dat er geen zijn.
 
    De tabel is <c-table> geworden. Wat admin-approvals.css eraan gaf - kopregelkleur,
-   celranden, kolombreedtes (.col-*) en de hover-regel - levert het component zelf. De
-   percentages van de oude .col-klassen staan nu als columns= (12/25/20/18/25).
+   celranden, kolombreedtes (.col-*) en de hover-regel - levert het component zelf.
 
    De twee soorten label zijn <c-tag>. .type-badge en .status-badge waren twee keer
    dezelfde pil (inline-block, padding, radius, 0.75rem, vet) met alleen een andere
@@ -10,15 +9,18 @@
    BETEKENIS via het type: aangevraagd is warning, goedgekeurd success, afgewezen error.
    Dat is ook waarom de laatste tak default is en niet een eigen kleurloze .status-badge.
 
-   De gele regel voor een aanvraag die nog open staat is het selected-attribuut van
-   <c-table-row> - het thema kleurt zo'n regel zelf, dus .domain-row.status-requested en
-   zijn hover-variant konden weg.
-
    Wat BLEEF is .project-group-header, en alleen nog voor de band eromheen (padding, lijn
    eronder, grijze achtergrond). De flexregel erin - titel links, knop rechts - is
    <c-cluster justify="between">. Voor de band zelf is er geen component: <c-card> heeft
    geen kopgebied, en <c-section-head> zet alleen een h4 met een aanhangsel neer zonder
-   vlak eromheen. #}
+   vlak eromheen.
+
+   DE KOLOMMEN Type / Domein / Naam stonden hier tot RC-143. Een dienstaanvraag heeft geen
+   domein, dus die kwam als een LEGE cel op het scherm met een tag die hardgecodeerd
+   "Domein" zei. Wat een aanvraag IS staat nu in de groepskop (de dienst, met haar naam en
+   icoon uit de registry) en wat er gevraagd wordt in item.subject, geschreven door de
+   dienst die het weet. Dezelfde vorm als bg/admin-approvals.html.j2; die twee horen niet
+   uiteen te lopen. De groepen komen uit groepeer_per_dienst() in router_approvals.py. #}
 {% if projects_data %}
     {% for project in projects_data %}
     <c-card outline="true" padding="none" background-color="wit">
@@ -31,28 +33,34 @@
                 {% set lotc_onclick_1 %}openApprovalModal('{{ project.project_name }}'){% endset %}<c-button label="Beheren" size="sm" show-icon="before" icon="pencil-on-square"/>
             </c-cluster>
         </div>
-        <c-table columns="1.2fr 2.5fr 2fr 1.8fr 2.5fr">
+        {% for groep in project.approval_groups %}
+        {# Het icoon staat NAAST de kop en niet erin: binnen een <c-heading> lijnt het op de
+           tekstbasislijn uit en zakt het uit de lijn. h5, want de projectkop erboven is een
+           h3 en de koppenboom hoort niet om te keren. #}
+        <c-cluster gap="sm" align="center">
+            <c-icon :icon="groep.icoon | nldd_icon" size="md"/>
+            <c-heading type="h5" size="5" label="{{ groep.naam }}"/>
+        </c-cluster>
+        {# Zonder columns stapelen de cellen, want NLDD maakt er een CSS-grid van. De
+           soortkolom bestaat alleen als hij iets toevoegt: bij publiceren op het web
+           scheidt hij domein van subdomein, bij een dienst met een enkele soort zou hij de
+           groepskop herhalen. #}
+        <c-table columns="{{ '1fr 3fr 1.5fr 2fr' if groep.toon_soort else '3fr 1.5fr 2fr' }}">
             <c-table-head>
-                <c-th>Type</c-th>
-                <c-th>Domein</c-th>
-                <c-th>Naam</c-th>
+                {% if groep.toon_soort %}<c-th>Soort</c-th>{% endif %}
+                <c-th>Aanvraag</c-th>
                 <c-th>Status</c-th>
                 <c-th>Laatste wijziging</c-th>
             </c-table-head>
-            {% for item in project.approval_items %}
+            {% for item in groep.aanvragen %}
             {# :selected= en geen {% if %} rond het attribuut: de componentlaag leest de
                tag als HTML en een Jinja-blok binnen een tag is voor haar een onbekend
                attribuut (ComponentError). De dubbele punt geeft een EXPRESSIE mee. #}
             <c-table-row :selected="item.current_status == 'requested'">
-                <c-td>
-                    {% if item.type == 'subdomain' %}
-                        <c-tag type="info" label="Subdomein"/>
-                    {% else %}
-                        <c-tag type="success" label="Domein"/>
-                    {% endif %}
-                </c-td>
-                <c-td>{{ item.domain }}</c-td>
-                <c-td><strong>{{ item.name }}</strong></c-td>
+                {% if groep.toon_soort %}
+                <c-td><c-tag type="default" :label="item.label"/></c-td>
+                {% endif %}
+                <c-td><strong>{{ item.subject }}</strong></c-td>
                 <c-td>
                     {% if item.current_status == 'requested' %}
                         <c-tag type="warning" label="Aangevraagd"/>
@@ -76,8 +84,9 @@
             </c-table-row>
             {% endfor %}
         </c-table>
+        {% endfor %}
     </c-card>
     {% endfor %}
 {% else %}
-    <c-alert type="info" heading="Geen domein- of subdomeinaanvragen gevonden."/>
+    <c-alert type="info" heading="Geen openstaande aanvragen gevonden."/>
 {% endif %}

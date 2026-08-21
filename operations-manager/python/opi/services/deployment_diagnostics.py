@@ -257,3 +257,85 @@ async def gather_deployment_errors(
         ]
 
     return errors
+
+
+def gather_sync_deviations(
+    status_data: dict[str, Any],
+    *,
+    deployment_name: str = "",
+    disabled_components: frozenset[str] = frozenset(),
+) -> list[dict[str, str]]:
+    """List the resources that keep a deployment away from Synced/Healthy, with a reason.
+
+    The counterpart of :func:`gather_deployment_errors` for *deviations*: entries that
+    explain a yellow badge without being an application problem. Two sources, both read
+    from the already-fetched Application payload (no extra API calls):
+
+    1. App sync ``OutOfSync``: every OutOfSync resource. A ``requiresPruning`` resource
+       that the last (Succeeded) sync already reported as ``Pruned`` still being here
+       means the cluster cannot finish the delete (e.g. a stuck finalizer) -- that gets
+       its own reason, because no amount of re-syncing will resolve it.
+    2. App health ``Progressing``: every Progressing resource *without* a health message.
+       Entries with a message already surface through ``gather_deployment_errors``;
+       without one the yellow health badge was previously unexplained.
+
+    Entries: ``{"resource": "Kind/name", "kind": str, "reason": str}``. Resources of
+    disabled components are dropped, like in ``gather_deployment_errors``.
+    """
+    status = status_data.get("status", {}) or {}
+    sync_status = (status.get("sync") or {}).get("status")
+    health_status = (status.get("health") or {}).get("status")
+    operation_state = status.get("operationState", {}) or {}
+    resources = status.get("resources", []) or []
+    # Sleutel-aanwezigheid, niet truthiness: ArgoCD's ``automated: {}`` betekent aan.
+    auto_sync = "automated" in (((status_data.get("spec") or {}).get("syncPolicy")) or {})
+
+    # Resources the last successful sync already deleted; if such a resource still
+    # exists, its deletion is stuck and the next sync will not change that.
+    pruned_by_last_sync: set[tuple[str, str]] = set()
+    if operation_state.get("phase") == "Succeeded":
+        for result in (operation_state.get("syncResult", {}) or {}).get("resources", []) or []:
+            if result.get("status") == "Pruned":
+                pruned_by_last_sync.add((result.get("kind", ""), result.get("name", "")))
+
+    deviations: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(resource: dict[str, Any], reason: str) -> None:
+        kind = resource.get("kind", "Resource")
+        label = f"{kind}/{resource.get('name', 'unknown')}"
+        if label in seen:
+            return
+        seen.add(label)
+        deviations.append({"resource": label, "kind": kind, "reason": reason})
+
+    if sync_status == "OutOfSync":
+        for resource in resources:
+            if resource.get("status") != "OutOfSync":
+                continue
+            if resource.get("requiresPruning"):
+                if (resource.get("kind", ""), resource.get("name", "")) in pruned_by_last_sync:
+                    reason = "is verwijderd, maar het cluster maakt de verwijdering niet af"
+                else:
+                    reason = "staat niet meer in git en wordt bij de volgende sync opgeruimd"
+            elif auto_sync:
+                reason = "wijkt af van git en wordt bij de volgende sync bijgewerkt"
+            else:
+                reason = "wijkt af van git; auto-sync staat uit"
+            _add(resource, reason)
+
+    if health_status == "Progressing":
+        for resource in resources:
+            resource_health = resource.get("health", {}) or {}
+            if resource_health.get("status") != "Progressing" or resource_health.get("message"):
+                continue
+            _add(resource, "nog bezig")
+
+    if disabled_components:
+        deviations = [
+            entry
+            for entry in deviations
+            if _friendly_resource_name(entry["resource"], deployment_name) not in disabled_components
+        ]
+
+    return deviations

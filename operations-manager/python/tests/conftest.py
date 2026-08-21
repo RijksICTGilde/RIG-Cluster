@@ -256,6 +256,10 @@ def reset_readiness_state() -> Any:
 #: (``org.testcontainers``), maar dat draagt elk project dat deze bibliotheek gebruikt, en
 #: op deze machine draaien er meer. Wij ruimen alleen op wat van ons is.
 ORM_CONTAINER_LABEL = "nl.rijksapp.zad.orm-test"
+#: De pid van de pytest-run die de container maakte. Dit is wat een DRAAIENDE wees
+#: herkenbaar maakt: leeft die pid nog, dan is de container van een lopende suite en
+#: blijven we eraf; is hij dood, dan is de container een wees en mag hij weg.
+ORM_CONTAINER_PID_LABEL = "nl.rijksapp.zad.orm-test.pid"
 
 
 def _ruim_achtergebleven_containers_op() -> None:
@@ -280,14 +284,7 @@ def _ruim_achtergebleven_containers_op() -> None:
     import subprocess
 
     try:
-        # ALLEEN gestopte containers. Een draaiende is van een run die NU bezig is: op deze
-        # machine draaien meerdere suites tegelijk (agents in eigen worktrees), en die met
-        # hetzelfde etiket weghalen trekt een collega zijn database onder de voeten weg.
-        # Dat gebeurde ook echt: veertig fouten in een run die verder niets mankeerde.
-        #
-        # Een achtergebleven container is na afloop altijd gestopt (de context manager stopt
-        # hem, of het proces sterft en Docker laat hem in 'exited' achter), dus dit filter
-        # kost geen enkele opruiming die we wel willen.
+        # Gestopte containers met ons etiket zijn altijd van een afgelopen run: weg ermee.
         gevonden = subprocess.run(
             ["docker", "ps", "-aq", "--filter", f"label={ORM_CONTAINER_LABEL}", "--filter", "status=exited"],
             capture_output=True,
@@ -296,18 +293,89 @@ def _ruim_achtergebleven_containers_op() -> None:
             check=False,
         )
         containers = gevonden.stdout.split()
+
+        # DRAAIENDE containers zijn het echte lek. De vorige versie liet ze allemaal staan,
+        # op de aanname dat een gekilde run zijn container in 'exited' achterlaat. Dat is
+        # niet zo: de container draait onder de Docker-daemon, niet onder pytest, dus een
+        # SIGKILL op de suite laat de Postgres gewoon doorlopen. Gemeten op 20 augustus
+        # 2026: elf draaiende weeskes, de oudste 45 uur.
+        #
+        # Zomaar alle draaiende weghalen mag ook niet: hier draaien suites naast elkaar
+        # (agents in eigen worktrees) en een levende run zijn database weghalen gaf ooit
+        # veertig fouten. Daarom draagt elke container de pid van zijn maker, en ruimen we
+        # alleen op wat een DODE maker heeft. Hergebruik van pids kan een wees tijdelijk
+        # laten staan; die valt dan bij een volgende run alsnog om.
+        draaiend = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "--filter",
+                f"label={ORM_CONTAINER_LABEL}",
+                "--format",
+                f'{{{{.ID}}}} {{{{.Label "{ORM_CONTAINER_PID_LABEL}"}}}}',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        for regel in draaiend.stdout.splitlines():
+            container_id, _, pid_tekst = regel.partition(" ")
+            if not container_id:
+                continue
+            if _maker_leeft(pid_tekst.strip()):
+                continue
+            containers.append(container_id)
+
         if containers:
             subprocess.run(["docker", "rm", "-f", *containers], capture_output=True, timeout=60, check=False)
     except OSError, subprocess.SubprocessError:
         return
 
 
+def _maker_leeft(pid_tekst: str) -> bool:
+    """Leeft het proces dat deze container maakte nog?
+
+    Geen pid-etiket betekent een container van voor deze regeling, en die run is hoe dan
+    ook voorbij: niet levend dus. Een pid die we niet mogen signaleren (PermissionError)
+    leeft wel; alleen kijken mag altijd, dus die fout betekent "bestaat, maar is niet van
+    ons".
+    """
+    if not pid_tekst:
+        return False
+    try:
+        pid = int(pid_tekst)
+    except ValueError:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 @pytest.fixture(scope="session")
 def _orm_pg_container():
-    # Ryuk is testcontainers' reaper sidecar; op Docker Desktop komt hij niet overeind (zie
-    # _ruim_achtergebleven_containers_op voor het waarom, gemeten en niet aangenomen).
-    # ``setdefault`` zodat CI hem terug kan zetten, want daar werkt hij wel.
-    os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+    # Ryuk (de reaper van testcontainers) staat AAN, en dat is de eigenlijke opruiming:
+    # hij houdt een verbinding met deze run open en ruimt de containers van deze sessie op
+    # zodra die wegvalt -- ook bij kill -9, want dan sluit de kernel de socket. Zo ruimt de
+    # maker zelf op in plaats van dat een volgende run de rommel opveegt.
+    #
+    # De override is nodig op Docker Desktop: zonder wil Ryuk ``~/.docker/run/docker.sock``
+    # mounten en dat weigert de daemon ("operation not supported"). Met het pad zoals de
+    # daemon het zelf ziet start hij wel, EN doet hij zijn werk -- de oude aantekening dat
+    # zijn poort onbereikbaar zou zijn is op 20 augustus 2026 nagemeten en klopt niet meer
+    # (ryuk 0.8.1): na een kill -9 was alles binnen ~2 minuten weg. De vertraging komt van
+    # de poortproxy van Docker Desktop, die de verbroken verbinding pas laat doorgeeft.
+    # ``setdefault``, dus op Linux/CI (waar dit pad sowieso de standaard is) verandert er
+    # niets.
+    #
+    # ``_ruim_achtergebleven_containers_op`` hieronder blijft staan als vangnet voor het
+    # gat dat Ryuk zelf heeft: wordt DOCKER herstart terwijl er een wees staat, of sneuvelt
+    # Ryuk zelf, dan is er niemand meer die het opruimt behalve de volgende run.
+    os.environ.setdefault("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
 
     from testcontainers.postgres import PostgresContainer
 
@@ -315,7 +383,9 @@ def _orm_pg_container():
 
     # Het etiket is wat het opruimen mogelijk maakt: zonder dat weten we bij de volgende
     # run niet welke van deze containers van ons was.
-    container = PostgresContainer("postgres:16-alpine").with_kwargs(labels={ORM_CONTAINER_LABEL: "true"})
+    container = PostgresContainer("postgres:16-alpine").with_kwargs(
+        labels={ORM_CONTAINER_LABEL: "true", ORM_CONTAINER_PID_LABEL: str(os.getpid())}
+    )
     with container:
         yield container
 

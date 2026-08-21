@@ -47,6 +47,9 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "CLI", "link": "/cli", "icon": "computercode"},
         {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
+        # Onder de API-docs en niet bij Introductie: dit is naslag voor wie zijn eigen
+        # domein hierheen laat wijzen, dezelfde soort lezer als de API-documentatie.
+        {"label": "Eigen domein", "link": "/eigen-domein", "icon": "wereldbol"},
     ]
 
     # Auto-detect admin status from user email
@@ -61,7 +64,10 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         menu_items.append({"label": "Metrics", "link": "/metrics-explorer", "icon": "grafiek"})
         menu_items.append({"label": "Gebruikersbeheer", "link": "/admin/users", "icon": "user"})
         menu_items.append({"label": "Gebruik & Kosten", "link": "/admin/usage", "icon": "grafiek"})
-        menu_items.append({"label": "Domeinen", "link": "/admin/approvals", "icon": "wereldbol"})
+        # "Aanvragen" en niet "Domeinen": achter deze link staat elke goedkeuring die een
+        # dienst declareert, en dat is er sinds send-email meer dan een.
+        menu_items.append({"label": "Aanvragen", "link": "/admin/approvals", "icon": "vinkje"})
+        menu_items.append({"label": "Services status", "link": "/admin/diensten", "icon": "weegschaal"})
 
     # Add user-specific menu items
     if user:

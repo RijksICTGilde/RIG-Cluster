@@ -13,7 +13,7 @@ Er staan twee dingen op het spel en ze zijn allebei alleen in de gerenderde pagi
    niet, en dat blijkt uit niets anders dan de pagina zelf.
 
 Het project wordt in de draaiende testserver gezet en daarna weer weggehaald, net als in
-``tests/e2e/test_lotc_domeinbeheer.py``: de projectenlijst wordt elders in zijn geheel
+``tests/e2e/test_lotc_aanvragenbeheer.py``: de projectenlijst wordt elders in zijn geheel
 getoetst en een blijvertje maakt die test stuk.
 """
 
@@ -43,12 +43,12 @@ GEVRAAGD_ADRES = f"frontend.{SUBDOMEIN}.{EIGEN_DOMEIN}"
 #: Het adres dat ECHT bediend wordt: het veilige formaat op het clusterdomein van 'local'.
 CLUSTERADRES = f"https://frontend-{DEPLOYMENT}-{PROJECT}.kind"
 
-#: De vorm uit de melding: base-domain en subdomain, met de oude domain-mode en ZONDER
-#: domain-format. Precies die vorm liep om de goedkeuringspoort heen.
+#: De vorm uit de melding, zoals de v2.8-migratie hem achterlaat: het oude
+#: ``domain-mode: nice-url`` is ``domain-format: component.subdomain`` geworden.
 WEBCONFIG: dict[str, Any] = {
     "base-domain": EIGEN_DOMEIN,
     "subdomain": SUBDOMEIN,
-    "domain-mode": "nice-url",
+    "domain-format": "component.subdomain",
 }
 
 #: Het sleutelpaar uit ``tests/e2e/fixtures/projects/test-project-detail.yaml``. De

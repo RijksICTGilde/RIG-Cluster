@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Deployment layer: how this deployment's web address is composed (RC-60).\n\nEvery field is optional because a deployment on the platform's own cluster domain\nneeds none of them: the format defaults, the base domain comes from the cluster and the\nissuer from the domain entry. ``domain-mode`` is legacy -- superseded by\n``domain-format`` and read only by ``HostnameFormat.from_domain_mode`` for old files --\nbut it describes the same subject, so it moved along rather than staying behind as a\nsecond place to look.",
+  "description": "Deployment layer: how this deployment's web address is composed (RC-60).\n\nEvery field is optional because a deployment on the platform's own cluster domain\nneeds none of them: the format defaults, the base domain comes from the cluster and the\nissuer from the domain entry. The legacy ``domain-mode`` field is gone: the v2.8\nmigration converts ``nice-url`` to ``domain-format: component.subdomain`` and drops\nthe key.",
   "properties": {
     "base-domain": {
       "anyOf": [
@@ -12,7 +12,7 @@
         }
       ],
       "default": null,
-      "description": "The domain to publish on; the cluster's own domain when absent. For a domain of your own, write the domain name itself here (for example 'mijn-app.nl'); it does not have to be one the cluster offers, and there is no separate field or marker for it. A domain of your own needs an administrator's approval AND a certificate, and the two are separate: not every cluster can obtain a certificate for a domain it does not offer, and on one that cannot, the deployment is created and reachable but serves an invalid certificate. Read `custom-domain-certificates` from GET /api/v2/projects/{project}/clusters before setting this; where it is false, supply your own certificate with the component's tls='provided'.",
+      "description": "The domain to publish on; the cluster's own domain when absent. For a domain of your own, write the domain name itself here (for example 'domein.nl'); it does not have to be one the cluster offers, and there is no separate field or marker for it. A hostname on your own domain is the COMBINATION with a subdomain: base-domain 'domein.nl' + domain-format 'subdomain' + subdomain 'mijn' serves mijn.domein.nl (the bare 'domein.nl' itself is only served via expose-component-on-bare-domain). A domain of your own needs an administrator's approval (that your project may use it), DNS records set by your own organisation, AND a certificate, and those are separate: not every cluster can obtain a certificate for a domain it does not offer, and on one that cannot, the deployment is created and reachable but serves an invalid certificate. Read `custom-domain-certificates` from GET /api/v2/projects/{project}/clusters before setting this; where it is false, supply your own certificate with the component's tls='provided'.",
       "title": "Base-Domain"
     },
     "domain-format": {
@@ -41,19 +41,6 @@
       "description": "Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES). The id set is closed, so this field carries an enum; which of those ids you can actually use here is narrower and depends on base-domain, because the dotted variants need a domain that supports dot-separated hostnames. Read x-choices-source on this field for the list that fits.",
       "title": "Domain-Format"
     },
-    "domain-mode": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "LEGACY hostname strategy, superseded by domain-format. Only read for files that predate it.",
-      "title": "Domain-Mode"
-    },
     "expose-component-on-bare-domain": {
       "anyOf": [
         {
@@ -67,7 +54,7 @@
         }
       ],
       "default": null,
-      "description": "Component served on the bare custom domain, or false/absent for none.",
+      "description": "The component served on the bare custom domain itself: base-domain 'domein.nl' with no name part in front. This is an EXTRA address next to the ones domain-format composes, not the way to publish on a named address -- mijn.domein.nl is base-domain + a subdomain format + subdomain. False/absent for none, which is the normal case.",
       "title": "Expose-Component-On-Bare-Domain"
     },
     "issuer": {
@@ -93,7 +80,7 @@
         }
       ],
       "default": null,
-      "description": "The component served on the address without a component segment, for the formats that have one.",
+      "description": "For the dotted formats with a component segment: the component that ALSO serves the address without that segment (component.deployment.project also serves deployment.project, typically the frontend). Absent means no component does.",
       "title": "Root-Component"
     },
     "subdomain": {
@@ -106,7 +93,7 @@
         }
       ],
       "default": null,
-      "description": "The subdomain under the base domain, for the hostname formats that use one.",
+      "description": "The subdomain under the base domain, for the hostname formats that use one. On a platform-managed domain it is a request an administrator approves, so two projects cannot claim the same name; on a domain of your own no approval is involved -- which names exist there is your organisation's business.",
       "title": "Subdomain"
     }
   },

@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-ron
+
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+
+# De relayconfiguratie als GENERATOR en niet als kaal resource: de gegenereerde naam
+# draagt een hash van de inhoud, en kustomize schrijft die naam ook in de volume-
+# referentie van het Deployment. Een configwijziging is daardoor vanzelf een rollout.
+# Nodig omdat de config via subPath gemount is: een bijgewerkte ConfigMap bereikt een
+# draaiende pod nooit, en dat heeft twee keer een stil-op-oude-regels-draaiende relay
+# opgeleverd (webadmin-fix en RC-145, 20/21 augustus 2026). ArgoCD pruned de oude
+# gehashte ConfigMaps (prune: true op de ron-infrastructure Application).
+configMapGenerator:
+  - name: rig-mail-relay-config
+    files:
+      - config.toml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: rig-platform
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false

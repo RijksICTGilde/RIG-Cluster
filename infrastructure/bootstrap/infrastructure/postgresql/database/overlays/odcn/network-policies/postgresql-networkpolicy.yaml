@@ -27,6 +27,17 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+    # De mailrelay (rig-prd-ron): Stalwart bewaart zijn accounts en zijn wachtrij in de
+    # gedeelde PostgreSQL (rol en database staan declaratief in ../../base). De
+    # RON-namespace draagt niet het created-by-label, dus hij valt buiten de tenant-regel
+    # hierboven.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-ron
+      ports:
+        - protocol: TCP
+          port: 5432
   egress:
     # DNS.
     - to:

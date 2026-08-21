@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-ron
+
+generators:
+  - decrypt-sops.yaml
+
+resources:
+  - ../../base
+  - network-policies/mail-relay-networkpolicy.yaml
+
+# De SMTP-sink als testupstream, MET de schakelaar die de relay zijn zelfondertekende
+# certificaat laat aannemen - de component levert die twee samen, zodat de ene niet zonder
+# de andere kan worden ingeladen. Staat alleen in local en sandboxed-local: op ODCN is de
+# upstream de mailserver van de Rijksoverheid en heeft een sink niets te zoeken.
+components:
+  - ../../../sink/as-upstream
+
+patches:
+  # Op dit cluster draait de gedeelde PostgreSQL in rig-system, niet in
+  # rig-prd-operations. Op naam en niet op index: kustomize voegt env-lijsten samen op
+  # het veld `name`, dus deze patch blijft staan als de basis een variabele erbij krijgt.
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rig-mail-relay
+      spec:
+        template:
+          spec:
+            containers:
+              - name: stalwart
+                env:
+                  - name: MAIL_DB_HOST
+                    value: rig-db-rw.rig-system.svc.cluster.local

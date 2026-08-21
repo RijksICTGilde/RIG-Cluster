@@ -47,10 +47,18 @@ COMPONENT_IMAGE = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Container image",
     description="Docker image van je applicatie. Moet een rootless image zijn.",
-    help_text=(
-        "Bijvoorbeeld: ghcr.io/minbzk/base-images/hello-world:latest."
-        "Kan leeg gelaten worden; er wordt dan geen deployment aangemaakt voor dit component."
-    ),
+    # EEN REGEL, en niet twee. Hier stonden twee zinnen aan elkaar geplakt - de spatie
+    # ertussen ontbrak, dus op het scherm stond "...hello-world:latest.Kan leeg gelaten
+    # worden" - en samen met de omschrijving erboven waren dat drie regels tekst tussen het
+    # label en het invoerveld. Gemeld als "de tip van Docker staat gepropt tussen de
+    # invulvelden".
+    #
+    # De zin die weg is ("kan leeg gelaten worden") staat woordelijk in de hulpdialoog
+    # achter het vraagteken, onder de kop "Mag dit leeg zijn?". Het voorbeeld blijft hier
+    # wel staan: zonder help_text valt de omschrijving weg naast het vraagteken (zie
+    # widgets/text.html.j2, dat de tekst alleen toont als er allebei is) en blijft er een
+    # los icoon boven het veld hangen - precies de klacht die dat sjabloon oploste.
+    help_text="Bijvoorbeeld: ghcr.io/minbzk/base-images/hello-world:latest",
     help_template="container-image.html.j2",
     attributes={"data-paste-clean": "container-image"},
 )

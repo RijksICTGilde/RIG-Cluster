@@ -354,8 +354,19 @@ def test_de_grafieken_van_een_deployment_worden_echt_getekend(app_server: str, a
 
     # De maten komen uit de eigen stylesheet van het fragment. Zonder die is de wikkel nul
     # pixels hoog en tekent Chart.js in het niets - een canvas dat er staat en leeg blijft.
+    #
+    # Op een ONDERGRENS en niet meer op letterlijk "100px". De wikkel heeft sinds de
+    # grafieken twee-naast-elkaar gingen een VERHOUDING (aspect-ratio 5/2 met een min- en
+    # max-hoogte, zie static/css/metrics-charts.css): met een vaste hoogte werd een grafiek
+    # bij die bredere kolom ruim vijf keer zo breed als hoog en las hij als een platte
+    # streep. De uitkomst hangt daardoor af van de kolombreedte, en dat is precies de
+    # bedoeling. Wat deze test bewaakt staat in de regel erboven en is niet veranderd: er
+    # moet hoogte zijn, anders tekent Chart.js in het niets.
     hoogte = auth_page.evaluate("() => getComputedStyle(document.querySelector('.chart-wrapper')).height")
-    assert hoogte == "100px", f"de wikkel is {hoogte} hoog; de stijl van het fragment is niet geladen"
+    assert hoogte.endswith("px"), f"de wikkel heeft geen hoogte in pixels ({hoogte})"
+    assert float(hoogte.removesuffix("px")) >= 100, (
+        f"de wikkel is {hoogte} hoog; de stijl van het fragment is niet geladen"
+    )
 
     # Chart.js komt van een CDN. Is die niet bereikbaar, dan zegt deze test dat met zoveel
     # woorden in plaats van te falen op iets wat niet over de omzetting gaat.

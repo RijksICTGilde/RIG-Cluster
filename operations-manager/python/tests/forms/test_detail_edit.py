@@ -93,7 +93,7 @@ class TestEditSectionDefinitions:
     def test_edit_sections_registry_count(self):
         # +1 for the postgresql-database schema-list section (RC-17), +2 for the
         # redis / minio-storage project-level config sections (RC-25).
-        assert len(EDIT_SECTIONS) == 13
+        assert len(EDIT_SECTIONS) == 14
 
     def test_sleep_mode_config_section_present(self):
         assert "sleep-mode-config" in EDIT_SECTIONS

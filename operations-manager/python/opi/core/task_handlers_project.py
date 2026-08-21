@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Any
 
+from opi.core.task_errors import CLIENT_ERROR_TYPES
 from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 
 logger = logging.getLogger(__name__)
@@ -369,7 +370,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "Invalid project name format. Must start with lowercase letter, "
                 "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
             )
-            progress.fail_task(validate_task, error_msg)
+            progress.fail_task(validate_task, error_msg, client_error=True)
             progress.fail_project(error_msg)
             return {
                 "deployment_name": deployment_name,
@@ -384,7 +385,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 f"Invalid deployment name. Use lowercase letters, numbers, and "
                 f"hyphens only. Suggested: {sanitized_name}"
             )
-            progress.fail_task(validate_task, error_msg)
+            progress.fail_task(validate_task, error_msg, client_error=True)
             progress.fail_project(error_msg)
             return {
                 "deployment_name": deployment_name,
@@ -423,13 +424,14 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
 
         if not result["success"]:
             error_msg = result.get("error", "Unknown upsert error")
-            progress.fail_task(upsert_task, error_msg)
+            error_type = result.get("error_type", "unknown")
+            progress.fail_task(upsert_task, error_msg, client_error=error_type in CLIENT_ERROR_TYPES)
             progress.fail_project(error_msg)
             return {
                 "deployment_name": deployment_name,
                 "status": "failed",
                 "error": error_msg,
-                "error_type": result.get("error_type", "unknown"),
+                "error_type": error_type,
             }
 
         progress.complete_task(upsert_task)

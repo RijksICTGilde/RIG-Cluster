@@ -409,6 +409,35 @@ class KubectlConnector:
             logger.error(f"Failed to parse secret data: {e}")
             return None
 
+    async def secret_exists(self, secret_name: str, namespace: str) -> bool | None:
+        """
+        Ground-truth existence check for a Secret.
+
+        ``get_secret`` answers ``None`` both for a Secret that is not there and for a
+        kubectl call that failed, which is fine for a reader that only wants the contents
+        but not for a caller that would CREATE something on the strength of the absence.
+        This one keeps the two apart.
+
+        Args:
+            secret_name: Name of the secret
+            namespace: The namespace that would contain it
+
+        Returns:
+            True  - the Secret exists
+            False - the Secret is confirmed absent (NotFound)
+            None  - the check itself failed; existence is unknown, so the caller must not
+                    conclude the Secret is gone
+        """
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["get", "secret", secret_name, "-n", namespace, "-o", "name"]
+        )
+        if code == 0:
+            return True
+        if "notfound" in stderr.lower().replace(" ", ""):
+            return False
+        logger.warning(f"Could not determine existence of secret '{secret_name}' in '{namespace}': {stderr}")
+        return None
+
     async def get_sops_secret_from_namespace(self, namespace: str) -> str | None:
         """
         Retrieve the SOPS AGE private key from the specified namespace.

@@ -46,7 +46,12 @@ if TYPE_CHECKING:
 REQUIRING = "keycloak"
 LOCKED = "publish-on-web"
 
+#: De ECHTE <input>, twee schaduwbomen diep in <nldd-checkbox>. Playwright's CSS-engine
+#: gaat door een schaduwboom heen, dus deze selector vindt hem. Dit is het element waar
+#: ``disabled`` op zou landen en dus het element waarop die afwezigheid gemeten wordt.
 _LOCKED_CHECKBOX = f"input[type='checkbox'][value='{LOCKED}']"
+#: Het aanvinkvakje als COMPONENT: de host waar het sjabloon en wizard.js op schrijven.
+_LOCKED_VAKJE = f"[data-service='{LOCKED}'] nldd-checkbox"
 _LOCKED_CARD = f"[data-service='{LOCKED}']"
 
 
@@ -81,7 +86,15 @@ def test_a_locked_service_is_not_disabled_and_is_posted(app_server: str, auth_pa
         "a locked checkbox must NOT be disabled - a disabled checkbox posts nothing, "
         "which is how the service disappeared from the project file"
     )
-    assert checkbox.get_attribute("aria-disabled") == "true", "the lock must still be announced"
+    # ON THE COMPONENT, NOT ON THE INNER INPUT. This assertion used to read the inner
+    # ``<input>``, which worked while the card rendered a bare checkbox of its own. The
+    # card is drawn by the component system now and that input lives inside the shadow
+    # root of ``<nldd-checkbox>``, out of reach of both the template and wizard.js. The
+    # marking travelled with the lock and belongs on the control, so the control here is
+    # the component; ``request_for_components.md`` asks for it to be forwarded inward.
+    vakje = auth_page.locator(_LOCKED_VAKJE).first
+    assert vakje.count() == 1, "the checkbox component is not on the card"
+    assert vakje.get_attribute("aria-disabled") == "true", "the lock must still be announced"
     assert auth_page.locator(f"{_LOCKED_CARD} input[type='hidden']").count() == 0, (
         "the hidden input that used to carry a locked value is no longer needed"
     )

@@ -31,7 +31,6 @@ from opi.utils.age import (
     get_project_public_key,
 )
 from opi.utils.naming import (
-    HostnameFormat,
     extract_domain_from_url,
     generate_external_hostname,
     generate_project_admin_username,
@@ -175,18 +174,13 @@ class KeycloakManager:
             ingress_postfix = get_ingress_postfix(cluster)
             subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
             base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-            domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
             domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
             expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
 
-            if domain_mode == "nice-url":
-                logger.info(
-                    f"Using nice-url mode for deployment {deployment_name}: subdomain={subdomain}, base-domain={base_domain}"
-                )
-            elif subdomain:
-                logger.info(f"Using subdomain mode for deployment {deployment_name}: subdomain={subdomain}")
-            else:
-                logger.info(f"Using component-specific mode for deployment {deployment_name}")
+            logger.info(
+                f"Composing hostnames for deployment {deployment_name}: "
+                f"domain-format={domain_format}, subdomain={subdomain}, base-domain={base_domain}"
+            )
 
             # Filter components that should process SSO
             filtered_sso_components = []
@@ -205,9 +199,9 @@ class KeycloakManager:
                 ingress_postfix=ingress_postfix,
                 subdomain=subdomain,
                 base_domain=base_domain,
-                hostname_format=HostnameFormat.from_domain_mode(domain_mode),
                 domain_format=domain_format,
                 expose_on_bare_domain=expose_on_bare_domain,
+                root_component=get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT),
                 project_data=project_data,
                 cluster=settings.CLUSTER_MANAGER,
             )

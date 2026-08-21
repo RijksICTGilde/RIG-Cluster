@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import yaml
 from playwright.sync_api import expect
 from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
@@ -210,3 +211,97 @@ def test_second_component_offers_every_project_service(app_server: str, auth_pag
         "els => els.filter(e => e.checked).map(e => e.value)",
     )
     assert sorted(ticked) == sorted(selected), f"second component came up with {ticked}, expected {selected}"
+
+
+def test_een_voorinstelling_meldt_niets(app_server: str, auth_page: Page) -> None:
+    """Een voorinstelling aanklikken mag geen melding opleveren.
+
+    Gemeld op de keycloak-configuratiestap: klikken op "Snelstart: kies een scenario" gaf
+    een systeemvenster met "undefined is vereist en kan niet worden uitgezet".
+
+    De oorzaak: de voorinstellingen gebruiken dezelfde klassen als de dienstkaarten, want ze
+    zien er hetzelfde uit, maar ze dragen geen ``data-service`` - een voorinstelling is geen
+    dienst. Ze liepen daardoor toch door de dienstenlogica heen, en die vroeg naar de naam
+    van een dienst die er niet is. Dat was jarenlang onzichtbaar omdat de melding uit een
+    regel IN de kaart kwam die er niet stond; zodra de melding zijn eigen tekst opbouwde,
+    kwam hij wel in beeld.
+    """
+    meldingen: list[str] = []
+    auth_page.on("dialog", lambda dialoog: (meldingen.append(dialoog.message), dialoog.accept()))
+
+    wizard = WizardHelper(auth_page, app_server)
+    wizard.open_create_wizard()
+    wizard.fill_identity(display_name=unique_project_name(), description="voorinstelling zonder melding")
+    wizard.click_next()
+    # authorization-wall dwingt de waarden van de voorinstelling "toegangsbeperking" af, en
+    # daardoor staat die voorinstelling VERGRENDELD op de configuratiestap. Dat is de stand
+    # waarin de melding verscheen; een losse voorinstelling raakt hem nooit.
+    wizard.fill_services(["keycloak", "authorization-wall"])
+    wizard.click_next()
+    auth_page.wait_for_load_state("networkidle")
+
+    # Een VERGRENDELDE voorinstelling draagt geen hx-post (die staat er alleen als je hem
+    # nog mag toepassen), dus hij is niet met _PRESET_CARD te vinden. Op de klasse dus.
+    kaart = auth_page.locator(".service-card--locked-checked")
+    kaart.first.wait_for(state="visible", timeout=10000)
+    kaart.first.click()
+    auth_page.wait_for_timeout(500)
+
+    assert not meldingen, f"een voorinstelling aanklikken gaf een systeemvenster: {meldingen}"
+    assert auth_page.locator("nldd-modal-dialog:visible").count() == 0, (
+        "er hoort ook geen dialoog te verschijnen; een voorinstelling heeft geen slot"
+    )
+
+
+def test_een_uitnodiging_zonder_eigen_sleutel_wordt_opgeslagen(
+    app_server: str, auth_page: Page, captured_yaml: list[str]
+) -> None:
+    """De wizard mag geen projectbestand opleveren dat de validatie afkeurt.
+
+    Gemeld: aan het eind van de wizard kwam "Verwerking mislukt - Failed Git operations:
+    configuratie van service 'invite' op projectniveau is ongeldig: Field required", en het
+    projectbestand was niet opgeslagen, dus al het werk was weg.
+
+    Wat er misging: het sleutelveld van een uitnodiging mag leeg blijven, dan wordt er een
+    willekeurige sleutel gegenereerd. Dat gebeurt in de ``post_merge`` van de invite-sectie.
+    Maar de wizard bewaarde de stapgegevens VOORDAT die hook draaide en bewaarde daarna
+    alleen ``components`` opnieuw, dus de gegenereerde sleutel haalde de wizardstand nooit.
+    Bij het opslaan stond er een uitnodiging zonder ``key``, en ``InviteEntry.key`` is
+    verplicht.
+    """
+    wizard = WizardHelper(auth_page, app_server)
+    wizard.open_create_wizard()
+    wizard.fill_identity(display_name=unique_project_name(), description="uitnodiging zonder sleutel")
+    wizard.click_next()
+
+    # invite vereist keycloak; die komt automatisch mee.
+    wizard.fill_services(["keycloak", "invite"])
+    wizard.click_next()
+
+    # De invite-stap gewoon doorlopen zonder een sleutel in te vullen.
+    _finish_wizard(wizard, auth_page)
+
+    assert captured_yaml, "de wizard heeft geen projectbestand opgeleverd; het opslaan is mislukt"
+
+    # Op de GEPARSTE inhoud meten en niet op de tekst: "key:" komt ook voor in
+    # age-public-key en age-private-key, dus een zoekopdracht op die tekst slaagt altijd en
+    # meet niets. Dat is deze test een keer overkomen.
+    project = yaml.safe_load(captured_yaml[-1])
+    invite = next(
+        (
+            entry["config"]
+            for entry in project.get("services", [])
+            if isinstance(entry, dict) and entry.get("name") == "invite"
+        ),
+        None,
+    )
+    assert invite is not None, "de dienst invite hoort in het projectbestand te staan"
+
+    uitnodigingen = invite.get("active") or []
+    assert uitnodigingen, "er hoort een uitnodiging in te staan"
+    for nummer, uitnodiging in enumerate(uitnodigingen):
+        assert uitnodiging.get("key"), (
+            f"uitnodiging {nummer} heeft geen sleutel. Een lege sleutel hoort bij het opslaan een "
+            f"gegenereerde te worden; zonder sleutel keurt InviteEntry het projectbestand af en "
+            f"gaat de hele wizardsessie verloren. Gekregen: {sorted(uitnodiging)}"
+        )

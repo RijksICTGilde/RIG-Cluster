@@ -172,6 +172,7 @@ class ProvisionContext:
     minio_manager: Any
     keycloak_manager: Any
     redis_manager: Any
+    mail_manager: Any
 
 
 @dataclass
@@ -304,6 +305,14 @@ class ManifestContribution:
 
     #: Secret names to append to the pod's ``envFrom`` list, in ``manifest_order``.
     env_from_secrets: list[str] = field(default_factory=list)
+    #: Plain (non-secret) environment variables to add to the container, in
+    #: ``manifest_order``. **Additive**, merged into the ``env_vars`` template var
+    #: rather than replacing it -- which is why this is a field of its own and not a
+    #: ``template_vars`` entry: ``template_vars`` is an override, so a service putting
+    #: ``env_vars`` there would wipe the component's own variables. For a value that
+    #: IS a secret use ``secret_files`` + ``env_from_secrets``; encrypting a public
+    #: cluster address only makes it harder to read what a pod was told.
+    env_vars: dict[str, str] = field(default_factory=dict)
     #: Template-context keys to override (merged with ``dict.update``).
     template_vars: dict[str, Any] = field(default_factory=dict)
     #: Sidecar names to append to the pod's ``sidecars`` list.
@@ -707,6 +716,14 @@ class Service(ABC):
     #: also fire for their namespace variant (mirroring the provisioning grouping), so
     #: exactly one provider contributes per manager.
     manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
+    #: Where the selection that switches the per-component contribution on is read.
+    #: False (the default): the component's own ``services`` list, so each component
+    #: decides. True: the PROJECT's list, so every component of every deployment gets
+    #: the contribution. That is what ``ServiceBinding.DEPLOYMENT`` means for a service
+    #: that hands each pod the same thing and has no per-component choice to make
+    #: (vlam: one address, one egress rule) -- without it such a service could never
+    #: contribute at all, because no component ever ticks it.
+    manifest_activated_by_project: ClassVar[bool] = False
 
     #: This service's event handlers, event -> ``(method name, order)`` in ``@on(...,
     #: order=)`` order (RC-39). Derived from the decorated methods of the class (mixins
@@ -1357,6 +1374,19 @@ class Service(ABC):
             project_data=ctx.project_data,
             marked_for_deletion_service=ctx.marked_for_deletion_service,
         )
+
+    def available_on_cluster(self, cluster: str) -> bool:
+        """Whether this service can be used on ``cluster``. Default: yes, everywhere.
+
+        A service that depends on something only some clusters have (vlam needs the RON
+        link, and the proxy that hangs off it) overrides this and answers from the
+        cluster configuration, never from a hardcoded cluster name. Two consumers read
+        it, and both are needed: the wizard's service picker leaves an unavailable
+        service out of the cards, and ``validate_service_availability`` refuses a
+        project that selected it anyway -- a filtered card list is not validation, since
+        the API and a hand-written project file never see a card.
+        """
+        return True
 
     def manifest_activation_types(self) -> tuple[ServiceType, ...]:
         """Service types whose presence in a component activates this provider's

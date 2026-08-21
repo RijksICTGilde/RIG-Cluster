@@ -62,12 +62,12 @@ def _migrated_deployment() -> dict:
 
 
 class TestTheSettingSet:
-    def test_seven_settings_no_more_no_less(self) -> None:
-        # The plan counts seven; a field added or dropped without thought shows up here.
+    def test_six_settings_no_more_no_less(self) -> None:
+        # Six since v2.8 retired domain-mode; a field added or dropped without thought
+        # shows up here.
         assert DOMAIN_SETTING_KEYS == (
             "base-domain",
             "subdomain",
-            "domain-mode",
             "domain-format",
             "issuer",
             "root-component",
@@ -158,7 +158,7 @@ class TestPresenceIsNotTruth:
 
     def test_absent_is_absent(self) -> None:
         assert has_domain_setting({"name": "productie"}, DomainSetting.SUBDOMAIN) is False
-        assert has_domain_setting(_migrated_deployment(), DomainSetting.DOMAIN_MODE) is False
+        assert has_domain_setting({"name": "productie", "services": ["publish-on-web"]}, DomainSetting.ISSUER) is False
 
     def test_a_configured_value_is_present(self) -> None:
         assert has_domain_setting(_migrated_deployment(), DomainSetting.SUBDOMAIN) is True

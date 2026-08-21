@@ -8,6 +8,7 @@ to drive multi-step edit flows within the modal.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -30,7 +31,7 @@ from opi.forms.visualizers.wizard_sections import (
     _extract_services,
 )
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
-from opi.forms.wizard.mutation import apply_services_mutation
+from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
@@ -253,9 +254,45 @@ def _fully_owned_list_keys(flow: Any) -> set[str]:
     owned: set[str] = set()
     for section in flow.sections:
         for vis in section.editables:
+            # A readonly visualizer never writes, so it owns nothing: in a flow
+            # where only such a carrier references the list (modal-edit-attachments),
+            # base_data must keep it or the renderer has no data at all --
+            # _split_data_across_sections skips readonly carriers for the same reason.
+            if vis.readonly:
+                continue
             path = vis.editable.yaml_path
             if "/" not in path and "[" not in path:
                 owned.add(path)
+    return owned
+
+
+_ITEM_SELECTION_PATH = re.compile(r"^(\w[\w-]*)\[(\d+)\]/services$")
+
+
+def _owned_item_selection_paths(flow: Any) -> list[tuple[str, int]]:
+    """(list_key, index) pairs whose per-item ``services`` selection an editable owns whole.
+
+    The component form's checklist at ``components[0]/services`` renders the full
+    selection, so its step data is authoritative for that list -- the same rule
+    ``_fully_owned_list_keys`` applies to bare top-level lists, one level down. A
+    shadow copy in base_data would win it back through the by-name union in
+    ``get_merged_data`` (which never removes), so an unticked service returned on
+    every save.
+    """
+
+    def _visit(vis_list: list[Any], owned: list[tuple[str, int]]) -> None:
+        for vis in vis_list:
+            if getattr(vis, "readonly", False):
+                continue
+            match = _ITEM_SELECTION_PATH.match(vis.editable.yaml_path)
+            if match:
+                owned.append((match.group(1), int(match.group(2))))
+            if getattr(vis, "children", None):
+                _visit(vis.children, owned)
+
+    owned: list[tuple[str, int]] = []
+    for section in flow.sections:
+        _visit(list(section.editables), owned)
     return owned
 
 
@@ -414,6 +451,7 @@ def _render_modal_step(
         "step_target": "#edit-section-inner",
         "step_push_url": False,
         "step_query_params": "",
+        "show_review": flow.show_review,
         # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-sjablonen hebben de
         # NLDD-woordenschat nodig. Het roos-sjabloon raakt dit niet aan.
         "nldd_icon": to_nldd_icon,
@@ -423,6 +461,83 @@ def _render_modal_step(
         template="bg/_modal-wizard-step.html.j2",
         context=context,
     )
+
+
+async def _validate_modal_flow_for_review(
+    request: Request,
+    wizard_token: str | None,
+    state: WizardState,
+    flow_id: str,
+    project_name: str,
+    active_sections: list[FormSection],
+) -> HTMLResponse | None:
+    """Valideer de hele modalflow voor de sprong naar de samenvatting.
+
+    De modal-tegenhanger van ``router_wizard._validate_whole_flow``: alle actieve
+    secties worden tegen de samengevoegde data gevalideerd, inclusief de stappen
+    die de gebruiker met de sprong overslaat (een net aangevinkte service met een
+    lege verplichte config voorop). Geeft bij fouten de her-render van de eerste
+    falende stap terug, met de fouten gemarkeerd; anders None.
+    """
+    from opi.web.router_wizard import _collect_all_editable_paths, _section_has_errors
+
+    all_editables = [editable for section in active_sections for editable in section.editables]
+    yaml_data = state.get_merged_data()
+    processor = EditableFormProcessor()
+    processor.clear_hidden_depends_on(all_editables, yaml_data)
+
+    enforcer_ctx: dict[str, Any] = {"project_name": project_name}
+    if state.base_data and "existing_deployment_names" in state.base_data:
+        enforcer_ctx["existing_deployment_names"] = state.base_data["existing_deployment_names"]
+    if state.base_data and "existing_component_names" in state.base_data:
+        enforcer_ctx["existing_component_names"] = state.base_data["existing_component_names"]
+
+    _final, errors = await processor.process_json_submission(
+        yaml_data,
+        all_editables,
+        yaml_data,
+        edit_mode=True,
+        enforcer_context=enforcer_ctx,
+        strip_transients=False,
+    )
+    global_errors: list[str] = []
+    if not errors:
+        field_errors: dict[str, list[str]] = {}
+        global_errors = await processor.enforce_sections(
+            yaml_data, active_sections, enforcer_context=enforcer_ctx, field_errors=field_errors
+        )
+        errors = field_errors
+    if not errors and not global_errors:
+        return None
+
+    logger.warning(
+        "Modal review jump blocked for %s/%s: field_errors=%s global_errors=%s",
+        project_name,
+        flow_id,
+        errors,
+        global_errors,
+    )
+    error_section = active_sections[0]
+    for section in active_sections:
+        if _section_has_errors(_collect_all_editable_paths(section.editables), errors):
+            error_section = section
+            break
+    state.current_step = error_section.section_id
+    save_modal_state_by_token(wizard_token, state)
+    step_html = _render_section_html(error_section, yaml_data, errors=errors, locked_services=None)
+    rendered = _render_modal_step(
+        request,
+        wizard_token,
+        state,
+        flow_id,
+        error_section,
+        step_html,
+        project_name,
+        errors=errors,
+        global_errors=global_errors
+        or ["Er zijn nog verplichte velden leeg. Vul deze stap aan voordat je naar de samenvatting gaat."],
+    )
+    return HTMLResponse(content=rendered)
 
 
 def _targeted_deployment_name(flow: FormFlow, project_data: dict[str, Any]) -> str | None:
@@ -658,6 +773,18 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # from the raw project before, which left the encrypted blocks in the session even
     # though step_data had been stripped of them.
     state.base_data = {k: v for k, v in session_data.items() if k not in owned}
+    # Same ownership rule one level down: a per-item selection an editable renders
+    # whole (components[0]/services) is authoritative in step_data, so base_data
+    # must not carry a shadow copy. Shallow-copy the touched item -- the values in
+    # base_data alias session_data and step_data.
+    for item_list_key, item_idx in _owned_item_selection_paths(flow):
+        items = state.base_data.get(item_list_key)
+        if isinstance(items, list) and 0 <= item_idx < len(items) and isinstance(items[item_idx], dict):
+            items = list(items)
+            slimmed = dict(items[item_idx])
+            slimmed.pop("services", None)
+            items[item_idx] = slimmed
+            state.base_data[item_list_key] = items
     state.base_data["_wizard_token"] = wizard_token
 
     # Remember that this was an add: the flow is rebuilt from its id on later
@@ -703,7 +830,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # that carry its section. Template-only: no editable names it, so it falls outside the
     # write set and never reaches the saved project.
     if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
-        state.base_data.update(build_cross_domain_context(project_name, _user_email))
+        state.base_data.update(build_cross_domain_context(_user_email))
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
@@ -780,6 +907,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     seq_path = body.pop("_seq_path", None)
     seq_index = body.pop("_seq_index", None)
     is_rerender = bool(body.pop("_rerender", None))
+    goto = body.pop("_goto", None)
 
     if seq_action in ("add", "remove"):
         yaml_data = state.get_merged_data()
@@ -882,6 +1010,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # de sectienaam "services-edit": elke andere flow met een dienstenlijst kreeg geen
         # aanvulling, en dat is dezelfde fout als 94478afb, een laag verderop.
         apply_services_mutation(section.editables, yaml_data, submitted_yaml)
+        apply_component_services_mutation(section.editables, yaml_data, submitted_yaml)
 
         # Run section-level enforcer (cross-field validation). Capture warnings
         # too: without a field_warnings dict a FieldWarning (e.g. a subdomain that
@@ -953,6 +1082,28 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     # Determine next step
     active_sections = resolve_active_sections(flow, state.step_data)
     section_ids = [s.section_id for s in active_sections]
+
+    # De sprong "Naar samenvatting": mag stappen overslaan, maar geen verplichte
+    # waarde. Valideer de hele flow (zoals de paginawizard dat in zijn
+    # review-tak doet) en land bij fouten op de eerste stap die nog iets mist.
+    if goto == "review" and flow.show_review:
+        error_response = await _validate_modal_flow_for_review(
+            request, wizard_token, state, flow_id, project_name, active_sections
+        )
+        if error_response is not None:
+            return error_response
+        for validated in active_sections:
+            state.mark_completed(validated.section_id)
+        save_modal_state_by_token(wizard_token, state)
+        return _render_modal_review(
+            request,
+            wizard_token,
+            project_name,
+            flow_id,
+            active_sections,
+            state,
+            field_warnings=section_warnings or None,
+        )
 
     try:
         current_idx = section_ids.index(section_id)
@@ -1366,15 +1517,25 @@ async def _process_and_save_modal_edit(
         if isinstance(entry, dict) and entry.get("content")
     }
 
-    existing_data = await apply_modal_edit(
-        existing_data,
-        merged_data,
-        flow=flow,
-        active_sections=active_sections,
-        state=state,
-        project_name=project_name,
-        original_attachment_content=original_attachment_content,
-    )
+    # De merge zit in dezelfde rij als het opslaan hieronder: ook hij kan de bewerking
+    # WEIGEREN (het doel van een index-flow wijst niet meer dezelfde deployment aan, zie
+    # guard_target_still_points_at_the_same_item). Buiten de try was dat een kale 500,
+    # terwijl de weigering juist een uitleg voor de gebruiker draagt.
+    try:
+        existing_data = await apply_modal_edit(
+            existing_data,
+            merged_data,
+            flow=flow,
+            active_sections=active_sections,
+            state=state,
+            project_name=project_name,
+            original_attachment_content=original_attachment_content,
+        )
+    except ProjectIntegrityError as e:
+        logger.warning("Modal wizard merge rejected for %s (flow=%s): %s", project_name, flow.flow_id, e)
+        return existing_data, _render_modal_review(
+            request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
+        )
 
     # Save through the single validated path: schema + structural integrity
     # validation, canonical dumper, commit + push, and cache refresh in one shot.

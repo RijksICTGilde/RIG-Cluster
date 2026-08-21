@@ -127,6 +127,174 @@ def _mock_get_service() -> InMemoryUserAdminService:
     return get_in_memory_user_service()
 
 
+#: Vaste metriekreeksen voor /admin/diensten, gesleuteld op de naam die de meetlaag
+#: aan zijn queries geeft. De getallen zijn die van de meting tegen productie van
+#: 18 augustus 2026, inclusief de PVC van 92,7% die niemand zag; zo toont de pagina in
+#: de browsertest hetzelfde beeld als de aanleiding voor deze pagina.
+_DIENSTEN_METRIEKEN: dict[str, list[dict]] = {
+    "vulling": [
+        {
+            "metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
+            "value": [1787000000.0, "92.7"],
+        },
+        {
+            "metric": {
+                "namespace": "rig-prd-mb-docs-helmfile-infrastructure",
+                "persistentvolumeclaim": "mb-docs-helmfile-db-1",
+            },
+            "value": [1787000000.0, "62.8"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-algor-odc-infrastructure", "persistentvolumeclaim": "algor-odc-db-1"},
+            "value": [1787000000.0, "60.8"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-operations", "persistentvolumeclaim": "minio-storage-versioned"},
+            "value": [1787000000.0, "40.5"],
+        },
+    ],
+    "gebruikt": [
+        {
+            "metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
+            "value": [1787000000.0, "9955571302"],
+        },
+        {
+            "metric": {
+                "namespace": "rig-prd-mb-docs-helmfile-infrastructure",
+                "persistentvolumeclaim": "mb-docs-helmfile-db-1",
+            },
+            "value": [1787000000.0, "674309865"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-algor-odc-infrastructure", "persistentvolumeclaim": "algor-odc-db-1"},
+            "value": [1787000000.0, "652835225"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-operations", "persistentvolumeclaim": "minio-storage-versioned"},
+            "value": [1787000000.0, "43486543872"],
+        },
+    ],
+    "capaciteit": [
+        {
+            "metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
+            "value": [1787000000.0, "10737418240"],
+        },
+        {
+            "metric": {
+                "namespace": "rig-prd-mb-docs-helmfile-infrastructure",
+                "persistentvolumeclaim": "mb-docs-helmfile-db-1",
+            },
+            "value": [1787000000.0, "1073741824"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-algor-odc-infrastructure", "persistentvolumeclaim": "algor-odc-db-1"},
+            "value": [1787000000.0, "1073741824"],
+        },
+        {
+            "metric": {"namespace": "rig-prd-operations", "persistentvolumeclaim": "minio-storage-versioned"},
+            "value": [1787000000.0, "107374182400"],
+        },
+    ],
+    "inodes": [
+        {
+            "metric": {"namespace": "rig-prd-ubbw-0i1", "persistentvolumeclaim": "production-typesense-data-pvc"},
+            "value": [1787000000.0, "3.1"],
+        },
+    ],
+    "grootte": [
+        {
+            "metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"},
+            "value": [1787000000.0, "24049331"],
+        },
+        {
+            "metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"},
+            "value": [1787000000.0, "19166899"],
+        },
+    ],
+    "verbindingen": [
+        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"}, "value": [1787000000.0, "2"]},
+        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"}, "value": [1787000000.0, "3"]},
+    ],
+    "langste_transactie": [
+        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"}, "value": [1787000000.0, "0"]},
+        {"metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"}, "value": [1787000000.0, "0"]},
+    ],
+    "xid_leeftijd": [
+        {
+            "metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "forgejo"},
+            "value": [1787000000.0, "71449"],
+        },
+        {
+            "metric": {"namespace": "rig-system", "pod": "rig-db-1", "datname": "keycloak"},
+            "value": [1787000000.0, "71449"],
+        },
+    ],
+    "wachtend": [
+        {"metric": {"namespace": "rig-system", "pod": "rig-db-1"}, "value": [1787000000.0, "0"]},
+    ],
+    # Het Keycloak-blok. Dit blok praat met opzet RECHTSTREEKS met PrometheusConnector
+    # (de metrieken zitten niet in Mimir), dus het komt niet langs de metriekconnector
+    # hierboven en heeft een eigen stand-in nodig - zie _fake_prometheus_connector.
+    "realms": [
+        {"metric": {}, "value": [1787000000.0, "7"]},
+    ],
+    "gebruikers": [
+        {"metric": {"realm": "master"}, "value": [1787000000.0, "3"]},
+        {"metric": {"realm": "algor-odc-odcn-production"}, "value": [1787000000.0, "12"]},
+    ],
+    "gebruikers_per_idp": [
+        {"metric": {"realm": "algor-odc-odcn-production", "idp_type": "rijksportaal"}, "value": [1787000000.0, "9"]},
+        {"metric": {"realm": "algor-odc-odcn-production", "idp_type": "lokaal"}, "value": [1787000000.0, "3"]},
+    ],
+    "logins": [
+        {"metric": {"realm": "algor-odc-odcn-production"}, "value": [1787000000.0, "24"]},
+    ],
+    "mislukte_logins": [
+        {"metric": {"realm": "algor-odc-odcn-production"}, "value": [1787000000.0, "1"]},
+    ],
+}
+
+
+def _fake_metrics_connector():
+    """Een metriekconnector met vaste antwoorden, voor /admin/diensten.
+
+    Zonder deze zou elke browsertest van die pagina alleen "kon niet meten" te zien
+    krijgen - waar en heel, maar dan zie je de tabellen nooit. De opzoeking gaat via de
+    QUERYTEKST: verandert een query zonder dat hier een antwoord bij komt, dan valt dat
+    blok leeg en zegt de test dat.
+    """
+    from unittest.mock import AsyncMock
+
+    from opi.services.gedeelde_diensten import _DATABASE_QUERIES, _KEYCLOAK_QUERIES, _OPSLAG_QUERIES
+
+    op_query = {query: naam for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES, **_KEYCLOAK_QUERIES}.items()}
+
+    async def custom_query(query: str) -> list[dict]:
+        return _DIENSTEN_METRIEKEN.get(op_query.get(query, ""), [])
+
+    connector = MagicMock()
+    connector.custom_query = AsyncMock(side_effect=custom_query)
+    return connector
+
+
+def _fake_prometheus_connector():
+    """Een stand-in voor PrometheusConnector zelf, voor het Keycloak-blok.
+
+    Het Keycloak-blok van /admin/diensten gaat met opzet NIET langs
+    ``get_metrics_connector()`` -- die metrieken staan alleen in onze eigen Prometheus -
+    en bouwt zijn eigen ``PrometheusConnector()``. Dat is een echte HTTP-client, dus in
+    deze harnas ging het blok het netwerk op en wachtte het de volledige DNS- en
+    retryketen af op een naam die hier niet bestaat.
+
+    Dat kostte niet alleen dat blok. Zolang die keten liep bleven ook de twee andere,
+    wel gestubde blokken op "wordt opgehaald..." staan; zeven browsertests stonden
+    daarop rood. De blokkade zelf is in de connector gerepareerd (asyncio.to_thread), en
+    hier wordt de netwerkaanroep vervangen - een standalone suite hoort geen naam op te
+    zoeken.
+    """
+    return _fake_metrics_connector()
+
+
 async def _fake_store_save(
     self,
     name: str,
@@ -290,6 +458,18 @@ def create_test_app():
                 return_value="0" * 40,
             ),
             patch("opi.web.router_user_admin._get_service", _mock_get_service),
+            # /admin/diensten leest via de metriekconnector; hier is geen Prometheus.
+            patch(
+                "opi.services.gedeelde_diensten.get_metrics_connector",
+                new_callable=AsyncMock,
+                return_value=_fake_metrics_connector(),
+            ),
+            # ... behalve het Keycloak-blok, dat rechtstreeks een PrometheusConnector
+            # bouwt. Zie _fake_prometheus_connector.
+            patch(
+                "opi.connectors.prometheus.PrometheusConnector",
+                return_value=_fake_prometheus_connector(),
+            ),
             patch(
                 "opi.manager.backup.BackupManager",
                 return_value=MagicMock(

@@ -28,15 +28,13 @@ class AuthorizationWallService(Service):
     service_type = ServiceType.AUTHORIZATION_WALL
     definition = ServiceDefinition(
         name="Authorization Wall",
-        # De 403 staat er met zoveel woorden bij. Een component achter de muur antwoordt een
-        # niet-ingelogde bezoeker met 403 en een inlogpagina, niet met een 302 naar Keycloak.
-        # Wie met curl of een healthcheck op 200 controleert of zijn deployment leeft,
-        # concludeert daardoor dat hij stuk is (zad-cli, punt 10).
-        description=(
-            "OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties. "
-            "Een verzoek zonder geldige sessie krijgt HTTP 403 met een inlogpagina, geen redirect: "
-            "een healthcheck die op 200 controleert, ziet dit component daardoor als kapot."
-        ),
+        # De uitleg over de 403 (een verzoek zonder sessie krijgt 403 met een inlogpagina en
+        # geen redirect, dus een healthcheck die op 200 controleert ziet het component als
+        # kapot) stond HIER, in de omschrijving die op elke dienstkaart staat. Dat is de
+        # verkeerde plek: het is een detail voor wie de dienst al gebruikt, en op de
+        # keuzekaart drukte het de omschrijving van een regel naar vier. Het staat in
+        # authorization_wall/help.md, achter het vraagteken op de kaart.
+        description="OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties.",
         icon="schild-met-vinkje-erop",
         color="groen",
         binding=ServiceBinding.COMPONENT,
