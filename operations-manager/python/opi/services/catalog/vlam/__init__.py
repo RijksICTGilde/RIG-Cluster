@@ -60,9 +60,8 @@ class VlamService(Service):
     definition = ServiceDefinition(
         name="VLAM-API",
         description=(
-            "Bereik de VLAM-API van SSC-ICT vanuit je pods, zonder VPN en zonder zelf een "
-            "certificaat te vertrouwen. Je componenten krijgen VLAM_API_URL en mogen naar "
-            "de interne VLAM-proxy verbinden; het VLAM-team laat je er vervolgens in."
+            "Geeft de optie te verbinden met de VLAM-API van SSC-ICT. Je hebt zelf"
+            " keys nodig om de service te mogen gebruiken, dat kan niet via ZAD."
         ),
         help_template="vlam/help.md",
         icon="wolk",
@@ -110,7 +109,14 @@ class VlamService(Service):
                 ctx.cluster,
             )
             return ManifestContribution()
-        return ManifestContribution(env_vars={VlamVariables.API_URL.value.name: endpoint.api_url})
+        api_var = VlamVariables.API_URL.value
+        return ManifestContribution(
+            # De kanonieke naam EN de gedeclareerde aliassen: de declaratie in
+            # variables.py is wat de dienstenpagina en de e2e-probe-spec beloven, dus
+            # wat daar staat moet ook echt in de container staan. De coverage-check
+            # van de e2e-testpod meet dat letterlijk.
+            env_vars=dict.fromkeys((api_var.name, *api_var.aliases), endpoint.api_url)
+        )
 
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
         """One egress NetworkPolicy per deployment, towards the VLAM proxy pod.
