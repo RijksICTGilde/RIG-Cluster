@@ -65,11 +65,12 @@ spec:
         #
         # MAIL_RELAY_API_URL is de SCHAKELAAR: leeg betekent "geen relay op dit cluster" en
         # de dienst weigert dan een account aan te maken in plaats van onbruikbare
-        # inloggegevens uit te delen. Aan sinds 21 augustus 2026, samen met de
-        # ron-infrastructure Application in de bootstrap-overlay (de relay draait via een
-        # eigen Application in rig-prd-ron, niet via clusters/odcn).
-        - name: MAIL_RELAY_API_URL
-          value: "http://rig-mail-relay.rig-prd-ron.svc.cluster.local:8080"
+        # inloggegevens uit te delen. UIT sinds de avond van 21 augustus 2026, met de
+        # ron-infrastructure Application mee (zie de bootstrap-kustomization): zolang de
+        # relay in zijn crashlus-RCA zit, hoort OPI "geen relay" te melden in plaats van
+        # elke projectverwerking op een dode poort te laten falen.
+        # - name: MAIL_RELAY_API_URL
+        #   value: "http://rig-mail-relay.rig-prd-ron.svc.cluster.local:8080"
         - name: MAIL_RELAY_ADMIN_USERNAME
           valueFrom:
             secretKeyRef:
