@@ -50,6 +50,8 @@ _GEEN_TIJDSTEMPEL = {
     ("bg/_argocd-deployment-card.html.j2", "{{ reden[:120] }}"),
     # een lange ArgoCD-melding, met "..." erachter
     ("bg/_argocd-deployment-card.html.j2", "{{ status.operation_message[:100] }}"),
+    # de eerste vijf afwijkende resources, met een telling erboven
+    ("bg/_argocd-deployment-card.html.j2", "{% for deviation in deviations[:5] %}"),
 }
 
 

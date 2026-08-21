@@ -523,9 +523,14 @@ class TestTheAddresses:
         stiller: ``include :optional`` slaat een script dat niet bestaat woordeloos over, dus
         bij drift verstuurt elk project gewoon zonder weergavenaam en meldt niets dat.
         """
+        # config.toml en niet configmap.yaml: de relayconfiguratie is een
+        # configMapGenerator geworden ("een configwijziging van de relay is vanzelf een
+        # rollout"), en de inhoud staat sindsdien als los bestand naast de kustomization.
+        # Deze toets las nog het verdwenen bestand en viel om op een FileNotFoundError -
+        # rood, maar niet om de reden die hij bewaakt.
         configmap = (
             Path(__file__).resolve().parents[3]
-            / "infrastructure/bootstrap/infrastructure/mail/controller/base/configmap.yaml"
+            / "infrastructure/bootstrap/infrastructure/mail/controller/base/config.toml"
         ).read_text()
         assert f"strip_prefix(authenticated_as, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in configmap
         assert f"strip_prefix(account, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in configmap
