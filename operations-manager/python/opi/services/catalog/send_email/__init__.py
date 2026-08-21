@@ -46,6 +46,7 @@ from opi.core.cluster_config import (
     get_mail_relay_host,
     get_mail_relay_namespace,
     get_mail_relay_port,
+    has_mail_relay,
 )
 from opi.services.catalog.approval import service_use_approval
 from opi.services.catalog.base import (
@@ -144,6 +145,20 @@ class SendEmailService(Service):
 
     config_section_id: ClassVar[str] = "send-email-config"
     modal_flow_id = "modal-edit-send-email-config"
+
+    def available_on_cluster(self, cluster: str) -> bool:
+        """Only where the cluster configuration knows a mail relay.
+
+        Everything this service hands out points at that relay: the host and port in
+        SMTP_HOST/SMTP_PORT, the sender address the relay pins, and the namespace the
+        egress NetworkPolicy opens. A cluster without one has none of those to give, so
+        offering the service there would produce a project with SMTP credentials that
+        authenticate nowhere -- exactly the half state the approval gate rules out.
+
+        Read from the configuration and not from a cluster name, like vlam: deploying the
+        relay on another cluster is then a configuration change, not a code change.
+        """
+        return has_mail_relay(cluster)
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
         if layer is ConfigLayer.PROJECT:
