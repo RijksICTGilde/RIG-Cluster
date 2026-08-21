@@ -155,15 +155,14 @@ func TestVlamNoAnswerNamesTheNetworkHops(t *testing.T) {
 	}
 }
 
-func TestVlamUsesTheAppAliasAndTrimsTheTrailingSlash(t *testing.T) {
+func TestVlamTrimsTheTrailingSlash(t *testing.T) {
 	seen := new(string)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*seen = r.URL.Path
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
 	t.Cleanup(server.Close)
-	t.Setenv("VLAM_API_URL", "")
-	t.Setenv("APP_VLAM_API_URL", server.URL+"/")
+	t.Setenv("VLAM_API_URL", server.URL+"/")
 
 	result := checkVlam(context.Background())
 
@@ -177,7 +176,6 @@ func TestVlamUsesTheAppAliasAndTrimsTheTrailingSlash(t *testing.T) {
 
 func TestVlamWithoutAnAddressFails(t *testing.T) {
 	t.Setenv("VLAM_API_URL", "")
-	t.Setenv("APP_VLAM_API_URL", "")
 
 	result := checkVlam(context.Background())
 
