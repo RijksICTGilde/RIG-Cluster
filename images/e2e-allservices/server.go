@@ -187,7 +187,15 @@ func renderHTML(cache *resultCache, query url.Values, chat *chatOutcome) string 
 	if mailBound() {
 		outcome := ""
 		if s := query.Get("testmail"); s != "" {
-			outcome = fmt.Sprintf(`<p style="color:#137333">Verstuurd: <code>%s</code> &mdash; zoek dit onderwerp bij de ontvanger (sandbox: Mailpit).</p>`, html.EscapeString(s))
+			// "Aangenomen" en niet "verstuurd", want dat is het enige dat hier bekend is:
+			// de relay heeft het bericht in zijn wachtrij gezet. De bezorging gebeurt
+			// daarna en kan alsnog stranden. GEMETEN op productie 21 augustus 2026: een
+			// bericht naar een extern adres werd hier als succes gemeld en 131 seconden
+			// later door de upstream geweigerd met "550 #5.1.0 Address rejected", zonder
+			// dat iemand dat te zien kreeg (zie plans/mail-vervolgpunten.md, punt 8 en 10).
+			// De sink werd hier onvoorwaardelijk genoemd terwijl die alleen op local en
+			// sandboxed-local bestaat; op productie gaat post naar de echte upstream.
+			outcome = fmt.Sprintf(`<p style="color:#137333">Aangenomen door de relay: <code>%s</code> &mdash; een ontvangstbevestiging, geen bezorgbewijs. Zoek het onderwerp bij de ontvanger.</p>`, html.EscapeString(s))
 		} else if e := query.Get("testmailerr"); e != "" {
 			outcome = fmt.Sprintf(`<p style="color:#c5221f">Mislukt: %s</p>`, html.EscapeString(e))
 		}
