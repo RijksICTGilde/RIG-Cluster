@@ -1,31 +1,40 @@
 #!/usr/bin/env python3
-"""RC-114: toetst de identiteitsregels van de mailrelay tegen een draaiende sandbox.
+"""RC-114/RC-145: toetst de identiteitsregels van de mailrelay tegen een draaiende sandbox.
 
 Waarom dit bestaat: de regels waarop het hele send-email-ontwerp rust zijn regels in een
 sieve-script, en een sieve-script dat stilletjes niets doet ziet er precies zo uit als een
 sieve-script dat werkt. De rest van de relayconfiguratie is destijds met de hand nagespeeld
-tegen een draaiende Stalwart; het OVERSCHRIJVEN van de From: (identiteitsregel 2 in zijn
-huidige vorm) niet. Dit script maakt daar een assertie van.
+tegen een draaiende Stalwart; het OVERSCHRIJVEN van de From: niet. Dit script maakt daar
+een assertie van.
 
-Het toetst vier dingen, en alle vier zijn ze eerder een keer stuk geweest of ongemeten:
+Sinds RC-145 is de From: HELEMAAL van het platform - adres en weergavenaam allebei. Het
+toetst dus vijf dingen, en alle vijf zijn ze eerder stuk geweest of ongemeten:
 
-1. De From: wordt overschreven met het vaste adres, MET behoud van de weergavenaam.
-2. Ook zonder weergavenaam, en ook bij een kaal adres zonder punthaken.
-3. De envelope draagt het account in het plusdeel en blijft in hetzelfde domein. Dit is de
-   belangrijkste: `rijksoverheid.nl` publiceert p=reject en wij ondertekenen niet met DKIM,
-   dus SPF-uitlijning tussen envelope en From: is het ENIGE dat een bericht door DMARC
-   krijgt. Breekt deze regel, dan weigert elke ontvanger buiten de Rijksoverheid alles.
-4. De Received-keten en de verklikkerheaders zijn eraf.
+1. Het afzenderADRES is dat van dit account, wat de applicatie ook aanbiedt.
+2. De weergavenaam is die uit de projectconfiguratie, ook wanneer de applicatie zelf een
+   naam meestuurt. Dat laatste is het geval dat tot RC-145 juist ANDERS liep: de naam van
+   de applicatie bleef staan, dus `e2e-allservices` stond boven de post van elk project.
+3. De envelope is HETZELFDE adres als de From:. Dit is de belangrijkste:
+   `rijksoverheid.nl` publiceert p=reject en wij ondertekenen niet met DKIM, dus
+   SPF-uitlijning tussen envelope en From: is het ENIGE dat een bericht door DMARC krijgt.
+4. De Reply-To: van de applicatie komt ONGEWIJZIGD aan. Dat is de scheiding waar het
+   ontwerp op staat: de From: is identiteit en ligt vast, de Reply-To: zegt alleen waar
+   een antwoord heen moet en is dus wel van de applicatie.
+5. De Received-keten en de verklikkerheaders zijn eraf.
 
 Draaien tegen de sandbox, met twee port-forwards open:
 
     kubectl -n rig-ron port-forward svc/rig-mail-relay 1587:587 &
     kubectl -n rig-ron port-forward svc/rig-mail-sink 8025:8025 &
     cd operations-manager/python
-    uv run python scripts/mail_identity_check.py --user <account> --password <geheim>
+    uv run python scripts/mail_identity_check.py --user project-ai1-uit --password <geheim> \\
+        --verwacht-adres noreply-rijksapp+ai1-uit@rijksoverheid.nl \\
+        --verwacht-naam "Robbert Uittenbroek"
 
 De inloggegevens zijn die van een send-email-account; die van ZAD zelf staan in de Secret
-uit MAIL_PLATFORM_SECRET_NAME in de namespace van OPI.
+uit MAIL_PLATFORM_SECRET_NAME in de namespace van OPI. Zonder --verwacht-adres toetst het
+script de TERUGVAL: een account waarvoor de relay geen afzender houdt, hoort onder het kale
+platformadres en zonder naam te vertrekken.
 """
 
 from __future__ import annotations
@@ -38,7 +47,13 @@ from email.message import EmailMessage
 
 import requests
 
-VAST_ADRES = "noreply-rijksapp@rijksoverheid.nl"
+#: Het kale afzenderadres van het platform. Sinds RC-145 is dit niet meer het adres dat een
+#: project gebruikt (dat draagt de projectnaam in het plusdeel) maar de TERUGVAL: hier komt
+#: post terecht van een account waarvoor de relay geen afzender houdt.
+KAAL_ADRES = "noreply-rijksapp@rijksoverheid.nl"
+
+#: Het antwoordadres dat de proefberichten meesturen. Het hoort ongewijzigd aan te komen.
+ANTWOORDADRES = "antwoord@applicatie.example"
 
 #: Waaraan de Received-regel van de ONTVANGER te herkennen is: elke MTA noemt zichzelf
 #: achter "by", en de ontvanger is hier de sink. Zonder deze eis zou een keten van precies
@@ -82,13 +97,20 @@ def received_fouten(ontvangen: list[str]) -> list[str]:
     return []
 
 
-def _stuur(host: str, poort: int, user: str, password: str, from_header: str, onderwerp: str) -> None:
+def _stuur(host: str, poort: int, user: str, password: str, from_header: str, onderwerp: str, ontvanger: str) -> None:
     """Biedt een bericht aan met een expres afwijkende From:."""
     bericht = EmailMessage()
     bericht["Subject"] = onderwerp
-    bericht["To"] = "ontvanger@example.org"
-    # Precies het punt van de toets: dit adres MOET verdwijnen.
+    # Een EIGEN ontvanger per bericht, want Stalwart telt standaard 25 berichten per uur per
+    # (afzenderdomein, ontvanger) - `queue.limiter.inbound.sender`. Met een vaste ontvanger
+    # loopt deze toets bij de derde keer draaien vast op "452 4.4.5 Rate limit exceeded", en
+    # dat leest als een storing terwijl het de teller van de toets zelf is.
+    bericht["To"] = ontvanger
+    # Precies het punt van de toets: dit adres MOET verdwijnen, en sinds RC-145 ook de
+    # weergavenaam die eraan vastzit.
     bericht["From"] = from_header
+    # En dit MOET juist blijven staan.
+    bericht["Reply-To"] = ANTWOORDADRES
     bericht["X-Mailer"] = "identiteitstoets"
     bericht["X-Originating-IP"] = "10.42.0.99"
     bericht.set_content("Toets van de identiteitsregels.")
@@ -124,40 +146,59 @@ def main() -> int:
     parser.add_argument("--api", default="http://127.0.0.1:8025", help="Mailpit-API van de sink")
     parser.add_argument("--user", required=True, help="SMTP-account op de relay")
     parser.add_argument("--password", required=True)
+    parser.add_argument(
+        "--verwacht-adres",
+        default=KAAL_ADRES,
+        help="Het adres dat in From: en Return-Path hoort te staan. Standaard het kale "
+        "platformadres, wat de terugval toetst voor een account zonder afzender.",
+    )
+    parser.add_argument(
+        "--verwacht-naam",
+        default="",
+        help="De weergavenaam die de relay ernaast hoort te zetten. Leeg is een geldige "
+        "uitkomst: dan verstuurt het project met een kaal adres en zonder naam.",
+    )
     args = parser.parse_args()
 
     stempel = str(int(time.time()))
+    # Alle drie de gevallen bieden een andere From: aan, en alle drie horen ze dezelfde
+    # afzender op te leveren. Het eerste geval is het geval dat tot RC-145 anders liep.
     gevallen = [
-        ("met weergavenaam", "Iemand Anders <spoof@evil.example>", "Iemand Anders"),
-        ("zonder weergavenaam", "<spoof@evil.example>", None),
-        ("kaal adres", "spoof@evil.example", None),
+        ("applicatie zet een eigen naam", "Applicatienaam <spoof@evil.example>"),
+        ("zonder weergavenaam", "<spoof@evil.example>"),
+        ("kaal adres", "spoof@evil.example"),
     ]
 
     fouten: list[str] = []
-    for naam, from_header, verwachte_naam in gevallen:
+    for volgnummer, (naam, from_header) in enumerate(gevallen):
         onderwerp = f"identiteitstoets {naam} {stempel}"
-        _stuur(args.relay_host, args.relay_port, args.user, args.password, from_header, onderwerp)
+        ontvanger = f"ontvanger-{stempel}-{volgnummer}@example.org"
+        _stuur(args.relay_host, args.relay_port, args.user, args.password, from_header, onderwerp, ontvanger)
         bericht = _haal_bericht(args.api, onderwerp)
 
-        # 1 en 2: het adres is vervangen, de weergavenaam is behouden waar hij er was.
+        # 1 en 2: adres en weergavenaam komen allebei van het platform. Wat de applicatie
+        # aanbood is weg, ook de naam.
         afzender = (bericht.get("From") or {}).get("Address", "")
-        if afzender != VAST_ADRES:
-            fouten.append(f"[{naam}] From-adres is {afzender!r}, verwacht {VAST_ADRES!r}")
-        getoonde_naam = (bericht.get("From") or {}).get("Name") or None
-        if verwachte_naam is not None and getoonde_naam != verwachte_naam:
-            fouten.append(f"[{naam}] weergavenaam is {getoonde_naam!r}, verwacht {verwachte_naam!r}")
+        if afzender != args.verwacht_adres:
+            fouten.append(f"[{naam}] From-adres is {afzender!r}, verwacht {args.verwacht_adres!r}")
+        getoonde_naam = (bericht.get("From") or {}).get("Name") or ""
+        if getoonde_naam != args.verwacht_naam:
+            fouten.append(f"[{naam}] weergavenaam is {getoonde_naam!r}, verwacht {args.verwacht_naam!r}")
 
-        # 3: de envelope draagt het account en blijft in hetzelfde domein.
+        # 3: de envelope is hetzelfde adres als de From:, dus SPF lijnt per definitie uit.
         envelope = (bericht.get("ReturnPath") or "").strip("<>")
-        verwacht = f"noreply-rijksapp+{args.user}@rijksoverheid.nl"
-        if envelope != verwacht:
-            fouten.append(f"[{naam}] envelope is {envelope!r}, verwacht {verwacht!r}")
-        if envelope.rpartition("@")[2] != VAST_ADRES.rpartition("@")[2]:
-            fouten.append(f"[{naam}] envelope-domein wijkt af van het From-domein: SPF lijnt niet uit")
+        if envelope != args.verwacht_adres:
+            fouten.append(f"[{naam}] envelope is {envelope!r}, verwacht {args.verwacht_adres!r}")
 
-        # 4: niets van binnen het cluster gaat mee naar buiten.
         headers = _headers(args.api, bericht["ID"])
         aanwezig = {k.lower(): v for k, v in headers.items()}
+
+        # 4: de Reply-To blijft van de applicatie.
+        antwoord = [waarde.strip("<> ") for waarde in aanwezig.get("reply-to", [])]
+        if antwoord != [ANTWOORDADRES]:
+            fouten.append(f"[{naam}] Reply-To is {antwoord!r}, verwacht [{ANTWOORDADRES!r}] ongewijzigd")
+
+        # 5: niets van binnen het cluster gaat mee naar buiten.
         fouten.extend(
             f"[{naam}] header {verboden} staat er nog in"
             for verboden in VERBODEN_HEADERS
@@ -165,7 +206,7 @@ def main() -> int:
         )
         fouten.extend(f"[{naam}] {fout}" for fout in received_fouten(aanwezig.get("received", [])))
 
-        print(f"  {naam}: From={afzender!r} naam={getoonde_naam!r} envelope={envelope!r}")
+        print(f"  {naam}: From={afzender!r} naam={getoonde_naam!r} envelope={envelope!r} reply-to={antwoord!r}")
 
     if fouten:
         print("\nNIET GOED:")

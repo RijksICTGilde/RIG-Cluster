@@ -36,7 +36,11 @@ from opi.utils.age import (
     get_decoded_project_private_key,
     get_project_public_key,
 )
-from opi.utils.naming import MAIL_PROJECT_ACCOUNT_PREFIX, generate_mail_account_name
+from opi.utils.naming import (
+    MAIL_PROJECT_ACCOUNT_PREFIX,
+    generate_mail_account_name,
+    generate_mail_sender_address,
+)
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import SendEmailSecret
 
@@ -98,6 +102,7 @@ class MailManager:
         password: str,
         from_address: str,
         bounce_address: str,
+        from_name: str,
         messages_per_day: int,
         is_platform_account: bool = False,
     ) -> MailAccount:
@@ -117,7 +122,10 @@ class MailManager:
             username: SASL username the application authenticates with.
             password: Plaintext password to set on the account.
             from_address: Address the relay pins the sender to.
-            bounce_address: Address bounces come back to.
+            bounce_address: Address bounces come back to. The same address today: envelope
+                and ``From:`` were split by a plus part that bought nothing.
+            from_name: Display name the recipient sees, or empty for none. Empty is a
+                valid outcome and not a fallback -- a project simply did not choose one.
             messages_per_day: Daily budget recorded for this account. Not handed to the
                 relay: Stalwart v0.11 has no per-account limit, so the relay enforces one
                 ceiling for every account from its own configuration.
@@ -138,6 +146,18 @@ class MailManager:
             await connector.create_principal(name=username, password=password)
         else:
             await connector.update_principal(name=username, password=password)
+
+        # The display NAME is a second thing the relay has to be told; the address it works
+        # out itself from this very account name (see ``_sender_address``). Written only on
+        # a difference, so processing a project twice makes no settings write and no
+        # reload -- and a changed ``from-name`` takes effect on the very next run, because
+        # that IS a difference.
+        #
+        # Nothing to warn about when it is absent: no display name is a legal outcome, and a
+        # project whose name has not been written yet sends from the right ADDRESS with no
+        # name next to it. That is the whole failure mode.
+        await connector.set_sender_name(username, from_name)
+
         return MailAccount(
             username=username,
             from_address=from_address,
@@ -177,7 +197,13 @@ class MailManager:
         view = Project(project_data)
         config = view.get(_CONFIG_BASE) or {}
 
-        from_address, bounce_address = self._addresses(cluster, username)
+        # De afzender van dit project: het adres draagt de PROJECTnaam (niet de accountnaam,
+        # die het voorvoegsel project- draagt en op een andere lengte wordt afgekapt), en de
+        # weergavenaam komt uit de projectconfiguratie. Leeg is een geldige uitkomst: dan
+        # vertrekt de post met een kaal projectadres en zonder naam.
+        from_address = self._sender_address(cluster, project_name)
+        bounce_address = from_address
+        from_name = str(config.get("from-name") or "").strip()
         messages_per_day = config.get("messages-per-day") or settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
 
         entry, password = await self._existing_account_entry(view, project_data, cluster)
@@ -192,6 +218,7 @@ class MailManager:
             password=password,
             from_address=from_address,
             bounce_address=bounce_address,
+            from_name=from_name,
             messages_per_day=messages_per_day,
         )
 
@@ -245,10 +272,13 @@ class MailManager:
 
         cluster = settings.CLUSTER_MANAGER
         username = settings.MAIL_PLATFORM_ACCOUNT
-        # ZAD sends from the same fixed address as every project -- there is one sender
-        # address on the whole relay. Only the envelope differs, so a bounce still says
-        # which account produced it. See ``_addresses``.
-        from_address, bounce_address = MailManager._addresses(cluster, username)
+        # ZAD is not a project, so there is no project name to put in the plus part and no
+        # project configuration to take a display name from. It sends from the BARE
+        # address, without a name -- which is also what the relay falls back to when it
+        # holds no sender for an account, so the platform account needs no exception
+        # anywhere. See ``_sender_address``.
+        from_address = MailManager._sender_address(cluster, None)
+        bounce_address = from_address
 
         stored = await MailManager._read_platform_secret()
         password = (stored or {}).get("password") or ""
@@ -274,6 +304,7 @@ class MailManager:
             password=password,
             from_address=from_address,
             bounce_address=bounce_address,
+            from_name="",
             messages_per_day=settings.MAIL_PLATFORM_MESSAGES_PER_DAY,
             is_platform_account=True,
         )
@@ -413,6 +444,10 @@ class MailManager:
             connector = await create_mail_connector()
         except MailRelayNotConfiguredError:
             return None
+        # The display name goes with the account. Leaving it would keep a project's name in
+        # the relay's configuration after the project is gone, and hand it to whoever next
+        # gets an account by that name.
+        await connector.delete_sender_name(username)
         return await connector.delete_principal(username)
 
     async def _revoke(self, project_data: dict[str, Any], cluster: str) -> None:
@@ -445,24 +480,40 @@ class MailManager:
     # --- internals --------------------------------------------------------------
 
     @staticmethod
-    def _addresses(cluster: str, username: str) -> tuple[str, str]:
-        """The sender and bounce address for this account.
+    def _sender_address(cluster: str, project_name: str | None) -> str:
+        """The one address this account sends from: the ``From:`` header AND the envelope.
 
-        The sender address is the SAME for every project and cannot be configured. The
-        relay overwrites the ``From:`` header with it unconditionally (identity rule 2 in
-        the sieve script), so what is returned here is a report of what will happen, not a
-        request. It is handed to the application as ``SMTP_FROM`` purely so a developer can
-        see what recipients will see.
+        One address for both, where those two used to differ by a plus part. The
+        difference bought nothing -- SPF alignment looks at the DOMAIN, and that is the
+        same either way -- while it cost the recipient the ability to see which project
+        wrote to them.
 
-        The bounce address carries the project in the plus part and stays in the same
-        domain, and that is load-bearing: ``rijksoverheid.nl`` publishes ``p=reject`` and
-        we sign nothing with DKIM, so SPF alignment between envelope and ``From:`` is the
-        only thing that gets a message through DMARC. Leaving the domain to make bounces
-        land somewhere of ours would fail every message at every external recipient.
+        The project goes in the plus part, which is what makes a bounce traceable without
+        leaving the domain. Staying in ``rijksoverheid.nl`` is load-bearing: it publishes
+        ``p=reject`` and we sign nothing with DKIM, so alignment between envelope and
+        ``From:`` is the only thing that gets a message through DMARC.
+
+        ``project_name`` is ``None`` for the platform account of ZAD itself, which is not a
+        project and has none to point at. It gets the bare address -- the same one the
+        relay falls back to when it holds no sender for an account, so the two coincide by
+        construction instead of by coincidence.
+
+        What is returned is not a request but a REPORT of what the relay will do. The relay
+        composes this address ITSELF, by cutting the ``project-`` prefix off the
+        authenticated account name, because Stalwart v0.11.8 turned out to have no way at
+        all to look a value up per account while a message is being accepted (measured; see
+        the identity rules in the relay's configmap). The two cannot disagree: both are
+        built from ``mail_project_label``, so the account name always carries exactly the
+        label the address puts after the ``+``.
+
+        It is handed to the application as ``SMTP_FROM`` so a developer can see what the
+        recipient gets, and written into the project file so the file answers "who does this
+        project send as".
         """
-        from_address = get_mail_from_address(cluster)
-        local_part, _, domain = from_address.partition("@")
-        return from_address, f"{local_part}+{username}@{domain}"
+        base_address = get_mail_from_address(cluster)
+        if project_name is None:
+            return base_address
+        return generate_mail_sender_address(base_address, project_name)
 
     async def _existing_account_entry(
         self, view: Project, project_data: dict[str, Any], cluster: str
