@@ -47,6 +47,14 @@ the same image works for a project that binds only some services.
   round never spends budget. The page shows a "Stuur testmail" form when the
   send-email service is bound; the redirect carries the subject line so you can
   find the message at the receiving end (sandbox: Mailpit on the sink, port 8025).
+- `POST /vlam-chat` — does one real chat completion against
+  `{VLAM_API_URL}/v1/chat/completions` with a token you type into the form, and
+  puts the answer on the page. Manual for the same reason the testmail button is:
+  the periodic `vlam` probe carries no credential, so it proves the chain but says
+  nothing about whether a project's token opens the door and a model answers. The
+  form appears only when the vlam service is bound; without it the path is a 404.
+  There is no streaming and no conversation history — this is a proof, not a chat
+  client.
 - `GET /healthz` — `200 OK` once the process is listening (liveness only).
 - `GET /status` — JSON, the payload the E2E suite asserts on: per-service
   `bound` / `ok` / `latency_ms` / details, plus an overall `all_ok`. Add
@@ -54,6 +62,26 @@ the same image works for a project that binds only some services.
 
 The server binds `:8080` immediately (before the first check round) so the
 platform's `tcpSocket:8080` probe passes at once.
+
+## The two buttons are on a public page
+
+With `publish-on-web` bound, this status page is reachable by anyone, and both
+buttons act for real. That is a deliberate, bounded trade-off, and it is the same
+one for both. Neither button hands a visitor anything they could not already do
+without it: the mail button sends as an account whose credentials the platform
+injected here anyway, and the chat button needs a VLAM token the visitor must
+supply themselves — the pod holds none. Both destinations are fixed to the
+injected address and one path each, so neither is a proxy that can be pointed
+somewhere else. What a visitor can do is spend: a message off the project's daily
+relay budget, or a chat completion off whatever the supplied token pays for.
+
+The token gets the stricter treatment, because it is the only secret that arrives
+from outside: it is used for one outgoing request and then dropped. It is never
+stored, never written to the log, and never rendered back into the page — not
+even as the value of the form field it came from. The question and the answer
+stay off the log too, which is why the chat button answers the POST in place
+instead of redirecting: a redirect would carry the answer through a query string
+and into every access log between here and the browser.
 
 ## Platform constraints it satisfies
 
