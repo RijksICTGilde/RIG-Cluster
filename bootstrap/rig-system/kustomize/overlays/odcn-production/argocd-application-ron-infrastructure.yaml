@@ -1,0 +1,53 @@
+# ArgoCD Application voor de RON-namespace op ODCN: de mailrelay (RC-114).
+#
+# Waarom een EIGEN Application en niet de regel in
+# infrastructure/bootstrap/clusters/odcn/kustomization.yaml: de CMP-plugin injecteert
+# `namespace: <destination>` op de rootkustomization die hij bouwt (regel ~272 van het
+# pluginscript). Via production-infrastructure is dat rig-prd-operations, en die
+# transformatie zou de rig-prd-ron-resources van de mail-overlay platslaan naar
+# rig-prd-operations - het ID-conflict dat de sandbox op 19 augustus 2026 al gemeten
+# heeft. Een eigen namespace vergt dus een eigen Application, met destination
+# rig-prd-ron: de namespace die de CMP dan injecteert is gelijk aan de namespace die de
+# overlay zelf al zet.
+#
+# VOORDAT deze app kan renderen (de CMP stopt er anders hard mee, en de namespaced
+# ArgoCD kan het geen van beide zelf):
+#   1. de namespace rig-prd-ron bestaat, met de RON-annotatie
+#      egress.projectcalico.org/egressGatewayPolicy: rig-ron en het label
+#      argocd.argoproj.io/managed-by: rig-prd-operations;
+#   2. het secret sops-age-key staat in rig-prd-ron (de CMP leest de AGE-sleutel in de
+#      namespace van de app).
+# De exacte manifesten staan in features/send-email.md, "Wat er bij het aanzetten
+# werkelijk moet gebeuren". CreateNamespace staat bewust uit: zie punt 1.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ron-infrastructure
+  namespace: rig-system
+spec:
+  project: default
+  source:
+    repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
+    path: infrastructure/bootstrap/infrastructure/mail/controller/overlays/odcn
+    targetRevision: main
+    plugin:
+      name: kustomize-sops-v1.0
+      env:
+        - name: SOPS_KEY_SECRET
+          value: "sops-age-key"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rig-prd-ron
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - SyncTimeout=60s
+    retry:
+      limit: 2
+      backoff:
+        duration: "30s"
+        factor: 1
+        maxDuration: "30s"
