@@ -1,5 +1,40 @@
 /* Wizard CSS - extracted from wizard_page.html.j2 and roos.py */
 
+/* KLEUREN KOMEN HIER UIT HET THEMA, NIET UIT EEN VASTE WAARDE (RC-134).
+ *
+ * De opdrachtgever meldde dat vooral de FORMULIEREN in de donkere weergave niet klopten.
+ * Gemeten in Chromium met data-scheme="dark":
+ *
+ *   samenvattingstap    #333333 op #20252B  1,22   39 stukken tekst, waaronder elke
+ *                       #555555 op #20252B  2,07   labelnaam en elke waarde
+ *   dienstenstap        14 witte .service-card-vlakken (400x115) in een donkere pagina
+ *
+ * Beide vormen komen uit hetzelfde: een vaste kleur die de licht/donker-stand niet volgt,
+ * terwijl de kleur ernaast (de thema-tekstkleur, het thema-vlak van de kaart) dat wel doet.
+ * Elke kleur hieronder wijst daarom naar het themotoken met dezelfde BEDOELING, met de
+ * oude waarde als vangnet erachter voor het geval de themastylesheet niet geladen is:
+ *
+ *   vlak van een kaart of dialoog  --semantics-surfaces-base-background-color
+ *   gedempt vlak (#FAFAFA/#f5f5f5) --semantics-surfaces-tinted-background-color
+ *   gekozen optie (#E5F0F9)        --semantics-categories-accent-tinted-background-color
+ *   lijn of rand (#E0E0E0/#ccc)    --semantics-dividers-color
+ *   gewone tekst (#333)            --semantics-content-color
+ *   gedempte tekst (#666/#555)     --semantics-content-secondary-color
+ *   goed / fout                    --semantics-content-success-color / -critical-color
+ *   accentknop (#007BC7 + wit)     --semantics-buttons-accent-filled-background-color
+ *
+ * Er komt geen kleurwaarde bij, en de lichte weergave verandert niet: de tokens hebben daar
+ * dezelfde (of vrijwel dezelfde) waarde als de vaste kleuren die er stonden. Bewaakt door
+ * tests/e2e/test_donkere_weergave_contrast.py en tests/test_donkere_weergave_vaste_kleuren.py.
+ *
+ * DE CODEMIRROR-EDITOR HOORT HIER NU OOK BIJ. Hij tekende zijn kantlijn (#f5f5f5) en zijn
+ * sleutelnamen (#219, donkerblauw) uit zijn EIGEN basisthema, dus vaste lichte waarden: een
+ * wit vlak in een donkere pagina en donkerblauwe namen op bijna-zwart. Gemeld als onleesbaar.
+ * Dat zit nu in static/js/codemirror-kv.js, dat dezelfde --semantics-tokens gebruikt als de
+ * rest van dit bestand - een editor krijgt zijn opmaak via CodeMirror-uitbreidingen, niet via
+ * CSS, want zijn klassenamen worden bij het laden gegenereerd. Zie features/donkere-weergave-contrast.md.
+ */
+
 /* Helper text spacing - stack description + help_text vertically */
 .lotc-form-field__helper-group {
     display: flex;
@@ -20,7 +55,7 @@
    tussen de balk en de inhoud van het venster, en <c-step-indicator> heeft daar geen stand
    voor. */
 .edit-step-indicator {
-    border-bottom: 1px solid #E0E0E0;
+    border-bottom: 1px solid var(--semantics-dividers-color, #E0E0E0);
     padding-bottom: 0.5rem;
 }
 
@@ -33,7 +68,7 @@
     margin-bottom: 1.5rem;
 }
 .wizard-step__description {
-    color: #666;
+    color: var(--semantics-content-secondary-color, #666);
     margin-top: 0.5rem;
 }
 .wizard-step__fields {
@@ -46,16 +81,16 @@
    is de haak waarmee static/js/edit_modal.js de dialoog weer vrijgeeft. */
 .wizard-step__actions {
     padding-top: 1.5rem;
-    border-top: 1px solid #E0E0E0;
+    border-top: 1px solid var(--semantics-dividers-color, #E0E0E0);
 }
 /* .wizard-step__actions-right is <c-cluster gap="xs"> geworden. */
 
 /* Nested fieldsets (sub-sections) get a card-like border */
 c-fieldset c-fieldset {
-    border: 1px solid #E0E0E0;
+    border: 1px solid var(--semantics-dividers-color, #E0E0E0);
     border-radius: 4px;
     padding: 1.25rem;
-    background: #FAFAFA;
+    background: var(--semantics-surfaces-tinted-background-color, #FAFAFA);
 }
 
 /* Sequence items */
@@ -103,12 +138,16 @@ c-fieldset c-fieldset {
     padding: 0;
     border: 0;
     background: none;
-    color: var(--nldd-color-hemelblauw, #007bc7);
+    /* --nldd-color-hemelblauw bestaat nergens, dus stond hier altijd de vaste #007bc7 -
+       een kleur die niet meebeweegt met de licht/donker-stand (RC-134). Het themotoken
+       voor accenttekst doet dat wel; de vaste waarde blijft als vangnet voor het geval de
+       themastylesheet niet geladen is. */
+    color: var(--semantics-content-accent-color, #007bc7);
     cursor: pointer;
 }
 .kv-toggle {
     display: inline-flex;
-    border: 1px solid #ccc;
+    border: 1px solid var(--semantics-dividers-color, #ccc);
     border-radius: 4px;
     overflow: hidden;
     margin-bottom: 0.5rem;
@@ -116,18 +155,18 @@ c-fieldset c-fieldset {
 .kv-toggle__btn {
     padding: 0.25rem 0.75rem;
     border: none;
-    background: #f5f5f5;
+    background: var(--semantics-surfaces-tinted-background-color, #f5f5f5);
     cursor: pointer;
     font-size: 0.8125rem;
     font-weight: 600;
-    color: #333;
+    color: var(--semantics-content-color, #333);
 }
 .kv-toggle__btn:not(:last-child) {
-    border-right: 1px solid #ccc;
+    border-right: 1px solid var(--semantics-dividers-color, #ccc);
 }
 .kv-toggle__btn--active {
-    background: #007BC7;
-    color: white;
+    background: var(--semantics-buttons-accent-filled-background-color, #007BC7);
+    color: var(--semantics-buttons-accent-filled-content-color, white);
 }
 .kv-editor__status {
     font-size: 0.75rem;
@@ -135,10 +174,10 @@ c-fieldset c-fieldset {
     min-height: 1.25rem;
 }
 .kv-editor__status--ok {
-    color: #39870C;
+    color: var(--semantics-content-success-color, #39870C);
 }
 .kv-editor__status--error {
-    color: #C00;
+    color: var(--semantics-content-critical-color, #C00);
 }
 
 /* Radio option descriptions */
@@ -152,7 +191,7 @@ c-fieldset c-fieldset {
 }
 .wizard-review__section-content {
     font-size: 0.9375rem;
-    color: #333;
+    color: var(--semantics-content-color, #333);
 }
 .wizard-review__section-content dl {
     display: grid;
@@ -162,7 +201,7 @@ c-fieldset c-fieldset {
 }
 .wizard-review__section-content dt {
     font-weight: 600;
-    color: #555;
+    color: var(--semantics-content-secondary-color, #555);
 }
 .wizard-review__section-content dd {
     margin: 0;
@@ -182,77 +221,102 @@ c-fieldset c-fieldset {
    hem de rij vullen. Op de dienstenpagina en in de wizard staan er altijd meer dan genoeg;
    op de detailpagina kan een component een enkele dienst hebben, en die kaart is dan
    breder dan eerst. */
-.service-cards-grid {
-    margin-top: 0.5rem;
+/* DE DIENSTKAARTEN TEKENEN ZICHZELF.
+ *
+ * Hier stond de hele vormgeving van een dienstkaart: de rand, het gekozen vlak, de
+ * hoverkleur, de titel, de omschrijving, en de maat en de accentkleur van het
+ * aanvinkvakje. Dat was onze eigen opmaak naast een componentensysteem, en het bleef er
+ * RVO-achtig uitzien ook nadat de kleuren naar de themategens waren gebracht. Zo ook
+ * gemeld.
+ *
+ * De kaart is nu een <c-card> in een <c-auto-grid> met een <c-checkbox> erin (zie
+ * widgets/service_cards.html.j2), en die tekenen zichzelf. De GEKOZEN STAND is het
+ * background-attribuut van de kaart (base of tinted), een eigenschap van het component;
+ * static/js/wizard.js zet hem om.
+ *
+ * Wat hieronder overblijft is geen opmaak maar GEDRAG: een regel die alleen bij een
+ * gekozen kaart hoort te staan. Daar heeft het thema niets voor, want het gaat over onze
+ * diensten en niet over een kaart. */
+
+/* GELIJKE HOOGTE, EN HET VAKJE ONDERAAN.
+ *
+ * Dit is LAYOUT van onze eigen kaartopbouw en geen opmaak van een component: er wordt hier
+ * niets van het thema overgeschilderd, er wordt alleen gezegd waar het laatste blok in de
+ * kaart terechtkomt. Het componentensysteem heeft daar niets voor - <c-stack> en <c-grid>
+ * nemen alleen een class, geen uitlijning - en zonder deze twee regels staat het
+ * aanvinkvakje bij elke kaart op een andere hoogte, afhankelijk van hoe lang de
+ * omschrijving is. Gevraagd: de vakjes van een rij horen op een lijn te staan.
+ *
+ * height:100% laat de kaart de rastercel vullen (een rasterrij is al even hoog);
+ * margin-top:auto duwt het vakje naar de onderrand van wat er over is. */
+/* HIER STOND CSS OP <nldd-container>, EN DIE IS WEG.
+ *
+ * Het doel was de aanvinkvakjes van een rij op een lijn te krijgen: de kaart op volle
+ * celhoogte, de container erin laten meegroeien, en het vakje met margin-top:auto naar de
+ * onderrand duwen. Het werkte hier ook, maar het deugde niet.
+ *
+ * Gemeten waarom: <nldd-container> HEEFT een schaduwboom, en zijn licht-DOM-kind wordt
+ * daarin geslot. De layout wordt dus bepaald door een <div> BINNEN dat component, niet
+ * door de host waar onze regels op landden. `display:flex` op de host deed daarmee niets
+ * voorspelbaars, en `flex: 1` op het geslotte kind werkte in een flexcontext die wij niet
+ * bezitten. Op de sandbox leverde dat een kaart op waarin de hele inhoud - tekst en vakje -
+ * op ongeveer de halve breedte bleef staan.
+ *
+ * Dat is precies de afspraak: geen eigen CSS op de componenten van het thema. Wat er nu
+ * overblijft is een regel op onze EIGEN klasse. Die duwt het vakje naar de onderrand als de
+ * stapel eromheen ruimte over heeft, en doet anders niets. De vakjes van een rij staan
+ * daardoor niet meer gegarandeerd op een lijn; dat was een wens, en een kaart die op elke
+ * breedte klopt weegt zwaarder. */
+/* De kaart vult zijn rastercel, en de container erin groeit mee.
+ *
+ * Alleen `flex-grow`, en dat is het verschil met de vorige poging. Die zette OOK
+ * `display: flex` op <nldd-container>, en dat is de binnenkant van een component: die
+ * plaatst zijn eigen kinderen in een schaduwboom, dus de host een flexcontainer maken
+ * verandert dingen die wij niet overzien. Op de sandbox bleef de hele inhoud daardoor op
+ * ongeveer de halve breedte staan.
+ *
+ * `flex-grow` is iets anders: dat is geen opmaak van het component maar een eigenschap die
+ * de OUDER uitleest. De kaart is intern een flexkolom die groeit (`.card` in zijn
+ * schaduwboom), en zonder deze regel is de container daarin een item dat niet meegroeit.
+ *
+ * Daarmee heeft de stapel eronder ruimte over, en duwt margin-top:auto het aanvinkvakje
+ * naar de onderrand. De vakjes van een rij staan dan op een lijn. */
+.service-cards-grid > .service-card {
+    height: 100%;
 }
-.service-card {
+/* Het vak met de padding, en de stapel erin, groeien mee met de kaart. Beide zijn onze
+   eigen elementen (een <c-box> en een <c-stack> uit de layoutlaag, gewone divs zonder
+   schaduwboom), en `flex-grow` is een eigenschap die de ouder uitleest. */
+.service-card__vak {
     display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 1rem;
-    border: 2px solid var(--rvo-color-grijs-300, #e5e5e5);
-    border-radius: 8px;
-    background: white;
-    transition: border-color 0.2s, background-color 0.2s;
-    cursor: pointer;
+    flex-direction: column;
+    flex-grow: 1;
 }
-.service-card:hover {
-    border-color: var(--rvo-color-hemelblauw, #007BC7);
+/* En de stapel IN die container ook, om precies dezelfde reden: hij is daar een flexitem
+   dat uit zichzelf niet meegroeit. Eigen klasse, en `flex-grow` is een eigenschap die de
+   ouder uitleest - geen opmaak van een component. */
+.service-card__body {
+    flex-grow: 1;
 }
-.service-card--selected {
-    border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
+.service-card__kies {
+    margin-top: auto;
 }
-.service-card--locked-checked {
-    border-color: var(--rvo-color-hemelblauw, #007BC7);
-    background: #E5F0F9;  /* hemelblauw-100 bestaat nergens; de fallback WAS de waarde */
-    opacity: 0.85;
-}
-/* Read-only card (project details): same look as the picker, but nothing to pick. */
-.service-card--static,
-.service-card--static:hover {
-    cursor: default;
-    border-color: var(--rvo-color-grijs-300, #e5e5e5);
-}
-.service-card--static .service-card__content {
-    cursor: default;
-}
-.service-card__content {
-    flex: 1;
-    cursor: pointer;
-}
-.service-card__header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-}
-.service-card__title {
-    font-weight: 600;
-    color: var(--rvo-color-zwart, #000);
-}
-.service-card__description {
-    font-size: 0.875rem;
-    color: var(--rvo-color-grijs-700, #666);
-    margin: 0;
-    line-height: 1.4;
-}
-.service-card__hint {
-    font-size: 0.8rem;
-    color: var(--rvo-color-hemelblauw, #007BC7);
-    margin: 0.25rem 0 0 0;
-    font-style: italic;
-}
-/* "Deze dienst stelt u per component in": only meaningful once the card is ticked,
-   and it has to appear at that moment -- the user ticks and clicks Next, so a line
-   that needs a page reload to show up is never read. The selected class is kept in
-   sync client-side by updateAllVisuals() in wizard.js. */
+
+/* "Deze dienst stelt u per component in": alleen zinnig zodra de kaart aangevinkt is, en
+   het moet op DAT moment verschijnen - de gebruiker vinkt aan en klikt door, dus een
+   regel die een herlaadbeurt nodig heeft wordt nooit gelezen. De klasse wordt
+   client-side bijgehouden door updateAllVisuals() in static/js/wizard.js. */
 .service-card__hint--config {
-    display: none;
+    /* VISIBILITY EN GEEN DISPLAY. Met display:none neemt de regel geen ruimte in, dus
+       groeide de kaart op het moment dat je hem aanvinkte - en omdat de kaarten van een rij
+       even hoog zijn en het vakje aan de onderrand hangt, sprongen alle vakjes van die rij
+       mee. Met visibility blijft de ruimte staan en beweegt er niets; onzichtbaar is hij
+       nog steeds, ook voor een schermlezer en voor Playwright's is_visible(). */
+    visibility: hidden;
 }
 .service-card--selected .service-card__hint--config,
 .service-card--locked-checked .service-card__hint--config {
-    display: block;
+    visibility: visible;
 }
 
 /* Display field header (for display_card widget) */
@@ -270,14 +334,10 @@ c-fieldset c-fieldset {
     opacity: 0.7;
 }
 
-/* Service card help icon */
-.service-card__help-btn {
-    margin-left: auto;
-    cursor: pointer;
-}
-.service-card__help-btn:hover {
-    opacity: 0.7;
-}
+/* De hulpknop van een dienstkaart heeft hier geen regel meer: hij stond rechts door
+   margin-left:auto, en dat is wat <c-cluster justify="between"> doet. De klasse blijft
+   staan als HAAK - tests/e2e/test_lotc_pariteit.py en test_services_overview_help.py
+   zoeken hem op. */
 
 /* Service help modal */
 .service-help-backdrop {
@@ -297,7 +357,7 @@ c-fieldset c-fieldset {
     left: 50%;
     transform: translate(-50%, -50%) scale(0.95);
     z-index: 1001;
-    background: white;
+    background: var(--semantics-surfaces-base-background-color, white);
     border-radius: 8px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
     width: min(640px, 90vw);
@@ -333,9 +393,9 @@ c-fieldset c-fieldset {
 }
 
 /* CodeMirror KV editor wrapper */
-.cm-kv-wrapper { border: 1px solid #ccc; border-radius: 4px; min-height: 7.5rem; }
-.cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid #007BC7; }
-.kv-editor--error .cm-kv-wrapper { border-color: #d52b1e; }
+.cm-kv-wrapper { border: 1px solid var(--semantics-dividers-color, #ccc); border-radius: 4px; min-height: 7.5rem; }
+.cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid var(--semantics-content-accent-color, #007BC7); }
+.kv-editor--error .cm-kv-wrapper { border-color: var(--semantics-content-critical-color, #d52b1e); }
 
 /* Uit opi/templates/wizard/wizard_step.html.j2 */
 #wizard-step-form .wizard-step__saving { display: none; }
@@ -434,7 +494,7 @@ c-fieldset c-fieldset {
 }
 
 /* Uit opi/templates/wizard/partials/attachments_upload.html.j2 */
-.att-upload-ok { display:inline-flex; align-items:center; gap:0.35rem; color:#39870c; font-weight:600; animation: attUploadOk 2.6s ease forwards; }
+.att-upload-ok { display:inline-flex; align-items:center; gap:0.35rem; color:var(--semantics-content-success-color, #39870c); font-weight:600; animation: attUploadOk 2.6s ease forwards; }
 @keyframes attUploadOk { 0% {opacity:0; transform:translateY(-2px) scale(0.9);} 12% {opacity:1; transform:none;} 75% {opacity:1;} 100% {opacity:0;} }
 
 /* ===================================================================
@@ -546,10 +606,12 @@ c-fieldset c-fieldset {
 }
 
 .restore-mode-option--selected {
-    /* Vaste waarde, geen var(): --rvo-color-hemelblauw-100 staat niet in de lijst van
-       lotc-app.css en leverde dus NIETS op - de gekozen optie was niet te zien. Dit is de
-       lichtste tint van dezelfde hemelblauw die er wel is. */
-    background: #E5F0F9;
+    /* Hier stond een vaste #E5F0F9, omdat --rvo-color-hemelblauw-100 niet in de lijst van
+       lotc-app.css staat en dus NIETS opleverde - de gekozen optie was niet te zien. Die
+       vaste waarde loste dat op maar volgde de licht/donker-stand niet. Het themotoken
+       hieronder is dezelfde bedoeling (het lichtste accentvlak) en is in licht #E3EFFE,
+       dus vrijwel de waarde die er stond. */
+    background: var(--semantics-categories-accent-tinted-background-color, #E5F0F9);
     border-color: var(--rvo-color-hemelblauw);
 }
 
@@ -657,31 +719,13 @@ c-fieldset c-fieldset {
     margin-top: 1rem;
 }
 
-/*
- * Het aanvinkvakje van een servicekaart.
+/* HET AANVINKVAKJE VAN DE DIENSTKAART HEEFT HIER GEEN REGEL MEER.
  *
- * Dit is een KAAL <input type="checkbox"> en dat blijft het ook: static/js/wizard.js
- * zoekt het op met card.querySelector('input[type="checkbox"]'), leest .checked en zet
- * hem. Het NLDD-component heeft helemaal geen input - het gebruikt ElementInternals -
- * dus een selector zou hem nooit vinden. Toen dit hier ooit wel een component was,
- * vinkte klikken niets aan en verstuurde het formulier ALLE diensten.
+ * Hier stonden een maat en een accent-color voor een KAAL <input type="checkbox">. Dat
+ * vakje bestaat niet meer: de kaart draagt een <c-checkbox> (zie
+ * widgets/service_cards.html.j2), hetzelfde component als de keycloak-stap in de wizard,
+ * en dat tekent zichzelf inclusief aangevinkt, focus en uitgeschakeld.
  *
- * Wat er ontbrak was niet het component maar de OPMAAK: er stond nergens een regel voor,
- * dus tekende de browser zijn standaardvakje van 13 bij 13 midden in een kaart die verder
- * helemaal van het thema is. Gemeten: appearance auto, accent-color auto.
- *
- * accent-color is precies genoeg. De browser tekent het vakje dan in onze kleur, met alle
- * toestanden (aangevinkt, focus, uitgeschakeld) die hij zelf al kent - geen nagebouwd
- * vakje van pseudo-elementen dat bij de volgende themawissel weer scheef staat.
- */
-.service-card input[type="checkbox"] {
-    width: 1.15rem;
-    height: 1.15rem;
-    accent-color: var(--rvo-color-hemelblauw, #007bc7);
-    cursor: pointer;
-    flex: none;
-}
-
-.service-card input[type="checkbox"][aria-disabled="true"] {
-    cursor: not-allowed;
-}
+ * De reden die hier stond voor het kale vakje - "wizard.js zoekt input[type=checkbox] en
+ * het component heeft er geen" - is opgelost aan de kant van wizard.js: dat zoekt nu het
+ * component, dat .checked gewoon als eigenschap draagt. Zie features/aanvinkvakje.md. */

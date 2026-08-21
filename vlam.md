@@ -22,6 +22,14 @@ TLS wordt **niet** getermineerd. HAProxy kopieert bytes, dus de TLS-sessie loopt
 tot aan de bestemming met diens eigen certificaat. Wij hebben nooit een sleutel en kunnen het
 verkeer niet lezen.
 
+**Er zijn sinds RC-142 twee paden, en ze delen niets behalve de RON-koppeling.** Het pad hierboven
+is voor MENSEN op een laptop: VPN, geen terminatie, end-to-end TLS. Het tweede pad is voor
+WORKLOADS die al in het cluster draaien: een eigen component `vlam-proxy-intern` op poort 8081 dat
+plat HTTP aanneemt en zelf de geverifieerde TLS naar VLAM opzet, plus de ZAD-dienst `vlam` die een
+afnemer het adres en de netwerkregel geeft. Zie "Component 4" hieronder en
+`features/vlam-service.md`. Een afnemer in het cluster heeft dus geen tunnel nodig; wie
+versleuteling tot aan VLAM zelf wil, gebruikt het VPN-pad.
+
 ## De RON-koppeling
 
 De koppeling zelf, inclusief het gekoppelde IP-blok en de ingresskant, staat in
@@ -350,6 +358,68 @@ van de container en schaalt hij zijn interne structuren daarop, wat in rust al 1
 wachtende verbindingen in plaats van een OOMKill. Vastgezet op requests 64Mi/25m en limits
 256Mi/500m.
 
+## Component 4: vlam-proxy-intern
+
+Voor afnemers BINNEN het cluster (RC-142). Een eigen component naast `vlam-proxy`, niet een tweede
+frontend erop: de twee hebben andere gebruikers en een ander wijzigingsritme, en een configuratiefout
+in het ene pad mag het andere niet omvertrekken. HAProxy is stateless, dus de prijs is een kleine
+pod erbij.
+
+| | |
+|---|---|
+| image | `docker.io/library/haproxy:lts-alpine` |
+| ports | inbound `[8081]`, outbound `[443]` |
+| services | `attachments` (de Rijksdienst-CA-keten als bijlage, als bestand gemount) |
+| probe | `scheme: http` op een `monitor-uri /healthz` |
+| resources | `auto-tune-resources: false`, vast op 64Mi/256Mi |
+
+Het verschil met component 3 is de terminatie. Deze proxy draait `mode http`, zet de TLS naar
+`vlam-api.rijksweb.nl` zelf op en VERIFIEERT daarbij het certificaat tegen de meegeleverde
+CA-keten:
+
+```
+server vlam vlam-api.rijksweb.nl:443 ssl sni str(vlam-api.rijksweb.nl) verify required \
+  ca-file /etc/haproxy/rijksdienst-ca.pem resolvers dns init-addr last,libc,none
+```
+
+Daarmee is het CA-probleem uit "Valkuilen" een keer opgelost, op de proxy, in plaats van in elke
+runtime van elke afnemer. De prijs staat er tegenover en is bewust aanvaard: **deze proxy ziet het
+verkeer in platte tekst**. Dat blijft binnen ons eigen cluster en beheer, en de stap naar buiten is
+versleuteld en geverifieerd.
+
+Verder overgenomen uit component 3, om dezelfde redenen: `maxconn` expliciet, de `resolvers`-sectie
+en `timeout server 10m` (taalmodellen antwoorden traag). De Host-header richting upstream zetten we
+zelf (`http-request set-header Host vlam-api.rijksweb.nl`), zodat de binnenkomende Host de
+bestemming niet bepaalt. Redirects worden teruggegeven, niet gevolgd.
+
+De RON-egress werkt vanzelf mee: de `rig-ron`-annotatie staat op de NAMESPACE, niet op een
+component.
+
+**Toegang.** Eenmalig, en daarna nooit meer per afnemer. In `vlam-wt8` staat EEN
+cross-domain-access-regel die poort 8081 van `vlam-proxy-intern` zonder projectlimiet
+openzet:
+
+```yaml
+  - name: cross-domain-access
+    schema-version: "1.1"
+    config:
+      inbound:
+        - name: iedereen-in-het-cluster
+          from: { project: "*" }        # geen projectlimiet, alleen deze poort
+          to: { component: vlam-proxy-intern, port: 8081 }
+```
+
+Een afnemer heeft daarna genoeg aan de ZAD-dienst `vlam` (uitgaande regel plus
+`VLAM_API_URL`). De autorisatie zit bij VLAM zelf, op de API-sleutel; de netwerkregel regelt
+alleen nog de bereikbaarheid. De wildcard geldt alleen inkomend, alleen op die ene poort van
+dat ene component, en `deployment`/`component` moeten er leeg blijven -- het model weigert
+een wildcard die er toch een noemt.
+
+**CA-rotatie.** De keten zit in een `subPath`-mount, en die wordt NOOIT vanzelf ververst: de pod
+draait stil door op de oude inhoud, zonder foutmelding. Roteren is dus bijlage vervangen EN alleen
+`vlam-proxy-intern` opnieuw uitrollen. Noteer bij het vervangen de vervaldatum van de nieuwe keten,
+anders is de eerstvolgende storing een certificaat dat stilletjes verliep.
+
 ## Verificatie
 
 De test die de hele keten dekt, vanaf een laptop:
@@ -374,6 +444,16 @@ De proxy weigert alles wat niet op de allowlist staat. Hij is geen doorgeefluik.
 Verder te controleren: de RON-egress via de namespace-annotatie, de Keycloak-login met rolfilter
 inclusief een account **zonder** de rol (moet geweigerd worden), de split-DNS die bij clients
 aankomt, en een gateway-adres dat een herstart overleeft.
+
+Voor het interne pad, vanuit een pod in `rig-prd-vlam-wt8`:
+
+```
+wget -qO- http://productie-vlam-proxy-intern:8081/v1/models
+  → de modellenlijst van VLAM
+```
+
+En de negatieve test die erbij hoort: dezelfde aanroep met een afwijkende `Host`-header geeft
+hetzelfde antwoord. De binnenkomende Host bepaalt de bestemming dus niet.
 
 ## Valkuilen
 

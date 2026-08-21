@@ -11,6 +11,7 @@ from opi.services.deployment_diagnostics import (
     categorize_error,
     conditions_to_errors,
     gather_deployment_errors,
+    gather_sync_deviations,
 )
 
 
@@ -517,3 +518,162 @@ class TestCategorizeError:
             else:
                 assert explanation is not None
                 assert len(explanation) > 0
+
+
+# ---------------------------------------------------------------------------
+# gather_sync_deviations
+# ---------------------------------------------------------------------------
+
+
+def _mb_docs_status() -> dict[str, Any]:
+    """Het mb-docs-helmfile-geval van 2026-08-20: alles draait, twee Jobs hangen in delete.
+
+    Sync OutOfSync + health Progressing, laatste operatie Succeeded en die heeft de twee
+    Jobs al "Pruned" gemeld - maar ze bestaan nog (finalizer-bug). De kaart toonde twee
+    gele badges zonder verklaring; deze fixture pint dat de afwijkingen dat nu uitleggen.
+    """
+    return {
+        "spec": {"syncPolicy": {"automated": {"prune": True}}},
+        "status": {
+            "sync": {"status": "OutOfSync"},
+            "health": {"status": "Progressing"},
+            "operationState": {
+                "phase": "Succeeded",
+                "syncResult": {
+                    "resources": [
+                        {"kind": "Job", "name": "docs-backend-createsuperuser-1786315497", "status": "Pruned"},
+                        {"kind": "Job", "name": "docs-backend-migrate-1786315497", "status": "Pruned"},
+                    ]
+                },
+            },
+            "resources": [
+                {"kind": "Deployment", "name": "docs-backend", "status": "Synced", "health": {"status": "Healthy"}},
+                {
+                    "kind": "Job",
+                    "name": "docs-backend-createsuperuser-1786315497",
+                    "status": "OutOfSync",
+                    "requiresPruning": True,
+                    "health": {"status": "Progressing"},
+                },
+                {
+                    "kind": "Job",
+                    "name": "docs-backend-migrate-1786315497",
+                    "status": "OutOfSync",
+                    "requiresPruning": True,
+                    "health": {"status": "Progressing"},
+                },
+            ],
+        },
+    }
+
+
+class TestGatherSyncDeviations:
+    """Afwijkingen verklaren de gele badges zonder dat het fouten zijn."""
+
+    def test_stuck_deletion_gets_its_own_reason(self) -> None:
+        deviations = gather_sync_deviations(_mb_docs_status())
+        assert [d["resource"] for d in deviations] == [
+            "Job/docs-backend-createsuperuser-1786315497",
+            "Job/docs-backend-migrate-1786315497",
+        ]
+        assert all(d["reason"] == "is verwijderd, maar het cluster maakt de verwijdering niet af" for d in deviations)
+        assert all(d["kind"] == "Job" for d in deviations)
+
+    @pytest.mark.asyncio
+    async def test_mb_docs_case_has_deviations_but_no_errors(self) -> None:
+        """Het oorspronkelijke gat: errors bleef leeg, dus de kaart zweeg."""
+        errors = await gather_deployment_errors(
+            argo=_argo_mock(),
+            kubectl=None,
+            app_name="app",
+            base_namespace="ns",
+            cluster="c",
+            deployment_name="docs",
+            status_data=_mb_docs_status(),
+        )
+        assert errors == []
+        assert len(gather_sync_deviations(_mb_docs_status())) == 2
+
+    def test_green_status_has_no_deviations(self) -> None:
+        status_data = {
+            "spec": {"syncPolicy": {"automated": {}}},
+            "status": {
+                "sync": {"status": "Synced"},
+                "health": {"status": "Healthy"},
+                "resources": [
+                    {"kind": "Deployment", "name": "web", "status": "Synced", "health": {"status": "Healthy"}}
+                ],
+            },
+        }
+        assert gather_sync_deviations(status_data) == []
+
+    def test_prune_not_yet_attempted_says_next_sync(self) -> None:
+        status_data = _mb_docs_status()
+        status_data["status"]["operationState"]["syncResult"]["resources"] = []
+        deviations = gather_sync_deviations(status_data)
+        assert all(d["reason"] == "staat niet meer in git en wordt bij de volgende sync opgeruimd" for d in deviations)
+
+    def test_plain_diff_mentions_auto_sync(self) -> None:
+        status_data = {
+            "spec": {"syncPolicy": {"automated": {}}},
+            "status": {
+                "sync": {"status": "OutOfSync"},
+                "health": {"status": "Healthy"},
+                "resources": [{"kind": "Deployment", "name": "web", "status": "OutOfSync"}],
+            },
+        }
+        assert gather_sync_deviations(status_data) == [
+            {
+                "resource": "Deployment/web",
+                "kind": "Deployment",
+                "reason": "wijkt af van git en wordt bij de volgende sync bijgewerkt",
+            }
+        ]
+
+    def test_plain_diff_without_auto_sync(self) -> None:
+        status_data = {
+            "spec": {"syncPolicy": {}},
+            "status": {
+                "sync": {"status": "OutOfSync"},
+                "health": {"status": "Healthy"},
+                "resources": [{"kind": "Deployment", "name": "web", "status": "OutOfSync"}],
+            },
+        }
+        assert gather_sync_deviations(status_data)[0]["reason"] == "wijkt af van git; auto-sync staat uit"
+
+    def test_progressing_without_message_becomes_nog_bezig(self) -> None:
+        status_data = {
+            "status": {
+                "sync": {"status": "Synced"},
+                "health": {"status": "Progressing"},
+                "resources": [
+                    {"kind": "Deployment", "name": "web", "status": "Synced", "health": {"status": "Progressing"}},
+                    {
+                        "kind": "Deployment",
+                        "name": "api",
+                        "status": "Synced",
+                        # Met message: die verschijnt al via gather_deployment_errors.
+                        "health": {"status": "Progressing", "message": "waiting for rollout"},
+                    },
+                ],
+            },
+        }
+        assert gather_sync_deviations(status_data) == [
+            {"resource": "Deployment/web", "kind": "Deployment", "reason": "nog bezig"}
+        ]
+
+    def test_disabled_component_resources_are_dropped(self) -> None:
+        status_data = {
+            "status": {
+                "sync": {"status": "OutOfSync"},
+                "health": {"status": "Healthy"},
+                "resources": [
+                    {"kind": "Deployment", "name": "productie-typesense", "status": "OutOfSync"},
+                    {"kind": "Deployment", "name": "productie-web", "status": "OutOfSync"},
+                ],
+            },
+        }
+        deviations = gather_sync_deviations(
+            status_data, deployment_name="productie", disabled_components=frozenset({"typesense"})
+        )
+        assert [d["resource"] for d in deviations] == ["Deployment/productie-web"]

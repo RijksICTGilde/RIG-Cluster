@@ -20,7 +20,10 @@ import time
 import urllib.error
 import urllib.request
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
 def _run(args: list[str], *, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
@@ -192,6 +195,43 @@ def _free_local_port() -> int:
         return sock.getsockname()[1]
 
 
+@contextlib.contextmanager
+def port_forward(namespace: str, pod: str, remote_port: int, *, ready_timeout: float = 30.0) -> Generator[str]:
+    """A ``kubectl port-forward`` that stays up for the length of the block.
+
+    The subprocess lifecycle lives here and nowhere else: ``http_get_via_port_forward``
+    below is this block plus a GET. A BROWSER needs the forward to outlive that first
+    request - it loads the page, posts a form and reads the answer, all against the same
+    address. Yields the base URL to point it at.
+
+    Waits until the local port actually accepts a connection before yielding, so a failure
+    inside the block is about the page and not about a forward that was not up yet.
+    """
+    local_port = _free_local_port()
+    proc = subprocess.Popen(
+        ["kubectl", "port-forward", "-n", namespace, f"pod/{pod}", f"{local_port}:{remote_port}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.time() + ready_timeout
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                stderr = proc.stderr.read() if proc.stderr else ""
+                raise RuntimeError(f"port-forward exited early: {stderr.strip()}")
+            with contextlib.suppress(OSError), socket.create_connection(("127.0.0.1", local_port), timeout=2.0):
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError(f"port-forward to {pod}:{remote_port} was not up within {ready_timeout:.0f}s")
+        yield f"http://127.0.0.1:{local_port}"
+    finally:
+        proc.terminate()
+        with contextlib.suppress(subprocess.SubprocessError):
+            proc.wait(timeout=5)
+
+
 def http_get_via_port_forward(
     namespace: str,
     pod: str,
@@ -207,22 +247,16 @@ def http_get_via_port_forward(
     the authorization-wall sidecar (which would otherwise gate the request behind
     OIDC). The workload image is distroless, so ``kubectl exec`` + curl is not an
     option - port-forward is the deterministic path. Returns (status_code, body).
+
+    ``timeout`` bounds each of the two waits: first the forward coming up, then the GET
+    succeeding. The retry on the GET stays, because a forward that accepts a connection
+    does not mean the app inside the pod is already serving.
     """
-    local_port = _free_local_port()
-    proc = subprocess.Popen(
-        ["kubectl", "port-forward", "-n", namespace, f"pod/{pod}", f"{local_port}:{remote_port}"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    url = f"http://127.0.0.1:{local_port}{path}"
-    try:
+    with port_forward(namespace, pod, remote_port, ready_timeout=timeout) as base_url:
+        url = f"{base_url}{path}"
         deadline = time.time() + timeout
         last_error: Exception | None = None
         while time.time() < deadline:
-            if proc.poll() is not None:
-                stderr = proc.stderr.read() if proc.stderr else ""
-                raise RuntimeError(f"port-forward exited early: {stderr.strip()}")
             try:
                 with urllib.request.urlopen(url, timeout=5.0) as resp:  # noqa: S310 (fixed localhost)
                     return resp.status, resp.read().decode()
@@ -234,10 +268,6 @@ def http_get_via_port_forward(
                 last_error = exc
                 time.sleep(1.0)
         raise RuntimeError(f"GET {url} did not succeed within {timeout:.0f}s: {last_error}")
-    finally:
-        proc.terminate()
-        with contextlib.suppress(subprocess.SubprocessError):
-            proc.wait(timeout=5)
 
 
 #: The annotation the ArgoCD CMP plugin stamps on every pod template: a hash over all

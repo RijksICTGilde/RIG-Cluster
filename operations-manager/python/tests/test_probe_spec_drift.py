@@ -10,6 +10,7 @@ case, forcing a regenerate, and also assert the spec's structural invariants.
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,21 @@ if TYPE_CHECKING:
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GENERATOR = _REPO_ROOT / "scripts" / "generate_probe_spec.py"
 _SPEC_FILE = _REPO_ROOT / "images" / "e2e-allservices" / "probe_spec.json"
+_RUNNER_GO = _REPO_ROOT / "images" / "e2e-allservices" / "runner.go"
+#: The kind names the Go runner dispatches on, e.g. ``case "sql":``.
+_KIND_CASE = re.compile(r'^\s*case "([a-z0-9-]+)":', re.MULTILINE)
+
+
+def _kinds_with_a_handler() -> set[str]:
+    """Probe kinds the Go binary can actually run, read from its dispatch switch.
+
+    Pinned here as a literal list, this rotted the moment a kind was added: the list
+    would be edited to match rather than checked against anything. What the spec really
+    owes the binary is a HANDLER, and the switch in ``runner.go`` is where that lives.
+    """
+    kinds = set(_KIND_CASE.findall(_RUNNER_GO.read_text()))
+    assert kinds, f"no probe-kind cases found in {_RUNNER_GO}; did the dispatch move?"
+    return kinds
 
 
 def _load_generator() -> ModuleType:
@@ -75,12 +91,14 @@ def test_every_service_with_vars_is_covered(generator: ModuleType) -> None:
 def test_spec_targets_are_well_formed(generator: ModuleType) -> None:
     """Structural invariants the Go loader relies on."""
     spec = generator.build_spec()
-    known_kinds = {"sql", "redis", "s3", "oidc", "path", "metadata"}
+    known_kinds = _kinds_with_a_handler()
     ids: set[str] = set()
     for target in spec["targets"]:
         assert target["id"] not in ids, f"duplicate target id {target['id']!r}"
         ids.add(target["id"])
-        assert target["kind"] in known_kinds, f"unknown probe kind {target['kind']!r}"
+        assert target["kind"] in known_kinds, (
+            f"probe kind {target['kind']!r} has no handler in runner.go (known: {sorted(known_kinds)})"
+        )
         assert target["services"], f"target {target['id']!r} has no contributing services"
         assert target["env_vars"], f"target {target['id']!r} has no env vars"
         # Every boundness var must also be one of the target's env vars.

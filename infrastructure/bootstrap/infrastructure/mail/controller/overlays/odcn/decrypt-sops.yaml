@@ -1,0 +1,25 @@
+# De TWEEDE rendering van precies hetzelfde versleutelde bestand.
+#
+# Het geheim wordt EEN keer gegenereerd (de gedeelde secret-generatie, zie
+# infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml) en komt
+# via die weg in de namespace van OPI terecht, want daar leest OPI zijn
+# beheerderswachtwoord uit zijn omgeving. De relay draait in een eigen namespace en heeft
+# dezelfde waarden nodig, dus dat ene bestand wordt hier nog een keer gerenderd; de
+# namespace van deze overlay komt eroverheen.
+#
+# Waarom zo en niet met leesrechten voor OPI op de geheimen van de relay-namespace: rechten
+# over een namespacegrens zijn moeilijker terug te draaien dan een tweede rendering van
+# hetzelfde bestand. En omdat het EEN bron is, kan een geroteerd beheerderswachtwoord niet
+# in de ene namespace landen en in de andere niet.
+apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: mail-relay-secret-generator
+  annotations:
+    config.kubernetes.io/function: "exec:\n  path: ksops\n"
+files:
+  - ../../../../secrets/config/overlays/odcn/mail-relay-secret.yaml.sops.yaml
+  # Zelfde constructie voor de databasegebruiker: CNPG leest hem in rig-prd-operations (de
+  # rol en de database komen daaruit voort), de relay leest hem hier als
+  # MAIL_DB_USER/PASSWORD.
+  - ../../../../secrets/config/overlays/odcn/mail-db-credentials-secret.yaml.sops.yaml

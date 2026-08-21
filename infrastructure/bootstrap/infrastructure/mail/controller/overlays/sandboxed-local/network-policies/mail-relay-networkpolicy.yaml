@@ -1,0 +1,81 @@
+# podSelector + policyTypes maakt de relay-pods deny-by-default; alleen wat hieronder
+# expliciet wordt toegestaan komt erdoor.
+#
+# De INGANG staat hier, de UITGANG bij het project: de dienst send-email draagt per
+# component een egress-beleid bij in de projectnamespace, want alleen de dienst weet
+# wanneer hij aanstaat en voor welk component. Handmatig beheerde regels aan die kant zijn
+# precies hoe de storing van 10 juni ontstond.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mail-relay-access
+  namespace: rig-ron
+spec:
+  podSelector:
+    matchLabels:
+      app: rig-mail-relay
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Tenant-namespaces bieden post aan op submission. De grens tussen projecten ligt
+    # hier niet: die ligt bij de SMTP-authenticatie en bij de limiet per account. Een
+    # namespace die geen egress-beleid heeft komt hier sowieso niet aan.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
+      ports:
+        # 2525, niet 587: dat is de podpoort (de Service vertaalt 587 -> 2525,
+        # zie configmap.yaml), en een NetworkPolicy kijkt naar de poort van de pod.
+        - protocol: TCP
+          port: 2525
+    # OPI zelf: post versturen namens het platform (587) en accounts aanmaken op de
+    # management-API (8080).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-system
+      ports:
+        # 2525, niet 587: dat is de podpoort (de Service vertaalt 587 -> 2525,
+        # zie configmap.yaml), en een NetworkPolicy kijkt naar de poort van de pod.
+        - protocol: TCP
+          port: 2525
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # De gedeelde PostgreSQL: de relay bewaart zijn accounts en zijn wachtrij daar en
+    # niet op een PVC.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-system
+      ports:
+        - protocol: TCP
+          port: 5432
+    # De upstream is hier de SMTP-sink in deze namespace, en verder niets. Hier stond
+    # eerst 0.0.0.0/0 omdat "welke testupstream een ontwikkelaar gebruikt niet vastligt";
+    # nu er een sink meekomt ligt het wel vast, en dan hoort de relay ook in een
+    # ontwikkelcluster niet naar willekeurige mailservers op internet te kunnen praten.
+    # Dat is geen formaliteit: een relay die overal heen mag is een open relay zodra
+    # iemand een account bemachtigt.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: rig-mail-sink
+      ports:
+        # 1025, niet 25: dat is de podpoort (de Service vertaalt 25 -> 1025, zie
+        # sink/base/service.yaml), en een NetworkPolicy kijkt naar de poort van de pod.
+        # Stond hier 25, dan blijft de relay hangen op het verbinden met de sink: de
+        # bezorging stopt na "TLSA record not found" en er komt niets bij de sink aan.
+        - protocol: TCP
+          port: 1025

@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 import shutil
+import time
 from collections.abc import Callable  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -80,6 +81,7 @@ from opi.handlers.project_file_handler import (
     remove_component_references,
 )
 from opi.handlers.sops import SopsHandler
+from opi.manager.argo_manager import UMBRELLA_REFRESH_MAX_POGINGEN, UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
@@ -89,6 +91,7 @@ from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
     ManifestContext,
+    ManifestContribution,
     ProvisionContext,
     SecretFileSpec,
 )
@@ -133,8 +136,7 @@ from opi.utils.env_vars import (
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
-    DOMAIN_FORMAT_TEMPLATES,
-    HostnameFormat,
+    ROOT_COMPONENT_FORMAT_IDS,
     generate_argocd_application_name,
     generate_bare_domain_hostname,
     generate_external_hostname,
@@ -158,10 +160,8 @@ from opi.utils.naming import (
 )
 from opi.utils.project_utils import (
     ComponentValidationError,
-    apply_resource_limits,
     build_component_config,
     normalize_container_image,
-    validate_component_paths,
     validate_root_component,
 )
 from opi.utils.secrets import (
@@ -182,6 +182,7 @@ from opi.utils.yaml_util import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from opi.connectors.argo import ArgoConnector
     from opi.core.persistent_task_progress import AnyTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
 
@@ -454,6 +455,52 @@ def _secret_labels_for(spec: SecretFileSpec) -> dict[str, str]:
     return labels
 
 
+def collect_manifest_contributions(
+    ctx: ManifestContext, *, component_services: list[str], project_services: list[str]
+) -> list[ManifestContribution]:
+    """Every contributing service's ``ManifestContribution`` for one component.
+
+    Which services are asked depends on where their selection lives. Most read the
+    COMPONENT's own ``services`` list -- each component decides whether it sits behind
+    login, gets database credentials, is scraped. A service that is deployment-bound and
+    has no per-component choice to make reads the PROJECT's list instead
+    (``manifest_activated_by_project``); no component ever ticks such a service, so a
+    component-scoped question would answer "no" for every component forever.
+
+    Module-level so both halves of that rule can be measured without building a whole
+    deployment first.
+    """
+    return [
+        provider.contribute_manifest_context(ctx)
+        for provider in manifest_services()
+        if any(
+            service_type.value in (project_services if provider.manifest_activated_by_project else component_services)
+            for service_type in provider.manifest_activation_types()
+        )
+    ]
+
+
+def apply_manifest_contributions(variables: dict[str, Any], contributions: list[ManifestContribution]) -> None:
+    """Merge the contributions into a component's template context, in ``manifest_order``.
+
+    Three merge semantics, and the difference is load-bearing:
+
+    * ``template_vars`` OVERRIDE a base key (auth-wall moves ``service_port`` 8080 ->
+      4180).
+    * ``env_vars`` are ADDITIVE: they join the component's own variables instead of
+      replacing them. That is why they are a field of their own rather than a
+      ``template_vars`` entry -- as an override, one service handing out one variable
+      would wipe every variable the component itself declared.
+    * ``sidecars`` are additive too.
+    """
+    for contribution in contributions:
+        variables.update(contribution.template_vars)
+        if contribution.env_vars:
+            variables["env_vars"] = {**variables.get("env_vars", {}), **contribution.env_vars}
+        if contribution.sidecars:
+            variables.setdefault("sidecars", []).extend(contribution.sidecars)
+
+
 class ProjectManager:
     """Manager for project resources and deployments."""
 
@@ -529,6 +576,7 @@ class ProjectManager:
         from opi.manager.bootstrap_manager import BootstrapManager
         from opi.manager.delete_project_manager import DeleteProjectManager
         from opi.manager.keycloak_manager import KeycloakManager
+        from opi.manager.mail_manager import MailManager
         from opi.manager.minio_manager import MinioManager
         from opi.manager.pvc_manager import PVCManager
         from opi.manager.redis_manager import RedisManager
@@ -539,6 +587,7 @@ class ProjectManager:
         self._minio_manager = MinioManager(self)
         self._keycloak_manager = KeycloakManager(self)
         self._redis_manager = RedisManager(self)
+        self._mail_manager = MailManager(self)
         self._argo_manager = ArgoManager(self)
         self._bootstrap_manager = BootstrapManager(self)
         self._delete_project_manager = DeleteProjectManager(self)
@@ -2557,7 +2606,7 @@ class ProjectManager:
 
             logger.info(f"Successfully created ArgoCD infrastructure application for project '{project_name}'")
 
-            # STEP 7: Refresh ArgoCD user-applications to detect new infrastructure folder
+            # STEP 7: ArgoCD-verbinding voor de verversbewaker hieronder en voor STEP 9
             logger.info(
                 f"Refreshing ArgoCD user-applications to create infrastructure application for '{project_name}'"
             )
@@ -2575,22 +2624,32 @@ class ProjectManager:
             if not await argo_connector.login():
                 raise RuntimeError("Failed to login to ArgoCD")
 
-            # Refresh user-applications app to pick up the new {project_name}-infrastructure folder
-            if not await argo_connector.refresh_application("user-applications"):
-                raise RuntimeError("Failed to refresh ArgoCD user-applications")
-
-            logger.info("ArgoCD user-applications refreshed, waiting for infrastructure application to be created")
-
             # STEP 8: Wait for infrastructure application to be created by ArgoCD
             infra_app_name = f"{project_name}-infrastructure"
             if progress_manager and infra_task:
                 progress_manager.update_task(infra_task, "Wachten tot ArgoCD de infrastructuur aanmaakt")
 
-            await self._argo_manager.wait_for_application_created(
-                app_name=infra_app_name,
-                timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
-                poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
+            # Dezelfde bewaker als bij de deployment-applicaties: de refresh die de umbrella
+            # onze infrastructuurmap moet laten zien kan opgaan in een reconcile die zijn
+            # revisie al had opgehaald, en dan gebeurt er tot de volgende reconcile niets.
+            umbrella_watcher = asyncio.create_task(
+                self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
             )
+            try:
+                await self._argo_manager.wait_for_application_created(
+                    app_name=infra_app_name,
+                    timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
+                    poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
+                )
+            finally:
+                umbrella_watcher.cancel()
+                try:
+                    await umbrella_watcher
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    # De bewaker is een vangnet en mag het wachten nooit meeslepen.
+                    logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
 
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
 
@@ -2735,6 +2794,64 @@ class ProjectManager:
                 logger.info("No deployments found in current project configuration")
 
         return deployment_changes
+
+    async def _keep_umbrella_refreshed(self, argo_connector: ArgoConnector, pushed_commit: str | None) -> None:
+        """Prik `user-applications` opnieuw zolang die onze commit nog niet gezien heeft.
+
+        Een refresh is geen opdracht in een wachtrij maar een vlaggetje op de Application:
+        liep er al een reconcile, dan wist die het vlaggetje als hij klaar is, terwijl hij
+        zijn revisie ophaalde voordat wij pushten. Onze wijziging zit er dan niet in en er
+        gebeurt tot de volgende reconcile (op odcn-production `timeout.reconciliation: 15m`)
+        niets meer.
+
+        Het enige harde bewijs is de revisie: `reconciledAt` kan best na onze push liggen
+        terwijl de vergeleken revisie van ervoor is. Zonder bekende commit valt er niets te
+        bewijzen en blijft het bij de eerste refresh, zoals voorheen.
+
+        De lus loopt op het antwoord van de refresh en niet op een tijdklok: die call blijft
+        hangen tot er een reconcile is afgerond, en juist dan is te zien of die de goede
+        revisie had. Zo niet, dan is dat het bewijs dat ons vlaggetje in andermans run is
+        opgegaan en heeft meteen opnieuw prikken zin.
+
+        Bedoeld om naast de wachters te draaien en door de aanroeper geannuleerd te worden.
+        """
+        for poging in range(1, UMBRELLA_REFRESH_MAX_POGINGEN + 1):
+            gestart = time.monotonic()
+            if not await argo_connector.refresh_application("user-applications"):
+                logger.warning(
+                    "Refresh van user-applications leverde niets op; een volgende ronde probeert het opnieuw"
+                )
+            if not pushed_commit:
+                return
+
+            status_data = await argo_connector.get_application_status("user-applications") or {}
+            status = status_data.get("status", {}) or {}
+            revision = status.get("sync", {}).get("revision")
+            self._argo_manager.last_umbrella_revision = revision
+            self._argo_manager.last_umbrella_reconciled_at = status.get("reconciledAt")
+
+            if revision == pushed_commit:
+                logger.info(f"user-applications heeft onze commit {pushed_commit} vergeleken; niet opnieuw verversen")
+                return
+
+            if poging == UMBRELLA_REFRESH_MAX_POGINGEN:
+                break
+
+            logger.info(
+                f"user-applications staat nog op revisie {revision or 'onbekend'} in plaats van {pushed_commit}; "
+                "de vorige refresh is verloren gegaan, opnieuw verversen"
+            )
+            # De refresh hierboven wachtte zelf al op een reconcile; kwam hij toch meteen
+            # terug, dan houdt deze ondergrens het een lus in plaats van een storm.
+            rest = UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN - (time.monotonic() - gestart)
+            if rest > 0:
+                await asyncio.sleep(rest)
+
+        logger.warning(
+            f"user-applications staat na {UMBRELLA_REFRESH_MAX_POGINGEN} refreshes nog op revisie "
+            f"{self._argo_manager.last_umbrella_revision or 'onbekend'} in plaats van {pushed_commit}; "
+            "hier is meer aan de hand dan een verloren wekker, doorprikken helpt niet"
+        )
 
     async def process_project_from_git(
         self,
@@ -3080,7 +3197,6 @@ class ProjectManager:
                         f"Refreshing user-applications: {len(apps_to_create)} application(s) not yet present "
                         f"({', '.join(apps_to_create)})"
                     )
-                    await argo_connector.refresh_application("user-applications")
 
                     async def _wait_created(app_name: str) -> str | None:
                         try:
@@ -3092,7 +3208,25 @@ class ProjectManager:
                             logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
                             return f"{app_name}: timed out waiting for application to be created"
 
-                    created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
+                    # Eén bewaker naast alle wachters, niet één per applicatie: die zou bij
+                    # drie nieuwe applicaties drie keer tegelijk verversen. Hij doet de
+                    # eerste refresh en herhaalt die alleen zolang de umbrella onze commit
+                    # aantoonbaar nog niet vergeleken heeft.
+                    umbrella_watcher = asyncio.create_task(
+                        self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
+                    )
+                    try:
+                        created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
+                    finally:
+                        umbrella_watcher.cancel()
+                        try:
+                            await umbrella_watcher
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            # De bewaker is een vangnet; als hij zelf omvalt, mag dat het
+                            # wachten op de applicaties niet meeslepen.
+                            logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
                     sync_failures.extend(result for result in created_results if result)
                 else:
                     logger.info(
@@ -5022,6 +5156,7 @@ class ProjectManager:
                         minio_manager=self._minio_manager,
                         keycloak_manager=self._keycloak_manager,
                         redis_manager=self._redis_manager,
+                        mail_manager=self._mail_manager,
                     )
                     for provider in provisioning_services():
                         await provider.provision(provision_ctx)
@@ -5165,19 +5300,22 @@ class ProjectManager:
             logger.warning(f"No components found in deployment {deployment_name}, skipping")
             return []
 
-        # Register subdomain for nice-url mode (with rollback on failure)
-        domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+        # Register subdomain for the dotted component-per-subdomain layouts (with rollback
+        # on failure). Keyed on domain-format: the legacy ``domain-mode: nice-url`` files
+        # were migrated to ``component.subdomain`` (schema v2.8).
         subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+        domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
+        uses_dotted_subdomain_layout = domain_format in ROOT_COMPONENT_FORMAT_IDS
         subdomain_registered = False  # Track if we registered a new subdomain for rollback
         subdomain_connector = None  # Initialize for use in rollback
 
-        # Validate nice-url mode requirements BEFORE subdomain registration
+        # Validate the layout's requirements BEFORE subdomain registration
         # This prevents orphaned subdomain entries when validation fails
         root_component_name = get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
-        if domain_mode == "nice-url" and subdomain and base_domain:
+        if uses_dotted_subdomain_layout and subdomain and base_domain:
             # Validate that all components with publish-on-web have ports configured
-            # In nice-url mode, each component gets its own ingress at component.subdomain.base_domain
+            # In this layout, each component gets its own ingress at component.subdomain.base_domain
             components_missing_ports = []
             for component in components:
                 component_name = component.get("reference") or component.get("name")
@@ -5196,7 +5334,8 @@ class ProjectManager:
 
             if components_missing_ports:
                 raise ValueError(
-                    f"Components with 'publish-on-web' in nice-url mode must have at least one port configured. "
+                    f"Components with 'publish-on-web' on domain-format '{domain_format}' must have at least "
+                    f"one port configured. "
                     f"Missing ports for: {', '.join(components_missing_ports)}. "
                     f"Add 'ports.inbound' to the component definition."
                 )
@@ -5212,7 +5351,7 @@ class ProjectManager:
                         f"Root components must have a service exposed for the root URL to work."
                     )
 
-        if domain_mode == "nice-url" and subdomain and base_domain:
+        if uses_dotted_subdomain_layout and subdomain and base_domain:
             subdomain_connector = SubdomainConnector()
 
             # Check if this is a new registration (for rollback purposes)
@@ -5558,17 +5697,15 @@ class ProjectManager:
             subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
             base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
             issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
-            domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
             domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
             expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
             logger.info(
                 f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
-                f"issuer: {issuer_config}, domain-mode: {domain_mode}, domain-format: {domain_format}, "
+                f"issuer: {issuer_config}, domain-format: {domain_format}, "
                 f"expose-component-on-bare-domain: {expose_on_bare_domain}"
             )
 
             # Get ingress map using centralized function
-            hostname_format = HostnameFormat.from_domain_mode(domain_mode)
             ingress_map = get_component_ingress_map(
                 component_name=component_name,
                 deployment_name=deployment_name,
@@ -5576,7 +5713,6 @@ class ProjectManager:
                 ingress_postfix=ingress_postfix,
                 subdomain=subdomain,
                 base_domain=base_domain,
-                hostname_format=hostname_format,
                 domain_format=domain_format,
                 project_data=project_data,
                 cluster=settings.CLUSTER_MANAGER,
@@ -5694,11 +5830,13 @@ class ProjectManager:
                 get_secret=self._get_secret_from_map,
                 component_def=component_def,
             )
-            manifest_contributions = [
-                provider.contribute_manifest_context(manifest_ctx)
-                for provider in manifest_services()
-                if any(t.value in all_services for t in provider.manifest_activation_types())
-            ]
+            manifest_contributions = collect_manifest_contributions(
+                manifest_ctx,
+                component_services=all_services,
+                project_services=ServiceAdapter.extract_service_names_from_project_services(
+                    project_data.get("services", []) or []
+                ),
+            )
 
             # Build envFrom secrets list based on services used and user env vars
             # This list determines which secrets are referenced in the deployment manifest
@@ -5835,13 +5973,9 @@ class ProjectManager:
             # config_handler.add_custom_config(component_name, "unique_name", unique_name)
 
             # Merge each service's manifest contribution into the template context
-            # (RC-5 Phase 6b): sidecars are additive, template_vars override base keys
-            # (auth-wall sets authorization_wall + service_port 8080 -> 4180). The
-            # contributions were collected once, above, before the dict was built.
-            for contribution in manifest_contributions:
-                variables.update(contribution.template_vars)
-                if contribution.sidecars:
-                    variables.setdefault("sidecars", []).extend(contribution.sidecars)
+            # (RC-5 Phase 6b). The contributions were collected once, above, before the
+            # dict was built; the merge semantics per field live with the function.
+            apply_manifest_contributions(variables, manifest_contributions)
 
             # Auth-wall observability: the provider contributes nothing when a component
             # asks for an auth wall but no keycloak secret is provisioned (old warn path).
@@ -6062,24 +6196,23 @@ class ProjectManager:
                                 f"Successfully created {manifest_file} manifest for {ingress_hostname}{path_value}: {manifest_file_path}"
                             )
 
-                    # Create root ingress for nice-url mode if this is the root component.
-                    # When domain-format is set, skip root ingress if the template does not
-                    # include {component} (all components already share the same hostname).
+                    # Create the root ingress (``subdomain.base-domain``) when this is the
+                    # root component of a dotted component-per-subdomain layout. Keyed on
+                    # domain-format: the legacy ``domain-mode: nice-url`` files were
+                    # migrated to ``component.subdomain`` (schema v2.8), and only the
+                    # dotted formats WITH a component segment carry a root address next to
+                    # the per-component ones.
                     # The root ingress composes ``subdomain.base-domain`` itself instead of
                     # asking get_component_ingress_map, so the approval fallback that moves
                     # the components to the cluster address does not reach it. Without this
                     # check an unapproved domain still got an apex-style ingress plus a
                     # certificate request for a domain nobody granted this project.
                     is_root_component = component_name == root_component_name
-                    template_has_component = (
-                        "{component}" in DOMAIN_FORMAT_TEMPLATES.get(domain_format, "") if domain_format else True
-                    )
                     if (
-                        domain_mode == "nice-url"
+                        domain_format in ROOT_COMPONENT_FORMAT_IDS
                         and subdomain
                         and base_domain
                         and is_root_component
-                        and template_has_component
                         and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
                     ):
                         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
@@ -6989,7 +7122,10 @@ class ProjectManager:
             project_data = await self.get_contents()
             project_name = await self.get_name()
 
-            # Validate that all component references exist in the project
+            # Validate that all component references exist in the project.
+            # Bewust dubbel: het v2-endpoint doet dezelfde controle synchroon om een fout van
+            # de aanroeper als 400 terug te geven, maar tussen aanname en uitvoering van de
+            # taak kan het projectbestand veranderen, dus hier blijft het vangnet staan.
             validation_result = self._validate_component_references(project_data, components, "deployment")
             if not validation_result["success"]:
                 return {
@@ -7387,34 +7523,12 @@ class ProjectManager:
                     "error_type": "invalid_deployments",
                 }
 
-            # Validate path uniqueness per target deployment
+            # Validate root component constraints per target deployment
             for deployment in existing_deployments:
                 dep_name = deployment.get("name")
                 if dep_name not in deployment_names:
                     continue
-                domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE, "component-specific")
 
-                # Collect existing component paths in this deployment
-                existing_paths = []
-                for comp_ref in deployment.get("components", []):
-                    comp_ref_name = comp_ref.get("reference")
-                    if comp_ref_name:
-                        for comp_def in existing_components:
-                            if comp_def.get("name") == comp_ref_name:
-                                existing_paths.append(comp_def.get("path", "/"))
-                                break
-
-                # Validate path uniqueness (including the new component)
-                try:
-                    validate_component_paths([*existing_paths, path], domain_mode)
-                except ComponentValidationError as e:
-                    return {
-                        "success": False,
-                        "error": str(e),
-                        "error_type": "validation_error",
-                    }
-
-                # Validate root component constraints
                 if root:
                     dep_component_names = [
                         c.get("reference") for c in deployment.get("components", []) if c.get("reference")
@@ -7423,7 +7537,6 @@ class ProjectManager:
                         validate_root_component(
                             name,
                             [*dep_component_names, name],
-                            domain_mode,
                             get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
                         )
                     except ComponentValidationError as e:
@@ -7722,8 +7835,15 @@ class ProjectManager:
                 )
 
             if cpu_limit is not None or memory_limit is not None:
-                resources = component.setdefault("resources", {})
-                apply_resource_limits(resources, cpu_limit=cpu_limit, memory_limit=memory_limit)
+                # Through the shared user-intent path: a limit set here has to beat any
+                # override the tuner wrote for this component, and be remembered as the
+                # user's own value (RC-141). The API knows limits only, never requests.
+                self._project_file_handler.apply_user_resource_intent(
+                    project_data,
+                    name,
+                    {"limits_cpu": cpu_limit, "limits_memory": memory_limit},
+                    origin="api",
+                )
 
             await self.save_and_commit_project(project_data, f"Update component '{name}' in project '{project_name}'")
 
@@ -8495,28 +8615,6 @@ class ProjectManager:
                     "success": False,
                     "error": f"Component '{component_name}' is already in deployment '{deployment_name}'",
                     "error_type": "duplicate_component_in_deployment",
-                }
-
-            # Validate path uniqueness
-            domain_mode = get_domain_setting(target_deployment, DomainSetting.DOMAIN_MODE, "component-specific")
-            new_path = component_def.get("path", "/")
-
-            existing_paths = []
-            for comp_ref in target_deployment.get("components", []):
-                comp_ref_name = comp_ref.get("reference")
-                if comp_ref_name:
-                    for existing_comp in existing_components:
-                        if existing_comp.get("name") == comp_ref_name:
-                            existing_paths.append(existing_comp.get("path", "/"))
-                            break
-
-            try:
-                validate_component_paths([*existing_paths, new_path], domain_mode)
-            except ComponentValidationError as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "error_type": "validation_error",
                 }
 
             # Normalize image

@@ -10,6 +10,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
 import httpx
 
 if TYPE_CHECKING:
@@ -37,6 +38,7 @@ from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
+from opi.core.no_mail_reconciler import reconcile_no_mail_records
 from opi.core.project_schema import check_schema_versions
 from opi.core.version import set_running_image
 from opi.manager.project_manager import ProjectManager, create_project_manager
@@ -400,6 +402,56 @@ async def keycloak_client_exists_and_works() -> bool:
     return await ensure_keycloak_credentials()
 
 
+async def ensure_platform_mail_account() -> bool:
+    """Make sure ZAD's own account exists on the mail relay.
+
+    Here and not in a project run, because ZAD is not a project: it has no project file to
+    hang an account on and no processing cycle that would create one. Setting up the relay
+    is when the platform account belongs, and a boot IS that moment -- it repeats harmlessly
+    and repairs an account that was removed by hand.
+
+    Non-critical: a cluster without a relay simply has no platform mail yet, and that must
+    not stop OPI from booting. What it does block is password reset and invite mail, which
+    is why the outcome is logged either way.
+
+    "Non-critical" only holds if every way this can fail is caught HERE: ``server.py`` awaits
+    ``run_startup_tasks`` without a guard, so an exception escaping this function takes the
+    boot down and phases 4 and 5 (Keycloak, OAuth) never run. A relay that is configured but
+    unreachable does not raise ``MailRelayError`` -- aiohttp raises its own
+    ``ClientConnectorError`` before there is any HTTP answer to turn into one. So catch what
+    ``check_minio_availability`` right below catches too: the transport errors as well, and
+    the kubectl failure from writing the account's Secret (a cluster where that is refused
+    must still boot).
+
+    That last one has two shapes, and both are normal on a fresh cluster: kubectl raises
+    ``KubectlConnectionError`` -- NOT a subclass of ``KubectlExecutionError`` -- when the
+    API server is unreachable, which is exactly the state its own retry loop exists for.
+    And ``create_mail_connector`` decrypts ``MAIL_RELAY_ADMIN_PASSWORD``, so an admin
+    password that is not (yet) decryptable arrives here as a plain ``ValueError``; the
+    first boot after someone sets ``MAIL_RELAY_API_URL`` is the likely moment for it.
+    """
+    from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
+    from opi.connectors.mail import MailRelayError
+    from opi.manager.mail_manager import MailManager
+
+    try:
+        account = await MailManager.ensure_platform_account()
+    except (
+        MailRelayError,
+        KubectlExecutionError,
+        KubectlConnectionError,
+        ValueError,
+        aiohttp.ClientError,
+        OSError,
+    ) as error:
+        logger.error(f"Platform-mailaccount kon niet worden ingericht: {error}")
+        return False
+    if account is None:
+        return False
+    logger.info(f"Platform-mailaccount {account.username} staat klaar ({account.from_address})")
+    return True
+
+
 async def check_minio_availability() -> bool:
     """
     Check MinIO CLI availability and basic functionality.
@@ -712,6 +764,10 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     if not skip_checks:
         await check_minio_availability()
 
+    # Phase 3b: ZAD's own SMTP account (non-critical, no retry)
+    if not skip_checks:
+        await ensure_platform_mail_account()
+
     # Phase 4: Keycloak
     await _setup_keycloak(readiness, skip_checks)
 
@@ -724,6 +780,12 @@ async def run_startup_tasks(app: FastAPI) -> bool:
         await reconcile_caa_records()
     except Exception as e:  # non-critical: DNS hygiene must never block boot
         logger.error(f"CAA reconciliation failed: {e}")
+
+    # Phase 7: no-mail records on the names we publish ourselves (non-critical)
+    try:
+        await reconcile_no_mail_records()
+    except Exception as e:  # non-critical: DNS hygiene must never block boot
+        logger.error(f"No-mail reconciliation failed: {e}")
 
     if readiness.is_ready:
         logger.info("All startup tasks completed successfully")

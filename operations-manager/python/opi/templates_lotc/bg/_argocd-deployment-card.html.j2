@@ -216,6 +216,29 @@
                 </c-cluster>
             {% endif %}
 
+            {# Waarom niet groen: de resources die de badges van groen afhouden, met reden.
+               Dit zijn afwijkingen, geen problemen - die staan hieronder bij de fouten.
+               Alleen aanwezig bij een afwijking, dus een gezonde kaart rendert als voorheen. #}
+            {% set deviations = status.get('deviations', []) %}
+            {% if deviations %}
+                <c-stack gap="xs">
+                    <c-cluster gap="xs" align="center">
+                        <c-icon icon="info-circle" size="sm" />
+                        {% if sync == 'OutOfSync' and status.get('operation_phase') == 'Succeeded' %}
+                            <c-span>Laatste sync geslaagd, maar {{ deviations|length }} {% if deviations|length == 1 %}resource wijkt{% else %}resources wijken{% endif %} nog af</c-span>
+                        {% else %}
+                            <c-span>Waarom niet groen</c-span>
+                        {% endif %}
+                    </c-cluster>
+                    {% for deviation in deviations[:5] %}
+                        <c-paragraph size="sm">{{ deviation.resource }}: {{ deviation.reason }}</c-paragraph>
+                    {% endfor %}
+                    {% if deviations|length > 5 %}
+                        <c-paragraph size="sm">en {{ deviations|length - 5 }} meer</c-paragraph>
+                    {% endif %}
+                </c-stack>
+            {% endif %}
+
             {# De knop "View Logs", en alleen zolang er iets draait: een slapende of
                uitgeschakelde deployment heeft geen pods en dus geen logs, en dan suggereert
                de knop iets dat er niet is. Die vlag heet expects_no_pods en komt uit dezelfde

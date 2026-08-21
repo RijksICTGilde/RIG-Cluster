@@ -96,12 +96,31 @@ class TestTheHintForTheServicesStep:
         assert SERVICES[ServiceType.PLATFORM].config_layers() == []
         assert project_step_config_hint(ServiceType.PLATFORM) is None
 
-    def test_more_than_one_layer_is_phrased_as_one_sentence(self) -> None:
-        # user-env-vars carries config on the component AND deployment-component layer.
+    def test_more_than_one_layer_reads_as_one_phrase(self) -> None:
+        """Meer lagen worden EEN korte aanduiding van de dimensies, zonder opsomming.
+
+        Dit was eerst een hele zin, daarna een opsomming met "en" ertussen, en allebei waren
+        te lang voor een pil op een dienstkaart. Er zijn maar twee dingen waarop je iets
+        instelt - een component en een deployment - en de laag ertussen (een component
+        BINNEN een deployment) is de combinatie, dus die telt voor allebei mee.
+
+        user-env-vars draagt configuratie op de component-laag en op de
+        component-in-deployment-laag; samen levert dat precies die twee dimensies op.
+        """
         hint = project_step_config_hint(ServiceType.USER_ENV_VARS)
-        assert hint is not None
-        assert " en " in hint
-        assert hint.count(";") == 1
+        assert hint == "per component per deployment", hint
+
+    def test_een_dimensie_wordt_niet_herhaald(self) -> None:
+        """publish-on-web draagt op alle drie de lagen iets, en dat blijft twee woordparen.
+
+        Zonder ontdubbeling gaf dat "per component per component per deployment per
+        deployment", en dat is precies waar de inkorting vandaan komt.
+        """
+        hint = project_step_config_hint(ServiceType.PUBLISH_ON_WEB)
+        assert hint == "per component per deployment", hint
+
+    def test_een_enkele_laag_blijft_twee_woorden(self) -> None:
+        assert project_step_config_hint(ServiceType.HEALTH_CHECK) == "per component"
 
     def test_the_string_form_takes_a_project_file_name(self) -> None:
         assert config_hint_for_value("health-check") == project_step_config_hint(ServiceType.HEALTH_CHECK)
@@ -157,10 +176,12 @@ class TestTheCardsShowIt:
 
     def test_a_project_configurable_service_carries_no_line(self) -> None:
         html = self._render(["sleep-mode"])
-        assert "Geen projectbrede instellingen" in html  # from the other cards
+        andere = project_step_config_hint(ServiceType.HEALTH_CHECK)
+        assert andere is not None
+        assert andere in html  # from the other cards
         # ... but not on sleep-mode's own card, which does get a config step.
         sleep_card = html.split('data-service="sleep-mode"', 1)[1].split("</div>", 3)[0]
-        assert "Geen projectbrede instellingen" not in sleep_card
+        assert andere not in sleep_card
 
     def test_system_services_have_no_card_to_carry_a_hint(self) -> None:
         # user-env-vars and aliases are in the measured set but are never offered as a
@@ -229,9 +250,24 @@ class TestEenVergrendeldeDienstOverleeftHetVersturen:
         html = self._render(["keycloak", "publish-on-web"])
         assert "service-card--locked-checked" in html
         card = self._card(html, "publish-on-web")
-        assert "Vereist door:" in card
         # Vanaf het eerste beeld, niet pas nadat de JS een keuze heeft gezien.
         assert 'aria-disabled="true"' in card
+
+    def test_de_reden_staat_niet_in_de_kaart(self) -> None:
+        """De regel "Vereist door ..." hoort niet IN de kaart.
+
+        Hij stond er wel, en verscheen en verdween met het slot. Omdat de kaarten van een
+        rij even hoog zijn en het aanvinkvakje aan de onderrand hangt, sprongen daardoor
+        ALLE vakjes van die rij zodra er een regel bijkwam. Zo ook gemeld.
+
+        De reden wordt nu verteld op het moment dat je hem nodig hebt: als je een
+        vergrendelde dienst probeert uit te vinken, in de dialoog naast het raster. Zie
+        static/js/wizard.js (slotReden/zegWaarom) en
+        tests/e2e/test_dienstkaarten_uitlijning.py.
+        """
+        html = self._render(["keycloak", "publish-on-web"])
+        assert "Vereist door" not in html, "deze regel laat de aanvinkvakjes verspringen"
+        assert "nldd-modal-dialog" in html, "dan moet de dialoog die de reden vertelt er wel zijn"
 
     def test_een_niet_vergrendelde_kaart_zegt_dat_ook(self) -> None:
         card = self._card(self._render(["keycloak", "publish-on-web"]), "redis")

@@ -206,9 +206,65 @@ function kvToggleFormat(editorId, newFormat) {
 
 function initServiceCards(grid) {
     if (!grid || grid.dataset.initialized) return;
+
+    /*
+     * ALLEEN EEN RASTER MET ECHTE DIENSTKAARTEN.
+     *
+     * De VOORINSTELLINGEN ("Snelstart: kies een scenario") gebruiken dezelfde klassen -
+     * .service-cards-grid en .service-card - want ze zien eruit als dienstkaarten. Maar ze
+     * dragen geen data-service: een voorinstelling is geen dienst, hij stuurt bij een klik
+     * zijn eigen hx-post en heeft geen afhankelijkheden en geen slot.
+     *
+     * Zonder deze poort liep dat raster toch door de dienstenlogica heen. Dat was lang
+     * onzichtbaar, want de melding bij een vergrendelde kaart werd uit een regel IN de kaart
+     * gelezen en die stond er niet. Sinds de melding zijn tekst zelf opbouwt kwam er wel
+     * iets: "undefined is vereist en kan niet worden uitgezet", op een voorinstelling
+     * aanklikken. Gemeld op de keycloak-configuratiestap.
+     */
+    if (!grid.querySelector('.service-card[data-service]')) return;
+
     grid.dataset.initialized = 'true';
 
     var processing = false;
+
+    /* De dialoog die uitlegt waarom een dienst vastzit. Hij staat naast het raster in
+       widgets/service_cards.html.j2, met een id afgeleid van dezelfde veldnaam. */
+    var melding = document.getElementById(String(grid.id || '').replace(/-grid$/, '-melding'));
+
+    /*
+     * ZEGGEN WAAROM, IN DE DIALOOG VAN HET THEMA.
+     *
+     * Hier stond window.alert(). Dat is een systeemvenster: het draagt de naam van de host,
+     * het weet niets van de vormgeving, en het bevriest de hele pagina tot je klikt. Zo ook
+     * gemeld. <nldd-modal-dialog> draait op een echte <dialog> met showModal(), dus de
+     * toplaag, de focus en Escape komen van de browser, en hij ziet eruit als de rest.
+     *
+     * Valt terug op alert() als de dialoog er niet is: dan is er iets mis met het sjabloon,
+     * en dan is een lelijke melding beter dan een klik die stil niets doet.
+     */
+    function zegWaarom(tekst) {
+        /* Een dialoog van deze lijst, en anders de eerste op de pagina: een melding hoort
+           er overal hetzelfde uit te zien, en nooit een systeemvenster te worden omdat een
+           sjabloon zijn eigen dialoog niet meebracht. */
+        var venster = melding || document.querySelector('nldd-modal-dialog');
+        if (!venster || typeof venster.show !== 'function') {
+            alert(tekst);
+            return;
+        }
+        melding = venster;
+        melding.setAttribute('text', 'Deze dienst is vereist');
+        melding.setAttribute('supporting-text', tekst);
+        melding.show();
+    }
+
+    /* De reden dat een dienst vastzit, in woorden. Stond als regel IN de kaart; daar liet
+       hij bij het verschijnen alle aanvinkvakjes van de rij verspringen. */
+    function slotReden(svc) {
+        var requirers = getReverseDeps()[svc] || [];
+        var namen = requirers.map(function (r) { return getLabel(r); });
+        if (!namen.length) return getLabel(svc) + ' is vereist en kan niet worden uitgezet.';
+        return getLabel(svc) + ' is vereist door ' + namen.join(', ') + ' en kan niet worden uitgezet.';
+    }
 
     /* step 1: build requiresMap from data-requires attrs */
     var requiresMap = {};
@@ -225,36 +281,80 @@ function initServiceCards(grid) {
     function getCard(svc) {
         return grid.querySelector('[data-service="' + svc + '"]');
     }
+    /*
+     * HET BESTURINGSELEMENT IS HET COMPONENT, NIET EEN <input>.
+     *
+     * Hier stond querySelector('input[type="checkbox"]'), en dat vond de kale <input> die
+     * de kaart vroeger zelf meebracht. De kaart is nu een <c-card> met een <c-checkbox>,
+     * en dat wordt onder NLDD een <nldd-checkbox-field>: form-associated, met zijn echte
+     * <input> twee schaduwbomen diep. Een selector op input vindt daar niets - dat is
+     * precies waar de vorige poging op strandde.
+     *
+     * Het element zelf draagt .checked als eigenschap: lezen en zetten werkt er gewoon op,
+     * en het stuurt zijn waarde mee via ElementInternals (voor htmx rechtgezet in
+     * static/js/form-associated.js). Zie features/aanvinkvakje.md.
+     */
+    var VAKJE = 'nldd-checkbox-field, nldd-checkbox, input[type="checkbox"]';
     function getCheckbox(svc) {
         var card = getCard(svc);
-        return card ? card.querySelector('input[type="checkbox"]') : null;
+        return card ? card.querySelector(VAKJE) : null;
     }
     function isChecked(svc) {
         var cb = getCheckbox(svc);
-        return cb ? cb.checked : false;
+        return cb ? !!cb.checked : false;
     }
     /**
-     * Set a checkbox checked state and sync the ROOS label class.
-     * ROOS renders: <label class="rvo-checkbox rvo-checkbox--not-checked">
-     *                  <input type="checkbox" ...>
-     *               </label>
-     * Setting .checked directly doesn't update the label class.
+     * Een geweigerde klik ONGEDAAN MAKEN, EEN TIK LATER.
+     *
+     * Hier stond een herstel binnen dezelfde gebeurtenis, en dat leverde een stille desync
+     * op. Gemeten in de browser, stap voor stap, met de schaduwboom erbij:
+     *
+     *     na de geweigerde klik : host checked=true,  eigen <input> checked=false
+     *     volgende klik         : <input> gaat naar true, host blijft true -> er gebeurt NIETS
+     *     de klik daarna        : nu weer gelijk, en pas dan werkt uitvinken
+     *
+     * Zo voelde het ook: een vergrendelde dienst leek uit te kunnen, en daarna reageerde het
+     * vakje een klik lang niet.
+     *
+     * Waar het vandaan komt: bij een klik zet het component zijn eigen `checked` op false en
+     * plant het een hertekening. Zetten wij `checked` in diezelfde gebeurtenis terug op true,
+     * dan ziet die hertekening dezelfde waarde als de vorige keer en schrijft hij niets -
+     * terwijl de browser het vakje in de schaduwboom al had uitgezet.
+     *
+     * Een tik later is de hertekening geweest en is false->true wel een echte wijziging, dus
+     * schrijft het component zijn eigen vakje bij. `processing` blijft tot dan aanstaan, zodat
+     * de change die daaruit volgt niet opnieuw door de handler loopt.
+     *
+     * Dit patroon komt terug bij elk component dat zijn besturingselement in een schaduwboom
+     * tekent. Het staat uitgeschreven in features/aanvinkvakje.md, onder "Het vakje vanuit
+     * eigen JavaScript aansturen": welke drie standen het eens moeten zijn, wat wel en niet
+     * werkt, en hoe je het meet.
      */
+    function herstelVakje(svc, klaar) {
+        setTimeout(function () {
+            setChecked(svc, true);
+            updateAllVisuals();
+            klaar();
+        }, 0);
+    }
+
+    /** De stand zetten op het vakje, plus het gekozen vlak van de kaart eromheen. */
     function setChecked(svc, checked) {
         var cb = getCheckbox(svc);
-        if (!cb) return;
-        cb.checked = checked;
-        var label = cb.closest('label[data-roos-component="checkbox"]');
-        if (label) {
-            label.classList.toggle('rvo-checkbox--checked', checked);
-            label.classList.toggle('rvo-checkbox--not-checked', !checked);
-        }
+        if (cb) cb.checked = checked;
+        syncKaart(svc, checked);
     }
+    /* Het GEKOZEN VLAK is het background-attribuut van <nldd-card>, geen eigen klasse met
+       een eigen kleur: de kaart tekent zichzelf, wij zeggen alleen welke stand hij heeft. */
+    function syncKaart(svc, checked) {
+        var card = getCard(svc);
+        if (card) card.setAttribute('background', checked ? 'tinted' : 'base');
+    }
+    /* De naam staat op de kaart in data-label en niet op het aanvinkvakje: dat draagt
+       "Gebruiken" als label, want de naam staat al als kop in de kaart. */
     function getLabel(svc) {
-        var c = getCard(svc);
-        if (!c) return svc;
-        var t = c.querySelector('.service-card__title');
-        return t ? t.textContent.trim() : svc;
+        var card = getCard(svc);
+        return (card && card.dataset.label) || svc;
     }
 
     /* step 2: reverse map (recomputed on every change) */
@@ -294,49 +394,39 @@ function initServiceCards(grid) {
             var cb = getCheckbox(svc);
             var checked = cb ? cb.checked : false;
 
-            if (checked) {
-                card.classList.add('service-card--selected');
-            } else {
-                card.classList.remove('service-card--selected');
-            }
+            card.classList.toggle('service-card--selected', checked);
+            syncKaart(svc, checked);
 
             var requirers = revDeps[svc] || [];
             var serverLocked = card.dataset.locked === 'true';
             var locked = checked && (requirers.length > 0 || serverLocked);
 
-            if (locked) {
-                card.classList.add('service-card--locked-checked');
-            } else {
-                card.classList.remove('service-card--locked-checked');
-            }
+            card.classList.toggle('service-card--locked-checked', locked);
 
-            if (cb) {
-                /* Bewust GEEN cb.disabled = locked. Vergrendeld betekent "niet aanpasbaar",
-                   en disabled betekent daarnaast "niet versturen" -- dat tweede bedoelen we
-                   niet, en juist daardoor viel een vergrendelde dienst uit de POST. Het slot
-                   wordt bewaakt door de change-handler hieronder (die de wijziging
-                   terugdraait) en door de server. */
+            /* Bewust GEEN disabled op het vakje. Vergrendeld betekent "niet aanpasbaar",
+               en disabled betekent daarnaast "niet versturen" -- dat tweede bedoelen we
+               niet, en juist daardoor viel een vergrendelde dienst uit de POST. Het slot
+               wordt bewaakt door de change-handler hieronder (die de wijziging terugdraait)
+               en door de server.
+
+               aria-disabled op ALLEBEI. Hier stond alleen de kaart, met als reden "dat is
+               het element met role=checkbox dat een schermlezer voorleest" -- en die reden
+               klopt sinds de omzetting naar componenten niet meer: de kaart is een
+               <nldd-card> zonder rol, en de bediening is het vakje. De kaart houdt het
+               attribuut (het geheel staat op slot), het VAKJE krijgt het terug. Het
+               sjabloon zet dezelfde twee bij het renderen; zie widgets/_macros.html.j2 voor
+               wat <nldd-checkbox> er vandaag wel en niet mee doet. */
+            card.setAttribute('aria-disabled', locked ? 'true' : 'false');
+            /* Niet op een vakje dat AL disabled is: aria-disabled="false" naast een
+               disabled is een tegenspraak. Zelfde regel als in het sjabloon. */
+            if (cb && cb.setAttribute && !cb.disabled) {
                 cb.setAttribute('aria-disabled', locked ? 'true' : 'false');
-                syncLabel(cb);
             }
 
-            /* Only the dependency hint: a card can carry other hint lines (e.g. where a
-               service without project-wide settings IS configured), and matching on the
-               shared class alone removed those on the first update. */
-            var hint = card.querySelector('.service-card__hint--depends');
-            if (locked) {
-                var labels = requirers.map(function(r) { return getLabel(r); });
-                var text = 'Vereist door: ' + labels.join(', ');
-                if (!hint) {
-                    hint = document.createElement('p');
-                    hint.className = 'service-card__hint service-card__hint--depends';
-                    var content = card.querySelector('.service-card__content');
-                    if (content) content.appendChild(hint);
-                }
-                hint.textContent = text;
-            } else {
-                if (hint) hint.remove();
-            }
+            /* GEEN REGEL MEER IN DE KAART. Die verscheen en verdween met het slot, en
+               omdat de kaarten van een rij even hoog zijn en het vakje aan de onderrand
+               hangt, sprongen alle vakjes van die rij mee. De reden wordt nu verteld op
+               het moment dat je hem nodig hebt, in zegWaarom(). */
         });
     }
 
@@ -353,63 +443,78 @@ function initServiceCards(grid) {
         updateAllVisuals();
     }
 
-    /* Zet de ROOS-labelklasse gelijk aan de stand van de checkbox. */
-    function syncLabel(cb) {
-        var label = cb.closest('label[data-roos-component="checkbox"]');
-        if (!label) return;
-        label.classList.toggle('rvo-checkbox--checked', cb.checked);
-        label.classList.toggle('rvo-checkbox--not-checked', !cb.checked);
-    }
-
-    /* change event from native checkbox click */
+    /*
+     * DE RIJ MELDT ZIJN EIGEN WIJZIGING.
+     *
+     * <nldd-list-item checkbox> handelt de klik op de hele rij en de toetsenbordbediening
+     * zelf af, zet daarna zijn eigen `checked` en stuurt een change-gebeurtenis omhoog.
+     * Er is hier dus geen eigen klikafhandeling meer nodig - die stond er alleen omdat de
+     * kaart eromheen onze eigen <div> was en zelf niets kon.
+     *
+     * Wat wij nog doen is de stand overnemen in het verborgen aanvinkvakje (de waarde die
+     * het formulier verstuurt), het slot bewaken, en de afhankelijkheden bijwerken.
+     */
+    /*
+     * HET VAKJE MELDT ZIJN EIGEN WIJZIGING.
+     *
+     * <nldd-checkbox-field> handelt de klik en de toetsenbordbediening zelf af en stuurt
+     * daarna een change omhoog. Er is hier geen eigen klikafhandeling meer: die stond er
+     * alleen omdat de kaart eromheen onze eigen <div> was en zelf niets kon. Wat wij nog
+     * doen is het slot bewaken en de afhankelijkheden bijwerken.
+     */
     grid.addEventListener('change', function(e) {
         if (processing) return;
-        var card = e.target.closest('.service-card');
+        var card = e.target.closest ? e.target.closest('.service-card') : null;
         if (!card) return;
         var svc = card.dataset.service;
+        var aan = isChecked(svc);
 
-        /* Hier is het slot een slot. De checkbox is niet disabled -- anders zou hij zijn
+        /* Hier is het slot een slot. Het vakje is niet disabled -- anders zou het zijn
            waarde niet versturen -- dus wordt het uitvinken teruggedraaid en wordt gezegd
            waarom. */
-        if (card.classList.contains('service-card--locked-checked') && !e.target.checked) {
+        if (card.classList.contains('service-card--locked-checked') && !aan) {
             processing = true;
-            e.target.checked = true;
-            syncLabel(e.target);
-            processing = false;
-            var slotHint = card.querySelector('.service-card__hint--depends');
-            if (slotHint) alert(slotHint.textContent);
+            herstelVakje(svc, function () { processing = false; });
+            zegWaarom(slotReden(svc));
             return;
         }
 
         processing = true;
-        syncLabel(e.target);
+        syncKaart(svc, aan);
         handleToggle(svc);
         processing = false;
     });
 
-    /* Make entire card clickable */
+    /*
+     * DE HELE KAART IS EEN KLIKDOEL.
+     *
+     * Het aanvinkvakje bedient zichzelf, maar een kaart van 300 bij 120 waarvan alleen het
+     * vakje links reageert is een klein doel met veel dood vlak eromheen. Deze handler
+     * maakt de rest van de kaart een tweede ingang naar hetzelfde vakje.
+     *
+     * Programmatisch .checked zetten stuurt GEEN change-gebeurtenis (dat is zo voor een
+     * gewone <input> en ook voor dit component), dus de afhankelijkheden worden hier zelf
+     * bijgewerkt in plaats van via de handler hierboven.
+     */
     grid.querySelectorAll('.service-card').forEach(function(card) {
         card.addEventListener('click', function(e) {
-            /* Let the native checkbox/label and help icon handle their own clicks */
-            if (e.target.closest('input[type="checkbox"]') ||
-                e.target.closest('label[data-roos-component="checkbox"]') ||
-                e.target.closest('.service-card__help-btn')) return;
+            /* Het vakje en het vraagteken handelen hun eigen klik af. Zonder deze uitzondering
+               zet de kaart het vakje meteen weer terug. */
+            if (e.target.closest('nldd-checkbox-field, nldd-checkbox, .service-card__help-btn')) return;
             if (processing) return;
 
+            var svc = card.dataset.service;
             if (card.classList.contains('service-card--locked-checked')) {
-                var hint = card.querySelector('.service-card__hint--depends');
-                if (hint) alert(hint.textContent);
+                zegWaarom(slotReden(svc));
                 return;
             }
 
-            var svc = card.dataset.service;
             var cb = getCheckbox(svc);
-            if (cb && !cb.disabled) {
-                processing = true;
-                setChecked(svc, !cb.checked);
-                handleToggle(svc);
-                processing = false;
-            }
+            if (!cb || cb.disabled) return;
+            processing = true;
+            setChecked(svc, !cb.checked);
+            handleToggle(svc);
+            processing = false;
         });
     });
 }
@@ -417,6 +522,8 @@ function initServiceCards(grid) {
 /* ========================================================================
  * Service help modal
  * ======================================================================== */
+
+var focusVoorHulp = null;
 
 function openServiceHelp(templateName) {
     var backdrop = document.getElementById('service-help-backdrop');
@@ -428,6 +535,11 @@ function openServiceHelp(templateName) {
     backdrop.classList.add('is-open');
     modal.classList.add('is-open');
     document.body.style.overflow = 'hidden';
+    /* De focus MOET de dialoog in. Page Up/Page Down scrollen het scrollgebied van het
+       element dat focus heeft; die bleef op de vraagtekenknop staan, dus scrollde de
+       pagina eronder en niet deze dialoog. Zie ook static/js/edit_modal.js. */
+    focusVoorHulp = document.activeElement;
+    modal.focus();
 
     /* A service's help text is addressed as "<service-package>/help.md", so
        encode per path segment -- encodeURIComponent would escape the separator. */
@@ -456,6 +568,10 @@ function closeServiceHelp() {
     if (backdrop) backdrop.classList.remove('is-open');
     if (modal) modal.classList.remove('is-open');
     document.body.style.overflow = '';
+    if (focusVoorHulp && typeof focusVoorHulp.focus === 'function') {
+        focusVoorHulp.focus();
+    }
+    focusVoorHulp = null;
 }
 
 document.addEventListener('keydown', function(e) {
@@ -467,19 +583,16 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
-/* ========================================================================
- * Scroll to first validation error after form submission
- * ======================================================================== */
-
-function scrollToFirstError(container) {
-    container = container || document;
-    var el = container.querySelector('[aria-invalid="true"]')
-          || container.querySelector('.rvo-form-field__error-text, .lotc-form-field__error-text')
-          || container.querySelector('[data-roos-component="alert"]');
-    if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-}
+/* NAAR DE EERSTE FOUT: die staat niet meer hier.
+ *
+ * Er stond een scrollToFirstError() die na elke swap naar de eerste fout sprong, en
+ * static/js/htmx-formgedrag.js zette na diezelfde swap de cursor terug waar hij was. Twee
+ * luisteraars op een gebeurtenis die allebei de focus zetten, waarbij de laatst
+ * geregistreerde won. Op een stap met een openstaande fout werd je daardoor bij elke swap
+ * uit je veld getrokken.
+ *
+ * Waar de focus na een swap heen gaat is EEN beslissing, en die staat nu op een plek: in
+ * htmx-formgedrag.js, bij het herstel dat er al was. Zie de toelichting daar. */
 
 /* ========================================================================
  * Initialization: on page load and after HTMX swaps
@@ -497,7 +610,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
 document.addEventListener('htmx:afterSettle', function(event) {
     initWizardWidgets(event.detail.target);
-    scrollToFirstError(event.detail.target);
 
     /* Clean up the _rerender hidden field after a re-render swap completes,
        so the next regular form submit is not treated as another re-render. */

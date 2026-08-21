@@ -1,0 +1,48 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-prd-ron
+
+generators:
+  - decrypt-sops.yaml
+
+resources:
+  - ../../base
+  - network-policies/mail-relay-networkpolicy.yaml
+
+patches:
+  # De Namespace uit de base kan hier niet meedoen: de ArgoCD op ODCN draait in
+  # namespaced mode en weigert cluster-scoped resources, en de CMP weigert sowieso te
+  # renderen zolang de doelnamespace niet bestaat. rig-prd-ron komt daarom uit de
+  # BOOTSTRAP (namespace-ron.yaml in bootstrap/rig-system/kustomize/overlays/
+  # odcn-production, aangebracht door task bootstrap-argo-system met kubectl), met
+  # daarop:
+  #   - de RON-koppeling: annotatie egress.projectcalico.org/egressGatewayPolicy:
+  #     rig-ron. Die annotatie is de reden dat de relay een eigen namespace heeft: ze
+  #     neemt exact een waarde, dus RON en internet kunnen niet allebei op dezelfde
+  #     namespace staan (plans/mailrelay.md, aanvulling 2, en docs/ron-koppeling.md);
+  #   - het label argocd.argoproj.io/managed-by: rig-prd-operations, zodat de
+  #     namespaced ArgoCD er RBAC voor krijgt;
+  #   - het secret sops-age-key in die namespace, want de CMP leest hem daar.
+  # (De naam volgt de ODCN-eis dat een namespace met de clusterprefix begint, dus
+  # rig-ron kan daar niet bestaan.)
+  - target:
+      kind: Namespace
+      name: rig-ron
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: rig-ron
+  # OpenShift kent de UID/GID zelf toe uit het toegestane bereik.
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsGroup
+      - op: remove
+        path: /spec/template/spec/securityContext/fsGroup

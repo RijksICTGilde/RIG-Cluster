@@ -37,17 +37,43 @@ DUTCH_MONTHS = [
     "december",
 ]
 
+# De gangbare Nederlandse afkortingen. Niet af te leiden met [:3]: maart is "mrt" en niet
+# "maa". Zie het short_month-argument hieronder.
+DUTCH_MONTHS_SHORT = [
+    "jan",
+    "feb",
+    "mrt",
+    "apr",
+    "mei",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "okt",
+    "nov",
+    "dec",
+]
 
-def format_dutch_date(value: str | datetime | None, include_time: bool = True) -> str:
+
+def format_dutch_date(value: str | datetime | None, include_time: bool = True, short_month: bool = False) -> str:
     """
     Format a date/timestamp in Dutch format.
 
     Args:
         value: ISO timestamp string or datetime object
         include_time: Whether to include time in output
+        short_month: Abbreviate the month to three letters ("17 sep 2026 23:18")
 
     Returns:
         Dutch formatted date string (e.g., "14 januari 2026 17:14")
+
+    ``short_month`` bestaat voor een DICHTE, herhaalde context: de takentabel heeft zes
+    kolommen waarvan er twee een tijdstip tonen, en "18 september 2026 01:40" is daar 174
+    pixels breed tegen 126 afgekort - gemeten in de browser, zie
+    tests/e2e/test_lotc_takentabel_datumkolom.py. Het is met opzet een optie op DIT filter
+    en geen tweede formatteerfunctie: de omrekening naar Europe/Amsterdam en de Nederlandse
+    maandnamen blijven op een plek, precies zoals ``include_time`` dat al doet. Wie een
+    datum in gewone tekst toont, laat hem uitgeschreven.
     """
     if not value:
         return "-"
@@ -85,7 +111,7 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True) -
             dt = dt.astimezone(ZoneInfo("Europe/Amsterdam"))
 
         day = dt.day
-        month = DUTCH_MONTHS[dt.month - 1]
+        month = (DUTCH_MONTHS_SHORT if short_month else DUTCH_MONTHS)[dt.month - 1]
         year = dt.year
 
         if include_time:

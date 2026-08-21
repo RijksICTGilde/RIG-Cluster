@@ -119,6 +119,27 @@ The TLS select leads with an inherit option that **names the mode it would fall 
 to** ("Erven van het component: standaard certificaat ..."), so an empty field reads as
 an inheritance rather than as an absence.
 
+### `provided` needs a certificate to exist first (RC-132)
+
+`provided` terminates a PEM you supply as an attachment, so a project with an **empty
+attachment catalogue** has no value that can satisfy it: the model refuses `tls:
+provided` without an `attachment`, and the attachment picker next to it offers only
+"Geen bijlagen geüpload". Choosing the mode there was a screen you could not save and
+could not repair.
+
+The mode is therefore offered **disabled, with the reason in its label** ("Eigen
+certificaat op de ingress - upload eerst een certificaat bij Bijlagen") while the
+project has no attachments -- not removed, because an option that quietly disappears is
+its own puzzle for whoever comes looking for it. One helper
+(`providers.publish_tls_mode_options`) does this for the component select and the
+per-deployment override alike, so neither layer is a way round the other. Upload a
+certificate on the Bijlagen section and the option is a normal choice again.
+
+This is a form gate, not the security boundary: the model keeps refusing the
+combination, so an API call or a crafted post is rejected exactly as before -- now with
+a message that says what to do ("kies 'Standaard certificaat', of upload eerst een
+certificaat bij Bijlagen en kies die hier") instead of raw pydantic output.
+
 Adding a deployment-component field for another service needs no change to any form: the
 service declares `config_editables(ConfigLayer.DEPLOYMENT_COMPONENT)`,
 `config_deployment_component_visualizers()` and `config_deployment_component_layout()`,

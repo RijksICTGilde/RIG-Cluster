@@ -51,18 +51,8 @@ def _apply_web_address_settings(
     Only settings the user actually chose are written: an absent setting means "inherit",
     and writing an empty one would turn that into an explicit empty value.
     """
-    if project_data.domain_mode == "deployment-name":
-        set_domain_setting(deployment_config, DomainSetting.SUBDOMAIN, deployment_name)
-    elif project_data.domain_mode == "custom" and project_data.subdomain:
-        set_domain_setting(deployment_config, DomainSetting.SUBDOMAIN, project_data.subdomain)
-    elif project_data.domain_mode == "nice-url":
-        set_domain_setting(deployment_config, DomainSetting.DOMAIN_MODE, "nice-url")
-        # For nice-url mode, subdomain is required and globally unique
-        if getattr(project_data, "subdomain", None):
-            set_domain_setting(deployment_config, DomainSetting.SUBDOMAIN, project_data.subdomain)
-    # For "component-specific" mode, don't set a subdomain at all
-
     for setting, value in (
+        (DomainSetting.SUBDOMAIN, getattr(project_data, "subdomain", None)),
         (DomainSetting.BASE_DOMAIN, getattr(project_data, "base_domain", None)),
         (DomainSetting.DOMAIN_FORMAT, getattr(project_data, "domain_format", None)),
         (DomainSetting.ISSUER, getattr(project_data, "issuer", None)),
@@ -72,58 +62,23 @@ def _apply_web_address_settings(
             set_domain_setting(deployment_config, setting, value)
 
 
-def validate_component_paths(component_paths: list[str], domain_mode: str) -> None:
-    """
-    Validate path uniqueness for shared-domain modes.
-
-    When using shared domains (deployment-name, custom), all component paths
-    within a deployment must be unique to enable correct routing.
-
-    Args:
-        component_paths: List of paths from all components in the deployment
-        domain_mode: The deployment's domain mode
-
-    Raises:
-        ValueError: If duplicate paths are found in a shared-domain mode
-    """
-    if domain_mode not in ("deployment-name", "custom"):
-        return
-
-    seen_paths: set[str] = set()
-    duplicate_paths: list[str] = []
-    for path in component_paths:
-        if path in seen_paths:
-            duplicate_paths.append(path)
-        seen_paths.add(path)
-
-    if duplicate_paths:
-        raise ComponentValidationError(
-            f"When using shared domains (domain mode: {domain_mode}), all component paths must be unique. "
-            f"Duplicate paths found: {', '.join(duplicate_paths)}. "
-            f"Please assign different paths to each component (e.g., /, /api, /admin)."
-        )
-
-
 def validate_root_component(
     root_component_name: str | None,
     deployment_component_names: list[str],
-    domain_mode: str,
     domain_format: str | None = None,
 ) -> None:
     """
     Validate root-component constraints on a deployment.
 
     root-component only applies when the deployment's domain setup exposes a root
-    host: the legacy ``nice-url`` domain mode, or a domain-format whose template
-    has a droppable ``{component}`` prefix (``ROOT_COMPONENT_FORMAT_IDS``). On any
-    other format (e.g. the dash formats) it is inert, so a value that was inherited
-    -- a clone copying the source's root-component -- is ignored rather than
-    rejected.
+    host: a domain-format whose template has a droppable ``{component}`` prefix
+    (``ROOT_COMPONENT_FORMAT_IDS``). On any other format (e.g. the dash formats) it
+    is inert, so a value that was inherited -- a clone copying the source's
+    root-component -- is ignored rather than rejected.
 
     Args:
         root_component_name: Value of ``root-component`` on the deployment, or None
         deployment_component_names: Names of components referenced by this deployment
-        domain_mode: The deployment's domain mode (legacy)
         domain_format: The deployment's domain-format id, if set
 
     Raises:
@@ -133,8 +88,7 @@ def validate_root_component(
     if not root_component_name:
         return
 
-    supports_root = domain_mode == "nice-url" or domain_format in ROOT_COMPONENT_FORMAT_IDS
-    if not supports_root:
+    if domain_format not in ROOT_COMPONENT_FORMAT_IDS:
         return
 
     if root_component_name not in deployment_component_names:
@@ -273,7 +227,16 @@ async def build_component_config(
         "uses-components": [],
     }
 
-    # Add resource limits if specified, in the canonical nested form.
+    # Add resource limits if specified, in the canonical nested form. Deliberately NOT
+    # through apply_user_resource_intent (RC-141): that path also records the values as a
+    # wish the tuner has to leave alone, and here they are not one. Creation always carries
+    # both limits -- the wizard prefills 1 CPU / 256Mi and the API defaults to the same --
+    # so routing this through the intent path pinned EVERY new component at its creation
+    # value, with request == limit and no burst headroom, until an OOM-kill or an expiry
+    # that needs usage under half the pinned value. A value nobody chose is not a wish; the
+    # first real edit of the component is, and that one does go through the intent path.
+    # Nothing is lost by writing straight here: a component that does not exist yet has no
+    # deployment override to clear and no history to carry.
     if cpu_limit or memory_limit:
         component_config["resources"] = {}
         apply_resource_limits(component_config["resources"], cpu_limit=cpu_limit, memory_limit=memory_limit)
@@ -576,7 +539,6 @@ async def generate_base_project_file(
         project_description=description,
         cluster=cluster,
         deployment_name="main",
-        domain_mode="component-specific",
         domain_format=None,
         subdomain=None,
         base_domain=None,

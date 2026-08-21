@@ -24,6 +24,12 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | `setup_keycloak_client_scope.py` | Set up custom client scopes (organization-attribute passthrough) for Keycloak clients. |
 | `keycloak_self_service_report.py` | Pre-flight report before disabling the `UPDATE_PASSWORD` required action: per realm, users with that action still pending (they would get stuck at login, blocking, non-zero exit) and federated users who already have a password credential (they keep the SSO bypass, cleanup). Report only. Needs `KEYCLOAK_ADMIN_PASSWORD`; see `features/futures/keycloak-sso-bypass-voorkomen.md`. |
 
+## Mail
+
+| Script | Wat het doet |
+|---|---|
+| `mail_identity_check.py` | Toetst de identiteitsregels van de mailrelay tegen een draaiende sandbox: is de `From:` overschreven met het vaste adres (met en zonder weergavenaam, en bij een kaal adres), draagt de envelope het account in het plusdeel en blijft die in hetzelfde domein, en zijn de `Received`-keten en de verklikkerheaders eraf. Vraagt twee port-forwards (relay 587 en de sink-API 8025) en de inloggegevens van een send-email-account. Zie `features/send-email.md`. |
+
 ## Grafana / observability
 
 | Tool | What it does |

@@ -743,6 +743,7 @@ Every hook a service may implement, so a new service knows what it can own:
 | `api_singular_lists` | config lists this service shows the API as ONE entry (a temporary facade; today only `invite.active`, see `features/service-config-api.md`) |
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `allows_implicit_project_selection` / `implicit_project_config()` | whether binding the service to a component/deployment may also select it at project level, and with what project-level config (RC-84, `features/impliciete-dienstselectie.md`) |
+| `available_on_cluster(cluster)` | whether a cluster can deliver this service at all; read by the wizard's card list AND by `validate_service_availability` at save time |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
@@ -865,14 +866,31 @@ def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribut
     )
 ```
 
-`ManifestContribution` has four fields with two different merge semantics:
+`ManifestContribution` has five fields with two different merge semantics:
 
 | Field | Semantics |
 |---|---|
 | `env_from_secrets` | **Additive**, appended in `manifest_order` |
+| `env_vars` | **Additive** plain (non-secret) env vars, merged into the component's own set in `manifest_order` |
 | `sidecars` | **Additive**, appended in `manifest_order` |
 | `template_vars` | **Override**, `dict.update` on the template context (auth-wall moves `service_port` 8080 to 4180) |
 | `secret_files` | `SecretFileSpec`s the shared writer turns into SOPS secret manifests |
+
+`env_vars` is a field of its own rather than a `template_vars` entry precisely because
+`template_vars` overrides: a service handing out one variable through it would wipe every
+variable the component itself declared. Use it for a value the reader of a manifest should
+be able to see (vlam's in-cluster address); a value that IS a secret goes through
+`secret_files` + `env_from_secrets`, because encrypting a public address only makes it
+harder for its owner to see what the pod was told.
+
+**Who switches the contribution on.** By default the COMPONENT's own `services` list: each
+component decides whether it sits behind login, gets database credentials, is scraped. A
+service that is deployment-bound and has no per-component choice to make sets
+`manifest_activated_by_project = True` and is switched on by the PROJECT's selection --
+without it such a service never contributes at all, because no component ever ticks it.
+The two halves of that rule live in `collect_manifest_contributions` /
+`apply_manifest_contributions` (`opi/manager/project_manager.py`), module-level so they
+can be measured without building a whole deployment.
 
 What you get in `ManifestContext`: `deployment_name`, `project_data`, `unique_name`,
 `cluster`, `component_def` (the resolved component, for component-level config) and
@@ -910,9 +928,9 @@ the on-disk-glob kustomization picks them up. cross-domain-access is the referen
 ## Approvals
 
 A service can declare that a value it manages needs someone's approval before it takes
-effect (`opi/services/catalog/approval.py`). Today only publish-on-web uses it, for domains
-and subdomains, but the mechanism is generic and the approver UI needs no change to pick up
-a new one.
+effect (`opi/services/catalog/approval.py`). publish-on-web uses it for domains and
+subdomains, send-email for the use of the service itself; the mechanism is generic and the
+approver UI needs no change to pick up a new one.
 
 `ApprovalSpec` has these callbacks:
 
@@ -922,6 +940,13 @@ a new one.
 | `list_items` | What is open for the approver? | `collect_approval_items` → the admin approvals page |
 | `record` | Write down this verdict | `apply_approval_verdicts`, which builds the uniform history entry |
 | `notices_for` | What does an ungranted approval mean for this deployment? | `collect_deployment_approval_notices` → the project page |
+
+Each item `list_items` returns carries a `subject`: WHAT is being asked for, in words the
+approver reads (`example.nl`, `foo.example.nl`, "Gebruik van de dienst"). Write it — the
+service is the only thing that knows how to say it. Without one, generic code has to
+assemble the sentence from the fields it happens to know, and that is exactly how a service
+request ended up on the approver page as an empty domain column. `collect_approval_items`
+falls back to `domain` / `name` so an in-flight modal session does not break.
 
 The verdict history (`{date, status, by, message}`) is appended by the spec's `record`; the
 last status wins and the file is the audit trail. The *consequence* of a verdict is service
@@ -946,6 +971,28 @@ Report the pending state back where a caller can see it: `collect_deployment_app
 already turns it into the `approvals` field on the deployment read endpoints and on the
 task result of a config write (`features/domain-configuration.md`). A value that quietly
 does not take effect is worse than one that is refused.
+
+### "May this project use this service at all?"
+
+That yes/no is a shape, not a one-off: state under `services/[<service>]/config/approval`
+with a `status` and a `history`, one decision per project. It is written once, as
+`service_use_approval()` in `opi/services/catalog/approval.py`, and a service that needs it
+declares only what is being approved and what it means while it is not:
+
+```python
+APPROVAL = service_use_approval(
+    ServiceType.SEND_EMAIL,
+    label="E-mail versturen",
+    activity="Het versturen van e-mail",
+    consequence="Er is nog geen SMTP-account, geen netwerktoegang naar de relay en geen SMTP_-variabelen in deze deployment.",
+)
+```
+
+It returns three things: `spec` for `config_approvals()`, `is_approved(project_data)` and
+`ensure_requested(project_data)`. Hang **everything** the service switches on off that one
+`is_approved`, so the parts can never disagree — send-email gates its account, its network
+policy, its envFrom secret and its secret file on it. And keep the `consequence`: a service
+that is switched on and silently does nothing is the fault this shape exists to prevent.
 
 Note the split between blocking and enforcing: a user picking a rejected domain is stopped
 at the form field, but the save gate accepts the state, otherwise an approver could not
@@ -998,6 +1045,11 @@ its four wiring points are listed under "Forms and wizard screens".
 
 ## Traps
 
+- **A filtered card is not validation.** A service that only some clusters can deliver
+  answers `available_on_cluster`, and BOTH consumers matter: the wizard leaves the card
+  out, and `validate_service_availability` (`opi/manager/project_validation.py`) refuses
+  the save. The API and a hand-written project file never pass a card at all. vlam is the
+  first inhabitant.
 - **A registered service has no UI.** The registry drives behaviour, not screens. A service
   without form hooks is invisible in the wizard, and `hidden=True` removes even its card.
   Neither is reported by any test, because "no UI" is a valid configuration for some services.

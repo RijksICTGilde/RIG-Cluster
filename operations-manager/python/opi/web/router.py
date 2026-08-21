@@ -2,32 +2,21 @@
 Web routes for serving HTML pages (non-API endpoints).
 """
 
-import asyncio  # noqa: TC003  # used at runtime by the module-level _background_tasks annotation
+import asyncio
 import copy
 import logging
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-    from opi.manager.project_manager import ProjectManager
-
-from datetime import UTC, datetime
-
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
-from opi.services.catalog.publish_on_web.domain_config import (
-    DomainSetting,
-    get_domain_setting,
-    pop_domain_setting,
-    set_domain_setting,
-)
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
 from opi.services.config_location import binding_label, project_step_config_hint
@@ -61,16 +50,18 @@ from opi.web.lotc_switch import (
     tab_from_path,
 )
 from opi.web.menu import get_menu_items
+from opi.web.navigation_lotc import get_navigation
 from opi.web.project_actions import build_project_action
 from opi.web.stap_labels import stap_label
 from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
 
-from ..utils.age import decrypt_age_content
+from ..utils.age import decrypt_age_content, is_age_encrypted
 from .metrics_explorer_router import metrics_explorer_router
 from .router_approvals import approvals_router
 from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
 from .router_self_service import check_subdomain_availability_web
+from .router_shared_services import shared_services_router
 from .router_tasks import tasks_router
 from .router_usage import usage_router
 from .router_user_admin import user_admin_router
@@ -91,6 +82,7 @@ web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
 web_router.include_router(usage_router)
+web_router.include_router(shared_services_router)
 web_router.include_router(approvals_router)
 web_router.include_router(attachments_router)
 web_router.include_router(wizard_attachments_router)
@@ -103,6 +95,76 @@ for _service_router in collect_service_routers():
     web_router.include_router(_service_router)
 
 
+async def ontsleutel_helm_values(items: list[dict[str, Any]], naam_sleutel: str, waar: str, private_key: str) -> None:
+    """Maak de ``helm-values`` van helm-chart- of helmfile-items leesbaar voor de pagina.
+
+    Het veld heeft in het schema geen type (``"helm-values": {}``) en komt in de
+    projectbestanden in twee vormen voor: als AGE-blok en als gewone boom. In
+    ``mb-docs-helmfile`` staan ze zelfs allebei -- versleuteld op de deployment, in
+    platte tekst op het project. De generatie leest beide vormen
+    (``_decrypt_with_private_key`` ontsleutelt alleen strings), maar deze
+    weergaveweg ontsleutelde onvoorwaardelijk. Een boom viel dan in de ``except``
+    en werd ``None``, en omdat het sjabloon het blok alleen toont ``if ... is
+    mapping`` verdween het van het scherm zonder melding.
+
+    Daarom kijken we eerst wat er staat: alleen een AGE-blok gaat door de
+    ontsleuteling, de rest blijft zoals hij is.
+    """
+    for item in items:
+        waarde = item.get("helm-values")
+        if not waarde:
+            continue
+        naam = item.get(naam_sleutel, "unknown")
+        if not isinstance(waarde, str):
+            # Al een boom: niets te ontsleutelen, en niets te verliezen.
+            continue
+        if not is_age_encrypted(waarde):
+            # Een string die geen AGE-blok is, is YAML in platte tekst.
+            item["helm-values"] = load_yaml_from_string(waarde)
+            continue
+        try:
+            item["helm-values"] = load_yaml_from_string(await decrypt_age_content(waarde, private_key))
+            logger.info(f"Decrypted helm-values for {waar} '{naam}'")
+        except Exception as e:
+            logger.warning(f"Failed to decrypt helm-values for {waar} '{naam}': {e}")
+            item["helm-values"] = None
+
+
+def _render_eigen_domein(request: Request, *, current_path: str) -> Response:
+    """De uitleg over het aanwijzen van een eigen domein.
+
+    Twee ingangen, een pagina: de kale routernaam (waar de bezoeker binnenvalt vanuit
+    andermans DNS-record) en /eigen-domein in het menu (waar een projecteigenaar hem
+    opzoekt). De genoemde routernaam volgt de zone waarop je kijkt.
+    """
+    gebruiker = get_current_user(request)
+    router_host = router_hostname_for(request.url.hostname)
+    adressen = router_addresses_for(router_host)
+    return render(
+        request,
+        template="bg/router.html.j2",
+        context={
+            "request": request,
+            "menu_items": get_menu_items(gebruiker),
+            "navigation": get_navigation(gebruiker, current_path=current_path),
+            "router_host": router_host,
+            # Leeg als we ze voor deze naam niet kennen (de sandbox): dan toont de pagina
+            # alleen de CNAME-vorm in plaats van adressen die daar niet kloppen.
+            "router_ipv4": adressen[0] if adressen else "",
+            "router_ipv6": adressen[1] if adressen else "",
+        },
+    )
+
+
+@web_router.get("/eigen-domein", response_class=HTMLResponse)
+async def eigen_domein(request: Request) -> Response:
+    """BEWUST ZONDER ``@requires_sso``: wie een domein aanwijst is vaak een DNS-beheerder
+    van een andere organisatie, zonder account hier. Een inlogmuur zou de pagina precies
+    voor zijn publiek onbereikbaar maken. ``tests/test_routerpagina.py`` bewaakt dat.
+    """
+    return _render_eigen_domein(request, current_path="/eigen-domein")
+
+
 @web_router.get("/")
 async def root(request: Request):
     """De voordeur: het dashboard als je ingelogd bent, anders de introductie.
@@ -113,7 +175,17 @@ async def root(request: Request):
 
     Doorverwijzen en niet hier renderen, zodat de introductie een eigen adres houdt dat je
     kunt delen en dat ook werkt voor iemand die al ingelogd is.
+
+    OP DE ROUTERNAMEN BEGINT HET ERGENS ANDERS. ``router.<zone>`` is de kale ingang van het
+    cluster waar elke andere naam met een CNAME naartoe wijst. Wie die naam intypt kwam hem
+    tegen in andermans DNS-record en heeft een andere vraag dan een ZAD-gebruiker, dus die
+    begint bij de uitleg over het aanwijzen van een eigen domein.
+
+    Doorverwijzen en niet hier renderen, om dezelfde reden als hierboven: het is gewoon ZAD,
+    alleen met een ander beginpunt, en de pagina houdt een adres dat je kunt delen.
     """
+    if request.url.hostname in ROUTER_HOSTNAMES:
+        return RedirectResponse(url="/eigen-domein", status_code=302)
     if get_current_user(request) is None:
         return RedirectResponse(url="/introductie", status_code=302)
     return RedirectResponse(url="/dashboard", status_code=302)
@@ -1511,24 +1583,34 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so
         # the page and the API can never disagree about what a component's variables are.
-        for deployment in project_data_decrypted.get("deployments", []):
-            for dep_component in deployment.get("components", []):
-                if dep_component.get("user-env-vars"):
-                    dep_component["user-env-vars"] = await read_user_env_vars(
-                        dep_component["user-env-vars"],
-                        project_private_key,
-                        where=f"deployment component '{dep_component.get('reference')}'",
-                    )
+        #
+        # NAAST ELKAAR, NIET ERACHTER. Elke ontsleuteling is een eigen `age`-proces (zie
+        # opi/utils/age.py), en die stonden hier in een lus achter elkaar te wachten: een
+        # project met achttien deployments betaalde achttien keer een procesfork op ELKE
+        # tabwissel, netjes een voor een. De aanroepen zijn onderling onafhankelijk - elke
+        # taak schrijft in zijn eigen dict - dus asyncio.gather zet ze naast elkaar zonder
+        # dat er iets aan de uitkomst verandert.
+        async def _lees_env_vars(houder: dict[str, Any], waar: str) -> None:
+            houder["user-env-vars"] = await read_user_env_vars(houder["user-env-vars"], project_private_key, where=waar)
+
+        env_var_taken = [
+            _lees_env_vars(dep_component, f"deployment component '{dep_component.get('reference')}'")
+            for deployment in project_data_decrypted.get("deployments", [])
+            for dep_component in deployment.get("components", [])
+            if dep_component.get("user-env-vars")
+        ]
 
         logger.info(f"Processing {len(project_data_decrypted.get('components', []))} components for user-env-vars")
+        env_var_taken += [
+            _lees_env_vars(component, f"component '{component.get('name', 'unknown')}'")
+            for component in project_data_decrypted.get("components", [])
+            if component.get("user-env-vars")
+        ]
+        if env_var_taken:
+            await asyncio.gather(*env_var_taken)
+
         for component in project_data_decrypted.get("components", []):
             component_name = component.get("name", "unknown")
-            if component.get("user-env-vars"):
-                component["user-env-vars"] = await read_user_env_vars(
-                    component["user-env-vars"],
-                    project_private_key,
-                    where=f"component '{component_name}'",
-                )
             # Aliassen ook, en om dezelfde reden: de kaart toont ze en zonder dit staat er
             # een AGE-blok op het scherm. Sinds RC-106 is dat hetzelfde blok als hierboven,
             # en het is dezelfde decoder als de leesendpoints gebruiken, zodat de pagina en
@@ -1537,8 +1619,13 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             # is_verwijzing.
             if component.get("aliases"):
                 try:
-                    component["aliases"] = decode_component_values(
-                        component["aliases"], project_data_decrypted, project_private_key
+                    # In een thread, want decode_component_values is synchroon en draait
+                    # `age` met subprocess.run. Dat zette niet alleen deze pagina stil maar
+                    # de hele worker, per component - en bij de oude mapping-vorm zelfs per
+                    # alias. De decoder zelf blijft synchroon: hij wordt ook door de
+                    # leesendpoints gebruikt en daar hoort een tweede vorm niet thuis.
+                    component["aliases"] = await asyncio.to_thread(
+                        decode_component_values, component["aliases"], project_data_decrypted, project_private_key
                     )
                 except (ComponentValuesError, ValueError) as error:
                     # Een onleesbaar blok levert geen namen op om te tonen; laat het weg in
@@ -1546,65 +1633,28 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                     logger.warning(f"Aliases of component '{component_name}' could not be read: {error}")
                     component["aliases"] = {}
 
-        # Decrypt helm-charts base helm-values
-        for helm_chart in project_data_decrypted.get("helm-charts", []):
-            chart_name = helm_chart.get("name", "unknown")
-            if helm_chart.get("helm-values"):
-                try:
-                    decrypted_yaml = await decrypt_age_content(helm_chart["helm-values"], project_private_key)
-                    helm_chart["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                    logger.info(f"Decrypted helm-values for helm-chart '{chart_name}'")
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt helm-values for helm-chart '{chart_name}': {e}")
-                    helm_chart["helm-values"] = None
-
-        # Decrypt helmfile base helm-values
-        for helmfile in project_data_decrypted.get("helmfile", []):
-            helmfile_name = helmfile.get("name", "unknown")
-            if helmfile.get("helm-values"):
-                try:
-                    decrypted_yaml = await decrypt_age_content(helmfile["helm-values"], project_private_key)
-                    helmfile["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                    logger.info(f"Decrypted helm-values for helmfile '{helmfile_name}'")
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt helm-values for helmfile '{helmfile_name}': {e}")
-                    helmfile["helm-values"] = None
-
-        # Decrypt deployment-level helm-charts and helmfile helm-values
+        # helm-values leesbaar maken: op projectniveau (de catalogus) en op
+        # deploymentniveau (de verwijzing), voor helm-charts zowel als helmfile.
+        await ontsleutel_helm_values(
+            project_data_decrypted.get("helm-charts", []), "name", "helm-chart", project_private_key
+        )
+        await ontsleutel_helm_values(
+            project_data_decrypted.get("helmfile", []), "name", "helmfile", project_private_key
+        )
         for deployment in project_data_decrypted.get("deployments", []):
             deployment_name = deployment.get("name", "unknown")
-
-            # Decrypt deployment helm-charts helm-values
-            for helm_chart in deployment.get("helm-charts", []):
-                chart_ref = helm_chart.get("reference", "unknown")
-                if helm_chart.get("helm-values"):
-                    try:
-                        decrypted_yaml = await decrypt_age_content(helm_chart["helm-values"], project_private_key)
-                        helm_chart["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                        logger.info(
-                            f"Decrypted helm-values for deployment '{deployment_name}' helm-chart '{chart_ref}'"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to decrypt helm-values for deployment '{deployment_name}' helm-chart '{chart_ref}': {e}"
-                        )
-                        helm_chart["helm-values"] = None
-
-            # Decrypt deployment helmfile helm-values
-            for helmfile in deployment.get("helmfile", []):
-                helmfile_ref = helmfile.get("reference", "unknown")
-                if helmfile.get("helm-values"):
-                    try:
-                        decrypted_yaml = await decrypt_age_content(helmfile["helm-values"], project_private_key)
-                        helmfile["helm-values"] = load_yaml_from_string(decrypted_yaml)
-                        logger.info(
-                            f"Decrypted helm-values for deployment '{deployment_name}' helmfile '{helmfile_ref}'"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to decrypt helm-values for deployment '{deployment_name}' helmfile '{helmfile_ref}': {e}"
-                        )
-                        helmfile["helm-values"] = None
+            await ontsleutel_helm_values(
+                deployment.get("helm-charts", []),
+                "reference",
+                f"deployment '{deployment_name}' helm-chart",
+                project_private_key,
+            )
+            await ontsleutel_helm_values(
+                deployment.get("helmfile", []),
+                "reference",
+                f"deployment '{deployment_name}' helmfile",
+                project_private_key,
+            )
 
         # Process services to add display information
         services_with_info = []
@@ -1961,7 +2011,11 @@ async def _fetch_argocd_deployment_status(
     project_name: str, deployment: dict[str, Any], argo: Any, kubectl: Any
 ) -> dict[str, Any]:
     """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy."""
-    from opi.services.deployment_diagnostics import conditions_to_errors, gather_deployment_errors
+    from opi.services.deployment_diagnostics import (
+        conditions_to_errors,
+        gather_deployment_errors,
+        gather_sync_deviations,
+    )
     from opi.services.event_interpreter import interpret_argocd_errors
     from opi.utils.naming import generate_argocd_application_name
 
@@ -2009,6 +2063,14 @@ async def _fetch_argocd_deployment_status(
         errors = interpret_argocd_errors(raw_errors, deployment_name=deployment_name, component_names=component_names)
         _annotate_argocd_error_ages(errors)
 
+        # Afwijkingen naast fouten: welke resources houden de badges van groen af, en
+        # waarom. Alleen berekend als er iets af te wijken valt - groen blijft stil.
+        deviations: list[dict[str, str]] = []
+        if sync.get("status") == "OutOfSync" or (app_health == "Progressing" and not errors):
+            deviations = gather_sync_deviations(
+                status_data, deployment_name=deployment_name, disabled_components=disabled_components
+            )
+
         last_sync = operation_state.get("finishedAt")
         if not last_sync and sync.get("status") == "Synced":
             last_sync = status.get("reconciledAt")
@@ -2024,6 +2086,7 @@ async def _fetch_argocd_deployment_status(
             "operation_phase": operation_state.get("phase"),
             "operation_message": operation_state.get("message"),
             "errors": errors,
+            "deviations": deviations,
         }
     except Exception as app_error:
         logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
@@ -2413,687 +2476,6 @@ async def deployment_metrics_fragment(
             "metingen_leeg": not _heeft_metingen(metrics, pvc_storage),
         },
     )
-
-
-@web_router.get("/projects/{project_name}/deployments/{deployment_name}/domain-settings")
-@requires_sso
-async def get_deployment_domain_settings(request: Request, project_name: str, deployment_name: str):
-    """
-    Get current domain settings for a deployment.
-
-    This endpoint returns the current domain configuration for a specific deployment,
-    including domain mode, subdomain, base domain, and component information.
-
-    Args:
-        request: The FastAPI request object
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        JSON response with domain settings
-    """
-
-    from opi.api.router import DeploymentDomainSettingsResponse
-    from opi.web.router_self_service import get_cluster_base_domains_for_template
-
-    try:
-        user = get_current_user(request)
-        user_email = user.get("email", "").lower()
-
-        # Get project service to validate access
-
-        # Check if user has access to this project
-        if not is_user_authorized_for_project(project_name, user_email):
-            logger.warning(f"User {user_email} not authorized to access project: {project_name}")
-            raise HTTPException(status_code=403, detail="You are not authorized to access this project")
-
-        # Get project details
-        project = get_project_store().get(project_name)
-        if not project:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-
-        # === PATH TRAVERSAL PROTECTION ===
-        _validate_path_safe(project.filename)
-
-        project_data = project.data or {}
-
-        # Find the deployment
-        deployments = project_data.get("deployments", [])
-        deployment = None
-        for dep in deployments:
-            if dep.get("name") == deployment_name:
-                deployment = dep
-                break
-
-        if not deployment:
-            raise HTTPException(
-                status_code=404, detail=f"Deployment '{deployment_name}' not found in project '{project_name}'"
-            )
-
-        # Extract domain settings from deployment
-        cluster = deployment.get("cluster", "")
-        domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
-        domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
-        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
-        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-
-        # Find root component (if any)
-        root_component = get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
-        components_list = []
-        for comp in deployment.get("components", []):
-            comp_ref = comp.get("reference")
-            if comp_ref:
-                components_list.append({"reference": comp_ref, "root": comp_ref == root_component})
-
-        # Get supported base domains for this cluster
-        cluster_base_domains = get_cluster_base_domains_for_template()
-        supported_domains = cluster_base_domains.get(cluster, [])
-
-        response_data = DeploymentDomainSettingsResponse(
-            deployment_name=deployment_name,
-            cluster=cluster,
-            domain_mode=domain_mode,
-            domain_format=domain_format,
-            subdomain=subdomain,
-            base_domain=base_domain,
-            root_component=root_component,
-            components=components_list,
-            supported_base_domains=supported_domains,
-        )
-
-        return JSONResponse(content=response_data.model_dump())
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting domain settings for {project_name}/{deployment_name}: {e!s}")
-        # Don't expose internal error details to the user
-        raise HTTPException(status_code=500, detail="An error occurred while fetching domain settings.")
-
-
-async def _validate_csrf(request: Request, form_data: Mapping[str, Any] | None = None) -> None:
-    """
-    Validate CSRF protection (double-submit token + Origin/Referer).
-
-    CSRF enforcement is now central in CSRFMiddleware, so by the time a
-    handler runs the request has already been validated. This helper is kept
-    for the explicit call site and is idempotent: it re-runs the same checks
-    against the same token, which always passes for a legitimately validated
-    request.
-
-    Args:
-        request: The FastAPI request object
-        form_data: Optional pre-parsed form data (to avoid parsing twice). Any mapping;
-            the handlers pass starlette's ``FormData``, which is not a dict.
-
-    Raises:
-        HTTPException: If CSRF validation fails
-    """
-    from opi.utils.csrf import validate_csrf_origin, validate_csrf_token
-
-    csrf_form_data = dict(form_data) if form_data else None
-    validate_csrf_token(request, csrf_form_data)
-    validate_csrf_origin(request)
-
-
-def _validate_path_safe(filename: str) -> None:
-    """
-    Validate that a filename is safe and doesn't contain path traversal sequences.
-
-    Args:
-        filename: The filename to validate
-
-    Raises:
-        HTTPException: If the filename contains path traversal sequences
-    """
-    import os
-
-    # Check for path traversal patterns
-    if ".." in filename:
-        logger.warning(f"Path traversal attempt detected in filename: {filename}")
-        raise HTTPException(status_code=400, detail="Invalid project filename")
-
-    # Check for absolute paths
-    if os.path.isabs(filename):
-        logger.warning(f"Absolute path detected in filename: {filename}")
-        raise HTTPException(status_code=400, detail="Invalid project filename")
-
-    # Check for other dangerous patterns
-    dangerous_patterns = ["//", "\\", "\x00"]
-    for pattern in dangerous_patterns:
-        if pattern in filename:
-            logger.warning(f"Dangerous pattern '{pattern}' detected in filename: {filename}")
-            raise HTTPException(status_code=400, detail="Invalid project filename")
-
-
-async def _update_keycloak_redirect_uris_for_deployment(
-    project_manager: ProjectManager,
-    project_name: str,
-    deployment_name: str,
-    cluster: str,
-    domain_mode: str,
-    subdomain: str | None,
-    base_domain: str | None,
-) -> None:
-    """
-    Update Keycloak client redirect URIs after domain settings change.
-
-    This function checks if the deployment uses Keycloak service and updates
-    the redirect URIs to match the new hostnames based on domain settings.
-
-    Args:
-        project_manager: The ProjectManager instance with project data
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-        cluster: Name of the cluster
-        domain_mode: Domain mode (component-specific, deployment-name, custom, nice-url)
-        subdomain: Subdomain for nice-url or custom mode
-        base_domain: Base domain for nice-url or custom mode
-    """
-    from opi.connectors.keycloak import create_keycloak_connector
-    from opi.core.cluster_config import get_ingress_postfix, get_keycloak_support_http
-    from opi.core.config import settings
-    from opi.services import ServiceAdapter, ServiceType
-    from opi.utils.naming import get_deployment_hostnames
-
-    try:
-        # Get refreshed project data
-        project_data = await project_manager.get_contents()
-
-        # Check if deployment uses Keycloak service
-        deployment = None
-        for dep in project_data.get("deployments", []):
-            if dep.get("name") == deployment_name:
-                deployment = dep
-                break
-
-        if not deployment:
-            logger.warning(f"Deployment {deployment_name} not found in project data, skipping Keycloak update")
-            return
-
-        # Get component references for this deployment that use Keycloak
-        component_refs = [comp.get("reference") for comp in deployment.get("components", []) if comp.get("reference")]
-
-        sso_components = []
-        for component_ref in component_refs:
-            for component in project_data.get("components", []):
-                if component.get("name") == component_ref:
-                    service_names = ServiceAdapter.extract_service_names_from_project_services(
-                        component.get("services", [])
-                    )
-                    component_services = ServiceAdapter.parse_services_from_strings(service_names)
-                    if ServiceType.KEYCLOAK in component_services:
-                        sso_components.append(component_ref)
-                    break
-
-        if not sso_components:
-            logger.debug(f"No SSO components found in deployment {deployment_name}, skipping Keycloak update")
-            return
-
-        logger.info(
-            f"Updating Keycloak redirect URIs for deployment {deployment_name} with {len(sso_components)} SSO components"
-        )
-
-        # Get Keycloak configuration for this cluster
-        kc_config = await project_manager._get_project_keycloak_config_for_cluster(cluster)
-        if not kc_config:
-            logger.warning(f"No Keycloak config found for cluster {cluster}, skipping redirect URI update")
-            return
-
-        realm_name = kc_config["realm"]
-        keycloak_host = kc_config["host"]
-
-        # Calculate new hostnames based on domain settings
-        ingress_postfix = get_ingress_postfix(cluster)
-        all_ingress_hosts = get_deployment_hostnames(
-            component_names=sso_components,
-            deployment_name=deployment_name,
-            project_name=project_name,
-            ingress_postfix=ingress_postfix,
-            subdomain=subdomain,
-            base_domain=base_domain,
-            domain_format=get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
-            project_data=project_data,
-            cluster=cluster,
-        )
-
-        if not all_ingress_hosts:
-            logger.warning(f"No ingress hosts generated for deployment {deployment_name}, skipping Keycloak update")
-            return
-
-        logger.info(f"New hostnames for Keycloak client: {all_ingress_hosts}")
-
-        # Get HTTP support setting and additional redirect URIs from config
-        support_http = get_keycloak_support_http(cluster)
-
-        # Get additional redirect URIs from project keycloak service config.
-        # Format-agnostic: ``"keycloak" in service_item`` only matched the legacy
-        # single-key form, so extra redirect URIs were dropped for record-form projects.
-        from opi.services.services import service_entry_config, service_entry_name
-
-        additional_redirect_uris = None
-        project_services = project_data.get("services", [])
-        for service_item in project_services:
-            if service_entry_name(service_item) != ServiceType.KEYCLOAK.value:
-                continue
-            config = service_entry_config(service_item)
-            if isinstance(config, dict):
-                additional_redirect_uris = config.get("additional_redirect_uris")
-            break
-
-        # Create Keycloak connector and update redirect URIs
-        keycloak = await create_keycloak_connector(
-            keycloak_url=keycloak_host,
-            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
-            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
-        )
-
-        result = await keycloak.update_deployment_client_hosts(
-            deployment_name=deployment_name,
-            project_name=project_name,
-            ingress_hosts=all_ingress_hosts,
-            realm_name=realm_name,
-            support_http=support_http,
-            additional_redirect_uris=additional_redirect_uris,
-        )
-
-        if result:
-            logger.info(f"Successfully updated Keycloak redirect URIs for deployment {deployment_name}")
-        else:
-            logger.warning(
-                f"Failed to update Keycloak redirect URIs for deployment {deployment_name} (client not found)"
-            )
-
-    except Exception as e:
-        # Log the error but don't fail the entire operation
-        # The ingresses have already been updated, SSO might work with existing URIs
-        logger.error(f"Error updating Keycloak redirect URIs for {deployment_name}: {e}")
-
-
-@web_router.post("/projects/{project_name}/deployments/{deployment_name}/domain-settings")
-@requires_sso
-async def update_deployment_domain_settings(request: Request, project_name: str, deployment_name: str):
-    """
-    Update domain settings for a deployment.
-
-    This endpoint updates the domain configuration for a specific deployment.
-    It validates subdomain availability (for nice-url mode), updates the project YAML,
-    and re-processes the project to apply changes.
-
-    Security:
-        - Requires SSO authentication
-        - Validates CSRF via Origin/Referer headers
-        - Validates path safety for project filenames
-        - Validates root_component against actual deployment components
-
-    Args:
-        request: The FastAPI request object
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        JSON response with update status and redirect URL
-    """
-
-    from opi.connectors.subdomain import (
-        validate_base_domain,
-        validate_subdomain,
-    )
-    from opi.manager.project_manager import ProjectManager
-    from opi.services.persistence.subdomain_registry import create_subdomain_connector
-
-    # Track state for rollback
-    original_data: dict[str, Any] | None = None
-    git_committed = False
-    subdomain_registered = False
-    old_subdomain_info: dict | None = None
-
-    try:
-        # Parse form data first (needed for CSRF validation)
-        form_data = await request.form()
-
-        # === CSRF PROTECTION (token + origin/referer validation) ===
-        await _validate_csrf(request, form_data)
-
-        user = get_current_user(request)
-        user_email = user.get("email", "").lower()
-
-        # Get project service to validate access
-
-        # Check if user has access to this project
-        if not is_user_authorized_for_project(project_name, user_email):
-            logger.warning(f"User {user_email} not authorized to access project: {project_name}")
-            raise HTTPException(status_code=403, detail="You are not authorized to access this project")
-
-        # Check if user has admin or owner role
-        user_role = get_user_role_for_project(project_name, user_email)
-        if user_role not in ["admin", "owner"]:
-            logger.warning(f"User {user_email} with role '{user_role}' cannot edit domain settings: {project_name}")
-            raise HTTPException(
-                status_code=403, detail=f"Only admin or owner roles can edit domain settings. Your role: {user_role}"
-            )
-
-        # Extract form fields
-        domain_mode = str(form_data.get("domain-mode", "")).strip()
-        subdomain = str(form_data.get("subdomain", "")).strip() or None
-        base_domain = str(form_data.get("base-domain", "")).strip() or None
-        root_component = str(form_data.get("root-component", "")).strip() or None
-
-        # Validate domain mode
-        valid_modes = ["component-specific", "deployment-name", "custom", "nice-url"]
-        if domain_mode not in valid_modes:
-            raise HTTPException(status_code=400, detail=f"Invalid domain mode. Valid modes: {', '.join(valid_modes)}")
-
-        # Get project details
-        project = get_project_store().get(project_name)
-        if not project:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-
-        # === PATH TRAVERSAL PROTECTION ===
-        _validate_path_safe(project.filename)
-
-        project_data = project.data or {}
-
-        # Find the deployment
-        deployments = project_data.get("deployments", [])
-        deployment = None
-        for dep in deployments:
-            if dep.get("name") == deployment_name:
-                deployment = dep
-                break
-
-        if not deployment:
-            raise HTTPException(
-                status_code=404, detail=f"Deployment '{deployment_name}' not found in project '{project_name}'"
-            )
-
-        cluster = deployment.get("cluster", "")
-
-        # === VALIDATE ROOT COMPONENT ===
-        # Get list of valid component references for this deployment
-        deployment_components = deployment.get("components", [])
-        valid_component_refs = {comp.get("reference") for comp in deployment_components if comp.get("reference")}
-
-        if root_component and root_component not in valid_component_refs:
-            logger.warning(
-                f"Invalid root_component '{root_component}' for deployment '{deployment_name}'. "
-                f"Valid components: {valid_component_refs}"
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid root component. Must be one of: {', '.join(sorted(valid_component_refs)) or 'none available'}",
-            )
-
-        # === CAPTURE EXISTING SUBDOMAIN INFO FOR ROLLBACK ===
-        # This must happen BEFORE we check domain_mode, so we can restore if switching away from nice-url
-        subdomain_connector = create_subdomain_connector()
-        existing_subdomain = await subdomain_connector.get_by_deployment(project_name, deployment_name)
-        if existing_subdomain:
-            old_subdomain_info = existing_subdomain  # Store for potential rollback
-
-        # Validate nice-url settings if nice-url mode is selected. The two validated
-        # values are kept separately: the registration further down needs them, and by
-        # then nothing can still tell that this branch proved they are set.
-        nice_url_subdomain = ""
-        nice_url_base_domain = ""
-        if domain_mode == "nice-url":
-            if not subdomain:
-                raise HTTPException(status_code=400, detail="Subdomain is required for nice-url mode")
-            if not base_domain:
-                raise HTTPException(status_code=400, detail="Base domain is required for nice-url mode")
-            nice_url_subdomain = subdomain
-            nice_url_base_domain = base_domain
-
-            # Validate subdomain format
-            is_valid, error_msg = validate_subdomain(subdomain)
-            if not is_valid:
-                raise HTTPException(status_code=400, detail=error_msg)
-
-            # Validate base domain
-            is_valid, error_msg = validate_base_domain(base_domain, cluster)
-            if not is_valid:
-                raise HTTPException(status_code=400, detail=error_msg)
-
-            # Check subdomain availability (allow if already registered to this deployment)
-            if existing_subdomain:
-                # Check if subdomain changed
-                if (
-                    existing_subdomain["subdomain"] != subdomain.lower()
-                    or existing_subdomain["base_domain"] != base_domain.lower()
-                ):
-                    # Check if new subdomain is available
-                    is_available = await subdomain_connector.check_availability(subdomain, base_domain)
-                    if not is_available:
-                        raise HTTPException(
-                            status_code=400, detail=f"Subdomain '{subdomain}.{base_domain}' is not available"
-                        )
-            else:
-                # No existing registration, check availability
-                is_available = await subdomain_connector.check_availability(subdomain, base_domain)
-                if not is_available:
-                    raise HTTPException(
-                        status_code=400, detail=f"Subdomain '{subdomain}.{base_domain}' is not available"
-                    )
-
-        # Validate custom subdomain format if custom mode is selected
-        elif domain_mode == "custom":
-            if not subdomain:
-                raise HTTPException(status_code=400, detail="Subdomain is required for custom mode")
-
-            # Validate subdomain format (same rules as nice-url, but without base_domain or availability check)
-            # This ensures the subdomain is DNS-compatible and not a reserved name
-            is_valid, error_msg = validate_subdomain(subdomain)
-            if not is_valid:
-                raise HTTPException(status_code=400, detail=error_msg)
-
-        # Mutate through the bound ProjectManager: it reads fresh, migrated
-        # contents from Git and persists via the single validated save path.
-        project_file_path = f"projects/{project.filename}"
-        project_manager = ProjectManager(project_file_relative_path=project_file_path)
-        project_yaml = await project_manager.get_contents()
-
-        # Keep a copy of the pre-edit state for rollback on failure.
-        original_data = copy.deepcopy(project_yaml)
-
-        # Find and update deployment
-        yaml_deployments = project_yaml.get("deployments", [])
-        for yaml_dep in yaml_deployments:
-            if yaml_dep.get("name") == deployment_name:
-                # Update domain settings. Every write and every removal goes through the
-                # service's own accessors (RC-60), so the modal cannot leave a value behind
-                # in the deployment root that a later read would resurrect.
-                set_domain_setting(yaml_dep, DomainSetting.DOMAIN_MODE, domain_mode)
-
-                # Handle subdomain and base-domain based on mode
-                if domain_mode == "nice-url":
-                    set_domain_setting(yaml_dep, DomainSetting.SUBDOMAIN, subdomain)
-                    set_domain_setting(yaml_dep, DomainSetting.BASE_DOMAIN, base_domain)
-                    # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
-                    set_domain_setting(yaml_dep, DomainSetting.ISSUER, "letsencrypt")
-                elif domain_mode == "custom":
-                    set_domain_setting(yaml_dep, DomainSetting.SUBDOMAIN, subdomain)
-                    # Remove base-domain and issuer for custom mode
-                    pop_domain_setting(yaml_dep, DomainSetting.BASE_DOMAIN)
-                    pop_domain_setting(yaml_dep, DomainSetting.ISSUER)
-                else:
-                    # Remove subdomain, base-domain, and issuer for other modes
-                    pop_domain_setting(yaml_dep, DomainSetting.SUBDOMAIN)
-                    pop_domain_setting(yaml_dep, DomainSetting.BASE_DOMAIN)
-                    pop_domain_setting(yaml_dep, DomainSetting.ISSUER)
-
-                # Handle root component — set on deployment level
-                if root_component:
-                    set_domain_setting(yaml_dep, DomainSetting.ROOT_COMPONENT, root_component)
-                else:
-                    pop_domain_setting(yaml_dep, DomainSetting.ROOT_COMPONENT)
-
-                # Clean up any legacy root flags on components
-                for comp in yaml_dep.get("components", []):
-                    if "root" in comp:
-                        del comp["root"]
-
-                break
-
-        # === STEP 1: Save to git ===
-        # Sanitize commit message by removing potentially dangerous characters
-        safe_deployment_name = "".join(c for c in deployment_name if c.isalnum() or c in "-_")
-        safe_project_name = "".join(c for c in project_name if c.isalnum() or c in "-_")
-
-        await project_manager.save_and_commit_project(
-            project_yaml,
-            f"Update domain settings for deployment '{safe_deployment_name}' in project '{safe_project_name}'",
-        )
-        git_committed = True
-        logger.info(f"Updated domain settings for {project_name}/{deployment_name} by {user_email}")
-
-        # === STEP 2: Register/update subdomain ===
-        # Track whether we deleted an existing subdomain (for rollback)
-        subdomain_deleted = False
-
-        try:
-            if domain_mode == "nice-url":
-                # Reuse the subdomain_connector created earlier
-                await subdomain_connector.register_or_update_for_deployment(
-                    subdomain=nice_url_subdomain,
-                    base_domain=nice_url_base_domain,
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    cluster=cluster,
-                    created_by=user_email,
-                )
-                subdomain_registered = True
-                logger.info(f"Registered subdomain '{subdomain}.{base_domain}' for {project_name}/{deployment_name}")
-            else:
-                # If switching away from nice-url, delete any existing subdomain registration
-                # Reuse the subdomain_connector created earlier
-                deleted = await subdomain_connector.delete_by_deployment(project_name, deployment_name)
-                if deleted:
-                    subdomain_deleted = True
-                    logger.info(f"Deleted subdomain registration for {project_name}/{deployment_name}")
-        except Exception as subdomain_error:
-            logger.error(f"Subdomain registration failed: {subdomain_error}")
-
-            # Rollback git commit first
-            if git_committed and original_data is not None:
-                try:
-                    await project_manager.save_and_commit_project(
-                        original_data,
-                        f"Rollback domain settings for '{safe_deployment_name}' (subdomain registration failed)",
-                    )
-                    logger.info(f"Rolled back git commit for {project_name}/{deployment_name}")
-                except Exception as rollback_error:
-                    logger.error(f"Failed to rollback git commit: {rollback_error}")
-
-            # Restore deleted subdomain if we deleted one before the error
-            if subdomain_deleted and old_subdomain_info:
-                try:
-                    await subdomain_connector.register_or_update_for_deployment(
-                        subdomain=old_subdomain_info["subdomain"],
-                        base_domain=old_subdomain_info["base_domain"],
-                        project_name=project_name,
-                        deployment_name=deployment_name,
-                        cluster=old_subdomain_info["cluster"],
-                        created_by=user_email,
-                    )
-                    logger.info(f"Restored deleted subdomain for {project_name}/{deployment_name}")
-                except Exception as restore_error:
-                    logger.error(f"Failed to restore deleted subdomain: {restore_error}")
-
-            raise HTTPException(status_code=500, detail="Failed to register subdomain. Changes have been rolled back.")
-
-        # === STEP 3: Re-process project to apply changes ===
-        try:
-            processing_result = await project_manager.process_project_from_git(
-                project_file_path, deployment_name=deployment_name
-            )
-            logger.info(f"Re-processed project {project_name} after domain settings update: {processing_result}")
-
-            # === STEP 4: Update Keycloak redirect URIs ===
-            # After domain settings change, update Keycloak client redirect URIs to match new hostnames
-            await _update_keycloak_redirect_uris_for_deployment(
-                project_manager=project_manager,
-                project_name=project_name,
-                deployment_name=deployment_name,
-                cluster=cluster,
-                domain_mode=domain_mode,
-                subdomain=subdomain,
-                base_domain=base_domain,
-            )
-        except Exception as processing_error:
-            logger.error(f"Project re-processing failed: {processing_error}")
-
-            # Rollback in reverse order of operations:
-            # 1. First rollback git (was step 1)
-            # 2. Then rollback subdomain (was step 2)
-            # This ensures consistent state even if one rollback fails
-
-            # Rollback git commit first
-            if git_committed and original_data is not None:
-                try:
-                    await project_manager.save_and_commit_project(
-                        original_data,
-                        f"Rollback domain settings for '{safe_deployment_name}' (processing failed)",
-                    )
-                    logger.info(f"Rolled back git commit for {project_name}/{deployment_name}")
-                except Exception as git_rollback_error:
-                    logger.error(f"Failed to rollback git commit: {git_rollback_error}")
-
-            # Rollback subdomain changes (reuse existing subdomain_connector)
-            try:
-                if subdomain_registered and domain_mode == "nice-url":
-                    # We registered a new subdomain - need to undo that
-                    if old_subdomain_info:
-                        # Restore old subdomain (was changed)
-                        await subdomain_connector.register_or_update_for_deployment(
-                            subdomain=old_subdomain_info["subdomain"],
-                            base_domain=old_subdomain_info["base_domain"],
-                            project_name=project_name,
-                            deployment_name=deployment_name,
-                            cluster=old_subdomain_info["cluster"],
-                            created_by=user_email,
-                        )
-                        logger.info(f"Restored old subdomain for {project_name}/{deployment_name}")
-                    else:
-                        # Delete newly registered subdomain (there was no old one)
-                        await subdomain_connector.delete_by_deployment(project_name, deployment_name)
-                        logger.info(f"Deleted new subdomain for {project_name}/{deployment_name}")
-
-                elif subdomain_deleted and old_subdomain_info:
-                    # We deleted an existing subdomain when switching away from nice-url
-                    # Need to restore it
-                    await subdomain_connector.register_or_update_for_deployment(
-                        subdomain=old_subdomain_info["subdomain"],
-                        base_domain=old_subdomain_info["base_domain"],
-                        project_name=project_name,
-                        deployment_name=deployment_name,
-                        cluster=old_subdomain_info["cluster"],
-                        created_by=user_email,
-                    )
-                    logger.info(f"Restored deleted subdomain for {project_name}/{deployment_name}")
-
-            except Exception as subdomain_rollback_error:
-                logger.error(f"Failed to rollback subdomain changes: {subdomain_rollback_error}")
-
-            raise HTTPException(status_code=500, detail="Failed to apply changes. Settings have been rolled back.")
-        finally:
-            await project_manager.close()
-
-        return JSONResponse(
-            content={
-                "success": True,
-                "message": f"Domain settings updated successfully for deployment '{deployment_name}'",
-                "redirect_url": f"/projects/{project_name}/details",
-            }
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating domain settings for {project_name}/{deployment_name}: {e!s}")
-        # Don't expose internal error details to the user
-        raise HTTPException(
-            status_code=500, detail="An error occurred while updating domain settings. Please try again."
-        )
 
 
 def _projects_for_user(user: dict) -> list[dict]:

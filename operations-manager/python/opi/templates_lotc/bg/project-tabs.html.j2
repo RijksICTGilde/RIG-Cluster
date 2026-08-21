@@ -66,6 +66,9 @@
        een <c-secret-field>, dat zijn eigen kopieerknop meebrengt. Stond inline op de
        bestaande pagina; sinds deze omzetting in een eigen bestand. #}
     <script src="{{ static_url('js/copy_to_clipboard.js') }}"></script>
+    {# De uitklappende rijen in een componentkaart (omgevingsvariabelen, aliassen).
+       <nldd-list-item> tekent het uitklappen, dit zet alleen de stand om. #}
+    <script src="{{ static_url('js/uitklap.js') }}"></script>
     {# De key-value editors (omgevingsvariabelen, aliassen) in de bewerkdialoog. De
        bestaande pagina laadt deze twee ook; hier ontbraken ze, en dan blijft er in de
        dialoog een kale textarea staan die zich niet gedraagt als de rest van het
@@ -410,7 +413,11 @@
 
         {% call panel("Componenten", "rectangle-stack") %}
             {% if project.components %}
-                <c-stack gap="md">
+                {# lg en niet md: hier stonden twee <c-card outline> met dezelfde lijn en
+                   hetzelfde vlak op md van elkaar, en dan is de ruimte tussen twee
+                   componenten even groot als de ruimte binnen een component. Met lg is de
+                   grens tussen twee kaarten te zien zonder er een streep bij te tekenen. #}
+                <c-stack gap="lg">
                     {# Alfabetisch tonen, maar de flow-id van de bewerkdialoog blijft de
                        oorspronkelijke index in het projectbestand - anders bewerk je een
                        ander component dan je aanklikt. Overgenomen. #}
@@ -418,16 +425,28 @@
                         {% set original_index = project.components.index(component) %}
                         {% set component_bewerken = "openEditModal('modal-edit-component-" ~ original_index ~ "', 'Component bewerken - " ~ component.name ~ "')" %}
                         {% set component_verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-component/confirm?target=" ~ (component.name | urlencode) ~ "', 'Component verwijderen')" %}
-                        {# De klasse component-card is die van section-components.html.j2 en
-                           wordt LETTERLIJK overgenomen: hij bakent een kaart af zodat je de
-                           knop van DIT component te pakken krijgt en niet die van het
-                           volgende. Zonder die afbakening meet een test de verkeerde knop -
-                           en dat is precies het soort fout dat er stil doorheen glipt. #}
+                        {# De kop hoort BIJ de kaart en staat er dus in.
+                           Hij heeft er even buiten gestaan, als ankerpunt om langs te
+                           scrollen toen de kaarten nog honderden regels lang waren. Dat
+                           probleem is bij de bron opgelost: services, omgevingsvariabelen
+                           en aliassen staan nu ingeklapt, dus een kaart is kort en de naam
+                           hoort weer bij de gegevens waar hij over gaat. Zo teruggevraagd
+                           ("zit het toch meer bij elkaar") en zo is het.
+
+                           De klasse component-card is geen opmaak maar een HAAK: hij bakent
+                           een kaart af zodat je de knop van DIT component te pakken krijgt
+                           en niet die van het volgende. tests/e2e/test_detail_confirmations.py
+                           zoekt hem op met de componentnaam erin. Op de kaart klopt dat, en
+                           de knoppen staan er weer binnen.
+
+                           size 4 en niet 5: op 5 was de naam kleiner dan de labels eronder
+                           ("Poorten:", "Resources:"), en dan leest de kop niet als kop.
+                           Gemeld als "de naam van het component is te klein". #}
                         <c-card outline padding="md" class="component-card">
                             <c-stack gap="sm">
                                 <c-cluster gap="sm" align="center" justify="between">
                                     <c-stack gap="xs">
-                                        <c-heading type="h3" size="5" label="{{ component.name }}" />
+                                        <c-heading type="h3" size="4" label="{{ component.name }}" />
                                         <c-paragraph size="sm">{{ component.type | title }}</c-paragraph>
                                     </c-stack>
                                     {% if user_role in ["admin", "owner"] %}
@@ -437,62 +456,11 @@
                                         </c-action-group>
                                     {% endif %}
                                 </c-cluster>
-
-                                {% if component.ports %}
-                                    <c-paragraph size="sm">
-                                        <b>Poorten:</b>
-                                        {% if component.ports.inbound %}Inbound: {{ component.ports.inbound | join(", ") }}{% endif %}
-                                        {% if component.ports.outbound %}{% if component.ports.inbound %} | {% endif %}Outbound: {{ component.ports.outbound | join(", ") }}{% endif %}
-                                    </c-paragraph>
-                                {% endif %}
-
-                                {% if component.resources %}
-                                    {% set req = component.resources.get('requests', {}) or {} %}
-                                    {% set lim = component.resources.get('limits', {}) or {} %}
-                                    <c-paragraph size="sm">
-                                        <b>Resources:</b>
-                                        {% if req.get('memory') or lim.get('memory') %}
-                                            Memory: {{ req.get('memory', '?') }} / {{ lim.get('memory', '?') }}
-                                        {% elif component.resources.memory is string %}
-                                            Memory: {{ component.resources.memory }}
-                                        {% endif %}
-                                        {% if req.get('cpu') or lim.get('cpu') %}
-                                            | CPU: {{ req.get('cpu', '?') }} / {{ lim.get('cpu', '?') }}
-                                        {% elif component.resources.cpu is string %}
-                                            | CPU: {{ component.resources.cpu }}
-                                        {% endif %}
-                                    </c-paragraph>
-                                {% endif %}
-
-                                {% if component.services %}
-                                    {# Dezelfde lezing als de bestaande pagina: de naam via
-                                       het service_name-filter, want een regel kan een
-                                       tekst, een {naam: {...}} of een {reference: ...}
-                                       zijn. Een kale {{ regel }} toonde bij die laatste
-                                       twee een python-dict. #}
-                                    <c-cluster gap="sm" align="center">
-                                        <b>Services:</b>
-                                        {% for svc in component.services %}
-                                            {% set definition = svc | service_definition %}
-                                            <c-chip>{{ definition.name if definition else svc | service_name }}</c-chip>
-                                            {# Het vraagteken opent de uitleg van die dienst, net als op de
-                                               bestaande pagina. Dezelfde functie uit static/js/wizard.js en
-                                               dezelfde dialoog; die staat in bg/_modals.html.j2, onderaan deze
-                                               pagina. stopPropagation staat erbij omdat de kaart eronder zelf
-                                               ook een klik afhandelt. #}
-                                            {% if definition and definition.help_template %}
-                                                {% set uitleg_js %}event.stopPropagation(); openServiceHelp('{{ definition.help_template | e }}'){% endset %}
-                                                <c-icon-button
-                                                    icon="question-mark-circle"
-                                                    accessible-label="Uitleg over {{ definition.name }}"
-                                                    variant="neutral-transparent"
-                                                    size="sm"
-                                                    :attrs="{'onclick': uitleg_js}" />
-                                            {% endif %}
-                                        {% endfor %}
-                                    </c-cluster>
-                                {% endif %}
-
+                                {# HET ADRES EERST. Dit is waar iemand voor komt: een component
+                                   opzoeken om er daarna heen te gaan. Het stond onder de poorten,
+                                   de resources en de diensten, dus je scrolde er elke keer
+                                   langsheen. Zo teruggevraagd, en het klopt ook met de rest van de
+                                   kaart: eerst wat je ermee doet, dan hoe hij is ingesteld. #}
                                 {% if component.ingress_links %}
                                     {# De knop opent zijn eigen data-url; de URL staat op het
                                        element en niet in de aanroep, precies zoals op de
@@ -529,23 +497,136 @@
                                     </c-stack>
                                 {% endif %}
 
+                                {% if component.ports %}
+                                    <c-paragraph size="sm">
+                                        <b>Poorten:</b>
+                                        {% if component.ports.inbound %}Inbound: {{ component.ports.inbound | join(", ") }}{% endif %}
+                                        {% if component.ports.outbound %}{% if component.ports.inbound %} | {% endif %}Outbound: {{ component.ports.outbound | join(", ") }}{% endif %}
+                                    </c-paragraph>
+                                {% endif %}
+
+                                {% if component.resources %}
+                                    {% set req = component.resources.get('requests', {}) or {} %}
+                                    {% set lim = component.resources.get('limits', {}) or {} %}
+                                    <c-paragraph size="sm">
+                                        <b>Resources:</b>
+                                        {% if req.get('memory') or lim.get('memory') %}
+                                            Memory: {{ req.get('memory', '?') }} / {{ lim.get('memory', '?') }}
+                                        {% elif component.resources.memory is string %}
+                                            Memory: {{ component.resources.memory }}
+                                        {% endif %}
+                                        {% if req.get('cpu') or lim.get('cpu') %}
+                                            | CPU: {{ req.get('cpu', '?') }} / {{ lim.get('cpu', '?') }}
+                                        {% elif component.resources.cpu is string %}
+                                            | CPU: {{ component.resources.cpu }}
+                                        {% endif %}
+                                    </c-paragraph>
+                                {% endif %}
+
+                                {% if component.services %}
+                                    {# EEN LIJST, GEEN RIJ CHIPS.
+                                       Veertien chips met achter elke chip een los
+                                       vraagteken liepen over drie regels door en er was
+                                       geen enkele lijn om langs te lezen: welk vraagteken
+                                       bij welke dienst hoorde moest je uit de tussenruimte
+                                       afleiden. Gemeld als "het ziet er nu erg rommelig
+                                       uit", met de suggestie er een lijstje van te maken.
+
+                                       <c-list> is precies dat, en het levert meteen wat de
+                                       chip niet kon: de BESCHRIJVING van de dienst als
+                                       ondertitel. Die stond al in de dienstdefinitie en
+                                       nergens op deze pagina, terwijl het de vraag
+                                       beantwoordt waar het vraagteken voor bedoeld was.
+
+                                       Dezelfde lezing als hiervoor: de naam via het
+                                       service_name-filter, want een regel kan een tekst,
+                                       een {naam: {...}} of een {reference: ...} zijn. #}
+                                    {# OOK INGEKLAPT. Als losse lijst was het netjes maar veel te
+                                       hoog: veertien rijen met een beschrijving eronder duwden de
+                                       omgevingsvariabelen en het volgende component uit beeld.
+                                       Gemeld als "wel mooi vormgegeven maar veel te veel ruimte".
+                                       Zelfde uitklaprij als hieronder, dus een component leest nu
+                                       als drie regels met een aantal erachter. #}
+                                    <c-list variant="simple" dividers="never" accessible-label="Services van {{ component.name }}">
+                                        <c-list-item button :attrs="{'data-uitklap': 'true'}">
+                                            <c-icon-cell icon="chevron-right" size="20" :attrs="{'disclosure': 'true'}" />
+                                            <c-spacer-cell size="8" />
+                                            <c-text-cell text="Services ({{ component.services | length }})" />
+                                        {% for svc in component.services %}
+                                            {% set definition = svc | service_definition %}
+                                            <c-list-item slot="children">
+                                                <c-icon-cell icon="{{ (definition.icon if definition else 'cube') | nldd_icon }}" size="16" />
+                                                <c-spacer-cell size="8" />
+                                                <c-text-cell
+                                                    text="{{ definition.name if definition else svc | service_name }}"
+                                                    supporting-text="{{ definition.description if definition else '' }}" />
+                                                {# Het vraagteken opent de uitleg van die dienst: dezelfde functie
+                                                   uit static/js/wizard.js en dezelfde dialoog, die onderaan deze
+                                                   pagina in bg/_modals.html.j2 staat. Als <c-list-item-action>,
+                                                   want dat is de bediening die BIJ een rij hoort - een losse knop
+                                                   ernaast was precies wat de rij rommelig maakte. #}
+                                                {% if definition and definition.help_template %}
+                                                    {% set uitleg_js %}event.stopPropagation(); openServiceHelp('{{ definition.help_template | e }}'){% endset %}
+                                                    <c-list-item-action button accessible-label="Uitleg over {{ definition.name }}" :attrs="{'onclick': uitleg_js}">
+                                                        <c-icon-cell icon="question-mark-circle" size="20" />
+                                                    </c-list-item-action>
+                                                {% endif %}
+                                            </c-list-item>
+                                        {% endfor %}
+                                        </c-list-item>
+                                    </c-list>
+                                {% endif %}
+
                                 {# De variabelen ZELF, in de kaart van het component waar ze bij
                                    horen. Hier stond een regel die naar een aparte sectie verwees
                                    ("zie Omgevingsvariabelen sectie"), en die sectie stond op een
                                    ander tabblad; je moest dus wegklikken om te zien wat er stond.
                                    De waarden zijn afgeschermd, want het zijn gebruikerswaarden en
                                    er kan van alles in staan. #}
+                                {# INGEKLAPT, want deze lijst heeft geen bovengrens. Een component
+                                   met dertig variabelen duwde alles eronder - de aliassen en het
+                                   volgende component - buiten beeld, en dan is de componentenlijst
+                                   niet meer te overzien. Gemeld: "die zijn soms veel te lang".
+
+                                   Uitgeklapt met <c-list-item>, niet met een eigen <details>.
+                                   nldd-list-item draagt zelf een `expanded` en een slot
+                                   "children" dat het thema verbergt en toont, plus een
+                                   <c-icon-cell disclosure> die meedraait. <c-accordion> is
+                                   bewust NIET gebruikt: dat is de RVO-versie, met een pijltje uit
+                                   een rvo-icon-klasse, en deze pagina laadt de RVO-stylesheet niet
+                                   - daar zou een onzichtbaar pijltje van komen.
+
+                                   Het omklappen zelf doet static/js/uitklap.js: het component
+                                   levert de stand en de opmaak, de consument bepaalt wanneer hij
+                                   verspringt.
+
+                                   Het AANTAL staat in de kop, zodat je weet of het de moeite is
+                                   om open te klappen. #}
                                 {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars'] | length > 0 %}
-                                    <c-heading type="h5" size="6" label="Omgevingsvariabelen" />
-                                    <c-stack gap="xs">
-                                        {% for sleutel, waarde in component['user-env-vars'].items() | sort %}
-                                            <c-cluster gap="sm" align="center">
-                                                <c-icon icon="lock-closed" size="sm" />
-                                                <c-span>{{ sleutel }}</c-span>
-                                            </c-cluster>
-                                            <c-secret-field value="{{ waarde }}" show-copy />
-                                        {% endfor %}
-                                    </c-stack>
+                                    <c-list variant="simple" dividers="never">
+                                        <c-list-item button :attrs="{'data-uitklap': 'true'}">
+                                            {# disclosure via :attrs, want c-icon-cell kent het attribuut niet als
+                                               eigen eigenschap; het thema selecteert erop
+                                               (::slotted(nldd-icon-cell[disclosure])) en draait de cel dan mee
+                                               met de stand van de rij. #}
+                                            <c-icon-cell icon="chevron-right" size="20" :attrs="{'disclosure': 'true'}" />
+                                            <c-spacer-cell size="8" />
+                                            <c-text-cell text="Omgevingsvariabelen ({{ component['user-env-vars'] | length }})" />
+                                            {# ELKE VARIABELE EEN EIGEN RIJ, en dat is geen keuze maar de vorm die
+                                               het component kent: <nldd-list-item> filtert zijn slot "children"
+                                               op geneste <nldd-list-item> (_updateChildren in de themabundel).
+                                               Een los blok in dat slot wordt weggefilterd en dan klapt de rij
+                                               nergens open. Gemeten in de browser, niet beredeneerd. #}
+                                            {% for sleutel, waarde in component['user-env-vars'].items() | sort %}
+                                                <c-list-item slot="children">
+                                                    <c-icon-cell icon="lock-closed" size="16" />
+                                                    <c-spacer-cell size="8" />
+                                                    <c-text-cell text="{{ sleutel }}" />
+                                                    <c-cell><c-secret-field value="{{ waarde }}" show-copy /></c-cell>
+                                                </c-list-item>
+                                            {% endfor %}
+                                        </c-list-item>
+                                    </c-list>
                                 {% endif %}
 
                                 {# De ALIASSEN, naast de omgevingsvariabelen en in dezelfde
@@ -565,29 +646,44 @@
                                    AliasesService.owned_value_is_secret en komt hier binnen als
                                    het filter is_verwijzing, zodat er niet twee regels ontstaan. #}
                                 {% if component.get('aliases') and component['aliases'] is mapping and component['aliases'] | length > 0 %}
-                                    <c-heading type="h5" size="6" label="Aliassen" />
-                                    <c-stack gap="xs">
-                                        {% for sleutel, waarde in component['aliases'].items() | sort %}
-                                            {# Naam en waarde op EEN regel: een alias is het verband
-                                               tussen die twee ("deze naam komt daarvandaan") en dat
-                                               verband gaat verloren zodra ze onder elkaar staan. Bij
-                                               de omgevingsvariabelen hierboven kan dat niet, want
-                                               daar is de waarde een veld over de volle breedte. #}
-                                            {% if waarde | string | is_verwijzing %}
-                                                <c-cluster gap="sm" align="center">
-                                                    <c-icon icon="link" size="sm" />
-                                                    <c-span>{{ sleutel }}</c-span>
-                                                    <c-code>{{ waarde }}</c-code>
-                                                </c-cluster>
-                                            {% else %}
-                                                <c-cluster gap="sm" align="center">
-                                                    <c-icon icon="lock-closed" size="sm" />
-                                                    <c-span>{{ sleutel }}</c-span>
-                                                </c-cluster>
-                                                <c-secret-field value="{{ waarde }}" show-copy />
-                                            {% endif %}
-                                        {% endfor %}
-                                    </c-stack>
+                                    <c-list variant="simple" dividers="never">
+                                        <c-list-item button :attrs="{'data-uitklap': 'true'}">
+                                            {# disclosure via :attrs, want c-icon-cell kent het attribuut niet als eigen
+                                                   eigenschap; het thema selecteert erop
+                                                   (::slotted(nldd-icon-cell[disclosure])) en draait de cel
+                                                   dan mee met de stand van de rij. #}
+                                                <c-icon-cell icon="chevron-right" size="20" :attrs="{'disclosure': 'true'}" />
+                                            <c-spacer-cell size="8" />
+                                            <c-text-cell text="Aliassen ({{ component['aliases'] | length }})" />
+                                            {# Geneste rijen, om dezelfde reden als bij de
+                                               omgevingsvariabelen hierboven: het slot "children" van
+                                               <nldd-list-item> neemt alleen geneste <nldd-list-item>. #}
+                                            {% for sleutel, waarde in component['aliases'].items() | sort %}
+                                                {% if waarde | string | is_verwijzing %}
+                                                    {# Naam en waarde op EEN rij: een alias is het verband tussen
+                                                       die twee ("deze naam komt daarvandaan") en dat verband gaat
+                                                       verloren zodra ze onder elkaar staan. Als ondertitel van de
+                                                       naam, want dat is wat de cel ervoor heeft. #}
+                                                    <c-list-item slot="children">
+                                                        <c-icon-cell icon="link" size="16" />
+                                                        <c-spacer-cell size="8" />
+                                                        <c-text-cell text="{{ sleutel }}" supporting-text="{{ waarde }}" />
+                                                    </c-list-item>
+                                                {% else %}
+                                                    {# Geen verwijzing is mogelijk een geheim; dan het veld, niet
+                                                       de waarde. Dat oordeel staat in de dienst
+                                                       (AliasesService.owned_value_is_secret) en komt hier binnen
+                                                       als het filter is_verwijzing. #}
+                                                    <c-list-item slot="children">
+                                                        <c-icon-cell icon="lock-closed" size="16" />
+                                                        <c-spacer-cell size="8" />
+                                                        <c-text-cell text="{{ sleutel }}" />
+                                                        <c-cell><c-secret-field value="{{ waarde }}" show-copy /></c-cell>
+                                                    </c-list-item>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </c-list-item>
+                                    </c-list>
                                 {% endif %}
                             </c-stack>
                         </c-card>
@@ -609,15 +705,15 @@
                         <c-card outline padding="md">
                             <c-stack gap="sm">
                                 <c-heading type="h3" size="5" label="{{ helm_chart.name }}" />
-                                {% if helm_chart.get('repository') %}
-                                    <c-paragraph size="sm">{{ helm_chart.repository }}</c-paragraph>
+                                {% if helm_chart.get('git-url') %}
+                                    <c-paragraph size="sm">{{ helm_chart['git-url'] }}</c-paragraph>
                                 {% endif %}
                                 <c-detail-list>
-                                    {% if helm_chart.get('chart') %}
-                                        <c-detail-item label="Chart" value="{{ helm_chart.chart }}" />
+                                    {% if helm_chart.get('chart-path') %}
+                                        <c-detail-item label="Chart" value="{{ helm_chart['chart-path'] }}" />
                                     {% endif %}
-                                    {% if helm_chart.get('version') %}
-                                        <c-detail-item label="Version" value="{{ helm_chart.version }}" />
+                                    {% if helm_chart.get('git-ref') %}
+                                        <c-detail-item label="Versie" value="{{ helm_chart['git-ref'] }}" />
                                     {% endif %}
                                 </c-detail-list>
                                 {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping and helm_chart['helm-values'] | length > 0 %}
@@ -643,15 +739,21 @@
                         <c-card outline padding="md">
                             <c-stack gap="sm">
                                 <c-heading type="h3" size="5" label="{{ helmfile.name }}" />
-                                {% if helmfile.get('repository') %}
-                                    <c-paragraph size="sm">{{ helmfile.repository }}</c-paragraph>
+                                {% if helmfile.get('url') %}
+                                    <c-paragraph size="sm">{{ helmfile.url }}</c-paragraph>
                                 {% endif %}
                                 <c-detail-list>
                                     {% if helmfile.get('path') %}
-                                        <c-detail-item label="Path" value="{{ helmfile.path }}" />
+                                        <c-detail-item label="Pad" value="{{ helmfile.path }}" />
                                     {% endif %}
-                                    {% if helmfile.get('branch') %}
-                                        <c-detail-item label="Branch" value="{{ helmfile.branch }}" />
+                                    {% if helmfile.get('ref') %}
+                                        <c-detail-item label="Ref" value="{{ helmfile.ref }}" />
+                                    {% endif %}
+                                    {% if helmfile.get('files') %}
+                                        <c-detail-item label="Eigen bestanden" value="{{ helmfile.files | join(', ') }}" />
+                                    {% endif %}
+                                    {% if helmfile.get('services') %}
+                                        <c-detail-item label="Diensten" value="{{ helmfile.services | map('service_name') | join(', ') }}" />
                                     {% endif %}
                                 </c-detail-list>
                                 {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values'] | length > 0 %}

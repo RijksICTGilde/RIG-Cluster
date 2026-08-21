@@ -34,6 +34,6 @@
     :attrs="dict(field_attrs(field), **{'value': value_str or none})"
 >
     {% for option in field.options or [] %}
-        <option value="{{ option.value|e }}"{% if option.value|string == value_str %} selected{% endif %}>{{ option.label|e }}</option>
+        <option value="{{ option.value|e }}"{% if option.value|string == value_str %} selected{% endif %}{% if option.disabled %} disabled{% endif %}>{{ option.label|e }}</option>
     {% endfor %}
 </c-select-field>{{ render_examples(field) }}

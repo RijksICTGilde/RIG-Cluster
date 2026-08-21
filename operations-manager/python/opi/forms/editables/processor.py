@@ -443,7 +443,7 @@ class EditableFormProcessor:
             ed = vis.editable
             if vis.readonly or (vis.readonly_on_edit and edit_mode):
                 continue
-            if not should_render_editable(vis, result, siblings=editables):
+            if not should_render_editable(vis, result, siblings=editables, edit_mode=edit_mode):
                 # When ``show_when`` no longer holds against the in-progress
                 # ``result`` the field is conceptually hidden; processing it
                 # anyway would let stale form data clobber the now-current
@@ -550,7 +550,7 @@ class EditableFormProcessor:
             child_ed = child_vis.editable
             if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                 continue
-            if not should_render_editable(child_vis, result, siblings=group_children):
+            if not should_render_editable(child_vis, result, siblings=group_children, edit_mode=edit_mode):
                 continue
 
             if child_vis.widget == WidgetType.GROUP:
@@ -726,7 +726,9 @@ class EditableFormProcessor:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
-                if not should_render_editable(child_vis, result, index=index, siblings=seq_children_json):
+                if not should_render_editable(
+                    child_vis, result, index=index, siblings=seq_children_json, edit_mode=edit_mode
+                ):
                     continue
                 if child_vis.widget == WidgetType.SEQUENCE:
                     self._process_nested_sequence_json(
