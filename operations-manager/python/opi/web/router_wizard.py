@@ -2529,8 +2529,16 @@ async def _do_submit(
         # Beide kanten: RC-47 brengt de foutafhandeling (het veld krijgt een markering,
         # de boodschap zelf gaat autoescaped naar global_errors), RC-43 brengt state.is_edit
         # als naam voor "het project bestaat al".
+        # De GEMENGDE staat en niet final_data: dat laatste is de opslagvorm (transients
+        # gestript, generators toegepast, de _-sleutels eruit) en de stap moet de velden
+        # tonen zoals de gebruiker ze achterliet. Elke andere aanroep van _render_step_html
+        # gebruikt dezelfde bron.
+        #
+        # Hier stond kaal ``yaml_data``, en die naam bestaat in deze functie niet: elke
+        # afkeuring liep op een NameError in plaats van op de melding die deze hele tak juist
+        # moest opleveren. tests/test_wizard_rejects_invalid_project.py stond erop rood.
         step_html = _render_step_html(
-            request, error_section, yaml_data=yaml_data, errors=field_errors, edit_mode=state.is_edit
+            request, error_section, yaml_data=state.get_merged_data(), errors=field_errors, edit_mode=state.is_edit
         )
         context = _build_step_context(
             request, flow_id, error_section, step_html, errors=field_errors, global_errors=global_errors
