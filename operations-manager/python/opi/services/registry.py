@@ -34,9 +34,11 @@ from opi.services.catalog.postgresql_database import PostgresqlDatabaseService
 from opi.services.catalog.publish_on_web import PublishOnWebService
 from opi.services.catalog.redis import RedisService
 from opi.services.catalog.resource_tuning import ResourceTuningService
+from opi.services.catalog.send_email import SendEmailService
 from opi.services.catalog.sleep_mode import SleepModeService
 from opi.services.catalog.temp_storage import TempStorageService
 from opi.services.catalog.user_env_vars import UserEnvVarsService
+from opi.services.catalog.vlam import VlamService
 from opi.services.services_enums import ActionEvent, ServiceEvent, ServiceType, UIEvent
 
 if TYPE_CHECKING:
@@ -56,6 +58,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.POSTGRESQL_DATABASE: PostgresqlDatabaseService(),
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE: NamespacePostgresqlDatabaseService(),
     ServiceType.MINIO_STORAGE: MinioStorageService(),
+    ServiceType.SEND_EMAIL: SendEmailService(),
     ServiceType.REDIS: RedisService(),
     ServiceType.NAMESPACE_REDIS: NamespaceRedisService(),
     ServiceType.PLATFORM: PlatformService(),
@@ -64,6 +67,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.INVITE: InviteService(),
     ServiceType.RESOURCE_TUNING: ResourceTuningService(),
     ServiceType.CROSS_DOMAIN_ACCESS: CrossDomainAccessService(),
+    ServiceType.VLAM: VlamService(),
     ServiceType.DEPLOYMENT_HEALTH: DeploymentHealthService(),
     ServiceType.USER_ENV_VARS: UserEnvVarsService(),
     ServiceType.ALIASES: AliasesService(),

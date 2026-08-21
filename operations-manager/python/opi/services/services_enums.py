@@ -22,6 +22,11 @@ class ServiceType(Enum):
     # Object storage services
     MINIO_STORAGE = "minio-storage"
 
+    # Outgoing mail: an SMTP account on the platform relay, which authenticates once
+    # towards the upstream mail server. Named after what it does (like publish-on-web),
+    # not after the protocol or the product behind it.
+    SEND_EMAIL = "send-email"
+
     # Cache services
     REDIS = "redis"
     NAMESPACE_REDIS = "namespace-redis"
@@ -49,6 +54,11 @@ class ServiceType(Enum):
     # Cross-domain network access: allow this project's pods to reach, and be reached by,
     # named deployments/components of other projects on explicit ports (NetworkPolicy).
     CROSS_DOMAIN_ACCESS = "cross-domain-access"
+
+    # VLAM: the language-model API of SSC-ICT, reachable over the RON link and opened up
+    # inside the cluster by the vlam project's internal proxy. Only exists on a cluster
+    # whose configuration names a VLAM endpoint.
+    VLAM = "vlam"
 
     # A component's own environment variables and its alias map. System services: every
     # component has them, so they are never in the picker and never in the services list.
@@ -108,6 +118,7 @@ class ManagerKey(Enum):
     REDIS = "redis"
     KEYCLOAK = "keycloak"
     PVC = "pvc"
+    MAIL = "mail"
 
 
 class ServiceKind(Enum):

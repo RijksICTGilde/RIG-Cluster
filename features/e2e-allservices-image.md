@@ -37,7 +37,37 @@ Each bound service maps to one reusable *probe kind*:
 | `s3` | minio-storage | `PutObject`/`GetObject`/compare/`RemoveObject` in `OBJECT_STORE_BUCKET_NAME` |
 | `oidc` | keycloak | GET `OIDC_DISCOVERY_URL` (assert `issuer` + `token_endpoint`), then a **client-credentials token grab** with `OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` (falls back to discovery-only if the grant is unavailable, clearly marked - never a silent pass) |
 | `path` | persistent-storage, temp-storage | for each of `DATA_PATH` / `TEMP_PATH`: write a file, `fsync`, read back, compare, delete |
-| `metadata` | publish-on-web, metrics-scraper, platform | assert presence and echo (`DEPLOYMENT_NAME`, `PUBLIC_HOST`, ...); secret-looking values are redacted |
+| `metadata` | publish-on-web, metrics-scraper, platform, send-email | assert presence and echo (`DEPLOYMENT_NAME`, `PUBLIC_HOST`, ...); secret-looking values are redacted |
+| `vlam` | vlam | GET `{VLAM_API_URL}/v1/models`: a JSON body with a `data` list passes, and so does a **401/403** -- only VLAM itself can answer that, so the chain stands and only its own authorization is holding the door. A connection failure, a timeout, a 5xx or a 200 that is not a models document fails, with the suspect hop named (network path vs proxy vs upstream), because this gets debugged from the consumer's side |
+
+The vlam probe used to be `metadata` too, on the grounds that the sandbox has no
+VLAM behind the address. That reason is gone since RC-144: the sandbox E2E suite puts
+a stub on the placeholder coordinates, so the call has something to answer it there,
+and on production it reaches the real proxy. What it now measures is the chain --
+selected service, injected address, egress policy, the proxy's inbound policy, an
+answer -- instead of only the presence of a variable.
+
+The mail probe stays `metadata` on purpose: a real send counts against the
+project's daily budget on the relay, so the check round never sends. Instead the
+status page carries a manual **"Stuur testmail"** form (`POST /send-testmail`)
+when send-email is bound: STARTTLS + AUTH as the injected account, one message
+to an address you choose, and the subject line in the response so you can find
+it at the receiving end (sandbox: Mailpit on the sink, port 8025).
+
+The vlam probe stops one step short for the same kind of reason: it carries no
+credential, so it says nothing about whether a project's own token opens the door
+and whether a model actually answers. That last stretch needs something only a
+human has, so it hangs off a manual **"Test VLAM"** form (`POST /vlam-chat`) when
+the vlam service is bound: one real, non-streaming chat completion to
+`{VLAM_API_URL}/v1/chat/completions` with a token, a model (pre-filled with what
+the last probe round saw) and a question you type, and the answer on the page.
+The token is used for that one request and then dropped - never stored, never
+logged, never rendered back, not even into the field it came from - and the
+question and answer stay off the log too, which is why this one answers the POST
+in place instead of redirecting like the mail button does. Failures name the
+suspect hop the way the probe's do, but the hops differ because a credential is
+in play: no answer at all is the network path, a 401/403 is the token, a 400/404
+is the model name, a 5xx is the proxy or VLAM.
 
 Beyond the round-trip, for every **bound** service it asserts that **all** env
 vars the platform injects for it are actually injected (the key exists) - a
@@ -87,6 +117,11 @@ uv run python scripts/generate_probe_spec.py     # or: task generate-probe-spec
 - `GET /` - a plain human page: a `Hello, world` banner + a live table of
   service -> OK/FAIL/skipped + latency. Eyeball a deployment in a browser via the
   project's public ingress.
+- `POST /send-testmail` - the manual mail button (see above); redirects back to
+  `/` with the subject line, so a refresh does not resend.
+- `POST /vlam-chat` - the manual VLAM chat button (see above); answers with the
+  page itself, carrying the model answer or the failure. `404` when the vlam
+  service is not bound: no binding, no button, no endpoint.
 - `GET /healthz` - `200 OK` once the process is listening (liveness only; never
   reflects a downstream service).
 - `GET /status` - JSON, the payload the E2E suite asserts on:

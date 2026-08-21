@@ -10,8 +10,8 @@ from the data it already holds: it needs the logged-in user and the project stor
 else in the cascade (peer deployments, peer components, ports) is a function of a row's own
 values and is read at render time by the providers, so it cannot go stale or differ per flow.
 
-Template-only: no editable names ``_cross_domain_projects``, so it falls outside the write set
-and never reaches the saved project file.
+Template-only: no editable names ``_cross_domain_projects`` or ``_cross_domain_project_labels``,
+so they fall outside the write set and never reach the saved project file.
 """
 
 from __future__ import annotations
@@ -22,18 +22,31 @@ from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.project_store import get_project_store
 
 CROSS_DOMAIN_PROJECTS_KEY = "_cross_domain_projects"
+CROSS_DOMAIN_PROJECT_LABELS_KEY = "_cross_domain_project_labels"
 
 
-def build_cross_domain_context(project_name: str, user_email: str) -> dict[str, Any]:
-    """Peer projects this user may point a cross-domain rule at, own project excluded.
+def build_cross_domain_context(user_email: str) -> dict[str, Any]:
+    """Peer projects this user may point a cross-domain rule at, own project included.
 
     Limited to projects the user is authorized for: a peer you cannot see is a peer you
-    cannot name. ``project_name`` is empty in the create wizard (the project does not exist
-    yet), which simply means nothing is excluded.
+    cannot name.
+
+    The own project is in the list on purpose. The tenant baseline isolates per DEPLOYMENT,
+    not per project, so one deployment of a project cannot reach another deployment of that
+    same project without a rule either -- excluding the own project left that case with no
+    way to express it at all.
+
+    Sorted on the display name (case-insensitively), because that is what the select shows;
+    the code is only the tiebreaker.
     """
-    projects = sorted(
-        summary.name
-        for summary in get_project_store().get_all()
-        if summary.name != project_name and is_user_authorized_for_project(summary.name, user_email)
-    )
-    return {CROSS_DOMAIN_PROJECTS_KEY: projects}
+    labels: dict[str, str] = {}
+    display_names: dict[str, str] = {}
+    for summary in get_project_store().get_all():
+        if not is_user_authorized_for_project(summary.name, user_email):
+            continue
+        display_name = str((summary.data or {}).get("display-name") or "").strip()
+        display_names[summary.name] = display_name or summary.name
+        # Geen weergavenaam? Dan alleen de code, geen lege haakjes erachter.
+        labels[summary.name] = f"{display_name} ({summary.name})" if display_name else summary.name
+    projects = sorted(display_names, key=lambda name: (display_names[name].casefold(), name))
+    return {CROSS_DOMAIN_PROJECTS_KEY: projects, CROSS_DOMAIN_PROJECT_LABELS_KEY: labels}

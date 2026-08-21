@@ -64,12 +64,28 @@ components:
     ports:
       inbound: [8080]
       outbound: [443]
-    uses-services:
+    # `services` en niet `uses-services`: die laatste is de v1-naam, en de kaart leest de
+    # v2-vorm. Met de oude naam bleef het dienstenblok op de componentkaart leeg en was er
+    # niets te meten (zie tests/e2e/test_componentkaart_uitklap.py).
+    services:
       - keycloak
       - persistent-storage
     resources:
       cpu: "500m"
       memory: "512Mi"
+    # Omgevingsvariabelen en aliassen staan hier om DEZELFDE reden als de helm-charts
+    # verderop: zonder gegevens rendert de tak niet en is er niets te meten. Sinds de
+    # componentkaart die twee ingeklapt toont (ze werden soms honderden regels lang) is er
+    # ook gedrag om te meten, en dat doet tests/e2e/test_componentkaart_uitklap.py.
+    #
+    # Onversleuteld, en dat mag: read_user_env_vars leest een gewoon KEY=value-blok en de
+    # aliassendecoder een gewone mapping. Een AGE-blok zou hier alleen de sleutelketen van
+    # de testopstelling meten, niet de kaart.
+    user-env-vars: |
+      LOG_LEVEL=debug
+      FEATURE_FLAG=on
+    aliases:
+      POSTGRES_HOST: $DATABASE_SERVER_HOST
 
   - name: worker
     type: deployment
@@ -108,11 +124,17 @@ deployments:
 # ANDERS NIET TE METEN ZIJN: zowel de bestaande als de hertekende pagina zetten er
 # `{% if project.helm_charts %}` omheen, dus zonder gegevens rendert er aan beide kanten
 # niets en zegt een vergelijking niets.
+# De veldnamen zijn die van het schema (`helm-chart` en `helmfile-entry` in
+# `opi/schemas/project_v2.json`). Ze stonden hier als `repository`/`chart`/`version` en
+# `repository`/`branch`, en dat zijn namen die het schema met
+# `additionalProperties: false` verbiedt - de pagina las ze, dus toonde ze voor een echt
+# projectbestand niets.
 helm-charts:
   - name: redis-cache
-    repository: https://charts.bitnami.com/bitnami
-    chart: redis
-    version: "18.1.5"
+    source-type: git-clone
+    git-url: https://github.com/bitnami/charts.git
+    git-ref: "18.1.5"
+    chart-path: bitnami/redis
     helm-values:
       architecture: standalone
       auth:
@@ -120,9 +142,15 @@ helm-charts:
 
 helmfile:
   - name: monitoring-stack
-    repository: https://github.com/example/monitoring
+    url: https://github.com/example/monitoring.git
+    ref: main
     path: helmfile.d/monitoring.yaml
-    branch: main
+    files:
+      helmfile.yaml.gotmpl: |
+        bases:
+          - "helmfile/bases/environment.yaml.gotmpl"
+    services:
+      - publish-on-web
     helm-values:
       grafana:
         enabled: true

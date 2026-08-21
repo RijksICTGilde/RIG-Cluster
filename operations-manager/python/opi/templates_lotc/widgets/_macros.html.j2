@@ -66,13 +66,101 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
   openServiceHelp() (static/js/wizard.js) plus the help modal
   (widgets/service_help_modal.html.j2) on the page.
 #}
+{#
+  DE KEUZEKAART: de schil van een kaart die je aan kunt vinken.
+
+  Op EEN plek, want hij wordt op twee plaatsen gebruikt - de dienstenkiezer
+  (widgets/service_cards.html.j2) en de voorinstellingen (widgets/preset_cards.html.j2) -
+  en de vorige keer dat zoiets op twee plaatsen stond liepen ze uit de pas.
+
+  Wat er in deze schil zit is precies het stuk dat NIET mag afwijken, want het is met
+  meten tot stand gekomen:
+
+  - Rechtstreeks <nldd-card> en geen <c-card>. Die laatste zet altijd een
+    <nldd-container> om zijn inhoud, en de schaduw-div daarbinnen groeit niet mee met zijn
+    eigen host. Gemeten op een korte kaart in een hoge rij: kaart 426px, container 426px,
+    de div erin 214px. Alles eronder volgde die 214, dus het aanvinkvakje bleef halverwege
+    hangen in plaats van onderaan.
+  - De padding komt van <c-box> en de inhoud van <c-stack>. Dat zijn gewone divs uit de
+    layoutlaag zonder schaduwboom, dus `flex-grow` werkt er gewoon op
+    (static/css/wizard.css, .service-card__vak en .service-card__body).
+  - De klasse service-card is een HAAK, geen opmaak: static/js/wizard.js zoekt de kaarten
+    ermee op, en zo ook drie e2e-tests.
+
+  ``attrs`` is een dict die letterlijk op de kaart komt. Daar hangt het gedrag aan: de
+  dienstenkiezer zet er data-service en background in, de voorinstellingen hun hx-post.
+#}
+{% macro keuzekaart(gekozen=False, vergrendeld=False, attrs=None) %}
+<nldd-card class="service-card{% if gekozen %} service-card--selected{% endif %}{% if vergrendeld %} service-card--locked-checked{% endif %}"
+           outline
+           {% for naam, waarde in (attrs or {}).items() %}{{ naam }}="{{ waarde|e }}" {% endfor %}>
+    <c-box pad="lg" class="service-card__vak">
+    <c-stack gap="sm" class="service-card__body">
+        {{ caller() }}
+    </c-stack>
+    </c-box>
+</nldd-card>
+{% endmacro %}
+
+{#
+  Het aanvinkvakje van een keuzekaart: onderaan, rechts, zonder tekst ernaast.
+
+  Een kale <nldd-checkbox> en geen <c-checkbox>: die laatste wordt een
+  <nldd-checkbox-field> en tekent naast het vakje altijd een <span> met zijn label. Hier
+  hoort geen tekst bij, want de naam staat al als kop in de kaart. Het kale component
+  draagt zijn toegankelijke naam in accessible-label en is net zo goed form-associated.
+
+  ``naam`` leeg laten maakt het vakje pure bediening: de voorinstellingen sturen hun eigen
+  verzoek en zouden met een name een tweede waarde meesturen.
+
+  ``vergrendeld`` zet ``aria-disabled`` op het VAKJE en niet alleen op de kaart. Dat is waar
+  het hoort: een kaart is geen bediening, en een <nldd-card> heeft geen rol, dus een
+  aria-disabled daarop kondigt niets aan. Bij de omzetting naar componenten is die markering
+  van het vakje afgevallen en alleen op de kaart blijven staan.
+
+  Let op wat dit vandaag WEL en NIET doet. <nldd-checkbox> zet zijn echte <input> in een
+  schaduwboom en geeft daar alleen ``aria-label`` (uit accessible-label) en ``disabled`` aan
+  door. Dit attribuut blijft dus op de host staan en bereikt de bediening nog niet; dat is
+  gevraagd in request_for_components.md ("een vergrendeld aanvinkvakje dat zijn waarde wel
+  meestuurt"). Disabled is hier GEEN alternatief: dat onderdrukt de waarde in de POST, en
+  precies zo verdween een vergrendelde dienst ooit stil uit het projectbestand.
+
+  Op een vakje dat WEL ``uit`` is komt het attribuut niet: ``aria-disabled="false"`` naast
+  een ``disabled`` is een tegenspraak in de markup. De voorinstellingen gebruiken die vorm.
+#}
+{% macro kaart_vakje(id, label, gekozen=False, uit=False, naam='', waarde='', vergrendeld=False) %}
+<c-cluster justify="end" class="service-card__kies">
+    <nldd-checkbox
+        id="{{ id|e }}"
+        {% if naam %}name="{{ naam|e }}"{% endif %}
+        {% if waarde %}value="{{ waarde|e }}"{% endif %}
+        accessible-label="{{ label|e }}"
+        {% if not uit %}aria-disabled="{{ 'true' if vergrendeld else 'false' }}"{% endif %}
+        {% if gekozen %}checked{% endif %}
+        {% if uit %}disabled{% endif %}></nldd-checkbox>
+</c-cluster>
+{% endmacro %}
+
 {% macro service_block(name, description, icon, color, help_template=None, icon_size="lg") %}
-<div class="service-card__header">
-    {# Door het nldd_icon-filter: de kaartgegevens dragen de ROOS-naam, want dezelfde
-       gegevens voeden ook de oude weergave. Zonder vertaling rendert het icoon leeg -
-       zo misten de dienstkaarten in de wizard hun iconen, op PostgreSQL na. #}
-    <c-icon icon="{{ icon|nldd_icon|e }}" color="{{ color|e }}" size="{{ icon_size|e }}"/>
-    <span class="service-card__title">{{ name|e }}</span>
+{# HET BLOK DAT EEN DIENST VOORSTELT: icoon, naam, vraagteken op een regel, met de
+   omschrijving eronder. Op EEN plek, want de dienstenkiezer in de wizard en het
+   dienstenoverzicht bouwden dit allebei zelf en liepen uit de pas - het overzicht was
+   toen zijn vraagtekenknop kwijt. tests/test_service_help.py bewaakt dat ze het blijven
+   delen.
+
+   Omgezet naar componenten: de naam was een <span class="service-card__title"> die zijn
+   vetheid uit static/css/wizard.css haalde, en de omschrijving een <p> met een eigen
+   lettergrootte. Beide regels zijn daar weg; <c-heading> en <c-paragraph> leveren dat uit
+   het thema. De KLASSEN blijven staan, want ze zijn haken: wizard.js en de e2e-tests
+   zoeken de hulpknop ermee op. #}
+<c-cluster gap="sm" align="center" justify="between" class="service-card__header">
+    <c-cluster gap="sm" align="center">
+        {# Door het nldd_icon-filter: de kaartgegevens dragen de ROOS-naam, want dezelfde
+           gegevens voeden ook de oude weergave. Zonder vertaling rendert het icoon leeg -
+           zo misten de dienstkaarten in de wizard hun iconen, op PostgreSQL na. #}
+        <c-icon icon="{{ icon|nldd_icon|e }}" color="{{ color|e }}" size="{{ icon_size|e }}"/>
+        <c-heading type="h3" size="6" label="{{ name|e }}" class="service-card__title" />
+    </c-cluster>
     {% if help_template %}
     {# De vraagtekenknop opent de hulpdialoog van deze dienst. De aanroep gaat via een
        {% raw %}{% set %}{% endraw %}-blok en :attrs: <c-icon-button> laat geen onclick toe, en een genest
@@ -85,13 +173,13 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
        eerder ook in vielen. #}
     <c-icon-button
         icon="question-mark-circle"
-        accessible-label="Uitleg over deze dienst"
+        accessible-label="Uitleg over {{ name|e }}"
         variant="neutral-transparent"
         size="sm"
         :attrs="{'onclick': hulp_js, 'class': 'service-card__help-btn'}" />
     {% endif %}
-</div>
-<p class="service-card__description">{{ description|e }}</p>
+</c-cluster>
+<c-paragraph size="sm" class="service-card__description">{{ description|e }}</c-paragraph>
 {% endmacro %}
 
 {# --- Task progress --- #}

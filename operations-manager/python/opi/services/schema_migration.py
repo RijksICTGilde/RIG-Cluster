@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 #: patch in ``opi/schemas/project_legacy/``. ``check_schema_versions`` enforces that
 #: at startup, so adding a migration without a schema fails loudly instead of
 #: quietly rejecting files that declare the new version.
-SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7)
+SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8)
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 
@@ -50,6 +50,12 @@ LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 # `expose-component-on-bare-domain`) to the publish-on-web service config on that deployment
 # (`deployments[*]/services{publish-on-web}/config`). See ``relocate_domain_settings_to_service``
 # below; the placement itself is decided by ``catalog/publish_on_web/domain_config.py``.
+#
+# v2.7 -> v2.8: the legacy `domain-mode` field is retired. `domain-format` superseded it;
+# a deployment on `domain-mode: nice-url` without an explicit format gets
+# `domain-format: component.subdomain` (the format that IS nice-url's meaning, and the one
+# the files that carried both already chose), every other value was already equivalent to
+# the default format. See ``remove_domain_mode`` below.
 
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
@@ -858,13 +864,19 @@ def _fixup_flat_resources(entity: dict[str, Any]) -> bool:
     return changed
 
 
-def _normalize_service_entry(entry: Any, id_key: str) -> Any:
+def _normalize_service_entry(entry: Any, id_key: str, *, keep_attachments_legacy: bool = True) -> Any:
     """Convert a legacy name-as-key service entry to the uniform record form.
 
     ``{X: {config: ...}}`` -> ``{id_key: X, config: ...}``. Bare strings and entries
     already in record form (they carry ``name``/``reference``) are returned as-is.
     ``id_key`` is ``"name"`` for project-level definitions, ``"reference"`` for
     component-level references.
+
+    ``keep_attachments_legacy`` is the migration default. The services-list merge
+    (``services_merge``) passes False: it normalizes an entry only when its merge
+    partner already carries the record form, and merging two shapes into one dict is
+    worse than converting -- that is how a component entry ended up with BOTH
+    ``reference`` and its name as keys.
     """
     if not isinstance(entry, dict):
         return entry
@@ -874,7 +886,7 @@ def _normalize_service_entry(entry: Any, id_key: str) -> Any:
     if len(keys) != 1:
         return entry
     name = keys[0]
-    if name == "attachments":
+    if name == "attachments" and keep_attachments_legacy:
         # Deferred hard case: attachments has its own project-level 'data' catalog and
         # dedicated $defs. Leave it in the legacy name-as-key form (readers handle it).
         return entry
@@ -1041,6 +1053,52 @@ def relocate_domain_settings_to_service(project_data: dict[str, Any]) -> bool:
     return changed
 
 
+def remove_domain_mode(project_data: dict[str, Any]) -> bool:
+    """Retire the legacy ``domain-mode`` field (v2.7 -> v2.8).
+
+    ``domain-format`` superseded it, and the wild carried exactly one value: ``nice-url``
+    (five deployments in four projects, measured against the production projects repo on
+    2026-08-21). A deployment on nice-url without an explicit format gets
+    ``domain-format: component.subdomain`` -- the format that is nice-url's meaning, and
+    the one the files that carried both fields already chose. Every other mode value maps
+    to the default format (``HostnameFormat.from_domain_mode`` returned DASHES for it), so
+    for those removal alone preserves behaviour.
+
+    The key is removed from both places it could live: the publish-on-web service config
+    (its home since v2.7) and the deployment root (for a pre-2.7 file, since the v2.7
+    relocation no longer knows the key). Idempotent: a deployment without the key is left
+    untouched.
+    """
+    from opi.services.catalog.publish_on_web.domain_config import (
+        DomainSetting,
+        get_domain_config,
+        get_domain_setting,
+        set_domain_setting,
+    )
+
+    key = "domain-mode"
+    changed = False
+    for deployment in project_data.get("deployments") or []:
+        if not isinstance(deployment, dict):
+            continue
+        mode = None
+        config = get_domain_config(deployment)
+        if isinstance(config, dict) and key in config:
+            mode = config.pop(key)
+            changed = True
+        if key in deployment:
+            # Same precedence as get_domain_setting: the service config wins, the root
+            # copy is only the value when no config copy existed.
+            mode = mode if mode is not None else deployment.pop(key)
+            deployment.pop(key, None)
+            changed = True
+        if mode == "nice-url" and not get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT):
+            set_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT, "component.subdomain")
+    if changed:
+        logger.info(f"Removed legacy domain-mode for project '{project_data.get('name', 'unknown')}'")
+    return changed
+
+
 def _migrate_v2_2_to_v2_3(project_data: dict[str, Any]) -> bool:
     """Relocate the per-cluster Keycloak admin connections from the project-level
     ``config.keycloak`` list to the keycloak service's ``config.realms`` (RC-5 B).
@@ -1149,6 +1207,7 @@ MIGRATION_STEPS: tuple[tuple[int | float, Callable[[dict[str, Any]], bool]], ...
     (2.5, normalize_domains_location),
     (2.6, relocate_invites_to_service),
     (2.7, relocate_domain_settings_to_service),
+    (2.8, remove_domain_mode),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

@@ -3,6 +3,13 @@ kind: Cluster
 metadata:
   name: rig-db
   namespace: rig-system
+  annotations:
+    # NIET automatisch prunen: dit IS het platform. Verwijdering van deze resource laat
+    # CNPG de instanties en hun PVC's opruimen - alle databases (Keycloak, Forgejo, OPI
+    # en elk project) in een klap. Verdwijnt hij uit de gerenderde manifests door een
+    # kapotte kustomization, dan laat ArgoCD hem staan en toont OutOfSync; weghalen
+    # blijft mogelijk maar wordt een bewuste handeling van een mens.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:17
@@ -77,6 +84,19 @@ spec:
           - pg_use_reserved_connections
         passwordSecret:
           name: forgejo-db-credentials  # This must exist
+
+      # De mailrelay (Stalwart, rig-ron / rig-prd-ron) bewaart zijn accounts en zijn
+      # wachtrij hier en niet op een PVC. Rol en database komen declaratief mee (zie ook
+      # databases.yaml), zodat ze op een al draaiend cluster verschijnen zonder handmatige
+      # CREATE DATABASE.
+      # Limiet 20 en niet krapper: de relay pint zijn pool op 8 (zie de configmap van de
+      # mailcomponent), en bij een podwissel draaien er even TWEE pods met elk zo'n pool.
+      - name: mailrelay
+        ensure: present
+        login: true
+        connectionLimit: 20
+        passwordSecret:
+          name: mail-db-credentials  # This must exist
 
   # Enable backups if the cluster provides S3-compatible storage
   # backup:

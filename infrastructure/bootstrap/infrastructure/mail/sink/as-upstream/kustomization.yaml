@@ -1,0 +1,48 @@
+# De sink ALS UPSTREAM van de relay: de sink zelf, het upstream-adres dat naar de sink
+# wijst, en de schakelaar die de relay zijn zelfondertekende certificaat laat aannemen.
+# Die drie horen onlosmakelijk bij elkaar, en daarom staan ze in een component in
+# plaats van los in elke overlay: wie de sink inlaadt, krijgt de rest mee. Dat is
+# precies de fout die deze component voorkomt - de sink stond in twee overlays en de
+# schakelaar in een, waardoor `local` de sink kreeg maar er niets aan kon bezorgen.
+#
+# WAAROM DE SCHAKELAAR HIERBIJ HOORT. De sink maakt bij elke start een zelfondertekend
+# certificaat (zie ../base/deployment.yaml) en Stalwart valideert tegen zijn ingebouwde
+# webpki-roots; een eigen CA toevoegen kan niet, want hij leest de trust store van het
+# besturingssysteem niet (gemeten 19 augustus 2026). Zonder deze schakelaar mislukt elke
+# bezorging naar de sink op "invalid peer certificate"; dat is een TIJDELIJKE fout, dus de
+# wachtrij loopt vol in plaats van dat je het meteen ziet.
+#
+# Het Deployment in de basis zet de schakelaar op "false". Een cluster dat deze component
+# niet inlaadt - odcn, met de mailserver van de Rijksoverheid als upstream - blijft dus
+# strikt zonder daar iets voor te hoeven zeggen.
+#
+# Op naam en niet op index: kustomize voegt env-lijsten samen op het veld `name`, dus deze
+# patch blijft staan als er in de basis een variabele voor of achter bij komt.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - ../base
+
+patches:
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rig-mail-relay
+      spec:
+        template:
+          spec:
+            containers:
+              - name: stalwart
+                env:
+                  # Het Deployment in de basis wijst naar de mailserver van de organisatie;
+                  # hier gaat alles naar de sink. Deze component draait alleen in overlays
+                  # met namespace rig-ron, dus de FQDN klopt overal waar hij meekomt.
+                  - name: MAIL_UPSTREAM_HOST
+                    value: rig-mail-sink.rig-ron.svc.cluster.local
+                  - name: MAIL_UPSTREAM_ALLOW_INVALID_CERTS
+                    value: "true"

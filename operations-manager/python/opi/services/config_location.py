@@ -34,12 +34,29 @@ BINDING_LABELS: dict[ServiceBinding, str] = {
     ServiceBinding.PROJECT: "Voor het hele project",
 }
 
-#: The non-project layers, phrased as the place a user goes. Ordered, so a service that
-#: carries config on more than one layer always reads the same way.
-_LAYER_PHRASES: dict[ConfigLayer, str] = {
-    ConfigLayer.COMPONENT: "per component, bij Componenten",
-    ConfigLayer.DEPLOYMENT_COMPONENT: "per component binnen een deployment",
-    ConfigLayer.DEPLOYMENT: "per deployment",
+#: De niet-project-lagen, als KORTE aanduiding van waar de dienst wordt ingesteld.
+#:
+#: Dit stond als hele zin ("Geen projectbrede instellingen; u stelt deze dienst per
+#: component, bij Componenten en per component binnen een deployment en per deployment
+#: in."). Op een dienstkaart is dat drie regels voor een mededeling die met twee woorden af
+#: kan, en zo is het ook teruggekomen.
+#:
+#: DE AANDUIDING NOEMT DE DIMENSIES, NIET DE LAGEN. Een dienst die op alle drie de lagen
+#: iets draagt gaf "per component en per component in een deployment en per deployment", en
+#: dat is nog steeds te lang. Er zijn maar twee dingen waarop je iets instelt - een
+#: component en een deployment - en de middelste laag is de combinatie van die twee. Hij
+#: telt daarom voor allebei mee, en dubbele aanduidingen vallen weg. Wat er uit komt:
+#:
+#:     alleen component                -> "per component"
+#:     component + deployment          -> "per component per deployment"
+#:     component + component-in-deploy -> "per component per deployment"
+#:
+#: Geordend, zodat een dienst die op meer dan een laag configuratie draagt altijd dezelfde
+#: volgorde geeft.
+_LAYER_PHRASES: dict[ConfigLayer, tuple[str, ...]] = {
+    ConfigLayer.COMPONENT: ("per component",),
+    ConfigLayer.DEPLOYMENT_COMPONENT: ("per component", "per deployment"),
+    ConfigLayer.DEPLOYMENT: ("per deployment",),
 }
 
 
@@ -65,9 +82,14 @@ def project_step_config_hint(service_type: ServiceType) -> str | None:
     if not layers:
         return None
 
-    phrases = [_LAYER_PHRASES[layer] for layer in _LAYER_PHRASES if layer in layers]
-    joined = " en ".join(phrases)
-    return f"Geen projectbrede instellingen; u stelt deze dienst {joined} in."
+    aanduidingen: list[str] = []
+    for layer in _LAYER_PHRASES:
+        if layer not in layers:
+            continue
+        for aanduiding in _LAYER_PHRASES[layer]:
+            if aanduiding not in aanduidingen:
+                aanduidingen.append(aanduiding)
+    return " ".join(aanduidingen)
 
 
 def config_hint_for_value(service_value: str) -> str | None:

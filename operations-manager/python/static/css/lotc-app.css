@@ -97,6 +97,62 @@ nldd-page-footer {
 }
 
 /*
+ * De --nldd-color-*-variabelen, ingevuld uit het thema.
+ *
+ * WAT ER MIS WAS. Een handvol handgeschreven componenten uit de componentenlaag schrijft
+ * zijn kleuren zo:
+ *
+ *     background: var(--nldd-color-surface, #fff);
+ *     color:      var(--nldd-color-text, #1a1a1a);
+ *
+ * Die namen bestaan in het NLDD-thema NIET - het thema draait op --semantics- en
+ * --primitives-namen - dus wint altijd de terugvalwaarde, en dat is een VASTE lichte
+ * kleur. In de lichte
+ * weergave valt dat niet op. In de donkere wel: <c-secret-field> tekent dan een WIT vlak
+ * waar de tekstkleur van het thema (bijna wit) overheen komt. Gemeten op de projectpagina,
+ * blok "Configuratie & Secrets": #FFFFFF op #FFFFFF, contrast 1,00 - de projectnaam, de
+ * API-sleutel en beide AGE-sleutels waren letterlijk onzichtbaar.
+ *
+ * WAAROM DIT HIER MAG STAAN. Dit is geen tweede kleurenstelsel en geen eigen donker thema:
+ * er komt hier geen enkele kleurwaarde bij. Elke regel wijst een naam die een component
+ * OPVRAAGT aan op het token van het thema dat er al is, en die tokens zijn zelf
+ * light-dark(). De lichte weergave verandert er dus niet van (--semantics-surfaces-base-
+ * background-color is daar #FFFFFF, precies de terugvalwaarde die er stond); de donkere
+ * krijgt de waarde die hij altijd al had moeten hebben. Dezelfde weg als het blok
+ * hieronder voor nldd-sidebar-section: een component leest zijn eigen custom properties,
+ * en die zetten is de bedoelde manier.
+ *
+ * Dit hoort bij de componentenlaag en is daar gemeld (request_for_components.md, punt over
+ * de donkere weergave). Zodra die componenten hun kleuren uit --semantics-* halen kan dit
+ * blok weg. Onze eigen regels die dezelfde namen spiegelen (bg/admin-usage.html.j2,
+ * metrics-charts.css) volgen automatisch mee - dat was de bedoeling van dat spiegelen.
+ */
+:root {
+    --nldd-color-surface: var(--semantics-surfaces-base-background-color);
+    --nldd-color-text: var(--semantics-content-color);
+    --nldd-color-text-subtle: var(--semantics-content-secondary-color);
+    /* Niet --semantics-dividers-color. Een scheidingslijn tussen twee vlakken mag
+       zacht zijn; de RAND VAN EEN INVOERVELD moet het veld begrenzen. Alle vier de
+       plekken die deze naam opvragen zijn invoerachtig - <c-secret-field>,
+       .lotc-copyfield, select-field en de keuzelijst op admin-usage - en in een lijst
+       van tien velden onder elkaar liep de dividerlijn (donker: neutral-200) visueel
+       weg tegen het vlak. Gemeld als "de kaders zijn bijna niet te onderscheiden".
+       Het thema heeft hier een eigen token voor, en dat is donkerder in beide
+       weergaven: light-dark(neutral-550, neutral-650). */
+    --nldd-color-border: var(--semantics-input-fields-border-color);
+    --nldd-color-focus: var(--semantics-content-accent-color);
+    --nldd-color-error: var(--semantics-content-critical-color);
+
+    /* Een TYPFOUT in de componentenlaag: .lotc-shortcut-cta vraagt
+       --semantics-actions-primary-... (meervoud), en het thema heet --semantics-action-...
+       Gevolg is dezelfde terugval op een vaste kleur: #154273 op de donkere achtergrond
+       van /introductie, contrast 1,84 ("Naar zad-cli", "Naar zad-actions"). Het is een
+       LINKTEKST op een vlak, dus de juiste themawaarde is de accentkleur voor inhoud en
+       niet die van een knopvlak. Ook gemeld; weg zodra de typfout weg is. */
+    --semantics-actions-primary-default-background-color: var(--semantics-content-accent-color);
+}
+
+/*
  * De statuskaarten van Deployment Status even hoog in hun rij.
  *
  * Gemeten: de cellen van .lotc-auto-grid zijn AL even hoog (een grid rekt zijn cellen
@@ -186,8 +242,28 @@ nldd-sidebar-section {
  * pagina die op hetzelfde element display zet, wint dan bij gelijke specificiteit en de
  * klasse verbergt niets meer. Deze klasse doet een ding en moet dat winnen.
  *
- * Gemeten in tests/e2e/test_lotc_domeinbeheer.py: op HOOGTE, niet op het class-attribuut.
+ * Gemeten in tests/e2e/test_lotc_aanvragenbeheer.py: op HOOGTE, niet op het class-attribuut.
  */
 .is-hidden {
     display: none !important;
+}
+
+/* Een lang adres in een tabelcel breekt af in plaats van eroverheen te lopen.
+ *
+ * Een e-mailadres is een woord zonder afbreekpunten, dus de standaard laat het gewoon
+ * over de volgende kolom heen lopen: in de takentabel schoof
+ * "robbert.uittenbroek@rijksoverheid.nl" uit de kolom Door dwars over de datum in
+ * Gestart, die daardoor onleesbaar was. Dat viel pas op toen de datum in die kolom paste
+ * (RC-133) - daarvoor lag de overlap over een kolom die zelf al onleesbaar was.
+ *
+ * anywhere en niet break-all: alleen breken als het woord anders niet past. Bij 1280 en
+ * 1440 raakt dat alleen het adres; pas bij 1024, waar de zes kolommen echt te krap
+ * worden, breken ook de andere waarden middenin een woord af. Dat is daar de betere van
+ * twee kwaden: zonder deze regel schuiven de kolommen daar over elkaar heen.
+ *
+ * De klasse staat op de TABEL en niet op de applicatie: elke cel in het portaal zo laten
+ * breken is een veel grotere ingreep dan waar dit een antwoord op is.
+ */
+.lange-waarden-breken nldd-cell {
+    overflow-wrap: anywhere;
 }

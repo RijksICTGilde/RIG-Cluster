@@ -211,6 +211,136 @@ aanvinkvakjes(page, "resource_types")                                          #
 De stand lees je van het element: `el.checked`. Niet `is_checked()`, want dat wil een
 `<input>` zien.
 
+## Het vakje vanuit eigen JavaScript aansturen
+
+Dit is het lastigste deel, en het komt terug bij elk web-component dat een eigen
+besturingselement in zijn schaduwboom tekent. De dienstenkiezer in de wizard doet het:
+hij vinkt afhankelijkheden automatisch aan en hij WEIGERT het uitvinken van een dienst die
+een andere dienst nodig heeft.
+
+### Drie standen die het eens moeten zijn
+
+Bij `<nldd-checkbox>` bestaat "aangevinkt" op drie plekken tegelijk:
+
+| waar | hoe je het leest | wie schrijft het |
+|---|---|---|
+| de eigenschap op het element | `el.checked` | jij, en het component zelf |
+| het `<input>` in de schaduwboom | `el.shadowRoot.querySelector('input').checked` | de browser bij een klik, het component bij een hertekening |
+| de formulierwaarde | `new FormData(form).getAll(naam)` | het component, via `commitFormValue()` |
+
+Ze lopen niet vanzelf gelijk. Wat je meet als "het vakje staat aan" hangt er dus van af
+welke van de drie je toevallig aankijkt, en dat is precies waarom dit soort fouten stil is.
+
+### Aanzetten vanuit code mag gewoon
+
+`el.checked = true` werkt: het component ziet een echte wijziging, tekent zichzelf bij en
+werkt zijn formulierwaarde bij. De dienstenkiezer selecteert zo zijn afhankelijkheden, en
+de meting bevestigt dat het vakje, zijn `<input>` en de FormData daarna alle drie kloppen.
+
+### Een klik TERUGDRAAIEN mag niet in dezelfde gebeurtenis
+
+Hier zit de val. Bij een klik gebeurt dit, in deze volgorde:
+
+1. de browser zet het `<input>` in de schaduwboom op `false`;
+2. het component zet zijn eigen `checked` op `false` en plant een hertekening;
+3. het component meldt de wijziging met een `change`-gebeurtenis;
+4. onze handler draait.
+
+Zet je in stap 4 `checked` terug op `true`, dan ziet de geplande hertekening dezelfde
+waarde als de vorige keer en schrijft hij niets. Het `<input>` blijft dus op `false`
+staan, terwijl het element zegt dat het aanstaat. Gemeten, met de schaduwboom erbij:
+
+```
+na de geweigerde klik : host checked=true,  eigen <input> checked=false
+volgende klik         : <input> gaat naar true, host blijft true -> er gebeurt NIETS
+de klik daarna        : weer gelijk, en pas dan werkt uitvinken
+```
+
+Op het scherm ziet dat eruit als: een vergrendelde dienst laat zich toch uitvinken, en
+daarna reageert het vakje een klik lang niet. Zo is het ook gemeld.
+
+**De regel: draai een geweigerde klik EEN TIK LATER terug.** Dan is de hertekening geweest
+en is `false -> true` wel een echte wijziging, dus werkt het component zijn eigen `<input>`
+en zijn formulierwaarde bij. In `static/js/wizard.js` heet dat `herstelVakje()`:
+
+```js
+function herstelVakje(svc, klaar) {
+    setTimeout(function () {
+        setChecked(svc, true);
+        updateAllVisuals();
+        klaar();
+    }, 0);
+}
+```
+
+De vlag die dubbele verwerking tegenhoudt (`processing`) blijft aanstaan tot ná dat
+herstel, want het herstel veroorzaakt zelf weer een `change`.
+
+Wat NIET werkt, en waarom het aantrekkelijk lijkt:
+
+* `el.toggle()` aanroepen. Dat is de eigen weg van het component, maar in dezelfde
+  gebeurtenis loopt hij tegen precies dezelfde hertekening aan. Gemeten: geen verschil.
+* Het `<input>` in de schaduwboom rechtstreeks zetten. Dat werkt wel en het is precies wat
+  je niet moet doen: je schrijft dan in de binnenkant van een component, en de eerstvolgende
+  hertekening gooit het weer weg.
+
+### Hoe je dit meet
+
+Redeneren helpt hier niet, want alle drie de standen zijn plausibel. Meet ze naast elkaar,
+in een echte browser:
+
+```python
+page.evaluate("""() => {
+    const cb = document.querySelector('nldd-checkbox');
+    const binnen = cb.shadowRoot && cb.shadowRoot.querySelector('input');
+    const form = cb.closest('form');
+    return {
+        prop: cb.checked,
+        attr: cb.getAttribute('checked'),
+        binnen: binnen ? binnen.checked : null,
+        formdata: form ? new FormData(form).getAll(cb.name) : [],
+    };
+}""")
+```
+
+Let op het verschil tussen een Playwright-selector en `page.evaluate`: een selector kijkt
+WEL door schaduwbomen heen, `querySelector` in de pagina NIET. Een meting die op
+`page.evaluate` met `querySelectorAll('input[name=...]')` leunt, meet bij deze componenten
+niets en lijkt te slagen. Dat is een keer gebeurd: de test las een lege lijst en noemde dat
+"niets verstuurd".
+
+### Wat het slot NIET kan aankondigen
+
+Vergrendeld is `aria-disabled` en nadrukkelijk niet `disabled`: dat tweede onderdrukt de
+waarde in de POST, en precies zo verdween een vergrendelde dienst op 6 augustus 2026 stil
+uit het projectbestand.
+
+Sinds de dienstkaart door het componentensysteem getekend wordt, komt dat attribuut niet
+meer aan. `<nldd-checkbox>` rendert zijn `<input>` in een schaduwboom en geeft daar alleen
+`aria-label` (uit `accessible-label`) en `disabled` (uit de `disabled`-eigenschap) aan door:
+
+```
+<nldd-checkbox accessible-label="Publiceren op het web" checked aria-disabled="true">
+  #shadow-root
+    <input class="checkbox__input" type="checkbox" aria-label="Publiceren op het web">
+```
+
+Het sjabloon en `wizard.js` zetten `aria-disabled` op de kaart EN op de host, zodat de
+markering staat waar hij hoort zodra het component hem doorgeeft. Voorgelezen wordt hij nog
+niet: de `<input>` is het element met de rol, en daar is van buitenaf niets aan toe te
+voegen. Het gat staat met de meting in `request_for_components.md`; in de schaduwboom van
+een ander component grijpen is geen uitweg (zie hierboven waarom niet), en `disabled` al
+helemaal niet.
+
+Het slot zelf werkt wel, langs drie wegen: de change-handler draait een geweigerde klik
+terug, de dialoog vertelt waarom, en de server weigert het ook.
+
+### De vangrail
+
+`tests/e2e/test_locked_service_survives_submit.py` bevat de toets die hierop staat:
+`test_na_een_geweigerde_klik_werkt_de_volgende_klik_meteen`. Hij faalt zonder het uitstel
+en slaagt ermee; dat is gecontroleerd door de reparatie tijdelijk terug te draaien.
+
 ## De toets
 
 `tests/e2e/test_aanvinkvakje.py` doet het hele rondje - aanvinken, opslaan, heropenen,

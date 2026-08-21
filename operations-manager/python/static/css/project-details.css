@@ -58,9 +58,12 @@
 /* Metrics Section */
 .deployment-select {
     padding: var(--rvo-space-sm) var(--rvo-space-md);
-    border: 1px solid var(--rvo-color-grijs-300);
+    /* Vlak en rand uit het thema: dit is een ECHTE <select> (native="true"), dus hij krijgt
+       de kleuren niet van een component. Met een vaste witte achtergrond stond hij als wit
+       vak in een donkere pagina, met thema-tekst eroverheen (RC-134). */
+    border: 1px solid var(--semantics-dividers-color, var(--rvo-color-grijs-300));
     border-radius: 4px;
-    background: white;
+    background: var(--semantics-surfaces-base-background-color, white);
     font-size: 0.875rem;
     cursor: pointer;
     min-width: 200px;
@@ -226,9 +229,20 @@
 }
 
 
-.component-card {
-    border-left: 4px solid #6B4C9A;  /* --rvo-color-paars staat niet in lotc-app.css */
-}
+/* De paarse balk op .component-card is WEG.
+ *
+ * Hij was een vaste kleur (#6B4C9A) die de licht/donker-stand niet volgde, en hij bakende
+ * op de hertekende pagina niets meer af dat niet al afgebakend was.
+ *
+ * Er komt geen eigen regel voor terug. Wat een component van het volgende scheidt komt uit
+ * het componentensysteem: de kaart is een <c-card outline> en de ruimte ertussen staat op
+ * <c-stack gap="lg">. De kaarten zijn bovendien kort geworden - services,
+ * omgevingsvariabelen en aliassen staan ingeklapt in <c-list-item>-rijen - en daarmee was
+ * het probleem dat de balk moest oplossen er niet meer.
+ *
+ * .component-card zelf blijft in de sjablonen staan, als HAAK: tests/e2e zoekt de kaart van
+ * een component ermee op. Grep de lezers voordat een klasse verdwijnt; tests zijn ook
+ * lezers. */
 
 .component-header {
     display: flex;
@@ -318,7 +332,10 @@
     padding: var(--rvo-space-md);
     border: 1px solid var(--rvo-color-grijs-200);
     border-radius: 4px;
-    background: #F8FAFC;  /* grijs-25 staat niet in lotc-app.css; gelijk aan grijs-050 */
+    /* Gedempt vlak uit het thema. Hier stond een vaste #F8FAFC omdat grijs-25 niet in
+       lotc-app.css staat; die volgde de licht/donker-stand niet, terwijl de tekst
+       erop dat wel doet (RC-134). */
+    background: var(--semantics-surfaces-tinted-background-color, #F8FAFC);
 }
 
 .config-label {

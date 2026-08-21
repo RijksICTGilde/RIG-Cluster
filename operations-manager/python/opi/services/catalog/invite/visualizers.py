@@ -48,8 +48,8 @@ INVITE_KEY = EditableVisualizer(
     # and ROOS re-emits attribute values, so anything needing escaping is escaped twice and
     # the reader sees the entities themselves ("&lt;sleutel&gt;").
     help_text=(
-        "De sleutel is het laatste deel van de uitnodigingslink, achter /invite/, en de enige "
-        "toegangsdrempel. Laat leeg om een veilige, willekeurige sleutel te laten genereren."
+        "De sleutel is het laatste deel van de uitnodigingslink, achter /invite/. "
+        "Laat leeg om een veilige, willekeurige sleutel te laten genereren."
     ),
 )
 
@@ -146,7 +146,7 @@ INVITE_ACTIVE = EditableVisualizer(
     editable=INVITE_ACTIVE_EDITABLE,
     widget=WidgetType.SEQUENCE,
     label="Uitnodiging",
-    help_text="De uitnodigingslink is de enige toegangsdrempel; deel hem zorgvuldig.",
+    help_text="Deel de uitnodigingslink zorgvuldig.",
     children=[
         INVITE_KEY,
         INVITE_REALM_ROLES,

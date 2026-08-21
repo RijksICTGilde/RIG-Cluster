@@ -180,6 +180,7 @@ def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool
     Supported operators:
     - ``{"contains": "value"}`` - dep_value is a list containing "value"
     - ``{"contains_any": [...]}`` - dep_value is a list containing any value
+    - ``{"not_equals": "value"}`` - dep_value is anything BUT "value"
     - ``{"field": "value"}`` - dep_value equals "value"
     - ``{"field": ["v1", "v2"]}`` - dep_value is in the list
     """
@@ -187,7 +188,13 @@ def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool
         return bool(dep_value)
 
     for key, expected in show_when.items():
-        if key == "contains":
+        if key == "not_equals":
+            # "Everything except this one value" (RC-142: every peer project except the
+            # wildcard). Listing the allowed values is not an option when the allowed set
+            # is open-ended, and an absent value is not the excluded one, so it shows.
+            if dep_value == expected:
+                return False
+        elif key == "contains":
             if not isinstance(dep_value, list):
                 return False
             names = _extract_names_from_list(dep_value)
@@ -214,8 +221,13 @@ def should_render_editable(
     yaml_data: dict[str, Any],
     index: int | None = None,
     siblings: list[EditableVisualizer] | None = None,
+    edit_mode: bool = False,
 ) -> bool:
     """Check if an editable should be rendered based on its dependencies.
+
+    Eerst een poort die niets met afhankelijkheden te maken heeft: een veld met
+    ``alleen_bij_bewerken`` verschijnt niet in de aanmaakwizard. Zie de toelichting bij die
+    vlag in :mod:`opi.forms.visualizers.visualizer`.
 
     Implements 4 dependency patterns:
 
@@ -229,6 +241,9 @@ def should_render_editable(
     when a converter maps stored values to sentinel display values (e.g.
     ``CustomDomainSelectConverter`` maps ``"mijnapp.nl"`` → ``"__custom__"``).
     """
+    if editable.alleen_bij_bewerken and not edit_mode:
+        return False
+
     ed = editable.editable
     depends_on = ed.depends_on
     show_when = ed.show_when

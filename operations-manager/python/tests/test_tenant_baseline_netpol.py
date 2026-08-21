@@ -291,3 +291,52 @@ class TestDeploymentLabelOnPods:
         assert 'deployment: "{{ deployment_name }}"' in source, (
             "pod template metadata must include a `deployment` label so the NetworkPolicy selector matches"
         )
+
+
+class TestExterneEgressBlijftBeperktTot443En80:
+    """De mailrelay leunt op deze eigenschap, dus hij wordt hier vastgepind.
+
+    De upstream mailserver authenticeert niet en vertrouwt op ons uitgaande IP
+    (gemeten 17-08-2026, zie docs/ron-koppeling.md). Daardoor is dit baseline-beleid
+    het enige dat een tenant dwingt via de relay te mailen: kan een pod
+    145.21.161.201:25 bereiken, dan mailt hij namens onze organisatie zonder limiet,
+    zonder From-policy, zonder DKIM en zonder log.
+
+    Vandaag kan dat niet, want de enige egressregel richting buiten staat hier
+    hardgecodeerd op 443 en 80. Dat is een stilzwijgende eigenschap waar iemand over
+    een jaar in een enkele regel een poort aan toevoegt zonder te weten waar het op
+    rust. Deze test is die waarschuwing.
+    """
+
+    @staticmethod
+    def _externe_egresspoorten(doc) -> set:
+        """Poorten van elke egressregel die naar een ipBlock buiten het cluster wijst."""
+        poorten = set()
+        for rule in doc["spec"].get("egress") or []:
+            for peer in rule.get("to") or []:
+                if "ipBlock" in peer:
+                    for port in rule.get("ports") or []:
+                        poorten.add((port.get("protocol"), port.get("port")))
+        return poorten
+
+    def test_alleen_443_en_80_gaan_naar_buiten(self):
+        _, doc = _render_baseline()
+        assert self._externe_egresspoorten(doc) == {("TCP", 443), ("TCP", 80)}
+
+    def test_smtp_poorten_staan_er_niet_bij(self):
+        """Expliciet, zodat een faalmelding meteen zegt waar het over gaat."""
+        _, doc = _render_baseline()
+        poorten = {poort for _, poort in self._externe_egresspoorten(doc)}
+        for smtp in (25, 465, 587):
+            assert smtp not in poorten, (
+                f"poort {smtp} naar buiten maakt de mailrelay omzeilbaar: een tenant kan dan "
+                "rechtstreeks bij de upstream mailserver, die niet authenticeert. "
+                "Zie docs/ron-koppeling.md."
+            )
+
+    def test_geen_ongelimiteerde_externe_egress(self):
+        """Een ipBlock-regel zonder poorten betekent alle poorten."""
+        _, doc = _render_baseline()
+        for rule in doc["spec"].get("egress") or []:
+            if any("ipBlock" in peer for peer in rule.get("to") or []):
+                assert rule.get("ports"), "een externe egressregel zonder poortenlijst opent alles"

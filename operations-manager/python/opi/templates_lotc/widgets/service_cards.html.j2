@@ -1,84 +1,172 @@
 {#
   Dienstkaarten voor de LOTC-bouwlijn.
 
-  Zelfde afweging als bij preset_cards: de eigen kaartklassen blijven, de componenttags
-  gaan om. aria-disabled blijft bewust naast disabled bestaan - een vergrendelde dienst
-  moet mee de POST in, alleen aanpassen mag niet.
+  KAARTEN UIT HET THEMA, MET HET AANVINKVAKJE VAN HET THEMA.
 
-  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
-  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
-  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+  Wat hier stond was een eigen <div class="service-card"> met een kaal <input
+  type="checkbox">, en alles eraan werd getekend door static/css/wizard.css: de rand, het
+  gekozen vlak, de hoverkleur, de maat van het vakje. Dat is eigen vormgeving naast een
+  componentensysteem, en het bleef er RVO-achtig uitzien. Zo ook gemeld.
+
+  Nu: <c-card> in een <c-auto-grid>, met <c-checkbox> erin. Er staat geen enkele eigen
+  opmaakregel meer omheen.
+
+  WAAROM HET AANVINKVAKJE DEZE KEER WEL EEN COMPONENT KAN ZIJN.
+
+  Een eerdere poging zette hier <c-checkbox> neer en toen faalden 7 van de 9 e2e-tests. De
+  reden stond in de weg die het formulier neemt, niet in het component: <nldd-checkbox> is
+  form-associated en levert zijn waarde via ElementInternals, en htmx haalde zijn
+  parameters niet uit FormData. Dat is inmiddels bij de bron opgelost in
+  static/js/form-associated.js, en checkbox_group.html.j2 draait al op precies deze vorm -
+  een <c-checkbox> per keuze met dezelfde array-naam. De keycloak-stap in de wizard is het
+  levende bewijs dat het werkt.
+
+  Wat er daarnaast nog nodig was, en de vorige keer ontbrak: static/js/wizard.js zocht het
+  besturingselement met querySelector('input[type="checkbox"]'). Dat vindt niets, want de
+  echte <input> zit twee schaduwbomen diep. Het zoekt nu het COMPONENT, dat zijn .checked
+  gewoon als eigenschap draagt.
+
+  Het hele verhaal met de meting staat in features/aanvinkvakje.md.
+
+  DE GEKOZEN STAND is het `background`-attribuut van <nldd-card> (base of tinted), niet een
+  eigen klasse met een eigen kleur. Dat is een eigenschap van het component; wizard.js zet
+  hem om bij een wijziging.
+
+  DE INDELING BLIJFT DIE VAN DE OUDE KAART: icoon, naam, uitleg, vakje. Dit is een
+  OMZETTING - dezelfde kaart, getekend door het componentensysteem - en geen herontwerp.
+  Een tussenversie liet de naam het label van het aanvinkvakje zijn; dat was wel korter maar
+  het was iets anders, en zo is het teruggevraagd.
+
+  De klassen service-card en service-cards-grid blijven staan. Ze zijn geen opmaak meer
+  maar HAKEN: static/js/wizard.js zoekt de kaarten ermee op, en zo ook
+  tests/e2e/test_locked_service_survives_submit.py,
+  test_service_config_hint_survives_toggle.py en test_lotc_pariteit.py. Grep de lezers
+  voordat een klasse verdwijnt; tests zijn ook lezers. De haak op de hulpknop staat in de
+  gedeelde macro, samen met de knop zelf.
+
+  Vergrendeld is aria-disabled en niet disabled: de waarde moet mee de POST in, alleen
+  aanpassen mag niet. Dat attribuut staat op de KAART en op het VAKJE. Op de kaart omdat
+  wizard.js het daar bijhoudt en de kaart het geheel is dat op slot staat; op het vakje
+  omdat dat de bediening is, en een <nldd-card> geen rol heeft en dus niets aankondigt. Bij
+  deze omzetting was het vakje zijn markering kwijtgeraakt.
 #}
-{% from "widgets/_macros.html.j2" import helper_text, render_errors, service_block %}
+{% from "widgets/_macros.html.j2" import render_errors, service_block, keuzekaart, kaart_vakje %}
+{# GEEN KOP EN GEEN UITLEG BOVEN DE KAARTEN. Er stond "Beschikbare Services" met daaronder
+   "Selecteer de services die je wilt activeren voor je project", boven een raster van
+   veertien kaarten met elk een aanvinkvakje. De stap heeft zijn eigen titel, en wat de
+   kaarten zijn en wat je ermee doet is uit het beeld zelf af te lezen. Weggevraagd. #}
 <div>
-    <span class="utrecht-form-label">{{ field.label|e }}</span>
-    {{ helper_text(field) }}
-    {# .service-cards-grid was repeat(auto-fill, minmax(300px, 1fr)): dat is
-       <c-auto-grid min="300px">. De KLASSE blijft erop staan, want hij is ook een haak -
-       static/js/wizard.js zoekt de rasters ermee op en een e2e-test ook. #}
-    <c-auto-grid min="300px" gap="md" class="service-cards-grid" id="{{ field.path|e }}-grid">
+    {# De id buiten de tag samengesteld: :attrs wordt door de voorbewerker als PYTHON
+       gelezen, en Jinja's ~ voor plakken bestaat daar niet. #}
+    {% set grid_id = field.path ~ '-grid' %}
+    {% set melding_id = field.path ~ '-melding' %}
+    {% set melding_sluiten = "this.closest('nldd-modal-dialog').hide()" %}
+    {# DRIE KOLOMMEN, geen auto-fit. Met <c-auto-grid min="300px"> bepaalde de
+       schermbreedte hoeveel kaarten er naast elkaar pasten, en bij vier of meer werd een
+       kaart zo smal dat icoon, naam en vraagteken niet meer op een regel stonden. Drie is
+       de breedte waarop die regel heel blijft. #}
+    <c-grid columns="three" gap="md" class="service-cards-grid" :attrs="{'id': grid_id}">
         {% for card in cards %}
-        <div class="service-card{% if card.checked %} service-card--selected{% endif %}{% if card.is_locked %} service-card--locked-checked{% endif %}" data-service="{{ card.value|e }}"{% if card.data_requires %} data-requires='{{ card.data_requires }}'{% endif %}{% if card.server_locked %} data-locked="true"{% endif %}>
-            {# EEN GEWOON <input>, EN DAT IS HIER GEEN LUIHEID.
+        {# De attribuutbundels BUITEN de tag opgebouwd: een componenttag verdraagt geen
+           Jinja-blokken binnenin, en :attrs neemt een enkele expressie. #}
+        {# data-label draagt de NAAM van de dienst. static/js/wizard.js schrijft "Vereist
+           door: <naam>, <naam>" en heeft die namen dus nodig; sinds het label van het
+           aanvinkvakje "Gebruiken" is, staat de naam alleen nog in de kop en die is een
+           component met een eigen schaduwboom. Een data-attribuut is de plek waar zoiets
+           hoort: expliciet, en het overleeft een wissel van componenten. #}
+        {% set kaart_attrs = {
+            'data-service': card.value,
+            'data-label': card.label,
+            'aria-disabled': 'true' if card.is_locked else 'false',
+            'background': 'tinted' if card.checked else 'base'
+        } %}
+        {% if card.data_requires %}{% set _ = kaart_attrs.update({'data-requires': card.data_requires}) %}{% endif %}
+        {% if card.server_locked %}{% set _ = kaart_attrs.update({'data-locked': 'true'}) %}{% endif %}
+        {% set vakje_id = field.path ~ '-' ~ card.value %}
+        {# De schil komt uit de gedeelde macro: zie widgets/_macros.html.j2, keuzekaart().
+           Daar staat waarom het rechtstreeks <nldd-card> met <c-box> en <c-stack> is en
+           niet <c-card>. De voorinstellingen gebruiken dezelfde macro, zodat de twee niet
+           uit de pas kunnen lopen. #}
+        {% call keuzekaart(gekozen=card.checked, vergrendeld=card.is_locked, attrs=kaart_attrs) %}
+                {# DE VOLGORDE VAN DE OUDE KAART: icoon, naam, uitleg, en het vakje daarna.
+                   Hier hebben naam en vakje even een element gedeeld (de naam was het label
+                   van het aanvinkvakje); dat was een herontwerp en geen omzetting, en het is
+                   zo teruggevraagd. De KOP is nu weer een kop, met het icoon ernaast en het
+                   vraagteken rechts, precies zoals in de kaart die er stond.
 
-               Onder NLDD wordt <c-checkbox> een <nldd-checkbox-field>, en dat element
-               heeft geen <input> in de LICHTE boom: die zit twee schaduwbomen diep, en
-               de waarde loopt via ElementInternals (gemeten, zie
-               features/aanvinkvakje.md). static/js/wizard.js zoekt het besturingselement
-               met card.querySelector('input[type="checkbox"]') en vindt dan dus niets.
-               Gevolg, in de browser gemeten: een klik op een kaart vinkte NIETS aan, en
-               het formulier verstuurde vervolgens ALLE veertien diensten in plaats van
-               geen enkele. Precies omgekeerd aan wat de gebruiker aanwees, en volkomen
-               onzichtbaar in de HTML.
-
-               De kaart is bovendien ons eigen onderdeel met onze eigen CSS
-               (static/css/wizard.css, .service-card): het vakje wordt daar opgemaakt, niet
-               door het thema. Een component eromheen voegt hier dus niets toe en neemt het
-               enige weg wat telt - een besturingselement dat JavaScript kan vinden en dat
-               met het formulier meegaat.
-
-               OPNIEUW GEPROBEERD MET EEN COMPONENT, EN GEMETEN DAT HET NIET KAN.
-               Het element is form-associated en stuurt zijn waarde netjes mee (sinds
-               RC-71 ook via htmx) - dat alleen is dus niet genoeg. Met de kaart op
-               <c-checkbox> en wizard.js aangepast om ook nldd-checkbox-field te vinden:
-
-                   oude vormgeving : 9 van de 9 tests groen
-                   nieuwe vormgeving: 7 van de 9 GEFAALD
-
-               Wat er stukgaat zit in de samenhang eromheen: het slot dat een dienst
-               vastzet, het terugdraaien van een uitvinkactie, het bewaren van een
-               presetkeuze. Die leunen op de gebeurtenissen en de disabled-stand van een
-               echte <input>, en die gedragen zich bij het component net anders.
-
-               Als dit ooit een component wordt, dan door die samenhang eerst op te lossen
-               - niet door het vakje te vervangen. De opmaak is intussen geen reden meer:
-               die staat in static/css/wizard.css (accent-color uit onze kleurvariabele).
-
-               Vergrendeld is aria-disabled, niet disabled: de waarde moet mee de POST in,
-               alleen aanpassen mag niet. Server-side gezet zodat het klopt vanaf het eerste
-               beeld; wizard.js houdt het bij zodra een keuze het slot verplaatst. #}
-            <input
-                type="checkbox"
-                id="{{ field.path|e }}-{{ card.value|e }}"
-                name="{{ field.path|e }}[]"
-                value="{{ card.value|e }}"
-                {% if card.checked %}checked{% endif %}
-                {% if card.disabled %}disabled{% endif %}
-                aria-disabled="{{ 'true' if card.is_locked else 'false' }}"
-            />
-            <div class="service-card__content">
+                   Het icoon door het nldd_icon-filter, want de dienstdefinities dragen nog de
+                   ROOS-naam; zonder vertaling rendert het icoon leeg. #}
+                {# HET DIENSTBLOK KOMT UIT DE GEDEELDE MACRO: icoon, naam en vraagteken op
+                   een regel, met de omschrijving eronder. Niet hier nagebouwd, want de
+                   kiezer en het dienstenoverzicht liepen precies daardoor ooit uit de pas
+                   (het overzicht was zijn vraagtekenknop kwijt). tests/test_service_help.py
+                   bewaakt dat ze het blijven delen. #}
                 {{ service_block(card.label, card.description, card.icon, card.color, card.help_template) }}
-                {% if card.is_locked and card.dependents_labels %}
-                <p class="service-card__hint service-card__hint--depends">Vereist door: {{ card.dependents_labels|join(', ')|e }}</p>
+                {# DE REGEL "VEREIST DOOR ..." STAAT HIER NIET MEER.
+                   Hij verscheen en verdween met het slot, en omdat de kaarten van een rij
+                   even hoog zijn en het vakje aan de onderrand hangt, sprongen ALLE vakjes
+                   van die rij mee zodra er een regel bijkwam. Zo ook gemeld.
+
+                   De reden hoort bovendien op het moment dat je hem nodig hebt: als je een
+                   vergrendelde dienst probeert uit te vinken. Dat is nu de dialoog onderaan
+                   dit bestand. #}
+                {% if card.requires_approval %}
+                {# VEREIST GOEDKEURING, altijd zichtbaar en niet pas na het aanvinken:
+                   dit is informatie die je nodig hebt VOOR je kiest, anders lijkt de
+                   dienst kapot wanneer er na het aanzetten niets gebeurt. Dezelfde pil
+                   als de config-hint eronder; de vlag komt uit approval_specs() van de
+                   dienst zelf, dus een dienst die goedkeuring gaat vereisen draagt de
+                   waarschuwing vanzelf. #}
+                <c-cluster>
+                    <c-tag label="Vereist goedkeuring door een beheerder" class="service-card__hint" />
+                </c-cluster>
                 {% endif %}
                 {% if card.config_hint %}
-                {# Shown only while the card is selected (see .service-card__hint--config
-                   in wizard.css): before ticking there is nothing to explain. #}
-                <p class="service-card__hint service-card__hint--config">{{ card.config_hint|e }}</p>
+                {# EEN TAG EN GEEN ALINEA. Dit is geen lopende tekst maar een aanduiding van
+                   WAAR je de dienst instelt ("per component"), en die stond er als gewone
+                   tekst even groot bij als de omschrijving erboven. <c-tag> is de pil die
+                   het thema daarvoor heeft: kleiner, gedempt, en herkenbaar als label.
+
+                   Alleen zichtbaar zolang de dienst gekozen is (zie
+                   .service-card__hint--config in wizard.css): voor het aanvinken valt er
+                   niets uit te leggen. De tekst komt uit opi/services/config_location.py. #}
+                <c-cluster>
+                    <c-tag label="{{ card.config_hint|e }}" class="service-card__hint service-card__hint--config" />
+                </c-cluster>
                 {% endif %}
-            </div>
-        </div>
+                {# HET VAKJE ONDERAAN RECHTS, op een eigen regel.
+                   De kaarten zijn even hoog (een rasterrij rekt zijn cellen gelijk), en het
+                   vakje wordt naar de onderrand geduwd, zodat de vakjes van een rij op
+                   dezelfde hoogte staan. Die twee regels staan in static/css/wizard.css.
+
+                   EEN KALE <nldd-checkbox> en geen <c-checkbox>. Die laatste wordt een
+                   <nldd-checkbox-field>, en dat component tekent naast het vakje ALTIJD een
+                   <span> met zijn label erin. Hier hoort geen tekst bij het vakje: de naam
+                   van de dienst staat al als kop bovenin. Het kale component draagt zijn
+                   toegankelijke naam in accessible-label - dat leest een schermlezer voor
+                   zonder dat er iets op het scherm bijkomt - en het is net zo goed
+                   form-associated, dus het stuurt zijn waarde gewoon mee (gemeten in de
+                   bundel: formValue/commitFormValue).
+
+                   De naam met [] zodat de diensten als lijst binnenkomen, precies zoals
+                   checkbox_group.html.j2 het doet. #}
+                {{ kaart_vakje(vakje_id, card.label, gekozen=card.checked, uit=card.disabled, naam=field.path ~ "[]", waarde=card.value, vergrendeld=card.is_locked) }}
+        {% endcall %}
         {% endfor %}
-    </c-auto-grid>
+    </c-grid>
+    {# DE MELDING BIJ EEN VERGRENDELDE DIENST.
+       Dit was een window.alert: een grijs systeemvenster met de naam van de host erin, dat
+       niets van de vormgeving weet en de hele pagina blokkeert. <c-modal-dialog> is de
+       dialoog van het thema; hij draait op een echte <dialog> met showModal(), dus de
+       toplaag, de focus en Escape komen van de browser.
+
+       Leeg opgezet: static/js/wizard.js zet de tekst en roept show() aan. Een dialoog per
+       raster, met de id afgeleid van het veldpad. #}
+    <c-modal-dialog variant="alert"
+                    icon="exclamation-triangle"
+                    accessible-label="Deze dienst is vereist"
+                    :attrs="{'id': melding_id}">
+        <c-button slot="actions" type="primary" label="Begrepen" :attrs="{'onclick': melding_sluiten}" />
+    </c-modal-dialog>
     {{ render_errors(field.errors) }}
 </div>

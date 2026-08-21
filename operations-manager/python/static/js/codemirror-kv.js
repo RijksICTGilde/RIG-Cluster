@@ -28,8 +28,79 @@
     var jsYaml        = CM.jsYaml;
     var properties    = CM.properties;
     var yaml          = CM.yaml;
+    var HighlightStyle = CM.HighlightStyle;
+    var syntaxHighlighting = CM.syntaxHighlighting;
+    var tags          = CM.tags;
+    var autocompletion = CM.autocompletion;
 
     var _instances = {};
+
+    /* ---- weergave ---- */
+
+    /*
+     * CodeMirror tekent zijn EIGEN kleuren, en die staan vast in de bundel.
+     *
+     * Het basisthema zet de kantlijn op #f5f5f5 met #6c6c6c tekst, en
+     * defaultHighlightStyle zet de sleutels op #219 (donkerblauw). Beide zijn
+     * VASTE lichte waarden: in de donkere weergave werd de kantlijn een wit vlak
+     * midden in een donkere pagina, en stonden de namen van de omgevingsvariabelen
+     * in donkerblauw op bijna-zwart. Gemeld als onleesbaar.
+     *
+     * Hieronder staat geen tweede kleurenstelsel: elke waarde is een verwijzing
+     * naar een --semantics-token van het thema, en die zijn zelf light-dark().
+     * De lichte weergave houdt dus dezelfde bedoeling (accentkleur voor sleutels,
+     * gedempt voor commentaar); de donkere krijgt de waarde die erbij hoort.
+     *
+     * defaultHighlightStyle staat in basicSetup met {fallback: true} - een eigen
+     * HighlightStyle vervangt hem daarom volledig zodra hij meegegeven wordt.
+     */
+    var zadTheme = EditorView.theme({
+        "&": {
+            minHeight: "7.5rem",
+            color: "var(--semantics-content-color)",
+            backgroundColor: "var(--semantics-surfaces-base-background-color)",
+        },
+        ".cm-scroller": { overflow: "auto" },
+        ".cm-content, .cm-gutter": { minHeight: "7.5rem" },
+        ".cm-gutters": {
+            backgroundColor: "var(--semantics-surfaces-tinted-background-color)",
+            color: "var(--semantics-content-secondary-color)",
+            border: "none",
+            borderRight: "1px solid var(--semantics-dividers-color)",
+        },
+        ".cm-activeLine": { backgroundColor: "var(--semantics-surfaces-tinted-background-color)" },
+        ".cm-activeLineGutter": {
+            backgroundColor: "var(--semantics-surfaces-tinted-background-color)",
+            color: "var(--semantics-content-color)",
+        },
+        ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--semantics-content-color)" },
+        "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
+            backgroundColor: "var(--semantics-categories-accent-tinted-background-color)",
+        },
+        ".cm-panels": {
+            backgroundColor: "var(--semantics-surfaces-tinted-background-color)",
+            color: "var(--semantics-content-color)",
+        },
+    });
+
+    /*
+     * Vier rollen, niet meer. Een sleutel moet opvallen, een opmerking moet
+     * wegvallen, een waarde is gewone tekst. Meer kleuren maken een lijst met
+     * omgevingsvariabelen niet leesbaarder.
+     *
+     * De namen links komen uit de oude modus-tokens: properties geeft "def" voor de
+     * sleutel (variableName.definition) en "quote" voor de waarde, yaml geeft
+     * atom/meta/number/keyword/string.
+     */
+    var zadHighlight = HighlightStyle.define([
+        { tag: [tags.definition(tags.variableName), tags.propertyName, tags.labelName, tags.atom],
+          color: "var(--semantics-content-accent-color)" },
+        { tag: tags.heading, color: "var(--semantics-content-accent-color)", fontWeight: "bold" },
+        { tag: [tags.comment, tags.meta], color: "var(--semantics-content-secondary-color)", fontStyle: "italic" },
+        { tag: [tags.string, tags.number, tags.bool], color: "var(--semantics-content-success-color)" },
+        { tag: tags.keyword, color: "var(--semantics-content-warning-color)" },
+        { tag: tags.invalid, color: "var(--semantics-content-critical-color)" },
+    ]);
 
     /* ---- language extensions ---- */
 
@@ -90,6 +161,57 @@
         return envLinter();
     }
 
+    /* ---- aanvullen ---- */
+
+    /*
+     * Aanvullen na een dollarteken.
+     *
+     * Alleen voor het aliassenveld: daar schrijf je EIGEN_NAAM=$PLATFORM_VARIABELE, en
+     * WELKE platform-variabelen bestaan stond tot nu toe alleen in de hulpdialoog achter
+     * het vraagteken. Wie de naam niet uit zijn hoofd wist moest die dialoog openen,
+     * lezen, sluiten en overtypen.
+     *
+     * De lijst komt van de server mee in data-completions en is dezelfde bron als de
+     * validatie (alias_variabelen(), zie opi/services/catalog/aliases/overzicht.py). Er
+     * kan hier dus nooit een naam voorgesteld worden die het formulier afkeurt.
+     */
+    function completionSource(items) {
+        return function (context) {
+            var voor = context.matchBefore(/\$[A-Za-z0-9_]*/);
+            if (!voor) return null;
+            if (voor.from === voor.to && !context.explicit) return null;
+            return {
+                from: voor.from,
+                options: items,
+                validFor: /^\$[A-Za-z0-9_]*$/,
+            };
+        };
+    }
+
+    /* De server levert {naam, dienst, beschrijving}; CodeMirror wil {label, detail,
+       info}. Het dollarteken hoort bij het label, want de aanvulling vervangt het
+       dollarteken dat de gebruiker net typte. */
+    function parseCompletions(editorDiv) {
+        var ruw = editorDiv.dataset.completions;
+        if (!ruw) return null;
+        var items;
+        try {
+            items = JSON.parse(ruw);
+        } catch (e) {
+            console.warn("codemirror-kv: data-completions is geen geldige JSON", e);
+            return null;
+        }
+        if (!items.length) return null;
+        return items.map(function (item) {
+            return {
+                label: "$" + item.naam,
+                detail: item.dienst,
+                info: item.beschrijving,
+                type: "variable",
+            };
+        });
+    }
+
     /* ---- editor init ---- */
 
     /**
@@ -106,23 +228,32 @@
         var langCompartment = new Compartment();
         var lintCompartment = new Compartment();
 
+        var completions = parseCompletions(editorDiv);
+
+        var extensions = [];
+        /* VOOR basicSetup, en dat is geen smaak: basicSetup brengt zijn eigen
+           autocompletion() mee, en bij gelijke facetwaarden wint in CodeMirror de
+           extensie die het eerst in de lijst staat. Achteraan zou onze override
+           genegeerd worden. */
+        if (completions) {
+            extensions.push(autocompletion({ override: [completionSource(completions)] }));
+        }
+        extensions.push(
+            basicSetup,
+            langCompartment.of(langExtension(format)),
+            lintCompartment.of(lintExtension(format)),
+            EditorView.updateListener.of(function (update) {
+                if (update.docChanged) {
+                    textarea.value = update.state.doc.toString();
+                }
+            }),
+            zadTheme,
+            syntaxHighlighting(zadHighlight)
+        );
+
         var view = new EditorView({
             doc: textarea.value,
-            extensions: [
-                basicSetup,
-                langCompartment.of(langExtension(format)),
-                lintCompartment.of(lintExtension(format)),
-                EditorView.updateListener.of(function (update) {
-                    if (update.docChanged) {
-                        textarea.value = update.state.doc.toString();
-                    }
-                }),
-                EditorView.theme({
-                    "&": { minHeight: "7.5rem" },
-                    ".cm-scroller": { overflow: "auto" },
-                    ".cm-content, .cm-gutter": { minHeight: "7.5rem" },
-                }),
-            ],
+            extensions: extensions,
         });
 
         var wrapper = document.createElement("div");

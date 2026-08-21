@@ -2,6 +2,27 @@
   "targets": [
     {
       "bound_when_any": [
+        "SMTP_FROM",
+        "SMTP_HOST",
+        "SMTP_PASSWORD",
+        "SMTP_PORT",
+        "SMTP_USERNAME"
+      ],
+      "env_vars": [
+        "SMTP_FROM",
+        "SMTP_HOST",
+        "SMTP_PASSWORD",
+        "SMTP_PORT",
+        "SMTP_USERNAME"
+      ],
+      "id": "mail",
+      "kind": "metadata",
+      "services": [
+        "send-email"
+      ]
+    },
+    {
+      "bound_when_any": [
         "METRICS_AUTH_TOKEN",
         "PROMETHEUS_METRICS_AUTH_TOKEN"
       ],
@@ -164,6 +185,19 @@
       "kind": "path",
       "services": [
         "temp-storage"
+      ]
+    },
+    {
+      "bound_when_any": [
+        "VLAM_API_URL"
+      ],
+      "env_vars": [
+        "VLAM_API_URL"
+      ],
+      "id": "vlam",
+      "kind": "vlam",
+      "services": [
+        "vlam"
       ]
     },
     {

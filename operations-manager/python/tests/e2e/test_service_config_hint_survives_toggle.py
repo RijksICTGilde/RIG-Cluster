@@ -27,7 +27,10 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.e2e]
 
-HINT = "Geen projectbrede instellingen"
+# De KORTE aanduiding waar een dienst wel ingesteld wordt. Dit was de hele zin ("Geen
+# projectbrede instellingen; u stelt deze dienst per component, bij Componenten ... in"),
+# en die is op verzoek ingekort tot de aanduiding zelf; zie opi/services/config_location.py.
+HINT = "per component"
 
 SELECTED = "service-card--selected"
 

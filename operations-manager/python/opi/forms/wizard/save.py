@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
+from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import (
     PreserveAttachmentContentHook,
@@ -28,6 +29,7 @@ from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.wizard.secrets import restore_redacted_secrets
 from opi.forms.wizard.state import _strip_cleared_fields
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
+from opi.handlers.project_file_handler import ProjectFileHandler, _parse_resources_block_partial
 from opi.services.schema_migration import normalize_service_entries
 from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS
 
@@ -37,6 +39,62 @@ if TYPE_CHECKING:
     from opi.forms.wizard.state import WizardState
 
 logger = logging.getLogger(__name__)
+
+
+def guard_target_still_points_at_the_same_item(
+    existing_data: dict[str, Any],
+    state: WizardState,
+    target: Any | None,
+) -> None:
+    """Refuse the save when the flow's INDEX now names a different item (RC-132).
+
+    An indexed flow writes to ``deployments[3]``: the index is fixed when the dialog
+    opens, and the save merges into the project as it is read from git at that moment.
+    Those are two moments, and between them the list can change -- a project whose
+    deployments are per pull request has items appearing and disappearing without anyone
+    pressing anything. One removal earlier in the list shifts every index behind it, and
+    the write lands on the neighbour: the deployment you were not editing gets your
+    setting, silently.
+
+    So the name the session showed is checked against the name that now sits at that
+    index. A mismatch is a refusal with the reason, not a write; reopening the dialog
+    rebuilds the flow on the current list.
+
+    Best effort by design: the check is skipped when the session does not carry the item
+    (an add flow, or a list an editable fully owns, which is therefore not in
+    ``base_data``) and when either side has no name. Not knowing is a reason to stay out
+    of the way, not to guess -- the point is to catch the shift, not to invent one.
+    """
+    if target is None or target.is_new:
+        return
+    stored = existing_data.get(target.list_key)
+    session = (state.base_data or {}).get(target.list_key)
+    if not isinstance(stored, list) or not isinstance(session, list):
+        return
+    if target.index >= len(session):
+        return
+
+    expected = session[target.index].get("name") if isinstance(session[target.index], dict) else None
+    actual = (
+        stored[target.index].get("name")
+        if target.index < len(stored) and isinstance(stored[target.index], dict)
+        else None
+    )
+    if not expected or expected == actual:
+        return
+
+    logger.warning(
+        "Modal edit target shifted: %s[%d] was %r and is now %r; refusing the write",
+        target.list_key,
+        target.index,
+        expected,
+        actual,
+    )
+    raise ProjectIntegrityError(
+        f"'{expected}' staat niet meer op dezelfde plek in de lijst"
+        f"{f' (daar staat nu {actual!r})' if actual else ''}: er is iets aan dit project gewijzigd terwijl je "
+        f"aan het bewerken was. Sluit dit scherm en open het opnieuw, dan werk je weer op de huidige lijst."
+    )
 
 
 def apply_list_item_merge(
@@ -175,6 +233,54 @@ def _hook_editables(all_editables: list[Any]) -> list[EditableVisualizer]:
     ]
 
 
+def _component_resources(existing_data: dict[str, Any], target: Any | None) -> dict[str, str] | None:
+    """The stored resource values of the component this flow edits, or None.
+
+    None means "this flow is not a component edit" -- a new component included: it has
+    no stored values to compare against and no override to clear.
+    """
+    if target is None or target.is_new or target.list_key != "components":
+        return None
+    components = existing_data.get("components") or []
+    if not 0 <= target.index < len(components):
+        return None
+    return _parse_resources_block_partial(components[target.index].get("resources"))
+
+
+def _record_user_resource_intent(
+    existing_data: dict[str, Any],
+    target: Any | None,
+    resources_before: dict[str, str] | None,
+) -> None:
+    """Put a resource change from the component modal through the shared user-intent path.
+
+    The merge above already wrote the new values into the catalog component, which is
+    half the job: manifest generation merges the deployment-level override on top of the
+    catalog, so a value the tuner once wrote there keeps winning and the edit is a silent
+    no-op (RC-141). The shared path clears exactly the edited fields from those overrides
+    and records what the user set, so the tuner leaves those fields alone.
+
+    *resources_before* is what makes the diff possible: the modal posts all four resource
+    fields on every save, so without it every component edit would pin all four.
+    """
+    if resources_before is None or target is None:
+        return
+    components = existing_data.get("components") or []
+    if not 0 <= target.index < len(components):
+        return
+    component = components[target.index]
+    name = component.get("name")
+    if not name:
+        return
+    ProjectFileHandler().apply_user_resource_intent(
+        existing_data,
+        name,
+        _parse_resources_block_partial(component.get("resources")),
+        origin="portal",
+        previous=resources_before,
+    )
+
+
 async def apply_modal_edit(
     existing_data: dict[str, Any],
     merged_data: dict[str, Any],
@@ -214,6 +320,14 @@ async def apply_modal_edit(
     # whole: the empty slot the wizard was seeded with carries fields no form
     # collects (the cluster of a new deployment) and they must come along.
     target = flow.target
+    guard_target_still_points_at_the_same_item(existing_data, state, target)
+
+    # The resource values of the component being edited, as they are BEFORE this merge.
+    # The merge below writes the new ones straight into the catalog, so this is the only
+    # moment the previous values still exist -- and without them there is no way to tell
+    # which fields the user actually moved (the modal posts all four on every save).
+    resources_before = _component_resources(existing_data, target)
+
     if target is not None and target.is_new:
         apply_list_item_merge(existing_data, merged_data, target.list_key, target.index, target.is_new)
         merged_data.pop(target.list_key, None)
@@ -281,5 +395,7 @@ async def apply_modal_edit(
     # above (e.g. via the top-level apply_form_data_to_project path) so they
     # never reach the saved project file.
     _strip_cleared_fields(existing_data)
+
+    _record_user_resource_intent(existing_data, target, resources_before)
 
     return existing_data

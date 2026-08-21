@@ -70,7 +70,9 @@ def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatu
 
 # --- LIST: enumerate the approvable items in a project ---------------------------
 # These read the state via get_domains_config (service config, root fallback). The wire
-# shape is the established ApprovalItem contract (byte-identical to the old router code).
+# shape is the established ApprovalItem contract; ``subject`` says WHAT is being asked for
+# (the domain, or the composed subdomain), so the approver page does not have to assemble
+# it from the fields it happens to know.
 
 
 def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
@@ -86,6 +88,7 @@ def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
         items.append(
             {
                 "type": "domain",
+                "subject": entry.get("domain", ""),
                 "domain": entry.get("domain", ""),
                 "name": entry.get("domain", ""),
                 "current_status": entry.get("status", ""),
@@ -113,6 +116,9 @@ def _subdomain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
             items.append(
                 {
                     "type": "subdomain",
+                    # Samengesteld, want dat is wat er wordt aangevraagd. De twee losse
+                    # velden blijven staan: daar wordt het oordeel op teruggerouteerd.
+                    "subject": f"{sub.get('name', '')}.{base_domain}",
                     "domain": base_domain,
                     "name": sub.get("name", ""),
                     "current_status": sub.get("status", ""),
@@ -235,6 +241,7 @@ class PublishOnWebService(Service):
         name="Publiceren op het web",
         description="Maak de applicatie toegankelijk via het publieke internet",
         help_template="publish_on_web/help.md",
+        guide_template="publish_on_web/guide.md",
         icon="wereldbol",
         color="hemelblauw",
         binding=ServiceBinding.COMPONENT,

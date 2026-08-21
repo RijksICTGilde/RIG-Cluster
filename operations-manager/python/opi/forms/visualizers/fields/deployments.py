@@ -26,7 +26,6 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
     DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
-    DEPLOYMENT_DOMAIN_MODE_EDITABLE,
     DEPLOYMENT_NAME_EDITABLE,
     DEPLOYMENT_REPOSITORY_EDITABLE,
     DEPLOYMENT_SUBDOMAIN_EDITABLE,
@@ -81,16 +80,6 @@ DEPLOYMENT_CUSTOM_BASE_DOMAIN = EditableVisualizer(
     label="Eigen domein",
     placeholder="voorbeeld.nl",
     help_text="Voer je eigen domeinnaam in. Je bent zelf verantwoordelijk voor DNS-configuratie. Gebruik het domein zonder 'subdomein', dus voorbeeld.nl en niet www.voorbeeld.nl",
-)
-
-DEPLOYMENT_DOMAIN_MODE = EditableVisualizer(
-    editable=DEPLOYMENT_DOMAIN_MODE_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="Domeinmodus",
-    help_text=(
-        "Hoe URL's worden opgebouwd: 'component-specific' geeft elk component "
-        "een eigen subdomein, 'nice-url' gebruikt pad-gebaseerde routing onder één domein"
-    ),
 )
 
 DEPLOYMENT_DOMAIN_FORMAT = EditableVisualizer(
@@ -262,7 +251,6 @@ DEPLOYMENTS_SEQUENCE = EditableVisualizer(
         DEPLOYMENT_SUBDOMAIN,
         DEPLOYMENT_BASE_DOMAIN,
         DEPLOYMENT_CUSTOM_BASE_DOMAIN,
-        DEPLOYMENT_DOMAIN_MODE,
         DEPLOYMENT_DOMAIN_FORMAT,
         DEPLOYMENT_CLONE_FROM,
         DEPLOYMENT_BACKUP_SCHEDULE,

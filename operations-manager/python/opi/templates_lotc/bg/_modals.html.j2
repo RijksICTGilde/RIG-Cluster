@@ -23,10 +23,14 @@
   is dode markup, en die neem je niet mee bij een verhuizing.
 #}
 <div id="edit-section-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
+{# tabindex="-1" maakt de dialoog zelf focusbaar. Dat is geen detail: zonder focus
+   BINNEN de dialoog blijft de focus op de knop erachter staan, en Page Up/Page Down
+   scrollen dan de pagina achter de dialoog in plaats van de dialoog zelf. Gemeld. #}
 <div id="edit-section-modal"
      class="edit-section-modal"
      role="dialog"
      aria-modal="true"
+     tabindex="-1"
      aria-labelledby="edit-section-title"
      data-project-name="{{ project.name }}">
     {# .edit-section-header was flex + space-between + align-items + gap: dat is
