@@ -49,7 +49,7 @@ STUB_MODEL_ID = "vlam-stub"
 STUB_MODELS_BODY = json.dumps({"data": [{"id": STUB_MODEL_ID, "object": "model"}], "object": "list"})
 
 #: De naam van de inkomende regel, gelijk aan die in het echte vlam-wt8-projectbestand.
-_INBOUND_RULE_NAME = "iedereen-in-het-cluster"
+_INBOUND_RULE_NAME = "vlam-api-iedereen"
 
 
 def _haproxy_config(port: int) -> str:
