@@ -14,15 +14,17 @@ start instead of repaired afterwards (aanvulling 5 in the plan). ``approval`` in
 a project that could set its own status to ``approved`` would be no approval at all.
 
 There is no field for the sender ADDRESS, and there deliberately is not going to be one:
-every project sends from one fixed address that the relay writes into the ``From:`` header
-itself. ``from-name`` (the display name) is all a project chooses.
+the platform composes it from the project name and the relay writes it into the ``From:``
+header itself. ``from-name`` (the display name) is all a project chooses -- and since
+RC-145 it is actually READ, which is why it now carries validation: it goes straight into
+a mail header.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from opi.services.config_managed import PLATFORM_MANAGED
 
@@ -32,6 +34,33 @@ from opi.services.config_managed import PLATFORM_MANAGED
 #: the sum of the accounts must stay under the volume that was agreed, and a single project
 #: asking for a number with an extra zero is exactly how that is broken.
 MAX_MESSAGES_PER_DAY = 5000
+
+#: Longest display name a project may choose. Not a technical ceiling (RFC 5322 allows a
+#: much longer one) but a human one: a name is what the recipient reads next to the
+#: address, and anything past this is not a name any more.
+MAX_FROM_NAME_LENGTH = 64
+
+#: What a display name may NOT contain, and every character in it is here for a reason.
+#: The name is pasted straight into the ``From:`` header by the relay, so:
+#:
+#: * control characters (``\r``, ``\n``, and the rest of the C0/C1 range) would end the
+#:   header and start another one -- header injection, the classic one;
+#: * ``@`` and the angle brackets make a name READ like an address. "beveiliging@bank.nl"
+#:   as a display name shows up as the sender in many mail clients, next to an address the
+#:   reader never sees;
+#: * ``"`` and ``\`` would break out of the quoting the relay puts around the name, and
+#:   that quoting is what makes a comma or a colon in a name safe instead of turning the
+#:   ``From:`` into a list of two mailboxes;
+#: * ``$`` is what a sieve string interpolates (``${...}``), and the relay writes the name
+#:   into a GENERATED sieve script. This character is here for the layer BELOW this one:
+#:   ``opi.connectors.mail`` refuses it when it renders that script, and a name that only
+#:   this rule let through would blow up halfway through processing a project instead of
+#:   being refused at the form. Keep the two lists identical.
+#:
+#: The rule lives HERE and not in the form: this model is what the API writes against and
+#: what a stored project file is validated with, and the form reuses it through
+#: ``ModelFieldValidator`` so there is one definition and not two that drift.
+FROM_NAME_PATTERN = r'^[^@<>"$\\\x00-\x1F\x7F]*$'
 
 
 class SendEmailAccount(BaseModel):
@@ -79,10 +108,17 @@ class SendEmailConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    from_name: str | None = Field(
-        default=None,
-        alias="from-name",
-        description="Display name shown to the recipient, e.g. 'Algoritmeregister'. The address itself is fixed.",
+    from_name: Annotated[str, StringConstraints(max_length=MAX_FROM_NAME_LENGTH, pattern=FROM_NAME_PATTERN)] | None = (
+        Field(
+            default=None,
+            alias="from-name",
+            description=(
+                "Display name shown to the recipient, e.g. 'Algoritmeregister'. The relay puts this "
+                "in the From: header next to the project's address, so it may not contain control "
+                "characters, an @, angle brackets, quotes, a backslash or a dollar sign, and it is "
+                f"at most {MAX_FROM_NAME_LENGTH} characters. Leave it out to send without a display name."
+            ),
+        )
     )
     messages_per_day: Annotated[int, Field(ge=1, le=MAX_MESSAGES_PER_DAY)] | None = Field(
         default=None,
