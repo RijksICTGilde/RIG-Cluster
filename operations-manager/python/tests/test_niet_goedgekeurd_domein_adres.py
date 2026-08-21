@@ -56,14 +56,14 @@ SUBDOMEIN = "rig-test"
 CLUSTERPOSTFIX = ".local.test"
 CLUSTERADRES = f"https://frontend-{SUBDOMEIN}-{PROJECT}{CLUSTERPOSTFIX}"
 
-#: De twee opslagvormen van hetzelfde webadres. De eerste is die uit de melding: geen
-#: ``domain-format``, alleen de oude ``domain-mode``. Precies die vorm liep om de poort
-#: heen, dus een test die alleen de tweede meet was groen op een kapot systeem.
+#: De twee opslagvormen van een webadres op een eigen domein. De eerste liep ooit met
+#: ``domain-mode: nice-url`` om de poort heen; dat veld is met v2.8 verdwenen, maar een
+#: schrijver die alleen base-domain en subdomain zet bestaat nog steeds, en ook die vorm
+#: moet de poort dekken. Een test die alleen de tweede meet was groen op een kapot systeem.
 VORMEN: dict[str, dict[str, Any]] = {
     "zonder-domain-format": {
         "base-domain": EIGEN_DOMEIN,
         "subdomain": SUBDOMEIN,
-        "domain-mode": "nice-url",
     },
     "met-domain-format": {
         "base-domain": EIGEN_DOMEIN,
@@ -72,8 +72,12 @@ VORMEN: dict[str, dict[str, Any]] = {
     },
 }
 
-#: Het adres dat het project VRAAGT, in beide vormen hetzelfde.
-GEVRAAGD_ADRES = f"frontend.{SUBDOMEIN}.{EIGEN_DOMEIN}"
+#: Het adres dat het project VRAAGT, per vorm: zonder format is dat het gedeelde
+#: ``subdomain.base-domain``, met het component.subdomain-format het adres per component.
+GEVRAAGDE_ADRESSEN: dict[str, str] = {
+    "zonder-domain-format": f"{SUBDOMEIN}.{EIGEN_DOMEIN}",
+    "met-domain-format": f"frontend.{SUBDOMEIN}.{EIGEN_DOMEIN}",
+}
 
 
 def _project(webconfig: dict[str, Any], domeinstatus: str | None) -> dict[str, Any]:
@@ -153,13 +157,13 @@ def test_de_portal_toont_het_clusteradres_zolang_het_domein_niet_is_goedgekeurd(
     adressen = _adressen(_project(VORMEN[vorm], domeinstatus))
 
     assert adressen == [CLUSTERADRES]
-    assert GEVRAAGD_ADRES not in " ".join(adressen)
+    assert GEVRAAGDE_ADRESSEN[vorm] not in " ".join(adressen)
 
 
 @pytest.mark.parametrize("vorm", list(VORMEN))
 def test_een_goedgekeurd_domein_levert_gewoon_het_eigen_adres(clusteradres: None, vorm: str) -> None:
     """De negatieve kant: de poort mag niet zomaar alles naar het cluster trekken."""
-    assert _adressen(_project(VORMEN[vorm], "approved")) == [f"https://{GEVRAAGD_ADRES}"]
+    assert _adressen(_project(VORMEN[vorm], "approved")) == [f"https://{GEVRAAGDE_ADRESSEN[vorm]}"]
 
 
 # ---------------------------------------------------------------------------
@@ -248,12 +252,17 @@ def test_de_api_meldt_het_clusteradres_met_de_juiste_van_de_drie_statussen(
 
 
 @pytest.mark.parametrize(
-    "api",
-    [_project(VORMEN["zonder-domain-format"], "approved"), _project(VORMEN["met-domain-format"], "approved")],
-    indirect=True,
+    ("api", "verwacht_adres"),
+    [
+        (_project(VORMEN["zonder-domain-format"], "approved"), GEVRAAGDE_ADRESSEN["zonder-domain-format"]),
+        (_project(VORMEN["met-domain-format"], "approved"), GEVRAAGDE_ADRESSEN["met-domain-format"]),
+    ],
+    indirect=["api"],
 )
-def test_de_api_zwijgt_over_een_goedgekeurd_domein_en_noemt_het_eigen_adres(api: TestClient) -> None:
+def test_de_api_zwijgt_over_een_goedgekeurd_domein_en_noemt_het_eigen_adres(
+    api: TestClient, verwacht_adres: str
+) -> None:
     detail = _lees(api)
 
-    assert detail["urls"] == {"frontend": f"https://{GEVRAAGD_ADRES}"}
+    assert detail["urls"] == {"frontend": f"https://{verwacht_adres}"}
     assert detail["approvals"] == []

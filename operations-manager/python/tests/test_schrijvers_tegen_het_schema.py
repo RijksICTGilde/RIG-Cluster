@@ -334,7 +334,6 @@ def test_elke_domeininstelling_blijft_geldig() -> None:
     waarden: dict[DomainSetting, Any] = {
         DomainSetting.BASE_DOMAIN: "rijksapps.nl",
         DomainSetting.SUBDOMAIN: "productie",
-        DomainSetting.DOMAIN_MODE: "subdomain",
         DomainSetting.DOMAIN_FORMAT: "deployment-project",
         DomainSetting.ISSUER: "letsencrypt-prod",
         DomainSetting.ROOT_COMPONENT: "api",

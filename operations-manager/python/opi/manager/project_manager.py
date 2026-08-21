@@ -136,8 +136,7 @@ from opi.utils.env_vars import (
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
-    DOMAIN_FORMAT_TEMPLATES,
-    HostnameFormat,
+    ROOT_COMPONENT_FORMAT_IDS,
     generate_argocd_application_name,
     generate_bare_domain_hostname,
     generate_external_hostname,
@@ -163,7 +162,6 @@ from opi.utils.project_utils import (
     ComponentValidationError,
     build_component_config,
     normalize_container_image,
-    validate_component_paths,
     validate_root_component,
 )
 from opi.utils.secrets import (
@@ -5302,19 +5300,22 @@ class ProjectManager:
             logger.warning(f"No components found in deployment {deployment_name}, skipping")
             return []
 
-        # Register subdomain for nice-url mode (with rollback on failure)
-        domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+        # Register subdomain for the dotted component-per-subdomain layouts (with rollback
+        # on failure). Keyed on domain-format: the legacy ``domain-mode: nice-url`` files
+        # were migrated to ``component.subdomain`` (schema v2.8).
         subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+        domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
+        uses_dotted_subdomain_layout = domain_format in ROOT_COMPONENT_FORMAT_IDS
         subdomain_registered = False  # Track if we registered a new subdomain for rollback
         subdomain_connector = None  # Initialize for use in rollback
 
-        # Validate nice-url mode requirements BEFORE subdomain registration
+        # Validate the layout's requirements BEFORE subdomain registration
         # This prevents orphaned subdomain entries when validation fails
         root_component_name = get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
-        if domain_mode == "nice-url" and subdomain and base_domain:
+        if uses_dotted_subdomain_layout and subdomain and base_domain:
             # Validate that all components with publish-on-web have ports configured
-            # In nice-url mode, each component gets its own ingress at component.subdomain.base_domain
+            # In this layout, each component gets its own ingress at component.subdomain.base_domain
             components_missing_ports = []
             for component in components:
                 component_name = component.get("reference") or component.get("name")
@@ -5333,7 +5334,8 @@ class ProjectManager:
 
             if components_missing_ports:
                 raise ValueError(
-                    f"Components with 'publish-on-web' in nice-url mode must have at least one port configured. "
+                    f"Components with 'publish-on-web' on domain-format '{domain_format}' must have at least "
+                    f"one port configured. "
                     f"Missing ports for: {', '.join(components_missing_ports)}. "
                     f"Add 'ports.inbound' to the component definition."
                 )
@@ -5349,7 +5351,7 @@ class ProjectManager:
                         f"Root components must have a service exposed for the root URL to work."
                     )
 
-        if domain_mode == "nice-url" and subdomain and base_domain:
+        if uses_dotted_subdomain_layout and subdomain and base_domain:
             subdomain_connector = SubdomainConnector()
 
             # Check if this is a new registration (for rollback purposes)
@@ -5695,17 +5697,15 @@ class ProjectManager:
             subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
             base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
             issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
-            domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
             domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
             expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
             logger.info(
                 f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
-                f"issuer: {issuer_config}, domain-mode: {domain_mode}, domain-format: {domain_format}, "
+                f"issuer: {issuer_config}, domain-format: {domain_format}, "
                 f"expose-component-on-bare-domain: {expose_on_bare_domain}"
             )
 
             # Get ingress map using centralized function
-            hostname_format = HostnameFormat.from_domain_mode(domain_mode)
             ingress_map = get_component_ingress_map(
                 component_name=component_name,
                 deployment_name=deployment_name,
@@ -5713,7 +5713,6 @@ class ProjectManager:
                 ingress_postfix=ingress_postfix,
                 subdomain=subdomain,
                 base_domain=base_domain,
-                hostname_format=hostname_format,
                 domain_format=domain_format,
                 project_data=project_data,
                 cluster=settings.CLUSTER_MANAGER,
@@ -6197,24 +6196,23 @@ class ProjectManager:
                                 f"Successfully created {manifest_file} manifest for {ingress_hostname}{path_value}: {manifest_file_path}"
                             )
 
-                    # Create root ingress for nice-url mode if this is the root component.
-                    # When domain-format is set, skip root ingress if the template does not
-                    # include {component} (all components already share the same hostname).
+                    # Create the root ingress (``subdomain.base-domain``) when this is the
+                    # root component of a dotted component-per-subdomain layout. Keyed on
+                    # domain-format: the legacy ``domain-mode: nice-url`` files were
+                    # migrated to ``component.subdomain`` (schema v2.8), and only the
+                    # dotted formats WITH a component segment carry a root address next to
+                    # the per-component ones.
                     # The root ingress composes ``subdomain.base-domain`` itself instead of
                     # asking get_component_ingress_map, so the approval fallback that moves
                     # the components to the cluster address does not reach it. Without this
                     # check an unapproved domain still got an apex-style ingress plus a
                     # certificate request for a domain nobody granted this project.
                     is_root_component = component_name == root_component_name
-                    template_has_component = (
-                        "{component}" in DOMAIN_FORMAT_TEMPLATES.get(domain_format, "") if domain_format else True
-                    )
                     if (
-                        domain_mode == "nice-url"
+                        domain_format in ROOT_COMPONENT_FORMAT_IDS
                         and subdomain
                         and base_domain
                         and is_root_component
-                        and template_has_component
                         and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
                     ):
                         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
@@ -7525,34 +7523,12 @@ class ProjectManager:
                     "error_type": "invalid_deployments",
                 }
 
-            # Validate path uniqueness per target deployment
+            # Validate root component constraints per target deployment
             for deployment in existing_deployments:
                 dep_name = deployment.get("name")
                 if dep_name not in deployment_names:
                     continue
-                domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE, "component-specific")
 
-                # Collect existing component paths in this deployment
-                existing_paths = []
-                for comp_ref in deployment.get("components", []):
-                    comp_ref_name = comp_ref.get("reference")
-                    if comp_ref_name:
-                        for comp_def in existing_components:
-                            if comp_def.get("name") == comp_ref_name:
-                                existing_paths.append(comp_def.get("path", "/"))
-                                break
-
-                # Validate path uniqueness (including the new component)
-                try:
-                    validate_component_paths([*existing_paths, path], domain_mode)
-                except ComponentValidationError as e:
-                    return {
-                        "success": False,
-                        "error": str(e),
-                        "error_type": "validation_error",
-                    }
-
-                # Validate root component constraints
                 if root:
                     dep_component_names = [
                         c.get("reference") for c in deployment.get("components", []) if c.get("reference")
@@ -7561,7 +7537,6 @@ class ProjectManager:
                         validate_root_component(
                             name,
                             [*dep_component_names, name],
-                            domain_mode,
                             get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
                         )
                     except ComponentValidationError as e:
@@ -8640,28 +8615,6 @@ class ProjectManager:
                     "success": False,
                     "error": f"Component '{component_name}' is already in deployment '{deployment_name}'",
                     "error_type": "duplicate_component_in_deployment",
-                }
-
-            # Validate path uniqueness
-            domain_mode = get_domain_setting(target_deployment, DomainSetting.DOMAIN_MODE, "component-specific")
-            new_path = component_def.get("path", "/")
-
-            existing_paths = []
-            for comp_ref in target_deployment.get("components", []):
-                comp_ref_name = comp_ref.get("reference")
-                if comp_ref_name:
-                    for existing_comp in existing_components:
-                        if existing_comp.get("name") == comp_ref_name:
-                            existing_paths.append(existing_comp.get("path", "/"))
-                            break
-
-            try:
-                validate_component_paths([*existing_paths, new_path], domain_mode)
-            except ComponentValidationError as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "error_type": "validation_error",
                 }
 
             # Normalize image

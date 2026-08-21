@@ -13,6 +13,7 @@ from opi.services.schema_migration import (
     normalize_domains_location,
     normalize_service_entries,
     relocate_domain_settings_to_service,
+    remove_domain_mode,
 )
 
 # ---------------------------------------------------------------------------
@@ -1276,7 +1277,7 @@ class TestRelocateDomainSettingsToService:
         result, _ = migrate_to_latest(self._hwt_nqi_shaped())
         validate_project_schema(result)
 
-    def test_all_seven_settings_move_together(self) -> None:
+    def test_all_settings_move_together_and_domain_mode_is_dropped(self) -> None:
         data = self._hwt_nqi_shaped()
         data["deployments"][0].update(
             {
@@ -1292,10 +1293,11 @@ class TestRelocateDomainSettingsToService:
 
         deployment = result["deployments"][0]
         config = deployment["services"][0]["config"]
+        # domain-mode does not survive v2.8; the explicit domain-format the file already
+        # carried wins over the nice-url conversion.
         assert config == {
             "base-domain": "rijksapp.nl",
             "subdomain": "wies",
-            "domain-mode": "nice-url",
             "domain-format": "component-deployment-project",
             "issuer": "letsencrypt",
             "root-component": "component1",
@@ -1337,3 +1339,86 @@ class TestRelocateDomainSettingsToService:
         # again; the schema of THAT version must still accept them.
         data = self._hwt_nqi_shaped()
         validate_declared_project_schema(data)
+
+
+class TestRemoveDomainMode:
+    """v2.7 -> v2.8: the legacy ``domain-mode`` is retired.
+
+    The wild carried exactly one value (nice-url, five deployments, measured against the
+    production projects repo on 2026-08-21), and the migration turns that into the format
+    that IS its meaning: ``component.subdomain`` -- the format the files carrying both
+    fields already chose. Measured migrate-then-validate, like the relocation above.
+    """
+
+    def _project(self, deployment_extra: dict) -> dict:
+        return {
+            "schema-version": 2.7,
+            "name": "desa",
+            "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+            "clusters": ["odcn-production"],
+            "components": [{"name": "website", "type": "deployment", "ports": {"inbound": [8080]}}],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "cluster": "odcn-production",
+                    "namespace": "desa",
+                    "components": [{"reference": "website", "image": "nginx:latest"}],
+                    "services": [
+                        {"reference": "publish-on-web", "config": {"base-domain": "rijksapp.nl", **deployment_extra}}
+                    ],
+                }
+            ],
+        }
+
+    def test_nice_url_without_format_becomes_component_subdomain(self) -> None:
+        data = self._project({"subdomain": "desa", "domain-mode": "nice-url"})
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        config = result["deployments"][0]["services"][0]["config"]
+        assert "domain-mode" not in config
+        assert config["domain-format"] == "component.subdomain"
+        validate_project_schema(result)
+
+    def test_nice_url_with_explicit_format_only_loses_the_mode(self) -> None:
+        data = self._project({"subdomain": "desa", "domain-mode": "nice-url", "domain-format": "component.subdomain"})
+        result, _ = migrate_to_latest(data)
+
+        config = result["deployments"][0]["services"][0]["config"]
+        assert "domain-mode" not in config
+        assert config["domain-format"] == "component.subdomain"
+
+    def test_another_mode_is_simply_dropped(self) -> None:
+        # Every non-nice-url value was already equivalent to the default format, so
+        # removal alone preserves behaviour: no format is written.
+        data = self._project({"domain-mode": "component-specific"})
+        result, _ = migrate_to_latest(data)
+
+        config = result["deployments"][0]["services"][0]["config"]
+        assert "domain-mode" not in config
+        assert "domain-format" not in config
+
+    def test_a_pre_relocation_root_level_mode_is_removed_too(self) -> None:
+        # A v2.6 file carries the mode at the deployment root; the v2.7 relocation no
+        # longer knows the key, so the v2.8 step has to catch it there itself.
+        data = self._project({})
+        data["schema-version"] = 2.6
+        deployment = data["deployments"][0]
+        deployment["domain-mode"] = "nice-url"
+        deployment["subdomain"] = "desa"
+        result, _ = migrate_to_latest(data)
+
+        deployment = result["deployments"][0]
+        assert "domain-mode" not in deployment
+        config = deployment["services"][0]["config"]
+        assert "domain-mode" not in config
+        assert config["domain-format"] == "component.subdomain"
+        validate_project_schema(result)
+
+    def test_it_is_idempotent_and_leaves_clean_files_alone(self) -> None:
+        clean = self._project({"subdomain": "desa", "domain-format": "subdomain"})
+        assert remove_domain_mode(clean) is False
+
+        once = self._project({"subdomain": "desa", "domain-mode": "nice-url"})
+        assert remove_domain_mode(once) is True
+        assert remove_domain_mode(once) is False

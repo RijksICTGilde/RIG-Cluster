@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Deployment layer: how this deployment's web address is composed (RC-60).\n\nEvery field is optional because a deployment on the platform's own cluster domain\nneeds none of them: the format defaults, the base domain comes from the cluster and the\nissuer from the domain entry. ``domain-mode`` is legacy -- superseded by\n``domain-format`` and read only by ``HostnameFormat.from_domain_mode`` for old files --\nbut it describes the same subject, so it moved along rather than staying behind as a\nsecond place to look.",
+  "description": "Deployment layer: how this deployment's web address is composed (RC-60).\n\nEvery field is optional because a deployment on the platform's own cluster domain\nneeds none of them: the format defaults, the base domain comes from the cluster and the\nissuer from the domain entry. The legacy ``domain-mode`` field is gone: the v2.8\nmigration converts ``nice-url`` to ``domain-format: component.subdomain`` and drops\nthe key.",
   "properties": {
     "base-domain": {
       "anyOf": [
@@ -40,19 +40,6 @@
       "default": null,
       "description": "Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES). The id set is closed, so this field carries an enum; which of those ids you can actually use here is narrower and depends on base-domain, because the dotted variants need a domain that supports dot-separated hostnames. Read x-choices-source on this field for the list that fits.",
       "title": "Domain-Format"
-    },
-    "domain-mode": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "LEGACY hostname strategy, superseded by domain-format. Only read for files that predate it.",
-      "title": "Domain-Mode"
     },
     "expose-component-on-bare-domain": {
       "anyOf": [

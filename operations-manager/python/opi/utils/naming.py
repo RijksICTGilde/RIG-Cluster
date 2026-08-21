@@ -7,38 +7,11 @@ including deployments, services, PVCs, and other manifest resources.
 
 import logging
 import re
-from enum import Enum
 from typing import Any, get_args
 
 from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
 
 logger = logging.getLogger(__name__)
-
-
-class HostnameFormat(Enum):
-    """Format for hostname generation.
-
-    DASHES: Traditional format using dashes (component-deployment-project.domain)
-    DOTS: Nice URL format using dots (component.subdomain.base_domain)
-    """
-
-    DASHES = "dashes"
-    DOTS = "dots"
-
-    @classmethod
-    def from_domain_mode(cls, domain_mode: str | None) -> HostnameFormat:
-        """Convert a domain_mode string to HostnameFormat enum.
-
-        Args:
-            domain_mode: The domain mode string from deployment config
-                        ("nice-url" -> DOTS, anything else -> DASHES)
-
-        Returns:
-            HostnameFormat enum value
-        """
-        if domain_mode == "nice-url":
-            return cls.DOTS
-        return cls.DASHES
 
 
 # ---------------------------------------------------------------------------
@@ -85,16 +58,6 @@ SUBDOMAIN_FORMAT_IDS: list[str] = [f for f, t in DOMAIN_FORMAT_TEMPLATES.items()
 ROOT_COMPONENT_FORMAT_IDS: list[str] = [
     f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." in f and "{component}" in t
 ]
-
-# Maps each domain-mode to its implicit default format (backward compat).
-# Only used for documentation/display; when domain-format is absent the
-# existing code path is used unchanged.
-DOMAIN_MODE_DEFAULT_FORMAT: dict[str, str] = {
-    "nice-url": "component-deployment-subdomain",
-    "component-specific": "component-deployment-project",
-    "deployment-name": "deployment-project",
-    "custom": "deployment-subdomain",
-}
 
 
 def resolve_domain_tail(
@@ -1779,42 +1742,6 @@ def generate_external_hostname(subdomain: str, base_domain: str) -> str:
     return f"{subdomain}.{base_domain}"
 
 
-def generate_nice_url_hostname(
-    component_name: str,
-    subdomain: str,
-    base_domain: str,
-) -> str:
-    """
-    Generate a hostname using the nice URL dot-separated pattern.
-
-    The nice URL pattern uses dots to separate components:
-    - Pattern: component.subdomain.base_domain
-
-    This provides cleaner, more readable URLs compared to dash-separated patterns.
-    The subdomain is user-configurable and globally unique per base_domain.
-
-    Args:
-        component_name: Name of the component (e.g., "frontend")
-        subdomain: User-configured subdomain (e.g., "myapp") - globally unique
-        base_domain: The base domain (e.g., "rijks.app")
-
-    Returns:
-        Hostname in dot-separated pattern
-
-    Examples:
-        >>> generate_nice_url_hostname("frontend", "myapp", "rijks.app")
-        'frontend.myapp.rijks.app'
-
-        >>> generate_nice_url_hostname("backend", "myapp", "rijksapps.nl")
-        'backend.myapp.rijksapps.nl'
-    """
-    # Sanitize component and subdomain names for URL use
-    component_clean = _sanitize_for_lowercase(component_name)
-    subdomain_clean = _sanitize_for_lowercase(subdomain)
-
-    return f"{component_clean}.{subdomain_clean}.{base_domain}"
-
-
 def generate_nice_url_root_hostname(subdomain: str, base_domain: str) -> str:
     """
     Generate the root hostname for nice URL mode.
@@ -1939,7 +1866,6 @@ def get_component_ingress_map(
     ingress_postfix: str,
     subdomain: str | None = None,
     base_domain: str | None = None,
-    hostname_format: HostnameFormat = HostnameFormat.DASHES,
     domain_format: str | None = None,
     *,
     project_data: dict[str, Any],
@@ -1962,29 +1888,20 @@ def get_component_ingress_map(
         ingress_postfix: Cluster ingress postfix
         subdomain: Optional subdomain override
         base_domain: Optional custom base domain (e.g., "rijks.app")
-        hostname_format: Format for hostname (DASHES or DOTS)
         domain_format: Optional domain-format template ID from project YAML
 
     Returns:
         Dict mapping ingress name to hostname
 
     Examples:
-        # Nice URL (DOTS): component.subdomain.base_domain
-        >>> get_component_ingress_map(
-        ...     "frontend", "prod", "myapp", ".kind",
-        ...     subdomain="myapp", base_domain="rijks.app",
-        ...     hostname_format=HostnameFormat.DOTS
-        ... )
-        {'prod-frontend': 'frontend.myapp.rijks.app'}
-
-        # Custom domain (DASHES): subdomain.base_domain
+        # Custom domain without a format: subdomain.base_domain
         >>> get_component_ingress_map(
         ...     "frontend", "prod", "myapp", ".kind",
         ...     subdomain="myapp", base_domain="custom.nl"
         ... )
         {'prod-frontend': 'myapp.custom.nl'}
 
-        # Cluster domain (DASHES): component-deployment-project.cluster
+        # Cluster domain: component-deployment-project.cluster
         >>> get_component_ingress_map(
         ...     "frontend", "prod", "myapp", ".kind"
         ... )
@@ -2002,11 +1919,10 @@ def get_component_ingress_map(
 
     # The approval gate runs BEFORE a shape is chosen, so it covers every shape. It used
     # to sit inside the branch below, which meant a deployment that names no
-    # domain-format -- an older file on ``domain-mode: nice-url``, or a write that only
-    # set base-domain and subdomain -- composed its hostname in the legacy dispatch with
-    # nobody having checked whether the domain was approved. That published an
-    # unapproved domain AND showed it as the component's address, because this function
-    # is also what the portal and the API read (RC-104).
+    # domain-format -- a write that only set base-domain and subdomain -- composed its
+    # hostname in the legacy dispatch with nobody having checked whether the domain was
+    # approved. That published an unapproved domain AND showed it as the component's
+    # address, because this function is also what the portal and the API read (RC-104).
     effective_format, effective_domain = apply_domain_approval_fallback(
         domain_format, base_domain, subdomain, ingress_postfix, project_data, cluster
     )
@@ -2027,12 +1943,7 @@ def get_component_ingress_map(
 
     # --- Legacy dispatch (no domain_format, and the domain it names IS approved) ---
 
-    # Nice URL format (DOTS): component.subdomain.base_domain
-    if hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
-        hostname = generate_nice_url_hostname(component_name, subdomain, base_domain)
-        return {base_name: hostname}
-
-    # Custom/external domain mode (base_domain with subdomain)
+    # Custom/external domain (base_domain with subdomain)
     if base_domain and subdomain:
         hostname = generate_external_hostname(subdomain, base_domain)
         return {base_name: hostname}
@@ -2048,9 +1959,9 @@ def get_deployment_hostnames(
     ingress_postfix: str,
     subdomain: str | None = None,
     base_domain: str | None = None,
-    hostname_format: HostnameFormat = HostnameFormat.DASHES,
     domain_format: str | None = None,
     expose_on_bare_domain: str | bool = False,
+    root_component: str | None = None,
     *,
     project_data: dict[str, Any],
     cluster: str,
@@ -2067,10 +1978,11 @@ def get_deployment_hostnames(
         ingress_postfix: Cluster ingress postfix
         subdomain: Optional subdomain override
         base_domain: Optional custom base domain (e.g., "rijks.app")
-        hostname_format: Format for hostname (DASHES or DOTS)
         domain_format: Optional domain-format template ID from project YAML
         expose_on_bare_domain: Component name that serves the bare domain,
             or False/empty when disabled
+        root_component: Component that serves the root address
+            (``subdomain.base-domain``), or None when no component does
 
     Returns:
         List of unique hostnames for the deployment
@@ -2089,7 +2001,6 @@ def get_deployment_hostnames(
             ingress_postfix,
             subdomain,
             base_domain,
-            hostname_format=hostname_format,
             domain_format=domain_format,
             project_data=project_data,
             cluster=cluster,
@@ -2104,10 +2015,19 @@ def get_deployment_hostnames(
     # address while ``subdomain.base-domain`` is still handed out as a hostname.
     domain_approved = is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
 
-    # For DOTS format (nice URLs) without explicit domain_format, add root hostname
-    # When domain_format is set, the template already defines the hostname shape;
-    # root hostname is only relevant for legacy nice-url with component prefix.
-    if domain_approved and not domain_format and hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
+    # The dotted formats with a component prefix carry a root address next to the
+    # per-component ones: ``subdomain.base-domain``, served by the root component. Keyed
+    # on the format plus root-component rather than the retired ``domain-mode``: nice-url
+    # files migrated to ``component.subdomain`` (schema v2.8), and the same pair gates the
+    # root INGRESS in project_manager, so the Keycloak redirect list and the ingress set
+    # cannot disagree.
+    if (
+        domain_approved
+        and domain_format in ROOT_COMPONENT_FORMAT_IDS
+        and root_component
+        and subdomain
+        and base_domain
+    ):
         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)

@@ -4,7 +4,6 @@ from opi.forms.visualizers.providers import (
     BaseDomainOptionsProvider,
     ClusterBaseDomainOptionsProvider,
     ComponentReferenceOptionsProvider,
-    DomainModeOptionsProvider,
     FilteredServiceOptionsProvider,
     KeycloakTemplateOptionsProvider,
     PullPolicyOptionsProvider,
@@ -136,20 +135,6 @@ class TestRepositoryOptionsProvider:
     def test_empty_names(self):
         provider = RepositoryOptionsProvider()
         assert provider.get_options() == []
-
-
-class TestDomainModeOptionsProvider:
-    def test_returns_four_options(self):
-        options = DomainModeOptionsProvider().get_options()
-        assert len(options) == 4
-
-    def test_includes_nice_url(self):
-        options = DomainModeOptionsProvider().get_options()
-        values = [o["value"] for o in options]
-        assert "nice-url" in values
-        assert "component-specific" in values
-        assert "deployment-name" in values
-        assert "custom" in values
 
 
 class TestClusterBaseDomainOptionsProvider:
