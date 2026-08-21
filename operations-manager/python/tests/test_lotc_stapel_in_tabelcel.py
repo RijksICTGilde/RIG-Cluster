@@ -21,7 +21,7 @@ markup, en het meet in alle drie de motoren hetzelfde.
 
 Wat er in LOTC zou moeten veranderen staat als punt 14 in ``request_for_components.md``.
 Komt dat er, dan kan deze test weg. Het gedrag in de browser wordt gemeten door
-``tests/e2e/test_lotc_domeinbeheer.py``; deze test is de goedkope poort eronder, zodat het
+``tests/e2e/test_lotc_aanvragenbeheer.py``; deze test is de goedkope poort eronder, zodat het
 patroon niet ergens anders terugkomt.
 """
 
@@ -35,8 +35,12 @@ from opi.core.template_helpers import CATALOG_DIR, TEMPLATES_DIR
 #: Een ``<c-td ...>`` gevolgd door een ``<c-stack``, met alleen witruimte en Jinja-blokken
 #: ertussen. Zo staan de gevallen erin die we gemeten hebben; een stack die dieper in de cel
 #: zit (in een kaart, in een cluster) is een ander geval en valt niet om.
+#: Let op de ``[^<]``: een overgeslagen Jinja-blok mag GEEN tag-grens passeren. Met een kale
+#: ``.*?`` onder ``re.DOTALL`` slikte deze regex ``</c-td></c-table>`` heen en landde hij op
+#: een stack die helemaal buiten de tabel stond (gemeten op
+#: ``_gedeelde-diensten-databases.html.j2``, een valse melding).
 STAPEL_IN_CEL = re.compile(
-    r"<c-td[^>]*>\s*(?:\{\#.*?\#\}\s*|\{%.*?%\}\s*)*<c-stack",
+    r"<c-td[^>]*>\s*(?:\{\#[^<]*?\#\}\s*|\{%[^<]*?%\}\s*)*<c-stack",
     re.DOTALL,
 )
 

@@ -617,6 +617,21 @@ tasks:
         # Build and apply
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
 
+        # Extra namespaces die niet DOOR de overlay-kustomization kunnen: haar
+        # namespace-transformer hernoemt elk Namespace-object naar de eigen
+        # namespace-waarde (gemeten 21 augustus 2026 als ID-conflict met rig-prd-ron).
+        # Los toegepast, zodat hij er is voordat de Applications erin gaan deployen.
+        # Het managed-by-label gaat er PAS NA de apply op: de Kyverno-policy van ODCN
+        # valideert dat label met een lookup van de namespace zelf en weigert daardoor
+        # elke create die het label al draagt - zelfde omweg als OPI bij
+        # tenant-namespaces (project_manager, "apply the label after creating").
+        if [ -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml" ]; then
+          kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
+          if [[ "{{.DRY_RUN}}" != "true" ]]; then
+            kubectl label namespace rig-prd-ron argocd.argoproj.io/managed-by=rig-prd-operations --overwrite
+          fi
+        fi
+
         # Wait for ArgoCD operator to create deployments, then restart to pick up config
         if [[ "{{.DRY_RUN}}" != "true" ]]; then
           echo "Waiting for ArgoCD deployments to be created by the operator..."
@@ -1474,13 +1489,11 @@ tasks:
         # Create output directory
         mkdir -p "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
 
-        # Check if SOPS-encrypted secrets already exist in the output directory
-        EXISTING_SOPS=$(find "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}" -name "*.sops.yaml" 2>/dev/null | head -1)
-        if [ -n "$EXISTING_SOPS" ]; then
-          echo "SOPS-encrypted secrets already exist in {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
-          echo "To regenerate, delete the *.sops.yaml files in that directory first"
-          exit 0
-        fi
+        # Bestaande geheimen worden PER BESTAND overgeslagen (zie de check in de lus), niet
+        # met een map-brede stop. Zo wordt een bestaand geheim nooit geroteerd, maar komt
+        # een NIEUWE template (zoals mail-db-credentials op een al draaiend cluster) er wel
+        # gewoon bij. De oude map-brede stop kon dat alleen door ALLES weg te gooien, en
+        # dat roteert Keycloak, MinIO en PostgreSQL mee.
 
         # Initialize overview file (overwrite if it exists from a previous incomplete run)
         OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
@@ -1503,6 +1516,13 @@ tasks:
           # Only process files that are clearly secrets (contain '-secret' or '.secret' in filename)
           if [[ "$filename" != *"-secret.yaml" ]] && [[ "$filename" != *".secret.yaml" ]]; then
             echo "Skipping non-secret file: $filename"
+            continue
+          fi
+
+          # Een geheim dat er al staat blijft staan: overslaan is de bescherming tegen
+          # ongevraagde rotatie. Opnieuw genereren = het .sops.yaml-bestand weggooien.
+          if [ -f "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/${filename}.sops.yaml" ]; then
+            echo "Skipping (already exists): ${filename}.sops.yaml"
             continue
           fi
 
@@ -2000,7 +2020,7 @@ tasks:
     desc: "Run Playwright E2E browser tests (local app server, no sandbox needed)"
     dir: operations-manager/python
     cmds:
-      # Ook firefox: tests/e2e/test_lotc_domeinbeheer.py meet daarin een fout die in
+      # Ook firefox: tests/e2e/test_lotc_aanvragenbeheer.py meet daarin een fout die in
       # Chromium NIET te zien is (een tabelcel die alleen daar tot niets krimpt).
       - uv run playwright install chromium firefox --with-deps
       - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
@@ -2458,6 +2478,11 @@ tasks:
         echo "Overlays configured for local images"
     silent: true
 
+  sandbox:renew-wildcard-cert:
+    desc: "Renew the *.sandbox.rijksapp.dev wildcard Let's Encrypt cert (every ~90 days). See docs/sandbox-wildcard-cert-renewal.md."
+    cmds:
+      - scripts/renew-sandbox-cert.sh
+
   sandbox:import-wildcard-cert:
     desc: "Import wildcard TLS certificate for *.sandbox.rijksapp.dev"
     cmds:
@@ -2778,6 +2803,32 @@ tasks:
           --dry-run=client -o yaml | kubectl apply -f -
 
         echo "sops-age-key secret created in rig-system"
+
+        # De RON-namespace (mailrelay) krijgt hetzelfde geheim: de CMP-plugin die de
+        # ron-infrastructure-app rendert, controleert op de namespace en leest dit secret
+        # in de namespace van de app. De namespace zelf kan NIET via GitOps (de ArgoCD op
+        # dit clustertype draait in namespaced mode en weigert Namespace-resources), dus
+        # hij wordt hier handmatig aangemaakt, met het label dat de argocd-operator de
+        # beheer-RBAC voor de namespace laat aanmaken. Zonder deze twee blijft de app
+        # hangen op "Namespace 'rig-ron' does not exist" / "SOPS secret not found".
+        kubectl apply -f - <<'EOF'
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: rig-ron
+          labels:
+            app.kubernetes.io/name: operations-ron
+            app.kubernetes.io/component: mail
+            app.kubernetes.io/part-of: rig-platform
+            argocd.argoproj.io/managed-by: rig-system
+        EOF
+
+        kubectl create secret generic sops-age-key \
+          --from-file=key=security/sandbox-key.txt \
+          -n rig-ron \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "namespace rig-ron en sops-age-key secret created"
     silent: true
 
   sandbox:deploy-postgresql-direct:

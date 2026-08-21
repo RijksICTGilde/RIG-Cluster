@@ -1,0 +1,40 @@
+# ArgoCD Application voor de RON-namespace: de mailrelay en zijn testupstream (RC-114/139).
+#
+# Waarom een EIGEN Application en niet een regel in
+# infrastructure/bootstrap/clusters/sandboxed-local: de CMP-plugin (kustomize-sops)
+# forceert `namespace: <destination>` op de rootkustomization die hij bouwt. Voor
+# sandbox-infrastructure is dat rig-system, en die namespace-transformatie platte de
+# rig-ron-resources van de mail-overlay naar rig-system - wat ophield met een dubbele
+# mail-relay-credentials Secret (ID conflict, gemeten 19 augustus 2026). Een eigen
+# namespace vergt dus een eigen Application, met destination rig-ron: de namespace die
+# de CMP dan injecteert is gelijk aan de namespace die de overlay zelf al zet.
+#
+# Twee dingen moeten er zijn VOORDAT deze app rendert; de CMP stopt er anders mee:
+# de namespace rig-ron zelf, en daarin het secret sops-age-key (de CMP haalt daar de
+# AGE-sleutel uit om de relay-credentials te ontsleutelen). De syncOptions hieronder
+# laten CreateNamespace bewust uit: de overlay levert zelf de Namespace-resource.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ron-infrastructure
+  namespace: rig-system
+spec:
+  project: default
+  source:
+    repoURL: http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-infrastructure.git
+    path: bootstrap/infrastructure/mail/controller/overlays/sandboxed-local
+    targetRevision: main
+    plugin:
+      name: kustomize-sops-v1.0
+      env:
+        - name: SOPS_KEY_SECRET
+          value: "sops-age-key"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rig-ron
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

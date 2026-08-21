@@ -236,3 +236,19 @@ class TestEditServices:
         modal.open_edit_modal("modal-edit-services", "Services beheren")
         path = modal.screenshot("edit-services-modal", screenshot_dir)
         assert path.exists()
+
+
+class TestNaarSamenvatting:
+    """De sprong "Naar samenvatting" in de modalwizard (flows met een reviewstap)."""
+
+    def test_sprong_vanaf_de_eerste_stap_landt_op_de_samenvatting(self, modal: EditModalHelper) -> None:
+        """Vanaf de servicestap direct naar de samenvatting, zonder de configstappen door."""
+        modal.open_edit_modal("modal-edit-services", "Services beheren")
+
+        knop = modal.page.locator("#edit-section-modal button:has-text('Naar samenvatting')").first
+        knop.wait_for(state="visible", timeout=5000)
+        knop.click()
+
+        modal.page.locator("#edit-section-modal :text('Controleer je wijzigingen')").first.wait_for(
+            state="visible", timeout=10000
+        )

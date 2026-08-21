@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
+from opi.core.config import settings
+from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
@@ -173,6 +175,11 @@ class ServiceOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available service options from ServiceAdapter definitions."""
+        # Imported here, not at module scope: the registry imports the catalog, whose
+        # services import this forms module back. The catalog breaks the same cycle the
+        # same way (instructions/services.md, "Keep the catalog import-light").
+        from opi.services.registry import get_service
+
         options: list[dict[str, Any]] = []
 
         if self.include_empty:
@@ -183,6 +190,16 @@ class ServiceOptionsProvider:
 
             # Skip hidden services and system services (never user-selectable)
             if definition.hidden or definition.kind is ServiceKind.SYSTEM:
+                continue
+
+            # Skip a service this cluster cannot deliver. Asked of the service itself
+            # (Service.available_on_cluster), which answers from the cluster
+            # configuration -- no cluster name appears here. The managing cluster is the
+            # measure because an OPI instance only ever provisions its own cluster. This
+            # is presentation only: the refusal that counts is at save time, in
+            # validate_service_availability, since the API and a hand-written project
+            # file never see a card.
+            if not get_service(service_type).available_on_cluster(settings.CLUSTER_MANAGER):
                 continue
 
             # Filter by binding if specified (filter_binding is the plain string value)
@@ -204,6 +221,16 @@ class ServiceOptionsProvider:
 
             if definition.help_template:
                 option["help_template"] = definition.help_template
+
+            # Uit de declaratie van de dienst zelf (approval_specs), niet uit een
+            # lijstje hier: een dienst die goedkeuring gaat vereisen draagt de
+            # waarschuwing dan vanzelf, op de kaart en in de uitleg allebei. De import
+            # staat binnenin: de registry laadt de dienstpakketten en die trekken langs
+            # de formulierlaag deze module weer binnen.
+            from opi.services.registry import get_service
+
+            if get_service(service_type).approval_specs():
+                option["requires_approval"] = True
 
             options.append(option)
 
@@ -389,38 +416,6 @@ class MemoryRequestOptionsProvider(MemoryOptionsProvider):
         return get_max_memory_request_mi(settings.CLUSTER_MANAGER)
 
 
-class DomainModeOptionsProvider:
-    """Provides domain mode options for URL configuration."""
-
-    # De lijst ligt vast: elk project krijgt deze keuzes.
-    options_source: ClassVar[OptionsSource | None] = None
-
-    def get_options(self) -> list[dict[str, Any]]:
-        """Get available domain mode options."""
-        return [
-            {
-                "value": "component-specific",
-                "label": "Component-specifiek (standaard)",
-                "description": "Elk component krijgt zijn eigen unieke URL",
-            },
-            {
-                "value": "deployment-name",
-                "label": "Deployment-naam (gedeeld domein)",
-                "description": "Alle componenten delen dezelfde domeinnaam met verschillende paden",
-            },
-            {
-                "value": "custom",
-                "label": "Aangepast subdomein",
-                "description": "Specificeer een custom subdomein voor alle componenten",
-            },
-            {
-                "value": "nice-url",
-                "label": "Eigen subdomein (nice URL)",
-                "description": "Punt-gescheiden URLs zoals frontend.mijnapp.rijks.app",
-            },
-        ]
-
-
 class StorageTypeOptionsProvider:
     """Provides storage type options for container volumes."""
 
@@ -532,7 +527,10 @@ class ClusterBaseDomainOptionsProvider:
             "clusterconfiguratie). Leeg betekent het standaarddomein van het cluster. Dit is "
             "geen gesloten verzameling: een eigen domein zet je door de domeinnaam zelf in dit "
             "veld te schrijven, en 'custom-domain-certificates' in hetzelfde antwoord zegt of "
-            "dit cluster daar een certificaat voor kan uitgeven."
+            "dit cluster daar een certificaat voor kan uitgeven. Een adres op een eigen domein "
+            "is de combinatie met een subdomein-format plus 'subdomain' (mijn.domein.nl = "
+            "base-domain 'domein.nl' + subdomain 'mijn'); alleen het kale domein zelf gaat via "
+            "'expose-component-on-bare-domain'."
         ),
         endpoint="GET /api/v2/projects/{project_name}/clusters",
         path="clusters[].base-domains[].value",
@@ -958,15 +956,55 @@ _PUBLISH_TLS_MODE_OPTIONS = [
     {"value": "provided", "label": "Eigen certificaat op de ingress (aangeleverd)"},
 ]
 
+#: Wat 'aangeleverd' heet zolang het project geen bijlage heeft om aan te leveren.
+#: ``PublishOnWebComponentConfig`` weigert ``tls: provided`` zonder ``attachment``, en het
+#: bijlageveld dat ernaast verschijnt heeft bij een lege catalogus geen enkele waarde om te
+#: kiezen -- dus wie de modus toch koos kwam in een scherm dat hij niet kon opslaan en niet
+#: kon herstellen. De optie blijft STAAN en wordt uitgeschakeld: wie ernaar zoekt vindt hem
+#: met de reden erbij, waar een optie die stil verdwijnt alleen een tweede raadsel geeft.
+_PROVIDED_WITHOUT_CERTIFICATE = "Eigen certificaat op de ingress - upload eerst een certificaat bij Bijlagen"
+
+
+def publish_tls_mode_options(yaml_data: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """De drie TLS-modi, met 'provided' uitgeschakeld zolang er geen bijlage is.
+
+    Eén helper voor beide lagen (component en de per-deployment override): een modus die
+    op het component niet te kiezen is, moet dat op de override ook niet zijn.
+
+    Zonder project (een kale render, een voorbeeld) blijft alles staan. Dat is dezelfde
+    keuze als bij het erf-label van ``PublishTlsOverrideOptionsProvider``: geen gegevens is
+    geen reden om te gokken, en een lege catalogus concluderen uit een ontbrekende context
+    zou de modus uitschakelen op een scherm dat er niets over weet.
+    """
+    # Lokaal, zoals bij AttachmentOptionsProvider hieronder: project_file_handler importeert
+    # deze module langs de vormenlaag terug.
+    from opi.handlers.project_file_handler import extract_attachment_catalog
+
+    kan_aangeleverd = not yaml_data or bool(extract_attachment_catalog(yaml_data))
+    return [
+        {**option, "label": _PROVIDED_WITHOUT_CERTIFICATE, "disabled": True}
+        if option["value"] == "provided" and not kan_aangeleverd
+        else dict(option)
+        for option in _PUBLISH_TLS_MODE_OPTIONS
+    ]
+
 
 class PublishTlsModeOptionsProvider:
-    """Static options for how TLS is handled on a published component."""
+    """Options for how TLS is handled on a published component.
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    ``yaml_data`` is handed to every provider that accepts it (see
+    ``bridge._resolve_options``); zonder project valt de lijst terug op alle drie de modi.
+    """
+
+    # De WAARDEN liggen vast: elk project krijgt deze drie. Alleen of 'provided' te kiezen
+    # is hangt van de bijlagencatalogus af, en dat verandert niets aan wat de API accepteert.
     options_source: ClassVar[OptionsSource | None] = None
 
+    def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
+        self._yaml_data = yaml_data or {}
+
     def get_options(self) -> list[dict[str, Any]]:
-        return list(_PUBLISH_TLS_MODE_OPTIONS)
+        return publish_tls_mode_options(self._yaml_data)
 
 
 class PublishTlsOverrideOptionsProvider:
@@ -1009,7 +1047,7 @@ class PublishTlsOverrideOptionsProvider:
         return f"Erven van het component: {labels.get(mode, mode)}"
 
     def get_options(self) -> list[dict[str, Any]]:
-        return [{"value": "", "label": self._inherited_label()}, *_PUBLISH_TLS_MODE_OPTIONS]
+        return [{"value": "", "label": self._inherited_label()}, *publish_tls_mode_options(self._yaml_data)]
 
 
 class YesNoOptionsProvider:
@@ -1222,15 +1260,18 @@ class CrossDomainProjectOptionsProvider:
     """Peer projects a cross-domain rule may reference.
 
     Reads ``_cross_domain_projects`` from ``yaml_data`` -- a precomputed list of project
-    names the logged-in user is authorized for (set by ``build_cross_domain_context``),
-    excluding the own project. Empty (no context at all) shows an explanatory option instead
-    of a blank select. A stored value that is no longer in the list is kept selectable so a
-    save does not silently drop it.
+    names the logged-in user is authorized for (set by ``build_cross_domain_context``), the
+    own project included. Empty (no context at all) shows an explanatory option instead of a
+    blank select. A stored value that is no longer in the list is kept selectable so a save
+    does not silently drop it.
 
     This list is deliberately limited to projects the user is authorized for: a peer you
     cannot see is a peer you cannot name here. That does narrow cross-domain access to
     projects you are a member of; widening it would disclose the platform's project names to
     every user and is a separate decision.
+
+    The label shows the display name with the code between brackets, from
+    ``_cross_domain_project_labels``; a project without a display name shows its code alone.
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
@@ -1248,12 +1289,29 @@ class CrossDomainProjectOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         names = [n for n in (self.yaml_data.get("_cross_domain_projects") or []) if n]
+        labels = dict(self.yaml_data.get("_cross_domain_project_labels") or {})
+        # The wildcard is deliberately NOT offered: opening a port to every source is a
+        # decision for the owner of a shared facility, taken through the API or the project
+        # file, not a menu item next to the peer projects. A rule that already carries it is
+        # kept and NAMED, because a select that quietly drops a value it does not recognise
+        # changes the configuration with nobody touching it.
+        if self.current_value == WILDCARD_PROJECT:
+            labels[WILDCARD_PROJECT] = "Geen projectlimiet (elke bron)"
+            return _cross_domain_options(
+                [WILDCARD_PROJECT, *names],
+                self.current_value,
+                empty_label="Geen andere projecten beschikbaar waar je toegang op hebt",
+                choose_label="-- Kies een project --",
+                stale_suffix="(niet meer beschikbaar)",
+                labels=labels,
+            )
         return _cross_domain_options(
             names,
             self.current_value,
-            empty_label="Geen andere projecten beschikbaar waar u toegang op heeft",
+            empty_label="Geen andere projecten beschikbaar waar je toegang op hebt",
             choose_label="-- Kies een project --",
             stale_suffix="(niet meer beschikbaar)",
+            labels=labels or None,
         )
 
 
@@ -1802,13 +1860,34 @@ class InviteApplicationUrlOptionsProvider:
             logger.debug("Could not derive public URLs for the invite destination", exc_info=True)
             urls = []
 
+        # Een component MAG meerdere paden publiceren, en dat zijn dan evenzoveel adressen.
+        # Het label noemde alleen deployment en component, dus die adressen kwamen als twee
+        # regels "production / frontend" in de lijst: niet te onderscheiden, terwijl je er
+        # wel een van moet kiezen. De ontdubbeling hieronder pakt ze niet, en terecht, want
+        # de URL's verschillen echt. Het pad komt er dus bij, maar alleen waar het iets
+        # oplost: bij een component met een enkel pad is "/" achter de naam alleen ruis.
         seen: set[str] = set()
+        gekozen: list[dict[str, str]] = []
         for entry in urls:
             url = entry.get("url")
             if not url or url in seen:
                 continue
             seen.add(url)
-            options.append({"value": url, "label": f"{entry['deployment_name']} / {entry['component_name']}"})
+            gekozen.append(entry)
+
+        meervoudig: set[tuple[str, str]] = set()
+        geteld: set[tuple[str, str]] = set()
+        for entry in gekozen:
+            sleutel = (entry["deployment_name"], entry["component_name"])
+            if sleutel in geteld:
+                meervoudig.add(sleutel)
+            geteld.add(sleutel)
+
+        for entry in gekozen:
+            label = f"{entry['deployment_name']} / {entry['component_name']}"
+            if (entry["deployment_name"], entry["component_name"]) in meervoudig:
+                label = f"{label} ({entry.get('path') or '/'})"
+            options.append({"value": entry["url"], "label": label})
 
         if self.current_value and self.current_value not in seen:
             options.append({"value": self.current_value, "label": f"{self.current_value} (niet meer afleidbaar)"})
@@ -1824,7 +1903,6 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "CpuLimitOptionsProvider": CpuLimitOptionsProvider,
     "MemoryOptionsProvider": MemoryOptionsProvider,
     "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
-    "DomainModeOptionsProvider": DomainModeOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,

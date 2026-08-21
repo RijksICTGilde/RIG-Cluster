@@ -2,7 +2,7 @@
 
 Component level: the TLS mode and the certificate attachment.
 
-Deployment level (RC-60): the seven fields that decide the web address itself. They used
+Deployment level (RC-60): the six fields that decide the web address itself. They used
 to live in ``forms/editables/fields/domains.py`` AND, with different providers and
 validators, a second time in ``forms/editables/fields/deployments.py`` -- two definitions
 for one path, in two flows, which is exactly the kind of duplication where converting one
@@ -217,15 +217,6 @@ DOMAIN_ISSUER_EDITABLE = Editable(
     remove_when_none=True,
 )
 
-#: Legacy: superseded by ``domain-format`` and only read for files that predate it
-#: (``HostnameFormat.from_domain_mode``). It moved along with the rest -- two places for one
-#: subject is the fault this change removes -- but it gets no wizard field of its own.
-DOMAIN_MODE_EDITABLE = Editable(
-    yaml_path=_path(DomainSetting.DOMAIN_MODE),
-    values_provider="DomainModeOptionsProvider",
-    virtualize=SERVICE_VIRTUALIZE,
-)
-
 DOMAIN_REQUEST_DOMAIN_EDITABLE = Editable(
     yaml_path="deployments[*]/_request-domain",
     transient=True,
@@ -278,5 +269,4 @@ PUBLISH_ON_WEB_DEPLOYMENT_EDITABLES = [
     DOMAIN_ROOT_COMPONENT_EDITABLE,
     DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE,
     DOMAIN_ISSUER_EDITABLE,
-    DOMAIN_MODE_EDITABLE,
 ]

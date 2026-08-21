@@ -67,8 +67,15 @@
                     {# Ook een cluster; de lijn erboven en de kleur blijven eigen opmaak. #}
                     <c-cluster gap="xs" align="center" class="project-deploy-time">
                         <c-icon icon="calendar" size="sm"/>
+                        {# Dezelfde inkorting als in de takentabel stond hier ook, met "UTC"
+                           erachter. Dat is wat het scherm toont zolang het script hieronder
+                           er niet aan toe is gekomen -- daarna vervangt formatDeployTimes()
+                           in dashboard.html.j2 de tekst door "3 uur geleden". Ook die
+                           tussenstand hoort onze eigen tijd te zijn, dus via dutch_date. De
+                           rauwe tijdstempel blijft in het attribuut staan; daar rekent het
+                           script mee. #}
                         <span data-deploy-time="{{ project.last_deployed }}">
-                            {{ project.last_deployed[:16]|replace('T', ' ') }} UTC
+                            {{ project.last_deployed | dutch_date }}
                         </span>
                     </c-cluster>
                     {% endif %}

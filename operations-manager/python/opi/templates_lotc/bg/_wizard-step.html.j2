@@ -102,7 +102,12 @@
                 {% endif %}
 
                 <c-cluster gap="sm" align="center">
-                    {% if all_steps_completed and show_review and not steps.is_last %}
+                    {# Altijd aangeboden, niet pas als alle stappen al eens afgerond zijn:
+                       wie halverwege niets meer te wijzigen heeft, hoeft niet door de rest
+                       te klikken. De sprong valideert eerst de HELE flow (zie de
+                       review-tak van submit_step) en zet je bij een gemiste verplichte
+                       waarde op precies die stap neer. #}
+                    {% if show_review and not steps.is_last %}
                         <c-button
                             type="tertiary"
                             label="Naar samenvatting"

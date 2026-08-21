@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import html
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -24,7 +24,7 @@ from opi.forms.editables.service_path import (
 )
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
-from opi.forms.wizard.mutation import apply_services_mutation
+from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
@@ -438,8 +438,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 
         # The same peer-project list the edit flow gets. Without it the cross-domain step had
         # three required fields whose select was empty, so the step could not be saved at all.
-        # The project does not exist yet, hence the empty name: nothing to exclude.
-        state.base_data.update(build_cross_domain_context("", user_email))
+        state.base_data.update(build_cross_domain_context(user_email))
         if user_email:
             state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
 
@@ -468,16 +467,15 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
             },
         )
 
-        # Seed the domains step with default domain mode only.
+        # Seed the domains step with one empty deployment entry, so the index-based
+        # merge in get_merged_data() has a slot to land on.
         # Do NOT include "name" here - it comes from the deployment step
         # and the index-based merge in get_merged_data() would overwrite it.
         state.store_step_data(
             "domains",
             {
                 "deployments": [
-                    {
-                        "domain-mode": "component-specific",
-                    },
+                    {},
                 ],
             },
         )
@@ -624,6 +622,13 @@ def _split_data_across_sections(
     for section in flow.sections:
         section_data: dict[str, Any] = {}
         for editable in section.editables:
+            # A readonly visualizer (e.g. the attachments services carrier) never
+            # writes its path; renderers read it from the merged data. Storing a
+            # copy here makes that copy authoritative-but-stale: the by-name union
+            # in merge_service_lists would re-add a service the user deselected
+            # in another section.
+            if editable.readonly:
+                continue
             ed = editable.editable
             value = smart_get_value(project_data, ed.yaml_path)
             if value is not None:
@@ -962,6 +967,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # aanleiding is dat deze regel eerst aan de sectienaam "services" hing en de bewerk-flow
     # "services-edit" heet, dus daar liep hij nooit.
     apply_services_mutation(section.editables, yaml_data, submitted_yaml)
+    apply_component_services_mutation(section.editables, yaml_data, submitted_yaml)
 
     # Forward navigation (Next / Review): block on field-level validation errors
     if is_forward and errors:
@@ -1031,13 +1037,28 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     state.store_step_data(section_id, section_data)
 
     # Run the section's post_merge reconciler against the merged view and
-    # persist affected component data back into step_data. The services step
-    # uses this to drop component-level service config when a project service
-    # is deselected; without persisting it here the components step would
-    # render stale config blocks until it was itself re-submitted (one
-    # navigation late).
+    # persist affected data back into step_data. The services step uses this to
+    # drop component-level service config when a project service is deselected;
+    # without persisting it here the components step would render stale config
+    # blocks until it was itself re-submitted (one navigation late).
     if section.post_merge is not None:
         section.post_merge(submitted_yaml, submitted_yaml)
+
+        # DE EIGEN SECTIE OOK OPNIEUW BEWAREN, en dat is waar het misging.
+        #
+        # De stapgegevens hierboven zijn bewaard VOORDAT deze hook draaide, en daarna werd
+        # alleen ``components`` opnieuw bewaard. Een hook die zijn EIGEN sectie aanvult
+        # schreef daarmee in het lucht: de aanvulling stond in de samengevoegde weergave,
+        # maar niet in de wizardstand, en die stand is wat er aan het eind opgeslagen wordt.
+        #
+        # Zichtbaar geworden bij de uitnodigingen. Het sleutelveld mag leeg blijven en
+        # wordt dan gevuld met een gegenereerde sleutel (InviteService.generate_missing_values,
+        # aangehangen als post_merge). Die sleutel haalde de wizardstand nooit, dus aan het
+        # eind stond er een uitnodiging zonder ``key`` in het bestand, en ``InviteEntry.key``
+        # is verplicht. De wizard eindigde met "Failed Git operations: configuratie van
+        # service 'invite' op projectniveau is ongeldig: Field required", en omdat het
+        # opslaan de laatste stap is, was de hele sessie weg.
+        state.store_step_data(section_id, _extract_section_data(section.editables, submitted_yaml))
         if "components" in submitted_yaml:
             state.store_step_data("components", {"components": submitted_yaml["components"]})
 
@@ -1062,6 +1083,17 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     # Review page
     if target_section_id == "review":
+        # De sprong "Naar samenvatting" mag stappen overslaan, maar geen verplichte
+        # waarde: valideer de HELE flow zoals de eindinzending dat doet, en land bij
+        # fouten op de eerste stap die nog iets mist (een net aangevinkte service
+        # met een lege verplichte config voorop).
+        validation = await _validate_whole_flow(request, flow_id, state)
+        if validation.error_response is not None:
+            return validation.error_response
+        # De overgeslagen stappen zijn zojuist gevalideerd; zonder dit vinkje zou de
+        # stapindicator op de samenvatting ze als onafgemaakt tonen.
+        for validated in validation.active_sections:
+            state.mark_completed(validated.section_id)
         save_wizard_state(request, state)
         return await _render_review(request, flow_id)
 
@@ -1199,7 +1231,8 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
     * ``<service-package>/help.md`` -- a service's own explanation. It is markdown, and
       it is the same file ``GET /api/v2/services/{name}`` returns, so the portal and an
       API client read one source (RC-59). It is turned into the components the
-      modal always showed, with the icon taken from the service definition.
+      modal always showed, with the icon taken from the service definition. A service's
+      ``guide.md`` (the ``guide`` field of that same endpoint) travels this route too.
     * ``<service-package>/help.html.j2`` -- the older Jinja form, still resolved by the
       Jinja loader for any help that has not been converted.
     * ``<name>.html.j2`` -- a help text that belongs to no single service (the
@@ -1595,6 +1628,11 @@ def _extract_section_data(
     service_config_leaves: list[str] = []
     # top_key -> field name -> service names, for a service list INSIDE an indexed item
     indexed_services: dict[str, dict[str, set[str]]] = {}
+    # top_key -> plain per-item fields the section renders WHOLE (an editable sits at
+    # ``components[0]/services`` itself, not only at ``services{X}/...``). For such a
+    # field the submission IS the selection, so pruning it to this section's configured
+    # services would throw away what the user just ticked.
+    selection_fields: dict[str, set[str]] = {}
     # real_key -> virtual_key for virtualized editables
     virt_mapping: dict[str, str] = {}
 
@@ -1644,6 +1682,8 @@ def _extract_section_data(
                 if "{" in parts[1]:
                     service = parts[1].split("{", 1)[1].split("}", 1)[0]
                     indexed_services.setdefault(top_key, {}).setdefault(field_name, set()).add(service)
+                elif len(parts) == 2:
+                    selection_fields.setdefault(top_key, set()).add(field_name)
 
     _collect_leaf_paths(editables)
 
@@ -1670,14 +1710,25 @@ def _extract_section_data(
                         # Keep only this section's own service entries, and never tombstone
                         # the list: an item without them simply says nothing about it.
                         #
-                        # On identity, not on shape: a bare string entry of ANOTHER service
-                        # is that service's selection, which this section has no business
-                        # carrying either. Dropping it is safe because the merge is additive
-                        # by name (``merge_service_lists``), so an entry this section does
-                        # not mention keeps whatever the base data holds.
+                        # UNLESS the section renders the whole selection (the component
+                        # form's services checklist): then the submitted list IS the
+                        # user's decision and every ticked name must survive. "The merge
+                        # restores the rest from base" only holds for what already stood
+                        # there -- a newly ticked service exists in no other copy, so
+                        # pruning it here erased the user's add (the send-email bug).
+                        # Foreign config dicts are still demoted to their bare name: the
+                        # selection is this section's, another service's config is not.
                         entries = pruned_item.get(field_name)
                         if isinstance(entries, list):
-                            kept = [entry for entry in entries if service_entry_name(entry) in services]
+                            if field_name in selection_fields.get(key, set()):
+                                kept = [
+                                    copy.deepcopy(entry)
+                                    if not isinstance(entry, dict) or service_entry_name(entry) in services
+                                    else (service_entry_name(entry) or copy.deepcopy(entry))
+                                    for entry in entries
+                                ]
+                            else:
+                                kept = [entry for entry in entries if service_entry_name(entry) in services]
                             pruned_item[field_name] = kept
                         else:
                             pruned_item.pop(field_name, None)
@@ -2267,19 +2318,28 @@ def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> No
         raise
 
 
-async def _do_submit(
-    request: Request,
-    flow_id: str,
-) -> HTMLResponse | RedirectResponse:
-    """Execute the final wizard submission."""
-    state = get_wizard_state(request)
-    if not state or state.flow_id != flow_id:
-        logger.warning("Wizard session lost on submit (flow=%s), redirecting to start", flow_id)
-        return RedirectResponse(
-            url=f"/forms/wizard/{flow_id}",
-            status_code=303,
-        )
+class _FlowValidation(NamedTuple):
+    """Uitkomst van een hele-flow-validatie (zie ``_validate_whole_flow``)."""
 
+    error_response: Response | None
+    final_data: dict[str, Any]
+    yaml_data: dict[str, Any]
+    all_editables: list[Any]
+    active_sections: list[Any]
+    enforcer_context: dict[str, Any]
+    processor: EditableFormProcessor
+
+
+async def _validate_whole_flow(request: Request, flow_id: str, state: Any) -> _FlowValidation:
+    """Valideer ALLE actieve secties tegen de samengevoegde wizarddata.
+
+    Het validatiedeel van de eindinzending, gedeeld met de sprong "Naar
+    samenvatting": die mag een stap overslaan, maar geen verplichte waarde. Bij
+    fouten is ``error_response`` de her-render van de eerste falende sectie
+    (met de fouten gemarkeerd) en is de rest van het resultaat niet bruikbaar;
+    anders draagt het resultaat de gevalideerde ``final_data`` en de context
+    die de eindinzending daarna nodig heeft.
+    """
     flow = get_flow(flow_id)
     active_sections = resolve_active_sections(flow, state.step_data)
 
@@ -2301,28 +2361,15 @@ async def _do_submit(
 
     enforcer_context = {"project_name": state.project_name, "edit_mode": state.is_edit}
 
-    # Validate and build final YAML in a single pass.
-    # The merged yaml_data is both the "submitted" values and the base.
-    # Process WITHOUT stripping transients first — generators may need them.
-    final_data, errors = await processor.process_json_submission(
-        yaml_data,
-        all_editables,
-        yaml_data,
-        edit_mode=state.is_edit,
-        enforcer_context=enforcer_context,
-        strip_transients=False,
-    )
-
-    if errors:
+    def _fail(errors: dict[str, list[str]], global_errors: list[str]) -> _FlowValidation:
         # Find the first section with errors and navigate there
-        logger.warning("Final validation failed: %s", errors)
         error_section = active_sections[0]
-        for section in active_sections:
-            section_paths = _collect_all_editable_paths(section.editables)
-            if _section_has_errors(section_paths, errors):
-                error_section = section
-                break
-
+        if errors:
+            for section in active_sections:
+                section_paths = _collect_all_editable_paths(section.editables)
+                if _section_has_errors(section_paths, errors):
+                    error_section = section
+                    break
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
 
@@ -2339,9 +2386,26 @@ async def _do_submit(
             error_section,
             step_html,
             errors=errors,
-            global_errors=["Er zijn nog validatiefouten. Controleer de gemarkeerde velden."],
+            global_errors=global_errors,
         )
-        return _step_response(request, context)
+        return _FlowValidation(
+            _step_response(request, context), {}, yaml_data, all_editables, active_sections, enforcer_context, processor
+        )
+
+    # Validate and build final YAML in a single pass.
+    # The merged yaml_data is both the "submitted" values and the base.
+    # Process WITHOUT stripping transients first — generators may need them.
+    final_data, errors = await processor.process_json_submission(
+        yaml_data,
+        all_editables,
+        yaml_data,
+        edit_mode=state.is_edit,
+        enforcer_context=enforcer_context,
+        strip_transients=False,
+    )
+    if errors:
+        logger.warning("Final validation failed: %s", errors)
+        return _fail(errors, ["Er zijn nog validatiefouten. Controleer de gemarkeerde velden."])
 
     # Cross-section enforcement
     enforce_field_errors: dict[str, list[str]] = {}
@@ -2350,27 +2414,33 @@ async def _do_submit(
     )
     if global_errors or enforce_field_errors:
         logger.warning("Section enforcement failed: global=%s field=%s", global_errors, enforce_field_errors)
-        # Find the section that owns the first field error
-        error_section = active_sections[0]
-        if enforce_field_errors:
-            for section in active_sections:
-                section_paths = _collect_all_editable_paths(section.editables)
-                if _section_has_errors(section_paths, enforce_field_errors):
-                    error_section = section
-                    break
-        state.current_step = error_section.section_id
-        save_wizard_state(request, state)
+        return _fail(enforce_field_errors, global_errors)
 
-        step_html = _render_step_html(request, error_section, yaml_data=yaml_data, errors=enforce_field_errors)
-        context = _build_step_context(
-            request,
-            flow_id,
-            error_section,
-            step_html,
-            errors=enforce_field_errors,
-            global_errors=global_errors,
+    return _FlowValidation(None, final_data, yaml_data, all_editables, active_sections, enforcer_context, processor)
+
+
+async def _do_submit(
+    request: Request,
+    flow_id: str,
+) -> HTMLResponse | RedirectResponse:
+    """Execute the final wizard submission."""
+    state = get_wizard_state(request)
+    if not state or state.flow_id != flow_id:
+        logger.warning("Wizard session lost on submit (flow=%s), redirecting to start", flow_id)
+        return RedirectResponse(
+            url=f"/forms/wizard/{flow_id}",
+            status_code=303,
         )
-        return _step_response(request, context)
+
+    flow = get_flow(flow_id)
+    validation = await _validate_whole_flow(request, flow_id, state)
+    if validation.error_response is not None:
+        return validation.error_response
+    final_data = validation.final_data
+    all_editables = validation.all_editables
+    active_sections = validation.active_sections
+    enforcer_context = validation.enforcer_context
+    processor = validation.processor
 
     # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)
@@ -2458,8 +2528,16 @@ async def _do_submit(
         # Beide kanten: RC-47 brengt de foutafhandeling (het veld krijgt een markering,
         # de boodschap zelf gaat autoescaped naar global_errors), RC-43 brengt state.is_edit
         # als naam voor "het project bestaat al".
+        # De GEMENGDE staat en niet final_data: dat laatste is de opslagvorm (transients
+        # gestript, generators toegepast, de _-sleutels eruit) en de stap moet de velden
+        # tonen zoals de gebruiker ze achterliet. Elke andere aanroep van _render_step_html
+        # gebruikt dezelfde bron.
+        #
+        # Hier stond kaal ``yaml_data``, en die naam bestaat in deze functie niet: elke
+        # afkeuring liep op een NameError in plaats van op de melding die deze hele tak juist
+        # moest opleveren. tests/test_wizard_rejects_invalid_project.py stond erop rood.
         step_html = _render_step_html(
-            request, error_section, yaml_data=yaml_data, errors=field_errors, edit_mode=state.is_edit
+            request, error_section, yaml_data=state.get_merged_data(), errors=field_errors, edit_mode=state.is_edit
         )
         context = _build_step_context(
             request, flow_id, error_section, step_html, errors=field_errors, global_errors=global_errors

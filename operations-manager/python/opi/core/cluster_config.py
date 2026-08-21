@@ -6,6 +6,7 @@ This module defines cluster-specific settings including ingress postfixes.
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
@@ -24,6 +25,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        "mail_relay_namespace": "rig-ron",
+        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
@@ -88,6 +93,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        "mail_relay_namespace": "rig-ron",
+        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
@@ -120,6 +129,18 @@ CLUSTER_CONFIG = {
         # certificate and runs a fake cert-manager CRD with no controller, so nothing is
         # ever issued here. See supports_custom_domain_certificates().
         "supports_custom_domain_certificates": False,
+        # Er is geen VLAM en geen RON in de sandbox: dit is een PLAATSHOUDER, alleen
+        # zodat de bedrading van de dienst (kaart, env-var, netwerkregel) hier
+        # end-to-end te doorlopen is. Het adres wijst naar een project dat hier niet
+        # bestaat, dus een pod die het probeert krijgt geen antwoord. Zie
+        # features/vlam-service.md.
+        "vlam": {
+            "project": "vlam-wt8",
+            "deployment": "productie",
+            "component": "vlam-proxy-intern",
+            "namespace": "vlam-wt8",
+            "port": 8081,
+        },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
@@ -146,6 +167,13 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
+        # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus daar
+        # heet hij rig-prd-ron; op local en sandbox rig-ron. Zelfde vorm als
+        # backup_namespace hierboven.
+        "mail_relay_namespace": "rig-prd-ron",
+        "mail_relay_host": "rig-mail-relay.rig-prd-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator (see the note in the other clusters).
         "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
@@ -178,6 +206,19 @@ CLUSTER_CONFIG = {
         # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
         # challenge for a domain of the user's own can complete here.
         "supports_custom_domain_certificates": True,
+        # VLAM (de taalmodel-API van SSC-ICT) is alleen hier bereikbaar: de RON-koppeling
+        # bestaat op dit cluster en nergens anders. De sleutels beschrijven WAAR de
+        # interne proxy van het vlam-project draait; de dienst leidt daar zowel het
+        # adres als de netwerkregel uit af, zodat die twee niet uiteen kunnen lopen.
+        # ``namespace`` is de onvoorvoegde naam uit het projectbestand; het cluster zet
+        # er ``rig-prd-`` voor (get_prefixed_namespace).
+        "vlam": {
+            "project": "vlam-wt8",
+            "deployment": "productie",
+            "component": "vlam-proxy-intern",
+            "namespace": "vlam-wt8",
+            "port": 8081,
+        },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
@@ -658,6 +699,97 @@ def get_redis_server(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["redis_server"]
+
+
+def get_mail_relay_namespace(cluster_name: str) -> str:
+    """
+    Get the namespace the SMTP relay runs in.
+
+    Its own namespace and not the operations namespace: the Calico annotation
+    ``egress.projectcalico.org/egressGatewayPolicy`` takes exactly ONE value, so a
+    namespace can have RON egress or internet egress, never both. The operations
+    namespace needs internet (ArgoCD, the registry, Keycloak), so the relay lives
+    apart. See ``plans/mailrelay.md``.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Namespace name the relay and its Service live in
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_relay_namespace"]
+
+
+def get_mail_relay_host(cluster_name: str) -> str:
+    """
+    Get the in-cluster hostname of the SMTP relay.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Relay hostname for internal pod use
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_relay_host"]
+
+
+def get_mail_relay_port(cluster_name: str) -> int:
+    """
+    Get the submission port of the SMTP relay.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Submission port (587) for internal pod use
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_relay_port"]
+
+
+def get_mail_from_address(cluster_name: str) -> str:
+    """
+    The BASE sender address of this cluster: the bare one, without a plus part.
+
+    Not what a project sends from -- that is ``<local>+<project>@<domain>``, composed by
+    ``generate_mail_sender_address`` and handed to the relay by ``MailManager``. What lives
+    here is the pair the relay itself is configured with (MAIL_FROM_LOCAL and MAIL_DOMAIN
+    in its secret), so composing happens in ONE place instead of here as well.
+
+    It is also the FALLBACK: a message from an account the relay holds no sender for goes
+    out under exactly this address, without a display name. So is the mail from ZAD's own
+    platform account, which is not a project and has no plus part to fill.
+
+    OPI and the relay must agree on this value -- if they drift, a developer is shown one
+    address while another one leaves the building.
+
+    It is a domain we do NOT own: mail goes out over the Rijksoverheid mail server, so it
+    carries their domain. That is also the only arrangement that survives DMARC, because
+    they publish ``p=reject`` and we sign nothing with DKIM, leaving SPF alignment between
+    envelope and ``From:`` as the single thing that can pass. See docs/ron-koppeling.md.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        The bare sender address (e.g. ``noreply-rijksapp@rijksoverheid.nl``)
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["mail_from_address"]
 
 
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
@@ -1165,3 +1297,18 @@ def get_extensions(cluster_name: str) -> list[str]:
     """
     config = get_cluster_config(cluster_name)
     return config.get("extensions", [])
+
+
+def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
+    """Where the in-cluster VLAM proxy runs on this cluster, or None when there is none.
+
+    Absent is the normal answer: VLAM hangs off the RON link, which exists on exactly one
+    cluster. A cluster without this key neither offers the ``vlam`` service in the wizard
+    nor accepts a project that selected it -- that is the whole availability mechanism,
+    and it lives here so the service itself names no cluster.
+
+    Keys: ``project`` / ``deployment`` / ``component`` / ``namespace`` (unprefixed) of the
+    proxy, plus its ``port``. The address a consumer gets and the NetworkPolicy peer it is
+    allowed to reach are BOTH derived from these, so they cannot drift apart.
+    """
+    return get_cluster_config(cluster_name).get("vlam")

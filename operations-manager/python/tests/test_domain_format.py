@@ -20,8 +20,6 @@ from opi.forms.visualizers.providers import DomainFormatOptionsProvider
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from opi.utils.naming import (
     DOMAIN_FORMAT_TEMPLATES,
-    DOMAIN_MODE_DEFAULT_FORMAT,
-    HostnameFormat,
     generate_hostname_from_format,
     get_component_ingress_map,
     get_deployment_hostnames,
@@ -201,23 +199,6 @@ class TestGetComponentIngressMapWithDomainFormat:
         # Legacy: component-deployment-project.cluster
         assert result == {"poc-frontend": "frontend-poc-myapp.kind"}
 
-    def test_none_domain_format_uses_legacy_dots(self):
-        """When domain_format is None with DOTS, legacy nice-url is used."""
-        result = get_component_ingress_map(
-            "frontend",
-            "poc",
-            "myapp",
-            ".kind",
-            subdomain="moza",
-            base_domain="rijksapp.dev",
-            hostname_format=HostnameFormat.DOTS,
-            domain_format=None,
-            project_data=_approved("rijksapp.dev"),
-            cluster=_CLUSTER,
-        )
-        # Legacy nice-url: component.subdomain.base_domain
-        assert result == {"poc-frontend": "frontend.moza.rijksapp.dev"}
-
 
 # ---------------------------------------------------------------------------
 # get_deployment_hostnames with domain_format
@@ -244,8 +225,8 @@ class TestGetDeploymentHostnamesWithDomainFormat:
         # Root hostname (moza.rijksapp.dev) should NOT be added
         assert "moza.rijksapp.dev" not in hostnames
 
-    def test_no_domain_format_adds_root_hostname(self):
-        """Without domain_format, DOTS mode adds root hostname (backward compat)."""
+    def test_root_component_on_dotted_format_adds_root_hostname(self):
+        """A dotted format with a root component adds the root hostname."""
         hostnames = get_deployment_hostnames(
             ["frontend"],
             "poc",
@@ -253,8 +234,8 @@ class TestGetDeploymentHostnamesWithDomainFormat:
             ".kind",
             subdomain="moza",
             base_domain="rijksapp.dev",
-            hostname_format=HostnameFormat.DOTS,
-            domain_format=None,
+            domain_format="component.subdomain",
+            root_component="frontend",
             project_data=_approved("rijksapp.dev"),
             cluster=_CLUSTER,
         )
@@ -402,14 +383,6 @@ class TestDomainFormatTemplates:
             assert "-" not in prefix.replace("{", "").replace("}", ""), (
                 f"{key} dot template should use dots, not hyphens"
             )
-
-    def test_default_format_mapping_covers_all_modes(self):
-        expected_modes = {"nice-url", "component-specific", "deployment-name", "custom"}
-        assert set(DOMAIN_MODE_DEFAULT_FORMAT.keys()) == expected_modes
-
-    def test_default_format_values_are_valid(self):
-        for mode, fmt in DOMAIN_MODE_DEFAULT_FORMAT.items():
-            assert fmt in DOMAIN_FORMAT_TEMPLATES, f"Default format '{fmt}' for mode '{mode}' not in templates"
 
 
 # ---------------------------------------------------------------------------

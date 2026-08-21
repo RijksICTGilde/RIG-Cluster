@@ -314,6 +314,12 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             "persistent-storage": ["generation", "revisions"],
             "postgresql-database": ["generation", "revisions"],
             "publish-on-web": ["domains"],
+            # RC-114: the SMTP account and its password are written by the mail manager,
+            # and the approval by the approver flow -- a project that could set its own
+            # status to approved would make the approval no approval at all. There is no
+            # sender-address field to protect: every project sends from one fixed address
+            # that the relay writes into the From: header itself.
+            "send-email": ["accounts", "approval"],
             "temp-storage": ["generation", "revisions"],
         }
 
@@ -326,14 +332,17 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             for layer in ConfigLayer
             if "put" in spec["paths"].get(f"/api/v2/projects/{{project_name}}/services/{name}/config/{layer.value}", {})
         }
-        # minio-storage en postgresql-database staan erbij omdat hun projectlaag wel een
-        # PUT heeft: daar zet een gebruiker zijn eigen instellingen, en de kloonstatus uit
-        # CloneState reist met hetzelfde model mee. Dat is precies de reden dat de weigering
-        # bestaat, want zonder markering was die tak schrijfbaar via een route die er wel is.
+        # publish-on-web heeft geen PUT op projectniveau (zijn config leeft per deployment).
+        # minio-storage en postgresql-database staan erbij omdat hun projectlaag die wel
+        # heeft: daar zet een gebruiker zijn eigen instellingen, en de kloonstatus uit
+        # CloneState reist met hetzelfde model mee. send-email hoort in datzelfde rijtje:
+        # ook die draagt een platform-managed veld in een blok waar een PUT op zit, en dat
+        # is precies het geval dat de weigering moet dekken.
         assert with_a_put == {
             ("keycloak", "project"),
             ("minio-storage", "project"),
             ("postgresql-database", "project"),
+            ("send-email", "project"),
         }
 
     def test_a_service_without_platform_fields_is_unaffected(
@@ -634,6 +643,18 @@ class TestListInsideObjectConfigPatch:
         mock_task_service.create_task.assert_not_called()
 
 
+def _store_with_components(names: list[str]) -> Any:
+    """A project store whose project file has exactly these components."""
+    store = MagicMock(spec=GitProjectStore)
+    store.get = lambda name: ProjectSummary(
+        name=name,
+        api_key=API_KEY,
+        filename=f"{name}.yaml",
+        data={"name": name, "components": [{"name": n} for n in names]},
+    )
+    return store
+
+
 class TestV2UpsertDeployment:
     """Tests for POST /api/v2/projects/{project_name}/:upsert-deployment."""
 
@@ -723,6 +744,38 @@ class TestV2UpsertDeployment:
             headers={"X-API-Key": API_KEY},
         )
         assert response.status_code == 422
+
+    def test_unknown_component_returns_400(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        """Een verwijzing naar een onbekend component is een fout van de aanroeper, geen taak."""
+        with patch("opi.api.v2.router.get_project_store", return_value=_store_with_components(["web"])):
+            response = v2_client.post(
+                "/api/v2/projects/test-project/:upsert-deployment",
+                headers={"X-API-Key": API_KEY},
+                json={
+                    "deploymentName": "production",
+                    "components": [{"reference": "logius-fscbootstrap", "image": "nginx:1.21"}],
+                },
+            )
+
+        assert response.status_code == 400
+        assert "logius-fscbootstrap" in response.json()["detail"]
+        mock_task_service.create_task.assert_not_awaited()
+
+    def test_known_component_still_returns_202(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
+
+        with patch("opi.api.v2.router.get_project_store", return_value=_store_with_components(["web"])):
+            response = v2_client.post(
+                "/api/v2/projects/test-project/:upsert-deployment",
+                headers={"X-API-Key": API_KEY},
+                json={
+                    "deploymentName": "production",
+                    "components": [{"reference": "web", "image": "nginx:1.21"}],
+                },
+            )
+
+        _assert_accepted(response, "upsert_deployment")
+        mock_task_service.create_task.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

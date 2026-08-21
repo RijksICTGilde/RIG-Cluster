@@ -3,7 +3,7 @@
 WAAROM DIT EEN STATISCHE POORT IS EN NIET ALLEEN EEN BROWSERTEST
 
 Het gedrag hieronder wordt in de browser gemeten door
-``tests/e2e/test_lotc_domeinbeheer.py`` en ``tests/e2e/test_shared_modal_blockade.py``.
+``tests/e2e/test_lotc_aanvragenbeheer.py`` en ``tests/e2e/test_shared_modal_blockade.py``.
 Die suite draait alleen apart (``-m e2e``); de gewone testronde slaat hem over. Toen de
 htmx-omzetting van RC-115 bij een merge wegviel terwijl de TESTS ervan wel meekwamen,
 stond er dus zeven keer rood in een suite die niemand in die ronde draaide, en groen in
@@ -48,7 +48,7 @@ def test_beheren_haalt_het_formulier_op_met_htmx() -> None:
     assert BEHEREN.search(_bron()), (
         "De knop 'Beheren' haalt het formulier niet (meer) met htmx op. De URL hoort in "
         "hx-get te staan - een gewoon attribuut, dus door Jinja gerenderd. Zie "
-        "tests/e2e/test_lotc_domeinbeheer.py voor wat er misgaat als hij in JavaScript "
+        "tests/e2e/test_lotc_aanvragenbeheer.py voor wat er misgaat als hij in JavaScript "
         "wordt samengesteld."
     )
 

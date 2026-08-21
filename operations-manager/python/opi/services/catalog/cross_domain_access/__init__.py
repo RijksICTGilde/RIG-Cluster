@@ -63,19 +63,33 @@ def _group_by_peer(rules: list[ResolvedRule]) -> list[dict]:
 
     Two rules from one own component to the same peer become one policy peer entry with two
     ports, so the rendered YAML stays compact. Sorted for a stable render.
+
+    Open rules (no peer, RC-142) fold together into ONE entry with ``peer: None``, which the
+    template renders as an ingress entry without a ``from`` selector. It sorts first, so the
+    rendered policy reads "this port is open" before "and these peers may also in".
     """
     groups: dict[tuple, dict] = {}
     for rule in rules:
-        key = (rule.peer.namespace, tuple(sorted(rule.peer.pod_labels.items())))
-        entry = groups.setdefault(
-            key, {"peer": {"namespace": rule.peer.namespace, "pod_labels": rule.peer.pod_labels}, "ports": []}
-        )
+        if rule.peer is None:
+            key: tuple = ((), ())
+            entry = groups.setdefault(key, {"peer": None, "ports": []})
+        else:
+            key = (rule.peer.namespace, tuple(sorted(rule.peer.pod_labels.items())))
+            entry = groups.setdefault(
+                key, {"peer": {"namespace": rule.peer.namespace, "pod_labels": rule.peer.pod_labels}, "ports": []}
+            )
         if rule.port not in entry["ports"]:
             entry["ports"].append(rule.port)
     result = list(groups.values())
     for entry in result:
         entry["ports"].sort()
-    result.sort(key=lambda entry: (entry["peer"]["namespace"], sorted(entry["peer"]["pod_labels"].items())))
+    result.sort(
+        key=lambda entry: (
+            ("", [])
+            if entry["peer"] is None
+            else (entry["peer"]["namespace"], sorted(entry["peer"]["pod_labels"].items()))
+        )
+    )
     return result
 
 
@@ -100,7 +114,11 @@ class CrossDomainAccessService(Service):
         cleanup_strategy=CleanupStrategy.NONE,
     )
     config_model = CrossDomainAccessConfig
-    config_schema_version = "1.0"
+    # 1.1 (RC-142): the inbound peer project accepts the wildcard "*". Purely additive --
+    # every 1.0 config is a valid 1.1 config and means the same thing -- so migrate_config
+    # stays the identity default. The version is bumped anyway because a client that reads
+    # the fragment for 1.0 would not know the value exists.
+    config_schema_version = "1.1"
     config_section_id = "cross-domain-access-config"
     modal_flow_id = "modal-edit-cross-domain-config"
 
@@ -291,7 +309,7 @@ class CrossDomainAccessService(Service):
                 )
                 continue
             normalized.append(rule)
-        return resolve_rules(normalized, cluster=ctx.cluster, self_project=ctx.project_name, lookup_project=lookup)
+        return resolve_rules(normalized, cluster=ctx.cluster, lookup_project=lookup)
 
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
         project_config = self._project_config(ctx.project_data)

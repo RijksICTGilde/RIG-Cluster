@@ -15,6 +15,16 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.e2e
 
+#: Waar "de uitleg is binnen" aan af te lezen is: de TITEL van het document.
+#:
+#: Hier stond ``h3``, en dat is de kop van een ``## ``-sectie in de markdown. Een uitleg
+#: HOEFT die niet te hebben: markdown_to_components maakt van ``# `` een h2 en van ``## ``
+#: een h3, en een korte uitleg van een titel plus twee alinea's heeft alleen het eerste.
+#: De uitleg van VLAM is precies dat, en daarop wachtte deze test tot de klok op was - niet
+#: omdat er niets geladen was, maar omdat er geen tussenkop in stond. Elke help.md begint
+#: met een ``# ``, dus de titel is het element dat er altijd is.
+_TITEL = "h2, h3"
+
 
 def test_every_service_on_the_overview_has_a_help_button(app_server: str, auth_page: Page) -> None:
     response = auth_page.goto(f"{app_server}/services")
@@ -40,7 +50,7 @@ def test_the_help_button_opens_the_explanation(app_server: str, auth_page: Page)
     modal = auth_page.locator("#service-help-modal")
     modal.wait_for(state="visible", timeout=5000)
     content = auth_page.locator("#service-help-content")
-    content.locator("h3").first.wait_for(state="visible", timeout=5000)
+    content.locator(_TITEL).first.wait_for(state="visible", timeout=5000)
     assert "kon niet geladen worden" not in content.inner_text()
 
 
@@ -60,7 +70,7 @@ def test_the_explanation_of_every_service_loads(app_server: str, auth_page: Page
     for index in range(count):
         buttons.nth(index).click()
         auth_page.locator("#service-help-modal").wait_for(state="visible", timeout=5000)
-        content.locator("h3").first.wait_for(state="visible", timeout=5000)
+        content.locator(_TITEL).first.wait_for(state="visible", timeout=5000)
         assert "kon niet geladen worden" not in content.inner_text(), (
             f"the explanation of service card {index} does not load"
         )

@@ -26,7 +26,7 @@ De knop "Beheren" wordt een gewone htmx-aanroep: `hx-get` naar de fragment-URL m
 
 ## Verifieerbaar
 
-Er staat sinds 16 augustus een e2e-test voor deze pagina (`tests/e2e/test_lotc_domeinbeheer.py`). Bouw daarop voort en toon aan:
+Er staat sinds 16 augustus een e2e-test voor deze pagina (`tests/e2e/test_lotc_aanvragenbeheer.py`). Bouw daarop voort en toon aan:
 
 1. de dialoog opent en toont het formulier;
 2. de opgevraagde URL bevat de ECHTE projectnaam (de regressietest van de eerste fout);

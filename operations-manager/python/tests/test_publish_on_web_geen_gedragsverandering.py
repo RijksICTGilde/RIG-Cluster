@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
-from opi.utils.naming import HostnameFormat, get_component_ingress_map
+from opi.utils.naming import get_component_ingress_map
 
 CLUSTER = "local"
 PROJECT = "webadres"
@@ -101,7 +101,6 @@ def _hostnames(shape: str) -> dict[str, str]:
         ingress_postfix=".cluster.local",
         subdomain=get_domain_setting(deployment, DomainSetting.SUBDOMAIN),
         base_domain=get_domain_setting(deployment, DomainSetting.BASE_DOMAIN),
-        hostname_format=HostnameFormat.from_domain_mode(get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)),
         domain_format=get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
         project_data=project,
         cluster=CLUSTER,

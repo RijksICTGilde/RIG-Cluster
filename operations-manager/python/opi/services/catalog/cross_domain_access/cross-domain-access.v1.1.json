@@ -185,7 +185,7 @@
         "project": {
           "anyOf": [
             {
-              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "pattern": "^(\\*|[a-z0-9]([-a-z0-9]*[a-z0-9])?)$",
               "type": "string"
             },
             {
@@ -193,7 +193,7 @@
             }
           ],
           "default": null,
-          "description": "Project of the peer, as a DNS-1123 label.",
+          "description": "Project of the peer, as a DNS-1123 label. Use '*' for no project limit: the port is opened to every source instead of to one named peer, and 'deployment' and 'component' must then be left empty.",
           "title": "Project"
         }
       },
@@ -269,7 +269,7 @@
   "description": "Project- or deployment-level cross-domain-access config: two lists of named rules.\n\nThis is the STORED shape (patch models), because a root rule may leave the peer\ndeployment open and a deployment rule is a partial patch keyed on ``name``. The\ncompleteness of a rule is judged after the merge, not here.",
   "properties": {
     "inbound": {
-      "description": "Rules letting another project's component reach one of mine.",
+      "description": "Rules letting another deployment's component reach one of mine; the peer may be another project or your own.",
       "items": {
         "$ref": "#/$defs/InboundRulePatch"
       },
@@ -277,7 +277,7 @@
       "type": "array"
     },
     "outbound": {
-      "description": "Rules letting one of my components reach another project's.",
+      "description": "Rules letting one of my components reach another deployment's; the peer may be another project or your own.",
       "items": {
         "$ref": "#/$defs/OutboundRulePatch"
       },

@@ -62,8 +62,8 @@
         {# De sectiekop is er voor een dialoog die MEER stappen heeft dan deze: hij zegt in
            welke stap je zit, en het vraagteken ernaast opent de uitleg van de dienst. Waar
            de dialoog zelf al een titel draagt die hetzelfde zegt, staan er twee koppen
-           boven elkaar - op /admin/approvals las de bovenste "Domeingoedkeuring - <project>"
-           en de onderste "Domein- en subdomeingoedkeuring". De titel van de dialoog wint
+           boven elkaar - op /admin/approvals las de bovenste "Goedkeuring - <project>"
+           en de onderste "Goedkeuring van aanvragen". De titel van de dialoog wint
            daar, want die noemt het project.
 
            Vandaar een schakelaar in de CONTEXT en niet een verwijdering: dit fragment
@@ -154,6 +154,23 @@
                     {% endif %}
 
                     <c-cluster gap="sm" align="center">
+                        {# Zelfde sprong als op de paginawizard: de flow wordt eerst in zijn
+                           geheel gevalideerd, een gemiste verplichte waarde zet je op die
+                           stap neer in plaats van op de samenvatting. #}
+                        {% if show_review and not steps.is_last %}
+                            <c-button
+                                type="tertiary"
+                                label="Naar samenvatting"
+                                icon="chevron-right"
+                                show-icon="after"
+                                hx-post="{{ _step_url_prefix }}{{ section.section_id }}{{ _token_qs }}"
+                                hx-target="#edit-section-inner"
+                                hx-swap="innerHTML"
+                                hx-include="#modal-wizard-form"
+                                hx-vals='{"_goto": "review"}'
+                                hx-ext="json-enc"
+                                hx-disabled-elt="this" />
+                        {% endif %}
                         {% if steps.is_last %}
                             {# Backup en restore slaan niets op maar starten een taak; daar
                                staat "Bezig met opslaan" dus niet. Zoals in het origineel. #}

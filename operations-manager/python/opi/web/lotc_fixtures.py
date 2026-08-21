@@ -28,10 +28,14 @@ from typing import Any
 
 import yaml
 
+from opi.core.dns_config import DEFAULT_ROUTER_HOSTNAME, router_addresses_for
 from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
+from opi.services.catalog.approval import SERVICE_USE_SUBJECT
+from opi.services.gedeelde_diensten import Drempel, OngemetenDienst
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
 from opi.web.lotc_switch import PROJECT_TABS
+from opi.web.router_approvals import APPROVAL_STATUSSEN, groepeer_per_dienst
 
 FIXTURES_DIR = Path(__file__).parent / "lotc_fixtures"
 
@@ -388,30 +392,129 @@ def page_data(slug: str) -> dict[str, Any]:
             "has_billing_datasource": False,
         }
 
+    if slug == "router":
+        # DE ECHTE NAAM EN DE ECHTE ADRESSEN, uit dns_config. De pagina wijst een bezoeker
+        # aan welk DNS-record hij in zijn eigen zone zet; die waarden zijn publiek en staan
+        # in de code, dus de proefopstelling toont wat de pagina op rijksapp.nl toont.
+        # Zonder deze context stond er "Dat is  , de ingang van dit cluster" en waren de
+        # kolommen van de recordtabel leeg - een schermafdruk die niets bewijst.
+        router_host = DEFAULT_ROUTER_HOSTNAME
+        adressen = router_addresses_for(router_host)
+        return {
+            "router_host": router_host,
+            "router_ipv4": adressen[0] if adressen else "",
+            "router_ipv6": adressen[1] if adressen else "",
+        }
+
+    if slug == "admin-gedeelde-diensten":
+        # ZICHTBAAR VERZONNEN drempels en ongemeten diensten, net als elke andere
+        # beheerderstak hier. De ECHTE DREMPELS en ONGEMETEN_DIENSTEN horen hier NIET:
+        # /lotc/bg/<naam> vraagt geen sessie en geen rol, terwijl /admin/diensten achter
+        # require_platform_admin zit. Wie zijn eigen grenswaarden en de lijst van welke
+        # platformdiensten helemaal niet gemeten worden publiek zet, vertelt een
+        # buitenstaander precies waar niemand naar kijkt.
+        #
+        # De VORM is wel de echte: dezelfde dataclasses als de route gebruikt, dus een
+        # veld dat daar bijkomt valt hier meteen op. Wat er te beoordelen valt is de
+        # opbouw - een drempeltabel met vijf kolommen, waarvan een met een getal dat
+        # groepering nodig heeft, en een blok "niet in beeld" met meer dan een item.
+        #
+        # De drie blokken erboven blijven op "wordt opgehaald..." staan: die worden lui
+        # opgehaald achter require_platform_admin en hebben een metriekbron nodig, en die
+        # heeft deze pagina allebei niet.
+        return {
+            "drempels": [
+                Drempel(
+                    naam="voorbeeld_vulling",
+                    waarschuwing=60.0,
+                    kritiek=80.0,
+                    eenheid="%",
+                    uitleg="Voorbeeldwaarde. De echte drempels staan op /admin/diensten zelf.",
+                ),
+                Drempel(
+                    naam="voorbeeld_wachtenden",
+                    waarschuwing=2.0,
+                    kritiek=4.0,
+                    eenheid="verbindingen",
+                    uitleg="Voorbeeldwaarde, met een eenheid die in een eigen kolom hoort.",
+                ),
+                Drempel(
+                    naam="voorbeeld_leeftijd",
+                    waarschuwing=100_000_000.0,
+                    kritiek=200_000_000.0,
+                    eenheid="transacties",
+                    uitleg="Voorbeeldwaarde, groot genoeg om de duizendtalgroepering te tonen.",
+                ),
+            ],
+            "ongemeten": [
+                OngemetenDienst(
+                    naam="Voorbeelddienst",
+                    reden="Voorbeeldtekst. Welke diensten hier echt staan is te zien op /admin/diensten.",
+                    nodig="Voorbeeldtekst over wat er nodig zou zijn om hem wel te meten.",
+                ),
+                OngemetenDienst(
+                    naam="Tweede voorbeelddienst",
+                    reden="Er staan er twee, zodat de opbouw met meerdere meldingen te beoordelen is.",
+                    nodig="Voorbeeldtekst.",
+                ),
+            ],
+        }
+
     if slug == "admin-approvals":
-        # Een aanvraag per stand, zodat de drie labels op het scherm naast elkaar staan.
+        # Een aanvraag per stand, zodat de drie labels op het scherm naast elkaar staan, en
+        # TWEE diensten, want de pagina groepeert per dienst. Elk item draagt dezelfde
+        # sleutels als collect_approval_items() ze aflevert (``service``, ``label``,
+        # ``subject``), anders toont de proefopstelling een vorm die de echte pagina niet
+        # heeft.
+        aanvragen = [
+            {
+                "service": "publish-on-web",
+                "type": "subdomain",
+                "label": "Subdomein",
+                "subject": "voorbeeld.rijksapps.nl",
+                "domain": "rijksapps.nl",
+                "name": "voorbeeld",
+                "current_status": "requested",
+                "history": [{"date": datetime(2026, 8, 1, tzinfo=UTC), "by": "voorbeeldgebruiker"}],
+            },
+            {
+                "service": "publish-on-web",
+                "type": "domain",
+                "label": "Domein",
+                "subject": "voorbeeld.nl",
+                "domain": "voorbeeld.nl",
+                "name": "voorbeeld.nl",
+                "current_status": "approved",
+                "history": [{"date": datetime(2026, 7, 14, tzinfo=UTC), "by": "voorbeeldbeheerder"}],
+            },
+            {
+                "service": "send-email",
+                "type": "send-email",
+                "label": "E-mail versturen",
+                "subject": SERVICE_USE_SUBJECT,
+                "domain": "",
+                "name": projects[0]["name"],
+                "current_status": "denied",
+                "history": [{"date": datetime(2026, 8, 12, tzinfo=UTC), "by": "voorbeeldbeheerder"}],
+            },
+        ]
+        # De groepen komen uit DEZELFDE functie als op de echte pagina. Ze hier met de hand
+        # opschrijven zou een tweede waarheid zijn, en dan toont de proefopstelling iets
+        # anders dan /admin/approvals zodra de groepering verandert. Het sjabloon leest
+        # alleen ``approval_groups``; ``approval_items`` blijft ernaast staan omdat de
+        # teller AANVRAGEN telt en geen groepen.
         return {
             "projects_data": [
                 {
                     "project_name": projects[0]["name"],
-                    "approval_items": [
-                        {
-                            "type": "subdomain",
-                            "domain": "rijksapps.nl",
-                            "name": "voorbeeld",
-                            "current_status": "requested",
-                            "history": [{"date": datetime(2026, 8, 1, tzinfo=UTC), "by": "voorbeeldgebruiker"}],
-                        },
-                        {
-                            "type": "domain",
-                            "domain": "voorbeeld.nl",
-                            "name": "voorbeeld.nl",
-                            "current_status": "approved",
-                            "history": [{"date": datetime(2026, 7, 14, tzinfo=UTC), "by": "voorbeeldbeheerder"}],
-                        },
-                    ],
+                    "approval_items": aanvragen,
+                    "approval_groups": groepeer_per_dienst(aanvragen),
                 }
             ],
+            "approvals_totaal": len(aanvragen),
+            "approvals_getoond": len(aanvragen),
+            "approval_status": "",
+            "approval_statussen": APPROVAL_STATUSSEN,
             "success_message": "",
         }
 

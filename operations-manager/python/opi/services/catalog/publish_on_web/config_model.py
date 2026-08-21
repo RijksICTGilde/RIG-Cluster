@@ -111,10 +111,9 @@ class PublishOnWebDeploymentConfig(BaseModel):
 
     Every field is optional because a deployment on the platform's own cluster domain
     needs none of them: the format defaults, the base domain comes from the cluster and the
-    issuer from the domain entry. ``domain-mode`` is legacy -- superseded by
-    ``domain-format`` and read only by ``HostnameFormat.from_domain_mode`` for old files --
-    but it describes the same subject, so it moved along rather than staying behind as a
-    second place to look.
+    issuer from the domain entry. The legacy ``domain-mode`` field is gone: the v2.8
+    migration converts ``nice-url`` to ``domain-format: component.subdomain`` and drops
+    the key.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -124,24 +123,27 @@ class PublishOnWebDeploymentConfig(BaseModel):
         alias="base-domain",
         description=(
             "The domain to publish on; the cluster's own domain when absent. For a domain of your own, "
-            "write the domain name itself here (for example 'mijn-app.nl'); it does not have to be one "
-            "the cluster offers, and there is no separate field or marker for it. A domain of your own "
-            "needs an administrator's approval AND a certificate, and "
-            "the two are separate: not every cluster can obtain a certificate for a domain it does not "
-            "offer, and on one that cannot, the deployment is created and reachable but serves an "
-            "invalid certificate. Read `custom-domain-certificates` from "
+            "write the domain name itself here (for example 'domein.nl'); it does not have to be one "
+            "the cluster offers, and there is no separate field or marker for it. A hostname on your "
+            "own domain is the COMBINATION with a subdomain: base-domain 'domein.nl' + domain-format "
+            "'subdomain' + subdomain 'mijn' serves mijn.domein.nl (the bare 'domein.nl' itself is only "
+            "served via expose-component-on-bare-domain). A domain of your own needs an administrator's "
+            "approval (that your project may use it), DNS records set by your own organisation, AND a "
+            "certificate, and those are separate: not every cluster can obtain a certificate for a "
+            "domain it does not offer, and on one that cannot, the deployment is created and reachable "
+            "but serves an invalid certificate. Read `custom-domain-certificates` from "
             "GET /api/v2/projects/{project}/clusters before setting this; where it is false, supply "
             "your own certificate with the component's tls='provided'."
         ),
     )
     subdomain: str | None = Field(
         default=None,
-        description="The subdomain under the base domain, for the hostname formats that use one.",
-    )
-    domain_mode: str | None = Field(
-        default=None,
-        alias="domain-mode",
-        description="LEGACY hostname strategy, superseded by domain-format. Only read for files that predate it.",
+        description=(
+            "The subdomain under the base domain, for the hostname formats that use one. On a "
+            "platform-managed domain it is a request an administrator approves, so two projects cannot "
+            "claim the same name; on a domain of your own no approval is involved -- which names exist "
+            "there is your organisation's business."
+        ),
     )
     domain_format: DomainFormatId | None = Field(
         default=None,
@@ -160,12 +162,21 @@ class PublishOnWebDeploymentConfig(BaseModel):
     root_component: str | None = Field(
         default=None,
         alias="root-component",
-        description="The component served on the address without a component segment, for the formats that have one.",
+        description=(
+            "For the dotted formats with a component segment: the component that ALSO serves the "
+            "address without that segment (component.deployment.project also serves "
+            "deployment.project, typically the frontend). Absent means no component does."
+        ),
     )
     expose_component_on_bare_domain: str | bool | None = Field(
         default=None,
         alias="expose-component-on-bare-domain",
-        description="Component served on the bare custom domain, or false/absent for none.",
+        description=(
+            "The component served on the bare custom domain itself: base-domain 'domein.nl' with no "
+            "name part in front. This is an EXTRA address next to the ones domain-format composes, "
+            "not the way to publish on a named address -- mijn.domein.nl is base-domain + a "
+            "subdomain format + subdomain. False/absent for none, which is the normal case."
+        ),
     )
 
 
@@ -194,8 +205,15 @@ class PublishOnWebComponentConfig(BaseModel):
     def _provided_needs_an_attachment(self) -> PublishOnWebComponentConfig:
         # Mirrors the if/then in $defs/publish-on-web-config: without the PEM there is
         # nothing to terminate with, and the failure would surface at render time.
+        #
+        # De tekst zegt wat je moet DOEN en niet alleen wat er mis is: hij komt via
+        # ``project_validation.validation_reasons`` ongewijzigd op het scherm van iemand
+        # die een webadres wijzigt, en die stond eerder met een afkeuring zonder uitweg.
         if self.tls == "provided" and not self.attachment:
-            raise ValueError("tls 'provided' requires an 'attachment' naming the certificate")
+            raise ValueError(
+                "tls 'provided' vereist een 'attachment' met het certificaat: kies 'Standaard certificaat', "
+                "of upload eerst een certificaat bij Bijlagen en kies die hier"
+            )
         return self
 
 

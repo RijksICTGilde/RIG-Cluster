@@ -1,0 +1,3 @@
+{
+  "$comment": "v2.7 -> v2.8 retired the legacy domain-mode field, which since v2.7 lived inside the publish-on-web service config. This schema does not describe service-config contents (they are validated against the service's own config model by validate_service_configs), so the accepted shape of a v2.7 file is identical to v2.8 and this patch changes nothing."
+}

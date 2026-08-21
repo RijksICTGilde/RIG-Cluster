@@ -26,13 +26,20 @@ by any services-step save.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
+from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.visualizers.bridge import resolve_options_for_editable
+from opi.forms.wizard.services_merge import merge_service_lists
 from opi.services.services import ServiceAdapter, service_entry_name
 
 #: The project-wide service selection.
 SERVICES_PATH = "services"
+
+#: A component's own service selection: the checklist editable's yaml_path, either
+#: materialized (``components[0]/services``) or the wildcard template form.
+_COMPONENT_SERVICES_PATH = re.compile(r"^components\[(\d+|\*)\]/services$")
 
 
 def _walk(editables: list[Any]) -> list[Any]:
@@ -82,10 +89,31 @@ def apply_selection_mutation(
     - a name in *base* that the form did NOT offer is untouched: it survives.
 
     Entries keep their base form (string or config-carrying dict), so a surviving
-    service keeps its configuration.
+    service keeps its configuration. That sentence used to be a promise the code
+    did not keep: ``result = list(submitted)`` let the checklist's bare name WIN
+    from the base's config record, so config without a form field in the flow
+    (the domain approvals under publish-on-web, a send-email approval) silently
+    fell out of the project on every services-save -- after which an approval
+    hook cheerfully re-requested what had already been approved. The base entry
+    is the configuration carrier; the submission is the selection, plus at most
+    a config overlay (attachments' restored catalog). ``merge_service_lists``
+    folds the two, normalizing record/legacy shape differences along the way.
     """
+    base_by_name: dict[str, Any] = {}
+    for entry in base:
+        name = service_entry_name(entry)
+        if name is not None and name not in base_by_name:
+            base_by_name[name] = entry
     submitted_names = {name for entry in submitted if (name := service_entry_name(entry)) is not None}
-    result = list(submitted)
+
+    result: list[Any] = []
+    for entry in submitted:
+        name = service_entry_name(entry)
+        base_entry = base_by_name.get(name) if name is not None else None
+        if base_entry is None:
+            result.append(copy.deepcopy(entry))
+        else:
+            result.extend(merge_service_lists([base_entry], [entry]))
     for entry in base:
         name = service_entry_name(entry)
         if name is None or name in submitted_names or name in offered:
@@ -132,3 +160,52 @@ def apply_services_mutation(
         submitted = apply_selection_mutation(base, submitted, offered)
 
     submitted_yaml[SERVICES_PATH] = ServiceAdapter.resolve_service_dependencies(submitted)
+
+
+def apply_component_services_mutation(
+    editables: list[Any],
+    base_data: dict[str, Any],
+    submitted_yaml: dict[str, Any],
+) -> None:
+    """Reconcile a component's submitted service selection with its base, in place.
+
+    The component form's checklist (``components[i]/services``) is the same kind of
+    selection as the project-wide one, and follows the same rule: a name the picker
+    offered and the submission omits was unticked and goes; a name the picker never
+    showed (a service the project disabled meanwhile, a hidden entry) survives from
+    the base. Does nothing for sections that do not carry the checklist -- a config
+    section speaking only through ``services{X}/...`` paths says nothing about the
+    selection.
+
+    The offered set comes from the same provider the renderer used
+    (``FilteredServiceOptionsProvider``), fed with the base's project services, so
+    "offered" means what the user actually saw.
+    """
+    for vis in _walk(editables):
+        editable = getattr(vis, "editable", None)
+        if editable is None:
+            continue
+        match = _COMPONENT_SERVICES_PATH.match(editable.yaml_path)
+        if not match:
+            continue
+
+        project_service_names = ServiceAdapter.extract_service_names_from_project_services(
+            base_data.get(SERVICES_PATH) or []
+        )
+        options = resolve_options_for_editable(vis, {"project_services": project_service_names})
+        offered = {str(option["value"]) for option in options if option.get("value")}
+
+        components = submitted_yaml.get("components")
+        if not isinstance(components, list):
+            return
+        indexes = range(len(components)) if match.group(1) == "*" else [int(match.group(1))]
+        for idx in indexes:
+            path = f"components[{idx}]/services"
+            submitted = smart_get_value(submitted_yaml, path)
+            if not isinstance(submitted, list):
+                continue
+            base = smart_get_value(base_data, path)
+            if isinstance(base, list):
+                submitted = apply_selection_mutation(base, submitted, offered)
+            smart_set_value(submitted_yaml, path, submitted)
+        return
