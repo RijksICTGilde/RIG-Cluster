@@ -31,7 +31,7 @@ import yaml
 from opi.core.dns_config import DEFAULT_ROUTER_HOSTNAME, router_addresses_for
 from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 from opi.services.catalog.approval import SERVICE_USE_SUBJECT
-from opi.services.gedeelde_diensten import DREMPELS, ONGEMETEN_DIENSTEN
+from opi.services.gedeelde_diensten import Drempel, OngemetenDienst
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
 from opi.web.lotc_switch import PROJECT_TABS
@@ -407,17 +407,57 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "admin-gedeelde-diensten":
-        # DE ECHTE DREMPELS EN DE ECHTE ONGEMETEN DIENSTEN, geen verzonnen lijst. Allebei
-        # staan ze in de code (gedeelde_diensten.py) en niet in een meting, dus de
-        # proefopstelling kan ze gewoon tonen zoals de route dat doet - en een verzonnen
-        # tweede lijst zou hier stil uit de pas gaan lopen met de echte.
+        # ZICHTBAAR VERZONNEN drempels en ongemeten diensten, net als elke andere
+        # beheerderstak hier. De ECHTE DREMPELS en ONGEMETEN_DIENSTEN horen hier NIET:
+        # /lotc/bg/<naam> vraagt geen sessie en geen rol, terwijl /admin/diensten achter
+        # require_platform_admin zit. Wie zijn eigen grenswaarden en de lijst van welke
+        # platformdiensten helemaal niet gemeten worden publiek zet, vertelt een
+        # buitenstaander precies waar niemand naar kijkt.
         #
-        # De drie blokken erboven blijven wel op "wordt opgehaald..." staan: die worden lui
+        # De VORM is wel de echte: dezelfde dataclasses als de route gebruikt, dus een
+        # veld dat daar bijkomt valt hier meteen op. Wat er te beoordelen valt is de
+        # opbouw - een drempeltabel met vijf kolommen, waarvan een met een getal dat
+        # groepering nodig heeft, en een blok "niet in beeld" met meer dan een item.
+        #
+        # De drie blokken erboven blijven op "wordt opgehaald..." staan: die worden lui
         # opgehaald achter require_platform_admin en hebben een metriekbron nodig, en die
-        # heeft deze pagina allebei niet. Wat hier te beoordelen valt is de opbouw eromheen.
+        # heeft deze pagina allebei niet.
         return {
-            "drempels": list(DREMPELS.values()),
-            "ongemeten": ONGEMETEN_DIENSTEN,
+            "drempels": [
+                Drempel(
+                    naam="voorbeeld_vulling",
+                    waarschuwing=60.0,
+                    kritiek=80.0,
+                    eenheid="%",
+                    uitleg="Voorbeeldwaarde. De echte drempels staan op /admin/diensten zelf.",
+                ),
+                Drempel(
+                    naam="voorbeeld_wachtenden",
+                    waarschuwing=2.0,
+                    kritiek=4.0,
+                    eenheid="verbindingen",
+                    uitleg="Voorbeeldwaarde, met een eenheid die in een eigen kolom hoort.",
+                ),
+                Drempel(
+                    naam="voorbeeld_leeftijd",
+                    waarschuwing=100_000_000.0,
+                    kritiek=200_000_000.0,
+                    eenheid="transacties",
+                    uitleg="Voorbeeldwaarde, groot genoeg om de duizendtalgroepering te tonen.",
+                ),
+            ],
+            "ongemeten": [
+                OngemetenDienst(
+                    naam="Voorbeelddienst",
+                    reden="Voorbeeldtekst. Welke diensten hier echt staan is te zien op /admin/diensten.",
+                    nodig="Voorbeeldtekst over wat er nodig zou zijn om hem wel te meten.",
+                ),
+                OngemetenDienst(
+                    naam="Tweede voorbeelddienst",
+                    reden="Er staan er twee, zodat de opbouw met meerdere meldingen te beoordelen is.",
+                    nodig="Voorbeeldtekst.",
+                ),
+            ],
         }
 
     if slug == "admin-approvals":
