@@ -17,5 +17,4 @@ class VlamVariables(Enum):
         name="VLAM_API_URL",
         description="Basisadres van de VLAM-API binnen het cluster, zonder pad",
         source="direct",
-        aliases=["APP_VLAM_API_URL"],
     )

@@ -195,15 +195,13 @@ class TestTheEnvironmentVariable:
         )
 
     def test_the_component_is_given_the_proxy_address(self) -> None:
-        """De kanonieke naam en de gedeclareerde alias, want de declaratie in
-        variables.py is wat de e2e-probe-spec belooft en diens coverage-check meet."""
+        """Precies één variabele, zonder APP_-tweeling: de declaratie in variables.py
+        is wat de e2e-probe-spec belooft en diens coverage-check meet, dus wat de
+        dienst declareert en wat hij injecteert moeten hetzelfde zijn."""
         endpoint = vlam_endpoint(WITH_VLAM)
         assert endpoint is not None
         contribution = SERVICE.contribute_manifest_context(self._ctx())
-        assert contribution.env_vars == {
-            "VLAM_API_URL": endpoint.api_url,
-            "APP_VLAM_API_URL": endpoint.api_url,
-        }
+        assert contribution.env_vars == {"VLAM_API_URL": endpoint.api_url}
 
     def test_it_is_not_an_envfrom_secret(self) -> None:
         """An in-cluster address is not a secret; encrypting it only hides it from its owner."""
@@ -270,7 +268,7 @@ class TestTheContributionReachesTheComponent:
         endpoint = vlam_endpoint(WITH_VLAM)
         assert endpoint is not None
         assert env["VLAM_API_URL"] == endpoint.api_url
-        assert env["APP_VLAM_API_URL"] == endpoint.api_url
+        assert "APP_VLAM_API_URL" not in env
         assert env["APP_ENV"] == "production"
 
 

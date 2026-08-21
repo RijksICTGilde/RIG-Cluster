@@ -109,14 +109,7 @@ class VlamService(Service):
                 ctx.cluster,
             )
             return ManifestContribution()
-        api_var = VlamVariables.API_URL.value
-        return ManifestContribution(
-            # De kanonieke naam EN de gedeclareerde aliassen: de declaratie in
-            # variables.py is wat de dienstenpagina en de e2e-probe-spec beloven, dus
-            # wat daar staat moet ook echt in de container staan. De coverage-check
-            # van de e2e-testpod meet dat letterlijk.
-            env_vars=dict.fromkeys((api_var.name, *api_var.aliases), endpoint.api_url)
-        )
+        return ManifestContribution(env_vars={VlamVariables.API_URL.value.name: endpoint.api_url})
 
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
         """One egress NetworkPolicy per deployment, towards the VLAM proxy pod.
