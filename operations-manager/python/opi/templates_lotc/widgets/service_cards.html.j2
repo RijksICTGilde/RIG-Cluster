@@ -45,7 +45,10 @@
   gedeelde macro, samen met de knop zelf.
 
   Vergrendeld is aria-disabled en niet disabled: de waarde moet mee de POST in, alleen
-  aanpassen mag niet.
+  aanpassen mag niet. Dat attribuut staat op de KAART en op het VAKJE. Op de kaart omdat
+  wizard.js het daar bijhoudt en de kaart het geheel is dat op slot staat; op het vakje
+  omdat dat de bediening is, en een <nldd-card> geen rol heeft en dus niets aankondigt. Bij
+  deze omzetting was het vakje zijn markering kwijtgeraakt.
 #}
 {% from "widgets/_macros.html.j2" import render_errors, service_block, keuzekaart, kaart_vakje %}
 {# GEEN KOP EN GEEN UITLEG BOVEN DE KAARTEN. Er stond "Beschikbare Services" met daaronder
@@ -147,7 +150,7 @@
 
                    De naam met [] zodat de diensten als lijst binnenkomen, precies zoals
                    checkbox_group.html.j2 het doet. #}
-                {{ kaart_vakje(vakje_id, card.label, gekozen=card.checked, uit=card.disabled, naam=field.path ~ "[]", waarde=card.value) }}
+                {{ kaart_vakje(vakje_id, card.label, gekozen=card.checked, uit=card.disabled, naam=field.path ~ "[]", waarde=card.value, vergrendeld=card.is_locked) }}
         {% endcall %}
         {% endfor %}
     </c-grid>
