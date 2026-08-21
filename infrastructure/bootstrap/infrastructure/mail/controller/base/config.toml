@@ -389,11 +389,14 @@ user = "%{env:MAIL_RELAY_ADMIN_USERNAME}%"
 secret = "%{env:MAIL_RELAY_ADMIN_PASSWORD}%"
 
 # Stalwart haalt bij elke start een bijgewerkte spamfilter-regelset op van GitHub
-# (spam-filter.auto-update, default aan). Op de sandbox is daar geen route:
-# github.com is onbereikbaar uit de pod (de jsdelivr-ASN-downloads lukken wel) en de
-# mislukte fetch levert een config.build-error op namespace "*" - gemeten 19 augustus
-# 2026. Daarom uit. NB: dit zegt niets over of het filter zelf AAN hoort - dat is een
-# van de open vervolgpunten in plans/mailrelay-sandboxtoets.md.
+# (spam-filter.auto-update, default aan). Ons egress-netwerkbeleid staat geen
+# internet-egress toe, dus die fetch strandt en levert een config.build-error op
+# namespace "*" - gemeten 19 augustus 2026. Daarom uit. (Een eerdere versie van deze
+# regel noemde github.com onbereikbaar terwijl jsdelivr wel lukte; dat bleek een race
+# in de netpol-handhaving van Kind bij een verse pod, gemeten 21 augustus 2026 -
+# allebei zitten ze dicht. Zie plans/mail-vervolgpunten.md, punt 6.)
+# NB: dit zegt niets over of het filter zelf AAN hoort - dat is een van de open
+# vervolgpunten in plans/mail-vervolgpunten.md.
 [spam-filter]
 auto-update = false
 
