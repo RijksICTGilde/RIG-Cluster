@@ -881,6 +881,28 @@ def get_mail_from_address(cluster_name: str) -> str:
     return cluster_config["mail_from_address"]
 
 
+def has_mail_relay(cluster_name: str) -> bool:
+    """Whether this cluster runs the platform mail relay.
+
+    The four ``mail_*`` keys are the relay's address book, and a cluster that does not
+    run one has none of them. This is the availability mechanism for the send-email
+    service, in the same shape as ``get_vlam_config``: the cluster configuration answers
+    the question and the service names no cluster.
+
+    Only the host is tested. The four keys are written and removed together -- they
+    describe one relay -- so testing all four would suggest a half-configured cluster is
+    a state worth handling, and it is not.
+
+    Absent means False, and so does an unknown cluster: a service that hands out SMTP
+    credentials nothing accepts is worse than one that is not offered.
+    """
+    try:
+        cluster_config = get_cluster_config(cluster_name)
+    except ValueError:
+        return False
+    return bool(cluster_config.get("mail_relay_host"))
+
+
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
     """
     Get infrastructure namespace with cluster-specific prefix.

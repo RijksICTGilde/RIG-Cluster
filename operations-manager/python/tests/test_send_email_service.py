@@ -44,6 +44,7 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.manager.mail_manager import MailManager
+from opi.manager.project_validation import validate_service_availability
 from opi.services.catalog.approval import ApproverScope
 from opi.services.catalog.base import ConfigLayer, DeploymentManifestContext
 from opi.services.catalog.send_email import RELAY_POD_LABELS, RELAY_POD_PORT, SendEmailService
@@ -869,6 +870,42 @@ class TestTheClusterConfig:
         """Geen eigen maildomein: we versturen via de mailserver van de Rijksoverheid en
         dragen daarom hun domein. Zie docs/ron-koppeling.md."""
         assert get_mail_from_address("odcn-production") == "noreply-rijksapp@rijksoverheid.nl"
+
+
+class TestDeDienstWordtAlleenAangebodenWaarDeRelayDraait:
+    """De relay is de dienst. Een cluster zonder relay heeft niets uit te delen.
+
+    Dezelfde vorm als vlam: de clusterconfiguratie beantwoordt de beschikbaarheidsvraag
+    en de dienst noemt geen enkel cluster. Zonder deze poort loopt een project op zo'n
+    cluster stuk op een ``KeyError`` op ``mail_relay_host`` -- diep in het genereren van
+    de manifesten, waar niemand kijkt -- in plaats van op een leesbare weigering bij het
+    opslaan.
+    """
+
+    @pytest.mark.parametrize("cluster", ["local", "sandboxed-local", "odcn-production"])
+    def test_beschikbaar_waar_de_configuratie_een_relay_kent(self, cluster: str) -> None:
+        assert SERVICE.available_on_cluster(cluster) is True
+
+    def test_niet_beschikbaar_op_een_cluster_zonder_relay(self) -> None:
+        assert SERVICE.available_on_cluster("fundament-poc") is False
+
+    def test_een_onbekend_cluster_krijgt_de_dienst_evenmin(self) -> None:
+        """Een naam die de configuratie niet kent is geen reden om SMTP-gegevens uit te
+        delen die nergens werken."""
+        assert SERVICE.available_on_cluster("bestaat-niet") is False
+
+    def test_een_project_op_een_cluster_zonder_relay_wordt_geweigerd(self) -> None:
+        """De weigering die telt: de API en een handgeschreven projectbestand zien nooit
+        een wizardkaart."""
+        project = _project()
+        project["deployments"][0]["cluster"] = "fundament-poc"
+        errors = validate_service_availability(project)
+        assert len(errors) == 1
+        assert ServiceType.SEND_EMAIL.value in errors[0]
+        assert "fundament-poc" in errors[0]
+
+    def test_hetzelfde_project_op_een_cluster_met_relay_wordt_geaccepteerd(self) -> None:
+        assert validate_service_availability(_project()) == []
 
 
 class TestTheSecretHandedToTheApplication:
