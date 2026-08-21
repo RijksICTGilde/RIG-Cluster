@@ -85,7 +85,9 @@ bind `publish-on-web` to it, and the page is internal again.
 The token gets the stricter treatment, because it is the only secret that arrives
 from outside: it is used for one outgoing request and then dropped. It is never
 stored, never written to the log, and never rendered back into the page — not
-even as the value of the form field it came from. The question and the answer
+even as the value of the form field it came from, and not when the far end echoes
+it back at us: it is stripped from a quoted error body and from the model's own
+answer alike, because "repeat your context" is the same echo. The question and the answer
 stay off the log too, which is why the chat button answers the POST in place
 instead of redirecting: a redirect would carry the answer through a query string
 and into every access log between here and the browser.
