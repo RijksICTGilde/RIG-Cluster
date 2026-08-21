@@ -12,7 +12,9 @@ which is provisioning by side effect.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,6 +54,67 @@ class MailAccount:
     #: relay enforces one ceiling for every account (see the limiter in its configmap),
     #: because a principal in Stalwart v0.11 carries no limit of its own.
     messages_per_day: int
+
+
+#: Settings prefix under which each account's display name is stored, one key per
+#: account. This is the DATA: OPI reads it back to see what it wrote, and writes a key only
+#: when it changes.
+MAIL_SENDER_NAME_PREFIX = "zad.afzender.naam"
+
+#: The sieve script OPI generates from those keys, and the reason the data cannot simply BE
+#: the script: to change one account you would have to parse the generated code to keep the
+#: others. The script is a projection, the keys are the truth.
+#:
+#: Why a generated script and not a lookup table, which is what this started out as: an
+#: in-memory lookup store built from settings (``lookup.<naam>.<sleutel>``) is only ever
+#: built ONCE. A ``POST /api/reload`` does not refresh it -- measured on 20 August 2026
+#: against v0.11.8: the first account written got its value, every account added afterwards
+#: read as empty until the relay was RESTARTED. A sieve script written through the same API
+#: IS recompiled on every reload (measured in both directions: changing the value of an
+#: existing account took effect on the very next message, without a restart), so this is
+#: the one shape that stays current while the relay keeps running.
+#:
+#: Its NAME is a constant because the other end of the pair is written in sieve, in
+#: ``mail/controller/base/configmap.yaml``, and drift between the two fails SILENTLY:
+#: ``include :optional`` skips a script it cannot find without a word, so every project
+#: would simply start sending without a display name and nothing would report it.
+#: ``test_de_relayconfiguratie_knipt_hetzelfde_voorvoegsel`` pins the two together, the
+#: same way it already pinned the ``project-`` prefix.
+MAIL_SENDER_SCRIPT_NAME = "zad-afzenders"
+
+#: The settings key that script is stored under, which is the only thing OPI writes.
+MAIL_SENDER_TABLE_KEY = f"sieve.trusted.scripts.{MAIL_SENDER_SCRIPT_NAME}.contents"
+
+#: What an account name may look like before it is written into that generated script.
+#: Belt and braces around a value that is already computed by ``generate_mail_account_name``
+#: -- it ends up inside a sieve string literal, and this is the layer that would have to
+#: hold if it ever stopped being computed.
+_ACCOUNT_PATROON = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+#: Same for a display name. This list and ``FROM_NAME_PATTERN`` (the rule the form and the
+#: API validate against) hold exactly the same characters, and they have to: a character only
+#: THIS one refuses turns a name the form just approved into an exception halfway through
+#: processing a project, where nothing catches it. Refusing them here as well means the
+#: generated script cannot be broken open by a value that reached this connector some other
+#: way. Note ``$``: a sieve string interpolates ``${...}``, so a name containing it would
+#: read a variable instead of being text -- which is why it belongs in both lists, and why
+#: ``TestDeWeergavenaamWordtGetoetst`` runs its refused names past this layer too.
+_NAAM_VERBODEN = re.compile(r'[@<>"\\$\x00-\x1F\x7F]')
+
+
+#: Serialises the read-modify-write of the generated table.
+#:
+#: Writing one account's name means rendering the table from ALL of them, so two projects
+#: being processed at the same time would both read the table as it was, and the one that
+#: writes last would drop the other one's name -- silently, and until someone happens to
+#: process that project again. OPI runs one replica per cluster, so a lock in the process is
+#: the whole of the concurrency; a second replica would need the relay to offer a conditional
+#: write, which v0.11.8 does not.
+_TABEL_SLOT = asyncio.Lock()
+
+
+class MailSenderNameError(ValueError):
+    """A display name or account name that may not be written into the relay's script."""
 
 
 class MailConnector:
@@ -178,6 +241,138 @@ class MailConnector:
             return False
         logger.info(f"Mailaccount {name} verwijderd van de relay")
         return True
+
+    # --- the display name of an account ------------------------------------------
+    #
+    # The relay works the sender ADDRESS out for itself, by cutting the ``project-`` prefix
+    # off the authenticated account name (identity rule 1 in its configmap). It has to:
+    # v0.11.8 offers nothing that can look a value up per account while a message is being
+    # accepted -- there is no expression function that reads a principal (``principal_get``,
+    # ``directory_query``, ``sql_query`` all do not exist), the lookup store that CAN be read
+    # live cannot be written through the management API, and the one that can be written is
+    # only built at startup. All measured on 20 August 2026.
+    #
+    # The display name cannot be derived from anything, so it is the one value that has to
+    # travel: OPI keeps it per account in the relay's settings and renders those settings
+    # into a small sieve script the identity rules include.
+
+    async def get_sender_names(self) -> dict[str, str]:
+        """Every account's display name, as the relay currently holds it.
+
+        The whole table in one call, and that is on purpose: the generated script is
+        rendered from ALL of them, so writing one name means knowing the others.
+        """
+        result = await self._request("GET", f"/api/settings/list?prefix={MAIL_SENDER_NAME_PREFIX}.")
+        items = ((result or {}).get("data") or {}).get("items") or {}
+        return {account: naam for account, naam in items.items() if naam}
+
+    async def set_sender_name(self, account: str, display_name: str) -> bool:
+        """Give this account the display name recipients see. Returns whether anything changed.
+
+        Idempotent by comparison and not by luck: a project is processed again on every
+        change it makes, and every write here drags a rebuild of the relay's whole
+        configuration behind it.
+
+        An empty name is a REMOVAL, not an empty value: no display name is a valid outcome
+        (the message then leaves with the project's address and nothing in front of it), and
+        a key that says nothing is one an administrator reading the settings has to
+        interpret.
+        """
+        _controleer_naam(account, display_name)
+        async with _TABEL_SLOT:
+            namen = await self.get_sender_names()
+            if namen.get(account, "") == display_name:
+                return False
+            if display_name:
+                namen[account] = display_name
+            else:
+                namen.pop(account, None)
+            await self._write_sender_names(account, display_name, namen)
+            return True
+
+    async def delete_sender_name(self, account: str) -> None:
+        """Forget this account's display name. Replay-safe: a missing key is fine."""
+        await self.set_sender_name(account, "")
+
+    async def _write_sender_names(self, account: str, display_name: str, namen: dict[str, str]) -> None:
+        """The key and the generated script in ONE request, then a reload.
+
+        One request, because the key is the data and the script is what the relay actually
+        reads: two requests could leave the relay reading a table that no longer matches
+        what OPI thinks it wrote.
+        """
+        sleutel = f"{MAIL_SENDER_NAME_PREFIX}.{account}"
+        wijzigingen: list[dict[str, Any]] = []
+        if display_name:
+            wijzigingen.append({"type": "insert", "values": [[sleutel, display_name]], "assert_empty": False})
+        else:
+            wijzigingen.append({"type": "delete", "keys": [sleutel]})
+        wijzigingen.append(
+            {"type": "insert", "values": [[MAIL_SENDER_TABLE_KEY, render_sender_table(namen)]], "assert_empty": False}
+        )
+        await self._request("POST", "/api/settings", payload=wijzigingen)
+        await self.reload()
+        logger.info(f"Weergavenaam van mailaccount {account} bijgewerkt op de relay: {display_name!r}")
+
+    async def reload(self) -> None:
+        """Rebuild the relay's configuration, so a written value takes effect.
+
+        A build error on ANY key leaves the whole rebuild where it was -- measured, and it is
+        the trap in this path: a value written correctly stays invisible because something
+        entirely unrelated does not compile. The errors the relay reports are therefore
+        logged rather than swallowed, even when none of them is ours.
+        """
+        result = await self._request("GET", "/api/reload")
+        errors = ((result or {}).get("data") or {}).get("errors") or {}
+        if errors:
+            logger.warning(f"De mailrelay meldt configuratiefouten bij het herladen: {list(errors)}")
+
+
+def _controleer_naam(account: str, display_name: str) -> None:
+    """Refuse anything that would not be text inside the generated sieve script.
+
+    Raises:
+        MailSenderNameError: The account name or the display name carries a character that
+            would end the string it is written into.
+    """
+    if not _ACCOUNT_PATROON.match(account):
+        raise MailSenderNameError(
+            f"Mailaccountnaam {account!r} hoort alleen kleine letters, cijfers en streepjes te bevatten"
+        )
+    if _NAAM_VERBODEN.search(display_name):
+        raise MailSenderNameError(
+            f"Weergavenaam {display_name!r} bevat een teken dat niet in een mailheader hoort "
+            "(regeleinde, @, punthaak, aanhalingsteken, backslash of dollarteken)"
+        )
+    if len(display_name) > 64:
+        raise MailSenderNameError(f"Weergavenaam {display_name!r} is langer dan 64 tekens")
+
+
+def render_sender_table(namen: dict[str, str]) -> str:
+    """The sieve script the identity rules include, rendered from the stored names.
+
+    Deliberately dull: one ``if`` per account, no expressions, no data structures. It is
+    generated code, so the only thing it may do is be obvious -- and the reader of a relay
+    configuration should be able to see at a glance that this file cannot do anything except
+    set one variable.
+
+    ``global`` is what makes the value visible to the including script (RFC 6609: an included
+    script shares only variables declared global), and it is declared in both.
+    """
+    regels = [
+        "# Gegenereerd door ZAD (RC-145). Niet met de hand bewerken: elke wijziging van een",
+        "# project schrijft dit script opnieuw, uit de sleutels onder " + MAIL_SENDER_NAME_PREFIX + ".",
+        'require ["variables"];',
+        'global "naam";',
+    ]
+    for account in sorted(namen):
+        naam = namen[account]
+        if not naam:
+            # Geen naam is geen regel: een leeg item zou een regel opleveren die niets doet.
+            continue
+        _controleer_naam(account, naam)
+        regels.append(f'if string :is "${{env.authenticated_as}}" "{account}" {{ set "naam" "{naam}"; }}')
+    return "\n".join(regels) + "\n"
 
 
 async def create_mail_connector() -> MailConnector:

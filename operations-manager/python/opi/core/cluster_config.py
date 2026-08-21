@@ -760,13 +760,19 @@ def get_mail_relay_port(cluster_name: str) -> int:
 
 def get_mail_from_address(cluster_name: str) -> str:
     """
-    The one sender address every project sends from. Not configurable per project.
+    The BASE sender address of this cluster: the bare one, without a plus part.
 
-    The relay pins the ``From:`` header to this address and rewrites the envelope to
-    ``<local>+<project>@<domain>``. Both live in the relay's own config (MAIL_FROM_LOCAL
-    and MAIL_DOMAIN in its secret); this function is what OPI hands to the application as
-    ``SMTP_FROM``. The two must agree -- if they drift, a developer is shown one address
-    while another one leaves the building.
+    Not what a project sends from -- that is ``<local>+<project>@<domain>``, composed by
+    ``generate_mail_sender_address`` and handed to the relay by ``MailManager``. What lives
+    here is the pair the relay itself is configured with (MAIL_FROM_LOCAL and MAIL_DOMAIN
+    in its secret), so composing happens in ONE place instead of here as well.
+
+    It is also the FALLBACK: a message from an account the relay holds no sender for goes
+    out under exactly this address, without a display name. So is the mail from ZAD's own
+    platform account, which is not a project and has no plus part to fill.
+
+    OPI and the relay must agree on this value -- if they drift, a developer is shown one
+    address while another one leaves the building.
 
     It is a domain we do NOT own: mail goes out over the Rijksoverheid mail server, so it
     carries their domain. That is also the only arrangement that survives DMARC, because
@@ -777,7 +783,7 @@ def get_mail_from_address(cluster_name: str) -> str:
         cluster_name: Name of the cluster
 
     Returns:
-        The fixed sender address (e.g. ``noreply-rijksapp@rijksoverheid.nl``)
+        The bare sender address (e.g. ``noreply-rijksapp@rijksoverheid.nl``)
 
     Raises:
         ValueError: If cluster is not found in configuration
