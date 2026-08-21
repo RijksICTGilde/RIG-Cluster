@@ -416,38 +416,6 @@ class MemoryRequestOptionsProvider(MemoryOptionsProvider):
         return get_max_memory_request_mi(settings.CLUSTER_MANAGER)
 
 
-class DomainModeOptionsProvider:
-    """Provides domain mode options for URL configuration."""
-
-    # De lijst ligt vast: elk project krijgt deze keuzes.
-    options_source: ClassVar[OptionsSource | None] = None
-
-    def get_options(self) -> list[dict[str, Any]]:
-        """Get available domain mode options."""
-        return [
-            {
-                "value": "component-specific",
-                "label": "Component-specifiek (standaard)",
-                "description": "Elk component krijgt zijn eigen unieke URL",
-            },
-            {
-                "value": "deployment-name",
-                "label": "Deployment-naam (gedeeld domein)",
-                "description": "Alle componenten delen dezelfde domeinnaam met verschillende paden",
-            },
-            {
-                "value": "custom",
-                "label": "Aangepast subdomein",
-                "description": "Specificeer een custom subdomein voor alle componenten",
-            },
-            {
-                "value": "nice-url",
-                "label": "Eigen subdomein (nice URL)",
-                "description": "Punt-gescheiden URLs zoals frontend.mijnapp.rijks.app",
-            },
-        ]
-
-
 class StorageTypeOptionsProvider:
     """Provides storage type options for container volumes."""
 
@@ -1935,7 +1903,6 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "CpuLimitOptionsProvider": CpuLimitOptionsProvider,
     "MemoryOptionsProvider": MemoryOptionsProvider,
     "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
-    "DomainModeOptionsProvider": DomainModeOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,
