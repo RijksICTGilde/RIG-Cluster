@@ -48,7 +48,11 @@ def _naar_de_mailstap(page: Page, app_server: str) -> WizardHelper:
     nergens heen; dat is geen bijzonderheid van deze dienst maar van de wizard.
     """
     wizard = _naar_de_dienstenstap(page, app_server)
-    _kaart(page).locator(".service-card__content").click()
+    # .service-card__body en niet .service-card__content: die tweede klasse verdween met de
+    # handgebouwde kaart toen de dienstkaarten op componenten overgingen. Er rendert niets
+    # meer dat zo heet, dus .click() had geen element om op te mikken en elke test die langs
+    # deze weg een dienst aanvinkt liep vast.
+    _kaart(page).locator(".service-card__body").click()
     expect(_kaart(page)).to_have_class(re.compile(r"\bservice-card--selected\b"))
 
     wizard.click_next()  # -> Projectleden
@@ -68,12 +72,19 @@ def test_de_dienst_staat_als_kaart_in_de_wizard(app_server: str, auth_page: Page
 
 def test_aanvinken_levert_een_eigen_stap_op(app_server: str, auth_page: Page) -> None:
     """De dienst heeft projectbrede instellingen, dus er hoort een stap te volgen. Blijft die
-    weg, dan is een van de vier bedradingspunten vergeten."""
+    weg, dan is een van de vier bedradingspunten vergeten.
+
+    TWEE VELDEN, EN DAT IS SINDS RC-114 DE HELE STAP. Hier stond ook "Deel voor de @ in het
+    afzenderadres". Dat veld bestaat niet meer: alle projecten versturen vanaf een vast
+    adres dat het platform zelf samenstelt uit de projectnaam, en de relay schrijft dat in
+    de From:. Zie de toelichting boven send_email/editables.py - het is geen opruiming maar
+    de enige opstelling die door DMARC komt.
+    """
     _naar_de_mailstap(auth_page, app_server)
 
     expect(auth_page.get_by_text("Naam van de afzender")).to_be_visible()
-    expect(auth_page.get_by_text("Deel voor de @ in het afzenderadres")).to_be_visible()
     expect(auth_page.get_by_text("Maximaal aantal berichten per dag")).to_be_visible()
+    expect(auth_page.get_by_text("Deel voor de @ in het afzenderadres")).to_have_count(0)
 
 
 def test_de_stap_verschijnt_niet_zonder_de_dienst(app_server: str, auth_page: Page) -> None:
@@ -87,29 +98,41 @@ def test_de_stap_verschijnt_niet_zonder_de_dienst(app_server: str, auth_page: Pa
     wizard.click_next()
     auth_page.wait_for_load_state("networkidle")
 
-    expect(auth_page.get_by_text("Deel voor de @ in het afzenderadres")).to_have_count(0)
+    expect(auth_page.get_by_text("Naam van de afzender")).to_have_count(0)
 
 
-def test_een_ongeldig_deel_voor_de_at_komt_er_niet_door(app_server: str, auth_page: Page) -> None:
-    """De regel staat in het configmodel en het formulier verwijst ernaar. Een waarde met een
-    @ erin zou anders pas als weigering van de relay terugkomen, op een bericht waar niemand
-    naar kijkt."""
+def test_een_ongeldige_afzendernaam_komt_er_niet_door(app_server: str, auth_page: Page) -> None:
+    """De regel staat in het CONFIGMODEL en het formulier verwijst ernaar.
+
+    Dit veld gaat rechtstreeks een mailheader in, dus een @ of een aanhalingsteken erin is
+    geen smaakkwestie: het formulier mag niet iets toelaten dat de API zou weigeren. De
+    validator is een ModelFieldValidator die naar dezelfde constraints wijst waarmee een
+    opgeslagen projectbestand wordt getoetst, en deze test loopt de weg waarlangs een
+    gebruiker die regel raakt.
+
+    Hier stond dezelfde meting op ``from-local-part``. Dat veld is met RC-114 vervallen -
+    het afzenderadres ligt vast - en de regel die overblijft zit op de afzendernaam.
+    """
     wizard = _naar_de_mailstap(auth_page, app_server)
 
-    veldbesturing_eindigend_op(auth_page, "from-local-part").fill("no@reply")
+    veldbesturing_eindigend_op(auth_page, "from-name").fill("post@rijksoverheid.nl")
     wizard.click_next()
     auth_page.wait_for_load_state("networkidle")
 
-    expect(auth_page.get_by_text(re.compile("alleen kleine letters"))).to_be_visible()
+    expect(auth_page.get_by_text(re.compile("mag geen regeleindes"))).to_be_visible()
 
 
-def test_een_geldig_deel_voor_de_at_gaat_door(app_server: str, auth_page: Page) -> None:
+def test_een_geldige_afzendernaam_gaat_door(app_server: str, auth_page: Page) -> None:
     """De tegenproef, zodat de test hierboven niet groen blijft omdat de stap altijd blijft
     staan."""
     wizard = _naar_de_mailstap(auth_page, app_server)
 
-    veldbesturing_eindigend_op(auth_page, "from-local-part").fill("support")
+    veldbesturing_eindigend_op(auth_page, "from-name").fill("Team Voorbeeld")
     wizard.click_next()
     auth_page.wait_for_load_state("networkidle")
 
-    expect(auth_page.get_by_text("Deel voor de @ in het afzenderadres")).to_have_count(0)
+    # Op de URL en niet alleen op de afwezigheid van het label: een stuk gelopen wizard
+    # toont dat label ook niet meer, en dan zou deze tegenproef groen blijven op een
+    # storing. Nu moet de stap echt achter ons liggen.
+    assert "send-email-config" not in auth_page.url, auth_page.url
+    expect(auth_page.get_by_text("Naam van de afzender")).to_have_count(0)

@@ -418,3 +418,27 @@ lotc_forms/templates/components/select-field.html.j2
 **Wat wij intussen doen.** In `static/css/lotc-app.css` wijzen wij die namen op `:root` aan op de themawaarde die er al is (`--nldd-color-surface: var(--semantics-surfaces-base-background-color)`, enzovoort), inclusief de typfout hierboven. Er komt daarmee geen enkele kleurwaarde bij en de lichte weergave verandert niet - `--semantics-surfaces-base-background-color` is daar #FFFFFF, precies de terugval die er stond. De drie namen die wij bewust NIET invullen (`.lotc-avatar`, `.lotc-unimplemented`, `.lotc-statusbar`) zetten hun voorgrond én achtergrond zelf vast en zijn dus in beide standen even leesbaar; die staan met die reden in `tests/test_donkere_weergave_vaste_kleuren.py`, dat ook rood wordt zodra er een naam bij komt. `tests/e2e/test_donkere_weergave_contrast.py` meet het contrast op de getroffen schermen in beide standen.
 
 **Voorstel.** De handgeschreven componenten hun kleuren uit `--semantics-…` laten halen, net als de gegenereerde componenten. Waar een eigen naam gewenst is (`--nldd-color-surface` als overschrijfpunt per toepassing), die naam dan zelf in het thema definiëren met een `light-dark()`-waarde, zodat de terugval een vangnet is en niet de werkelijke waarde. En de typfout `--semantics-actions-primary-default-background-color` rechtzetten - een kleur die als *background-color* heet maar als tekstkleur gebruikt wordt, is bovendien het verkeerde token voor die plek.
+
+## Een vergrendeld aanvinkvakje dat zijn waarde wel meestuurt, en dat ook aankondigt
+
+Gemeten in ZAD op 21 augustus 2026, in Chromium, op de dienstenstap van de aanmaakwizard.
+
+De dienstkaarten kennen een slot: kies je Keycloak, dan wordt `publish-on-web` automatisch aangevinkt en kun je hem niet meer uitzetten, want Keycloak heeft hem nodig. Dat slot mag nadrukkelijk **geen** `disabled` op het aanvinkvakje zijn. Een `disabled` vakje stuurt zijn waarde niet mee in de POST, en precies zo verdween een vergrendelde dienst op 6 augustus 2026 stil uit het projectbestand terwijl elke test eronder groen bleef. Het juiste attribuut is `aria-disabled`: "je mag dit niet wijzigen", zonder de waarde in te trekken.
+
+Dat lukt vandaag niet meer. `<nldd-checkbox>` zet zijn echte `<input>` in een schaduwboom en geeft daar alleen `aria-label` (uit `accessible-label`) en `disabled` (uit de `disabled`-eigenschap) aan door:
+
+```
+<nldd-checkbox id="services-publish-on-web" name="services[]" value="publish-on-web"
+               accessible-label="Publiceren op het web" checked>
+  #shadow-root
+    <input class="checkbox__input" type="checkbox" name="services[]"
+           value="publish-on-web" aria-label="Publiceren op het web">
+```
+
+De `<input>` is het element dat een schermlezer voorleest, en daar is niets aan toe te voegen: hij wordt door lit gerenderd en het sjabloon eromheen kan er niet bij. Het attribuut op de host blijft op de host staan, en die host heeft geen rol.
+
+**Waarom we het niet zelf oplossen.** De twee uitwegen zijn allebei erger dan het gat. `disabled` zetten haalt de waarde uit de POST - de bug die dit slot juist veroorzaakte. En vanuit `wizard.js` in de schaduwboom van een ander component grijpen om daar een attribuut op de `<input>` te zetten, maakt onze code afhankelijk van de interne opbouw van dat component; die opbouw is geen afspraak en verandert zonder waarschuwing.
+
+**Wat wij intussen doen.** Het attribuut staat op de kaart (`<nldd-card>`, waar wizard.js het bijhoudt) en sinds vandaag ook weer op de host `<nldd-checkbox>`, zodat de markering er staat waar hij hoort zodra het component hem doorgeeft. Aangekondigd wordt hij nog niet. Het slot zelf werkt wel: de change-handler draait een geweigerde wijziging terug en toont een dialoog met de reden, en de server weigert het ook. `tests/e2e/test_wizard_locked_service.py` meet dat de waarde meegaat en dat het vakje niet `disabled` is.
+
+**Voorstel.** `aria-disabled` op `<nldd-checkbox>` (en op `<c-checkbox>`/`<nldd-checkbox-field>`) doorgeven aan de `<input>` in de schaduwboom, los van `disabled`. Of, als een eigen attribuut prettiger is, een `locked`-eigenschap die precies dat doet: aankondigen dat het vakje niet te wijzigen is, de waarde laten staan en hem gewoon meesturen. Hetzelfde geldt voor de andere bedieningscomponenten met een schaduwboom - een vergrendelde keuze zonder ingetrokken waarde is geen zeldzaamheid.

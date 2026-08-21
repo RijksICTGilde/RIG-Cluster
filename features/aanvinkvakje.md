@@ -309,6 +309,32 @@ WEL door schaduwbomen heen, `querySelector` in de pagina NIET. Een meting die op
 niets en lijkt te slagen. Dat is een keer gebeurd: de test las een lege lijst en noemde dat
 "niets verstuurd".
 
+### Wat het slot NIET kan aankondigen
+
+Vergrendeld is `aria-disabled` en nadrukkelijk niet `disabled`: dat tweede onderdrukt de
+waarde in de POST, en precies zo verdween een vergrendelde dienst op 6 augustus 2026 stil
+uit het projectbestand.
+
+Sinds de dienstkaart door het componentensysteem getekend wordt, komt dat attribuut niet
+meer aan. `<nldd-checkbox>` rendert zijn `<input>` in een schaduwboom en geeft daar alleen
+`aria-label` (uit `accessible-label`) en `disabled` (uit de `disabled`-eigenschap) aan door:
+
+```
+<nldd-checkbox accessible-label="Publiceren op het web" checked aria-disabled="true">
+  #shadow-root
+    <input class="checkbox__input" type="checkbox" aria-label="Publiceren op het web">
+```
+
+Het sjabloon en `wizard.js` zetten `aria-disabled` op de kaart EN op de host, zodat de
+markering staat waar hij hoort zodra het component hem doorgeeft. Voorgelezen wordt hij nog
+niet: de `<input>` is het element met de rol, en daar is van buitenaf niets aan toe te
+voegen. Het gat staat met de meting in `request_for_components.md`; in de schaduwboom van
+een ander component grijpen is geen uitweg (zie hierboven waarom niet), en `disabled` al
+helemaal niet.
+
+Het slot zelf werkt wel, langs drie wegen: de change-handler draait een geweigerde klik
+terug, de dialoog vertelt waarom, en de server weigert het ook.
+
 ### De vangrail
 
 `tests/e2e/test_locked_service_survives_submit.py` bevat de toets die hierop staat:

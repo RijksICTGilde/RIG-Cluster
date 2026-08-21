@@ -18,7 +18,10 @@ naast elkaar stonden): `docs/lotc-samenleven-met-jinja-roos.md`.
   `/admin/usage`, en **de wizard** (`/forms/wizard/start`, `/forms/wizard/<flow>`,
   `/forms/wizard/<flow>/edit/<project>`, elke htmx-stap en de samenvatting).
 - Daarnaast een **proefopstelling** onder `/lotc/`, met voorbeeldprojecten. Die is er om
-  vorm te kiezen zonder een cluster nodig te hebben, niet als eindbestemming.
+  vorm te kiezen zonder een cluster nodig te hebben, niet als eindbestemming. Let op: die
+  routes zijn **publiek** - ze vragen geen sessie en geen rol, en ze zitten ook in de
+  release-image. Wat `opi/web/lotc_fixtures.py` aanlevert ligt dus op straat, dus daar
+  horen alleen zichtbaar verzonnen waarden in, ook (juist) voor de beheerderspagina's.
 - De navigatie volgt de opzet van [bg.rijks.app](https://bg.rijks.app/): hoofdnavigatie
   in een zijkolom met groepen, alleen hulplinks (account, in- en uitloggen) in de header.
 - De formulierlaag is te bekijken op `/lotc/formulier`.
