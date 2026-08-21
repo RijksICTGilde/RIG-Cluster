@@ -19,3 +19,7 @@ Je component krijgt de variabelen **PUBLIC_HOST** en **PUBLIC_HOSTNAME** met het
 ## Je eigen domein gebruiken
 
 In plaats van een adres van het platform kun je een eigen domeinnaam laten uitkomen op je applicatie. Op [Eigen domein](/eigen-domein) staat welk DNS-record je daarvoor laat zetten, wat het platform daarna zelf regelt en welke twee punten bij je eigen organisatie blijven.
+
+## Meer scenario's
+
+Alle manieren om een adres samen te stellen, met wat je daarvoor instelt (een eigen domein, meerdere componenten achter één adres, paden), staan in [Webadressen: de scenario's](/forms/wizard/help/publish_on_web/guide.md).
