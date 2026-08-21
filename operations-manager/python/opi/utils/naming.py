@@ -2021,13 +2021,7 @@ def get_deployment_hostnames(
     # files migrated to ``component.subdomain`` (schema v2.8), and the same pair gates the
     # root INGRESS in project_manager, so the Keycloak redirect list and the ingress set
     # cannot disagree.
-    if (
-        domain_approved
-        and domain_format in ROOT_COMPONENT_FORMAT_IDS
-        and root_component
-        and subdomain
-        and base_domain
-    ):
+    if domain_approved and domain_format in ROOT_COMPONENT_FORMAT_IDS and root_component and subdomain and base_domain:
         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)
