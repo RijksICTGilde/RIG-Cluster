@@ -188,15 +188,6 @@ On a network-restricted host where the build container cannot reach
 `proxy.golang.org`, use a single-arch `docker build --network=host` (module
 download then uses the host network).
 
-### Open after the next publish: the skip in the VLAM-button test
-
-`tests/e2e/test_sandbox_vlam.py::test_the_test_vlam_button_gets_an_answer` starts
-by checking that `#vlam-token` is on the status page and SKIPS when it is not,
-because the published `:latest` predates the Test-VLAM button (RC-147). That skip
-is scaffolding, not a permanent guard: it cannot tell "old image" from "the block
-stopped rendering", so once `task publish-e2e-allservices` has run with the button
-in it, remove the skip so a broken block fails the test instead of skipping it.
-
 ## Dependencies
 
 - Runtime: Go stdlib + `jackc/pgx/v5` (Postgres), `redis/go-redis/v9`,

@@ -36,7 +36,7 @@ import pytest
 from opi.services.catalog.vlam.endpoint import vlam_endpoint
 from opi.services.services_enums import ServiceType
 from tests.e2e.conftest import FORGEJO_VERIFY_SSL, SANDBOX_TEST_USER
-from tests.e2e.helpers import cluster, lifecycle, sandbox_api, vlam_stub
+from tests.e2e.helpers import cluster, sandbox_api, vlam_stub
 from tests.e2e.helpers.lifecycle import CreatedProject, create_project_via_wizard, create_project_with_services
 from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
@@ -325,17 +325,6 @@ def test_the_test_vlam_button_gets_an_answer(
     try:
         with cluster.port_forward(namespace, pod, 8080) as base_url:
             page.goto(f"{base_url}/", wait_until="load")
-            # STEIGER, geen blijvende grendel: deze skip kan "image van voor RC-147" niet
-            # onderscheiden van "het blok rendert niet meer", en dekt dus na de publish een
-            # echte regressie stil af. Weghalen zodra `task publish-e2e-allservices` met de
-            # knop erin gedraaid is -- staat ook in features/e2e-allservices-image.md.
-            if page.locator("#vlam-token").count() == 0:
-                pytest.skip(
-                    f"de draaiende workload ({lifecycle.RUNNABLE_IMAGE}) kent de Test-VLAM-knop nog "
-                    "niet: dat image is van voor RC-147. Publiceer het opnieuw met "
-                    "`task publish-e2e-allservices` en herstart de pod; dan meet deze test wat hij "
-                    "hoort te meten (en mag deze skip weg)."
-                )
             page.fill("#vlam-token", _NEP_TOKEN)
             page.fill("#vlam-model", vlam_stub.STUB_MODEL_ID)
             page.fill("#vlam-question", "werkt deze verbinding?")
