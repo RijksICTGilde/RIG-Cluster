@@ -2023,7 +2023,11 @@ async def _fetch_argocd_deployment_status(
     project_name: str, deployment: dict[str, Any], argo: Any, kubectl: Any
 ) -> dict[str, Any]:
     """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy."""
-    from opi.services.deployment_diagnostics import conditions_to_errors, gather_deployment_errors
+    from opi.services.deployment_diagnostics import (
+        conditions_to_errors,
+        gather_deployment_errors,
+        gather_sync_deviations,
+    )
     from opi.services.event_interpreter import interpret_argocd_errors
     from opi.utils.naming import generate_argocd_application_name
 
@@ -2071,6 +2075,14 @@ async def _fetch_argocd_deployment_status(
         errors = interpret_argocd_errors(raw_errors, deployment_name=deployment_name, component_names=component_names)
         _annotate_argocd_error_ages(errors)
 
+        # Afwijkingen naast fouten: welke resources houden de badges van groen af, en
+        # waarom. Alleen berekend als er iets af te wijken valt - groen blijft stil.
+        deviations: list[dict[str, str]] = []
+        if sync.get("status") == "OutOfSync" or (app_health == "Progressing" and not errors):
+            deviations = gather_sync_deviations(
+                status_data, deployment_name=deployment_name, disabled_components=disabled_components
+            )
+
         last_sync = operation_state.get("finishedAt")
         if not last_sync and sync.get("status") == "Synced":
             last_sync = status.get("reconciledAt")
@@ -2086,6 +2098,7 @@ async def _fetch_argocd_deployment_status(
             "operation_phase": operation_state.get("phase"),
             "operation_message": operation_state.get("message"),
             "errors": errors,
+            "deviations": deviations,
         }
     except Exception as app_error:
         logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
