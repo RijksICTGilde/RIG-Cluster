@@ -87,6 +87,20 @@ Alleen op een cluster waarvan de configuratie een VLAM-endpoint kent (`vlam` in
 De sandbox draagt een PLAATSHOUDER, zodat de bedrading (kaart, variabele, netwerkregel) daar
 end-to-end te doorlopen is; er zit geen VLAM achter.
 
+Sinds RC-144 zet de sandbox-E2E-suite zelf een STUB op die plaatshoudercoordinaten
+(`tests/e2e/helpers/vlam_stub.py`): een haproxy die op `/v1/models` een vaste modellenlijst
+teruggeeft, met dezelfde naam, namespace en pod-labels die het endpoint noemt. Daarmee is in de
+sandbox niet alleen de bedrading maar de hele KETEN te meten -- de aanroep vanuit een afnemer-pod
+komt aan, en een pod in een project zonder de dienst loopt op hetzelfde adres vast.
+
+De stub wordt met `kubectl` neergezet en niet als ZAD-project aangemaakt, en dat is geen luiheid:
+de plaatshouder noemt het project `vlam-wt8`, die naam staat in het pod-label waar de uitgaande
+regel van de afnemer op selecteert, en een technische projectnaam is op dit platform niet te
+kiezen -- `generate_project_name()` hangt er op ELKE aanmaakweg een willekeurig postfix van drie
+tekens achter. De INKOMENDE regel van de stub wordt wel door de dienst zelf gerenderd
+(`contribute_deployment_manifests` van cross-domain-access), zodat de sandbox de echte
+wildcard-YAML afdwingt en niet een handgeschreven kopie ervan.
+
 Op een cluster zonder endpoint gebeuren twee dingen, en allebei zijn nodig:
 
 1. de dienstkaart staat niet in de wizard;
