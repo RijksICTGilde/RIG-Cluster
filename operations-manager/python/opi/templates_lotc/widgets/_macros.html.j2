@@ -124,6 +124,9 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
   gevraagd in request_for_components.md ("een vergrendeld aanvinkvakje dat zijn waarde wel
   meestuurt"). Disabled is hier GEEN alternatief: dat onderdrukt de waarde in de POST, en
   precies zo verdween een vergrendelde dienst ooit stil uit het projectbestand.
+
+  Op een vakje dat WEL ``uit`` is komt het attribuut niet: ``aria-disabled="false"`` naast
+  een ``disabled`` is een tegenspraak in de markup. De voorinstellingen gebruiken die vorm.
 #}
 {% macro kaart_vakje(id, label, gekozen=False, uit=False, naam='', waarde='', vergrendeld=False) %}
 <c-cluster justify="end" class="service-card__kies">
@@ -132,7 +135,7 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
         {% if naam %}name="{{ naam|e }}"{% endif %}
         {% if waarde %}value="{{ waarde|e }}"{% endif %}
         accessible-label="{{ label|e }}"
-        aria-disabled="{{ 'true' if vergrendeld else 'false' }}"
+        {% if not uit %}aria-disabled="{{ 'true' if vergrendeld else 'false' }}"{% endif %}
         {% if gekozen %}checked{% endif %}
         {% if uit %}disabled{% endif %}></nldd-checkbox>
 </c-cluster>
