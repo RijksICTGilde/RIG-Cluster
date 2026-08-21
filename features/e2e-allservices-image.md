@@ -54,6 +54,21 @@ when send-email is bound: STARTTLS + AUTH as the injected account, one message
 to an address you choose, and the subject line in the response so you can find
 it at the receiving end (sandbox: Mailpit on the sink, port 8025).
 
+The vlam probe stops one step short for the same kind of reason: it carries no
+credential, so it says nothing about whether a project's own token opens the door
+and whether a model actually answers. That last stretch needs something only a
+human has, so it hangs off a manual **"Test VLAM"** form (`POST /vlam-chat`) when
+the vlam service is bound: one real, non-streaming chat completion to
+`{VLAM_API_URL}/v1/chat/completions` with a token, a model (pre-filled with what
+the last probe round saw) and a question you type, and the answer on the page.
+The token is used for that one request and then dropped - never stored, never
+logged, never rendered back, not even into the field it came from - and the
+question and answer stay off the log too, which is why this one answers the POST
+in place instead of redirecting like the mail button does. Failures name the
+suspect hop the way the probe's do, but the hops differ because a credential is
+in play: no answer at all is the network path, a 401/403 is the token, a 400/404
+is the model name, a 5xx is the proxy or VLAM.
+
 Beyond the round-trip, for every **bound** service it asserts that **all** env
 vars the platform injects for it are actually injected (the key exists) - a
 dropped or renamed variable is a provisioning-drift bug and fails the check. An
@@ -102,6 +117,11 @@ uv run python scripts/generate_probe_spec.py     # or: task generate-probe-spec
 - `GET /` - a plain human page: a `Hello, world` banner + a live table of
   service -> OK/FAIL/skipped + latency. Eyeball a deployment in a browser via the
   project's public ingress.
+- `POST /send-testmail` - the manual mail button (see above); redirects back to
+  `/` with the subject line, so a refresh does not resend.
+- `POST /vlam-chat` - the manual VLAM chat button (see above); answers with the
+  page itself, carrying the model answer or the failure. `404` when the vlam
+  service is not bound: no binding, no button, no endpoint.
 - `GET /healthz` - `200 OK` once the process is listening (liveness only; never
   reflects a downstream service).
 - `GET /status` - JSON, the payload the E2E suite asserts on:
@@ -167,6 +187,15 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 On a network-restricted host where the build container cannot reach
 `proxy.golang.org`, use a single-arch `docker build --network=host` (module
 download then uses the host network).
+
+### Open after the next publish: the skip in the VLAM-button test
+
+`tests/e2e/test_sandbox_vlam.py::test_the_test_vlam_button_gets_an_answer` starts
+by checking that `#vlam-token` is on the status page and SKIPS when it is not,
+because the published `:latest` predates the Test-VLAM button (RC-147). That skip
+is scaffolding, not a permanent guard: it cannot tell "old image" from "the block
+stopped rendering", so once `task publish-e2e-allservices` has run with the button
+in it, remove the skip so a broken block fails the test instead of skipping it.
 
 ## Dependencies
 
