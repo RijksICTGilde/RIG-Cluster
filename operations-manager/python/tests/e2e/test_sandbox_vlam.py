@@ -36,7 +36,7 @@ import pytest
 from opi.services.catalog.vlam.endpoint import vlam_endpoint
 from opi.services.services_enums import ServiceType
 from tests.e2e.conftest import FORGEJO_VERIFY_SSL, SANDBOX_TEST_USER
-from tests.e2e.helpers import cluster, sandbox_api, vlam_stub
+from tests.e2e.helpers import cluster, lifecycle, sandbox_api, vlam_stub
 from tests.e2e.helpers.lifecycle import CreatedProject, create_project_via_wizard, create_project_with_services
 from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
@@ -295,3 +295,55 @@ def test_a_project_without_the_service_does_not_get_through(
         f"Uitvoer: {answer!r}"
     )
     assert _NO_ANSWER in answer, f"verwacht dat de aanroep vastloopt zonder de dienst, maar de probe zei: {answer!r}"
+
+
+#: Een verzonnen token. De stub toetst hem niet (dat kan haproxy niet, zie
+#: ``vlam_stub._haproxy_config``), dus wat hieronder gemeten wordt is de KETEN: formulier,
+#: uitgaande regel, inkomende regel, een OpenAI-vormig antwoord terug op de pagina. Juist
+#: het stuk dat hier niet meetbaar is -- dat het echte VLAM een verkeerd token weigert --
+#: is waarvoor deze knop op productie bestaat.
+_NEP_TOKEN = "nep-token-rc147"
+
+
+@pytest.mark.timeout(900)
+def test_the_test_vlam_button_gets_an_answer(
+    sandbox_context: BrowserContext, vlam_project: CreatedProject, stub_endpoint: VlamEndpoint
+) -> None:
+    """De knop op de statuspagina van de afnemer doet echt een chat-completion (RC-147).
+
+    Dit is de enige meting die de WEG VAN DE GEBRUIKER loopt: de andere gaan met wget uit
+    een debug-container. Hier vult een browser het formulier, drukt op de knop, en het
+    antwoord van de stub moet op de pagina staan.
+
+    Via een port-forward, om dezelfde reden als bij ``/status`` in de all-services-suite:
+    het project bindt geen publish-on-web en de statuspagina is dan alleen van binnenuit
+    bereikbaar. Een NetworkPolicy selecteert pods, dus de aanroep die de pod zelf naar de
+    stub doet is nog steeds onderworpen aan precies de regels die het platform genereerde.
+    """
+    namespace, pod = _first_running_pod(vlam_project)
+    page = sandbox_context.new_page()
+    try:
+        with cluster.port_forward(namespace, pod, 8080) as base_url:
+            page.goto(f"{base_url}/", wait_until="load")
+            if page.locator("#vlam-token").count() == 0:
+                pytest.skip(
+                    f"de draaiende workload ({lifecycle.RUNNABLE_IMAGE}) kent de Test-VLAM-knop nog "
+                    "niet: dat image is van voor RC-147. Publiceer het opnieuw met "
+                    "`task publish-e2e-allservices` en herstart de pod; dan meet deze test wat hij "
+                    "hoort te meten."
+                )
+            page.fill("#vlam-token", _NEP_TOKEN)
+            page.fill("#vlam-model", vlam_stub.STUB_MODEL_ID)
+            page.fill("#vlam-question", "werkt deze verbinding?")
+            page.click("form[action='/vlam-chat'] button[type=submit]")
+            page.wait_for_load_state()
+            body = page.text_content("body") or ""
+            html = page.content() or ""
+    finally:
+        page.close()
+
+    assert vlam_stub.STUB_CHAT_ANSWER in body, (
+        f"het antwoord van de vlam-stub staat niet op de pagina. Verdacht: de uitgaande netwerkregel "
+        f"van de dienst, de inkomende regel op de stub, of de knop zelf. Pagina: {body!r}"
+    )
+    assert _NEP_TOKEN not in html, "het ingevulde token kwam terug in de pagina"
