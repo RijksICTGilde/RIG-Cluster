@@ -72,11 +72,11 @@ aanzetten werkelijk moet gebeuren").
   RC-145 draagt de From: het plusdeel, neem dat mee in het gesprek.
 - Een bounce-postbus die OPI via IMAP mag legen; zonder die is onbestelbare post
   onzichtbaar.
-- De namespace `rig-prd-ron` vooraf handmatig aanmaken (ArgoCD op ODCN is namespaced en
-  kan dat niet zelf), met de RON-annotatie
-  `egress.projectcalico.org/egressGatewayPolicy: rig-ron`, het label
-  `argocd.argoproj.io/managed-by: rig-prd-operations` en het `sops-age-key`-secret erin;
-  het exacte manifest staat in `features/send-email.md`.
+- De namespace `rig-prd-ron` komt uit de bootstrap (`namespace-ron.yaml` in de
+  odcn-production bootstrap-overlay, met de RON-annotatie en het managed-by-label;
+  ArgoCD op ODCN is namespaced en kan dat niet zelf): `task bootstrap-argo-system`
+  draaien. Daarna het `sops-age-key`-secret erin kopieren; het commando staat in
+  `features/send-email.md`.
 - De eigen Application `ron-infrastructure` aanzetten
   (`bootstrap/rig-system/kustomize/overlays/odcn-production/`, regel staat klaar in
   commentaar) en `MAIL_RELAY_API_URL` aan in de OPI-overlay van odcn. NIET via
