@@ -34,7 +34,7 @@ from opi.services.services import (
 )
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_extra_database_schema, registry_tag_owner
-from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
+from opi.utils.project_utils import ComponentValidationError, validate_root_component
 
 if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
@@ -727,33 +727,18 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         seen_deployments.add(dep_name)
 
         refs = dep.get("components", []) or []
-        domain_mode = get_domain_setting(dep, DomainSetting.DOMAIN_MODE, "component-specific")
 
         # All component references resolve to a defined component
         reference_result = validate_component_references(project_data, refs, "deployment")
         if not reference_result["success"]:
             raise ProjectIntegrityError(reference_result["error"])
 
-        # Ingress path uniqueness within the deployment
-        paths = []
-        for ref in refs:
-            ref_name = ref.get("reference") if isinstance(ref, dict) else None
-            comp = component_by_name.get(ref_name)
-            if comp:
-                paths.append(comp.get("path", "/"))
-        try:
-            validate_component_paths(paths, domain_mode)
-        except ComponentValidationError as e:
-            raise ProjectIntegrityError(str(e)) from e
-
         # Root component constraints
         root_ref = get_domain_setting(dep, DomainSetting.ROOT_COMPONENT)
         if root_ref:
             ref_names = [name for r in refs if isinstance(r, dict) and (name := r.get("reference"))]
             try:
-                validate_root_component(
-                    root_ref, ref_names, domain_mode, get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
-                )
+                validate_root_component(root_ref, ref_names, get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT))
             except ComponentValidationError as e:
                 raise ProjectIntegrityError(str(e)) from e
 

@@ -467,16 +467,15 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
             },
         )
 
-        # Seed the domains step with default domain mode only.
+        # Seed the domains step with one empty deployment entry, so the index-based
+        # merge in get_merged_data() has a slot to land on.
         # Do NOT include "name" here - it comes from the deployment step
         # and the index-based merge in get_merged_data() would overwrite it.
         state.store_step_data(
             "domains",
             {
                 "deployments": [
-                    {
-                        "domain-mode": "component-specific",
-                    },
+                    {},
                 ],
             },
         )

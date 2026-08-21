@@ -7,7 +7,6 @@ infrastructure, and URL handling.
 """
 
 from opi.utils.naming import (
-    HostnameFormat,
     ensure_fqdn,
     ensure_url_has_protocol,
     extract_domain_from_url,
@@ -678,7 +677,7 @@ class TestGetComponentIngressMap:
     """Tests for get_component_ingress_map function."""
 
     def test_dots_format(self):
-        """DOTS format generates component.subdomain.base_domain."""
+        """The component.subdomain format generates component.subdomain.base_domain."""
         result = get_component_ingress_map(
             "frontend",
             "prod",
@@ -686,7 +685,7 @@ class TestGetComponentIngressMap:
             ".kind",
             subdomain="myapp",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS,
+            domain_format="component.subdomain",
             project_data=_approved("rijks.app"),
             cluster="local",
         )
@@ -723,7 +722,7 @@ class TestGetDeploymentHostnames:
     """Tests for get_deployment_hostnames function."""
 
     def test_dots_format_includes_root(self):
-        """DOTS format includes root hostname."""
+        """The component.subdomain format with a root component includes the root hostname."""
         result = get_deployment_hostnames(
             ["frontend", "backend"],
             "prod",
@@ -731,7 +730,8 @@ class TestGetDeploymentHostnames:
             ".kind",
             subdomain="myapp",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS,
+            domain_format="component.subdomain",
+            root_component="frontend",
             project_data=_approved("rijks.app"),
             cluster=_CLUSTER,
         )
@@ -739,6 +739,21 @@ class TestGetDeploymentHostnames:
         assert "backend.myapp.rijks.app" in result
         assert "myapp.rijks.app" in result
         assert len(result) == 3
+
+    def test_dots_format_without_root_component_has_no_root(self):
+        """Without a root component the root hostname is not handed out."""
+        result = get_deployment_hostnames(
+            ["frontend"],
+            "prod",
+            "myapp",
+            ".kind",
+            subdomain="myapp",
+            base_domain="rijks.app",
+            domain_format="component.subdomain",
+            project_data=_approved("rijks.app"),
+            cluster=_CLUSTER,
+        )
+        assert result == ["frontend.myapp.rijks.app"]
 
     def test_dashes_format_no_root(self):
         """DASHES format does not add root hostname."""
@@ -765,26 +780,6 @@ class TestGetDeploymentHostnames:
         )
         # In subdomain mode with subdomain != deployment_name, both resolve to same hostname
         assert "myapp.dev.example.com" in result
-
-
-class TestHostnameFormat:
-    """Tests for HostnameFormat enum."""
-
-    def test_from_domain_mode_nice_url(self):
-        """'nice-url' maps to DOTS."""
-        assert HostnameFormat.from_domain_mode("nice-url") == HostnameFormat.DOTS
-
-    def test_from_domain_mode_other(self):
-        """Any other string maps to DASHES."""
-        assert HostnameFormat.from_domain_mode("something") == HostnameFormat.DASHES
-
-    def test_from_domain_mode_none(self):
-        """None maps to DASHES."""
-        assert HostnameFormat.from_domain_mode(None) == HostnameFormat.DASHES
-
-    def test_from_domain_mode_empty(self):
-        """Empty string maps to DASHES."""
-        assert HostnameFormat.from_domain_mode("") == HostnameFormat.DASHES
 
 
 class TestBackupNaming:

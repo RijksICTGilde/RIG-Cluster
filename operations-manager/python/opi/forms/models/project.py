@@ -192,17 +192,6 @@ class ProjectFormModel(BaseModel):
     ] = Field(min_length=1)
 
     # Web Address Configuration
-    domain_mode: Annotated[
-        str,
-        FormMeta(
-            label="domain.mode",
-            description="domain.mode.description",
-            widget="radio",
-            options_provider="DomainModeOptionsProvider",
-            section="web",
-        ),
-    ] = Field(default="component-specific")
-
     subdomain: Annotated[
         str | None,
         FormMeta(
@@ -211,8 +200,6 @@ class ProjectFormModel(BaseModel):
             widget="text",
             placeholder="mijn-app",
             section="web",
-            depends_on="domain_mode",
-            show_when={"domain_mode": "custom"},
         ),
     ] = Field(default=None)
 
@@ -280,7 +267,6 @@ def get_project_form_layout() -> Fieldset:
                 css_class="web-address",
                 collapsible=True,
                 children=[
-                    "domain_mode",
                     "subdomain",
                 ],
             ),

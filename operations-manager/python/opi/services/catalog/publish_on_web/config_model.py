@@ -111,10 +111,9 @@ class PublishOnWebDeploymentConfig(BaseModel):
 
     Every field is optional because a deployment on the platform's own cluster domain
     needs none of them: the format defaults, the base domain comes from the cluster and the
-    issuer from the domain entry. ``domain-mode`` is legacy -- superseded by
-    ``domain-format`` and read only by ``HostnameFormat.from_domain_mode`` for old files --
-    but it describes the same subject, so it moved along rather than staying behind as a
-    second place to look.
+    issuer from the domain entry. The legacy ``domain-mode`` field is gone: the v2.8
+    migration converts ``nice-url`` to ``domain-format: component.subdomain`` and drops
+    the key.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -145,11 +144,6 @@ class PublishOnWebDeploymentConfig(BaseModel):
             "claim the same name; on a domain of your own no approval is involved -- which names exist "
             "there is your organisation's business."
         ),
-    )
-    domain_mode: str | None = Field(
-        default=None,
-        alias="domain-mode",
-        description="LEGACY hostname strategy, superseded by domain-format. Only read for files that predate it.",
     )
     domain_format: DomainFormatId | None = Field(
         default=None,
