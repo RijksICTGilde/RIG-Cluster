@@ -799,7 +799,11 @@ class PrometheusConnector:
         try:
             # Query all PVC usage in the namespace - simple namespace filter only
             pvc_used_query = f'kubelet_volume_stats_used_bytes{{namespace="{namespace}"}}'
-            pvc_used_result = self.prom.custom_query_range(
+            # Via to_thread, net als custom_query hierboven: prometheus_api_client praat
+            # synchroon via requests, en een synchrone aanroep in een async methode houdt
+            # de event loop vast tot de DNS- en retryketen op is.
+            pvc_used_result = await asyncio.to_thread(
+                self.prom.custom_query_range,
                 query=pvc_used_query,
                 start_time=start_time,
                 end_time=end_time,
@@ -808,7 +812,9 @@ class PrometheusConnector:
 
             # Get PVC capacities (current values)
             pvc_capacity_query = f'kubelet_volume_stats_capacity_bytes{{namespace="{namespace}"}}'
-            pvc_capacity_result: list[dict[str, Any]] = self.prom.custom_query(pvc_capacity_query)
+            pvc_capacity_result: list[dict[str, Any]] = await asyncio.to_thread(
+                self.prom.custom_query, pvc_capacity_query
+            )
 
             # Build capacity lookup by PVC name
             pvc_capacities: dict[str, float] = {}
@@ -878,7 +884,9 @@ class PrometheusConnector:
             query = f'kube_pod_info{{namespace="{namespace}"}}'
             logger.debug(f"Discovering workloads with query: {query}")
 
-            result: list[dict[str, Any]] = self.prom.custom_query(query)
+            # Via to_thread, om dezelfde reden als bij custom_query: synchroon in een
+            # async methode blokkeert de hele applicatie voor de duur van het verzoek.
+            result: list[dict[str, Any]] = await asyncio.to_thread(self.prom.custom_query, query)
 
             for item in result:
                 metric = item.get("metric", {})

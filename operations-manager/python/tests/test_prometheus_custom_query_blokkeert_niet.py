@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from opi.connectors.prometheus import PrometheusConnector
@@ -48,15 +48,18 @@ def reset_singleton():
 
 @pytest.fixture
 def connector() -> PrometheusConnector:
-    """Een verbonden connector met een client die blokkeert zoals de echte dat doet."""
-    with patch.object(PrometheusConnector, "__init__", lambda self: None):
-        verbinding = PrometheusConnector.__new__(PrometheusConnector)
-        verbinding._initialized = True
-        verbinding._prometheus_url = "http://prometheus:9090"
-        verbinding.prom = MagicMock()
-        PrometheusConnector.is_connected = True
-        PrometheusConnector._instance = verbinding
-        return verbinding
+    """Een verbonden connector met een client die blokkeert zoals de echte dat doet.
+
+    Via ``__new__`` en niet via de constructor: die zou verbinding maken. Daarmee draait
+    ``__init__`` sowieso niet en hoeft die ook niet afgevangen te worden.
+    """
+    verbinding = PrometheusConnector.__new__(PrometheusConnector)
+    verbinding._initialized = True
+    verbinding._prometheus_url = "http://prometheus:9090"
+    verbinding.prom = MagicMock()
+    PrometheusConnector.is_connected = True
+    PrometheusConnector._instance = verbinding
+    return verbinding
 
 
 @pytest.mark.asyncio
