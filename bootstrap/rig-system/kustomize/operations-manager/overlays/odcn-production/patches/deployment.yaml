@@ -9,7 +9,7 @@ spec:
       - name: ghcr-rig-robot-pull-secret
       containers:
       - name: operations-manager
-        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.08.21.1526-366c81e5
+        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.08.21.1633-2ca94c4e-dirty
         resources:
           limits:
             cpu: "3"
@@ -60,17 +60,17 @@ spec:
         # daarmee alle accounts aan: die van een project en dat van ZAD zelf. Het geheim is
         # dezelfde gegenereerde bron als die de relay in zijn eigen namespace krijgt, hier
         # gerenderd in de namespace van OPI - zoals bij Keycloak en PostgreSQL.
-        # optional: true, want de relay staat nog niet aan; zonder het geheim boot OPI
-        # gewoon door en blijft de dienst send-email zeggen dat er geen relay is.
+        # optional: true zodat OPI ook op een cluster zonder relay gewoon doorboot; zonder
+        # het geheim blijft de dienst send-email zeggen dat er geen relay is.
         #
         # MAIL_RELAY_API_URL is de SCHAKELAAR: leeg betekent "geen relay op dit cluster" en
         # de dienst weigert dan een account aan te maken in plaats van onbruikbare
-        # inloggegevens uit te delen. UIT sinds de avond van 21 augustus 2026, met de
-        # ron-infrastructure Application mee (zie de bootstrap-kustomization): zolang de
-        # relay in zijn crashlus-RCA zit, hoort OPI "geen relay" te melden in plaats van
-        # elke projectverwerking op een dode poort te laten falen.
-        # - name: MAIL_RELAY_API_URL
-        #   value: "http://rig-mail-relay.rig-prd-ron.svc.cluster.local:8080"
+        # inloggegevens uit te delen. Aan sinds 21 augustus 2026, die avond uit gezet toen
+        # de relay in een crashlus zat, en weer aan zodra de RCA rond was en een verse boot
+        # bewezen op onze configuratie draaide. De toelichting staat bij
+        # argocd-application-ron-infrastructure.yaml in de bootstrap-kustomization.
+        - name: MAIL_RELAY_API_URL
+          value: "http://rig-mail-relay.rig-prd-ron.svc.cluster.local:8080"
         - name: MAIL_RELAY_ADMIN_USERNAME
           valueFrom:
             secretKeyRef:
