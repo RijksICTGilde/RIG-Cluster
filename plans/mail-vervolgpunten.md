@@ -72,11 +72,17 @@ aanzetten werkelijk moet gebeuren").
   RC-145 draagt de From: het plusdeel, neem dat mee in het gesprek.
 - Een bounce-postbus die OPI via IMAP mag legen; zonder die is onbestelbare post
   onzichtbaar.
-- De regel `- ../../infrastructure/mail/controller/overlays/odcn` uit het commentaar in
-  `infrastructure/bootstrap/clusters/odcn/kustomization.yaml`, en `MAIL_RELAY_API_URL`
-  aan in de OPI-overlay van odcn. De geheimen (`mail-relay-secret`,
-  `mail-db-credentials`) staan sinds 20 augustus versleuteld in git; de database komt
-  declaratief mee via `postgresql/database/base/`.
+- De namespace `rig-prd-ron` vooraf handmatig aanmaken (ArgoCD op ODCN is namespaced en
+  kan dat niet zelf), met de RON-annotatie
+  `egress.projectcalico.org/egressGatewayPolicy: rig-ron`, het label
+  `argocd.argoproj.io/managed-by: rig-prd-operations` en het `sops-age-key`-secret erin;
+  het exacte manifest staat in `features/send-email.md`.
+- De eigen Application `ron-infrastructure` aanzetten
+  (`bootstrap/rig-system/kustomize/overlays/odcn-production/`, regel staat klaar in
+  commentaar) en `MAIL_RELAY_API_URL` aan in de OPI-overlay van odcn. NIET via
+  `clusters/odcn`: de CMP slaat die build plat naar `rig-prd-operations`. De geheimen
+  (`mail-relay-secret`, `mail-db-credentials`) staan sinds 20 augustus versleuteld in
+  git; de database komt declaratief mee via `postgresql/database/base/`.
 
 ## 6. Webadmin, en wat er echt aan de hand was
 
