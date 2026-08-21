@@ -468,7 +468,7 @@ const vlamModelsPath = "/v1/models"
 // The failures are worded for the side this gets debugged from - the consumer - so
 // each one names the hop that is suspect rather than only what went wrong.
 func checkVlam(ctx context.Context) checkResult {
-	base := strings.TrimRight(firstEnv("VLAM_API_URL", "APP_VLAM_API_URL"), "/")
+	base := strings.TrimRight(firstEnv("VLAM_API_URL"), "/")
 	if base == "" {
 		return checkResult{err: fmt.Errorf("VLAM_API_URL is empty")}
 	}
