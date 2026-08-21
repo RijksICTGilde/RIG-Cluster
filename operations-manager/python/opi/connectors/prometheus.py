@@ -5,6 +5,7 @@ This module provides functionality to interact with Prometheus for retrieving
 cluster and application metrics.
 """
 
+import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
@@ -294,16 +295,27 @@ class PrometheusConnector:
         Execute a custom PromQL query.
 
         Declared async to match GrafanaPrometheusConnector.custom_query so callers
-        can await a single interface regardless of METRICS_BACKEND. The underlying
-        prometheus_api_client is sync; the call blocks the loop for the request,
-        which is acceptable here because metrics queries are low-frequency.
+        can await a single interface regardless of METRICS_BACKEND.
+
+        IN EEN THREAD, EN DAT IS GEEN VERSIERING. prometheus_api_client is synchroon en
+        praat via ``requests``; rechtstreeks aangeroepen blokkeert hij de event loop voor
+        de duur van het verzoek. Hier stond dat dat mocht "omdat metriekqueries
+        laagfrequent zijn" -- maar de frequentie is niet het punt, de DUUR is het. Een
+        Prometheus die niet oplost kost per query de volledige DNS- en retryketen, en zolang
+        die loopt handelt de applicatie GEEN ENKEL ander verzoek af.
+
+        Gemeten op /admin/diensten: dat scherm haalt drie blokken lui op en belooft dat een
+        kapot blok alleen dat blok kost. Het Keycloak-blok praat rechtstreeks met deze
+        connector, en met een onbereikbare Prometheus bleven de twee andere blokken op
+        "wordt opgehaald..." staan tot de retries op waren -- de belofte van de pagina precies
+        omgedraaid. Zeven browsertests stonden daarop rood.
         """
         self._ensure_connected()
 
         logger.debug(f"Executing custom query: {query}")
 
         try:
-            result: list[dict[str, Any]] = self.prom.custom_query(query)
+            result: list[dict[str, Any]] = await asyncio.to_thread(self.prom.custom_query, query)
             return result
         except Exception as e:
             logger.error(f"Failed to execute custom query: {e}")
