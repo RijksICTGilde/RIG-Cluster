@@ -417,7 +417,9 @@ function initServiceCards(grid) {
                sjabloon zet dezelfde twee bij het renderen; zie widgets/_macros.html.j2 voor
                wat <nldd-checkbox> er vandaag wel en niet mee doet. */
             card.setAttribute('aria-disabled', locked ? 'true' : 'false');
-            if (cb && cb.setAttribute) {
+            /* Niet op een vakje dat AL disabled is: aria-disabled="false" naast een
+               disabled is een tegenspraak. Zelfde regel als in het sjabloon. */
+            if (cb && cb.setAttribute && !cb.disabled) {
                 cb.setAttribute('aria-disabled', locked ? 'true' : 'false');
             }
 
