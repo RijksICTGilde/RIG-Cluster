@@ -138,6 +138,89 @@ egress). Plus een ingress en het besef dat het een tweede beheervlak is.
   `opi/services/catalog/cross_domain_access/config_model.py`. Even verifieren en dan
   deze regel schrappen.
 
+## 8. Naar buiten mailen kan nog niet: de upstream weigert externe ontvangers
+
+**Wat**: de upstream accepteert post AAN `rijksoverheid.nl` en weigert al het andere.
+GEMETEN op 21 augustus 2026 met twee testberichten vanaf `project-tvas-7pb` op productie:
+naar `robbert.uittenbroek@rijksoverheid.nl` volgde `250 ok: Message 139253981 accepted`,
+naar een gmail-adres volgde `550 #5.1.0 Address rejected.` op de RCPT TO bij
+`rmrmail.rijksweb.nl`. Ons eigen pad deed het dus goed; de weigering komt van de upstream.
+
+**Waar**: niets in onze configuratie. Dit is de afspraak met het mailteam.
+
+**Voorstel**: bij het mailteam navragen of uitgaande post naar buiten uberhaupt de
+bedoeling is voor dit relaypad, en zo ja onder welke voorwaarde. Zolang dit staat, is de
+dienst send-email feitelijk alleen bruikbaar voor post binnen de Rijksoverheid, en dat is
+iets anders dan wat er nu in `features/send-email.md` staat.
+
+**Open**: het gesprek. Let op dat punt 10 hieronder betekent dat een project deze
+weigering op dit moment niet te zien krijgt.
+
+## 9. De MTA-STS-lookup hangt 131 seconden op geblokkeerde egress
+
+**Wat**: voor elke ontvangende domeinnaam met een MTA-STS-record haalt Stalwart de policy
+op via HTTPS (`https://mta-sts.<domein>/.well-known/mta-sts.txt`). Deze namespace heeft
+geen internet-egress, dus die fetch loopt in een timeout. GEMETEN: de bezorgpoging naar
+gmail.com duurde 131 seconden, waarvan vrijwel alles in die lookup zat. Bij
+`rijksoverheid.nl` viel het niet op, want daar bestaat het DNS-record niet en strandde de
+lookup in 7 ms.
+
+**Waar**: Stalwart doet dit per bezorgpoging, dus dit raakt de doorlooptijd van elk
+bericht naar een domein dat MTA-STS publiceert (gmail, outlook en de meeste grote
+partijen).
+
+**Voorstel**: MTA-STS uitzetten, met dezelfde redenering als DKIM. Wij praten nooit
+rechtstreeks met de ontvangende server: alles gaat naar een upstream die zijn eigen
+transportbeveiliging regelt. Een policy ophalen over een verbinding die wij niet leggen,
+beschermt niets en kost hier twee minuten per bericht.
+
+**Let op de klasse**: dit is dezelfde val als de starthang uit punt 6. Een geblokkeerde
+uitgang levert hier geen foutmelding op maar een wachttijd, en op de sandbox (Kind dwingt
+netwerkbeleid niet af) is het per definitie niet te reproduceren.
+
+## 10. Bounces verdwijnen stil, want de upstream weigert ons eigen afzenderadres
+
+**Wat**: mislukt een bezorging, dan maakt Stalwart netjes een DSN en stuurt die naar het
+envelope-adres, dus naar `noreply-rijksapp+<project>@rijksoverheid.nl`. Die DSN gaat langs
+dezelfde upstream, en die weigert dat adres als ONTVANGER met `550 #5.1.0 Address
+rejected.`. Stalwart noteert dan "discarding message after double bounce" en gooit hem
+weg. GEMETEN op 21 augustus 2026, direct achter de weigering uit punt 8.
+
+**Gevolg**: een project dat post kwijtraakt, krijgt daar niets over te horen. Wij ook
+niet. De enige plek waar het staat is de relaylog, en die bewaart drie uur.
+
+**Waar**: dit is de "bounce-postbus" die in `features/send-email.md` al als voorwaarde bij
+het aanzetten staat en die er nog niet is. Het is dus geen nieuw gat, maar het is nu
+gemeten in plaats van voorspeld, en het is ernstiger dan "onbestelbare post is
+onzichtbaar": ook een 550 op de eerste hop verdwijnt.
+
+**Voorstel**: het adres moet een echte postbus krijgen bij het mailteam, en OPI moet die
+legen. Tot die er is, is de relaylog de enige waarheid en zou een mislukte bezorging
+minstens een alert moeten opleveren.
+
+## 11. Een commit is hier geen wijziging
+
+**Wat**: `bootstrap/rig-system/kustomize/overlays/odcn-production` wordt met de hand
+toegepast (`task bootstrap-argo-system`), niet door ArgoCD. Een wijziging daarin is dus
+pas een wijziging als iemand die taak draait, en niets laat zien dat dat nog moet.
+
+**Hoe het bewezen is**: #168 zette de relay uit "tot de RCA rond is", op beide
+schakelaars. Die commit heeft het cluster nooit bereikt. De OPI-deployment draagt geen
+ArgoCD-tracking-id en had `MAIL_RELAY_API_URL` gewoon nog staan, dus OPI wees die hele
+periode naar de crashende relay. De noodrem zat in git en nergens anders. Vastgesteld op
+21 augustus 2026.
+
+**Waarom dit erger is dan het klinkt**: het gaat hier om de noodrem. Precies de
+wijzigingen die je onder druk maakt (iets uitzetten omdat het stuk is) landen in het deel
+van het platform waar een commit stil niets doet, en je gaat naar huis in de overtuiging
+dat het uit staat.
+
+**Voorstel**: een detectie in plaats van een afspraak. De gerenderde bootstrap vergelijken
+met de live toestand en het verschil melden, bijvoorbeeld als CI-stap of als controle in
+de Services-statuspagina. Een ArgoCD-Application die de bootstrap zelf bewaakt kan ook,
+maar dat is een grotere ingreep en de kip-en-ei met ArgoCD zelf moet dan opgelost worden.
+
+**Open**: welke van de twee, en waar de melding landt.
 ## Wat hier bewust NIET staat
 
 De fundament-migratie van de sandbox (app-of-apps): eigen traject, zie
