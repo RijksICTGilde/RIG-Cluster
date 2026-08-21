@@ -403,13 +403,25 @@ function initServiceCards(grid) {
 
             card.classList.toggle('service-card--locked-checked', locked);
 
-            /* Bewust GEEN disabled op het verborgen vakje. Vergrendeld betekent "niet
-               aanpasbaar", en disabled betekent daarnaast "niet versturen" -- dat tweede
-               bedoelen we niet, en juist daardoor viel een vergrendelde dienst uit de POST.
-               Het slot wordt bewaakt door de change-handler hieronder (die de wijziging
-               terugdraait) en door de server. aria-disabled staat op de RIJ, want dat is
-               het element met role="checkbox" dat een schermlezer voorleest. */
+            /* Bewust GEEN disabled op het vakje. Vergrendeld betekent "niet aanpasbaar",
+               en disabled betekent daarnaast "niet versturen" -- dat tweede bedoelen we
+               niet, en juist daardoor viel een vergrendelde dienst uit de POST. Het slot
+               wordt bewaakt door de change-handler hieronder (die de wijziging terugdraait)
+               en door de server.
+
+               aria-disabled op ALLEBEI. Hier stond alleen de kaart, met als reden "dat is
+               het element met role=checkbox dat een schermlezer voorleest" -- en die reden
+               klopt sinds de omzetting naar componenten niet meer: de kaart is een
+               <nldd-card> zonder rol, en de bediening is het vakje. De kaart houdt het
+               attribuut (het geheel staat op slot), het VAKJE krijgt het terug. Het
+               sjabloon zet dezelfde twee bij het renderen; zie widgets/_macros.html.j2 voor
+               wat <nldd-checkbox> er vandaag wel en niet mee doet. */
             card.setAttribute('aria-disabled', locked ? 'true' : 'false');
+            /* Niet op een vakje dat AL disabled is: aria-disabled="false" naast een
+               disabled is een tegenspraak. Zelfde regel als in het sjabloon. */
+            if (cb && cb.setAttribute && !cb.disabled) {
+                cb.setAttribute('aria-disabled', locked ? 'true' : 'false');
+            }
 
             /* GEEN REGEL MEER IN DE KAART. Die verscheen en verdween met het slot, en
                omdat de kaarten van een rij even hoog zijn en het vakje aan de onderrand

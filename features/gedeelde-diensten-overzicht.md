@@ -115,6 +115,16 @@ via `asyncio.gather`. Het projectdashboard doet 132 ArgoCD-aanroepen per weergav
 daardoor seconden; dat schaalt lineair mee met het platform. Beide blokken laden lui, zodat
 de pagina er meteen staat en een trage bron hem niet ophoudt.
 
+**Een trage bron kost alleen zijn eigen blok - sinds 21 augustus 2026 ook echt.** De
+belofte van het lui laden stond er wel, maar het Keycloak-blok maakte hem stuk. Dat blok
+praat rechtstreeks met `PrometheusConnector`, en `custom_query` was `async` in naam terwijl
+`prometheus_api_client` synchroon via `requests` praat: de coroutine gaf de event loop niet
+terug voor de duur van het verzoek. Met een Prometheus die niet oplost betekende dat de
+volledige DNS- en retryketen, en zolang die liep handelde de applicatie GEEN ENKEL ander
+verzoek af - de twee andere blokken bleven op "wordt opgehaald..." staan en een navigatie
+naar een heel andere pagina liep in zijn timeout. De query gaat nu via `asyncio.to_thread`,
+zoals `metrics_explorer_router` al deed voor `discover_metric_names`.
+
 **"Kon niet meten" is niet "niets te melden".** Een mislukte meting logt op WARNING (niet
 DEBUG) en levert `gemeten=False` met de fout op; de pagina zegt dan expliciet dat hij niet
 kon meten. Op het dashboard zag een kapotte grafiek er maandenlang identiek uit als "geen
@@ -145,3 +155,4 @@ alleen de metrieken, dan is het blok leeg met "Niets te melden".
 | `tests/test_gedeelde_diensten.py` | De drempels, de sortering, het onderscheid gemeten/niet-gemeten (inclusief het WARNING-niveau) en dat het aantal queries niet met het aantal rijen meegroeit |
 | `tests/test_admin_diensten_toegang.py` | Dat de pagina EN beide fragmenten een niet-beheerder weigeren |
 | `tests/e2e/test_gedeelde_diensten_pagina.py` | Dat de blokken echt renderen, in de goede volgorde, met Redis en MinIO benoemd |
+| `tests/test_prometheus_custom_query_blokkeert_niet.py` | Dat een trage query de event loop niet vasthoudt - gemeten op een taak die meeloopt en per tick telt, niet op de aanwezigheid van `to_thread` |

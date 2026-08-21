@@ -112,14 +112,30 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 
   ``naam`` leeg laten maakt het vakje pure bediening: de voorinstellingen sturen hun eigen
   verzoek en zouden met een name een tweede waarde meesturen.
+
+  ``vergrendeld`` zet ``aria-disabled`` op het VAKJE en niet alleen op de kaart. Dat is waar
+  het hoort: een kaart is geen bediening, en een <nldd-card> heeft geen rol, dus een
+  aria-disabled daarop kondigt niets aan. Bij de omzetting naar componenten is die markering
+  van het vakje afgevallen en alleen op de kaart blijven staan.
+
+  Let op wat dit vandaag WEL en NIET doet. <nldd-checkbox> zet zijn echte <input> in een
+  schaduwboom en geeft daar alleen ``aria-label`` (uit accessible-label) en ``disabled`` aan
+  door. Dit attribuut blijft dus op de host staan en bereikt de bediening nog niet; dat is
+  gevraagd in request_for_components.md ("een vergrendeld aanvinkvakje dat zijn waarde wel
+  meestuurt"). Disabled is hier GEEN alternatief: dat onderdrukt de waarde in de POST, en
+  precies zo verdween een vergrendelde dienst ooit stil uit het projectbestand.
+
+  Op een vakje dat WEL ``uit`` is komt het attribuut niet: ``aria-disabled="false"`` naast
+  een ``disabled`` is een tegenspraak in de markup. De voorinstellingen gebruiken die vorm.
 #}
-{% macro kaart_vakje(id, label, gekozen=False, uit=False, naam='', waarde='') %}
+{% macro kaart_vakje(id, label, gekozen=False, uit=False, naam='', waarde='', vergrendeld=False) %}
 <c-cluster justify="end" class="service-card__kies">
     <nldd-checkbox
         id="{{ id|e }}"
         {% if naam %}name="{{ naam|e }}"{% endif %}
         {% if waarde %}value="{{ waarde|e }}"{% endif %}
         accessible-label="{{ label|e }}"
+        {% if not uit %}aria-disabled="{{ 'true' if vergrendeld else 'false' }}"{% endif %}
         {% if gekozen %}checked{% endif %}
         {% if uit %}disabled{% endif %}></nldd-checkbox>
 </c-cluster>

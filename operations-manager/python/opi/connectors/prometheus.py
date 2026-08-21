@@ -5,6 +5,7 @@ This module provides functionality to interact with Prometheus for retrieving
 cluster and application metrics.
 """
 
+import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
@@ -294,16 +295,27 @@ class PrometheusConnector:
         Execute a custom PromQL query.
 
         Declared async to match GrafanaPrometheusConnector.custom_query so callers
-        can await a single interface regardless of METRICS_BACKEND. The underlying
-        prometheus_api_client is sync; the call blocks the loop for the request,
-        which is acceptable here because metrics queries are low-frequency.
+        can await a single interface regardless of METRICS_BACKEND.
+
+        IN EEN THREAD, EN DAT IS GEEN VERSIERING. prometheus_api_client is synchroon en
+        praat via ``requests``; rechtstreeks aangeroepen blokkeert hij de event loop voor
+        de duur van het verzoek. Hier stond dat dat mocht "omdat metriekqueries
+        laagfrequent zijn" -- maar de frequentie is niet het punt, de DUUR is het. Een
+        Prometheus die niet oplost kost per query de volledige DNS- en retryketen, en zolang
+        die loopt handelt de applicatie GEEN ENKEL ander verzoek af.
+
+        Gemeten op /admin/diensten: dat scherm haalt drie blokken lui op en belooft dat een
+        kapot blok alleen dat blok kost. Het Keycloak-blok praat rechtstreeks met deze
+        connector, en met een onbereikbare Prometheus bleven de twee andere blokken op
+        "wordt opgehaald..." staan tot de retries op waren -- de belofte van de pagina precies
+        omgedraaid. Zeven browsertests stonden daarop rood.
         """
         self._ensure_connected()
 
         logger.debug(f"Executing custom query: {query}")
 
         try:
-            result: list[dict[str, Any]] = self.prom.custom_query(query)
+            result: list[dict[str, Any]] = await asyncio.to_thread(self.prom.custom_query, query)
             return result
         except Exception as e:
             logger.error(f"Failed to execute custom query: {e}")
@@ -787,7 +799,11 @@ class PrometheusConnector:
         try:
             # Query all PVC usage in the namespace - simple namespace filter only
             pvc_used_query = f'kubelet_volume_stats_used_bytes{{namespace="{namespace}"}}'
-            pvc_used_result = self.prom.custom_query_range(
+            # Via to_thread, net als custom_query hierboven: prometheus_api_client praat
+            # synchroon via requests, en een synchrone aanroep in een async methode houdt
+            # de event loop vast tot de DNS- en retryketen op is.
+            pvc_used_result = await asyncio.to_thread(
+                self.prom.custom_query_range,
                 query=pvc_used_query,
                 start_time=start_time,
                 end_time=end_time,
@@ -796,7 +812,9 @@ class PrometheusConnector:
 
             # Get PVC capacities (current values)
             pvc_capacity_query = f'kubelet_volume_stats_capacity_bytes{{namespace="{namespace}"}}'
-            pvc_capacity_result: list[dict[str, Any]] = self.prom.custom_query(pvc_capacity_query)
+            pvc_capacity_result: list[dict[str, Any]] = await asyncio.to_thread(
+                self.prom.custom_query, pvc_capacity_query
+            )
 
             # Build capacity lookup by PVC name
             pvc_capacities: dict[str, float] = {}
@@ -866,7 +884,9 @@ class PrometheusConnector:
             query = f'kube_pod_info{{namespace="{namespace}"}}'
             logger.debug(f"Discovering workloads with query: {query}")
 
-            result: list[dict[str, Any]] = self.prom.custom_query(query)
+            # Via to_thread, om dezelfde reden als bij custom_query: synchroon in een
+            # async methode blokkeert de hele applicatie voor de duur van het verzoek.
+            result: list[dict[str, Any]] = await asyncio.to_thread(self.prom.custom_query, query)
 
             for item in result:
                 metric = item.get("metric", {})

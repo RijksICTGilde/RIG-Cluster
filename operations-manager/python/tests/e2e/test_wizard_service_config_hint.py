@@ -38,15 +38,21 @@ def _hint(page: Page, service: ServiceType):
 
 
 def _tick(page: Page, service: ServiceType, *, expect_selected: bool) -> None:
-    """Tick a service the way a user does: on the card, not on the bare input.
+    """Tick a service the way a user does: on the card body, not on the bare input.
 
-    The ROOS checkbox sits inside its own label and the card body carries the click
-    handler, so a click straight at the input is swallowed and the card never becomes
-    selected -- which would make this test pass or fail for the wrong reason. The
-    resulting state is asserted here so a failure points at the click, not at the CSS.
+    The checkbox is a component with its own shadow root and the CARD carries the click
+    handler (see initServiceCards in static/js/wizard.js), so a click straight at the
+    input is swallowed and the card never becomes selected -- which would make this test
+    pass or fail for the wrong reason. The resulting state is asserted here so a failure
+    points at the click, not at the CSS.
+
+    ``.service-card__body`` and not ``.service-card__content``: that second class went out
+    with the hand-built card in "de dienstkaarten tekenen zichzelf met het
+    componentensysteem". Nothing rendered it any more, so ``.click()`` had no element to
+    aim at and this whole file timed out on the first tick.
     """
     card = page.locator(f"[data-service='{service.value}']").first
-    card.locator(".service-card__content").click()
+    card.locator(".service-card__body").click()
 
     # Wait for the resulting state instead of a fixed pause: the repaint runs in the
     # change handler, and on a loaded machine that lands later than any number we pick.
@@ -79,7 +85,12 @@ def test_the_line_appears_when_the_service_is_ticked(app_server: str, auth_page:
     assert hint.first.is_visible(), "ticking the card must reveal where the service is configured"
     expected = project_step_config_hint(_COMPONENT_ONLY)
     assert expected is not None
-    assert hint.first.inner_text().strip() == expected
+    # Read the ``text`` attribute, not ``inner_text()``. The line used to be a ``<p>`` with
+    # the words between its tags; it is a ``<c-tag>`` now, and that component puts its label
+    # in an attribute and draws it inside a shadow root. ``inner_text()`` returns an empty
+    # string there -- which is exactly how a check like this goes vacuously green somewhere
+    # else, so it is asserted on the attribute the component actually carries.
+    assert hint.first.get_attribute("text") == expected
 
 
 def test_unticking_hides_it_again(app_server: str, auth_page: Page) -> None:
