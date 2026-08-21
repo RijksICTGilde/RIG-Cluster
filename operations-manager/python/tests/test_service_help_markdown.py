@@ -28,6 +28,7 @@ from opi.services.help_text import (
     is_markdown_help,
     markdown_to_components,
     render_service_help,
+    service_guide_markdown,
     service_help_markdown,
 )
 from opi.services.services import ServiceAdapter
@@ -223,3 +224,51 @@ def test_alleen_een_intern_pad_of_https_wordt_een_link() -> None:
     for bron in ("[x](javascript:alert(1))", "[x](data:text/html,y)", "[x](ftp://host/f)"):
         markup = markdown_to_components(bron)
         assert "c-link" not in markup, bron
+
+
+# ---------------------------------------------------------------------------
+# The guide: a second, application-oriented document a service MAY carry
+# ---------------------------------------------------------------------------
+
+_GUIDED = [s for s in _SERVICES if ServiceAdapter.get_service_definition(s).guide_template]
+
+
+def test_publish_on_web_carries_the_domain_guide() -> None:
+    """The reason guide_template exists: the domain story did not fit the popup."""
+    assert ServiceType.PUBLISH_ON_WEB in _GUIDED
+
+
+@pytest.mark.parametrize("service", _GUIDED, ids=lambda s: s.value)
+def test_a_guide_is_markdown_that_resolves_and_starts_with_a_title(service: ServiceType) -> None:
+    definition = ServiceAdapter.get_service_definition(service)
+    assert definition.guide_template is not None
+    assert is_markdown_help(definition.guide_template)
+    assert help_file(definition.guide_template) is not None
+    assert service_guide_markdown(service).startswith("# ")
+
+
+@pytest.mark.parametrize("service", _GUIDED, ids=lambda s: s.value)
+def test_a_guide_renders_as_a_help_page_with_the_service_icon(service: ServiceType) -> None:
+    definition = ServiceAdapter.get_service_definition(service)
+    assert definition.guide_template is not None
+    rendered = render_service_help(definition.guide_template)
+
+    assert rendered.strip()
+    assert "<c-" not in rendered, "an unexpanded component means the markup is wrong"
+    assert _icoonnamen(rendered), f"{definition.guide_template} shows no icon at all"
+
+
+def test_the_guide_carries_no_approval_banner() -> None:
+    """publish-on-web declares approval_specs, so its POPUP gets the banner.
+
+    The guide explains per scenario what is a request and what is not (a subdomain on a
+    domain of your own needs none), and the blanket banner above it would claim more than
+    is true.
+    """
+    assert "Vereist goedkeuring" in render_service_help("publish_on_web/help.md")
+    assert "Vereist goedkeuring" not in render_service_help("publish_on_web/guide.md")
+
+
+def test_a_service_without_a_guide_reports_an_empty_string() -> None:
+    zonder = next(s for s in _SERVICES if not ServiceAdapter.get_service_definition(s).guide_template)
+    assert service_guide_markdown(zonder) == ""

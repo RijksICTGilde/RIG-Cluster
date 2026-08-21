@@ -127,7 +127,7 @@ from opi.services.component_values import validate_value_for_storage as validate
 from opi.services.config_lists import PatchableList, patchable_lists
 from opi.services.config_singular import overflowing_list, singular_config_model, to_singular, to_stored
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
-from opi.services.help_text import service_help_markdown
+from opi.services.help_text import service_guide_markdown, service_help_markdown
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
@@ -2180,6 +2180,15 @@ class ServiceDescription(BaseModel):
             "something the portal does not."
         ),
     )
+    guide: str | None = Field(
+        None,
+        description=(
+            "An application-oriented guide, in Dutch, as markdown: the scenarios a user of this "
+            "service runs into and which fields configure each one. Longer than `explanation` "
+            "(which stays the short what-is-this text) and, like it, the same file the portal "
+            "renders as a help page. Null for a service that has none."
+        ),
+    )
     configurable: bool = Field(..., description="Whether the service accepts user config at any layer")
     layers: list[ServiceLayerInfo] = Field(
         default_factory=list,
@@ -2284,6 +2293,7 @@ async def describe_service_v2(service_name: str) -> ServiceDescription:
         binding=definition.binding,
         hidden=definition.hidden,
         explanation=service_help_markdown(service_type),
+        guide=service_guide_markdown(service_type) or None,
         configurable=bool(_supported_targets(service)),
         layers=[_layer_info(service, service_type, layer) for layer in layers],
         config_schema_version=service.config_schema_version,

@@ -92,6 +92,20 @@ def service_help_markdown(service_type: ServiceType) -> str:
     return read_help_markdown(definition.help_template)
 
 
+def service_guide_markdown(service_type: ServiceType) -> str:
+    """The application-oriented guide of one service, as markdown; empty when it has none.
+
+    Same contract as :func:`service_help_markdown`, for the ``guide_template`` a service
+    may declare next to its ``help_template``: one file, read by the API (the ``guide``
+    field of ``GET /api/v2/services/{name}``) and rendered by the portal through the same
+    help route.
+    """
+    definition = ServiceAdapter.get_service_definition(service_type)
+    if not definition.guide_template:
+        return ""
+    return read_help_markdown(definition.guide_template)
+
+
 def _text(raw: str) -> str:
     """Prose as it may be handed to the template engine.
 
@@ -228,7 +242,7 @@ def render_service_help(help_template: str) -> str:
         (
             (service_type, d)
             for service_type, d in ServiceAdapter.SERVICE_DEFINITIONS.items()
-            if d.help_template == help_template
+            if help_template in (d.help_template, d.guide_template)
         ),
         None,
     )
@@ -246,8 +260,10 @@ def render_service_help(help_template: str) -> str:
     # De goedkeuringswaarschuwing komt uit de DECLARATIE van de dienst (approval_specs),
     # niet uit de uitlegtekst: zo staat hij op elke dienst die goedkeuring vereist, ook op
     # een die het later gaat vereisen, en kan de tekst niet beweren wat de dienst niet
-    # waarmaakt. Bovenaan, want dit is wat je wilt weten voor je aanvraagt.
-    if owner and get_service(owner[0]).approval_specs():
+    # waarmaakt. Bovenaan, want dit is wat je wilt weten voor je aanvraagt. Alleen op de
+    # POPUP-uitleg: een guide beschrijft per scenario zelf wat een aanvraag is en wat niet,
+    # en de generieke banner zou daar breder claimen dan waar is.
+    if owner and owner[1].help_template == help_template and get_service(owner[0]).approval_specs():
         waarschuwing = (
             '<c-alert type="warning" heading="Vereist goedkeuring">'
             "Het aanzetten van deze dienst is een aanvraag: een beheerder moet hem "

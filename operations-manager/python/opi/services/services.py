@@ -360,6 +360,12 @@ class ServiceDefinition:
     help_template: str | None = None
     """Optional Jinja2 template name (relative to ``templates/help/``) with a
     long-form explanation shown in a popup when the user clicks the info icon."""
+    guide_template: str | None = None
+    """Optional markdown file with an application-oriented guide: the scenarios a user of
+    this service runs into and how to configure each one. Longer than ``help_template``
+    (which stays the short what-is-this popup) and served next to it: the API returns it
+    as the ``guide`` field of ``GET /api/v2/services/{name}`` and the portal renders it
+    as a full help page. Same small markdown dialect, same resolution roots."""
     requires: list[str] = field(default_factory=list)
     """Service requirements using path syntax.
 
