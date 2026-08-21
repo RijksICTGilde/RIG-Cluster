@@ -215,6 +215,11 @@ CLUSTER_CONFIG = {
         "max_cpu_limit_m": 8000,
         # VPA draait hier wel en levert aanbevelingen, anders dan op de andere niet-ODCN clusters.
         "supports_vpa": True,
+        # Een ECHTE cert-manager (wave -1) en van buiten bereikbaar over 80, dus een
+        # ACME HTTP-01-challenge voor een eigen domein kan hier aflopen. Afwezig zou
+        # hetzelfde betekenen, maar dit is precies het veld waar zwijgen eerder een
+        # verkeerd certificaat opleverde (zad-cli, bevinding 22), dus het staat er.
+        "supports_custom_domain_certificates": True,
         # Geen SCC en geen Pod Security Admission: niemand wijst een UID toe, dus wij pinnen er een.
         "assigns_uid_via_scc": False,
         # Geen policy-engine die iets van een namespace verlangt.
