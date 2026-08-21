@@ -27,19 +27,42 @@ tegen een draaiende relay zoals bij de identiteitsregels is gedaan.
 
 **Open**: de maat zelf, en punt 4 hieronder bepaalt of dit per project kan.
 
-## 2. Het spamfilterbesluit
+## 2. Het spamfilter aanzetten
 
-**Wat**: `spam-filter.auto-update` staat uit (de download blokkeerde de start), maar of
-het filter zelf AAN hoort op een uitgaande relay is nooit besloten. Een uitgaande relay
-filtert normaal niet op spam-score maar leunt op authenticatie plus limieten.
+**Wat**: het filter HOORT aan te staan en staat uit. Dat is nooit een besluit geweest maar
+een blokkade: de regelset wordt bij elke start van github gehaald, dat kan niet vanuit deze
+namespace, dus er zijn simpelweg geen regels. Een eerdere versie van dit punt stelde voor
+het "uit te laten en dat expliciet op te schrijven". Dat was een redenering achter een
+storing aan, en is hierbij ingetrokken.
 
-**Waar**: `config.toml`, blok `[spam-filter]`.
+**Waar**: `config.toml`, blok `[spam-filter]`. Daar staat sinds 21 augustus 2026
+`resource = "file:///nonexistent/..."` om de starthang van 60 seconden te doden die de
+relay op productie in een crashloop hield (de analyse staat in het commentaar bij dat
+blok). Dat is de noodstop, niet de oplossing.
 
-**Voorstel**: uit laten en dat expliciet opschrijven, tenzij iemand een concreet scenario
-heeft waarin een geauthenticeerd project spam-achtige mail moet worden geweigerd in
-plaats van gebudgetteerd.
+**Voorstel**: het bestand VENDOREN. `spam-filter.toml` erbij in de base als tweede bestand
+in dezelfde configMapGenerator, een eigen mount, en `resource` daarop richten met
+`file://`. Dan leest Stalwart de regels van schijf in plaats van van internet, laadt hij ze
+bij de start in de configopslag, en blijft de start instantaan.
 
-**Open**: het besluit zelf.
+**Gemeten, zodat de volgende hier niet opnieuw naar hoeft te kijken**: de `spam-filter.toml`
+van de laatste release is 76 KB en past dus ruim binnen de 1 MiB van een ConfigMap. Hij
+draagt `version.spam-filter = "2.0.5"` en `version.server = "0.11.0"`, en
+`fetch_spam_rules()` weigert alleen als de vereiste serverversie HOGER is dan de draaiende,
+dus v0.11.8 voldoet.
+
+**Open, en dit is het echte werk**: het regelbestand brengt sleutels mee die zelf naar
+buiten willen. Het opent met `[asn] type = "resource"` met jsdelivr-URL's, terwijl onze
+eigen config `type = "disable"` zet - uitzoeken welke van de twee wint zodra de externe
+sleutels in de configopslag landen. Verder zitten er `http-lookup.`- en `lookup.`-sleutels
+in en regels die om verkeer vragen dat deze namespace niet heeft. Vendoren lost de
+STARTHANG op; welke regels daarna nog stil niets doen omdat ze niet naar buiten kunnen,
+moet per stuk worden nagelopen tegen een draaiende relay, zoals bij de identiteitsregels
+van RC-145 is gedaan.
+
+**Ook open**: of een uitgaande relay op spam-score hoort te filteren is een aparte vraag
+dan of het filter kan draaien. Die vraag mag gesteld worden, maar niet meer als reden om
+het uit te laten staan.
 
 ## 3. `messages = 10` per SMTP-sessie
 
