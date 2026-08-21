@@ -19,13 +19,13 @@ resources:
 - ../../operations-manager/overlays/odcn-production
 - argocd-application-production-infrastructure.yaml
 - argocd-application-user-applications.yaml
-# De mailrelay in zijn eigen RON-namespace (RC-114). Bewust nog uit: het aanzetten
-# vraagt eerst de handmatige namespace rig-prd-ron (met RON-annotatie, managed-by-label
-# en het sops-age-key secret) en de afspraken uit features/send-email.md, "Wat er bij
-# het aanzetten werkelijk moet gebeuren". Dit is de regel die dan aan gaat; NIET de
-# mail-regel in infrastructure/bootstrap/clusters/odcn (de CMP zou die build naar
-# rig-prd-operations platslaan, zie de kop van het Application-bestand).
-# - argocd-application-ron-infrastructure.yaml
+# De mailrelay in zijn eigen RON-namespace (RC-114), aan sinds 21 augustus 2026. De
+# namespace rig-prd-ron bestaat (met RON-annotatie, managed-by-label en het
+# sops-age-key-secret erin) en de afspraken uit features/send-email.md zijn rond.
+# Via deze eigen Application en NIET via de mail-regel in
+# infrastructure/bootstrap/clusters/odcn: de CMP zou die build naar
+# rig-prd-operations platslaan, zie de kop van het Application-bestand.
+- argocd-application-ron-infrastructure.yaml
 
 components:
 - ../../components/sops-plugin
