@@ -48,12 +48,39 @@ if TYPE_CHECKING:
 STUB_MODEL_ID = "vlam-stub"
 STUB_MODELS_BODY = json.dumps({"data": [{"id": STUB_MODEL_ID, "object": "model"}], "object": "list"})
 
+#: De inhoud die de stub als chat-completion teruggeeft (RC-147). Met opzet een zin die
+#: zichzelf aanwijst: wie dit op de statuspagina ziet staan weet dat hij de stub las en
+#: niet een taalmodel, en de e2e-assertie kan er hard op zoeken.
+STUB_CHAT_ANSWER = "Dit is de vlam-stub: er staat geen taalmodel achter dit adres."
+STUB_CHAT_BODY = json.dumps(
+    {
+        "id": "chatcmpl-vlam-stub",
+        "object": "chat.completion",
+        "model": STUB_MODEL_ID,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": STUB_CHAT_ANSWER},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+)
+
 #: De naam van de inkomende regel, gelijk aan die in het echte vlam-wt8-projectbestand.
 _INBOUND_RULE_NAME = "vlam-api-iedereen"
 
 
 def _haproxy_config(port: int) -> str:
-    """De hele stub: een poort, een gezondheidspad, een vast antwoord, en 404 voor de rest."""
+    """De hele stub: een poort, een gezondheidspad, twee vaste antwoorden, en 404 voor de rest.
+
+    De stub CONTROLEERT HET TOKEN NIET, en dat is een keuze en geen omissie: `http-request
+    return` oordeelt alleen op het verzoek en heeft geen manier om een token te toetsen dat
+    het echte VLAM per project uitgeeft. Wat de knop op de statuspagina hier bewijst is dus
+    de KETEN -- formulier, uitgaande regel, inkomende regel, een OpenAI-vormig antwoord dat
+    op de pagina belandt. De waarde van diezelfde knop op productie zit juist in het stuk dat
+    hier NIET meetbaar is: dat het echte VLAM een verkeerd token weigert.
+    """
     return f"""\
 global
     log stdout format raw local0
@@ -68,6 +95,7 @@ frontend vlam_stub
     bind :{port}
     monitor-uri /healthz
     http-request return status 200 content-type application/json string '{STUB_MODELS_BODY}' if {{ path /v1/models }}
+    http-request return status 200 content-type application/json string '{STUB_CHAT_BODY}' if {{ path /v1/chat/completions }}
     http-request return status 404 content-type application/json string '{{"error":"not a stubbed path"}}'
 """
 
