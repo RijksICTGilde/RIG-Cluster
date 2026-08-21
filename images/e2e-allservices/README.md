@@ -75,6 +75,13 @@ injected address and one path each, so neither is a proxy that can be pointed
 somewhere else. What a visitor can do is spend: a message off the project's daily
 relay budget, or a chat completion off whatever the supplied token pays for.
 
+The one thing the chat button does widen is reach: VLAM is cluster-internal, and
+this button lets anyone holding a valid VLAM token ask it one question from
+outside. That is bounded to the single chat-completion path with the caller's own
+credential, and this is a test workload rather than an application handling
+anyone's data — but if that trade is not wanted for a given deployment, do not
+bind `publish-on-web` to it, and the page is internal again.
+
 The token gets the stricter treatment, because it is the only secret that arrives
 from outside: it is used for one outgoing request and then dropped. It is never
 stored, never written to the log, and never rendered back into the page — not
