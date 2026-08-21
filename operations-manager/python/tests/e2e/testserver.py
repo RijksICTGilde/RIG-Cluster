@@ -232,6 +232,26 @@ _DIENSTEN_METRIEKEN: dict[str, list[dict]] = {
     "wachtend": [
         {"metric": {"namespace": "rig-system", "pod": "rig-db-1"}, "value": [1787000000.0, "0"]},
     ],
+    # Het Keycloak-blok. Dit blok praat met opzet RECHTSTREEKS met PrometheusConnector
+    # (de metrieken zitten niet in Mimir), dus het komt niet langs de metriekconnector
+    # hierboven en heeft een eigen stand-in nodig - zie _fake_prometheus_connector.
+    "realms": [
+        {"metric": {}, "value": [1787000000.0, "7"]},
+    ],
+    "gebruikers": [
+        {"metric": {"realm": "master"}, "value": [1787000000.0, "3"]},
+        {"metric": {"realm": "algor-odc-odcn-production"}, "value": [1787000000.0, "12"]},
+    ],
+    "gebruikers_per_idp": [
+        {"metric": {"realm": "algor-odc-odcn-production", "idp_type": "rijksportaal"}, "value": [1787000000.0, "9"]},
+        {"metric": {"realm": "algor-odc-odcn-production", "idp_type": "lokaal"}, "value": [1787000000.0, "3"]},
+    ],
+    "logins": [
+        {"metric": {"realm": "algor-odc-odcn-production"}, "value": [1787000000.0, "24"]},
+    ],
+    "mislukte_logins": [
+        {"metric": {"realm": "algor-odc-odcn-production"}, "value": [1787000000.0, "1"]},
+    ],
 }
 
 
@@ -245,9 +265,9 @@ def _fake_metrics_connector():
     """
     from unittest.mock import AsyncMock
 
-    from opi.services.gedeelde_diensten import _DATABASE_QUERIES, _OPSLAG_QUERIES
+    from opi.services.gedeelde_diensten import _DATABASE_QUERIES, _KEYCLOAK_QUERIES, _OPSLAG_QUERIES
 
-    op_query = {query: naam for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES}.items()}
+    op_query = {query: naam for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES, **_KEYCLOAK_QUERIES}.items()}
 
     async def custom_query(query: str) -> list[dict]:
         return _DIENSTEN_METRIEKEN.get(op_query.get(query, ""), [])
@@ -255,6 +275,24 @@ def _fake_metrics_connector():
     connector = MagicMock()
     connector.custom_query = AsyncMock(side_effect=custom_query)
     return connector
+
+
+def _fake_prometheus_connector():
+    """Een stand-in voor PrometheusConnector zelf, voor het Keycloak-blok.
+
+    Het Keycloak-blok van /admin/diensten gaat met opzet NIET langs
+    ``get_metrics_connector()`` -- die metrieken staan alleen in onze eigen Prometheus -
+    en bouwt zijn eigen ``PrometheusConnector()``. Dat is een echte HTTP-client, dus in
+    deze harnas ging het blok het netwerk op en wachtte het de volledige DNS- en
+    retryketen af op een naam die hier niet bestaat.
+
+    Dat kostte niet alleen dat blok. Zolang die keten liep bleven ook de twee andere,
+    wel gestubde blokken op "wordt opgehaald..." staan; zeven browsertests stonden
+    daarop rood. De blokkade zelf is in de connector gerepareerd (asyncio.to_thread), en
+    hier wordt de netwerkaanroep vervangen - een standalone suite hoort geen naam op te
+    zoeken.
+    """
+    return _fake_metrics_connector()
 
 
 async def _fake_store_save(
@@ -425,6 +463,12 @@ def create_test_app():
                 "opi.services.gedeelde_diensten.get_metrics_connector",
                 new_callable=AsyncMock,
                 return_value=_fake_metrics_connector(),
+            ),
+            # ... behalve het Keycloak-blok, dat rechtstreeks een PrometheusConnector
+            # bouwt. Zie _fake_prometheus_connector.
+            patch(
+                "opi.connectors.prometheus.PrometheusConnector",
+                return_value=_fake_prometheus_connector(),
             ),
             patch(
                 "opi.manager.backup.BackupManager",
