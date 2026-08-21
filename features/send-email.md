@@ -384,10 +384,47 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
    wachtwoord uit `mail-db-credentials`) en de database staan declaratief in
    `infrastructure/bootstrap/infrastructure/postgresql/database/base/`, dus CNPG maakt
    ze ook op een al draaiend cluster aan zodra de wijziging synct.
-2. **Overlay aanzetten**: de regel `- ../../infrastructure/mail/controller/overlays/<type>`
-   in `infrastructure/bootstrap/clusters/<type>/kustomization.yaml` uit het commentaar
-   halen. Daarmee komt het gegenereerde geheim ook in de namespace van de relay te staan
-   (de tweede rendering hierboven).
+2. **De RON-namespace vooraf aanmaken (ODCN).** De ArgoCD op ODCN draait in namespaced
+   mode: hij kan geen Namespace-resource aanmaken, en de CMP weigert zelfs te renderen
+   zolang de doelnamespace of het sleutelsecret ontbreekt. Beide dus handmatig, eenmalig,
+   VOOR stap 2b:
+
+   ```yaml
+   apiVersion: v1
+   kind: Namespace
+   metadata:
+     name: rig-prd-ron
+     labels:
+       app.kubernetes.io/name: operations-ron
+       app.kubernetes.io/component: mail
+       app.kubernetes.io/part-of: rig-platform
+       # De namespaced ArgoCD krijgt hiermee (via de operator) de beheer-RBAC voor
+       # deze namespace; zonder dit label kan de app er niets aanmaken.
+       argocd.argoproj.io/managed-by: rig-prd-operations
+     annotations:
+       # DE RON-KOPPELING. Deze annotatie neemt exact een waarde, dus RON en internet
+       # kunnen niet allebei op dezelfde namespace staan; dat is de reden dat de relay
+       # een eigen namespace heeft (plans/mailrelay.md, aanvulling 2).
+       egress.projectcalico.org/egressGatewayPolicy: rig-ron
+   ```
+
+   En daarna het sleutelsecret erin (dezelfde inhoud als in `rig-prd-operations`):
+
+   ```bash
+   kubectl get secret sops-age-key -n rig-prd-operations -o yaml \
+     | sed 's/namespace: rig-prd-operations/namespace: rig-prd-ron/' | kubectl apply -f -
+   ```
+
+2b. **De eigen Application aanzetten**: de regel
+   `- argocd-application-ron-infrastructure.yaml` uit het commentaar halen in
+   `bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml` en de
+   bootstrap toepassen. NIET de mail-regel in
+   `infrastructure/bootstrap/clusters/odcn/kustomization.yaml`: de CMP injecteert de
+   destination-namespace over die hele build, en dat slaat de rig-prd-ron-resources plat
+   naar rig-prd-operations (het ID-conflict dat de sandbox op 19 augustus 2026 heeft
+   gemeten; daarom heeft mail op elk cluster een eigen Application). Daarmee komt ook
+   het gegenereerde geheim in de namespace van de relay te staan (de tweede rendering
+   hierboven).
 3. **OPI de schakelaar geven.** Dit is de stap die je vergeet en die zich uit als "de dienst
    doet niets": `MAIL_RELAY_API_URL` staat uitgecommentarieerd in
    `bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/patches/deployment.yaml`
