@@ -400,7 +400,7 @@ acceptabel voor iets wat binnen seconden hoort aan te komen.
 
 *Een eigen planner in de lifespan van `server.py`* staat naast de zes die er al staan (de
 backupplanner, de stemmer, de reconciliatie, de consolereaper, de logbewaker en de
-slaapstandsweeper, `opi/server.py:214` en verder). Dat is het bekende patroon van dit
+slaapstandsweeper, `opi/server.py:217` en verder). Dat is het bekende patroon van dit
 codebestand, elke planner is een tiental regels, en hij is onafhankelijk in te stellen en uit
 te zetten.
 
