@@ -15,11 +15,20 @@ Dit is deel 1 van drie:
 ## De stand van zaken in een alinea
 
 ZAD heeft geen meldingssysteem. Gemeten: er is geen tabel, geen model, geen route en geen
-sjabloon dat er over gaat. Een grep op `notification` over de hele pakketboom levert elf
-treffers op, verspreid over zes bestanden, en die gaan alle over de logbewaker en ntfy
+sjabloon dat er over gaat. `grep -rn notification --include="*.py" opi/` levert **elf treffers
+in zes bestanden** op, en die gaan alle over de logbewaker en ntfy
 (`opi/services/log_watcher.py`, `opi/core/logwatcher_scheduler.py`, `opi/core/config.py:440`,
 `opi/core/simple_background.py:117`) of over het contactadres voor de certificaten van Let's
-Encrypt (`opi/api/router.py:1012`, `opi/core/cluster_config.py:1009`). Er is dus niets om op voort te bouwen en ook niets om te slopen.
+Encrypt (`opi/api/router.py:1012`, `opi/core/cluster_config.py:1009`).
+
+Laat je de beperking tot `.py` weg (`grep -rn notification opi/`), dan zijn het **achttien
+treffers in acht bestanden**: er komen zes regels bij in
+`opi/templates_lotc/bg/feedback.html.j2` en één in
+`opi/services/log_watch_ignore_patterns.txt`. Die zes zijn de LOTC-componenten
+`c-notification` en `c-notification-item` op de proefopstelling, en dat is een *vluchtige
+bevestiging na een actie*, geen postvak; de naamsbotsing staat in
+`plans/meldingen-plan-van-aanpak.md` onder Kanaal 1. De conclusie verandert er niet door: er
+is niets om op voort te bouwen en ook niets om te slopen.
 
 Er zijn vandaag precies **drie manieren** waarop iemand te weten komt dat er iets gebeurd is:
 
