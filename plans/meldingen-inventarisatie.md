@@ -154,7 +154,7 @@ Vandaag declareren **twee diensten** samen **drie goedkeuringen**:
 | `publish-on-web` | `subdomain` | een subdomein onder een cluster-domein (`:420`) |
 | `send-email` | `send-email` | mag dit project de dienst gebruiken (`opi/services/catalog/send_email/__init__.py:88`) |
 
-De statussen zijn `none`, `requested`, `approved`, `denied` (`approval.py:31`).
+De statussen zijn `none`, `requested`, `approved`, `denied` (`opi/services/catalog/approval.py:31`).
 
 | event | bron | onderwerp | belanghebbenden | ernst | standaardkanaal |
 |---|---|---|---|---|---|
@@ -168,7 +168,7 @@ De statussen zijn `none`, `requested`, `approved`, `denied` (`approval.py:31`).
 
 De opdracht noemt vier momenten die elk een melding verdienen: ingediend, goedgekeurd,
 afgewezen, ingetrokken. Er zijn er **drie**. Intrekken bestaat niet als toestand: de enum in
-`approval.py:31` heeft vier waarden en `withdrawn` is er geen van. Een aanvraag intrekken zou
+`opi/services/catalog/approval.py:31` heeft vier waarden en `withdrawn` is er geen van. Een aanvraag intrekken zou
 vandaag betekenen dat je de dienst uit het projectbestand haalt, en dan is er geen
 goedkeuringsblok meer om iets over te melden. Als intrekken een melding moet worden, is dat
 eerst een uitbreiding van de goedkeuringsmachine, en dat valt buiten meldingen.
@@ -412,10 +412,10 @@ toestand (standaard 6 uur, `LOGWATCHER_DEDUP_HOURS`), en POST wat overblijft naa
 | Eigenschap | Waarde | Waar |
 |---|---|---|
 | Standaard aan | nee, `LOGWATCHER_ENABLED = False` | `opi/core/config.py:441` |
-| Interval | 1800 seconden | `config.py:442` |
-| Server | `https://ntfy.sh` | `config.py:444` |
-| Ontdubbelvenster | 6 uur | `config.py:448` |
-| Onderwerp | een geheim, onraadbaar topic ("treat like a password") | `config.py:443` |
+| Interval | 1800 seconden | `opi/core/config.py:442` |
+| Server | `https://ntfy.sh` | `opi/core/config.py:444` |
+| Ontdubbelvenster | 6 uur | `opi/core/config.py:448` |
+| Onderwerp | een geheim, onraadbaar topic ("treat like a password") | `opi/core/config.py:443` |
 | Toestand | een dict in het geheugen van de planner, verdwijnt bij een herstart | `logwatcher_scheduler.py:32` |
 
 **Hoe dit zich tot het nieuwe verhoudt: naast elkaar, niet erin op.** Drie redenen, en ze
