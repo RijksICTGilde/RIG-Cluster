@@ -174,8 +174,8 @@ vondst van dit deel:
 | Wat | Waar | Stand |
 |---|---|---|
 | Het accountnaam-instelling | `MAIL_PLATFORM_ACCOUNT = "zad-platform"`, `opi/core/config.py:407` | bestaat |
-| Het dagbudget | `MAIL_PLATFORM_MESSAGES_PER_DAY = 2000`, `config.py:408` | bestaat |
-| Het geheim met de inloggegevens | `MAIL_PLATFORM_SECRET_NAME = "zad-platform-mail-account"`, `config.py:413` | bestaat |
+| Het dagbudget | `MAIL_PLATFORM_MESSAGES_PER_DAY = 2000`, `opi/core/config.py:408` | bestaat |
+| Het geheim met de inloggegevens | `MAIL_PLATFORM_SECRET_NAME = "zad-platform-mail-account"`, `opi/core/config.py:413` | bestaat |
 | Het aanmaken bij het opstarten | `MailManager.ensure_platform_account()`, `opi/manager/mail_manager.py:248`, aangeroepen via `ensure_platform_mail_account()` in `opi/core/startup.py:405` | bestaat, niet-kritiek bij het opstarten |
 | Het wachtwoord | wordt gegenereerd bij de eerste ontmoeting met een draaiende relay en bewaard in een Secret in de eigen namespace | bestaat, idempotent |
 | Het netwerkpad | egressregel naar `rig-prd-ron` op poort 587, `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/network-policy.yaml` | bestaat |
