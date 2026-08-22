@@ -36,15 +36,55 @@ Drie dingen, en niet meer:
 ### Wat er al ligt
 
 - **De schil en de componenten.** LOTC met het NLDD-thema, `base_lotc.html.j2`,
-  `opi/web/navigation_lotc.py` voor de indeling. In gebruik zijn onder meer `c-badge`,
-  `c-table`, `c-card`, `c-alert`, `c-icon`, `c-tag`. Een teller in de kop is een badge; het
-  postvak is een tabel. Beide bestaan.
+  `opi/web/navigation_lotc.py` voor de indeling. In gebruik in `opi/templates_lotc/` zijn
+  onder meer `c-table`, `c-card`, `c-alert`, `c-icon` en `c-tag`. Wat we hier nodig hebben
+  staat al in de bibliotheek zelf (de catalogus, niet het gebruik:
+  `lord_of_the_components/templates/components/` en `registry.json`), en dat is meer dan uit
+  het gebruik blijkt. Drie dingen die de bouwer moet weten voor hij begint:
+  - **De naam `c-notification` is bezet, en niet door ons.** `notification.html.j2` en
+    `notification-item.html.j2` bestaan al in de bibliotheek (een `<ul>` met per regel icoon,
+    titel, optionele link en een metaregel) en worden gebruikt in
+    `opi/templates_lotc/bg/feedback.html.j2:84` als **vluchtige bevestiging** na een actie
+    ("Project opgeslagen", "Uitrollen wacht"). Dat is geen postvak: het is de terugkoppeling
+    die verschijnt en weer weggaat. Er mag dus geen tweede `c-notification` gebouwd worden.
+    Kies bij het bouwen bewust: of je hergebruikt `c-notification-item` letterlijk voor een
+    postvakregel (de vorm past), of je geeft de nieuwe component een naam die niet botst
+    (voorstel: `c-inbox-item`). Wat niet mag is de bestaande naam overnemen en de betekenis
+    stilletjes verschuiven.
+  - **`c-activity` en `c-activity-item` staan qua vorm dichter bij een postvakregel dan
+    `c-table`.** Een activity-item draagt precies de velden die een melding heeft: actor,
+    actie, onderwerp (`res`), tijdstip (`at`) en een link. Een postvak is een lijst met
+    regels, geen raster met kolommen; kies de lijstvorm, tenzij de filters op type en
+    gelezen/ongelezen een kolomindeling afdwingen.
+  - **`c-badge` bestaat wel, maar wordt hier nog nergens gebruikt.** Nul treffers op
+    `<c-badge` in `opi/templates_lotc/`; in de catalogus staat hij als "Small count or
+    notification badge" met de standen default/info/success/warning/error. De conclusie
+    blijft dus dat de teller in de kop een bestaande component is, maar hij is voor dit
+    project nieuw: reken op een rondje vormcontrole in de proefopstelling in plaats van
+    kopieerwerk van een bestaande pagina.
 - **De regels.** `features/lotc-bouwlijn.md`: attributen in kebab-case, samenstellingen
   krijgen kinderen in plaats van data-props, Jinja niet op attribuutpositie. En: nooit een
   `{# ... #}`-commentaar BINNEN een componenttag.
-- **Het htmx-patroon voor verversen.** Ligt er al in twee snelheden: 2 seconden voor een
-  lopende taak (`opi/templates_lotc/partials/task_progress_fragment.html.j2:34`) en 60
-  seconden voor een blok dat vanzelf bijwerkt (`opi/templates_lotc/bg/project-tabs.html.j2`).
+- **Het htmx-patroon voor verversen.** Ligt er in twee vormen, en het verschil tussen die
+  twee is voor dit ontwerp belangrijker dan de snelheid. Een lopende taak vervangt zichzelf
+  met een kale tijdklok: `hx-trigger="every 2s"`
+  (`opi/templates_lotc/partials/task_progress_fragment.html.j2:34`). Dat mag daar, want dat
+  venster bestaat alleen zolang de taak loopt. Het blok dat vanzelf bijwerkt gebruikt
+  **bewust geen tijdklok**: `opi/templates_lotc/bg/project-tabs.html.j2:987` luistert met
+  `hx-trigger="intersect once, zad-metingen-ververs"` op een **eigen gebeurtenis**, en een
+  scriptje eronder (`TUSSENPOOS = 60000`, regels 993-1011) vuurt die gebeurtenis elke minuut,
+  maar keert meteen terug zolang het tabblad onzichtbaar is
+  (`if (document.hidden || typeof htmx === 'undefined') return;`), met daarnaast een haak op
+  `visibilitychange` die ververst zodra je terugkomt. Het commentaar op de
+  regels 975-986 legt uit waarom die vorm er staat en de kale vorm niet:
+  - een htmx-tijdklok blijft doorpeilen als het tabblad naar de achtergrond gaat, dus een
+    tabblad dat een dag openstaat bevraagt een dag lang elke minuut de server;
+  - en het voor de hand liggende lapmiddel daarvoor, een triggerfilter
+    `every 60s [conditie]`, **kan hier niet**: htmx bouwt zo'n conditie met de
+    `Function`-constructor en de Content-Security-Policy van deze applicatie staat geen
+    `unsafe-eval` toe (`opi/middleware/security_headers.py:56`: `script-src 'self'
+    'unsafe-inline' https://cdn.jsdelivr.net`, en `unsafe-eval` staat er niet bij), dus de
+    conditie zou stil nooit waar worden. Gemeten in RC-91.
 - **De proefopstelling.** `/lotc/bg/<pagina>` met verzonnen gegevens uit
   `opi/web/lotc_fixtures.py`, zodat je vorm kunt kiezen zonder cluster.
 
@@ -55,7 +95,7 @@ verdwenen (`features/roos-eruit.md`), en `CLAUDE.md` zegt het ook met zoveel woo
 oude ROOS-referentie is met de bibliotheek verdwenen"). De geldende referentie is
 `features/lotc-bouwlijn.md` plus `request_for_components.md` voor wat het thema nog niet kan.
 
-### De verversingsweg: htmx-polling, en niet de websocket
+### De verversingsweg: peilen vanuit de browser, en niet de websocket
 
 Er is een websocket-router (`opi/api/logs_websocket_router.py`, 926 regels) met
 sessie-authenticatie, Origin-controle, verbindingslimieten en snelheidsbegrenzing. Hij is
@@ -68,14 +108,36 @@ de kop is een verbinding die elke ingelogde gebruiker op elke pagina permanent o
 is een andere orde: van enkele gelijktijdige verbindingen naar één per open tabblad van
 iedereen, met per werker een eigen boekhouding.
 
-**Aanbeveling: htmx-polling, met een interval van 60 seconden voor de teller.** Dat is het
-patroon dat er al ligt, het kost één `hx-get` per minuut per open tabblad, het werkt over
-meerdere werkers heen zonder gedeelde toestand, en het overleeft een herstart van OPI zonder
-dat er iets opnieuw verbonden moet worden. Een melding die een minuut later binnenkomt is geen
-probleem: dit is geen chat.
+**Aanbeveling: peilen vanuit de browser met een minuutcadans, en wel in de
+zichtbaarheidsbewuste vorm die er al ligt.** Dus niet `hx-trigger="every 60s"` op de teller,
+maar de vorm van `opi/templates_lotc/bg/project-tabs.html.j2:987`: `hx-trigger` op een eigen
+gebeurtenis (voorstel: `zad-meldingen-ververs`), een scriptje in de schil met een
+`setInterval` van 60000 dat die gebeurtenis vuurt en meteen terugkeert zolang
+`document.hidden` waar is, plus een haak op `visibilitychange` die één keer ververst zodra
+het tabblad weer op de voorgrond komt.
 
-Waar het postvak zelf open staat mag het sneller (10 seconden), met dezelfde
-`hx-swap="outerHTML"`-vorm als `opi/templates_lotc/bg/_tasks.html.j2:28`.
+Waarom de kale tijdklok hier juist niet mag, terwijl hij bij het taakvenster wel mag: de
+teller komt in `base_lotc.html.j2`, dus op **elke pagina van elke ingelogde gebruiker in elk
+open tabblad**, en hij blijft daar staan zolang die sessie duurt. Dat is precies de last
+waarvoor het bestaande blok de kale vorm heeft afgewezen, en dat blok stond nog maar op
+één tabblad van één pagina. Een vergeten tabblad met de teller erin zou anders een etmaal lang
+1440 verzoeken kosten zonder dat er iemand kijkt. En de vluchtroute die je zou willen nemen,
+`every 60s [document.visibilityState === 'visible']`, is er niet: de CSP van deze applicatie
+verbiedt `unsafe-eval` en htmx bouwt zo'n conditie met de `Function`-constructor, dus hij
+faalt stil (RC-91). Wie dat niet weet bouwt hem, ziet geen fout, en denkt dat het werkt.
+
+Met de zichtbaarheidshaak kost het één `hx-get` per minuut per **zichtbaar** tabblad, het
+werkt over meerdere werkers heen zonder gedeelde toestand, en het overleeft een herstart van
+OPI zonder dat er iets opnieuw verbonden moet worden. Een melding die een minuut later
+binnenkomt is geen probleem: dit is geen chat. En het terugkeergedrag is hier eerder een
+voordeel dan een concessie: op het moment dat iemand naar het tabblad terugschakelt staat de
+teller meteen goed, in plaats van tot de volgende tik verouderd te zijn.
+
+Voor de postvakpagina zelf mag het sneller (voorstel: 10 seconden) en mag de kale tijdklok
+wél, om dezelfde reden als bij `opi/templates_lotc/bg/_tasks.html.j2:28` (daar `every 5s` met
+`hx-swap="outerHTML"`): dat is één pagina die iemand bewust openzet, niet iets wat overal
+meereist. Wie ook daar netjes wil zijn, hangt er dezelfde zichtbaarheidshaak onder; verplicht
+is het niet.
 
 ### Wat blokkeert
 
