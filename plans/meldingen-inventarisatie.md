@@ -250,8 +250,8 @@ deployment zonder dat de eigenaar erom vroeg, en de eigenaar hoort er niets over
 | Een deployment bleef hangen in "wakker worden" en is teruggezet | idem (de `waking`-tak van de sweeper) | deployment | projectbeheerder | actie nodig | postvak |
 | Een resource is als wees aangemerkt | `opi/jobs/service_orphan_sweep.py` (classificatie `orphan_candidate`) | dienst binnen een project | platformbeheerder, projectbeheerder | actie nodig | postvak + mail |
 | Een resource lijkt wees maar is in gebruik (`in_use_anomaly`) | `opi/jobs/service_orphan_sweep.py` | dienst | platformbeheerder | actie nodig | ntfy |
-| Een gemarkeerde resource is definitief verwijderd | `opi/jobs/reconciliation.py`, via `opi/services/marked_for_deletion_service.py` | dienst | projectbeheerder | storing (onomkeerbaar) | postvak + mail |
-| Een markering is teruggedraaid omdat de resource terugkwam | `opi/jobs/reconciliation.py` | dienst | platformbeheerder | ter informatie | geen |
+| Een gemarkeerde resource is definitief verwijderd | `opi/jobs/reconciliation.py:219` (`_purge_marks`), via `opi/services/marked_for_deletion_service.py` | dienst | projectbeheerder | storing (onomkeerbaar) | postvak + mail |
+| Een markering is teruggedraaid omdat de resource terugkwam | `opi/jobs/reconciliation.py:231` (de `unmarked`-tak in `_purge_marks`) | dienst | platformbeheerder | ter informatie | geen |
 
 **De automatische stemmer verdient een aparte opmerking.** Hij schrijft in het
 projectbestand, inclusief een `history`-blok met tijdstip, bron (`auto-tune`) en reden. Dat
