@@ -71,6 +71,20 @@ class SleepModeService(Service):
 
         return SLEEP_MODE_EDITABLES
 
+    def deployment_runtime_keys(self) -> tuple[str, ...]:
+        """``deployments[].sleep`` is this service's own record about one deployment.
+
+        It says which deployment is asleep and holds that deployment's wake token, so it
+        describes the deployment it sits on and nothing else. Copying it onto a second
+        deployment (the clone behind a PR preview) made a brand-new preview arrive at
+        ``replicas: 0`` -- rolled out asleep, before anyone could look at it -- carrying
+        the source's wake token as well, which quietly widened that token's blast radius
+        from the one deployment it is documented to cover.
+        """
+        from opi.services.catalog.sleep_mode.state import DEPLOYMENT_KEY
+
+        return (DEPLOYMENT_KEY,)
+
     @on(UIEvent.DEPLOYMENT_STATE)
     def report_sleep_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
         """Report that this deployment is asleep, or on its way back (RC-28).
