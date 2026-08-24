@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: rig-system
 resources:
   - ../../base
+  - issuer-letsencrypt.yaml
 
 # Geen SCC en geen Pod Security Admission op dit cluster, dus niemand wijst een UID toe.
 # Zelfde reden als op de Kind-clusters; zie assigns_uid_via_scc in cluster_config.
@@ -20,3 +21,50 @@ patches:
       - op: add
         path: /spec/template/spec/securityContext/fsGroup
         value: 1000
+      # De base geeft 1Gi, en daar wordt Keycloak op dit cluster op OOMKilled: de JVM
+      # heeft naast de heap ook metaspace en direct buffers nodig. 2Gi is de waarde die
+      # in de sandbox wel houdt. De request gaat mee omhoog, anders plant de scheduler
+      # hem op een node die de limiet niet kan waarmaken.
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "2Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "1Gi"
+      # De base staat op keycloak.kind. De op:test is de vangnet: verschuift de env-lijst,
+      # dan faalt de build in plaats van dat hij stil de verkeerde variabele overschrijft.
+      - op: test
+        path: /spec/template/spec/containers/0/env/6/name
+        value: "KC_HOSTNAME"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/6/value
+        value: "https://keycloak.fundament-poc.rijksapp.dev"
+  - target:
+      kind: Ingress
+      name: keycloak
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: keycloak.fundament-poc.rijksapp.dev
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: keycloak.fundament-poc.rijksapp.dev
+      - op: replace
+        path: /spec/tls/0/secretName
+        value: keycloak-fundament-poc-tls
+      # De base wijst naar de kind-CA. Die bestaat hier niet, dus die annotatie moet weg
+      # voordat de eigen Issuer erbij kan; anders ziet cert-manager er twee.
+      - op: remove
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1issuer
+        value: letsencrypt-keycloak
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1private-key-algorithm
+        value: ECDSA
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1private-key-size
+        value: "384"
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1private-key-rotation-policy
+        value: Always

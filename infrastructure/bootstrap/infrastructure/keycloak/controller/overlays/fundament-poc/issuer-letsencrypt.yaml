@@ -1,0 +1,19 @@
+# Let's Encrypt via HTTP-01, zelfde opzet als de forgejo- en operations-manager-issuers op
+# dit cluster. Werkt zodra keycloak.fundament-poc.rijksapp.dev naar het adres van de
+# ingresscontroller wijst; external-dns zet dat record zodra die draait.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-keycloak
+  namespace: rig-system
+spec:
+  acme:
+    email: rig-platform@rijksoverheid.nl
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-keycloak-key
+    solvers:
+      - http01:
+          ingress:
+            serviceType: ClusterIP
+            ingressClassName: nginx

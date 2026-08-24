@@ -1,0 +1,17 @@
+# De base draagt de kale naam `operations-manager:latest`. Die is bedoeld voor Kind, waar
+# `kind load docker-image` hem lokaal neerzet. Op een echt cluster resolvet een naam zonder
+# registry naar docker.io/library, en daar bestaat hij niet: ImagePullBackOff.
+#
+# Anders dan odcn-production pinnen we hier niet op een CalVer-tag. Dit is een PoC-cluster
+# en `latest` is publiek trekbaar van ghcr, dus er is geen pull secret nodig. Wil je hier
+# ooit wel een vaste tag, gebruik dan dezelfde vorm als de odcn-overlay.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operations-manager
+spec:
+  template:
+    spec:
+      containers:
+        - name: operations-manager
+          image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest
