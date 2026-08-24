@@ -108,6 +108,7 @@ spec:
   #       maxParallel: 2
 
   monitoring:
+    # Uit: dit platform draait geen prometheus-operator, dus een PodMonitor wordt door
+    # niemand gelezen. Prometheus scrapet rig-db via de job 'cloudnative-pg' in
+    # infrastructure/bootstrap/infrastructure/prometheus/controller/base/configmap.yaml.
     enablePodMonitor: false
-    # PodMonitor is managed as a separate resource (see podmonitor.yaml)
-    # enablePodMonitor is deprecated in CNPG v1.27+

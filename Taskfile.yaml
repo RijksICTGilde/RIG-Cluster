@@ -148,6 +148,7 @@ tasks:
       # hij tenant-scoped; de operators worden daar buiten GitOps geinstalleerd.
       CLUSTER_SCOPED: '{{default "true" .ARGOCD_CLUSTER_SCOPED}}'
       NS: '{{default "rig-system" .RIG_NAMESPACE}}'
+      CTX: '{{.KUBE_CONTEXT}}'
     cmds:
       - |
         echo "Preparing ArgoCD Operator version {{.VERSION}}..."
@@ -160,26 +161,19 @@ tasks:
         TEMP_DIR="/tmp/argocd-operator-prep"
         mkdir -p $TEMP_DIR
 
-        # Check if Prometheus CRD exists
-        if ! kubectl get crd prometheuses.monitoring.coreos.com &>/dev/null; then
-          echo "⚠️  WARNING: Prometheus CRD not found in the cluster."
-          echo "⚠️  This is required by the ArgoCD operator. Applying fake Prometheus CRD as a workaround."
-          echo "⚠️  Note: This is only a temporary solution. For production, install Prometheus Operator properly."
-
-          # Apply the fake Prometheus CRD
-          kubectl apply -f bootstrap/crd/prometheus/fake-prometheus.yaml
-
-          echo "✅ Fake Prometheus CRD applied successfully."
-        else
-          echo "✅ Prometheus CRD already exists in the cluster."
-        fi
+        # Zonder --context landt elke kubectl hieronder op `kubectl config current-context`,
+        # ongeacht welk cluster geselecteerd is. cluster:check controleert wel de juiste
+        # context, maar die controle is waardeloos als de installatie zelf ergens anders
+        # uitkomt. Leeg laten mag: kind-clusters zetten KUBE_CONTEXT niet.
+        CTX_FLAG=""
+        [ -n "{{.CTX}}" ] && CTX_FLAG="--context {{.CTX}}"
 
         # Check if cert-manager Issuer CRD exists
-        if ! kubectl get crd issuers.cert-manager.io &>/dev/null; then
+        if ! kubectl $CTX_FLAG get crd issuers.cert-manager.io &>/dev/null; then
           echo "⚠️  WARNING: cert-manager Issuer CRD not found in the cluster."
           echo "⚠️  Applying fake cert-manager CRD so Issuer resources can be created."
 
-          kubectl apply -f bootstrap/crd/cert-manager/fake-cert-manager.yaml
+          kubectl $CTX_FLAG apply -f bootstrap/crd/cert-manager/fake-cert-manager.yaml
 
           echo "✅ Fake cert-manager CRD applied successfully."
         else
@@ -229,7 +223,7 @@ tasks:
         # Apply to cluster if requested
         if [[ "{{.APPLY}}" == "true" ]]; then
           echo "Applying ArgoCD operator to cluster..."
-          kubectl replace --force -f "$OUTPUT_FILE"
+          kubectl $CTX_FLAG replace --force -f "$OUTPUT_FILE"
           echo "✅ ArgoCD operator applied to cluster"
 
           # De scope wordt hier gezet en niet in het gegenereerde manifest, zodat dat
@@ -239,16 +233,16 @@ tasks:
           OP_NS=argocd-operator-system
           OP_DEPLOY=deployment/argocd-operator-controller-manager
           if [[ "{{.CLUSTER_SCOPED}}" == "true" ]]; then
-            kubectl set env -n "$OP_NS" "$OP_DEPLOY" ARGOCD_CLUSTER_CONFIG_NAMESPACES={{.NS}}
-            kubectl rollout status -n "$OP_NS" "$OP_DEPLOY" --timeout=120s
+            kubectl $CTX_FLAG set env -n "$OP_NS" "$OP_DEPLOY" ARGOCD_CLUSTER_CONFIG_NAMESPACES={{.NS}}
+            kubectl $CTX_FLAG rollout status -n "$OP_NS" "$OP_DEPLOY" --timeout=120s
             echo "✅ operator cluster-scoped voor namespace {{.NS}}"
           else
-            kubectl set env -n "$OP_NS" "$OP_DEPLOY" ARGOCD_CLUSTER_CONFIG_NAMESPACES-
+            kubectl $CTX_FLAG set env -n "$OP_NS" "$OP_DEPLOY" ARGOCD_CLUSTER_CONFIG_NAMESPACES-
             echo "ℹ️  operator namespace-scoped gelaten (dit cluster staat cluster-brede rechten niet toe)"
           fi
         else
           echo "To apply this to your cluster, run:"
-          echo "kubectl replace --force -f {{.OUTPUT_DIR}}/argocd-operator-install.yaml"
+          echo "kubectl {{if .CTX}}--context {{.CTX}} {{end}}replace --force -f {{.OUTPUT_DIR}}/argocd-operator-install.yaml"
         fi
 
         # Clean up
@@ -883,6 +877,7 @@ tasks:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      CTX: '{{.KUBE_CONTEXT}}'
     preconditions:
       - sh: '[ -n "{{.KEY_FILE}}" ]'
         msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
@@ -890,6 +885,12 @@ tasks:
       - |
 
         echo "🚀 Bootstrapping minimal RIG Cluster with source type: {{.CLUSTER}}"
+
+        # Zonder --context landt de hele bootstrap op `kubectl config current-context` in
+        # plaats van op het geselecteerde cluster. Leeg laten mag: kind-clusters zetten
+        # KUBE_CONTEXT niet.
+        CTX_FLAG=""
+        [ -n "{{.CTX}}" ] && CTX_FLAG="--context {{.CTX}}"
 
         # Set flags for kubectl apply
         KUBECTL_FLAGS=""
@@ -899,32 +900,32 @@ tasks:
         fi
 
         # Build and apply
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl $CTX_FLAG apply $KUBECTL_FLAGS -f -
 
         # Wait for ArgoCD operator to create deployments, then restart to pick up config
         if [[ "{{.DRY_RUN}}" != "true" ]]; then
           echo "Waiting for ArgoCD deployments to be created by the operator..."
-          until kubectl get deployment argocd-repo-server -n {{.RIG_NAMESPACE}} &>/dev/null; do
+          until kubectl $CTX_FLAG get deployment argocd-repo-server -n {{.RIG_NAMESPACE}} &>/dev/null; do
             sleep 5
           done
-          until kubectl get deployment argocd-server -n {{.RIG_NAMESPACE}} &>/dev/null; do
+          until kubectl $CTX_FLAG get deployment argocd-server -n {{.RIG_NAMESPACE}} &>/dev/null; do
             sleep 5
           done
           echo "Restarting ArgoCD deployments to apply configuration changes..."
-          kubectl rollout restart deployment/argocd-repo-server -n {{.RIG_NAMESPACE}}
-          kubectl rollout restart deployment/argocd-server -n {{.RIG_NAMESPACE}}
+          kubectl $CTX_FLAG rollout restart deployment/argocd-repo-server -n {{.RIG_NAMESPACE}}
+          kubectl $CTX_FLAG rollout restart deployment/argocd-server -n {{.RIG_NAMESPACE}}
 
           # 300s, niet 120s: op een verse cluster moeten de argocd-image en de cmp-sidecar
           # nog gepulld worden. Gemeten op de dev-server duurde alleen dat al ~2,5 minuut,
           # waardoor sandbox:setup afbrak op een rollout die daarna gewoon slaagde.
           echo "Waiting for ArgoCD repo server (incl. CMP sidecar) to be ready..."
-          kubectl rollout status deployment/argocd-repo-server -n {{.RIG_NAMESPACE}} --timeout=300s
+          kubectl $CTX_FLAG rollout status deployment/argocd-repo-server -n {{.RIG_NAMESPACE}} --timeout=300s
 
           echo "Waiting for ArgoCD server to be ready..."
-          kubectl rollout status deployment/argocd-server -n {{.RIG_NAMESPACE}} --timeout=300s
+          kubectl $CTX_FLAG rollout status deployment/argocd-server -n {{.RIG_NAMESPACE}} --timeout=300s
 
           echo "Waiting for ArgoCD application controller to be ready..."
-          kubectl rollout status statefulset/argocd-application-controller -n {{.RIG_NAMESPACE}} --timeout=120s
+          kubectl $CTX_FLAG rollout status statefulset/argocd-application-controller -n {{.RIG_NAMESPACE}} --timeout=120s
         fi
 
         echo "✅ Bootstrap applied successfully!"
@@ -936,13 +937,19 @@ tasks:
       CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn | local
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
+      CTX: '{{.KUBE_CONTEXT}}'
     preconditions:
       - sh: '[ -n "{{.KEY_FILE}}" ]'
         msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
     cmds:
       - |
 
-        echo "📦 Applying backup-destination overlay '{{.CLUSTER}}' to context: $(kubectl config current-context)"
+        # Zonder --context landt dit op `kubectl config current-context` in plaats van op
+        # het geselecteerde cluster. Leeg laten mag: kind-clusters zetten KUBE_CONTEXT niet.
+        CTX_FLAG=""
+        [ -n "{{.CTX}}" ] && CTX_FLAG="--context {{.CTX}}"
+
+        echo "📦 Applying backup-destination overlay '{{.CLUSTER}}' to context: {{if .CTX}}{{.CTX}}{{else}}$(kubectl config current-context){{end}}"
 
         # Set flags for kubectl apply
         KUBECTL_FLAGS=""
@@ -952,7 +959,7 @@ tasks:
         fi
 
         # Build (SOPS-decrypted) and apply
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl $CTX_FLAG apply $KUBECTL_FLAGS -f -
 
         echo "✅ backup-destination ({{.CLUSTER}}) applied successfully!"
     silent: true
@@ -1212,6 +1219,7 @@ tasks:
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      CTX: '{{.KUBE_CONTEXT}}'
     preconditions:
       - sh: '[ -n "{{.KEY_FILE}}" ]'
         msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
@@ -1234,9 +1242,14 @@ tasks:
         echo "Loading image into kind cluster..."
         kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
       - |
+        # Zonder --context landt dit op `kubectl config current-context` in plaats van op
+        # het geselecteerde cluster. Leeg laten mag: kind-clusters zetten KUBE_CONTEXT niet.
+        CTX_FLAG=""
+        [ -n "{{.CTX}}" ] && CTX_FLAG="--context {{.CTX}}"
+
         echo "Updating operations-manager deployment..."
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl $CTX_FLAG apply $KUBECTL_FLAGS -f -
+        kubectl $CTX_FLAG rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
 
@@ -1265,14 +1278,20 @@ tasks:
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      CTX: '{{.KUBE_CONTEXT}}'
     preconditions:
       - sh: '[ -n "{{.KEY_FILE}}" ]'
         msg: "AGE_KEY_FILE is niet gezet. Zet hem in .env-taskfile-<cluster> of geef KEY_FILE expliciet mee. Er is bewust geen terugval: die versleutelde een nieuw cluster stilzwijgend met de sleutel van een ander cluster."
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
       - |
+        # Zonder --context landt dit op `kubectl config current-context` in plaats van op
+        # het geselecteerde cluster. Leeg laten mag: kind-clusters zetten KUBE_CONTEXT niet.
+        CTX_FLAG=""
+        [ -n "{{.CTX}}" ] && CTX_FLAG="--context {{.CTX}}"
+
         echo "Updating operations-manager deployment..."
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl $CTX_FLAG apply $KUBECTL_FLAGS -f -
         # On odcn-production the image is a CalVer tag that changes every deploy, so the
         # apply above already rolls the deployment. A `rollout restart` on top of that is
         # a SECOND change to the pod template, so two rollouts start at once and you
@@ -1282,7 +1301,7 @@ tasks:
         if [ "{{.CLUSTER}}" = "odcn-production" ]; then
           echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
         else
-          kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+          kubectl $CTX_FLAG rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
         fi
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
@@ -1571,6 +1590,7 @@ tasks:
     desc: "Build and deploy the cmp-kustomize-sops image to the local kind cluster"
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+      CTX: '{{.KUBE_CONTEXT}}'
     cmds:
       - |
         echo "Building cmp-kustomize-sops Docker image..."
@@ -1579,8 +1599,13 @@ tasks:
         echo "Loading image into kind cluster..."
         kind load docker-image rig-cmp-argo-kustomize-sops:latest --name {{.KIND_CLUSTER_NAME}}
       - |
+        # Zonder --context landt dit op `kubectl config current-context` in plaats van op
+        # het geselecteerde cluster. Leeg laten mag: kind-clusters zetten KUBE_CONTEXT niet.
+        CTX_FLAG=""
+        [ -n "{{.CTX}}" ] && CTX_FLAG="--context {{.CTX}}"
+
         echo "Restarting ArgoCD repo-server to pick up new CMP image..."
-        kubectl rollout restart deployment argocd-repo-server -n {{.RIG_NAMESPACE}}
+        kubectl $CTX_FLAG rollout restart deployment argocd-repo-server -n {{.RIG_NAMESPACE}}
       - echo -e "✅ CMP kustomize-sops image updated successfully!"
     silent: true
 
