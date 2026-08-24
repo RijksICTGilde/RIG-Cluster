@@ -104,6 +104,31 @@ def _kubectl_returning(pods: list[dict], replicasets: list[dict] | None) -> Asyn
 
 
 # ---------------------------------------------------------------------------
+# Module state
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clean_oom_watcher_state():
+    """Wipe the watcher's module dicts around every test in this file.
+
+    Both dicts are deliberately NOT reset by the code under test (a counter that
+    resets per round is no brake at all), so without this they leak from one test
+    into the next and make the file order-dependent -- exactly what the
+    ``pytest-randomly`` plugin in ``pyproject.toml`` is there to expose. Module-wide
+    and autouse rather than per class: every class here shares the key
+    ``myproject/production``.
+    """
+    from opi.services.oom_watcher import _last_tuned_pod_template_hash, _oom_tune_attempts
+
+    _oom_tune_attempts.clear()
+    _last_tuned_pod_template_hash.clear()
+    yield
+    _oom_tune_attempts.clear()
+    _last_tuned_pod_template_hash.clear()
+
+
+# ---------------------------------------------------------------------------
 # check_pod_health
 # ---------------------------------------------------------------------------
 
@@ -501,12 +526,6 @@ class TestCheckAllComponentsHealth:
 
 class TestCreateHealthCheckCallback:
     """Tests for the on_progressing callback factory."""
-
-    def setup_method(self):
-        from opi.services.oom_watcher import _last_tuned_pod_template_hash, _oom_tune_attempts
-
-        _oom_tune_attempts.clear()
-        _last_tuned_pod_template_hash.clear()
 
     @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
     @pytest.mark.asyncio
@@ -1040,12 +1059,6 @@ class TestRunOomCheck:
 class TestOomTuneBudgetAcrossRounds:
     """One budget per deployment, and it survives the refresh a tune queues itself."""
 
-    def setup_method(self):
-        from opi.services.oom_watcher import _last_tuned_pod_template_hash, _oom_tune_attempts
-
-        _oom_tune_attempts.clear()
-        _last_tuned_pod_template_hash.clear()
-
     @staticmethod
     def _project_data():
         return (
@@ -1154,12 +1167,6 @@ class TestPodGenerationLock:
     same unchanged pod. This lock is the net that would have stopped the escalation on
     its own, even without the counter fixes.
     """
-
-    def setup_method(self):
-        from opi.services.oom_watcher import _last_tuned_pod_template_hash, _oom_tune_attempts
-
-        _oom_tune_attempts.clear()
-        _last_tuned_pod_template_hash.clear()
 
     @staticmethod
     def _project_data():
