@@ -94,6 +94,14 @@ spec:
           mountPath: /tmp
         - name: tmp
           mountPath: /var/tmp
+        # Elke overlay levert een ConfigMap operations-manager-config met een .env erin,
+        # en de app leest die van /etc/config. Dat koppelen stond in drie overlays los
+        # herhaald, waardoor de vierde (fundament-poc) hem miste en de app stil terugviel
+        # op de defaults in opi/core/config.py. Hier hoort hij, want geen enkel cluster
+        # kan zonder.
+        - name: config-volume
+          mountPath: /etc/config
+          readOnly: true
         env:
         # Who is answering /version. During a rolling update two pods serve the same
         # Service, so an answer without a pod name reads as version drift instead of
@@ -144,3 +152,6 @@ spec:
       - name: tmp
         emptyDir:
           sizeLimit: 500Mi
+      - name: config-volume
+        configMap:
+          name: operations-manager-config

@@ -41,9 +41,6 @@ spec:
           mountPath: /tmp
         - name: tmp
           mountPath: /var/tmp
-        - name: config-volume
-          mountPath: /etc/config
-          readOnly: true
         - name: ca-certificate
           mountPath: /etc/ssl/certs/kind-local-ca.crt
           readOnly: true
@@ -73,9 +70,6 @@ spec:
       - name: tmp
         emptyDir:
           sizeLimit: 2Gi
-      - name: config-volume
-        configMap:
-          name: operations-manager-config
       - name: ca-certificate
         hostPath:
           path: /etc/ssl/certs/kind-local-ca.crt

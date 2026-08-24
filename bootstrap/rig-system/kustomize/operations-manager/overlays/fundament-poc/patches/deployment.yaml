@@ -15,3 +15,15 @@ spec:
       containers:
         - name: operations-manager
           image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest
+          # LOG_ERRORS_FILE_PATH staat in opi/core/config.py op /data/logs/errors.log, dus
+          # die map moet bestaan en beschrijfbaar zijn. odcn doet dit met een emptyDir; de
+          # sandbox heeft er een PVC op /data staan en dekt hem daarmee af. Dit hoort
+          # bewust NIET in de base: een emptyDir op /data/logs zou daar bovenop de PVC van
+          # de sandbox gemount worden en die logs stilletjes vluchtig maken.
+          volumeMounts:
+            - name: error-logs
+              mountPath: /data/logs
+      volumes:
+        - name: error-logs
+          emptyDir:
+            sizeLimit: 1Gi
