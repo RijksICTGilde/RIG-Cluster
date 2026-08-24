@@ -113,6 +113,7 @@ from opi.services.project_store import ConcurrencyError, ConflictError, get_proj
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
     deployment_manifest_services,
+    deployment_runtime_keys,
     generate_missing_values,
     manifest_services,
     provisioning_services,
@@ -7226,8 +7227,7 @@ class ProjectManager:
                 # An upsert rolls new content onto this deployment exactly as an image
                 # update does, so the services clear what they recorded about the old
                 # content through the same hook (RC-37). Only the components this call
-                # actually names, and only in this UPDATE branch: a deployment being
-                # created has no earlier state to clear.
+                # actually names.
                 upsert_deployment_dict = next(
                     (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
                 )
@@ -7321,7 +7321,13 @@ class ProjectManager:
                         # are an explicit per-deployment choice, and inheriting the
                         # source's schedule made every PR preview accumulate nightly
                         # snapshots.
-                        clone_exclude_keys = ["name", "components", "backup"]
+                        #
+                        # On top of those, every key a service uses for its own runtime
+                        # state about the SOURCE deployment: that state describes the
+                        # deployment it was recorded on, so it must not travel to this
+                        # one. Asked of the catalog rather than listed here, so a service
+                        # that starts recording state does not need an edit in this file.
+                        clone_exclude_keys = ["name", "components", "backup", *deployment_runtime_keys()]
                         new_deployment.update(
                             {
                                 key: copy.deepcopy(value)
@@ -7431,6 +7437,18 @@ class ProjectManager:
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
+                # Creating a deployment rolls content onto it just as an update does, so
+                # the services get the same moment (RC-37). There is no earlier state to
+                # clear here -- the clone drops it -- but the hook is also where a service
+                # sets what a rollout implies: sleep-mode starts the sleep clock at this
+                # commit instead of leaving the new deployment for the next sweep.
+                state_notices_create = await run_redeploy_hooks(
+                    project_name,
+                    project_data,
+                    new_deployment,
+                    [component.reference for component in components],
+                )
+
                 commit_message = f"Add deployment '{deployment_name}' to project '{project_name}'"
                 if clone_from:
                     commit_message += f" (cloned from '{clone_from}')"
@@ -7448,6 +7466,8 @@ class ProjectManager:
                 }
                 if normalized_warnings_create:
                     result_create["warnings"] = normalized_warnings_create
+                if state_notices_create:
+                    result_create["state_cleared"] = state_notices_create
                 return result_create
 
         except ConflictError, ConcurrencyError:
