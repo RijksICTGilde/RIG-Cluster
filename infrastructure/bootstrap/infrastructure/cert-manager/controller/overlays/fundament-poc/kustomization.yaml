@@ -6,4 +6,3 @@ kind: Kustomization
 # van issuer-letsencrypt.yaml.jinja.
 resources:
   - ../../base
-
