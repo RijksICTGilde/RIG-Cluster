@@ -39,6 +39,17 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/env/6/value
         value: "https://keycloak.fundament-poc.rijksapp.dev"
+      # Keycloak schaalt zijn heap standaard met MaxRAMPercentage, en dat leest de
+      # cgroup-limiet. Op deze node (123Gi) werd hij op zowel 1Gi als 2Gi OOMKilled in de
+      # augmentatiefase, en dat past bij een JVM die de limiet niet ziet en dus op het
+      # nodegeheugen schaalt. Een vaste heap omzeilt die detectie helemaal. Zodra dit
+      # bevestigd is kan de geheugenlimiet hierboven terug naar de basewaarde 1Gi, want
+      # dan is niet de limiet het probleem maar de schaling.
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: JAVA_OPTS_KC_HEAP
+          value: "-Xms256m -Xmx768m"
   - target:
       kind: Ingress
       name: keycloak

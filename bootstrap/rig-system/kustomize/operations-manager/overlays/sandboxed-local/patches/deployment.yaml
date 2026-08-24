@@ -144,9 +144,6 @@ spec:
           mountPath: /tmp
         - name: tmp
           mountPath: /var/tmp
-        - name: config-volume
-          mountPath: /etc/config
-          readOnly: true
         - name: data
           mountPath: /data
         # Sandbox-CPU-beleid: minimale request, geen cpu-limit — zie de toelichting in
@@ -184,9 +181,6 @@ spec:
       - name: tmp
         emptyDir:
           sizeLimit: 2Gi
-      - name: config-volume
-        configMap:
-          name: operations-manager-config
       - name: data
         persistentVolumeClaim:
           claimName: operations-manager-data
