@@ -1283,6 +1283,19 @@ class Service(ABC):
                 selected.add(service_entry_name(entry))
         return self.service_type.value in selected
 
+    def deployment_runtime_keys(self) -> tuple[str, ...]:
+        """The ``deployments[]`` keys under which this service records runtime state.
+
+        Runtime state is what the service itself wrote about one deployment -- not user
+        config. It describes the deployment that is there, so it must never travel to
+        another one. Generic code that copies a deployment (the clone behind a PR
+        preview) drops these keys instead of naming a service, which is the same reason
+        ``ActionEvent.REDEPLOY`` exists.
+
+        A service that records nothing returns the default empty tuple.
+        """
+        return ()
+
     # --- events: the one way a service hooks in (RC-39) --------------------------
     # A service declares what it listens to with ``@on(event)`` on the method that does
     # the work (see ``opi.services.catalog.events``); these two dispatches -- one per

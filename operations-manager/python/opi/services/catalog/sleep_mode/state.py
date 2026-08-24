@@ -22,6 +22,10 @@ STATE_WAKING = "waking"
 
 VALID_STATES = (STATE_AWAKE, STATE_SLEEPING, STATE_WAKING)
 
+#: The ``deployments[]`` key this state lives under. Declared here so the service can
+#: hand it to generic code (``deployment_runtime_keys``) without a second literal.
+DEPLOYMENT_KEY = "sleep"
+
 
 @dataclass
 class SleepState:
@@ -42,7 +46,7 @@ def _find_deployment(project_data: dict[str, Any], deployment_name: str) -> dict
 def read(project_data: dict[str, Any], deployment_name: str) -> SleepState:
     """Read a deployment's sleep state; defaults to ``awake`` when absent."""
     deployment = _find_deployment(project_data, deployment_name)
-    sleep = (deployment or {}).get("sleep") or {}
+    sleep = (deployment or {}).get(DEPLOYMENT_KEY) or {}
     return SleepState(
         state=sleep.get("state", STATE_AWAKE),
         expires_at=sleep.get("expires-at"),
@@ -62,7 +66,7 @@ def write(project_data: dict[str, Any], deployment_name: str, sleep_state: Sleep
         return False
 
     if sleep_state.state == STATE_AWAKE and not sleep_state.expires_at and not sleep_state.wake_token:
-        deployment.pop("sleep", None)
+        deployment.pop(DEPLOYMENT_KEY, None)
         return True
 
     sleep: dict[str, Any] = {"state": sleep_state.state}
@@ -70,5 +74,5 @@ def write(project_data: dict[str, Any], deployment_name: str, sleep_state: Sleep
         sleep["expires-at"] = sleep_state.expires_at
     if sleep_state.wake_token:
         sleep["wake-token"] = sleep_state.wake_token
-    deployment["sleep"] = sleep
+    deployment[DEPLOYMENT_KEY] = sleep
     return True
