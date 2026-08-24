@@ -945,6 +945,7 @@ def create_health_check_callback(
     attempt_key = f"{project_name}/{deployment_name}"
     last_check_at = 0
     exhaustion_logged = False
+    stale_generation_logged: set[str] = set()
 
     async def _callback(elapsed_seconds: int) -> None:
         nonlocal last_check_at, exhaustion_logged
@@ -1021,17 +1022,24 @@ def create_health_check_callback(
             # the OOM is guaranteed to be from the current lifecycle. Without this
             # exception, pods that OOM instantly on boot (e.g. 25Mi limit) get reported
             # only as CrashLoopBackOff and the auto-tune path never runs.
-            oom_is_new = health.oom_detected and oom_is_fresh_evidence(
-                project_name, deployment_name, health.component_name, health.oom_pod_template_hash
+            oom_actionable = (
+                not oom_budget_exhausted and health.oom_detected and (check_oom or health.crash_loop_detected)
             )
-            if health.oom_detected and not oom_is_new:
-                logger.info(
-                    "Health check: OOM for %s is on pod generation %s, the same one the previous tune "
-                    "answered — waiting for that increase to roll out",
-                    health.component_name,
-                    health.oom_pod_template_hash,
-                )
-            if not oom_budget_exhausted and oom_is_new and (check_oom or health.crash_loop_detected):
+            # Only ask about the generation for an OOM we would otherwise act on, and
+            # say so once per component: this runs on every poll iteration.
+            if oom_actionable and not oom_is_fresh_evidence(
+                project_name, deployment_name, health.component_name, health.oom_pod_template_hash
+            ):
+                oom_actionable = False
+                if health.component_name not in stale_generation_logged:
+                    stale_generation_logged.add(health.component_name)
+                    logger.info(
+                        "Health check: OOM for %s is on pod generation %s, the same one the previous tune "
+                        "answered — waiting for that increase to roll out",
+                        health.component_name,
+                        health.oom_pod_template_hash,
+                    )
+            if oom_actionable:
                 has_oom = True
                 _record_oom_tune_hash(
                     project_name, deployment_name, health.component_name, health.oom_pod_template_hash
