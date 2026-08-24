@@ -60,6 +60,14 @@ class ResourceTuningConfig(BaseModel):
     #: Minimum absolute headroom the memory limit keeps above the request (Mi), so a
     #: container never ends up with limit == request (which dies on the first spike).
     min_limit_headroom_mi: int
+    #: Hard ceiling for the automatic path, as a multiple of the memory limit declared
+    #: on the catalog component: an OOM-driven bump may raise a deployment override to
+    #: at most ``declared limit x this factor``. Without it the only bound was the
+    #: cluster ceiling, and a component declared at 45Mi climbed to 4096Mi in nine
+    #: automated rounds (asses-k2n/pr-494). The catalog value is a stable anchor
+    #: precisely because the tuner never writes to it -- it only writes deployment
+    #: overrides -- so the ratio cannot drift along with the increases.
+    max_growth_factor: float
     #: Below this observed max (Mi) the measurement is treated as "no data" rather
     #: than as a real value. A container that actually ran uses more than this within
     #: seconds; a fraction of a Mi is the footprint of a pod that barely existed
