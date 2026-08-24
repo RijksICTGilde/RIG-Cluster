@@ -55,7 +55,7 @@ if str(_OPI_ROOT) not in sys.path:
 
 from opi.services.catalog.resource_tuning.config import resource_tuning_config  # noqa: E402
 from opi.services.resource_analyzer import _k8s_memory_to_mb  # noqa: E402  (after sys.path bootstrap)
-from ruamel.yaml import YAML  # noqa: E402
+from ruamel.yaml import YAML, YAMLError  # noqa: E402
 
 #: The history source the auto-tune writes when the change came from an OOM.
 OOM_HISTORY_SOURCE = "oom-watcher"
@@ -158,7 +158,7 @@ def _load_projects(directory: Path) -> list[tuple[Path, dict[str, Any]]]:
     for path in sorted(directory.glob("*.y*ml")):
         try:
             data = yaml.load(path.read_text(encoding="utf-8"))
-        except Exception as exc:
+        except (YAMLError, OSError) as exc:
             print(f"  ! could not read {path.name}: {exc}", file=sys.stderr)
             continue
         if isinstance(data, dict):
