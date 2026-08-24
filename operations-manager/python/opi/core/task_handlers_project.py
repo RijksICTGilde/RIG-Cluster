@@ -286,16 +286,15 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             from opi.services.oom_watcher import reset_inline_oom_attempts, schedule_oom_check
 
             if isinstance(project_data_dict, dict):
-                # A user-initiated deploy is a fresh start for the OOM tune budget.
                 for dep in project_data_dict.get("deployments", []):
                     dep_name = dep.get("name", "")
-                    if dep_name:
-                        reset_inline_oom_attempts(project_name, dep_name)
-
-            if app_settings.OOM_WATCHER_ENABLED and isinstance(project_data_dict, dict):
-                for dep in project_data_dict.get("deployments", []):
-                    dep_name = dep.get("name", "")
-                    if dep_name:
+                    if not dep_name:
+                        continue
+                    # A user-initiated deploy is a fresh start for the OOM tune budget.
+                    # Outside the ENABLED guard on purpose: the inline callback counts
+                    # regardless of that setting, so its counter must be cleared here too.
+                    reset_inline_oom_attempts(project_name, dep_name)
+                    if app_settings.OOM_WATCHER_ENABLED:
                         schedule_oom_check(project_name, dep_name)
 
             progress.update_current_step(f"Project {project_name} succesvol geimplementeerd")
