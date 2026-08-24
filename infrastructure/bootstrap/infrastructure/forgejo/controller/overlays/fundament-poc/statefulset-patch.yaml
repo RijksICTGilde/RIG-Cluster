@@ -85,6 +85,16 @@ spec:
       labels:
         app: forgejo
     spec:
+      # LET OP: volumeClaimTemplates is in de StatefulSet-API een atomaire lijst. Een
+      # strategic merge patch vervangt daardoor de HELE array in plaats van in element [0]
+      # te mergen. Alles wat je hier niet herhaalt is weg, en de apiserver weigert de
+      # StatefulSet dan met "at least 1 access mode is required". Daarom staan accessModes
+      # en resources hier opnieuw, ook al veranderen ze niet ten opzichte van de base.
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
       # De base zegt "standard", en die klasse bestaat hier niet. csi-lvm is de default
       # van het platform maar kan niet provisionen; local-path komt uit de storage-app.
       storageClassName: local-path
