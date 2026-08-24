@@ -5,12 +5,20 @@ namespace: rig-system
 
 resources:
   - ../../base
+  # Op ODCN beheert Capsule deze RBAC; hier is geen Capsule, dus nemen we ze zelf mee.
+  # Lokale kopieën omdat de CMP-plugin zonder load-restrictor-vlag bouwt.
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
 
 patches:
   - target:
       kind: Deployment
       name: external-dns
     patch: |-
+      # De base trekt via de RCR-mirror-pullsecret, en die bestaat alleen op ODCN.
+      # registry.k8s.io is hier direct bereikbaar en vraagt geen authenticatie.
+      - op: remove
+        path: /spec/template/spec/imagePullSecrets
       # Alleen de eigen subzone, niet rijksapp.dev als geheel. ODCN beheert die zone ook,
       # en hoe smaller het filter hoe kleiner het oppervlak waarop twee instanties elkaar
       # kunnen raken.
