@@ -283,7 +283,14 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
             # Schedule fire-and-forget OOM watcher for each deployment
             from opi.core.config import settings as app_settings
-            from opi.services.oom_watcher import schedule_oom_check
+            from opi.services.oom_watcher import reset_inline_oom_attempts, schedule_oom_check
+
+            if isinstance(project_data_dict, dict):
+                # A user-initiated deploy is a fresh start for the OOM tune budget.
+                for dep in project_data_dict.get("deployments", []):
+                    dep_name = dep.get("name", "")
+                    if dep_name:
+                        reset_inline_oom_attempts(project_name, dep_name)
 
             if app_settings.OOM_WATCHER_ENABLED and isinstance(project_data_dict, dict):
                 for dep in project_data_dict.get("deployments", []):
@@ -478,7 +485,10 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
 
                 # Schedule fire-and-forget OOM watcher
                 from opi.core.config import settings
-                from opi.services.oom_watcher import schedule_oom_check
+                from opi.services.oom_watcher import reset_inline_oom_attempts, schedule_oom_check
+
+                # An upsert is a user action on this deployment: fresh OOM tune budget.
+                reset_inline_oom_attempts(project_name, deployment_name)
 
                 if settings.OOM_WATCHER_ENABLED:
                     oom_attempt = payload.get("oom_watch_attempt", 1)
