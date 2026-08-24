@@ -192,6 +192,11 @@ Two properties make it an actual bound:
   `min(recommendation, ceiling)` unconditionally would freeze exactly the blown-up
   deployments the bound exists to prevent — 4096Mi would then be permanent, and the
   nightly sweep could never bring it back down.
+- **It keeps the burst headroom.** Capping the limit at the ceiling can close the
+  `min_limit_headroom_mi` margin the step above just enforced, so the request is capped
+  at `ceiling - margin` (never below the declared root request). Pulling the request up
+  to the capped limit instead would leave `limit == request`, headroom 0 — the exact
+  burst-death that margin exists to prevent, on precisely the components that OOM most.
 
 A refused increase reports its own message, naming the declared limit, the current limit
 and the factor, and asking for manual intervention. It is deliberately not the old
