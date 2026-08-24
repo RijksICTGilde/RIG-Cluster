@@ -781,7 +781,15 @@ def describe_growth_ceiling_block(
     it answers "is this component already at the top of its automatic range", so the
     caller can say that instead of the misleading "could not determine new limits" --
     a limit WAS determined, it was refused.
+
+    The ratio alone is not enough to claim the ceiling is the reason. A component with
+    auto-tuning switched off returns before the ceiling is ever evaluated, so it may
+    well sit above the factor while the real reason for the missing change is the
+    opt-out. Same gate, same order as the analysis, so the answer matches why.
     """
+    if not file_handler.extract_auto_tune_enabled(project_data, dep_name, component_ref):
+        return None
+
     root_resources = file_handler.extract_component_resources(project_data, component_ref)
     current_resources = dict(root_resources)
     overrides = file_handler.extract_deployment_component_resources(project_data, dep_name, component_ref)

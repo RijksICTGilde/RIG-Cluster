@@ -201,7 +201,10 @@ Two properties make it an actual bound:
 A refused increase reports its own message, naming the declared limit, the current limit
 and the factor, and asking for manual intervention. It is deliberately not the old
 "auto-tune could not determine new limits": a limit WAS determined, it was refused, and
-the old wording sent people looking for missing metrics.
+the old wording sent people looking for missing metrics. A component with
+`auto-tune-resources: false` never reaches the ceiling check, so it keeps the generic
+message even when its ratio is past the factor — the opt-out is the reason there, not
+the ceiling.
 
 The ceiling only bounds new growth. Components an earlier, unbounded escalation already
 inflated keep their value; `scripts/oom_growth_report.py` (`PROJECTS=... task
