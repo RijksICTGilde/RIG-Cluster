@@ -503,9 +503,10 @@ class TestCreateHealthCheckCallback:
     """Tests for the on_progressing callback factory."""
 
     def setup_method(self):
-        from opi.services.oom_watcher import _oom_tune_attempts
+        from opi.services.oom_watcher import _last_tuned_pod_template_hash, _oom_tune_attempts
 
         _oom_tune_attempts.clear()
+        _last_tuned_pod_template_hash.clear()
 
     @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
     @pytest.mark.asyncio
@@ -1040,9 +1041,10 @@ class TestOomTuneBudgetAcrossRounds:
     """One budget per deployment, and it survives the refresh a tune queues itself."""
 
     def setup_method(self):
-        from opi.services.oom_watcher import _oom_tune_attempts
+        from opi.services.oom_watcher import _last_tuned_pod_template_hash, _oom_tune_attempts
 
         _oom_tune_attempts.clear()
+        _last_tuned_pod_template_hash.clear()
 
     @staticmethod
     def _project_data():
@@ -1081,12 +1083,16 @@ class TestOomTuneBudgetAcrossRounds:
         from opi.services.oom_watcher import OOM_MAX_TUNE_ATTEMPTS, _oom_tune_attempts
 
         mock_get_data.side_effect = lambda _name: self._project_data()
-        mock_check.return_value = PodHealthResult("production-api", oom_detected=True)
         mock_observe.return_value = MagicMock(requeue_refresh=True, failures=[])
 
         task_service = AsyncMock()
         with patch("opi.services.oom_watcher._task_service_ref", task_service):
             for round_number in range(1, OOM_MAX_TUNE_ATTEMPTS + 2):
+                # Each round the previous increase DID roll out, so the OOM comes from
+                # a new pod generation. Only the budget may stop this loop here.
+                mock_check.return_value = PodHealthResult(
+                    "production-api", oom_detected=True, oom_pod_template_hash=f"gen-{round_number}"
+                )
                 # Every round starts a fresh chain at attempt=1, exactly as the
                 # refresh handler does.
                 await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
@@ -1118,7 +1124,7 @@ class TestOomTuneBudgetAcrossRounds:
         from opi.services.oom_watcher import OOM_MAX_TUNE_ATTEMPTS, _oom_tune_attempts, reset_inline_oom_attempts
 
         mock_get_data.side_effect = lambda _name: self._project_data()
-        mock_check.return_value = PodHealthResult("production-api", oom_detected=True)
+        mock_check.return_value = PodHealthResult("production-api", oom_detected=True, oom_pod_template_hash="gen-1")
         mock_observe.return_value = MagicMock(requeue_refresh=True, failures=[])
         _oom_tune_attempts["myproject/production"] = OOM_MAX_TUNE_ATTEMPTS
 
@@ -1132,6 +1138,135 @@ class TestOomTuneBudgetAcrossRounds:
 
         mock_observe.assert_called_once()
         assert _oom_tune_attempts["myproject/production"] == 1
+
+
+# ---------------------------------------------------------------------------
+# The pod-template-hash lock
+# ---------------------------------------------------------------------------
+
+
+class TestPodGenerationLock:
+    """An OOM on the pod generation a previous tune already answered is not new evidence.
+
+    All twelve detections in the incident came from ONE pod
+    (``pr-494-api-fb654fcc5-rcf6g``): the health error broke off the ArgoCD sync wait
+    before the previous increase had rolled out, so the watcher kept re-reading the
+    same unchanged pod. This lock is the net that would have stopped the escalation on
+    its own, even without the counter fixes.
+    """
+
+    def setup_method(self):
+        from opi.services.oom_watcher import _last_tuned_pod_template_hash, _oom_tune_attempts
+
+        _oom_tune_attempts.clear()
+        _last_tuned_pod_template_hash.clear()
+
+    @staticmethod
+    def _project_data():
+        return (
+            {
+                "deployments": [
+                    {
+                        "name": "production",
+                        "namespace": "myproject",
+                        "cluster": "local",
+                        "components": [{"reference": "api"}],
+                    }
+                ]
+            },
+            "myproject.yaml",
+        )
+
+    async def _two_detections(self, mock_get_data, mock_check, mock_observe, first_hash, second_hash):
+        mock_get_data.side_effect = lambda _name: self._project_data()
+        mock_observe.return_value = MagicMock(requeue_refresh=True, failures=[])
+
+        task_service = AsyncMock()
+        with patch("opi.services.oom_watcher._task_service_ref", task_service):
+            for pod_hash in (first_hash, second_hash):
+                mock_check.return_value = PodHealthResult(
+                    "production-api", oom_detected=True, oom_pod_template_hash=pod_hash
+                )
+                await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+        return mock_observe.call_count
+
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @patch("opi.services.oom_watcher.schedule_oom_check")
+    @pytest.mark.asyncio
+    async def test_same_generation_tunes_once(self, mock_sched, mock_prefix, mock_get_data, mock_check, mock_observe):
+        """Twice the same pod-template-hash: exactly one tune, then wait for the rollout."""
+        tunes = await self._two_detections(mock_get_data, mock_check, mock_observe, "fb654fcc5", "fb654fcc5")
+        assert tunes == 1
+
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @patch("opi.services.oom_watcher.schedule_oom_check")
+    @pytest.mark.asyncio
+    async def test_new_generation_tunes_again(self, mock_sched, mock_prefix, mock_get_data, mock_check, mock_observe):
+        """A changed hash means the increase rolled out and still OOMs: tune again."""
+        tunes = await self._two_detections(mock_get_data, mock_check, mock_observe, "fb654fcc5", "7d9c1a2b4")
+        assert tunes == 2
+
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @patch("opi.services.oom_watcher.schedule_oom_check")
+    @pytest.mark.asyncio
+    async def test_unknown_hash_does_not_block(self, mock_sched, mock_prefix, mock_get_data, mock_check, mock_observe):
+        """A hash that cannot be determined must NOT block the tune.
+
+        Deliberate choice: blocking on an unknown hash would silence the auto-tune the
+        moment kubectl hiccups, which is worse than one tune too many.
+        """
+        tunes = await self._two_detections(mock_get_data, mock_check, mock_observe, None, None)
+        assert tunes == 2
+
+    @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_inline_path_uses_the_same_lock(self, mock_check):
+        """The inline callback observes the same rule as the background check."""
+        mock_check.return_value = [PodHealthResult("comp-a", oom_detected=True, oom_pod_template_hash="fb654fcc5")]
+        callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
+
+        with pytest.raises(DeploymentHealthError) as exc_info:
+            await callback(5)
+        assert exc_info.value.failures[0].failure_type == "oom"
+
+        # Same generation again: no OOM failure, so no second tune cycle.
+        await callback(10)
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_check_pod_health_reports_the_generation(self, mock_kubectl_cls):
+        """The hash comes off the pod the OOM was actually observed on."""
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        oom_pod = {
+            "metadata": {
+                "name": "prod-api-fb654fcc5-rcf6g",
+                "labels": {"app": "prod-api", "pod-template-hash": "fb654fcc5"},
+            },
+            "status": {
+                "containerStatuses": [
+                    {"name": "app", "lastState": {"terminated": {"reason": "OOMKilled", "exitCode": 137}}, "state": {}}
+                ]
+            },
+        }
+        mock_kubectl.run_command = _kubectl_returning(
+            pods=[oom_pod], replicasets=[_replicaset(pod_template_hash="fb654fcc5", revision="3")]
+        )
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+
+        assert result.oom_detected is True
+        assert result.oom_pod_template_hash == "fb654fcc5"
 
 
 # ---------------------------------------------------------------------------
