@@ -2,9 +2,18 @@
 # `kind load docker-image` hem lokaal neerzet. Op een echt cluster resolvet een naam zonder
 # registry naar docker.io/library, en daar bestaat hij niet: ImagePullBackOff.
 #
-# Anders dan odcn-production pinnen we hier niet op een CalVer-tag. Dit is een PoC-cluster
-# en `latest` is publiek trekbaar van ghcr, dus er is geen pull secret nodig. Wil je hier
-# ooit wel een vaste tag, gebruik dan dezelfde vorm als de odcn-overlay.
+# Gepind, net als odcn-production, want `latest` wordt van main gebouwd en daar bestaat het
+# blok "fundament-poc" in opi/core/cluster_config.py niet. OPI kwam daardoor tot de laatste
+# stap van de Keycloak-setup en viel om op "Cluster 'fundament-poc' not found in
+# configuration". De tag draagt het cluster in de naam zodat hij nooit met een tag van een
+# ander cluster verward wordt, en `latest` blijft van main.
+#
+# Nieuwe tag maken vanaf deze branch (NIET `task publish-operations-manager`, die zet
+# EXTRA_TAG=latest en pint odcn-production):
+#   task docker-build-and-push BUILD_CONTEXT=. DOCKERFILE_PATH=operations-manager/Dockerfile \
+#     IMAGE_NAME=operations-manager REGISTRY_IMAGE=ghcr.io/minbzk/base-images/operations-manager \
+#     IMAGE_TAG="$(date +%Y.%m.%d.%H%M)-$(git rev-parse --short=8 HEAD)-fundament" \
+#     BUILD_TARGET=application PLATFORMS=linux/amd64 SKIP_VALIDATION=true
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,7 +23,7 @@ spec:
     spec:
       containers:
         - name: operations-manager
-          image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest
+          image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:2026.08.24.1617-8d51a67e-fundament
           # LOG_ERRORS_FILE_PATH staat in opi/core/config.py op /data/logs/errors.log, dus
           # die map moet bestaan en beschrijfbaar zijn. odcn doet dit met een emptyDir; de
           # sandbox heeft er een PVC op /data staan en dekt hem daarmee af. Dit hoort
