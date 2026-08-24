@@ -50,7 +50,7 @@ class ResourceTuningService(Service):
         # Lazy import: resource_tuning_service pulls in the project manager, which the
         # catalog must not import at load time.
         from opi.handlers.project_file_handler import ProjectFileHandler
-        from opi.services.resource_tuning_service import apply_resource_tuning
+        from opi.services.resource_tuning_service import apply_resource_tuning, describe_growth_ceiling_block
 
         file_handler = ProjectFileHandler()
         try:
@@ -68,6 +68,17 @@ class ResourceTuningService(Service):
             ]
 
         if not changes:
+            # Distinguish "no limit could be computed" from "a limit was computed and
+            # refused". The second is the escalation ceiling, and it needs its own text:
+            # the old wording sent people looking for missing metrics while the real
+            # answer is that this component has outgrown its declared limit.
+            blocked = [
+                message
+                for ref in oom_components
+                if (message := describe_growth_ceiling_block(ctx.project_data, file_handler, ctx.deployment_name, ref))
+            ]
+            if blocked:
+                return [ObservationOutcome(failures=blocked)]
             return [
                 ObservationOutcome(
                     failures=[
