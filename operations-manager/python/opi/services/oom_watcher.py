@@ -872,24 +872,11 @@ def create_health_check_callback(
         ImagePullBackOff and CrashLoopBackOff and raises ``DeploymentHealthError``.
     """
     attempt_key = f"{project_name}/{deployment_name}"
-    current_attempts = _oom_tune_attempts.get(attempt_key, 0)
-    # When the OOM auto-tune budget is spent, only the OOM branch is suppressed —
-    # image-pull and crash-loop detection must keep working, otherwise a broken
-    # image on an OOM-exhausted deployment sits in Progressing until ArgoCD's
-    # progress deadline. Never return None here.
-    oom_budget_exhausted = current_attempts >= OOM_MAX_TUNE_ATTEMPTS
-    if oom_budget_exhausted:
-        logger.warning(
-            "Health check: max OOM tune attempts (%d) reached for %s, "
-            "OOM auto-tune disabled (image-pull/crash-loop still checked)",
-            OOM_MAX_TUNE_ATTEMPTS,
-            attempt_key,
-        )
-
     last_check_at = 0
+    exhaustion_logged = False
 
     async def _callback(elapsed_seconds: int) -> None:
-        nonlocal last_check_at
+        nonlocal last_check_at, exhaustion_logged
 
         # Stop checking after max elapsed (boot-time failures are fast)
         if elapsed_seconds > HEALTH_CHECK_MAX_ELAPSED_SECONDS:
@@ -898,6 +885,24 @@ def create_health_check_callback(
         # Throttle checks
         if last_check_at > 0 and (elapsed_seconds - last_check_at) < HEALTH_CHECK_INTERVAL_SECONDS:
             return
+
+        # Read the budget LIVE, on every call. Snapshotting it while building the
+        # callback meant it could never flip from "room left" to "spent" inside a
+        # callback's lifetime, and two callbacks alive on the same deployment each
+        # counted from their own zero. When the budget is spent, only the OOM branch
+        # is suppressed -- image-pull and crash-loop detection must keep working,
+        # otherwise a broken image on an OOM-exhausted deployment sits in Progressing
+        # until ArgoCD's progress deadline. Never return None here.
+        current_attempts = _oom_tune_attempts.get(attempt_key, 0)
+        oom_budget_exhausted = current_attempts >= OOM_MAX_TUNE_ATTEMPTS
+        if oom_budget_exhausted and not exhaustion_logged:
+            exhaustion_logged = True
+            logger.warning(
+                "Health check: max OOM tune attempts (%d) reached for %s, "
+                "OOM auto-tune disabled (image-pull/crash-loop still checked)",
+                OOM_MAX_TUNE_ATTEMPTS,
+                attempt_key,
+            )
 
         # CrashLoopBackOff and ImagePullBackOff are visible immediately —
         # no grace period needed.  OOM needs the grace period because
