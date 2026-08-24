@@ -67,14 +67,21 @@ HEALTH_CHECK_MAX_ELAPSED_SECONDS = 120
 # so silence during a stuck rollout becomes an actionable message.
 STALL_NOTICE_SECONDS = 45
 
-# Maximum number of inline OOM → tune → reprocess cycles per deployment.
+# Maximum number of OOM → tune → reprocess cycles per deployment.
 # With the sliding bump factor (3x/2x/1.5x), 3 attempts covers:
 #   25Mi → 75Mi → 150Mi → 300Mi  (should be enough for any boot)
-OOM_INLINE_MAX_ATTEMPTS = 3
+OOM_MAX_TUNE_ATTEMPTS = 3
 
-# Tracks how many inline OOM tune cycles have fired per deployment
-# during the current process lifetime.  Keyed by "project/deployment".
-_inline_oom_attempts: dict[str, int] = {}
+# Tracks how many OOM tune cycles have fired per deployment during the current
+# process lifetime.  Keyed by "project/deployment".
+#
+# ONE counter for BOTH paths (inline and fire-and-forget), and it deliberately
+# survives a round: every committed tune queues a refresh_deployment task, and that
+# task schedules a fresh check. A per-round counter therefore resets the very brake
+# it is meant to be (asses-k2n/pr-494, 24 August: 45Mi → 4096Mi in nine steps, each
+# round restarting at 1/3). Only an explicit reset -- a real new deploy, a user
+# action, an image bump -- clears it; see ``reset_inline_oom_attempts``.
+_oom_tune_attempts: dict[str, int] = {}
 
 # Module-level task service reference for the fire-and-forget path.
 # Set during app startup via ``set_task_service()``.
@@ -85,6 +92,28 @@ def set_task_service(task_service: AsyncTaskService) -> None:
     """Store a reference to the task service for fire-and-forget use."""
     global _task_service_ref
     _task_service_ref = task_service
+
+
+def _oom_attempt_key(project_name: str, deployment_name: str) -> str:
+    """The key both paths share for one deployment's OOM tune budget."""
+    return f"{project_name}/{deployment_name}"
+
+
+def oom_tune_budget_spent(project_name: str, deployment_name: str) -> bool:
+    """True when this deployment has used up its OOM tune cycles."""
+    return _oom_tune_attempts.get(_oom_attempt_key(project_name, deployment_name), 0) >= OOM_MAX_TUNE_ATTEMPTS
+
+
+def _record_oom_tune_attempt(project_name: str, deployment_name: str) -> int:
+    """Count one OOM tune cycle for this deployment and return the new total.
+
+    Read-modify-write on the shared dict rather than on a snapshot, so two callbacks
+    (or a callback and a background check) racing on the same deployment see each
+    other's increments.
+    """
+    key = _oom_attempt_key(project_name, deployment_name)
+    _oom_tune_attempts[key] = _oom_tune_attempts.get(key, 0) + 1
+    return _oom_tune_attempts[key]
 
 
 # ---------------------------------------------------------------------------
@@ -639,6 +668,22 @@ async def _run_oom_check(
             )
         return
 
+    # The shared budget decides, not the ``attempt`` parameter. That parameter only
+    # counts within one chain of scheduled checks, and every committed tune queues a
+    # refresh whose handler starts a brand new chain at attempt=1 -- so it reset the
+    # brake it was supposed to be. ``attempt`` stays in the log lines only.
+    if oom_tune_budget_spent(project_name, deployment_name):
+        logger.warning(
+            "Health watcher: OOM tune budget (%d cycles) spent for %s/%s, no further auto-tune "
+            "(attempt %d/%d) — manual intervention required",
+            OOM_MAX_TUNE_ATTEMPTS,
+            project_name,
+            deployment_name,
+            attempt,
+            max_attempts,
+        )
+        return
+
     logger.info(
         "Health watcher: OOM detected for %s/%s, triggering auto-tune (attempt %d/%d)",
         project_name,
@@ -656,10 +701,13 @@ async def _run_oom_check(
     try:
         observation = await run_after_sync_observation(project_name, deployment_name, component_health)
         if observation.requeue_refresh:
+            used = _record_oom_tune_attempt(project_name, deployment_name)
             logger.info(
-                "Health watcher: auto-tune committed changes for %s/%s",
+                "Health watcher: auto-tune committed changes for %s/%s (%d/%d OOM tune cycles used)",
                 project_name,
                 deployment_name,
+                used,
+                OOM_MAX_TUNE_ATTEMPTS,
             )
             await _queue_refresh_task(project_name, deployment_name)
             schedule_oom_check(
@@ -824,17 +872,17 @@ def create_health_check_callback(
         ImagePullBackOff and CrashLoopBackOff and raises ``DeploymentHealthError``.
     """
     attempt_key = f"{project_name}/{deployment_name}"
-    current_attempts = _inline_oom_attempts.get(attempt_key, 0)
+    current_attempts = _oom_tune_attempts.get(attempt_key, 0)
     # When the OOM auto-tune budget is spent, only the OOM branch is suppressed —
     # image-pull and crash-loop detection must keep working, otherwise a broken
     # image on an OOM-exhausted deployment sits in Progressing until ArgoCD's
     # progress deadline. Never return None here.
-    oom_budget_exhausted = current_attempts >= OOM_INLINE_MAX_ATTEMPTS
+    oom_budget_exhausted = current_attempts >= OOM_MAX_TUNE_ATTEMPTS
     if oom_budget_exhausted:
         logger.warning(
             "Health check: max OOM tune attempts (%d) reached for %s, "
             "OOM auto-tune disabled (image-pull/crash-loop still checked)",
-            OOM_INLINE_MAX_ATTEMPTS,
+            OOM_MAX_TUNE_ATTEMPTS,
             attempt_key,
         )
 
@@ -868,7 +916,7 @@ def create_health_check_callback(
             elapsed_seconds,
             check_oom,
             current_attempts,
-            OOM_INLINE_MAX_ATTEMPTS,
+            OOM_MAX_TUNE_ATTEMPTS,
         )
 
         unhealthy = await check_all_components_health(namespace, component_names, state)
@@ -938,16 +986,23 @@ def create_health_check_callback(
             return
 
         if has_oom:
-            _inline_oom_attempts[attempt_key] = current_attempts + 1
+            _record_oom_tune_attempt(project_name, deployment_name)
 
         raise DeploymentHealthError(failures, namespace)
 
-    # Reset OOM attempts when callback is created — a fresh deploy starts clean.
-    _inline_oom_attempts.pop(attempt_key, None)
-
+    # Deliberately NO reset here. Building a callback is not proof of a fresh deploy:
+    # the automated refresh queued by a tune builds one too, so popping the counter on
+    # creation wiped the budget once per escalation round. Only an explicit reset
+    # (``reset_inline_oom_attempts``, called for a real deploy / user action / image
+    # bump) clears it.
     return _callback
 
 
 def reset_inline_oom_attempts(project_name: str, deployment_name: str) -> None:
-    """Reset the inline OOM attempt counter for a deployment (e.g. after manual tune)."""
-    _inline_oom_attempts.pop(f"{project_name}/{deployment_name}", None)
+    """Clear a deployment's OOM tune budget: a real new deploy starts clean.
+
+    Called for user-initiated work only (a deploy, an upsert, a manual refresh, an
+    image bump) — never for the automated refresh a tune queues for itself, which
+    carries ``automated_remediation: True`` precisely so it can be told apart.
+    """
+    _oom_tune_attempts.pop(_oom_attempt_key(project_name, deployment_name), None)
