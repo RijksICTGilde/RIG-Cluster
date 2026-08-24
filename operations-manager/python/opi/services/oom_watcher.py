@@ -83,6 +83,11 @@ OOM_MAX_TUNE_ATTEMPTS = 3
 # action, an image bump -- clears it; see ``reset_inline_oom_attempts``.
 _oom_tune_attempts: dict[str, int] = {}
 
+# The pod-template-hash the last OOM tune acted on, per "project/deployment/component".
+# A detection on that same hash is not new evidence: the pod that OOM'd is still the
+# one from before the previous increase, so that increase has not rolled out yet.
+_last_tuned_pod_template_hash: dict[str, str] = {}
+
 # Module-level task service reference for the fire-and-forget path.
 # Set during app startup via ``set_task_service()``.
 _task_service_ref: AsyncTaskService | None = None
@@ -102,6 +107,53 @@ def _oom_attempt_key(project_name: str, deployment_name: str) -> str:
 def oom_tune_budget_spent(project_name: str, deployment_name: str) -> bool:
     """True when this deployment has used up its OOM tune cycles."""
     return _oom_tune_attempts.get(_oom_attempt_key(project_name, deployment_name), 0) >= OOM_MAX_TUNE_ATTEMPTS
+
+
+def _oom_hash_key(project_name: str, deployment_name: str, component_name: str) -> str:
+    return f"{project_name}/{deployment_name}/{component_name}"
+
+
+def oom_is_fresh_evidence(
+    project_name: str,
+    deployment_name: str,
+    component_name: str,
+    pod_template_hash: str | None,
+) -> bool:
+    """False when this OOM was observed on the same pod generation as the last tune.
+
+    A tune only means something once it is running. During the incident the health
+    error broke off the ArgoCD sync wait before the previous increase had rolled out,
+    so the watcher kept reading the SAME unchanged pod as fresh evidence: all twelve
+    detections came from ``pr-494-api-fb654fcc5-rcf6g``. The existing superseded-
+    generation filter could not catch that -- at that moment the pod still WAS the
+    current generation.
+
+    An unknown hash (kubectl hiccup, unparsable output) deliberately counts as fresh.
+    Blocking there would silence the auto-tune exactly when the cluster is already
+    having trouble, which is worse than one tune too many.
+    """
+    if not pod_template_hash:
+        logger.info(
+            "Health watcher: no pod-template-hash for %s/%s component %s, treating the OOM as fresh evidence",
+            project_name,
+            deployment_name,
+            component_name,
+        )
+        return True
+    return _last_tuned_pod_template_hash.get(_oom_hash_key(project_name, deployment_name, component_name)) != (
+        pod_template_hash
+    )
+
+
+def _record_oom_tune_hash(
+    project_name: str,
+    deployment_name: str,
+    component_name: str,
+    pod_template_hash: str | None,
+) -> None:
+    """Remember which pod generation this tune answered."""
+    if pod_template_hash:
+        _last_tuned_pod_template_hash[_oom_hash_key(project_name, deployment_name, component_name)] = pod_template_hash
 
 
 def _record_oom_tune_attempt(project_name: str, deployment_name: str) -> int:
@@ -127,6 +179,10 @@ class PodHealthResult:
 
     component_name: str
     oom_detected: bool = False
+    # pod-template-hash of the pod the OOM was observed on; None when it could not be
+    # determined. Same hash on a later detection means the previous increase has not
+    # rolled out yet, so that detection is not new evidence.
+    oom_pod_template_hash: str | None = None
     image_pull_error: str | None = None
     image_pull_container: str | None = None  # which container failed (main "app" vs a sidecar)
     image_pull_image: str | None = None  # the image reference that could not be pulled
@@ -338,6 +394,7 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
                             exit_code,
                         )
                         result.oom_detected = True
+                        result.oom_pod_template_hash = pod_template_hash or current_pod_template_hash
 
                 # Check waiting state for ImagePull and CrashLoop
                 waiting = container_status.get("state", {}).get("waiting", {})
@@ -617,6 +674,7 @@ async def _run_oom_check(
     # service decides what an observation means.
     health_service = deployment_health_service()
     oom_component_refs: list[str] = []
+    oom_pod_hashes: dict[str, str | None] = {}  # unique_name -> the generation that OOM'd
     image_pull_errors: list[tuple[str, str]] = []  # (component_ref, error_message)
     components = target_dep.get("components", [])
     for comp in components:
@@ -632,7 +690,18 @@ async def _run_oom_check(
             continue
 
         if health.oom_detected:
-            oom_component_refs.append(component_ref)
+            if oom_is_fresh_evidence(project_name, deployment_name, unique_name, health.oom_pod_template_hash):
+                oom_component_refs.append(component_ref)
+                oom_pod_hashes[unique_name] = health.oom_pod_template_hash
+            else:
+                logger.info(
+                    "Health watcher: OOM for %s/%s component %s is on pod generation %s, "
+                    "the same one the previous tune answered — waiting for that increase to roll out",
+                    project_name,
+                    deployment_name,
+                    component_ref,
+                    health.oom_pod_template_hash,
+                )
         if health.image_pull_error:
             if is_transient_registry_error(health.image_pull_error):
                 logger.warning(
@@ -702,6 +771,8 @@ async def _run_oom_check(
         observation = await run_after_sync_observation(project_name, deployment_name, component_health)
         if observation.requeue_refresh:
             used = _record_oom_tune_attempt(project_name, deployment_name)
+            for unique_name, pod_hash in oom_pod_hashes.items():
+                _record_oom_tune_hash(project_name, deployment_name, unique_name, pod_hash)
             logger.info(
                 "Health watcher: auto-tune committed changes for %s/%s (%d/%d OOM tune cycles used)",
                 project_name,
@@ -950,8 +1021,21 @@ def create_health_check_callback(
             # the OOM is guaranteed to be from the current lifecycle. Without this
             # exception, pods that OOM instantly on boot (e.g. 25Mi limit) get reported
             # only as CrashLoopBackOff and the auto-tune path never runs.
-            if not oom_budget_exhausted and health.oom_detected and (check_oom or health.crash_loop_detected):
+            oom_is_new = health.oom_detected and oom_is_fresh_evidence(
+                project_name, deployment_name, health.component_name, health.oom_pod_template_hash
+            )
+            if health.oom_detected and not oom_is_new:
+                logger.info(
+                    "Health check: OOM for %s is on pod generation %s, the same one the previous tune "
+                    "answered — waiting for that increase to roll out",
+                    health.component_name,
+                    health.oom_pod_template_hash,
+                )
+            if not oom_budget_exhausted and oom_is_new and (check_oom or health.crash_loop_detected):
                 has_oom = True
+                _record_oom_tune_hash(
+                    project_name, deployment_name, health.component_name, health.oom_pod_template_hash
+                )
                 failures.append(
                     ComponentFailure(
                         component_name=health.component_name,
@@ -1011,3 +1095,6 @@ def reset_inline_oom_attempts(project_name: str, deployment_name: str) -> None:
     carries ``automated_remediation: True`` precisely so it can be told apart.
     """
     _oom_tune_attempts.pop(_oom_attempt_key(project_name, deployment_name), None)
+    prefix = f"{project_name}/{deployment_name}/"
+    for key in [k for k in _last_tuned_pod_template_hash if k.startswith(prefix)]:
+        del _last_tuned_pod_template_hash[key]
