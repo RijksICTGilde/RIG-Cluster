@@ -12,7 +12,12 @@ spec:
     # De gebruikersnaam in de URL maakt hem uniek voor ArgoCD; dat is vereist.
     repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     path: infrastructure/bootstrap/clusters/fundament-poc
-    targetRevision: main
+    # De tweede plek waar de branch staat. De eerste is de patch onderaan
+    # infrastructure/bootstrap/clusters/fundament-poc/kustomization.yaml, maar die geldt
+    # alleen voor de child-Applications: hij zit in het bestand dat deze root eerst moet
+    # ophalen. Stond dit op main, dan faalt de root op een pad dat daar niet bestaat.
+    # Landt dit werk op main, dan gaan deze regel en die patch samen terug naar main.
+    targetRevision: fundament
     plugin:
       name: kustomize-sops-v1.0
       env:
