@@ -707,8 +707,14 @@ async def _analyze_component_resources(
             f"raise the declared limit by hand if the component really needs more"
         )
         new_limit = _mb_to_k8s_memory(allowed_mb)
-        if _k8s_memory_to_mb(new_request) > allowed_mb:
-            new_request = new_limit
+        # Re-apply the headroom margin, on the REQUEST side this time. The margin was
+        # enforced just above, but lowering the limit to the ceiling can close it again
+        # -- and setting the request to the capped limit would leave headroom 0, which
+        # is precisely the burst-death this margin exists to prevent. The declared root
+        # request stays the floor: never starve a component to buy headroom.
+        max_request_mb = max(allowed_mb - margin_mb, root_request_mb)
+        if _k8s_memory_to_mb(new_request) > max_request_mb:
+            new_request = _mb_to_k8s_memory(max_request_mb)
 
     # A value the user set by hand wins over the tuner for exactly the fields they set,
     # for as long as that intent lives (RC-141). Applied here, at the end: everything
