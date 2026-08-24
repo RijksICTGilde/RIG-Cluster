@@ -1975,6 +1975,28 @@ tasks:
       - uv run pytest tests/test_upgrade_safety_replay.py -v
     silent: false
 
+  oom-growth-report:
+    desc: "Rapporteer welke componenten de OOM auto-tune boven zijn plafond heeft laten groeien"
+    summary: |
+      Vergelijkt per project de huidige geheugenlimiet van elk deployment-component met
+      de in de catalogus verklaarde limiet, en somt de gevallen op waarvan de verhouding
+      buiten de auto-tune-bovengrens valt. De oude, onbegrensde escalatie liet die
+      gevallen achter; de grens uit RC-157 begrenst alleen NIEUWE groei.
+
+      Alleen lezen: er wordt niets geschreven, niets gecommit en geen cluster geraakt.
+
+        PROJECTS=/path/to/zad-projects/projects task oom-growth-report
+        PROJECTS=... FACTOR=4 task oom-growth-report      # strengere grens verkennen
+        PROJECTS=... ALL=1 task oom-growth-report         # ook de gevallen binnen de grens
+    dir: operations-manager/python
+    requires:
+      vars: [PROJECTS]
+    cmds:
+      - >-
+        uv run python scripts/oom_growth_report.py "{{.PROJECTS}}"
+        {{if .FACTOR}}--factor {{.FACTOR}}{{end}} {{if .ALL}}--all{{end}}
+    silent: true
+
   upgrade-safety-diff:
     desc: "RC-19 Layer 2: summarize what a zad-deployments upgrade removed, per project"
     summary: |
