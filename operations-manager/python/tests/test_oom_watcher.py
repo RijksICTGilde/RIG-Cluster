@@ -850,6 +850,33 @@ class TestCreateHealthCheckCallback:
         await first(5)
         assert _oom_tune_attempts["myproject/production"] == OOM_MAX_TUNE_ATTEMPTS
 
+    @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_warns_when_the_brake_closes(self, mock_check, caplog):
+        """The exhaustion warning is logged when the brake actually closes.
+
+        It used to be logged while BUILDING the callback. Now that the budget is read
+        live, that moment no longer coincides with the brake closing, so the warning
+        moved into the callback -- otherwise it would disappear from the logs of
+        exactly the deployment that needs manual attention.
+        """
+        from opi.services.oom_watcher import OOM_MAX_TUNE_ATTEMPTS, _oom_tune_attempts
+
+        mock_check.return_value = [PodHealthResult("comp-a", oom_detected=True)]
+        callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
+
+        with caplog.at_level(logging.WARNING, logger="opi.services.oom_watcher"):
+            for _ in range(OOM_MAX_TUNE_ATTEMPTS):
+                with pytest.raises(DeploymentHealthError):
+                    await callback(5)
+            assert "max OOM tune attempts" not in caplog.text, "not spent yet, nothing to warn about"
+
+            await callback(5)
+            assert "max OOM tune attempts" in caplog.text
+            assert "myproject/production" in caplog.text
+
+        assert _oom_tune_attempts["myproject/production"] == OOM_MAX_TUNE_ATTEMPTS
+
     def test_creation_does_not_reset_counter(self):
         """Building a callback must NOT clear the budget.
 
