@@ -13,8 +13,13 @@ The ArgoCD operator v0.14.0 requires the following modifications to work properl
 2. **Use Latest Image**
    - In `config/manager/kustomization.yaml`: Change `newTag: v0.14.0` to `newTag: latest`
 
-3. ** Using a fake prometheus **
-   - Currently we do not have prometheus in the cluster, so we create a fake definition for it for Argo to work
+3. **Fake cert-manager CRD**
+   - Clusters zonder cert-manager krijgen `bootstrap/crd/cert-manager/fake-cert-manager.yaml`, zodat de
+     Issuer-resources uit git aangemaakt kunnen worden.
+
+Er stond hier ook een fake Prometheus-CRD "voor Argo". Die is vervallen: in v0.14.0 zit alle
+monitoring-logica van de operator achter `IsPrometheusAPIAvailable()` (scheme, watches en reconcile),
+dus zonder de CRD start hij gewoon op en slaat hij monitoring over.
 
 ## Installation Process
 
