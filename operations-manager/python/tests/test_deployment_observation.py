@@ -140,6 +140,41 @@ class TestResourceTuningCeilingMessage:
         else:
             assert message.endswith("but auto-tune could not determine new limits")
 
+    @pytest.mark.asyncio
+    async def test_opt_out_above_the_ceiling_does_not_get_the_ceiling_message(self):
+        """Above the factor, but tuning is switched off: that is the reason, not the ceiling.
+
+        The ratio on its own does not explain why no change came out. A component with
+        ``auto-tune-resources: false`` returns before the ceiling is ever evaluated,
+        so blaming the ceiling would point at the wrong knob.
+        """
+        from opi.services.catalog.base import ComponentHealth, DeploymentObservationContext
+        from opi.services.registry import get_service
+
+        project_data = self._project("360Mi")
+        project_data["deployments"][0]["components"][0]["auto-tune-resources"] = False
+
+        service = get_service(ServiceType.RESOURCE_TUNING)
+        ctx = DeploymentObservationContext(
+            project_name="my-project",
+            deployment_name="production",
+            project_data=project_data,
+            cluster="odcn-production",
+            namespace="rig-prd-my-project",
+            component_health={"api": ComponentHealth(oom_detected=True)},
+        )
+
+        with patch(
+            "opi.services.resource_tuning_service.apply_resource_tuning",
+            new_callable=AsyncMock,
+        ) as mock_apply:
+            mock_apply.return_value = ([], ["api"])
+            outcomes = await service.tune_after_oom(ctx)
+
+        message = outcomes[0].failures[0]
+        assert "ceiling" not in message.lower()
+        assert message.endswith("but auto-tune could not determine new limits")
+
 
 class TestSystemServiceKind:
     def test_resource_tuning_applies_to_project_without_services(self):
