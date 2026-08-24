@@ -397,8 +397,41 @@ tasks:
         echo "Klaar. Controleer met 'git diff' dat er geen platte tekst in staat, en commit."
     silent: true
 
+  cluster:check:
+    desc: "Verify the selected cluster's prerequisites: context, server and auth"
+    vars:
+      CTX: '{{.KUBE_CONTEXT}}'
+    preconditions:
+      - sh: '[ -f .env-taskfile-current ]'
+        msg: "Geen cluster geselecteerd. Draai eerst 'task select-cluster'."
+    cmds:
+      # Wat cluster-specifiek is staat in .env-taskfile-<cluster>: de context, de
+      # serverwaarborg en het auth-commando. Lege waarde = die check overslaan.
+      - |
+        fail() { echo "❌ $1"; exit 1; }
+
+        [ -n "{{.CTX}}" ] || fail "KUBE_CONTEXT is niet gezet in de clusterconfig. Draai 'task select-cluster'."
+
+        kubectl config get-contexts -o name 2>/dev/null | grep -qx "{{.CTX}}" || fail "kubectl-context '{{.CTX}}' bestaat niet. Merge de kubeconfig van het cluster erin."
+
+        SERVER=$(kubectl config view --minify --context "{{.CTX}}" -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null)
+        if [ -n "{{.CONTEXT_SERVER_MATCH}}" ]; then
+          echo "$SERVER" | grep -q "{{.CONTEXT_SERVER_MATCH}}" || fail "Context '{{.CTX}}' wijst naar '$SERVER', en dat lijkt niet het geselecteerde cluster. Gestopt voordat er iets geïnstalleerd wordt."
+        fi
+
+        if [ -n "{{.AUTH_CHECK_COMMAND}}" ]; then
+          {{.AUTH_CHECK_COMMAND}} >/dev/null 2>&1 || fail "Auth-commando '{{.AUTH_CHECK_COMMAND}}' faalde. Log eerst in voor dit cluster."
+        fi
+
+        kubectl --context "{{.CTX}}" --request-timeout=30s auth can-i create customresourcedefinitions >/dev/null 2>&1 || fail "Geen rechten om CRD's aan te maken op '{{.CTX}}'."
+
+        echo "✅ context {{.CTX}} -> $SERVER"
+        echo "✅ CRD-rechten aanwezig"
+    silent: true
+
   cluster:bootstrap:
     desc: "Bootstrap the selected cluster: everything ArgoCD needs before it can take over"
+    deps: [cluster:check]
     vars:
       CTX: '{{.KUBE_CONTEXT}}'
     preconditions:
@@ -3615,30 +3648,18 @@ tasks:
   # moet dit opnieuw.
   # ---------------------------------------------------------------------------
 
+  # Behouden als bekende naam; de inhoud is verhuisd naar cluster:check en staat
+  # cluster-onafhankelijk in de .env-taskfile-<cluster> van het geselecteerde cluster.
+  # Specifiek voor fundament: zonder functl op de PATH werkt de kubeconfig-exec-plugin
+  # niet, dus klapt elke kubectl-call. Dat vang je hier vroeg.
   fundament:check:
     desc: "Verify the fundament-poc prerequisites: functl, authentication, and the right cluster"
-    vars:
-      CTX: '{{.KUBE_CONTEXT}}'
+    deps: [cluster:check]
     cmds:
       - |
         fail() { echo "❌ $1"; exit 1; }
-
-        [ -n "{{.CTX}}" ] || fail "KUBE_CONTEXT is niet gezet. Draai 'task select-cluster' en kies fundament-poc."
-
         command -v functl >/dev/null 2>&1 || fail "functl staat niet op de PATH. De kubeconfig gebruikt hem als exec-plugin, dus zonder functl werkt geen enkel kubectl-commando tegen dit cluster."
-
-        functl auth status 2>/dev/null | grep -q "Authenticated: *yes" || fail "functl is niet ingelogd. Draai 'functl auth login' met een API-key uit https://console.fundament-poc.nl (gebruikersmenu rechtsboven, API keys)."
-
-        kubectl config get-contexts -o name 2>/dev/null | grep -qx "{{.CTX}}" || fail "kubectl-context '{{.CTX}}' bestaat niet. Merge de kubeconfig van het cluster erin."
-
-        SERVER=$(kubectl config view --minify --context "{{.CTX}}" -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null)
-        echo "$SERVER" | grep -q "fundament" || fail "Context '{{.CTX}}' wijst naar '$SERVER', en dat lijkt geen Fundament-cluster. Gestopt voordat er iets geïnstalleerd wordt."
-
-        kubectl --context "{{.CTX}}" --request-timeout=30s auth can-i create customresourcedefinitions >/dev/null 2>&1 || fail "Geen rechten om CRD's aan te maken op '{{.CTX}}'."
-
-        echo "✅ functl aanwezig en ingelogd"
-        echo "✅ context {{.CTX}} -> $SERVER"
-        echo "✅ rechten voor CRD's aanwezig"
+        echo "✅ functl aanwezig"
     silent: true
 
   fundament:install-platform:
