@@ -1943,6 +1943,25 @@ tasks:
       - uv run pytest tests/ --ignore=tests/integration/ -v
     silent: false
 
+  test-db-stop:
+    desc: "Stop and remove the shared test Postgres (zad-test-postgres)"
+    summary: |
+      The ORM tests share one long-lived Postgres container instead of creating a
+      throwaway one per run, so it stays up between runs on purpose. This removes it;
+      the next test run creates it again. Safe at any moment when no suite is running.
+    cmds:
+      - docker rm -f zad-test-postgres
+
+  test-db-reset:
+    desc: "Recreate the shared test Postgres from scratch"
+    summary: |
+      Removes the container and lets the test fixture create it again, by running one
+      ORM test. The fixture stays the only place that knows the image and the port.
+    dir: operations-manager/python
+    cmds:
+      - docker rm -f zad-test-postgres
+      - uv run pytest tests/test_user_admin_service.py -q
+
   test-upgrade-safety:
     desc: "RC-19 Layer 1: replay every project file through migrate + validate (offline, no cluster/key)"
     summary: |
