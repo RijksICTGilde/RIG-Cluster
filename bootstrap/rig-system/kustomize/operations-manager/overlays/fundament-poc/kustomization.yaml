@@ -12,3 +12,9 @@ resources:
   - ingress.yaml
   - issuer-letsencrypt.yaml
   - pvc.yaml
+
+patches:
+  - path: patches/deployment.yaml
+    target:
+      kind: Deployment
+      name: operations-manager
