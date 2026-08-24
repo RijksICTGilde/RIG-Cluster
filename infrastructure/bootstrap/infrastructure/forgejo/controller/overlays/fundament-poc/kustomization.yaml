@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rig-system
+resources:
+- ../../base
+- robots-configmap.yaml
+- issuer-letsencrypt.yaml
+
+patches:
+  - path: statefulset-patch.yaml
+    target:
+      kind: StatefulSet
+      name: forgejo
+  - path: ingress-patch.yaml
+    target:
+      kind: Ingress
+      name: forgejo

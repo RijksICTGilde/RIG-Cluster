@@ -38,13 +38,19 @@ resources:
   - applications/2-keycloak.yaml
   - applications/2-prometheus.yaml
   - applications/2-minio-config.yaml
+  - applications/2-forgejo.yaml
   - applications/3-keycloak-config.yaml
   - applications/3-external-dns.yaml
+  - applications/3-forgejo-config.yaml
   - applications/4-operations-manager.yaml
 
 # external-dns beheert de fundament-poc.rijksapp.dev-subzone bij TransIP met een eigen
 # txt-owner-id; zonder dat zou hij de records van de ODCN-instantie opruimen. Zie de
 # waarschuwing in de overlay van de component.
+#
+# Forgejo levert de drie datarepo's (zad-projects, zad-argo-user-applications,
+# zad-deployments) lokaal op dit cluster. De operations-manager wijst nog naar GitHub;
+# omschakelen is een configmap-wijziging plus repo-credentials in ArgoCD.
 
 # De branch staat hier op een plaats in plaats van in twaalf bestanden. Op fundament-poc
 # lezen we van de branch `fundament` en niet van `main`: dat is de upstream waar dit werk

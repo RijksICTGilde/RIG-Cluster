@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: forgejo
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: init-directories
+        image: busybox:1.36
+        command: ["sh", "-c", "mkdir -p /var/lib/gitea/custom/conf"]
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/gitea
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      containers:
+      - name: forgejo
+        # De rootless-variant: geen SCC en geen Pod Security Admission op dit cluster,
+        # dus niemand wijst een UID toe. Dezelfde reden als de keycloak-overlay.
+        image: codeberg.org/forgejo/forgejo:14-rootless
+        env:
+        - name: USER_UID
+          value: "1000"
+        - name: USER_GID
+          value: "1000"
+        - name: FORGEJO__security__INSTALL_LOCK
+          value: "true"
+        - name: FORGEJO__server__ROOT_URL
+          value: "https://forgejo.fundament-poc.rijksapp.dev"
+        - name: FORGEJO__server__HTTP_PORT
+          value: "3000"
+        - name: FORGEJO__server__DOMAIN
+          value: "forgejo.fundament-poc.rijksapp.dev"
+        - name: FORGEJO__server__PROTOCOL
+          value: "http"
+        - name: FORGEJO__database__DB_TYPE
+          value: "postgres"
+        - name: FORGEJO__database__HOST
+          value: "rig-db-rw.rig-system.svc.cluster.local:5432"
+        - name: FORGEJO__database__NAME
+          value: "forgejo"
+        - name: FORGEJO__database__USER
+          value: "forgejo"
+        - name: FORGEJO__database__PASSWD
+          valueFrom:
+            secretKeyRef:
+              name: forgejo-db-credentials
+              key: password
+        - name: FORGEJO__database__SSL_MODE
+          value: "disable"
+        - name: FORGEJO__database__SCHEMA
+          value: "public"
+        - name: FORGEJO__service__DISABLE_REGISTRATION
+          value: "true"
+        - name: FORGEJO__service__REQUIRE_SIGNIN_VIEW
+          value: "false"
+        - name: FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE
+          value: "true"
+        - name: FORGEJO__repository__DEFAULT_BRANCH
+          value: "main"
+        - name: FORGEJO__repository__DEFAULT_PRIVATE
+          value: "false"
+        - name: FORGEJO__webhook__ALLOWED_HOST_LIST
+          value: "*"
+        - name: FORGEJO__webhook__SKIP_TLS_VERIFY
+          value: "true"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/gitea
+        - name: custom-robots
+          mountPath: /var/lib/gitea/custom/robots.txt
+          subPath: robots.txt
+          readOnly: true
+      volumes:
+      - name: custom-robots
+        configMap:
+          name: forgejo-robots
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        app: forgejo
+    spec:
+      # De base zegt "standard", en die klasse bestaat hier niet. csi-lvm is de default
+      # van het platform maar kan niet provisionen; local-path komt uit de storage-app.
+      storageClassName: local-path

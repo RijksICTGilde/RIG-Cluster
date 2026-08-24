@@ -1,0 +1,59 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-bootstrap
+spec:
+  template:
+    spec:
+      containers:
+      - name: bootstrap
+        # Zelfde rootless-image als de controller. Bevat curl maar geen jq; de database-
+        # env komt uit de base (strategic merge op containers[].env).
+        image: codeberg.org/forgejo/forgejo:14-rootless
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+
+          FORGEJO_URL="http://forgejo.rig-system.svc.cluster.local:3000"
+          ADMIN_USER="rig-admin"
+
+          echo "Stap 1: admin-gebruiker aanmaken..."
+          forgejo admin user create \
+            --admin \
+            --username "$ADMIN_USER" \
+            --password "$ADMIN_PASSWORD" \
+            --email "rig-platform@rijksoverheid.nl" \
+            --must-change-password=false \
+            -c /etc/gitea/app.ini 2>&1 || {
+            echo "Gebruiker bestaat mogelijk al (prima)"
+          }
+
+          echo "Stap 2: datarepo's aanmaken..."
+          # De drie repo's waar OPI in schrijft. De infra komt uit RIG-Cluster op
+          # GitHub en hoort hier niet thuis.
+          for REPO in zad-projects zad-argo-user-applications zad-deployments; do
+            echo "Repository: $REPO"
+            curl --fail -s -X POST \
+              -H "Content-Type: application/json" \
+              -u "$ADMIN_USER:$ADMIN_PASSWORD" \
+              -d "{
+                \"name\":\"$REPO\",
+                \"description\":\"OPI datarepo voor fundament-poc\",
+                \"private\":true,
+                \"auto_init\":true,
+                \"default_branch\":\"main\"
+              }" \
+              "$FORGEJO_URL/api/v1/user/repos" \
+              && echo "" \
+              || { echo "Repository $REPO bestaat mogelijk al (prima)"; true; }
+          done
+
+          echo "Bootstrap klaar."
+        env:
+        - name: ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: forgejo-admin
+              key: password
