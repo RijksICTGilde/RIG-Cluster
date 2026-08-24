@@ -1,0 +1,10 @@
+# Kopie van base/clusterrole.yaml. Verwijzen naar de base kan niet: de CMP-plugin bouwt
+# zonder load-restrictor-vlag. Op ODCN beheert Capsule deze RBAC en staan ze daar uit.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: external-dns
+rules:
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "watch", "list"]

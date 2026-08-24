@@ -39,13 +39,12 @@ resources:
   - applications/2-prometheus.yaml
   - applications/2-minio-config.yaml
   - applications/3-keycloak-config.yaml
+  - applications/3-external-dns.yaml
   - applications/4-operations-manager.yaml
 
-# external-dns staat klaar in infrastructure/bootstrap/infrastructure/external-dns maar
-# heeft nog geen Application: hij verwacht het transip-credentials secret, en dat zit
-# alleen in de odcn-overlay versleuteld met de ODCN-sleutel. Aanzetten is dat bestand
-# herversleutelen met security/fundament-poc-key.txt en hier een Application op wave 3
-# toevoegen.
+# external-dns beheert de fundament-poc.rijksapp.dev-subzone bij TransIP met een eigen
+# txt-owner-id; zonder dat zou hij de records van de ODCN-instantie opruimen. Zie de
+# waarschuwing in de overlay van de component.
 
 # De branch staat hier op een plaats in plaats van in twaalf bestanden. Op fundament-poc
 # lezen we van de branch `fundament` en niet van `main`: dat is de upstream waar dit werk
