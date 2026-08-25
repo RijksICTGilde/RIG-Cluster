@@ -1810,14 +1810,17 @@ tasks:
         # gewoon bij. De oude map-brede stop kon dat alleen door ALLES weg te gooien, en
         # dat roteert Keycloak, MinIO en PostgreSQL mee.
 
-        # Initialize overview file (overwrite if it exists from a previous incomplete run)
+        # Het overzicht wordt in een tijdelijk bestand opgebouwd en pas aan het eind
+        # weggeschreven, en alleen als er daadwerkelijk iets gegenereerd is.
+        #
+        # Hier stond eerst een `>` op het echte bestand, boven de lus. Dat kapte het af,
+        # waarna elk secret werd overgeslagen omdat het al bestond en er dus niets meer
+        # bijkwam: het schrijven naar het overzicht staat ná die `continue`. Een tweede run
+        # meldde dan netjes "Skipping (already exists)" voor alles, eindigde met een vinkje,
+        # en had ondertussen alle wachtwoorden gewist. Onherstelbaar, want in git staan
+        # alleen bcrypt-hashes en AGE-blokken.
         OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
-
-        echo "# {{.MODE | title}} Secrets Overview - {{.CLUSTER_TYPE}}" > "$OVERVIEW_FILE"
-        echo "# Generated on $(date)" >> "$OVERVIEW_FILE"
-        echo "# WARNING: This file contains plaintext passwords - handle with care!" >> "$OVERVIEW_FILE"
-        echo "# This file is added to .gitignore - copy passwords and delete this file manually" >> "$OVERVIEW_FILE"
-        echo "" >> "$OVERVIEW_FILE"
+        OVERVIEW_TMP=$(mktemp)
 
         # Process each template
         for template in {{.TEMPLATES_DIR}}/*.yaml; do
@@ -1848,7 +1851,7 @@ tasks:
           cp "$template" "$temp_file"
 
           # Add filename to overview
-          echo "# === $filename ===" >> "$OVERVIEW_FILE"
+          echo "# === $filename ===" >> "$OVERVIEW_TMP"
 
           # Find all @secret-gen annotations and process them
           grep -n "# @secret-gen:" "$template" | while IFS=':' read -r line_num rest; do
@@ -1913,13 +1916,13 @@ tasks:
 
             # Add to overview file
             if [ "$password_type" = "bcrypt" ]; then
-              echo "$field_name: \"$plain_password\"  # Original password (bcrypt hash in secret)" >> "$OVERVIEW_FILE"
+              echo "$field_name: \"$plain_password\"  # Original password (bcrypt hash in secret)" >> "$OVERVIEW_TMP"
             else
-              echo "$field_name: \"$password\"" >> "$OVERVIEW_FILE"
+              echo "$field_name: \"$password\"" >> "$OVERVIEW_TMP"
             fi
           done
 
-          echo "" >> "$OVERVIEW_FILE"
+          echo "" >> "$OVERVIEW_TMP"
 
           # Path substitution not needed - path annotation is only for informational purposes
 
@@ -1986,9 +1989,26 @@ tasks:
           echo "  ✅ Created kustomization.yaml"
         fi
 
+        # Alleen overschrijven als er echt iets gegenereerd is. Draait de taak zonder werk,
+        # dan blijft een eerder overzicht met de platte wachtwoorden staan.
+        if [ -s "$OVERVIEW_TMP" ]; then
+          {
+            echo "# {{.MODE | title}} Secrets Overview - {{.CLUSTER_TYPE}}"
+            echo "# Generated on $(date)"
+            echo "# WARNING: This file contains plaintext passwords - handle with care!"
+            echo "# This file is added to .gitignore - copy passwords and delete this file manually"
+            echo ""
+            cat "$OVERVIEW_TMP"
+          } > "$OVERVIEW_FILE"
+          OVERVIEW_MSG="📄 Overview file: $OVERVIEW_FILE (added to .gitignore)"
+        else
+          OVERVIEW_MSG="📄 Niets gegenereerd, dus $OVERVIEW_FILE is ongemoeid gelaten."
+        fi
+        rm -f "$OVERVIEW_TMP"
+
         echo ""
         echo "✅ {{.MODE | title}} secrets generated successfully!"
-        echo "📄 Overview file: $OVERVIEW_FILE (added to .gitignore)"
+        echo "$OVERVIEW_MSG"
         echo "🗂️  Encrypted secrets: {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/"
         if [ "{{.MODE}}" = "infrastructure" ]; then
           echo "📝 Configuration files: kustomization.yaml, decrypt-sops.yaml"
