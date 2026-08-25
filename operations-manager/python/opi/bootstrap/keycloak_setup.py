@@ -25,6 +25,7 @@ from opi.core.config import settings
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.utils.naming import extract_domain_from_url
+from opi.utils.passwords import generate_secure_password
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,16 @@ class KeycloakSetup:
             self.kubectl = KubectlConnector()
 
             # Build context from settings
+            local_admins = []
+            if settings.KEYCLOAK_LOCAL_ADMIN_EMAIL:
+                local_admins.append(
+                    {
+                        "username": settings.KEYCLOAK_LOCAL_ADMIN_USERNAME,
+                        "email": settings.KEYCLOAK_LOCAL_ADMIN_EMAIL,
+                        "password": await self._ensure_local_admin_password(),
+                    }
+                )
+
             context = {
                 "realm_name": settings.KEYCLOAK_DEFAULT_REALM,
                 "realm_display_name": settings.KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME,
@@ -76,6 +87,10 @@ class KeycloakSetup:
                 "sso_discovery_url": settings.KEYCLOAK_MASTER_OIDC_DISCOVERY_URL,
                 # SAML SP Entity ID for direct SSO-Rijk connection
                 "saml_sp_entity_id": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_DEFAULT_REALM}",
+                # Een lijst van nul of een, want de blueprint kent geen condities maar wel
+                # forEach: een lege lijst maakt niets aan. Zo is dit standaard uit en zetten
+                # alleen clusters die het expliciet configureren een noodaccount neer.
+                "local_admins": local_admins,
             }
 
             # Select bootstrap configuration based on setting
@@ -326,6 +341,57 @@ class KeycloakSetup:
         except Exception as e:
             logger.error(f"Failed to setup operations client: {e}")
             return False
+
+    async def _ensure_local_admin_password(self) -> str:
+        """Lees het wachtwoord van het lokale noodaccount, of maak het bij de eerste run aan.
+
+        Bewust idempotent: bestaat het Secret al, dan wordt het gelezen en niet geroteerd.
+        Roteren bij elke start zou het wachtwoord dat een beheerder heeft weggeschreven stil
+        ongeldig maken, en juist dit account bestaat voor het moment dat SSO eruit ligt.
+
+        Het Secret is de enige plek waar dit wachtwoord staat. Het hoort niet in git en niet
+        in een ConfigMap: het is het enige pad dat SSO omzeilt.
+        """
+        namespace = get_namespace(settings.CLUSTER_MANAGER)
+        secret_name = settings.KEYCLOAK_LOCAL_ADMIN_SECRET_NAME
+
+        existing = await self.kubectl.get_secret(secret_name, namespace)
+        if existing and existing.get("PASSWORD"):
+            logger.info(f"Lokaal noodaccount: wachtwoord gelezen uit bestaand secret {secret_name}")
+            return existing["PASSWORD"]
+
+        password = generate_secure_password(total_length=32)
+        logger.info(f"Lokaal noodaccount: nieuw wachtwoord gegenereerd en opgeslagen in secret {secret_name}")
+
+        with tempfile.TemporaryDirectory(dir=settings.TEMP_DIR) as temp_dir:
+            manifest_generator = ManifestGenerator()
+            template_path = os.path.join(
+                os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
+            )
+            secret_values = {
+                "name": secret_name,
+                "namespace": namespace,
+                "secret_type": "local-admin-credentials",
+                "secret_pairs": {
+                    "USERNAME": settings.KEYCLOAK_LOCAL_ADMIN_USERNAME,
+                    "EMAIL": settings.KEYCLOAK_LOCAL_ADMIN_EMAIL,
+                    "PASSWORD": password,
+                },
+                "secret_annotations": {
+                    "operations-manager.rig/managed": "true",
+                    "operations-manager.rig/purpose": "Lokaal noodaccount voor als de SSO-koppeling eruit ligt",
+                },
+            }
+            manifest_file_path = manifest_generator.create_manifest_file(
+                template_path=template_path,
+                values=secret_values,
+                output_dir=temp_dir,
+                output_filename=f"{secret_name}-secret.yaml",
+                use_sops=False,
+            )
+            await self.kubectl.apply_manifest(manifest_file_path)
+
+        return password
 
     async def _update_operations_secret(self, client_info: dict[str, Any]) -> bool:
         """Update the operations-manager-keycloak secret with client credentials."""
