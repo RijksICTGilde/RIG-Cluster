@@ -236,10 +236,16 @@ clientScopes:
     defaultScope: true
 
 clients:
-  # Shared client for development clusters (local Kind and sandbox) to use this Keycloak as upstream IDP
-  # These clusters authenticate users via this Keycloak, which in turn uses SSO-Rijk
+  # Shared client for non-production clusters to use this Keycloak as upstream IDP.
+  # These clusters authenticate users via this Keycloak, which in turn uses SSO-Rijk.
+  # Zij mogen zelf niet rechtstreeks aan SSO-Rijk hangen, vandaar deze omweg.
+  #
+  # LET OP: deze lijst is de enige plek waar dit vastligt. Zet je een redirect-URI met de
+  # hand in de productie-Keycloak, dan werkt het meteen maar is het weg zodra deze
+  # blueprint opnieuw draait, bijvoorbeeld bij een herbouw van productie. En het verdwijnt
+  # stil: niemand merkt het tot iemand op dat cluster probeert in te loggen.
   - clientId: "development-clusters"
-    name: "Development Clusters (Local & Sandbox)"
+    name: "Development Clusters (Local, Sandbox & Fundament)"
     enabled: true
     publicClient: false
     protocol: "openid-connect"
@@ -250,12 +256,17 @@ clients:
       - "https://localhost:*/*"
       - "http://localhost:*/*"
       - "https://keycloak.sandbox.rijksapp.dev/*"
+      # Fundament-poc krijgt bewust het precieze broker-endpoint en geen host-brede
+      # wildcard: we kennen het exact, dus een wildcard koopt niets en vergroot alleen het
+      # oppervlak waarlangs een autorisatiecode bij de verkeerde pagina kan belanden.
+      - "https://keycloak.fundament-poc.rijksapp.dev/realms/rig-platform/broker/sso-rijk/endpoint"
     webOrigins:
       - "https://keycloak.kind"
       - "http://keycloak.kind"
       - "https://localhost"
       - "http://localhost"
       - "https://keycloak.sandbox.rijksapp.dev"
+      - "https://keycloak.fundament-poc.rijksapp.dev"
     standardFlowEnabled: true
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: false
