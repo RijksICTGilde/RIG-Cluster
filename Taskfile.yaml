@@ -914,6 +914,12 @@ tasks:
           echo "Restarting ArgoCD deployments to apply configuration changes..."
           kubectl $CTX_FLAG rollout restart deployment/argocd-repo-server -n {{.RIG_NAMESPACE}}
           kubectl $CTX_FLAG rollout restart deployment/argocd-server -n {{.RIG_NAMESPACE}}
+          # De application-controller moet mee. Hij berekent de health van resources, en
+          # leest de resource.customizations uit argocd-cm bij het opstarten. Zonder deze
+          # herstart landt een wijziging in spec.extraConfig wel in argocd-cm maar verandert
+          # er niets in het cluster, en dat is stil: geen fout, geen waarschuwing. Gemeten
+          # op fundament-poc bij het aanzetten van de health-check voor Application.
+          kubectl $CTX_FLAG rollout restart statefulset/argocd-application-controller -n {{.RIG_NAMESPACE}}
 
           # 300s, niet 120s: op een verse cluster moeten de argocd-image en de cmp-sidecar
           # nog gepulld worden. Gemeten op de dev-server duurde alleen dat al ~2,5 minuut,
