@@ -11,7 +11,6 @@ resources:
 #  - ../../infrastructure/vault/controller/overlays/local
 #  - ../../infrastructure/vault/config/overlays/local
   - ../../infrastructure/keycloak/controller/overlays/local
-  - ../../infrastructure/keycloak/config/overlays/local
   - ../../infrastructure/minio/controller/overlays/local
   - ../../infrastructure/prometheus/controller/overlays/local
   - ../../infrastructure/redis/controller/overlays/local
