@@ -7,7 +7,6 @@ resources:
 #  - ../../infrastructure/vault/controller/overlays/odcn
 #  - ../../infrastructure/vault/config/overlays/odcn
   - ../../infrastructure/keycloak/controller/overlays/odcn
-  - ../../infrastructure/keycloak/config/overlays/odcn
 #  - ../../infrastructure/pgadmin/controller/overlays/odcn
 #  - ../../infrastructure/pgadmin/config/overlays/odcn
   - ../../infrastructure/minio/controller/overlays/odcn
