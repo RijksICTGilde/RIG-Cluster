@@ -41,6 +41,22 @@ data:
     ARGOCD_MANAGER=rig-system
 
     KEYCLOAK_URL=https://keycloak.fundament-poc.rijksapp.dev
+
+    # Dit cluster mag zelf niet aan SSO-Rijk hangen, dus brokert het via de
+    # productie-Keycloak, die de echte SSO-Rijk-koppeling heeft. Zonder deze regel valt
+    # OPI terug op "default" en legt bootstrap.yaml een DIRECTE SAML-koppeling naar
+    # SSO-Rijk, en die route is hier niet toegestaan.
+    #
+    # De waarde heet "sandbox" maar selecteert alleen bootstrap-sandbox.yaml, en die
+    # blueprint bevat niets sandbox-specifieks: hij draait volledig op de variabelen
+    # realm_name, realm_display_name, sso_client_id, sso_client_secret en
+    # sso_discovery_url. Hergebruiken is dus juister dan kopiëren. De naam beschrijft een
+    # mechanisme en geen omgeving; dat hernoemen is aparte opruiming.
+    KEYCLOAK_BOOTSTRAP_CONFIG=sandbox
+    KEYCLOAK_MASTER_OIDC_CLIENT_ID=development-clusters
+    KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
+    # Het bijbehorende secret staat NIET hier maar in operations-manager-env-secrets,
+    # als KEYCLOAK_MASTER_OIDC_CLIENT_SECRET. Zie docs/sso-brokering-client-secret.md.
     OIDC_DISCOVERY_URL=https://keycloak.fundament-poc.rijksapp.dev/realms/rig-platform/.well-known/openid-configuration
 
     OWN_DOMAIN=zad.fundament-poc.rijksapp.dev
