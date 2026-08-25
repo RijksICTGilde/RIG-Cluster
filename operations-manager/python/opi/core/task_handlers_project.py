@@ -302,6 +302,13 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 "elapsed_time": f"{elapsed_time:.2f}",
                 "file_path": project_file_path,
                 "status": "success",
+                # Ook op de geslaagde tak: "uitgerold, maar niet gezond" is formeel een
+                # succes, en juist daar viel het per-component-verhaal weg.
+                **(
+                    {"processing": {"status": "completed", "component_failures": component_failures}}
+                    if (component_failures := project_manager.get_component_failures())
+                    else {}
+                ),
             }
             logger.info(
                 "Project creation completed successfully: %s (took %.2fs)",
