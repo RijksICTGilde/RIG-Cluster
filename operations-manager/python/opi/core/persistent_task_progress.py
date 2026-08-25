@@ -17,6 +17,7 @@ from opi.core.task_manager import (
     TaskProgressManager,
     TaskStatus,
     _projects,
+    clamp_step_text,
     format_step_line,
 )
 
@@ -184,6 +185,8 @@ class PersistentTaskProgressManager:
         name instead of inside it, so the page can show and group them separately.
         """
         task_id = str(uuid.uuid4())
+        name = clamp_step_text(name)
+        subject = clamp_step_text(subject) if subject else subject
         self._subtasks[task_id] = {
             "name": name,
             "status": TaskStatus.RUNNING.value,
@@ -198,6 +201,8 @@ class PersistentTaskProgressManager:
     def add_subtask(self, parent_task_id: str, name: str, subject: str | None = None) -> str:
         """Add a subtask under a parent task. Returns subtask ID."""
         subtask_id = str(uuid.uuid4())
+        name = clamp_step_text(name)
+        subject = clamp_step_text(subject) if subject else subject
         self._subtasks[subtask_id] = {
             "name": name,
             "status": TaskStatus.RUNNING.value,
@@ -215,17 +220,26 @@ class PersistentTaskProgressManager:
         self.update_current_step(format_step_line(name, subject))
         return subtask_id
 
-    def update_task(self, task_id: str, message: str) -> None:
-        """Update a task's name/description."""
+    def update_task(self, task_id: str, message: str, subject: str | None = None) -> None:
+        """Update a task's name, and its subject when one is given.
+
+        Zonder ``subject`` blijft het bestaande onderwerp staan: het onderwerp is niet van
+        deze methode, zoals test_task_step_subject vastlegt. Meegeven overschrijft het, en
+        dat is wat een stap doet die per poll een nieuwe reden te melden heeft.
+        """
         if task_id in self._subtasks:
+            message = clamp_step_text(message)
             self._subtasks[task_id]["name"] = message
+            if subject is not None:
+                self._subtasks[task_id]["subject"] = clamp_step_text(subject)
+            gecombineerd = format_step_line(message, self._subtasks[task_id]["subject"])
             logger.info(
                 "Task %s: Updated task: %s (%s)",
                 self._task_id,
-                message,
+                gecombineerd,
                 task_id,
             )
-            self.update_current_step(message)
+            self.update_current_step(gecombineerd)
 
     def complete_task(self, task_id: str) -> None:
         """Mark a task/subtask as completed."""
