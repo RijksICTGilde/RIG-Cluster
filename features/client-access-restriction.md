@@ -10,25 +10,67 @@ This feature separates **authentication** (verifying identity via SSO) from **au
 
 When enabled, the system:
 
-1. Creates a **client role** on your application's Keycloak client
-2. Creates a **restricted browser flow** that checks for the role (for direct logins)
-3. Sets the browser flow as an **authentication override** on your client
-4. Creates a **post-broker login flow** that checks for the role (for SSO logins)
-5. Sets the post-broker login flow on all **identity providers** in the realm
-6. Users without the role are denied access with a custom error message
+1. Creates a **client role** (or realm role) on your application's Keycloak client
+2. Creates a **role gate browser flow** that checks for the role on every login
+3. Sets that flow as an **authentication override** on your client, and on the `<client>-public` client of the same deployment
+4. Removes the flow's predecessor, `browser-restricted-<client-id>` (see below)
+5. Creates a **post-broker login flow** that checks for the role (for SSO logins)
+6. Sets the post-broker login flow on all **identity providers** in the realm
+7. Users without the role are denied access with a custom error message
 
-### Browser Flow (for direct username/password logins)
+### Browser Flow (`browser-role-gate-<client-id>`)
 
 ```
-Browser Flow (restricted)
-├── Cookie [ALTERNATIVE]
-├── Identity Provider Redirector [ALTERNATIVE]
-└── Forms [ALTERNATIVE]
-    ├── Username Password Form [REQUIRED]
-    └── Deny If No Access [CONDITIONAL]
-        ├── Condition - User Role [REQUIRED] (negated)
-        └── Deny Access [REQUIRED]
+Role gate browser flow
+├── Authenticate [REQUIRED]
+│   ├── Cookie [ALTERNATIVE]
+│   ├── Identity Provider Redirector [ALTERNATIVE]
+│   └── Forms [ALTERNATIVE]
+│       ├── Username Password Form [REQUIRED]
+│       └── Browser - Conditional OTP [CONDITIONAL]
+│           ├── Condition - user configured [REQUIRED]
+│           └── OTP Form [REQUIRED]
+└── Deny If No Access [CONDITIONAL]
+    ├── Condition - User Role [REQUIRED] (negated)
+    └── Deny Access [REQUIRED]
 ```
+
+The shape carries the security, so two things about it are worth stating plainly.
+
+**The role check sits beside the authenticators, not inside them.** Until August 2026 it hung
+in the Forms sub-flow, and the Cookie step is an alternative that runs before Forms. A user
+who already had a session in the realm therefore reached the application without ever being
+checked. Such a session is easy to come by: every other client in the realm uses the default
+browser flow, including Keycloak's built-in `account-console` and the `<client>-public`
+client that OPI creates alongside each deployment. Reproduced on Keycloak 25.0.6: a local
+account without the role signed in on the account console and then obtained an authorization
+code for the protected client, which is exactly what the authorization wall redeems.
+
+**The `Authenticate` wrapper is not decoration.** Keycloak ignores ALTERNATIVE executions as
+soon as a REQUIRED one sits at the same level. Putting the role check directly beside Cookie
+and Forms therefore disables every way of signing in and denies everyone, role holders
+included. Wrapping the authenticators in one REQUIRED sub-flow keeps them alternatives among
+themselves and leaves the conditional role check beside them. The order matters too: the
+check runs after the wrapper, because before it there is no user to check and the deny would
+fire on everybody. That order comes from the order the sub-flows are created in: Keycloak gives
+a new sibling the highest existing priority plus one. Executions carry an explicit priority,
+the same way `ensure_auto_link_first_broker_login_flow` does it. What does lose the ordering is
+a hand-written, partial PUT on an execution's requirement, which resets its priority to 0; the
+`_ensure_execution_in_flow` and `_ensure_subflow` helpers send the fetched object back whole
+and therefore do not.
+
+**What this does not cover.** Other clients in the same realm keep the default browser flow:
+Keycloak's built-in `account-console`, the invite client (deliberately, or nobody could redeem
+an invitation), and anything created through `additional-clients`. Signing in there without the
+role still yields a realm session and tokens *for that client*. Since the role check moved next
+to the authenticators, such a session no longer opens the protected deployment, but the
+application behind that other client has no role check of its own. Adding a new client to the
+realm therefore falls outside the gate until someone binds it here as well.
+
+**Migration.** The flow was replaced rather than edited, under a new alias: a half-converted
+flow locks everyone out. The first task that touches a project builds
+`browser-role-gate-<client-id>`, points the clients at it, and only then deletes the old
+`browser-restricted-<client-id>`.
 
 ### Post-Broker Login Flow (for SSO logins)
 
@@ -46,7 +88,10 @@ This dual-flow approach ensures that both direct logins and SSO logins are subje
 
 ### Important: Session Behavior
 
-The post-broker login flow **only runs when the user authenticates through the IdP**. It does NOT run on every access attempt. This means:
+The browser flow's role check runs on every login through the protected client, including
+the one that reuses an existing realm session over the Cookie step. The post-broker login
+flow is different: it **only runs when the user authenticates through the IdP**. It does NOT
+run on every access attempt. This means:
 
 - **First SSO login**: Post-broker flow runs, role is checked
 - **Subsequent requests with valid session**: User is already authenticated, no role check occurs
@@ -224,7 +269,8 @@ This indicates the custom RequireClientRoleAuthenticator SPI is not installed. E
 Ensure:
 - The client role exists on the correct client
 - The `restrictAccess.role` matches the client role name exactly
-- The flow override is set on the client (check Client > Advanced > Authentication Flow Overrides)
+- The flow override is set on the client, and points at `browser-role-gate-<client-id>` (check Client > Advanced > Authentication Flow Overrides). An override still pointing at `browser-restricted-<client-id>` is the old flow, which misses logins that reuse an existing realm session
+- The same override is set on `<client-id>-public`
 
 ### Role is not being checked (SSO login)
 
