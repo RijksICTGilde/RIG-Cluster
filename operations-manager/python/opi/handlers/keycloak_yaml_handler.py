@@ -11,7 +11,12 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
-from opi.connectors.keycloak import AUTO_LINK_FIRST_BROKER_LOGIN_FLOW, KeycloakConnector, RealmType
+from opi.connectors.keycloak import (
+    AUTO_LINK_FIRST_BROKER_LOGIN_FLOW,
+    KeycloakConnector,
+    RealmType,
+    role_gate_flow_alias,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1235,7 +1240,7 @@ class KeycloakYamlHandler:
         error_message = restrict_access.get("errorMessage", "${accessDeniedNoPermission}")
 
         # Generate a flow alias based on the client ID
-        flow_alias = f"browser-restricted-{client_id}"
+        flow_alias = role_gate_flow_alias(client_id)
 
         logger.info(f"Setting up access restriction for client '{client_id}' with role '{role_name}'")
 

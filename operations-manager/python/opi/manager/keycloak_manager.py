@@ -7,9 +7,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jsonpath_ng.ext import parse as jsonpath_parse
+from keycloak.exceptions import KeycloakError
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector
+from opi.connectors.keycloak import (
+    KeycloakConnector,
+    create_keycloak_connector,
+    legacy_restricted_flow_alias,
+    role_gate_flow_alias,
+)
 from opi.core.cluster_config import (
     get_ingress_postfix,
     get_keycloak_discovery_url,
@@ -1131,10 +1137,20 @@ class KeycloakManager:
 
         This creates:
         1. A role (client or realm) that users need to access the application
-        2. A restricted browser flow that checks for the role (for direct logins)
-        3. Sets the flow as an authentication override on the client
+        2. A role gate browser flow that checks for the role on every login
+        3. Sets the flow as an authentication override on the client and on its public client
         4. A post-broker login flow for SSO/IdP authentication (if IdPs are configured)
         5. Sets the post-broker login flow on all identity providers in the realm
+
+        Wat dit NIET afdekt, en dat is een scherpe rand om te kennen: andere clients in
+        dezelfde realm houden de standaard browser flow. Dat zijn de ingebouwde
+        account-console, de invite-client (bewust, anders kan niemand een uitnodiging
+        inwisselen) en alles wat via ``additional-clients`` wordt aangemaakt. Wie daar
+        inlogt zonder de rol krijgt wel een realm-sessie en wel tokens VOOR DIE CLIENT.
+        Sinds de rolcontrole naast de authenticators staat opent zo'n sessie de beschermde
+        deployment niet meer, maar de applicatie achter zo'n andere client heeft geen
+        rolcontrole. Een nieuwe client toevoegen valt er dus buiten tot iemand hem hier
+        bijzet.
 
         Args:
             keycloak: KeycloakConnector instance
@@ -1147,7 +1163,7 @@ class KeycloakManager:
                 - error_message: str (theme message key)
         """
         error_message = restrict_access.get("error_message", "${accessDeniedNoPermission}")
-        browser_flow_alias = f"browser-restricted-{client_id}"
+        browser_flow_alias = role_gate_flow_alias(client_id)
         post_broker_flow_alias = f"post-broker-restricted-{client_id}"
 
         # Determine if using realm role or client role
@@ -1212,6 +1228,30 @@ class KeycloakManager:
                 realm_name=realm_name,
                 client_id=client_id,
                 browser_flow_alias=browser_flow_alias,
+            )
+
+            # Step 3b: dezelfde poort op de publieke client van deze deployment.
+            # ``create_deployment_client`` maakt naast de vertrouwelijke client altijd
+            # ``<client>-public`` voor browsergebaseerde OIDC. Die stond zonder override,
+            # dus dezelfde gebruiker kon daar zonder rol een token halen voor dezelfde
+            # applicatie. Best effort: oudere deployments hebben nog geen publieke client,
+            # en dat mag de uitrol niet breken.
+            public_client_id = f"{client_id}-public"
+            try:
+                await keycloak.set_client_authentication_flow_override(
+                    realm_name=realm_name,
+                    client_id=public_client_id,
+                    browser_flow_alias=browser_flow_alias,
+                )
+            except KeycloakError as e:
+                logger.info(f"No flow override set on '{public_client_id}': {e}")
+
+            # Step 3c: de voorganger opruimen. Die zette de rolcontrole in de forms-subflow,
+            # waar de Cookie-stap hem oversloeg; hij is vervangen, niet bijgewerkt (zie
+            # ``role_gate_flow_alias``). Pas verwijderen NA het omhangen, anders staat de
+            # client even zonder poort.
+            await keycloak.delete_authentication_flow_by_alias(
+                realm_name=realm_name, flow_alias=legacy_restricted_flow_alias(client_id)
             )
 
             # Step 4: Check for identity providers and set up post-broker login flow
