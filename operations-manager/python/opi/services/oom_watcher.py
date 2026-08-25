@@ -352,12 +352,30 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
     return result
 
 
+# De kubelet-message hoort op EEN regel te passen: wat deze functie teruggeeft komt in de
+# voortgangslijst terecht als de titel van een lijstitem, niet als lopende tekst. Gemeten
+# op productie is een image-pull-message van CRI-O 762 tekens, omdat dezelfde fout er twee
+# keer in staat (eerst als ``pull image err``, daarna als ``artifact err``). Die kwam
+# integraal in die titel terecht, maal twee componenten maal vijftien deployments.
+#
+# Vandaar deze grens. Het volledige bericht verdwijnt niet: dat blijft staan in
+# ``component_failures`` (met een vertaalde titel en een suggestie) en in de logs.
+_MAX_WAITING_DETAIL = 120
+
+
+def _short_detail(message: str) -> str:
+    """Vouw een kubelet-message op tot iets dat als regeltitel leesbaar blijft."""
+    collapsed = " ".join(message.split())
+    if len(collapsed) <= _MAX_WAITING_DETAIL:
+        return collapsed
+    return collapsed[: _MAX_WAITING_DETAIL - 1].rstrip() + "\u2026"
+
+
 def _describe_pod_waiting(pod: dict) -> str | None:
     """Return a plain-language reason a pod is not Ready yet, or None if it looks ready.
 
-    Passes the raw Kubernetes reason/message through so the user gets the full
-    detail (and something to search for), wrapped in Dutch framing for the
-    common cases.
+    Keeps the Kubernetes reason (something to search for) and a shortened form of the
+    message, wrapped in Dutch framing for the common cases.
     """
     status = pod.get("status", {})
     phase = status.get("phase", "")
@@ -368,17 +386,21 @@ def _describe_pod_waiting(pod: dict) -> str | None:
         for cond in status.get("conditions", []):
             if cond.get("type") == "PodScheduled" and cond.get("status") == "False":
                 msg = cond.get("message") or cond.get("reason") or "geen geschikte node beschikbaar"
-                return f"kan niet worden ingepland: {msg}"
+                return f"kan niet worden ingepland: {_short_detail(msg)}"
 
-    # Container-level waiting reasons (pass the raw reason + message through).
+    # Container-level waiting reasons (the Kubernetes reason, plus a shortened message).
     for cs in container_statuses:
         waiting = cs.get("state", {}).get("waiting")
         if waiting:
             reason = waiting.get("reason", "")
             message = waiting.get("message", "")
-            suffix = f": {message}" if message else ""
+            suffix = f": {_short_detail(message)}" if message else ""
             if reason in _IMAGE_PULL_REASONS:
-                return f"image ophalen mislukt ({reason}){suffix}"
+                # Bewust helemaal zonder message, ook niet ingekort: hier is dat altijd
+                # de registry-dump uit de toelichting bij _MAX_WAITING_DETAIL, en de eerste
+                # 120 tekens daarvan zeggen niets wat de reden hierboven niet al zegt. Welk
+                # image het is en wat eraan te doen valt staat in component_failures.
+                return f"image ophalen mislukt ({reason})"
             if reason in _CRASH_LOOP_REASONS:
                 return f"blijft herstarten na een crash{suffix}"
             if reason == "ContainerCreating":

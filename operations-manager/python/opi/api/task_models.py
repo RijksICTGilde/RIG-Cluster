@@ -73,12 +73,24 @@ class ProjectInfo(BaseModel):
 
 
 class ComponentFailureInfo(BaseModel):
-    """Per-component failure detail for deployment health issues."""
+    """Per-component failure detail for deployment health issues.
+
+    ``title`` en ``suggestion`` komen uit de event_interpreter en zijn de vertaalde vorm
+    van ``message``: dat laatste is de rauwe kubelet-tekst, die voor een image-pull-fout
+    ruim 700 tekens is en dezelfde fout twee keer bevat. De vertaling stond al in het
+    antwoord van de handler maar niet in dit model, dus elke API-lezer kreeg alleen de
+    rauwe variant.
+    """
 
     component: str
     deployment: str = ""
     failure_type: str  # "oom", "image_pull", "crash_loop"
     message: str
+    title: str = ""
+    suggestion: str = ""
+    severity: str = ""  # "actionable", "informational", "noise"
+    container: str | None = None
+    image: str | None = None
     logs: list[str] | None = None
 
 
@@ -109,6 +121,9 @@ class CreateProjectResult(BaseModel):
     error: str | None = None
     error_type: str | None = None
     error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
+    # Ook bij status "success": een project kan uitgerold zijn en toch componenten hebben
+    # die niet gezond draaien. Zonder dit veld had die uitkomst geen gestructureerd kanaal.
+    processing: ProcessingStatus | None = None
 
 
 class UpsertDeploymentResult(BaseModel):

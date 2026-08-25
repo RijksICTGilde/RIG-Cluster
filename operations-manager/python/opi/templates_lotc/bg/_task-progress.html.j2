@@ -57,16 +57,20 @@
 
         {% if status == "completed" %}
             <c-alert type="success" heading="{{ _success_msg }}" />
-        {% elif status == "failed" %}
-            {% if component_failures is defined and component_failures %}
-                {% for failure in component_failures %}
-                    <c-alert type="error" heading="{{ failure.title }}">{{ failure.suggestion }}</c-alert>
-                {% endfor %}
-            {% else %}
-                <c-alert type="error" heading="Verwerking mislukt">{{ error or "Onbekende fout" }}</c-alert>
-            {% endif %}
-        {% else %}
+        {% elif status != "failed" %}
             <c-paragraph>{{ current_step }} {{ progress }}%</c-paragraph>
+        {% endif %}
+
+        {# Ook na een GESLAAGDE verwerking. "Uitgerold, maar niet gezond" is formeel een
+           succes, en juist daar was er geen gestructureerd kanaal: het hele verhaal werd
+           als proza in de naam van een voortgangsstap geduwd. Hier hoort het.
+
+           Zonder logboeklinks: deze pagina laadt het logboekpaneel niet, dus die link zou
+           niets doen. Zie de kop van het ingesloten bestand. #}
+        {% if status == "failed" or (component_failures is defined and component_failures) %}
+            {% with show_log_links = false %}
+                {% include "bg/_component-failures.html.j2" %}
+            {% endwith %}
         {% endif %}
 
         {{ progress_task_list(tasks) }}
