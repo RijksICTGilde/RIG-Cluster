@@ -55,8 +55,12 @@ data:
     KEYCLOAK_BOOTSTRAP_CONFIG=sandbox
     KEYCLOAK_MASTER_OIDC_CLIENT_ID=development-clusters
     KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
-    # Het bijbehorende secret staat NIET hier maar in operations-manager-env-secrets,
-    # als KEYCLOAK_MASTER_OIDC_CLIENT_SECRET. Zie docs/sso-brokering-client-secret.md.
+    # Het bijbehorende secret staat NIET hier maar in operations-manager-env-secrets, als
+    # KEYCLOAK_MASTER_OIDC_CLIENT_SECRET. De weg ernaartoe: vul de waarde in
+    # operations-manager/python/.env.<cluster>.secrets (gitignored) en draai
+    # `task generate-env-secrets-for-operations-manager`. Die versleutelt het bestand met
+    # SOPS; ksops ontsleutelt het in het cluster tot een Secret, dat OPI via envFrom leest.
+    # Het komt dus nooit plat in git terecht.
     OIDC_DISCOVERY_URL=https://keycloak.fundament-poc.rijksapp.dev/realms/rig-platform/.well-known/openid-configuration
 
     OWN_DOMAIN=zad.fundament-poc.rijksapp.dev
