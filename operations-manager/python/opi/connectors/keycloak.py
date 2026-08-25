@@ -1167,31 +1167,66 @@ class KeycloakConnector:
                     current_provider = self.admin.get_idp(idp_alias=provider_alias)
                     current_config = current_provider.get("config", {}) or {}
 
-                    # Compute explicit diff: which keys would change?
-                    changed_keys: list[str] = []
-                    for key, desired in provider_config.items():
-                        if current_config.get(key) != desired:
-                            changed_keys.append(key)
-                    display_name_differs = current_provider.get("displayName") != provider_data["displayName"]
-                    first_broker_flow_differs = (
-                        current_provider.get("firstBrokerLoginFlowAlias") != provider_data["firstBrokerLoginFlowAlias"]
-                    )
-
-                    if changed_keys or display_name_differs or first_broker_flow_differs:
+                    # providerId is niet muteerbaar in Keycloak, en update_idp stuurt het
+                    # bestaande object terug met alleen displayName, firstBrokerLoginFlowAlias
+                    # en config overschreven. Wisselt een cluster van blueprint (SAML naar
+                    # OIDC onder dezelfde alias), dan bleef de oude provider dus staan terwijl
+                    # de code drie keer succes meldde: geen fout, geen waarschuwing, verkeerde
+                    # uitkomst. Daarom hier expliciet vergelijken en opnieuw aanmaken.
+                    current_provider_type = current_provider.get("providerId")
+                    if current_provider_type != provider_type:
+                        # Verwijderen wist de federated identity links van gebruikers die via
+                        # deze provider zijn binnengekomen. Alleen doen als het realm leeg is;
+                        # anders luid stoppen en een mens laten beslissen, want stil de
+                        # koppelingen van bestaande gebruikers weggooien is erger dan falen.
+                        user_count = self.admin.users_count()
+                        if user_count:
+                            raise ValueError(
+                                f"Identity provider '{provider_alias}' in realm '{realm_name}' is van het type "
+                                f"'{current_provider_type}' maar zou '{provider_type}' moeten zijn. Keycloak kan dat "
+                                f"type niet wijzigen, dus hij moet verwijderd en opnieuw aangemaakt worden. Dat is "
+                                f"hier niet automatisch gedaan omdat het realm {user_count} gebruiker(s) heeft en "
+                                f"verwijderen hun koppeling met deze provider wist. Controleer welke gebruikers via "
+                                f"'{provider_alias}' zijn binnengekomen en verwijder de provider handmatig."
+                            )
                         logger.info(
-                            f"Identity provider {provider_alias} in realm {realm_name} needs update: "
-                            f"changed_keys={changed_keys}, displayName_differs={display_name_differs}, "
-                            f"firstBrokerLoginFlow_differs={first_broker_flow_differs}"
+                            f"Identity provider {provider_alias} in realm {realm_name} is van type "
+                            f"{current_provider_type} en moet {provider_type} zijn; realm is leeg, dus verwijderen en "
+                            f"opnieuw aanmaken"
                         )
-                        current_provider["displayName"] = provider_data["displayName"]
-                        current_provider["firstBrokerLoginFlowAlias"] = provider_data["firstBrokerLoginFlowAlias"]
-                        current_provider["config"] = {**current_config, **provider_config}
-                        self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
-                        logger.info(f"Updated identity provider {provider_alias} in realm {realm_name}")
+                        self.admin.delete_idp(idp_alias=provider_alias)
+                        self.admin.create_idp(payload=provider_data)
+                        logger.info(
+                            f"Recreated identity provider {provider_alias} in realm {realm_name} as {provider_type}"
+                        )
                     else:
-                        logger.debug(
-                            f"Identity provider {provider_alias} in realm {realm_name} already matches desired config"
+                        # Compute explicit diff: which keys would change?
+                        changed_keys: list[str] = []
+                        for key, desired in provider_config.items():
+                            if current_config.get(key) != desired:
+                                changed_keys.append(key)
+                        display_name_differs = current_provider.get("displayName") != provider_data["displayName"]
+                        first_broker_flow_differs = (
+                            current_provider.get("firstBrokerLoginFlowAlias")
+                            != provider_data["firstBrokerLoginFlowAlias"]
                         )
+
+                        if changed_keys or display_name_differs or first_broker_flow_differs:
+                            logger.info(
+                                f"Identity provider {provider_alias} in realm {realm_name} needs update: "
+                                f"changed_keys={changed_keys}, displayName_differs={display_name_differs}, "
+                                f"firstBrokerLoginFlow_differs={first_broker_flow_differs}"
+                            )
+                            current_provider["displayName"] = provider_data["displayName"]
+                            current_provider["firstBrokerLoginFlowAlias"] = provider_data["firstBrokerLoginFlowAlias"]
+                            current_provider["config"] = {**current_config, **provider_config}
+                            self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
+                            logger.info(f"Updated identity provider {provider_alias} in realm {realm_name}")
+                        else:
+                            logger.debug(
+                                f"Identity provider {provider_alias} in realm {realm_name} already matches desired "
+                                f"config"
+                            )
                 else:
                     raise
 
