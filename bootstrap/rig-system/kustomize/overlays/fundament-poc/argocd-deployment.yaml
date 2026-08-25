@@ -14,6 +14,28 @@ spec:
       hs.status = "Healthy"
       hs.message = "Fake CRD - no controller"
       return hs
+    # Zonder deze check doen de sync-waves van de app-of-apps niets. ArgoCD levert voor
+    # het type Application geen health-check mee (resource_customizations/argoproj.io/
+    # Application bevat alleen 'actions'), en een wave wacht op Healthy. Een kind zonder
+    # health-oordeel is niets om op te wachten, dus schoof elke wave meteen door en werden
+    # alle zestien Applications in dezelfde seconde aangemaakt. Gevolg: keycloak startte
+    # terwijl wave 1 nog geen database had.
+    #
+    # Bewust alleen op status.health en NIET ook op status.sync: twee Applications staan
+    # hier blijvend OutOfSync om onschuldige redenen (lege sleutels in een Secret,
+    # verdwenen admission-Jobs). Zou Synced meetellen, dan bleef de root eeuwig op die
+    # waves hangen en zou het middel erger zijn dan de kwaal.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = "Wacht op de status van de onderliggende Application"
+      if obj.status ~= nil and obj.status.health ~= nil and obj.status.health.status ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
     timeout.reconciliation: "6m"
     timeout.hard.reconciliation: "0s"
     server.repo.server.timeout.seconds: "180"
