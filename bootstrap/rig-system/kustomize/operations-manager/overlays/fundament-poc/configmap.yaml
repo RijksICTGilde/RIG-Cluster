@@ -53,6 +53,18 @@ data:
     # sso_discovery_url. Hergebruiken is dus juister dan kopiëren. De naam beschrijft een
     # mechanisme en geen omgeving; dat hernoemen is aparte opruiming.
     KEYCLOAK_BOOTSTRAP_CONFIG=sandbox
+
+    # Noodingang voor als de SSO-koppeling eruit ligt. Zonder wachtwoordaccount is dit
+    # cluster dan onbereikbaar, want alle gebruikers komen via de broker binnen.
+    #
+    # ZAD autoriseert op e-mailadres en niet op gebruikersnaam, dus hetzelfde adres staat
+    # hieronder in ADMIN_EMAILS. add_platform_admins() zet het adres ook automatisch op de
+    # allowlist, dus ALLOWED_EMAILS hoeft niet apart.
+    #
+    # Het wachtwoord staat hier bewust niet: dat genereert OPI bij de eerste run en bewaart
+    # hij in het Secret zad-local-admin in dit namespace.
+    KEYCLOAK_LOCAL_ADMIN_EMAIL=zad-admin@fundament-poc.rijksapp.dev
+    ADMIN_EMAILS=zad-admin@fundament-poc.rijksapp.dev
     KEYCLOAK_MASTER_OIDC_CLIENT_ID=development-clusters
     KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
     # Het bijbehorende secret staat NIET hier maar in operations-manager-env-secrets, als

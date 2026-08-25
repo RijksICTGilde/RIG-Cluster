@@ -333,6 +333,21 @@ class Settings(BaseSettings):
     # In all cases, OPI creates its own realm during startup using the project file config.
     KEYCLOAK_BOOTSTRAP_CONFIG: str = "default"
 
+    # Lokaal noodaccount in het gedeelde realm, naast SSO. Zonder dit is een cluster
+    # onbereikbaar zodra de SSO-koppeling eruit ligt: er zijn dan geen wachtwoordgebruikers.
+    # Een leeg e-mailadres betekent GEEN account; de blueprint itereert over een lijst die
+    # dan leeg blijft, dus er verandert niets op clusters die dit niet zetten.
+    #
+    # Het wachtwoord staat hier bewust NIET. Dat wordt bij de eerste run gegenereerd en als
+    # Secret in het cluster gezet, en daarna alleen nog uitgelezen. Zo staat het nergens in
+    # git of in een configmap, en verandert het niet bij elke herstart.
+    #
+    # Het e-mailadres is de sleutel waarop ZAD autoriseert, niet de gebruikersnaam, dus dit
+    # adres hoort ook in ADMIN_EMAILS.
+    KEYCLOAK_LOCAL_ADMIN_USERNAME: str = "zad-admin"
+    KEYCLOAK_LOCAL_ADMIN_EMAIL: str = ""
+    KEYCLOAK_LOCAL_ADMIN_SECRET_NAME: str = "zad-local-admin"
+
     # Master OIDC provider configuration (to be added to shared realm)
     KEYCLOAK_MASTER_OIDC_CLIENT_ID: str = "dummy-client-id"
     KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: str = "dummy-client-secret-123"

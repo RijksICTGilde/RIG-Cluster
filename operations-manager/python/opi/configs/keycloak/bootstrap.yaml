@@ -274,3 +274,28 @@ clients:
     # Pass through SSO-Rijk attributes to local clusters
     defaultClientScopes:
       - "custom_attributes_passthrough"
+
+# Lokaal noodaccount naast SSO. De lijst local_admins is leeg tenzij een cluster
+# KEYCLOAK_LOCAL_ADMIN_EMAIL zet, en forEach over een lege lijst maakt niets aan. Dit blok
+# is dus standaard inert en verandert niets op clusters die het niet configureren.
+#
+# Het wachtwoord komt niet uit configuratie: keycloak_setup genereert het bij de eerste run
+# en bewaart het als Secret in het cluster, en leest het daarna alleen nog uit.
+#
+# temporary: false is opzet. Een verplichte wijziging bij eerste gebruik zou het wachtwoord
+# dat in dat Secret staat meteen ongeldig maken, en dit account bestaat juist voor het
+# moment dat niemand meer via SSO binnenkomt.
+users:
+  forEach: "{{ local_admins }}"
+  as: admin
+  user:
+    username: "{{ admin.username }}"
+    enabled: true
+    email: "{{ admin.email }}"
+    emailVerified: true
+    firstName: "ZAD"
+    lastName: "Noodaccount"
+    credentials:
+      - type: "password"
+        value: "{{ admin.password }}"
+        temporary: false
