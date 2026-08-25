@@ -1,0 +1,56 @@
+# Startregels en verstuurregels uit de Keycloak-proefpod, per ronde.
+# Verzameld met: kubectl logs -n rig-system deploy/rc158-keycloak | grep ...
+
+===================== runA =====================
+Changes detected in configuration. Updating the server image.
+2026-08-25 12:43:15,423 WARN  [org.key.services] (build-41) KC-SERVICES0047: zad-relay-proef (nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory) is implementing the internal SPI emailSender. This SPI is internal and may change without notice
+	kc.sh start --proxy-headers=forwarded --hostname-strict=false --optimized
+2026-08-25 12:43:24,990 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory] (main) ZAD-RELAY-PROEF: aangezet, relay rig-mail-relay.rig-ron.svc.cluster.local:587 als keycloak-proef, afzender noreply-rijksapp@rijksoverheid.nl
+
+===================== runB =====================
+Changes detected in configuration. Updating the server image.
+2026-08-25 12:45:38,918 WARN  [org.key.services] (build-31) KC-SERVICES0047: zad-relay-proef (nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory) is implementing the internal SPI emailSender. This SPI is internal and may change without notice
+	kc.sh start --proxy-headers=forwarded --hostname-strict=false --spi-email-sender-provider=zad-relay-proef --optimized
+2026-08-25 12:45:47,663 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory] (main) ZAD-RELAY-PROEF: aangezet, relay rig-mail-relay.rig-ron.svc.cluster.local:587 als keycloak-proef, afzender noreply-rijksapp@rijksoverheid.nl
+2026-08-25 12:46:40,067 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor proef-omleiding@example.org gaat naar relay rig-mail-relay.rig-ron.svc.cluster.local:587; smtpServer van de realm genegeerd (9 sleutels, host=rc158-lokaas.rig-system.svc.cluster.local)
+2026-08-25 12:46:40,220 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor proef-omleiding@example.org aangeboden aan de relay
+
+===================== runC-envvar =====================
+Changes detected in configuration. Updating the server image.
+2026-08-25 12:51:14,653 WARN  [org.key.services] (build-28) KC-SERVICES0047: zad-relay-proef (nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory) is implementing the internal SPI emailSender. This SPI is internal and may change without notice
+	kc.sh start --proxy-headers=forwarded --hostname-strict=false --optimized
+2026-08-25 12:51:23,868 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory] (main) ZAD-RELAY-PROEF: aangezet, relay rig-mail-relay.rig-ron.svc.cluster.local:587 als keycloak-proef, afzender noreply-rijksapp@rijksoverheid.nl
+2026-08-25 12:52:06,192 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor u-runc-envvar@example.org gaat naar relay rig-mail-relay.rig-ron.svc.cluster.local:587; smtpServer van de realm genegeerd (9 sleutels, host=rc158-lokaas.rig-system.svc.cluster.local)
+2026-08-25 12:52:06,276 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor u-runc-envvar@example.org aangeboden aan de relay
+2026-08-25 12:52:06,858 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor u-runc-envvar@example.org gaat naar relay rig-mail-relay.rig-ron.svc.cluster.local:587; smtpServer van de realm genegeerd (0 sleutels, host=null)
+2026-08-25 12:52:06,877 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor u-runc-envvar@example.org aangeboden aan de relay
+
+===================== runD-camelcase2 =====================
+Changes detected in configuration. Updating the server image.
+2026-08-25 12:53:18,060 WARN  [org.key.services] (build-25) KC-SERVICES0047: zad-relay-proef (nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory) is implementing the internal SPI emailSender. This SPI is internal and may change without notice
+	kc.sh start --proxy-headers=forwarded --hostname-strict=false --spi-emailSender-provider=zad-relay-proef --optimized
+2026-08-25 12:53:26,135 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory] (main) ZAD-RELAY-PROEF: aangezet, relay rig-mail-relay.rig-ron.svc.cluster.local:587 als keycloak-proef, afzender noreply-rijksapp@rijksoverheid.nl
+2026-08-25 12:54:15,271 ERROR [org.keycloak.services] (executor-thread-1) KC-SERVICES0029: Failed to send email: org.keycloak.email.EmailException: Please provide a valid address
+2026-08-25 12:54:15,273 ERROR [org.keycloak.services] (executor-thread-1) KC-SERVICES0088: Failed to send execute actions email: org.keycloak.email.EmailException: org.keycloak.email.EmailException: Please provide a valid address
+2026-08-25 12:54:16,362 ERROR [org.keycloak.services] (executor-thread-1) KC-SERVICES0029: Failed to send email: org.keycloak.email.EmailException: Please provide a valid address
+2026-08-25 12:54:16,363 ERROR [org.keycloak.authentication.requiredactions.VerifyEmail] (executor-thread-1) Failed to send verification email: org.keycloak.email.EmailException: org.keycloak.email.EmailException: Please provide a valid address
+2026-08-25 12:54:16,364 WARN  [org.keycloak.events] (executor-thread-1) type="SEND_VERIFY_EMAIL_ERROR", realmId="f6655d83-a0ae-474d-b954-00ce0b289ba2", realmName="proef-zonder-smtp", clientId="proef-client", userId="079378fc-eb31-4360-bb46-9ffbd0361dd6", ipAddress="10.244.0.135", error="email_send_failed", auth_method="openid-connect", response_type="code", redirect_uri="http://rc158-keycloak.rig-system.svc.cluster.local:8080/realms/proef-zonder-smtp/account/", remember_me="false", code_id="d24f3174-1f8d-4e29-bf53-031394c5dc63", email="reg-rund-camelcase@example.org", response_mode="query", username="reg-rund-camelcase"
+2026-08-25 12:55:03,691 ERROR [org.keycloak.services] (executor-thread-1) KC-SERVICES0029: Failed to send email: org.keycloak.email.EmailException: Please provide a valid address
+2026-08-25 12:55:03,691 ERROR [org.keycloak.services] (executor-thread-1) KC-SERVICES0088: Failed to send execute actions email: org.keycloak.email.EmailException: org.keycloak.email.EmailException: Please provide a valid address
+2026-08-25 12:55:04,482 ERROR [org.keycloak.services] (executor-thread-1) KC-SERVICES0029: Failed to send email: org.keycloak.email.EmailException: Please provide a valid address
+2026-08-25 12:55:04,483 ERROR [org.keycloak.authentication.requiredactions.VerifyEmail] (executor-thread-1) Failed to send verification email: org.keycloak.email.EmailException: org.keycloak.email.EmailException: Please provide a valid address
+2026-08-25 12:55:04,484 WARN  [org.keycloak.events] (executor-thread-1) type="SEND_VERIFY_EMAIL_ERROR", realmId="f6655d83-a0ae-474d-b954-00ce0b289ba2", realmName="proef-zonder-smtp", clientId="proef-client", userId="02aeaf73-18a1-4941-b545-52e823b5acc8", ipAddress="10.244.0.135", error="email_send_failed", auth_method="openid-connect", response_type="code", redirect_uri="http://rc158-keycloak.rig-system.svc.cluster.local:8080/realms/proef-zonder-smtp/account/", remember_me="false", code_id="6a1a2e16-d4bb-4421-8fb6-8f14d8116ae8", email="reg-rund-camelcase2@example.org", response_mode="query", username="reg-rund-camelcase2"
+
+===================== runF-definitief =====================
+Changes detected in configuration. Updating the server image.
+2026-08-25 12:58:33,172 WARN  [org.key.services] (build-8) KC-SERVICES0047: zad-relay-proef (nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory) is implementing the internal SPI emailSender. This SPI is internal and may change without notice
+	kc.sh start --proxy-headers=forwarded --hostname-strict=false --spi-email-sender-provider=zad-relay-proef --optimized
+2026-08-25 12:58:42,425 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory] (main) ZAD-RELAY-PROEF: aangezet, relay rig-mail-relay.rig-ron.svc.cluster.local:587 als keycloak-proef, afzender noreply-rijksapp@rijksoverheid.nl
+2026-08-25 13:00:36,017 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor u-runf-definitief@example.org gaat naar relay rig-mail-relay.rig-ron.svc.cluster.local:587; smtpServer van de realm genegeerd (9 sleutels, host=rc158-lokaas.rig-system.svc.cluster.local)
+2026-08-25 13:00:36,095 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor u-runf-definitief@example.org aangeboden aan de relay
+2026-08-25 13:00:36,683 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor u-runf-definitief@example.org gaat naar relay rig-mail-relay.rig-ron.svc.cluster.local:587; smtpServer van de realm genegeerd (0 sleutels, host=null)
+2026-08-25 13:00:36,703 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor u-runf-definitief@example.org aangeboden aan de relay
+2026-08-25 13:00:37,319 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor reg-runf-definitief@example.org gaat naar relay rig-mail-relay.rig-ron.svc.cluster.local:587; smtpServer van de realm genegeerd (9 sleutels, host=rc158-lokaas.rig-system.svc.cluster.local)
+2026-08-25 13:00:37,340 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor reg-runf-definitief@example.org aangeboden aan de relay
+2026-08-25 13:00:37,800 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor reg-runf-definitief@example.org gaat naar relay rig-mail-relay.rig-ron.svc.cluster.local:587; smtpServer van de realm genegeerd (0 sleutels, host=null)
+2026-08-25 13:00:37,823 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY-PROEF: bericht voor reg-runf-definitief@example.org aangeboden aan de relay
