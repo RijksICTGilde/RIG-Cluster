@@ -392,6 +392,14 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                     "status": "completed",
                     "message": f"Deployment '{deployment_name}' processed successfully",
                     "result": processing_result,
+                    # Ook op de geslaagde tak. "Uitgerold, maar niet gezond" is formeel een
+                    # succes, en juist daar viel het per-component-verhaal weg: er was geen
+                    # gestructureerd kanaal, dus werd het als proza in een staplabel geduwd.
+                    **(
+                        {"component_failures": component_failures}
+                        if (component_failures := project_manager.get_component_failures())
+                        else {}
+                    ),
                 },
             }
         else:
@@ -513,6 +521,14 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
                     "status": "completed",
                     "message": "All project resources processed successfully",
                     "result": processing_result,
+                    # Ook op de geslaagde tak. "Uitgerold, maar niet gezond" is formeel een
+                    # succes, en juist daar viel het per-component-verhaal weg: er was geen
+                    # gestructureerd kanaal, dus werd het als proza in een staplabel geduwd.
+                    **(
+                        {"component_failures": component_failures}
+                        if (component_failures := project_manager.get_component_failures())
+                        else {}
+                    ),
                 },
             }
         else:

@@ -31,6 +31,7 @@ from opi.core.version import get_version_info
 from opi.forms.lotc_attrs import attr_escape, bedraad_foutmelding, field_attrs
 from opi.services.catalog.aliases.overzicht import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
+from opi.services.event_interpreter import group_component_failures
 from opi.services.registry import deployment_action_key
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,10 @@ templates_lotc.env.globals["version"] = VERSION
 templates_lotc.env.globals["build_date"] = BUILD_DATE
 templates_lotc.env.globals["version_info"] = get_version_info
 templates_lotc.env.globals["static_url"] = static_url
+# De groepering van componentfouten. Als global en niet als contextsleutel, zodat elke
+# renderweg van het voortgangsfragment hem krijgt: hij afleiden in een van de twee
+# contextbouwers betekent dat de andere weg stilzwijgend het ongegroepeerde beeld toont.
+templates_lotc.env.globals["group_component_failures"] = group_component_failures
 # De attribuutbundel van een formulierveld, voor LOTC's :attrs-spread. Vervangt de
 # macro's die in de roos-templates attribuut-TEKST in de tag schreven; zie
 # opi/forms/lotc_attrs.py voor waarom dat bij LOTC niet kan.

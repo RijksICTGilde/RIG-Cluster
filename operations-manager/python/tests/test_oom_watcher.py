@@ -1120,7 +1120,12 @@ class TestDescribePodWaiting:
         assert "kan niet worden ingepland" in reason
         assert "Insufficient memory" in reason
 
-    def test_image_pull_passes_raw_reason_and_message(self):
+    def test_image_pull_keeps_the_reason_but_drops_the_registry_message(self):
+        """Dit heette "passes_raw_reason_and_message" en borgde de vorige keuze: de rauwe
+        kubelet-message erachteraan. Op productie is die message 762 tekens, met dezelfde
+        fout er twee keer in, en dit is de TITEL van een regel in de voortgangslijst. De
+        Kubernetes-reason blijft staan (daar kun je op zoeken), de message niet: welk image
+        het is en wat eraan te doen valt staat in component_failures."""
         pod = _pod(
             container_statuses=[
                 {"name": "app", "state": {"waiting": {"reason": "ImagePullBackOff", "message": "not found"}}}
@@ -1130,7 +1135,7 @@ class TestDescribePodWaiting:
         assert reason is not None
         assert "image ophalen mislukt" in reason
         assert "ImagePullBackOff" in reason
-        assert "not found" in reason
+        assert "not found" not in reason
 
     def test_crash_loop(self):
         pod = _pod(

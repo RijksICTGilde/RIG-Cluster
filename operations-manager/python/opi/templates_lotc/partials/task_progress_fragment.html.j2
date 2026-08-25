@@ -40,13 +40,18 @@
 
     {% if status == "completed" %}
     <p class="edit-progress-step">{{ _success_msg }}</p>
-    {% elif status == "failed" %}
+    {% elif status != "failed" %}
+    <p class="edit-progress-step">{{ current_step }} <span class="edit-progress-percentage">{{ progress }}%</span></p>
+    {% endif %}
+
     {# bg/_component-failures.html.j2 en niet de tegenhanger in deze map: die is de
        eerste automatische omzetting en toont de suggestie niet en heeft een lege,
-       dode logboeklink. De bg-versie is de nageschreven versie en doet allebei wel. #}
+       dode logboeklink. De bg-versie is de nageschreven versie en doet allebei wel.
+
+       Ook na een GESLAAGDE verwerking: "uitgerold, maar niet gezond" is formeel een
+       succes, en juist daar viel het per-component-verhaal weg. #}
+    {% if status == "failed" or (component_failures is defined and component_failures) %}
     {% include "bg/_component-failures.html.j2" %}
-    {% else %}
-    <p class="edit-progress-step">{{ current_step }} <span class="edit-progress-percentage">{{ progress }}%</span></p>
     {% endif %}
 
     {{ progress_task_list(tasks) }}
