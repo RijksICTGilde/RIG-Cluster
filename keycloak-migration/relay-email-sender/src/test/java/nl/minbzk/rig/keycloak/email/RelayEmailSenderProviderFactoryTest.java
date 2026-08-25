@@ -8,7 +8,9 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.stream.Collectors;
+import org.keycloak.email.EmailSenderSpi;
 import org.junit.Test;
 
 /** Toetst de registratie: zonder deze regel ziet Keycloak de fabriek nooit. */
@@ -33,14 +35,30 @@ public class RelayEmailSenderProviderFactoryTest {
     }
 
     /**
-     * De vlag die de provider aanwijst wordt gevormd uit de SPI-naam ({@code emailSender}) en
-     * dit id. Loopt het id uit de pas met wat er in de README en de meting staat, dan wijst
-     * de vlag naar niets en valt Keycloak STIL terug op de standaardprovider.
+     * De vlag die de provider aanwijst wordt gevormd uit de SPI-NAAM en dit id. Beide helften
+     * worden hier tegen de bron getoetst, want de meting van RC-158 liet zien dat een
+     * verkeerde vorm STIL wordt genegeerd: Keycloak start gewoon door en de standaardprovider
+     * verstuurt. Er is dus geen signaal bij het opstarten dat dit voor ons kan opvangen.
+     *
+     * <p>De SPI-naam komt uit Keycloak zelf ({@code EmailSenderSpi.getName()}), niet uit een
+     * string hier: verandert hij bij een upgrade, dan valt deze toets om in plaats van de
+     * bevestigingsmail.
      */
     @Test
     public void deVlagvormVolgtUitDeSpiNaamEnHetId() {
+        String spiNaam = new EmailSenderSpi().getName();
+        assertEquals("emailSender", spiNaam);
+
+        String vlag = "--spi-" + naarStreepjes(spiNaam) + "-provider=" + new RelayEmailSenderProviderFactory().getId();
+
+        assertEquals("--spi-email-sender-provider=zad-relay-proef", vlag);
         assertEquals(
-                "--spi-email-sender-provider=zad-relay-proef",
-                "--spi-email-sender-provider=" + new RelayEmailSenderProviderFactory().getId());
+                "KC_SPI_EMAIL_SENDER_PROVIDER",
+                "KC_SPI_" + naarStreepjes(spiNaam).replace('-', '_').toUpperCase(Locale.ROOT) + "_PROVIDER");
+    }
+
+    /** camelCase naar de vorm die de Keycloak-CLI leest: {@code emailSender} -> {@code email-sender}. */
+    private static String naarStreepjes(String camelCase) {
+        return camelCase.replaceAll("([a-z0-9])([A-Z])", "$1-$2").toLowerCase(Locale.ROOT);
     }
 }
