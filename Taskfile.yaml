@@ -1733,6 +1733,25 @@ tasks:
         ./test-local-docker.sh
     silent: false
 
+  build-keycloak-relay-email-sender-proef:
+    desc: "Build de PROEF-jar van de relay-emailSender (RC-158, niet voor productie)"
+    cmds:
+      - |
+        echo "🔨 Bouwen van de relay-emailSender PROEF..."
+        cd keycloak-migration/relay-email-sender
+        mvn clean package
+        echo "✅ JAR gebouwd: keycloak-migration/relay-email-sender/target/keycloak-relay-email-sender-proef-0.1.0-proef.jar"
+    silent: false
+
+  test-keycloak-relay-email-sender-proef:
+    desc: "Draai de tests van de relay-emailSender PROEF"
+    cmds:
+      - |
+        echo "🧪 Tests van de relay-emailSender PROEF..."
+        cd keycloak-migration/relay-email-sender
+        mvn test
+    silent: false
+
   publish-keycloak-custom-mapper:
     desc: "Build and publish the Keycloak custom mapper JAR to GitHub Releases"
     deps: [build-keycloak-custom-mapper]
