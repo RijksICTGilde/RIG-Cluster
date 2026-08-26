@@ -31,6 +31,7 @@ from tenacity import (
 from opi.bootstrap.keycloak_setup import setup_keycloak
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError, create_kubectl_connector
+from opi.connectors.mail import MailRelayError
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.caa_reconciler import reconcile_caa_records
@@ -402,6 +403,23 @@ async def keycloak_client_exists_and_works() -> bool:
     return await ensure_keycloak_credentials()
 
 
+_MAILACCOUNT_STARTFOUTEN = (
+    MailRelayError,
+    KubectlExecutionError,
+    KubectlConnectionError,
+    ValueError,
+    aiohttp.ClientError,
+    OSError,
+)
+"""Wat een mailaccount bij het opstarten mag laten mislukken zonder de boot mee te nemen.
+
+Beide mailaccounts vangen deze lijst, en ze staat hier EEN keer omdat de twee functies
+dezelfde reden hebben: ``server.py`` await ``run_startup_tasks`` zonder guard, dus een
+ontsnapte fout neemt fase 4 en 5 mee. De vormen staan uitgelegd in
+``ensure_platform_mail_account`` hieronder.
+"""
+
+
 async def ensure_platform_mail_account() -> bool:
     """Make sure ZAD's own account exists on the mail relay.
 
@@ -430,25 +448,46 @@ async def ensure_platform_mail_account() -> bool:
     password that is not (yet) decryptable arrives here as a plain ``ValueError``; the
     first boot after someone sets ``MAIL_RELAY_API_URL`` is the likely moment for it.
     """
-    from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
-    from opi.connectors.mail import MailRelayError
     from opi.manager.mail_manager import MailManager
 
     try:
         account = await MailManager.ensure_platform_account()
-    except (
-        MailRelayError,
-        KubectlExecutionError,
-        KubectlConnectionError,
-        ValueError,
-        aiohttp.ClientError,
-        OSError,
-    ) as error:
+    except _MAILACCOUNT_STARTFOUTEN as error:
         logger.error(f"Platform-mailaccount kon niet worden ingericht: {error}")
         return False
     if account is None:
         return False
     logger.info(f"Platform-mailaccount {account.username} staat klaar ({account.from_address})")
+    return True
+
+
+async def ensure_keycloak_mail_account() -> bool:
+    """Make sure KEYCLOAK's account exists on the mail relay.
+
+    Next to ``ensure_platform_mail_account`` and not inside it: the two accounts differ in
+    where the password comes from (OPI generates the one, the bootstrap makes the other),
+    and a cluster can perfectly well have one without the other -- an older cluster has the
+    platform account and not yet the Secret this one reads.
+
+    Non-critical, and for a sharper reason than the platform account: what this blocks is
+    every realm's login mail, and a boot that fails over it would take the portal down
+    together with the mail. So the same catch list applies, and for the same reason -- an
+    exception escaping here takes ``run_startup_tasks`` and therefore phases 4 and 5 with
+    it.
+
+    Two shapes are NOT errors and answer ``False`` without a word of alarm: no relay on
+    this cluster, and no Secret yet. Both are logged by the manager.
+    """
+    from opi.manager.mail_manager import MailManager
+
+    try:
+        account = await MailManager.ensure_keycloak_account()
+    except _MAILACCOUNT_STARTFOUTEN as error:
+        logger.error(f"Keycloak-mailaccount kon niet worden ingericht: {error}")
+        return False
+    if account is None:
+        return False
+    logger.info(f"Keycloak-mailaccount {account.username} staat klaar ({account.from_address})")
     return True
 
 
@@ -764,9 +803,10 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     if not skip_checks:
         await check_minio_availability()
 
-    # Phase 3b: ZAD's own SMTP account (non-critical, no retry)
+    # Phase 3b: the platform's SMTP accounts (non-critical, no retry)
     if not skip_checks:
         await ensure_platform_mail_account()
+        await ensure_keycloak_mail_account()
 
     # Phase 4: Keycloak
     await _setup_keycloak(readiness, skip_checks)

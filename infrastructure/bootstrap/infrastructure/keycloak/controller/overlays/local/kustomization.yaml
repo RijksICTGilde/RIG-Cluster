@@ -76,6 +76,9 @@ patches:
             cp keycloak-nl-design-system.jar /opt/keycloak/providers/
             wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar
             cp keycloak-saml-nameid-mapper-1.1.0.jar /opt/keycloak/providers/
+            # De derde jar komt uit de ConfigMap en niet van GitHub; zie de basis. Deze
+            # overlay VERVANGT het hele commando, dus de regel moet hier mee.
+            cp /zad-providers/keycloak-relay-email-sender-1.0.0.jar /opt/keycloak/providers/
   # Add management port (9000) to service for metrics endpoint
   - target:
       kind: Service

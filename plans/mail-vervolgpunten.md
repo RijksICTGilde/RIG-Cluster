@@ -221,10 +221,47 @@ de Services-statuspagina. Een ArgoCD-Application die de bootstrap zelf bewaakt k
 maar dat is een grotere ingreep en de kip-en-ei met ArgoCD zelf moet dan opgelost worden.
 
 **Open**: welke van de twee, en waar de melding landt.
+## STARTTLS op de submission-listener van de relay
+
+**Stand**: open, en het raakt alle tenants tegelijk.
+
+De submission-listener van de relay biedt **geen STARTTLS** aan. Gemeten met `EHLO` in
+RC-158 (sandbox): `AUTH PLAIN LOGIN`, geen `STARTTLS`. Alles wat post aanbiedt praat daar
+dus platte AUTH binnen het cluster: elk project met `SMTP_HOST`/`SMTP_PORT`, ZAD zelf, en
+sinds RC-159 ook Keycloak.
+
+Dat is geen nieuwe blootstelling en het is bewust aanvaard en opgeschreven
+(`features/keycloak-mail.md`), maar het is er wel een. Wie het cluster kan afluisteren leest
+het gedeelde relaywachtwoord van het platform mee.
+
+**Voorstel**: STARTTLS aanzetten op die listener, met een certificaat dat de clients kunnen
+valideren. Let op de tweede helft: de eigen verzender van Keycloak heeft STARTTLS standaard
+AAN en wordt in het manifest expliciet uitgezet (`ZAD_MAIL_RELAY_STARTTLS: "false"`); die
+regel moet er dan uit, en hij staat in de basis van het Keycloak-manifest.
+
+**Open**: welk certificaat, en of de bestaande projectapplicaties het aankunnen zonder
+aanpassing.
+
+## Declaratieve platformaccounts in de relay
+
+**Stand**: open, en het vraagt eerst een METING.
+
+`zad-platform` en `zad-keycloak` zijn gewone principals in de database van de relay, die OPI
+bij het opstarten aanmaakt en bijwerkt. Mooier zou zijn als de relay dit soort
+platformaccounts zelf declaratief kende - dan komt OPI er helemaal niet aan te pas en
+verdwijnt de rotatievolgorde uit `features/keycloak-mail.md`.
+
+Stalwart kan principals in de configuratie dragen via een directory van het type `memory`,
+maar `[session.auth]` wijst **één** directory aan en de projectaccounts leven in de interne
+directory in de database. Of dat per LISTENER te scheiden is - een tweede submission-listener
+voor platformcomponenten, met een eigen `directory` - is **niet gemeten**.
+
+**Open**: die meting. Zonder die uitkomst is dit geen plan maar een wens.
+
 ## Wat hier bewust NIET staat
 
-De fundament-migratie van de sandbox (app-of-apps): eigen traject, zie
-`docs/fundament-stand-van-zaken.md`. En de goedkeurings-UX rond "goedgekeurd maar aan
-geen component gekoppeld": besproken op 20 augustus en bewust niet gebouwd; de
-koppelvraag bij het aanvragen stellen is de minst ingrijpende variant als het toch gaat
-knellen.
+De fundament-migratie van de sandbox (app-of-apps): eigen traject, en er ligt op dit
+moment geen document dat de stand daarvan beschrijft. En de goedkeurings-UX rond
+"goedgekeurd maar aan geen component gekoppeld": besproken op 20 augustus en bewust
+niet gebouwd; de koppelvraag bij het aanvragen stellen is de minst ingrijpende variant
+als het toch gaat knellen.
