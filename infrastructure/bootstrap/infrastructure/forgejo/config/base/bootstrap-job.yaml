@@ -15,6 +15,22 @@ metadata:
   labels:
     app: forgejo
     component: bootstrap
+  annotations:
+    # Een ArgoCD-hook en geen gewone resource, om twee redenen.
+    #
+    # 1. spec.template van een Job is onveranderlijk. Werk je het script hier bij, dan
+    #    faalt de sync met "field is immutable" en blijft de OUDE Job staan. Dat is echt
+    #    gebeurd: het cluster draaide 22 uur door op een Job die niets deed, terwijl de
+    #    operations-manager al naar de nieuwe repo's wees. BeforeHookCreation ruimt de
+    #    vorige op voordat de nieuwe wordt aangemaakt, dus het probleem bestaat niet meer.
+    # 2. Een mislukte hook laat de sync falen. Als gewone resource bleef de Application
+    #    groen terwijl de bootstrap stuk was, en dat is exact de klacht die in de
+    #    kustomization van deze component al stond.
+    #
+    # De Job is idempotent en klaar in enkele seconden, dus meedraaien op elke sync kost
+    # niets en herstelt zichzelf als Forgejo ooit leeggemaakt wordt.
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   ttlSecondsAfterFinished: 86400
   backoffLimit: 3
