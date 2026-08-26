@@ -3,6 +3,36 @@
 # no place in a project realm.
 extends: sso-support
 
+# De realm van ZAD zelf. Deze blauwdruk erfde tot RC-159 het hele realmblok van
+# sso-support, dus ook de vier velden die OPI sinds die taak op de realm SCHRIJFT. Een
+# geerfde waarde is geen besluit: de blauwdruk BESCHRIJFT de realm, en zwijgen is geen
+# bewering (zie features/keycloak-mail.md). Daarom staan ze hier zelf, en doet dit bestand
+# gewoon mee in test_elk_blueprint_noemt_de_vier_velden.
+#
+# Drie ervan zijn dezelfde beschrijving als in sso-support: geen zelfregistratie, geen
+# inloggen op e-mailadres, geen wachtwoordherstel op deze realm.
+#
+# verifyEmail is hier expres WEL anders dan in sso-support, en dat is het besluit:
+#
+#   - Op productie draagt deze realm geen lokale accounts. Iedereen komt binnen via SSO
+#     Rijk en is via trustEmail al geverifieerd, dus verifieren zou daar niets doen.
+#   - Op de sandbox draagt hij er precies EEN: de beheerder uit
+#     opi/configs/projects/operations-manager-local.yaml, aangemaakt bij het opstarten van
+#     OPI met een vast wachtwoord. Sinds RC-159 volgt emailVerified de realm, dus met
+#     verifyEmail: true komt dat account op emailVerified: false binnen en blokkeert de
+#     login die docs/sandbox-reference.md documenteert (ZAD / admin / admin1234). Er is
+#     geen postbus voor admin@sandbox.rijksapp.dev; de bevestigingsmail landt in de
+#     Mailpit-sink en niemand klikt hem aan.
+#
+# De winst is dus nul en de kosten zijn een kapotte sandboxopstelling. Wie dit ooit
+# omzet, moet eerst de bootstrapbeheerder een weg naar binnen geven.
+realms:
+  - name: "{{ project_realm_name }}"
+    registrationAllowed: false
+    loginWithEmailAllowed: false
+    resetPasswordAllowed: false
+    verifyEmail: false
+
 clients:
   # Public client: a distributed CLI cannot keep a secret, so authorization code + PKCE
   # with a loopback redirect (RFC 8252). Keycloak ignores the port when matching loopback.
