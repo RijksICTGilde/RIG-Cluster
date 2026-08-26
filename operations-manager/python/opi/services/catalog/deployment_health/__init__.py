@@ -93,6 +93,9 @@ class DeploymentHealthService(Service):
                     ),
                     expects_no_application_pods=True,
                     badge="Uitgeschakeld",
+                    # Een display dat de componenten zelf opsomt, mét de reden per stuk,
+                    # zegt dit al en zegt het preciezer. Deze zin hoeft daar niet naast.
+                    superseded_by_component_details=True,
                     details={"disabled": state.disabled_count, "total": state.total_count},
                 )
             ]
@@ -111,6 +114,7 @@ class DeploymentHealthService(Service):
                     # deployment is still supposed to serve traffic and its health is
                     # still the thing to report.
                     badge=f"{state.disabled_count} van {state.total_count} componenten uitgeschakeld",
+                    superseded_by_component_details=True,
                     details={"disabled": state.disabled_count, "total": state.total_count},
                 )
             ]
