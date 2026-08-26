@@ -54,9 +54,22 @@ stopped the 24 August 2026 incident, where `asses-k2n/pr-494` walked from 45Mi t
 live on every check. It deliberately survives a round: every committed tune queues a
 `refresh_deployment` task, and that task schedules a new check starting at `attempt=1`.
 A counter that reset there would reset the very brake it is. Only an explicit
-`reset_inline_oom_attempts` clears it, and only for a user action: a deploy, an upsert, a
+`reset_oom_tune_attempts` clears it, and only for a user action: a deploy, an upsert, a
 manual refresh, an image bump. The automated refresh a tune queues for itself carries
-`automated_remediation: True` precisely so it can be told apart.
+`automated_remediation: True` precisely so it can be told apart. Deleting a deployment
+clears it too (`handle_delete_deployment`), so a removed deployment leaves neither the
+counter nor its pod-generation lock behind.
+
+**The budget counts attempted cycles, not realised changes**, and the two paths therefore
+charge at different moments. That asymmetry is deliberate. The fire-and-forget path
+charges only after the tune committed something, which it can afford because a
+non-committing round queues no refresh and schedules no follow-up check, so the chain
+ends by itself. The inline path charges on detection, before raising
+`DeploymentHealthError`: the tune runs afterwards in `project_manager`, outside the
+callback, so the callback cannot know the outcome, and the counter is its only brake.
+Charging early costs almost nothing in practice - a non-committing inline detection
+queues no automated refresh, so a next round can only come from a user action, and every
+user action resets the budget first.
 
 **The pod-generation lock.** A tune only means something once it is running. Both paths
 record the `pod-template-hash` of the pod the OOM was observed on; a later detection on
