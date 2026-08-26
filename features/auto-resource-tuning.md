@@ -173,6 +173,44 @@ A new deployment therefore inherits exactly the declared root. If that is too ti
 
 The root is also the **floor**: an override the tuner writes is never tuned below the memory the user declared on the component (a lower bound only — a deployment may always raise itself above it).
 
+### Growth Ceiling
+
+The root is the **ceiling** for the automatic path too: an OOM-driven bump may raise a
+deployment override to at most `max_growth_factor` (8) times the declared limit. Until
+RC-157 the only upper bound was the cluster ceiling, so a component declared at 45Mi was
+free to climb to 4096Mi — and `asses-k2n/pr-494` did exactly that, in nine automated
+rounds on 24 August 2026. With a factor of 8 it would have stopped at 360Mi.
+
+Two properties make it an actual bound:
+
+- **The anchor stands still.** The tuner writes deployment overrides only and never the
+  catalog component (see Root Component above), so the denominator does not grow along
+  with the numerator. A ratio bound whose anchor moves with every increase always holds
+  and bounds nothing.
+- **It looks at direction.** The working ceiling is `max(ceiling, current limit)`: an
+  increase past the ceiling is refused, a DECREASE is never blocked. Clamping to
+  `min(recommendation, ceiling)` unconditionally would freeze exactly the blown-up
+  deployments the bound exists to prevent — 4096Mi would then be permanent, and the
+  nightly sweep could never bring it back down.
+- **It keeps the burst headroom.** Capping the limit at the ceiling can close the
+  `min_limit_headroom_mi` margin the step above just enforced, so the request is capped
+  at `ceiling - margin` (never below the declared root request). Pulling the request up
+  to the capped limit instead would leave `limit == request`, headroom 0 — the exact
+  burst-death that margin exists to prevent, on precisely the components that OOM most.
+
+A refused increase reports its own message, naming the declared limit, the current limit
+and the factor, and asking for manual intervention. It is deliberately not the old
+"auto-tune could not determine new limits": a limit WAS determined, it was refused, and
+the old wording sent people looking for missing metrics. A component with
+`auto-tune-resources: false` never reaches the ceiling check, so it keeps the generic
+message even when its ratio is past the factor — the opt-out is the reason there, not
+the ceiling.
+
+The ceiling only bounds new growth. Components an earlier, unbounded escalation already
+inflated keep their value; `scripts/oom_growth_report.py` (`PROJECTS=... task
+oom-growth-report`) reports them read-only. What to do with them is an open decision, see
+`TODO.md`.
+
 An override that already sits below the root is **repaired** at the top of the tuning flow, before any measurement and ahead of the not-Available guard. Such an override starves the component, and that starvation blocks both routes that would otherwise correct it: there is no running pod to measure, and the deployment reports Available=False. The repair restores the declared value (only the deficient side of it), which needs neither. Deployment-level overrides are written by the tuner alone — there is no editable or API for them — so a repair can never overwrite a value someone set on purpose.
 
 If the component was auto-disabled for an OOM kill, the repair also **clears that disable**. Leaving it would make the repair invisible and permanent: a component scaled to zero has no pods, so no OOM metric, so nothing that would ever switch it back on. Same shape as the image-pull disable, which clears once the image changes. Disables for any other reason are left alone: memory says nothing about a missing image.
@@ -253,6 +291,7 @@ vars in practice, and a system service owns its own config. Change a value in
 | `min_delta_m` | `10` | Ignore CPU changes smaller than this in millicores (absolute deadband) |
 | `min_limit_headroom_mi` | `64` | Minimum absolute headroom the memory limit keeps above the request (so limit never equals request) |
 | `min_observed_mi` | `5.0` | Below this observed max the measurement counts as "no data" instead of as a real value |
+| `max_growth_factor` | `8.0` | The automatic path may raise a deployment override to at most this multiple of the declared limit (see Growth Ceiling) |
 | `user_intent_min_age_days` | `10` | A value a user set by hand may expire after this many days... |
 | `user_intent_stable_percent` | `50` | ...if the measured usage stays below this percent of what they set |
 | `scheduler_enabled` | `true` | Run the nightly fleet-wide tuner |
@@ -313,6 +352,7 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 | **OOM kill priority** | Always increase memory when OOM kills are present; the not-Available guard is skipped on the OOM path so it never blocks a needed bump |
 | **Root left untouched** | The tuner writes only deployment overrides; the declared root component is never ratcheted (no last-writer-wins race across deployments) |
 | **Declared root as floor** | An override is never tuned below the memory the user declared on the component (lower bound only) |
+| **Declared root as ceiling** | An OOM-driven increase never goes above 8x the declared limit; a decrease is never blocked by it (working ceiling = `max(ceiling, current limit)`) |
 | **Limit/request margin** | A written memory limit stays at least 64Mi above the request, so a container never ends up with limit == request |
 | **OOM floor (memory limit)** | A valid (recent, not-yet-stale) OOM floor is the lower bound for the memory limit, so a real past peak is never undercut; the limit only decays once the floor expires |
 | **OOM watcher net** | The reactive OOM watcher re-bumps a limit that decayed too far (e.g. an unobserved boot spike), so the peak-based limit can shrink without permanently risking startup |

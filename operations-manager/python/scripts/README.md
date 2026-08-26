@@ -45,6 +45,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 |---|---|
 | `argo_diagnostics.py` | ArgoCD diagnostics. |
 | `diagnose_oom.py` | OOM-kill diagnostics for tuning/analysis. |
+| `oom_growth_report.py` | Read-only report: per project, which deployment components sit above the auto-tune growth ceiling (current memory limit vs the limit declared on the catalog component), with the `oom-watcher` history entries that got them there. Left behind by the unbounded escalation RC-157 fixed. Also as `PROJECTS=... task oom-growth-report`. |
 
 ## Project-file maintenance
 
