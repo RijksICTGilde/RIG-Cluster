@@ -10,8 +10,8 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.stream.Collectors;
-import org.keycloak.email.EmailSenderSpi;
 import org.junit.Test;
+import org.keycloak.email.EmailSenderSpi;
 
 /** Toetst de registratie: zonder deze regel ziet Keycloak de fabriek nooit. */
 public class RelayEmailSenderProviderFactoryTest {
@@ -30,8 +30,9 @@ public class RelayEmailSenderProviderFactoryTest {
     }
 
     @Test
-    public void deProviderIdMerktZichzelfAlsProef() {
-        assertEquals("zad-relay-proef", new RelayEmailSenderProviderFactory().getId());
+    public void hetProviderIdIsDeEneNaamDieOokInDeVlagStaat() {
+        assertEquals("zad-relay", new RelayEmailSenderProviderFactory().getId());
+        assertEquals(RelayMailConfig.PROVIDER_ID, new RelayEmailSenderProviderFactory().getId());
     }
 
     /**
@@ -51,7 +52,7 @@ public class RelayEmailSenderProviderFactoryTest {
 
         String vlag = "--spi-" + naarStreepjes(spiNaam) + "-provider=" + new RelayEmailSenderProviderFactory().getId();
 
-        assertEquals("--spi-email-sender-provider=zad-relay-proef", vlag);
+        assertEquals("--spi-email-sender-provider=zad-relay", vlag);
         assertEquals(
                 "KC_SPI_EMAIL_SENDER_PROVIDER",
                 "KC_SPI_" + naarStreepjes(spiNaam).replace('-', '_').toUpperCase(Locale.ROOT) + "_PROVIDER");

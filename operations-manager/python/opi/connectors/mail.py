@@ -22,6 +22,7 @@ import aiohttp
 
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto
+from opi.utils.naming import MAIL_LOCAL_PART_MAX_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,36 @@ class MailAccount:
 #: when it changes.
 MAIL_SENDER_NAME_PREFIX = "zad.afzender.naam"
 
+#: Settings prefix under which each account's sender ADDRESS is stored, one key per account.
+#:
+#: A second series next to the names, and not a second field on the same key, because the
+#: relay's settings API stores flat strings: one key, one value. The two are read and
+#: written together and rendered into the same generated script.
+#:
+#: This is the exception, not the rule. Every account gets its address DERIVED from its
+#: account name (identity rule 1 in the relay's config.toml) and needs no key here; a key
+#: only exists for an account that has to send under a different address than its name
+#: gives it. Today that is ZAD's Keycloak account, whose login mail must be
+#: distinguishable from the portal's own post -- see ``settings.MAIL_KEYCLOAK_ACCOUNT``.
+#:
+#: It changes the ``From:`` header only. The ENVELOPE keeps the derived address (the
+#: ``rewrite`` rule in ``[session.mail]``, which no sieve variable reaches), and that is
+#: deliberate: DMARC alignment compares the two DOMAINS and those stay equal, while the
+#: plus part in the envelope keeps carrying the bounce. Anyone reading the two rules side
+#: by side will take the difference for an oversight, which is why it is written down in
+#: both places.
+MAIL_SENDER_ADDRESS_PREFIX = "zad.afzender.adres"
+
+#: The domains a configured sender address may live in.
+#:
+#: A settable sender address is a spoofing button, and the only reason it may exist here is
+#: that nothing but the platform operates it -- no project path writes an address, and no
+#: form offers one. The list is what keeps that true even if a value ever arrives from
+#: somewhere else: alignment with the envelope is what carries a message through DMARC (we
+#: sign nothing with DKIM), so an address outside this domain would not just be someone
+#: else's identity, it would also bounce at every recipient outside the Rijksoverheid.
+MAIL_SENDER_DOMAIN_ALLOWLIST = frozenset({"rijksoverheid.nl"})
+
 #: The sieve script OPI generates from those keys, and the reason the data cannot simply BE
 #: the script: to change one account you would have to parse the generated code to keep the
 #: others. The script is a projection, the keys are the truth.
@@ -89,7 +120,12 @@ MAIL_SENDER_TABLE_KEY = f"sieve.trusted.scripts.{MAIL_SENDER_SCRIPT_NAME}.conten
 #: Belt and braces around a value that is already computed by ``generate_mail_account_name``
 #: -- it ends up inside a sieve string literal, and this is the layer that would have to
 #: hold if it ever stopped being computed.
-_ACCOUNT_PATROON = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+#:
+#: ``\A``/``\Z`` and not ``^``/``$``: ``$`` also matches just BEFORE a closing newline, so
+#: ``"zad-keycloak\n"`` passes an anchored ``$`` pattern -- and a newline is exactly the
+#: character that ends the sieve string literal this value goes into. ``\Z`` is the end of
+#: the string and nothing else.
+_ACCOUNT_PATROON = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z")
 
 #: Same for a display name. This list and ``FROM_NAME_PATTERN`` (the rule the form and the
 #: API validate against) hold exactly the same characters, and they have to: a character only
@@ -100,6 +136,13 @@ _ACCOUNT_PATROON = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 #: read a variable instead of being text -- which is why it belongs in both lists, and why
 #: ``TestDeWeergavenaamWordtGetoetst`` runs its refused names past this layer too.
 _NAAM_VERBODEN = re.compile(r'[@<>"\\$\x00-\x1F\x7F]')
+
+#: The local part of a configured sender address. Deliberately narrower than RFC 5321
+#: allows: a quoted local part may legally contain a space, a quote and a backslash, and
+#: all three would end the sieve string literal this value is written into. Nothing on the
+#: platform needs them, so refusing them costs nothing and removes the whole class.
+#: Anchored with ``\A``/``\Z`` for the same reason as ``_ACCOUNT_PATROON``.
+_ADRES_LOKAAL_PATROON = re.compile(r"\A[a-z0-9][a-z0-9._+-]*\Z")
 
 
 #: Serialises the read-modify-write of the generated table.
@@ -262,57 +305,104 @@ class MailConnector:
         The whole table in one call, and that is on purpose: the generated script is
         rendered from ALL of them, so writing one name means knowing the others.
         """
-        result = await self._request("GET", f"/api/settings/list?prefix={MAIL_SENDER_NAME_PREFIX}.")
-        items = ((result or {}).get("data") or {}).get("items") or {}
-        return {account: naam for account, naam in items.items() if naam}
+        return await self._get_sender_keys(MAIL_SENDER_NAME_PREFIX)
 
-    async def set_sender_name(self, account: str, display_name: str) -> bool:
-        """Give this account the display name recipients see. Returns whether anything changed.
+    async def get_sender_addresses(self) -> dict[str, str]:
+        """Every account's configured sender address, as the relay currently holds it.
+
+        Normally empty or nearly so: an address is DERIVED from the account name unless a
+        key says otherwise (see ``MAIL_SENDER_ADDRESS_PREFIX``).
+        """
+        return await self._get_sender_keys(MAIL_SENDER_ADDRESS_PREFIX)
+
+    async def _get_sender_keys(self, prefix: str) -> dict[str, str]:
+        """One settings series, keyed by account name with the prefix stripped."""
+        result = await self._request("GET", f"/api/settings/list?prefix={prefix}.")
+        items = ((result or {}).get("data") or {}).get("items") or {}
+        return {account: waarde for account, waarde in items.items() if waarde}
+
+    async def set_sender(self, account: str, display_name: str, from_address: str = "") -> bool:
+        """Give this account the sender recipients see. Returns whether anything changed.
+
+        Both halves in ONE call, and one lock around them, because both are rendered into
+        the same generated script: writing them separately would render that script twice,
+        reload twice, and let two concurrent writers drop each other's value.
 
         Idempotent by comparison and not by luck: a project is processed again on every
         change it makes, and every write here drags a rebuild of the relay's whole
         configuration behind it.
 
-        An empty name is a REMOVAL, not an empty value: no display name is a valid outcome
-        (the message then leaves with the project's address and nothing in front of it), and
-        a key that says nothing is one an administrator reading the settings has to
-        interpret.
+        An empty value is a REMOVAL, not an empty value stored: no display name is a valid
+        outcome (the message then leaves with the account's address and nothing in front of
+        it) and no address means the including script derives one, which is what every
+        account but ZAD's Keycloak account does. A key that says nothing is one an
+        administrator reading the settings has to interpret.
         """
         _controleer_naam(account, display_name)
+        _controleer_adres(account, from_address)
         async with _TABEL_SLOT:
             namen = await self.get_sender_names()
-            if namen.get(account, "") == display_name:
+            adressen = await self.get_sender_addresses()
+            if namen.get(account, "") == display_name and adressen.get(account, "") == from_address:
                 return False
-            if display_name:
-                namen[account] = display_name
-            else:
-                namen.pop(account, None)
-            await self._write_sender_names(account, display_name, namen)
+            self._zet_of_verwijder(namen, account, display_name)
+            self._zet_of_verwijder(adressen, account, from_address)
+            await self._write_sender_keys(account, display_name, from_address, namen, adressen)
             return True
 
+    async def set_sender_name(self, account: str, display_name: str) -> bool:
+        """Give this account the display name recipients see, keeping its address derived.
+
+        The project path: a project never chooses its own address, so passing an empty one
+        here is not a default that could be forgotten but the only correct value.
+        """
+        return await self.set_sender(account, display_name, "")
+
     async def delete_sender_name(self, account: str) -> None:
-        """Forget this account's display name. Replay-safe: a missing key is fine."""
-        await self.set_sender_name(account, "")
+        """Forget this account's display name AND address. Replay-safe: missing keys are fine."""
+        await self.set_sender(account, "", "")
 
-    async def _write_sender_names(self, account: str, display_name: str, namen: dict[str, str]) -> None:
-        """The key and the generated script in ONE request, then a reload.
+    @staticmethod
+    def _zet_of_verwijder(waarden: dict[str, str], account: str, waarde: str) -> None:
+        """Store the value, or drop the key when it is empty."""
+        if waarde:
+            waarden[account] = waarde
+        else:
+            waarden.pop(account, None)
 
-        One request, because the key is the data and the script is what the relay actually
+    async def _write_sender_keys(
+        self,
+        account: str,
+        display_name: str,
+        from_address: str,
+        namen: dict[str, str],
+        adressen: dict[str, str],
+    ) -> None:
+        """The keys and the generated script in ONE request, then a reload.
+
+        One request, because the keys are the data and the script is what the relay actually
         reads: two requests could leave the relay reading a table that no longer matches
         what OPI thinks it wrote.
         """
-        sleutel = f"{MAIL_SENDER_NAME_PREFIX}.{account}"
         wijzigingen: list[dict[str, Any]] = []
-        if display_name:
-            wijzigingen.append({"type": "insert", "values": [[sleutel, display_name]], "assert_empty": False})
-        else:
-            wijzigingen.append({"type": "delete", "keys": [sleutel]})
+        for prefix, waarde in ((MAIL_SENDER_NAME_PREFIX, display_name), (MAIL_SENDER_ADDRESS_PREFIX, from_address)):
+            sleutel = f"{prefix}.{account}"
+            if waarde:
+                wijzigingen.append({"type": "insert", "values": [[sleutel, waarde]], "assert_empty": False})
+            else:
+                wijzigingen.append({"type": "delete", "keys": [sleutel]})
         wijzigingen.append(
-            {"type": "insert", "values": [[MAIL_SENDER_TABLE_KEY, render_sender_table(namen)]], "assert_empty": False}
+            {
+                "type": "insert",
+                "values": [[MAIL_SENDER_TABLE_KEY, render_sender_table(namen, adressen)]],
+                "assert_empty": False,
+            }
         )
         await self._request("POST", "/api/settings", payload=wijzigingen)
         await self.reload()
-        logger.info(f"Weergavenaam van mailaccount {account} bijgewerkt op de relay: {display_name!r}")
+        logger.info(
+            f"Afzender van mailaccount {account} bijgewerkt op de relay: naam {display_name!r}, adres {from_address!r}"
+        )
 
     async def reload(self) -> None:
         """Rebuild the relay's configuration, so a written value takes effect.
@@ -348,30 +438,84 @@ def _controleer_naam(account: str, display_name: str) -> None:
         raise MailSenderNameError(f"Weergavenaam {display_name!r} is langer dan 64 tekens")
 
 
-def render_sender_table(namen: dict[str, str]) -> str:
-    """The sieve script the identity rules include, rendered from the stored names.
+def _controleer_adres(account: str, adres: str) -> None:
+    """Refuse a sender address that may not be written into the generated sieve script.
+
+    A different check from ``_controleer_naam`` and not a shared one: a display name must
+    NOT contain an ``@`` and an address cannot do without it. Sharing the rule would mean
+    the loosest of the two, which is the wrong direction for both.
+
+    An empty address is valid and means "derive it from the account name", which is what
+    every account except ZAD's own Keycloak account does.
+
+    Raises:
+        MailSenderNameError: The address is malformed or lives outside
+            ``MAIL_SENDER_DOMAIN_ALLOWLIST``.
+    """
+    if not adres:
+        return
+    lokaal, apenstaart, domein = adres.partition("@")
+    if not apenstaart:
+        raise MailSenderNameError(f"Afzenderadres {adres!r} voor {account!r} heeft geen @")
+    if not _ADRES_LOKAAL_PATROON.match(lokaal):
+        raise MailSenderNameError(
+            f"Afzenderadres {adres!r} voor {account!r} heeft een lokaal deel dat alleen kleine letters, "
+            "cijfers en . _ + - mag bevatten"
+        )
+    if len(lokaal) > MAIL_LOCAL_PART_MAX_LENGTH:
+        raise MailSenderNameError(
+            f"Afzenderadres {adres!r} voor {account!r} heeft een lokaal deel langer dan "
+            f"{MAIL_LOCAL_PART_MAX_LENGTH} tekens (RFC 5321)"
+        )
+    if domein not in MAIL_SENDER_DOMAIN_ALLOWLIST:
+        raise MailSenderNameError(
+            f"Afzenderadres {adres!r} voor {account!r} staat in domein {domein!r}, en alleen "
+            f"{sorted(MAIL_SENDER_DOMAIN_ALLOWLIST)} is toegestaan: een ander domein lijnt niet uit met de "
+            "envelope en haalt DMARC niet"
+        )
+
+
+def render_sender_table(namen: dict[str, str], adressen: dict[str, str] | None = None) -> str:
+    """The sieve script the identity rules include, rendered from the stored names and addresses.
 
     Deliberately dull: one ``if`` per account, no expressions, no data structures. It is
     generated code, so the only thing it may do is be obvious -- and the reader of a relay
     configuration should be able to see at a glance that this file cannot do anything except
-    set one variable.
+    set two variables.
 
-    ``global`` is what makes the value visible to the including script (RFC 6609: an included
-    script shares only variables declared global), and it is declared in both.
+    ``global`` is what makes a value visible to the including script (RFC 6609: an included
+    script shares only variables declared global), and both are declared in both scripts.
+
+    ``adressen`` is almost always empty. An account's address is DERIVED from its name by
+    the including script, and a key here exists only for an account that has to send under
+    a different one; setting ``afzender`` is what makes the including script skip its own
+    derivation. An account with an address but no name is a normal outcome and gets a rule
+    of its own, which is why the two maps are walked together instead of nested.
     """
+    adressen = adressen or {}
     regels = [
-        "# Gegenereerd door ZAD (RC-145). Niet met de hand bewerken: elke wijziging van een",
-        "# project schrijft dit script opnieuw, uit de sleutels onder " + MAIL_SENDER_NAME_PREFIX + ".",
+        "# Gegenereerd door ZAD (RC-145/RC-159). Niet met de hand bewerken: elke wijziging van",
+        f"# een project schrijft dit script opnieuw, uit de sleutels onder {MAIL_SENDER_NAME_PREFIX}.",
+        f"# en {MAIL_SENDER_ADDRESS_PREFIX}.",
         'require ["variables"];',
         'global "naam";',
+        'global "afzender";',
     ]
-    for account in sorted(namen):
-        naam = namen[account]
-        if not naam:
-            # Geen naam is geen regel: een leeg item zou een regel opleveren die niets doet.
+    for account in sorted(set(namen) | set(adressen)):
+        naam = namen.get(account, "")
+        adres = adressen.get(account, "")
+        if not naam and not adres:
+            # Geen naam en geen adres is geen regel: een leeg item zou een regel opleveren
+            # die niets doet.
             continue
         _controleer_naam(account, naam)
-        regels.append(f'if string :is "${{env.authenticated_as}}" "{account}" {{ set "naam" "{naam}"; }}')
+        _controleer_adres(account, adres)
+        toekenningen = []
+        if naam:
+            toekenningen.append(f'set "naam" "{naam}";')
+        if adres:
+            toekenningen.append(f'set "afzender" "{adres}";')
+        regels.append(f'if string :is "${{env.authenticated_as}}" "{account}" {{ {" ".join(toekenningen)} }}')
     return "\n".join(regels) + "\n"
 
 

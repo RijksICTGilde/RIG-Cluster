@@ -25,7 +25,13 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
-from opi.core.cluster_config import get_mail_from_address, get_mail_relay_host, get_mail_relay_port, get_namespace
+from opi.core.cluster_config import (
+    get_keycloak_mail_from_address,
+    get_mail_from_address,
+    get_mail_relay_host,
+    get_mail_relay_port,
+    get_namespace,
+)
 from opi.core.config import settings
 from opi.services import ServiceType
 from opi.services.catalog.send_email import is_approved
@@ -66,25 +72,38 @@ class MailAccountNameError(ValueError):
     """
 
 
+def _platform_accounts() -> dict[str, str]:
+    """Every account the platform owns, by setting name.
+
+    A COLLECTION and not one name, because there are two: ZAD's own (``zad-platform``)
+    and Keycloak's (``zad-keycloak``). A guard that knows only one of them guards only
+    one of them, and the one it forgets is the one a project could take over.
+    """
+    return {
+        "MAIL_PLATFORM_ACCOUNT": settings.MAIL_PLATFORM_ACCOUNT,
+        "MAIL_KEYCLOAK_ACCOUNT": settings.MAIL_KEYCLOAK_ACCOUNT,
+    }
+
+
 def _refuse_platform_account(username: str) -> None:
-    """Refuse the platform account on the project path.
+    """Refuse any platform account on the project path.
 
     Both directions of the collision are caught: a project account that is called like
-    the platform account, and a platform account that has been configured into the
-    project prefix. In either case a project would create, update or DELETE the account
-    ZAD sends its password-reset mail from.
+    one of the platform accounts, and a platform account that has been configured into
+    the project prefix. In either case a project would create, update or DELETE an
+    account the platform sends its password-reset or login mail from.
     """
-    platform = settings.MAIL_PLATFORM_ACCOUNT
-    if username == platform:
-        raise MailAccountNameError(
-            f"Mailaccount {username} is het platformaccount van ZAD zelf en is niet van een project; "
-            "de projectweg raakt het niet aan"
-        )
-    if platform.startswith(MAIL_PROJECT_ACCOUNT_PREFIX):
-        raise MailAccountNameError(
-            f"MAIL_PLATFORM_ACCOUNT ({platform}) staat in de naamruimte van de projectaccounts "
-            f"({MAIL_PROJECT_ACCOUNT_PREFIX}...): dan kan een project het platformaccount overnemen"
-        )
+    for setting_name, platform in _platform_accounts().items():
+        if username == platform:
+            raise MailAccountNameError(
+                f"Mailaccount {username} is een platformaccount ({setting_name}) en is niet van een project; "
+                "de projectweg raakt het niet aan"
+            )
+        if platform.startswith(MAIL_PROJECT_ACCOUNT_PREFIX):
+            raise MailAccountNameError(
+                f"{setting_name} ({platform}) staat in de naamruimte van de projectaccounts "
+                f"({MAIL_PROJECT_ACCOUNT_PREFIX}...): dan kan een project het platformaccount overnemen"
+            )
 
 
 class MailManager:
@@ -105,6 +124,7 @@ class MailManager:
         from_name: str,
         messages_per_day: int,
         is_platform_account: bool = False,
+        sender_address: str = "",
     ) -> MailAccount:
         """Make the relay hold exactly this account. The ONE place an account is made.
 
@@ -131,6 +151,10 @@ class MailManager:
                 ceiling for every account from its own configuration.
             is_platform_account: Only the platform caller sets this. Everything else is
                 the project path and may not touch ZAD's own account.
+            sender_address: Address to pin the ``From:`` header to, or empty to let the
+                relay DERIVE it from the account name. Empty is the normal case and the
+                only correct value for a project: an address it chose itself would be a
+                spoofing button. Only the platform passes one.
 
         Returns:
             The account as it now stands on the relay.
@@ -156,7 +180,11 @@ class MailManager:
         # Nothing to warn about when it is absent: no display name is a legal outcome, and a
         # project whose name has not been written yet sends from the right ADDRESS with no
         # name next to it. That is the whole failure mode.
-        await connector.set_sender_name(username, from_name)
+        #
+        # The ADDRESS travels the same way and for the same reason, but only for an account
+        # that has one. An empty address is not a missing value: it means the relay works
+        # the address out from the account name, which is what every project does.
+        await connector.set_sender(username, from_name, sender_address)
 
         return MailAccount(
             username=username,
@@ -361,6 +389,85 @@ class MailManager:
             namespace,
         )
         logger.info(f"Platform-mailaccount {username} bewaard in secret {settings.MAIL_PLATFORM_SECRET_NAME}")
+
+    # --- caller 3: Keycloak -----------------------------------------------------
+
+    @staticmethod
+    async def ensure_keycloak_account() -> MailAccount | None:
+        """Ensure KEYCLOAK's account on the relay, from the password the bootstrap made.
+
+        A THIRD caller of ``ensure_account`` and not a variant of the second, because the
+        two differ in the one thing that matters: where the password comes from.
+
+        ``zad-platform`` is used by nobody but OPI, so OPI generates that password itself
+        and keeps it. Keycloak is a different program that does not know OPI, must not wait
+        for it, and reads its password out of a file the bootstrap put there. So here OPI
+        generates NOTHING and writes NOTHING back: the Secret comes out of git, and OPI is
+        the reconciler rather than the source. That is the whole rule, and it is written
+        down again in the template that makes the Secret.
+
+        Which also decides what happens when the Secret is absent: that is a cluster
+        without Keycloak mail, not a failure. It is logged and the boot carries on -- the
+        same shape as a cluster with no relay configured at all.
+
+        Idempotent: a second boot reads the same value out of the same Secret and hands the
+        relay the same password, so nothing changes. A CHANGED value in the Secret reaches
+        the relay on the next boot, which is what makes a rotation land at all.
+
+        Returns ``None`` when there is no relay or no Secret on this cluster.
+        """
+        if not settings.MAIL_RELAY_API_URL:
+            logger.info("Geen mailrelay ingesteld op dit cluster: Keycloak krijgt geen mailaccount")
+            return None
+
+        password = await MailManager._read_keycloak_secret()
+        if not password:
+            logger.info(
+                f"Secret {settings.MAIL_KEYCLOAK_SECRET_NAME} ontbreekt of is leeg: "
+                "dit cluster heeft geen Keycloak-mail. Genereer de clustergeheimen om hem aan te zetten."
+            )
+            return None
+
+        username = settings.MAIL_KEYCLOAK_ACCOUNT
+        # ``get_keycloak_mail_from_address`` is ook wat de YAML-handler in de ``smtpServer.from``
+        # van elke realm schrijft: een afleiding, dus het adres dat de relay krijgt en het adres
+        # dat een realm noemt kunnen niet uit elkaar lopen. Anders dan een projectadres draagt
+        # dit geen plusdeel - ``zad-keycloak`` verstuurt voor alle realms tegelijk, dus er is
+        # geen project om te noemen.
+        from_address = get_keycloak_mail_from_address(settings.CLUSTER_MANAGER)
+
+        connector = await create_mail_connector()
+        account = await MailManager.ensure_account(
+            connector=connector,
+            username=username,
+            password=password,
+            from_address=from_address,
+            bounce_address=from_address,
+            from_name=settings.MAIL_KEYCLOAK_FROM_NAME,
+            messages_per_day=settings.MAIL_KEYCLOAK_MESSAGES_PER_DAY,
+            is_platform_account=True,
+            sender_address=from_address,
+        )
+        logger.info(f"Keycloak-mailaccount {username} staat klaar op de relay ({from_address})")
+        return account
+
+    @staticmethod
+    async def _read_keycloak_secret() -> str | None:
+        """Keycloak's mail password out of the bootstrap Secret in OPI's own namespace.
+
+        ``None`` when the Secret is not there, which is the normal state of a cluster whose
+        infrastructure secrets predate this feature.
+
+        Unlike the platform account there is nothing to protect against a MISREAD here: a
+        ``None`` leads to "no Keycloak mail on this cluster" and never to a generated
+        password that overwrites anything. So an unreadable moment costs one reconcile, and
+        the next boot repairs it.
+        """
+        namespace = get_namespace(settings.CLUSTER_MANAGER)
+        stored = await KubectlConnector().get_secret(settings.MAIL_KEYCLOAK_SECRET_NAME, namespace)
+        if stored is None:
+            return None
+        return stored.get(settings.MAIL_KEYCLOAK_SECRET_KEY) or None
 
     # --- cleanup ----------------------------------------------------------------
 
