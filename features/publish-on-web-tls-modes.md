@@ -175,7 +175,7 @@ er een halen, via een ACME HTTP-01-uitdaging die van buiten bereikbaar moet zijn
 kan niet op elk cluster.
 
 In de sandbox kan het niet, en het is er ook niet aan te zien. `task sandbox:setup` zet een
-**nep** cert-manager-CRD neer (`bootstrap/crd/cert-manager/fake-cert-manager.yaml`) zonder
+**nep** cert-manager-CRD neer (`infrastructure/bootstrap/infrastructure/cert-manager/fake-crd/overlays/sandboxed-local`) zonder
 controller erachter, zodat de Issuer-manifesten gewoon toegepast kunnen worden. Gevolg: de
 Issuer wordt aangemaakt, meldt `Ready` (de nep-CRD zet die conditie als default), ArgoCD
 meldt Synced, de deployment meldt Healthy -- en er wordt nooit een certificaat uitgegeven.

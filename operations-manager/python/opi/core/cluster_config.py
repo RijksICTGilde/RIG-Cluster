@@ -1058,7 +1058,7 @@ def supports_custom_domain_certificates(cluster_name: str) -> bool:
     to issue one, over an ACME HTTP-01 challenge that the outside world must be able to
     reach. On production that works. On the two Kind clusters it cannot: they are not
     reachable from the internet, and ``task sandbox:setup`` even installs a FAKE
-    cert-manager CRD (``bootstrap/crd/cert-manager/fake-cert-manager.yaml``) with no
+    cert-manager CRD (``infrastructure/bootstrap/infrastructure/cert-manager/fake-crd/overlays/sandboxed-local``) with no
     controller behind it, so the Issuer applies, reports Ready, and nothing is ever
     issued. Everything stays green and the site serves the wrong certificate -- which is
     exactly how this was discovered (zad-cli, bevinding 22).

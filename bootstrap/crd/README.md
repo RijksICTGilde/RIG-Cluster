@@ -13,9 +13,12 @@ The ArgoCD operator v0.14.0 requires the following modifications to work properl
 2. **Use Latest Image**
    - In `config/manager/kustomization.yaml`: Change `newTag: v0.14.0` to `newTag: latest`
 
-3. **Fake cert-manager CRD**
-   - Clusters zonder cert-manager krijgen `bootstrap/crd/cert-manager/fake-cert-manager.yaml`, zodat de
-     Issuer-resources uit git aangemaakt kunnen worden.
+3. **Fake cert-manager CRD: verhuisd naar GitOps**
+   - Stond hier als een kale `kubectl apply` in `prepare-argocd-operator`. Dat was een tweede
+     installatiepad naast ArgoCD, en die dubbeling gaf verwarring. Hij staat nu in
+     `infrastructure/bootstrap/infrastructure/cert-manager/fake-crd/overlays/sandboxed-local` en wordt door ArgoCD aangebracht.
+   - Alleen de sandbox heeft hem nodig: die draait op localhost, kan geen Let's Encrypt gebruiken
+     en heeft dus geen cert-manager, terwijl OPI wel Issuer-resources per project genereert.
 
 Er stond hier ook een fake Prometheus-CRD "voor Argo". Die is vervallen: in v0.14.0 zit alle
 monitoring-logica van de operator achter `IsPrometheusAPIAvailable()` (scheme, watches en reconcile),

@@ -14,7 +14,7 @@ verwijzing naar wat er in de body hoort, en geen woord over de drie eisen uit ``
 die daarna alsnog een voor een omvielen.
 
 **22 -- een eigen domein krijgt geen certificaat in de sandbox.** Gemeten: het cluster
-draait een NEP cert-manager-CRD zonder controller (``bootstrap/crd/cert-manager``,
+draait een NEP cert-manager-CRD zonder controller (``infrastructure/bootstrap/infrastructure/cert-manager/fake-crd``,
 Taskfile), dus de Issuer wordt aangemaakt, meldt Ready, en er wordt nooit iets uitgegeven.
 Er is geen Certificate-resource dat blijft hangen -- die CRD bestaat er niet eens. Alles
 staat op groen en de bezoeker krijgt het verkeerde certificaat. En het valt precies samen
@@ -206,7 +206,7 @@ class TestUnmetRequirements:
 class TestTheClusterAnswersWhetherItCanIssue:
     def test_the_sandbox_cannot(self) -> None:
         """Nagemeten op kind-rig-sandbox: geen certificates-CRD, geen controller, alleen
-        een nep-Issuer-CRD uit bootstrap/crd/cert-manager."""
+        een nep-Issuer-CRD uit infrastructure/bootstrap/infrastructure/cert-manager/fake-crd."""
         assert supports_custom_domain_certificates("sandboxed-local") is False
 
     def test_production_can(self) -> None:

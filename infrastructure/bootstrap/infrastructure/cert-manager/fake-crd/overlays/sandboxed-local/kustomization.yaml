@@ -1,0 +1,23 @@
+# Een NEP cert-manager-CRD, alleen voor de sandbox.
+#
+# Waarom dit bestaat: de sandbox draait op localhost in een kind-cluster. Let's Encrypt kan
+# daar niet bij, dus HTTP-01 kan niet, en voor een wildcard kan het sowieso niet. De sandbox
+# gebruikt daarom een geimporteerd wildcard-certificaat (sandbox:import-wildcard-cert) en
+# draait helemaal geen cert-manager.
+#
+# Maar OPI genereert per project wel Issuer-resources (manifests/issuer-letsencrypt.yaml.jinja).
+# Zonder een geregistreerd type struikelt ArgoCD daarop met een onbekende kind. Deze CRD maakt
+# het type bekend; er is geen controller, dus er gebeurt verder niets. Dat is opzet.
+#
+# Waarom via ArgoCD en niet meer via de bootstrap-taak: dit stond in prepare-argocd-operator
+# als een kale kubectl apply. Dat is een tweede installatiepad naast GitOps, en die
+# dubbeling heeft vandaag al twee keer verwarring opgeleverd (de fake Prometheus-CRD die
+# nergens voor nodig was, en cert-manager die op fundament door twee dingen tegelijk
+# geinstalleerd werd). Nu is er een pad.
+#
+# LET OP: dit hoort NIET op een cluster met een echte cert-manager. Daar zou het de echte
+# CRD kunnen verdringen. Vandaar een overlay per cluster en geen plek in een gedeelde base.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
