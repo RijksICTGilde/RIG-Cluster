@@ -296,6 +296,47 @@ zetten van `verifyEmail: false` in de blauwdruk de weg.
 De maat is de RELAY en niet meer de `smtpServer` van de realm - die laatste zei daar ooit iets
 over, maar draagt nu op elke realm hetzelfde minimale veld.
 
+### Uitrol: eerst de Keycloak-pod, dan pas een projectverwerking
+
+De grendel hierboven meet `MAIL_RELAY_API_URL`, en dat is de relay **zoals OPI hem ziet**. Die
+variabele zegt niets over de vraag of de **Keycloak-pod** de nieuwe jar en de
+`ZAD_MAIL_RELAY_*`-variabelen al draait. Dat zijn twee verschillende deployments in twee
+verschillende namespaces die onafhankelijk van elkaar uitrollen.
+
+Dat maakt een venster bij de eerste uitrol van deze taak. Op een cluster dat vandaag nog op
+RC-156 staat, doet een verwerking in dat venster twee dingen tegelijk:
+
+- `_apply_smtp_server` **veegt** de werkende `smtpServer` weg (`host`, `user` en het
+  vaultwachtwoord uit RC-156), en
+- `_apply_realm_fields` zet `verifyEmail` **aan**.
+
+Draait de oude Keycloak-pod dan nog, dan is er op dat moment geen weg naar buiten: de oude
+verzender heeft geen `host` meer en faalt met "Please provide a valid address"
+(`SEND_VERIFY_EMAIL_ERROR`), terwijl de realm wel al verifieert.
+
+**De volgorde die dat venster vermijdt:**
+
+```bash
+# 1. de manifesten staan in git en ArgoCD heeft gesynct
+# 2. WACHT tot de Keycloak-pod met de nieuwe jar en de vlag echt draait
+kubectl -n rig-system rollout status deployment/keycloak
+kubectl -n rig-system get pods -l app=keycloak \
+  -o jsonpath='{.items[*].spec.containers[0].args}' | tr ' ' '\n' | grep email-sender
+# 3. pas daarna OPI met MAIL_RELAY_API_URL laten draaien / een projectverwerking laten lopen
+```
+
+Stap 2 is sterker dan hij lijkt: een provider-id dat Keycloak niet vindt laat de pod WEIGEREN
+op te komen (gemeten als canarie in `docs/rc159-uitrolmeting.md`). Een pod die `Ready` is en
+de vlag in zijn `args` draagt, heeft zijn verzender dus aantoonbaar geladen.
+
+Wie de blast radius wil weten: alleen **nieuwe lokale gebruikers** die in dat venster
+aangemaakt worden komen binnen met `emailVerified: false` en krijgen geen bericht. De terugweg
+is dat veld handmatig omzetten in de admin-console, of de gebruiker opnieuw laten aanmelden
+zodra de pod er is. Bestaande gebruikers en SSO-gebruikers merken er niets van.
+
+Dit is een **uitrol**-volgorde en geen rotatie. De rotatievolgorde van het geheim staat
+hierboven onder "Rotatie: de volgorde, en wat er tussendoor faalt".
+
 ## Het is een INTERNE SPI
 
 Keycloak zegt dat zelf bij het opstarten:
