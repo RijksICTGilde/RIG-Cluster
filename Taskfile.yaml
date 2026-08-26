@@ -3713,58 +3713,6 @@ tasks:
         echo "✅ functl aanwezig"
     silent: true
 
-  fundament:install-platform:
-    desc: "Install the platform layer fundament-poc does not provide: ingress, TLS, storage, database operator"
-    deps: [fundament:check]
-    vars:
-      CTX: '{{.KUBE_CONTEXT}}'
-      # Gepind, niet 'latest': een installatie moet over een maand hetzelfde opleveren.
-      INGRESS_NGINX_VERSION: '{{default "v1.15.1" .INGRESS_NGINX_VERSION}}'
-      CERT_MANAGER_VERSION: '{{default "v1.21.1" .CERT_MANAGER_VERSION}}'
-      LOCAL_PATH_VERSION: '{{default "v0.0.37" .LOCAL_PATH_VERSION}}'
-      CNPG_VERSION: '{{default "1.27.3" .CNPG_VERSION}}'
-    cmds:
-      - |
-        K="kubectl --context {{.CTX}} --request-timeout=180s"
-
-        # ingress-nginx: de cloud-variant, niet de Kind-variant. MetalLB en de metal-ccm
-        # kennen we hier een echte LoadBalancer toe; de Kind-variant patcht hostPorts en
-        # gaat uit van poortmappings op de control-plane node die hier niet bestaan.
-        echo "📦 ingress-nginx {{.INGRESS_NGINX_VERSION}}"
-        $K apply -f "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-{{.INGRESS_NGINX_VERSION}}/deploy/static/provider/cloud/deploy.yaml" >/dev/null
-        $K -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=180s
-
-        # cert-manager: het platform levert de Gardener cert-extensie (cert.gardener.cloud),
-        # maar onze manifests genereren cert-manager.io-resources. Zelf meebrengen scheelt
-        # een verbouwing van issuer-letsencrypt.yaml.jinja.
-        echo "📦 cert-manager {{.CERT_MANAGER_VERSION}}"
-        $K apply -f "https://github.com/cert-manager/cert-manager/releases/download/{{.CERT_MANAGER_VERSION}}/cert-manager.yaml" >/dev/null
-        for d in cert-manager cert-manager-webhook cert-manager-cainjector; do
-          $K -n cert-manager rollout status "deployment/$d" --timeout=180s
-        done
-
-        # local-path-provisioner: de meegeleverde csi-lvm kan niets provisionen omdat zijn
-        # device-patroon de systeemschijf meepakt, en die configuratie is gardener-beheerd.
-        # Tijdelijk tot de Rook/Ceph-plugin van het platform er is; die brengt ook de
-        # VolumeSnapshotClass mee die local-path niet heeft.
-        echo "📦 local-path-provisioner {{.LOCAL_PATH_VERSION}}"
-        $K apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/{{.LOCAL_PATH_VERSION}}/deploy/local-path-storage.yaml" >/dev/null
-
-        # De default /opt/local-path-provisioner staat op de 24GB-rootpartitie.
-        # /var/lib zit op de grote partitie (2,7 TB vrij), waar kubelet en containerd ook staan.
-        $K -n local-path-storage patch configmap local-path-config --type merge -p \
-          '{"data":{"config.json":"{\n  \"nodePathMap\":[\n    {\n      \"node\":\"DEFAULT_PATH_FOR_NON_LISTED_NODES\",\n      \"paths\":[\"/var/lib/local-path-provisioner\"]\n    }\n  ]\n}\n"}}' >/dev/null
-        $K -n local-path-storage rollout restart deployment/local-path-provisioner >/dev/null
-        $K -n local-path-storage rollout status deployment/local-path-provisioner --timeout=180s
-
-        echo "📦 CloudNativePG {{.CNPG_VERSION}}"
-        $K apply --server-side -f "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-{{.CNPG_VERSION}}.yaml" >/dev/null
-        $K -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=180s
-
-        echo ""
-        echo "✅ Platformlaag geïnstalleerd. Draai 'task fundament:verify' om te controleren dat het werkt."
-    silent: true
-
   fundament:verify:
     desc: "Prove the fundament-poc platform layer works: a PVC binds and the ingress has a public address"
     deps: [fundament:check]
