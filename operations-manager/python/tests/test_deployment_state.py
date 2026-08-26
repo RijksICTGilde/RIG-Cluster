@@ -79,8 +79,17 @@ class TestAServiceCannotDeclareADeploymentHealthy:
         field_names = {field.name for field in dataclasses.fields(DeploymentStateFact)}
 
         # ``badge`` (RC-35) is the word the card shows, not a verdict: it says what the
-        # situation is called, never whether it is good.
-        assert field_names == {"service", "summary", "expects_no_application_pods", "badge", "details"}
+        # situation is called, never whether it is good. ``superseded_by_component_details``
+        # is likewise about the display and not about health: it says this fact repeats a
+        # per-component listing, so a display that shows that listing may leave it out.
+        assert field_names == {
+            "service",
+            "summary",
+            "expects_no_application_pods",
+            "badge",
+            "superseded_by_component_details",
+            "details",
+        }
         for forbidden in ("healthy", "health", "ok", "verdict", "status"):
             assert forbidden not in field_names
 
