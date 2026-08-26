@@ -1,0 +1,30 @@
+2026-08-25T13:03:54.308Z | brokeruser@example.org | Link Proef-idp
+    From: ['noreply-rijksapp@rijksoverheid.nl']
+    Return-Path: ['<noreply-rijksapp+keycloak-proef@rijksoverheid.nl>']
+    X-Zad-Email-Sender: ['zad-relay-proef/0.1.0']
+    Received: ['from rig-mail-relay (10-244-0-85.rig-mail-relay.rig-ron.svc.cluster.local. [10.244.0.85]) by rig-mail-sink-6c6d994744-qzqp9 (Mailpit) with SMTP for <brokeruser@example.org>; Tue, 25 Aug 2026 13:03:54 +0000 (UTC)']
+2026-08-25T13:03:23.048Z | brokeruser@example.org | Link Proef-idp
+    From: ['noreply-rijksapp@rijksoverheid.nl']
+    Return-Path: ['<noreply-rijksapp+keycloak-proef@rijksoverheid.nl>']
+    X-Zad-Email-Sender: ['zad-relay-proef/0.1.0']
+    Received: ['from rig-mail-relay (10-244-0-85.rig-mail-relay.rig-ron.svc.cluster.local. [10.244.0.85]) by rig-mail-sink-6c6d994744-qzqp9 (Mailpit) with SMTP for <brokeruser@example.org>; Tue, 25 Aug 2026 13:03:23 +0000 (UTC)']
+2026-08-25T13:00:37.845Z | reg-runf-definitief@example.org | Verify email
+    From: ['noreply-rijksapp@rijksoverheid.nl']
+    Return-Path: ['<noreply-rijksapp+keycloak-proef@rijksoverheid.nl>']
+    X-Zad-Email-Sender: ['zad-relay-proef/0.1.0']
+    Received: ['from rig-mail-relay (10-244-0-85.rig-mail-relay.rig-ron.svc.cluster.local. [10.244.0.85]) by rig-mail-sink-6c6d994744-qzqp9 (Mailpit) with SMTP for <reg-runf-definitief@example.org>; Tue, 25 Aug 2026 13:00:37 +0000 (UTC)']
+2026-08-25T13:00:37.39Z | reg-runf-definitief@example.org | Verify email
+    From: ['noreply-rijksapp@rijksoverheid.nl']
+    Return-Path: ['<noreply-rijksapp+keycloak-proef@rijksoverheid.nl>']
+    X-Zad-Email-Sender: ['zad-relay-proef/0.1.0']
+    Received: ['from rig-mail-relay (10-244-0-85.rig-mail-relay.rig-ron.svc.cluster.local. [10.244.0.85]) by rig-mail-sink-6c6d994744-qzqp9 (Mailpit) with SMTP for <reg-runf-definitief@example.org>; Tue, 25 Aug 2026 13:00:37 +0000 (UTC)']
+2026-08-25T13:00:36.734Z | u-runf-definitief@example.org | Update Your Account
+    From: ['noreply-rijksapp@rijksoverheid.nl']
+    Return-Path: ['<noreply-rijksapp+keycloak-proef@rijksoverheid.nl>']
+    X-Zad-Email-Sender: ['zad-relay-proef/0.1.0']
+    Received: ['from rig-mail-relay (10-244-0-85.rig-mail-relay.rig-ron.svc.cluster.local. [10.244.0.85]) by rig-mail-sink-6c6d994744-qzqp9 (Mailpit) with SMTP for <u-runf-definitief@example.org>; Tue, 25 Aug 2026 13:00:36 +0000 (UTC)']
+2026-08-25T13:00:36.156Z | u-runf-definitief@example.org | Update Your Account
+    From: ['noreply-rijksapp@rijksoverheid.nl']
+    Return-Path: ['<noreply-rijksapp+keycloak-proef@rijksoverheid.nl>']
+    X-Zad-Email-Sender: ['zad-relay-proef/0.1.0']
+    Received: ['from rig-mail-relay (10-244-0-85.rig-mail-relay.rig-ron.svc.cluster.local. [10.244.0.85]) by rig-mail-sink-6c6d994744-qzqp9 (Mailpit) with SMTP for <u-runf-definitief@example.org>; Tue, 25 Aug 2026 13:00:36 +0000 (UTC)']
