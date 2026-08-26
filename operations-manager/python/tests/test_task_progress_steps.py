@@ -140,7 +140,9 @@ async def test_pipeline_reports_nothing_without_a_progress_manager(monkeypatch: 
 # ---------------------------------------------------------------------------
 
 
-def _sleep_mode_mocks(monkeypatch: pytest.MonkeyPatch, *, transition_applies: bool, matches: bool = True) -> Any:
+def _sleep_mode_mocks(
+    monkeypatch: pytest.MonkeyPatch, *, transition_applies: bool, enabled: bool = True, matches: bool = True
+) -> Any:
     """Stub the sleep-mode flow's collaborators; returns the trigger_reprocessing mock."""
     from opi.services.catalog.sleep_mode import config as sleep_config
     from opi.services.catalog.sleep_mode import service as sleep_service
@@ -162,7 +164,9 @@ def _sleep_mode_mocks(monkeypatch: pytest.MonkeyPatch, *, transition_applies: bo
     config = MagicMock()
     config.matches.return_value = matches
     config.waker = False
-    monkeypatch.setattr(sleep_config, "load", lambda *a, **k: config)
+    # ``enabled`` is the gate (config.load returns None when sleep-mode is off for this
+    # project/cluster); ``matches`` only scopes the sweeper and no longer stops the flow.
+    monkeypatch.setattr(sleep_config, "load", lambda *a, **k: config if enabled else None)
     monkeypatch.setattr(sleep_state, "read", lambda *a, **k: MagicMock(state="sleeping", wake_token=None))
     monkeypatch.setattr(sleep_service, "to_sleeping", lambda *a, **k: transition_applies)
     monkeypatch.setattr(sleep_service, "begin_wake", lambda *a, **k: transition_applies)
@@ -237,12 +241,12 @@ async def test_noop_says_so_instead_of_ticking_off_work_it_skipped(
 
 
 @pytest.mark.asyncio
-async def test_out_of_scope_deployment_reports_that_it_did_nothing(
+async def test_a_deployment_without_sleep_mode_reports_that_it_did_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from opi.services.catalog.sleep_mode.task import handle_sleep_transition
 
-    _sleep_mode_mocks(monkeypatch, transition_applies=True, matches=False)
+    _sleep_mode_mocks(monkeypatch, transition_applies=True, enabled=False)
     progress = _progress()
 
     await handle_sleep_transition(
@@ -250,6 +254,29 @@ async def test_out_of_scope_deployment_reports_that_it_did_nothing(
     )
 
     assert _names(progress)[-1] == "Slaapstand geldt niet voor deze deployment, er is niets gewijzigd"
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_outside_the_match_is_slept_like_any_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``match`` scopes the sweeper, not the manual task behind the button.
+
+    This used to stop here with "slaapstand geldt niet voor deze deployment", which made
+    the button a no-op on every deployment of a project that had left the match field
+    empty -- and empty is the default.
+    """
+    from opi.services.catalog.sleep_mode.task import handle_sleep_transition
+
+    _sleep_mode_mocks(monkeypatch, transition_applies=True, matches=False)
+    progress = _progress()
+
+    result = await handle_sleep_transition(
+        {"project_name": "test-project", "deployment_name": "dev", "direction": "sleep"}, progress
+    )
+
+    assert result["changed"] is True
+    assert _names(progress)[-1] == "Slaaptoestand vastleggen in git"
 
 
 # ---------------------------------------------------------------------------
