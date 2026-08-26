@@ -121,7 +121,7 @@
                 <c-cluster gap="md" align="center">
                     <c-icon icon="info-circle" size="lg" />
                     <c-stack gap="xs">
-                        <strong>{{ ServiceAdapter.get_service_definition(ServiceAdapter.get_service_by_value(fact.service)).name }}</strong>
+                        <strong>{{ fact.service_name }}</strong>
                         <c-span>{{ fact.summary }}</c-span>
                     </c-stack>
                 </c-cluster>
