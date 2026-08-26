@@ -9,6 +9,18 @@ spec:
   image: ghcr.io/minbzk/base-images/argocd-rig
   version: v3.5.1-rig1
   extraConfig:
+    # ArgoCD bepaalt standaard via het label app.kubernetes.io/instance bij welke
+    # Application een resource hoort. Dat botst met manifesten die dat label zelf zetten:
+    # de upstream cert-manager doet dat, met de waarde 'cert-manager'. ArgoCD las daaruit
+    # dat de CRD's bij een app met die naam horen, die niet bestaat, en meldde
+    # SharedResourceWarning op fundament-poc-cert-manager.
+    #
+    # Met 'annotation' volgt hij op argocd.argoproj.io/tracking-id en laat hij het label
+    # met rust. Dat is ook wat de ArgoCD-documentatie aanraadt zodra een applicatie zijn
+    # eigen instance-label meebrengt. Geverifieerd dat niets in deze repo op dat label
+    # leunt: niet in OPI, niet in de manifesten.
+    application.resourceTrackingMethod: annotation
+
     # Zonder deze check doen de sync-waves van de app-of-apps niets. ArgoCD levert voor
     # het type Application geen health-check mee (resource_customizations/argoproj.io/
     # Application bevat alleen 'actions'), en een wave wacht op Healthy. Een kind zonder
