@@ -6,7 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"  # Na de infrastructuur
 spec:
-  project: default
+  project: rig-platform
   sources:
     - repoURL: https://user-applications@github.com/RijksICTGilde/argo-applications.git
       # Deze map moet in de argo-applications repo bestaan voor de eerste sync slaagt.

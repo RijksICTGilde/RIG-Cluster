@@ -1,0 +1,79 @@
+# AppProject dat het ingebouwde 'default' vervangt voor alle Applications op dit cluster.
+#
+# Het ingebouwde default-project staat sourceRepos '*', destinations '*' en
+# clusterResourceWhitelist '*' toe. Met prune en selfHeal aan betekent dat: wie naar main
+# van een willekeurige repo kan pushen, krijgt willekeurige cluster-brede objecten
+# automatisch toegepast, inclusief een ClusterRoleBinding naar cluster-admin, en elke
+# handmatige terugdraai wordt binnen seconden hersteld. Zie PR #78, die hetzelfde doet voor
+# odcn-production en sandboxed-local.
+#
+# Dit cluster vraagt een ruimere whitelist dan productie, en dat is geen slordigheid maar
+# een wezenlijk verschil: op ODCN praat ArgoCD via de Capsule-proxy en is hij tenant-scoped,
+# dus daar worden de operators buiten GitOps geinstalleerd en kan clusterResourceWhitelist
+# leeg blijven. Hier installeert ArgoCD cert-manager, CloudNativePG, ingress-nginx en de
+# opslagprovisioner zelf, en die leveren CRD's, webhooks en cluster-brede RBAC.
+#
+# De lijsten hieronder zijn niet geraden maar geteld: alle dertien Applications zijn
+# gerenderd (156 resources) en daaruit komen exact deze acht cluster-brede types en deze
+# vijf namespaces. Komt er een component bij die iets anders nodig heeft, dan faalt de sync
+# met een duidelijke melding in plaats van dat het stilletjes doorglipt. Dat is opzet.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rig-platform
+  namespace: rig-system
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Beperkt project voor de Applications van fundament-poc.
+
+  # Geen wildcard. Dit alleen al sluit uit dat een push naar een willekeurige andere repo
+  # automatisch op dit cluster landt.
+  sourceRepos:
+    - https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
+    - https://user-applications@github.com/RijksICTGilde/argo-applications.git
+
+  # De namespaces waar de dertien Applications aantoonbaar naartoe deployen, plus
+  # rig-system voor de root en de user-applications.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: rig-system
+    - server: https://kubernetes.default.svc
+      namespace: cert-manager
+    - server: https://kubernetes.default.svc
+      namespace: cnpg-system
+    - server: https://kubernetes.default.svc
+      namespace: ingress-nginx
+    - server: https://kubernetes.default.svc
+      namespace: local-path-storage
+
+  # Geteld uit de render, niet geraden. Geen '*'.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: networking.k8s.io
+      kind: IngressClass
+    - group: storage.k8s.io
+      kind: StorageClass
+
+  # Bewust breed: de blast radius is al ingeperkt door de destinations hierboven, en een
+  # strakke namespaced-whitelist zou de platform-sync stil breken zonder extra winst.
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # Uit, om dezelfde reden als in PR #78: rig-system bevat ook bootstrap-resources die niet
+  # door ArgoCD beheerd worden (ArgoCD zelf, de sops-sleutel, de repo-secrets), en die zou
+  # hij anders als wees melden.
+  orphanedResources:
+    warn: false
