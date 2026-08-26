@@ -1,3 +1,9 @@
+> **Vervallen.** Het `local`-cluster bestaat niet meer; de sandbox heeft het vervangen. De taken die
+> hier beschreven worden (`generate-local-ca`, `install-local-ca`, `import-ca-to-cluster`,
+> `inject-ca-to-running-cluster`, `create-local-kind-cluster`, `setup-local-cluster`) zijn verwijderd.
+> De sandbox gebruikt een geimporteerd wildcard-certificaat, zie `sandbox:import-wildcard-cert`.
+> Bewaard omdat de uitleg over de CA-keten nog waarde heeft.
+
 # Local HTTPS Certificates
 
 ## What it is
