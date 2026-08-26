@@ -24,6 +24,7 @@ import hashlib
 from typing import Any
 
 import pytest
+from opi.core.config import settings
 from opi.core.project_schema import ProjectSchemaError
 from opi.services.project_service import get_project_service
 from opi.services.project_store import (
@@ -45,7 +46,10 @@ def _project(deployments: list[dict[str, Any]] | None = None, **extra: Any) -> d
         "display-name": "Demo",
         "description": "test project",
         "users": [{"email": "admin@example.com", "role": "admin"}],
-        "clusters": ["odcn-production"],
+        # Het cluster van deze test-OPI, niet een vaste naam. save_and_commit_project
+        # weigert sinds de eigendomsgrendel een projectbestand dat bij een ander cluster
+        # hoort, en dat is precies de bedoeling.
+        "clusters": [settings.CLUSTER_MANAGER],
         "services": [],
         "components": [],
         "deployments": deployments if deployments is not None else [],
