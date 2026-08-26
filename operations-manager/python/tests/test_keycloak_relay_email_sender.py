@@ -77,10 +77,7 @@ class TestDeVlag:
 
     @pytest.mark.parametrize(
         "pad",
-        sorted(
-            [KEYCLOAK_BASE / "deployment.yaml"]
-            + [p for p in KEYCLOAK_OVERLAYS.rglob("*.yaml")]
-        ),
+        sorted([KEYCLOAK_BASE / "deployment.yaml", *KEYCLOAK_OVERLAYS.rglob("*.yaml")]),
         ids=lambda p: str(p.relative_to(REPO_ROOT)),
     )
     def test_de_camelcase_vorm_staat_nergens(self, pad: Path) -> None:
@@ -148,7 +145,8 @@ class TestDeJarInDePod:
         commando = "\n".join(init["command"])
         for regel in commando.splitlines():
             if naam in regel:
-                assert "wget" not in regel and "curl" not in regel
+                assert "wget" not in regel
+                assert "curl" not in regel
 
 
 class TestDeRelayInDeOmgeving:
