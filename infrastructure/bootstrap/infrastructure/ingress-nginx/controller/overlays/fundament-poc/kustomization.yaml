@@ -33,6 +33,26 @@ patches:
         annotations-risk-level: "Critical"
         large-client-header-buffers: "4 16k"
 
+  # De twee admission-Jobs dragen upstream ttlSecondsAfterFinished: 0, dus Kubernetes
+  # verwijdert ze meteen nadat ze klaar zijn. Voor ArgoCD betekent dat: staat in git, staat
+  # niet in het cluster, dus eeuwig OutOfSync zonder dat er iets mis is. Dat maakt de
+  # statuskolom waardeloos, want je went aan rood.
+  #
+  # In de Helm-chart van ingress-nginx dragen deze Jobs helm.sh/hook: pre-install,pre-upgrade;
+  # de statische deploy.yaml laat die annotaties weg maar houdt de ttl wel. Ze zijn dus als
+  # hook bedoeld. Hier zetten we dat terug met de ArgoCD-variant, zodat ze buiten de
+  # sync-vergelijking vallen in plaats van hem te vervuilen.
+  - target:
+      kind: Job
+      name: ingress-nginx-admission-(create|patch)
+      namespace: ingress-nginx
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/hook: PreSync
+          argocd.argoproj.io/hook-delete-policy: HookSucceeded
+
   # Ook generiek: zonder deze vlag negeert nginx de ssl-passthrough-annotatie en werkt de
   # passthrough-modus van publish-on-web niet.
   - target:
