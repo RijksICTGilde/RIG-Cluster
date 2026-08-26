@@ -203,7 +203,7 @@ De namespace wordt `cnpg-system`, wat overeenkomt met `database_operator_namespa
 
 ### 4.4 cert-manager
 
-Als we voor cert-manager kiezen in plaats van de Gardener-extensie, is dit een echte installatie en niet de nep-CRD's uit `bootstrap/crd/cert-manager/fake-cert-manager.yaml`. Die bestaan alleen zodat ArgoCD in de sandbox niet struikelt over onbekende types; er draait daar geen cert-manager.
+Fundament heeft een echte cert-manager, via de Application op wave -1. De nep-CRD is er niet en hoort er ook niet: die staat alleen in `infrastructure/bootstrap/infrastructure/cert-manager/fake-crd/overlays/sandboxed-local`, want de sandbox draait op localhost, kan geen Let's Encrypt gebruiken en heeft dus geen cert-manager, terwijl OPI daar wel Issuer-resources per project genereert.
 
 Beslis dit expliciet, want het raakt `issuer-letsencrypt.yaml.jinja` en de hele TLS-keten. Voorstel: cert-manager, omdat het de templates ongemoeid laat.
 

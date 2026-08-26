@@ -2,6 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  # De nep cert-manager-CRD. Moet vooraan: OPI genereert per project Issuer-resources en
+  # zonder geregistreerd type struikelt ArgoCD daarop. Zie de uitleg in die overlay.
+  - ../../infrastructure/cert-manager/fake-crd/overlays/sandboxed-local
   - ../../infrastructure/secrets/config/overlays/sandboxed-local
   - ../../infrastructure/postgresql/database/overlays/sandboxed-local
   - ../../infrastructure/forgejo/controller/overlays/sandboxed-local
