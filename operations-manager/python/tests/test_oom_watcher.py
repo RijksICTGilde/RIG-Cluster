@@ -795,11 +795,11 @@ class TestCreateHealthCheckCallback:
         from opi.services.oom_watcher import (
             OOM_MAX_TUNE_ATTEMPTS,
             _oom_tune_attempts,
-            reset_inline_oom_attempts,
+            reset_oom_tune_attempts,
         )
 
         _oom_tune_attempts["myproject/production"] = OOM_MAX_TUNE_ATTEMPTS
-        reset_inline_oom_attempts("myproject", "production")
+        reset_oom_tune_attempts("myproject", "production")
 
         mock_check.return_value = [PodHealthResult("comp-a", oom_detected=True)]
         callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
@@ -1134,7 +1134,7 @@ class TestOomTuneBudgetAcrossRounds:
         self, mock_schedule, mock_prefix, mock_get_data, mock_check, mock_observe
     ):
         """A real new deploy resets the budget, so a later genuine OOM tunes again."""
-        from opi.services.oom_watcher import OOM_MAX_TUNE_ATTEMPTS, _oom_tune_attempts, reset_inline_oom_attempts
+        from opi.services.oom_watcher import OOM_MAX_TUNE_ATTEMPTS, _oom_tune_attempts, reset_oom_tune_attempts
 
         mock_get_data.side_effect = lambda _name: self._project_data()
         mock_check.return_value = PodHealthResult("production-api", oom_detected=True, oom_pod_template_hash="gen-1")
@@ -1146,7 +1146,7 @@ class TestOomTuneBudgetAcrossRounds:
             await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
             mock_observe.assert_not_called()
 
-            reset_inline_oom_attempts("myproject", "production")
+            reset_oom_tune_attempts("myproject", "production")
             await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
         mock_observe.assert_called_once()
