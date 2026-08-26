@@ -150,11 +150,25 @@ spec:
           # allebei 200 ZONDER inloggegevens, wat nodig is want een probe stuurt die niet
           # mee. Wat we ermee opgeven: dat de probe bewijst dat poort 2525 gebonden is.
           # Wat we ervoor terugkrijgen: een relay die na een dag nog post aanneemt.
+          # Een startupProbe, want liveness hoort het opstarten niet te bewaken. GEMETEN op
+          # fundament-poc 26-08-2026: met het egressbeleid dicht duurt het 60 seconden
+          # voor Stalwart zijn eerste logregel schrijft en poort 8080 bindt; met poort
+          # 80/443 tijdelijk open is dat 0 seconden. Er zit dus nog een uitgaande fetch in
+          # de start die pas op de TCP-timeout opgeeft, bovenop de twee die al uitgezet
+          # zijn (webadmin en asn). Zolang die niet gevonden is, kilde de liveness-probe
+          # (20s + 3 x 10s) de pod net voordat hij klaar was: een herstartlus waarin de
+          # container zelf niets fout doet. De startupProbe geeft hem 150 seconden en pas
+          # daarna begint liveness te tellen.
+          startupProbe:
+            httpGet:
+              path: /healthz/live
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz/live
               port: 8080
-            initialDelaySeconds: 20
             periodSeconds: 10
           readinessProbe:
             httpGet:
