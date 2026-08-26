@@ -414,9 +414,9 @@ class DeploymentStateFact:
     state, and it is narrow on purpose: it says the application's own pods are meant to
     be absent. It never excuses a problem observed on a pod that IS there.
 
-    ``badge`` is the second and last thing a service may say about the display (RC-35):
-    the one word that belongs on the deployment card. It is text only -- no colour, no
-    icon -- because a card full of service-chosen styling stops reading as one platform.
+    ``badge`` is the second thing a service may say about the display (RC-35): the one
+    word that belongs on the deployment card. It is text only -- no colour, no icon --
+    because a card full of service-chosen styling stops reading as one platform.
     Together with ``expects_no_application_pods`` it decides where that word lands:
 
     * badge + ``expects_no_application_pods`` -- nothing of the application is supposed
@@ -428,6 +428,14 @@ class DeploymentStateFact:
     Only the green Healthy is ever replaced: Degraded, Progressing and Unknown are
     something really observed, and a state that hid them would make switching a
     component off a way to make a failure disappear.
+
+    ``superseded_by_component_details`` is the third and last, and it exists because the
+    card had to guess it. A display that already lists the individual components does not
+    need a second, general sentence about the same thing, so the card suppressed that
+    sentence -- by grepping the summary for the words "uitgeschakeld" and "staat uit".
+    Rewording a summary would have broken the deduplication silently. A service knows
+    whether it is repeating a per-component listing; a template reading its prose does
+    not. So the service says it, and the display decides whether the condition holds.
     """
 
     #: ``ServiceType.value`` of the service that knows this.
@@ -438,6 +446,9 @@ class DeploymentStateFact:
     expects_no_application_pods: bool = False
     #: One or two words for the deployment card, or None to stay off the card.
     badge: str | None = None
+    #: True when this fact only restates what a per-component listing already shows, so
+    #: a display that shows that listing may leave this fact out.
+    superseded_by_component_details: bool = False
     #: Extra data for a service's own rendering of the fact (never read by generic code
     #: for a decision).
     details: dict[str, Any] = field(default_factory=dict)
