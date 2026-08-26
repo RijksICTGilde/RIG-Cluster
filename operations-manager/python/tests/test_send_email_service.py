@@ -851,6 +851,65 @@ class TestDeStartuptaakTrektDeBootNietOm:
         assert await startup.ensure_platform_mail_account() is False
 
 
+class TestEenClusterZonderRelayHoudtDeBootOvereind:
+    """De boot moet dit overleven, en niet dankzij een except maar dankzij de vraag vooraan.
+
+    Dit is geen randgeval: ``has_mail_relay`` bestaat omdat een cluster zonder relay normaal
+    is. Toch beloofden de vier ``mail_*``-getters ``ValueError`` en gaven ze ``KeyError``, en
+    ``ensure_platform_mail_account`` vangt alleen het eerste. Op zo'n cluster liep de fout
+    dus door ``run_startup_tasks`` heen en kwam OPI niet verder dan fase 3b: geen Keycloak,
+    geen OAuth, geen portaal.
+    """
+
+    ZONDER_RELAY: ClassVar[dict] = {
+        "namespace_prefix": "rig",
+        "argo_namespace": "rig-system",
+    }
+
+    def _cluster_zonder_relay(self, monkeypatch) -> str:
+        from opi.core import cluster_config
+
+        naam = "cluster-zonder-relay"
+        monkeypatch.setitem(cluster_config.CLUSTER_CONFIG, naam, dict(self.ZONDER_RELAY))
+        return naam
+
+    def test_de_getters_geven_de_fout_die_ze_beloven(self, monkeypatch) -> None:
+        """``KeyError`` of ``ValueError`` is hier geen smaakverschil: de aanroeper vangt er
+        precies een van, dus het type IS het gedrag."""
+        from opi.core.cluster_config import (
+            get_mail_from_address,
+            get_mail_relay_host,
+            get_mail_relay_namespace,
+            get_mail_relay_port,
+        )
+
+        naam = self._cluster_zonder_relay(monkeypatch)
+
+        for getter in (
+            get_mail_relay_namespace,
+            get_mail_relay_host,
+            get_mail_relay_port,
+            get_mail_from_address,
+        ):
+            with pytest.raises(ValueError, match="draait geen mailrelay"):
+                getter(naam)
+
+    @pytest.mark.asyncio
+    async def test_de_startuptaak_slaat_over_zonder_de_relay_aan_te_raken(self, monkeypatch) -> None:
+        """Overslaan, niet mislukken. Een cluster zonder relay heeft geen platform-mail en
+        dat is de bedoelde toestand, geen fout om te melden -- en er hoort geen enkele poging
+        naar een relay te gaan die niet bestaat."""
+        from opi.core import startup
+
+        naam = self._cluster_zonder_relay(monkeypatch)
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", naam)
+        poging = AsyncMock()
+        monkeypatch.setattr(MailManager, "ensure_platform_account", poging)
+
+        assert await startup.ensure_platform_mail_account() is False
+        poging.assert_not_awaited()
+
+
 class TestTheClusterConfig:
     """The relay is addressed per cluster, like every other shared service."""
 

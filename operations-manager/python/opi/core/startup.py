@@ -34,7 +34,7 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.caa_reconciler import reconcile_caa_records
-from opi.core.cluster_config import get_prefixed_namespace
+from opi.core.cluster_config import get_prefixed_namespace, has_mail_relay
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
@@ -414,6 +414,14 @@ async def ensure_platform_mail_account() -> bool:
     not stop OPI from booting. What it does block is password reset and invite mail, which
     is why the outcome is logged either way.
 
+    That case is ASKED first, with ``has_mail_relay``, instead of being left to the except
+    below. Two reasons. It is the honest answer -- a cluster without a relay is not a
+    failure to report as one -- and it does not depend on every getter raising the type
+    this function happens to catch. It did not: the four ``mail_*`` getters promised
+    ``ValueError`` and raised ``KeyError``, so on a cluster without those keys the boot
+    died here and phases 4 and 5 never ran. That is repaired in ``cluster_config``, but
+    asking the question up front is what makes this function right regardless.
+
     "Non-critical" only holds if every way this can fail is caught HERE: ``server.py`` awaits
     ``run_startup_tasks`` without a guard, so an exception escaping this function takes the
     boot down and phases 4 and 5 (Keycloak, OAuth) never run. A relay that is configured but
@@ -433,6 +441,10 @@ async def ensure_platform_mail_account() -> bool:
     from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
     from opi.connectors.mail import MailRelayError
     from opi.manager.mail_manager import MailManager
+
+    if not has_mail_relay(settings.CLUSTER_MANAGER):
+        logger.info(f"Cluster {settings.CLUSTER_MANAGER} draait geen mailrelay, platform-mailaccount overgeslagen")
+        return False
 
     try:
         account = await MailManager.ensure_platform_account()
