@@ -8,7 +8,7 @@ metadata:
     # zijn Issuer, PVC en Ingress mogelijk maken.
     argocd.argoproj.io/sync-wave: "4"
 spec:
-  project: default
+  project: rig-platform
   source:
     repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     path: bootstrap/rig-system/kustomize/operations-manager/overlays/fundament-poc

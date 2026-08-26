@@ -15,6 +15,9 @@ generators:
 resources:
 - namespace.yaml
 - argocd-deployment.yaml
+# Moet vóór de Applications staan die ernaar verwijzen: een Application in een project dat
+# nog niet bestaat wordt door ArgoCD geweigerd.
+- argocd-appproject-rig-platform.yaml
 - argocd-application-infrastructure.yaml
 - argocd-application-user-applications.yaml
 

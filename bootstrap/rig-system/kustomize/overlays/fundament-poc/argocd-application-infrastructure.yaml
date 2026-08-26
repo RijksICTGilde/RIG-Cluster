@@ -7,7 +7,7 @@ metadata:
   name: fundament-poc-infrastructure
   namespace: rig-system
 spec:
-  project: default
+  project: rig-platform
   source:
     # De gebruikersnaam in de URL maakt hem uniek voor ArgoCD; dat is vereist.
     repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git

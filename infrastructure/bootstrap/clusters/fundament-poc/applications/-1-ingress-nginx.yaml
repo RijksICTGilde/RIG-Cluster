@@ -6,7 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
-  project: default
+  project: rig-platform
   source:
     repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     path: infrastructure/bootstrap/infrastructure/ingress-nginx/controller/overlays/fundament-poc
