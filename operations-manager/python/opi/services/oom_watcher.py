@@ -70,6 +70,29 @@ STALL_NOTICE_SECONDS = 45
 # Maximum number of OOM → tune → reprocess cycles per deployment.
 # With the sliding bump factor (3x/2x/1.5x), 3 attempts covers:
 #   25Mi → 75Mi → 150Mi → 300Mi  (should be enough for any boot)
+#
+# The budget counts ATTEMPTED tune cycles, not realised changes -- weighed and kept
+# (RC-160 task D). The two paths therefore charge at different moments, and that
+# asymmetry is deliberate rather than an oversight:
+#
+#   - Fire-and-forget (``_run_oom_check``) charges only after the tune committed
+#     something (``observation.requeue_refresh``). It can afford to: when nothing was
+#     committed it queues no refresh AND schedules no follow-up check, so the chain
+#     ends by itself. The counter is only there to bound it ACROSS rounds.
+#   - Inline (``_callback``) charges on detection, before raising
+#     ``DeploymentHealthError``. It has no choice: the tune runs afterwards in
+#     ``project_manager``, outside the callback, so the callback cannot know the
+#     outcome. The counter is its only brake, and a brake that only engages once the
+#     work is proven wasted is no brake at all.
+#
+# The cost of charging early -- a detection blocked by the 8x ceiling spending budget
+# without anything being adjusted -- is near-unreachable in practice. A non-committing
+# inline detection queues no automated refresh, so a next round can only start from a
+# user action (deploy, upsert, manual refresh, image bump), and every one of those
+# calls ``reset_oom_tune_attempts`` first. Three such detections in a row therefore
+# cannot stack up. And where the budget does close on a ceiling-blocked deployment,
+# closing it is the correct outcome: nothing can be adjusted, so the honest answer is
+# "manual intervention required" instead of aborting every sync wait for ever.
 OOM_MAX_TUNE_ATTEMPTS = 3
 
 # Tracks how many OOM tune cycles have fired per deployment during the current
