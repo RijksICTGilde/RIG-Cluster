@@ -48,6 +48,34 @@ spec:
                 secretKeyRef:
                   name: forgejo-admin
                   key: password
+            # MAIL_RELAY_API_URL is de SCHAKELAAR: leeg betekent "geen relay op dit cluster"
+            # en de dienst send-email weigert dan een account aan te maken in plaats van
+            # onbruikbare inloggegevens uit te delen. Hij hoort aan te staan op precies de
+            # clusters waar de mail-component ook in
+            # infrastructure/bootstrap/clusters/<cluster>/kustomization.yaml staat, en dat is
+            # hier zo sinds fundament-poc-mail op wave 2.
+            #
+            # De relay levert af bij een Mailpit-sink en niet bij de mailserver van de
+            # Rijksoverheid: dit cluster kan niet bij het RON-netwerk. Zie de overlay
+            # infrastructure/bootstrap/infrastructure/mail/controller/overlays/fundament-poc.
+            - name: MAIL_RELAY_API_URL
+              value: "http://rig-mail-relay.rig-ron.svc.cluster.local:8080"
+            # optional: true, zoals op de andere clusters: zonder het geheim boot OPI gewoon
+            # door en meldt de dienst send-email dat er geen relay is. Het secret rendert in
+            # rig-system via de secrets-overlay van dit cluster; de relay krijgt zijn eigen
+            # rendering in rig-ron.
+            - name: MAIL_RELAY_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_RELAY_ADMIN_USERNAME
+                  optional: true
+            - name: MAIL_RELAY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mail-relay-credentials
+                  key: MAIL_RELAY_ADMIN_PASSWORD
+                  optional: true
           # LOG_ERRORS_FILE_PATH staat in opi/core/config.py op /data/logs/errors.log, dus
           # die map moet bestaan en beschrijfbaar zijn. odcn doet dit met een emptyDir; de
           # sandbox heeft er een PVC op /data staan en dekt hem daarmee af. Dit hoort
