@@ -56,7 +56,12 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.core.project_schema import (
+    ProjectClusterOwnershipError,
+    ProjectIntegrityError,
+    ProjectSchemaError,
+    validate_project_schema,
+)
 from opi.core.task_errors import TaskInputError
 from opi.extensions import load_extensions
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
@@ -499,6 +504,63 @@ def apply_manifest_contributions(variables: dict[str, Any], contributions: list[
             variables["env_vars"] = {**variables.get("env_vars", {}), **contribution.env_vars}
         if contribution.sidecars:
             variables.setdefault("sidecars", []).extend(contribution.sidecars)
+
+
+def assert_cluster_owns_project(project_data: dict[str, Any]) -> None:
+    """Weiger te schrijven aan een projectbestand dat niet van dit cluster is.
+
+    De projectenrepo is gedeeld tussen clusters. Bij het lezen pikt
+    ``get_deployments(cluster_filter=True)`` er de eigen deployments uit, maar op de
+    schrijfweg stond niets. Een OPI kon dus een projectbestand van een ander cluster
+    herschrijven, en dat gaat twee kanten op mis: de AGE-sleutel verschilt per cluster,
+    dus versleutelde waarden worden onleesbaar voor de eigenaar, en de status van die
+    deployments leeft ergens anders, dus elke afleiding daarover is een gok.
+
+    Toetst op het top-level veld ``clusters``, want dat is waar een projectbestand zegt
+    voor welk cluster het bedoeld is. Gemeten op de projectenrepo: alle 48 bestanden
+    noemen daar precies een cluster (47 odcn-production, 1 local).
+
+    Twee regels:
+
+    1. Staat dit cluster niet in ``clusters``, dan is het bestand van iemand anders.
+    2. Noemt ``clusters`` er meer dan een, dan is dat niet ondersteund. Een projectbestand
+       kan geen twee clusters bedienen zolang de AGE-sleutel per cluster verschilt: wat het
+       ene cluster versleutelt kan het andere niet lezen. Liever luid weigeren dan een
+       bestand produceren dat op een van beide clusters stuk is.
+
+    Ontbreekt ``clusters`` helemaal, dan valt de controle terug op de deployments. Dat is
+    de oudere vorm en die komt in de repo niet meer voor, maar een stille doorlaat zou
+    precies het gat zijn dat deze functie moet dichten.
+
+    Raises:
+        ProjectClusterOwnershipError: als het bestand niet van dit cluster is.
+    """
+    naam = project_data.get("name")
+    clusters = project_data.get("clusters")
+
+    if clusters:
+        if len(set(clusters)) > 1:
+            raise ProjectClusterOwnershipError(
+                f"Project '{naam}' noemt meerdere clusters ({', '.join(sorted(set(clusters)))}) en dat wordt niet "
+                f"ondersteund. Een projectbestand hoort bij een cluster, want de versleuteling van waarden gebeurt "
+                f"met een sleutel die per cluster verschilt. Splits het project per cluster."
+            )
+        if settings.CLUSTER_MANAGER not in clusters:
+            raise ProjectClusterOwnershipError(
+                f"Project '{naam}' hoort bij cluster '{clusters[0]}' en kan niet op dit cluster opgeslagen worden. "
+                f"Dit cluster is '{settings.CLUSTER_MANAGER}'. Bewerk het project op het cluster waar het thuishoort."
+            )
+        return
+
+    # Terugval voor bestanden zonder clusters-veld: dan bepalen de deployments het.
+    deployments = project_data.get("deployments") or []
+    if deployments and not any(d.get("cluster") == settings.CLUSTER_MANAGER for d in deployments):
+        vreemde = sorted({str(d.get("cluster")) for d in deployments})
+        raise ProjectClusterOwnershipError(
+            f"Project '{naam}' wordt niet op dit cluster uitgerold en kan hier dus niet opgeslagen worden. "
+            f"Dit cluster is '{settings.CLUSTER_MANAGER}'; de deployments in dit bestand draaien op "
+            f"{', '.join(vreemde)}. Bewerk het project op het cluster waar het thuishoort."
+        )
 
 
 class ProjectManager:
@@ -1830,6 +1892,8 @@ class ProjectManager:
         rendered from restores the compare-and-swap, so the store merges the two
         changes instead of overwriting one.
         """
+        assert_cluster_owns_project(project_data)
+
         filename = (
             os.path.basename(self._project_file_relative_path)
             if self._project_file_relative_path

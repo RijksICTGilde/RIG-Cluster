@@ -86,6 +86,26 @@ class ProjectIntegrityError(Exception):
     """
 
 
+class ProjectClusterOwnershipError(Exception):
+    """Raised when this cluster tries to write a project file it does not deploy.
+
+    De projectenrepo is gedeeld: elk cluster leest dezelfde bestanden en pikt er via
+    ``get_deployments(cluster_filter=True)`` zijn eigen deployments uit. Voor lezen en
+    uitrollen is dat genoeg, maar op de schrijfweg stond niets. Een OPI op een ander
+    cluster kon dus een projectbestand van productie herschrijven.
+
+    Dat gaat op twee manieren mis. De AGE-sleutel verschilt per cluster, dus wat het
+    ene cluster niet kan ontsleutelen kan het ook niet zinnig herschrijven, en wat het
+    opnieuw versleutelt kan het oorspronkelijke cluster daarna niet meer lezen. En de
+    status van die deployments leeft op een ander cluster, dus elke afleiding daarover
+    is een gok.
+
+    Faalt bewust luid: stil overslaan zou een gebruiker laten denken dat zijn wijziging
+    is opgeslagen. Bericht is gebruikersgericht en in het Nederlands, zoals de andere
+    twee hierboven.
+    """
+
+
 def version_key(version: int | float) -> str:
     """Canonical file-name key for a schema version: 2.0 -> "2", 2.6 -> "2.6"."""
     return f"{float(version):g}"

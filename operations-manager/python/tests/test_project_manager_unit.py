@@ -6,6 +6,7 @@ Focuses on: async correctness, command construction, edge cases in deployment pr
 import inspect
 
 import pytest
+from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
 
 
@@ -189,7 +190,7 @@ def _valid_project_for_save() -> dict:
     return {
         "name": "valid-project",
         "description": "A valid project",
-        "clusters": ["local", "odcn-production"],
+        "clusters": [settings.CLUSTER_MANAGER],
         "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
         "repositories": [
             {
@@ -217,7 +218,11 @@ def _valid_project_for_save() -> dict:
         "deployments": [
             {
                 "name": "productie",
-                "cluster": "odcn-production",
+                # Het cluster van deze test-OPI, niet een vaste naam. save_and_commit_project
+                # weigert sinds de eigendomsgrendel een projectbestand waarvan geen enkele
+                # deployment op CLUSTER_MANAGER draait, en dat is precies de bedoeling.
+                # Regel 100 in dit bestand deed dit al zo.
+                "cluster": settings.CLUSTER_MANAGER,
                 "namespace": "valid-project",
                 "repository": "main-repo",
                 "components": [{"reference": "frontend", "image": "nginx:latest"}],
