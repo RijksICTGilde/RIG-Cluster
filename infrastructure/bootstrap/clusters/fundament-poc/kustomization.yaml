@@ -37,10 +37,8 @@ resources:
   - applications/1-minio.yaml
   - applications/2-keycloak.yaml
   - applications/2-prometheus.yaml
-  - applications/2-minio-config.yaml
   - applications/2-forgejo.yaml
   - applications/3-external-dns.yaml
-  - applications/3-forgejo-config.yaml
   - applications/4-operations-manager.yaml
 
 # external-dns beheert de fundament-poc.rijksapp.dev-subzone bij TransIP met een eigen
