@@ -1,0 +1,19 @@
+# Eén Application per dienst, in plaats van een aparte voor 'config'.
+#
+# De splitsing controller/config klopt op schijf, maar voor ArgoCD hoort een dienst bij
+# elkaar: twee Applications geven twee statussen voor één ding, en dan vertelt geen van
+# beide de waarheid. Dat beet vandaag al: fundament-poc-forgejo stond Synced en Healthy
+# terwijl de bootstrap-Job in de andere app 138 minuten vastliep.
+#
+# Er was ook geen ordeningsreden om te splitsen. De minio-config is één NetworkPolicy, die
+# is volgorde-onafhankelijk; de forgejo-config is een Job die zelf op Forgejo wacht met een
+# init-container. En als volgorde ooit wel nodig is, werken sync-waves binnen één
+# Application gewoon, inclusief wachten op health tussen waves.
+#
+# Op odcn-production staan deze twee paden trouwens al in één Application; de splitsing is
+# pas ontstaan bij de omzetting naar app-of-apps.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../controller/overlays/fundament-poc
+  - ../../config/overlays/fundament-poc
