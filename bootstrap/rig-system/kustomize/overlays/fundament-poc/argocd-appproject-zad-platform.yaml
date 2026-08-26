@@ -52,6 +52,17 @@ spec:
       namespace: ingress-nginx
     - server: https://kubernetes.default.svc
       namespace: local-path-storage
+    # kube-system staat hier voor precies vier resources, en niet voor algemene toegang:
+    #   Role/cert-manager:leaderelection            RoleBinding/cert-manager:leaderelection
+    #   Role/cert-manager-cainjector:leaderelection RoleBinding/cert-manager-cainjector:leaderelection
+    # cert-manager zet zijn lease upstream vast in kube-system; dat is niet te verplaatsen.
+    #
+    # Deze ontbrak eerst, omdat de lijst was opgebouwd uit de DESTINATIONS van de
+    # Applications en niet uit de namespaces die de resources zelf declareren. Het verschil
+    # bleef verborgen tot cert-manager opnieuw moest synchroniseren en afbrak op
+    # "namespace kube-system is not permitted in project 'zad-platform'".
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
     # De mailrelay draait in een eigen namespace omdat de RON-koppeling op ODCN een
     # annotatie op de namespace vraagt die exact een waarde aanneemt; RON en internet
     # kunnen daar dus niet samen op een namespace staan. Dit cluster kan niet bij RON en

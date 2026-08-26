@@ -35,7 +35,13 @@ spec:
         - protocol: TCP
           port: 9000
   egress:
-    # DNS.
+    # DNS. Twee poorten, en dat is geen slordigheid: een NetworkPolicy matcht op de poort van
+    # de ONTVANGENDE pod, niet op de poort van de Service. Op dit cluster (Gardener) luistert
+    # CoreDNS op 8053 en vertaalt de kube-dns Service 53 -> 8053; met alleen 53 in deze regel
+    # komt er geen enkele lookup door terwijl de policy er correct uitziet. MinIO start daar
+    # gewoon van door en meldt zich Running, dus dit valt niet op tot iets een naam moet
+    # opzoeken. Gemeten op 26-08-2026: met 8053 erbij lost dezelfde pod wel op. 53 blijft
+    # staan voor de clusters waar CoreDNS wel op 53 luistert (sandbox, ODCN).
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -46,3 +52,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+        - protocol: UDP
+          port: 8053
+        - protocol: TCP
+          port: 8053
