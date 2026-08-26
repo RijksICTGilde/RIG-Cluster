@@ -104,9 +104,17 @@ def test_operations_manager_blueprint_extends_a_shared_one_and_adds_the_cli_clie
     client_ids = [c.get("clientId") for c in resolved["clients"] if isinstance(c, dict)]
     assert "{{ cli_client_id }}" in client_ids
 
-    # It inherited the base rather than redefining it.
+    # It inherited the base rather than redefining it: one realm, not two, and everything
+    # the base says about it EXCEPT the four fields this blueprint decides for itself.
+    # Inheriting those silently gave the ZAD realm verifyEmail: true (RC-159, review r7);
+    # see the comment in operations-manager-realm.yaml for why it verifies nothing.
+    from opi.handlers.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
+
     base = handler._load_yaml(TEMPLATE_DIR / "sso-support.yaml")
-    assert resolved["realms"] == base["realms"]
+    assert len(resolved["realms"]) == len(base["realms"]) == 1
+    geerfd = {k: v for k, v in resolved["realms"][0].items() if k not in _BLUEPRINT_REALM_FIELDS}
+    assert geerfd == {k: v for k, v in base["realms"][0].items() if k not in _BLUEPRINT_REALM_FIELDS}
+    assert resolved["realms"][0]["verifyEmail"] is False, "de realm van ZAD zelf verifieert niet"
     assert len(resolved["clients"]) == len(base["clients"]) + 1
 
 

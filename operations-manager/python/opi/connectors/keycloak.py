@@ -190,6 +190,12 @@ class KeycloakConnector:
         if admin_events_details_enabled is not None:
             event_settings["adminEventsDetailsEnabled"] = admin_events_details_enabled
 
+        # The SEED a realm is born with. Four of these are also decided by the blueprint
+        # (see ``_BLUEPRINT_REALM_FIELDS`` in the YAML handler), and that is not a second
+        # source of truth: the handler applies the blueprint immediately after this call,
+        # on the create path and on the 409 path alike, so whatever a blueprint says wins
+        # within the same run. They stay here as the CLOSED value a realm has in the
+        # meantime, and as what a realm gets whose blueprint says nothing about them.
         realm_data = {
             "realm": realm_name,
             "displayName": display_name or realm_name.title(),
@@ -224,6 +230,10 @@ class KeycloakConnector:
                     # Apply only the session and audit-event settings to the existing
                     # realm. A full realm_data update would reset browserFlow etc. and
                     # break the custom "External IDP Redirector" flow on the platform realm.
+                    # The blueprint-decided fields and the smtpServer are NOT applied here:
+                    # they are applied by ``_apply_realm_self_service`` right after this
+                    # call, which is also the reconcile path, so an existing realm picks
+                    # them up whether it got here or not.
                     replay_settings = {**session_settings, **event_settings}
                     if replay_settings:
                         self.admin.update_realm(realm_name=realm_name, payload=replay_settings)
@@ -475,6 +485,24 @@ class KeycloakConnector:
             return self.admin.get_realm(realm_name=realm_name)
         except KeycloakGetError:
             return None
+
+    async def update_realm_settings(self, realm_name: str, payload: dict[str, Any]) -> None:
+        """Apply a partial realm representation to an existing realm.
+
+        Partial on purpose: Keycloak merges what it is given, so only the named fields
+        move. A full representation would reset ``browserFlow`` and friends and break the
+        custom "External IDP Redirector" flow on the platform realm -- the same reason the
+        409 branch of ``create_realm`` never sends one.
+
+        Args:
+            realm_name: Name of the realm
+            payload: The fields to set. An empty payload is a no-op, so a caller that
+                found no difference does not have to check.
+        """
+        if not payload:
+            return
+        self.admin.update_realm(realm_name=realm_name, payload=payload)
+        logger.info(f"Updated realm {realm_name}: {sorted(payload)}")
 
     def get_discovery_url(self, realm_name: str) -> str:
         """
@@ -3508,6 +3536,24 @@ class KeycloakConnector:
 
     # ==================== User Operations ====================
 
+    async def _realm_verifies_email(self, realm_name: str) -> bool:
+        """Whether this realm makes a user confirm their e-mail address.
+
+        Falls back to False when the realm cannot be read, which keeps a new user
+        pre-verified exactly as before. That direction is deliberate: the other one would
+        turn one unreadable moment into a user who has to click a confirmation mail that
+        may not have been sent, and being locked out is worse than being let in the way
+        yesterday's code let everyone in.
+        """
+        try:
+            realm = self.admin.get_realm(realm_name=realm_name)
+        except KeycloakError as e:
+            logger.warning(
+                f"Could not read realm '{realm_name}' to decide emailVerified, assuming no verification: {e}"
+            )
+            return False
+        return bool((realm or {}).get("verifyEmail"))
+
     async def create_user(
         self,
         realm_name: str,
@@ -3553,7 +3599,20 @@ class KeycloakConnector:
 
         if email:
             user_data["email"] = email
-            user_data["emailVerified"] = True
+            # EMAILVERIFIED VOLGT DE REALM, en dat is de hele reden dat verifyEmail iets doet.
+            #
+            # Hier stond onvoorwaardelijk True. Elke gebruiker die via de invite-weg werd
+            # aangemaakt was daarmee vooraf geverifieerd zonder dat er ooit iets bevestigd
+            # was, en omdat SSO-gebruikers via ``trustEmail`` al geverifieerd binnenkomen
+            # bleef er als aanleiding voor een bevestigingsmail alleen het WIJZIGEN van een
+            # adres over. Dat is bijna nooit, dus verifyEmail zou een keten opleveren die
+            # in de praktijk stil blijft.
+            #
+            # Verifieert de realm, dan komt een nieuwe gebruiker binnen met False en
+            # bevestigt hij zijn adres bij zijn eerste login. Verifieert de realm niet, dan
+            # blijft het gedrag zoals het was: emailVerified heeft dan geen betekenis voor
+            # het inloggen.
+            user_data["emailVerified"] = not await self._realm_verifies_email(realm_name)
 
         if first_name:
             user_data["firstName"] = first_name
