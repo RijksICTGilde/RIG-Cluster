@@ -9029,11 +9029,11 @@ class ProjectManager:
 
         # Schedule fire-and-forget health watcher so an image bump to a missing
         # image (ImagePullBackOff) gets auto-disabled, same as the deploy path.
-        from opi.services.oom_watcher import reset_inline_oom_attempts, schedule_oom_check
+        from opi.services.oom_watcher import reset_oom_tune_attempts, schedule_oom_check
 
         # A new image is a new workload: its memory needs are unrelated to what the
         # previous image spent, so the OOM tune budget starts fresh.
-        reset_inline_oom_attempts(project_name, deployment_name)
+        reset_oom_tune_attempts(project_name, deployment_name)
 
         if settings.OOM_WATCHER_ENABLED:
             schedule_oom_check(project_name, deployment_name)

@@ -80,7 +80,7 @@ OOM_MAX_TUNE_ATTEMPTS = 3
 # task schedules a fresh check. A per-round counter therefore resets the very brake
 # it is meant to be (asses-k2n/pr-494, 24 August: 45Mi → 4096Mi in nine steps, each
 # round restarting at 1/3). Only an explicit reset -- a real new deploy, a user
-# action, an image bump -- clears it; see ``reset_inline_oom_attempts``.
+# action, an image bump -- clears it; see ``reset_oom_tune_attempts``.
 _oom_tune_attempts: dict[str, int] = {}
 
 # The pod-template-hash the last OOM tune acted on, per "project/deployment/component".
@@ -1112,12 +1112,12 @@ def create_health_check_callback(
     # Deliberately NO reset here. Building a callback is not proof of a fresh deploy:
     # the automated refresh queued by a tune builds one too, so popping the counter on
     # creation wiped the budget once per escalation round. Only an explicit reset
-    # (``reset_inline_oom_attempts``, called for a real deploy / user action / image
+    # (``reset_oom_tune_attempts``, called for a real deploy / user action / image
     # bump) clears it.
     return _callback
 
 
-def reset_inline_oom_attempts(project_name: str, deployment_name: str) -> None:
+def reset_oom_tune_attempts(project_name: str, deployment_name: str) -> None:
     """Clear a deployment's OOM tune budget: a real new deploy starts clean.
 
     Called for user-initiated work only (a deploy, an upsert, a manual refresh, an
