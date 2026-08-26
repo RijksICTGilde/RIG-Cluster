@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Sleep-mode config for a project, after the cluster default is merged in.\n\nThis doubles as the runtime object callers use: ``matches(name)`` answers whether\na deployment is in scope, and the parsed durations drive the deadlines.",
+  "description": "Sleep-mode config for a project, after the cluster default is merged in.\n\nThis doubles as the runtime object callers use: ``matches(name)`` answers whether a\ndeployment is scheduled to sleep, and the parsed durations drive the deadlines.\n\n``enabled`` and ``match`` answer different questions, and conflating them is what\nmade switching this service on look like it did nothing. ``enabled`` says sleep-mode\napplies to this project at all -- it is what the manual sleep/wake buttons hang on.\n``match`` says which deployments the sweeper puts to sleep on a deadline, and it is\nempty by default, so an ``enabled`` project with no patterns sleeps nothing by itself\nand can still be slept by hand.",
   "properties": {
     "description": {
       "default": "",
@@ -15,7 +15,7 @@
       "type": "boolean"
     },
     "match": {
-      "description": "Which deployments are in scope, by name: an exact name, 'prefix*' (starts with) or '*suffix' (ends with). Anything else is refused.",
+      "description": "Which deployments the sweeper puts to sleep on a deadline, by name: an exact name, 'prefix*' (starts with) or '*suffix' (ends with). Anything else is refused. Empty means nothing sleeps automatically; the manual sleep/wake buttons are governed by 'enabled', not by this.",
       "items": {
         "type": "string"
       },
