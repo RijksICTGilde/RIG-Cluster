@@ -17,8 +17,44 @@ from opi.connectors.keycloak import (
     RealmType,
     role_gate_flow_alias,
 )
+from opi.core.cluster_config import get_keycloak_mail_from_address
+from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+#: The realm fields a blueprint decides, applied on create AND on reconcile.
+#:
+#: Before this list existed they were hardcoded in ``create_realm()`` and the blueprints
+#: that named them were simply not read -- so ``sso-support.yaml`` promised self-registration,
+#: password reset and login-by-email and delivered none of the three. The blueprints now
+#: DESCRIBE what happens, which for three of these four fields meant writing down the value
+#: that was already live rather than the one that had been promised.
+#:
+#: A key that is absent from a blueprint is not touched, so a realm keeps whatever it has
+#: and a blueprint that says nothing about a field claims nothing about it.
+_BLUEPRINT_REALM_FIELDS = (
+    "registrationAllowed",
+    "loginWithEmailAllowed",
+    "resetPasswordAllowed",
+    "verifyEmail",
+)
+
+#: The ``smtpServer`` keys that describe a CONNECTION, and that OPI therefore removes.
+#:
+#: Not a defence -- the defence is that Keycloak's sender is replaced and ignores this whole
+#: map (``keycloak-migration/relay-email-sender/``). A realm administrator keeps
+#: ``manage-realm`` and can write these back a second after the reconcile, and it still
+#: leads nowhere.
+#:
+#: It is DRIFT REPAIR of a property worth keeping true: "it fails closed" holds only while
+#: no realm names a destination. Should the SPI ever silently fall back -- a Keycloak upgrade
+#: is the realistic way -- then a realm with a ``host`` delivers there and a realm without
+#: one fails with "Please provide a valid address" and sends nothing. So the reconcile keeps
+#: sweeping them off.
+#:
+#: Everything not in this list survives, ``replyTo`` above all: the relay does not touch
+#: ``Reply-To:``, so that is the one field a realm can really have of its own.
+_SMTP_CONNECTION_KEYS = ("host", "port", "auth", "user", "password", "ssl", "starttls")
 
 
 class KeycloakYamlHandler:
@@ -421,15 +457,27 @@ class KeycloakYamlHandler:
             await self._apply_realm_self_service(realm_name, item)
 
     async def _apply_realm_self_service(self, realm_name: str, item: dict[str, Any]) -> None:
-        """Apply the identity self-service restrictions from a realms item.
+        """Apply everything a realms item decides about an EXISTING realm.
 
-        Only these two keys are read from the blueprint; the rest of the realm representation
-        is still hardcoded in ``create_realm()``. That gap is deliberate and tracked separately,
-        so a new line in a blueprint does not silently do nothing here either: everything this
-        method understands is listed below.
+        Three things, and all three idempotent, so this runs on the create path and on
+        reconcile alike -- which is the whole point: ``create_realm()`` is skipped once a
+        realm exists, so anything applied only there never reaches a realm that was made
+        before the blueprint said it.
 
-        Both calls are idempotent, so this runs on the create path and on reconcile alike.
+        1. the minimal ``smtpServer``, which no tenant chooses;
+        2. the realm fields in ``_BLUEPRINT_REALM_FIELDS``;
+        3. the identity self-service restrictions this method started out as.
+
+        One ``get_realm`` for both of the first two, because both compare against the same
+        realm and the ``smtpServer`` write does not move the fields the other one reads.
         """
+        realm = await self.keycloak.get_realm(realm_name)
+        if realm is None:
+            logger.warning(f"Realm {realm_name} not found, skipping realm fields and smtpServer")
+        else:
+            await self._apply_smtp_server(realm_name, realm)
+            await self._apply_realm_fields(realm_name, item, realm)
+
         for alias in item.get("disabledRequiredActions") or []:
             await self.keycloak.set_required_action_enabled(realm_name, alias, enabled=False)
 
@@ -440,12 +488,119 @@ class KeycloakYamlHandler:
                 continue
             await self.keycloak.remove_default_role(realm_name, client_id, role_name)
 
+    @staticmethod
+    def _platform_can_send_mail() -> bool:
+        """Whether the PLATFORM has a mail relay, which is what decides ``verifyEmail``.
+
+        The measure is the relay and no longer the realm's ``smtpServer``. Under the
+        previous design that map held the destination, so "the realm can mail" and "there is
+        an smtpServer" were the same question. They are not any more: every realm carries a
+        minimal ``smtpServer`` (see ``_apply_smtp_server``) whether the post works or not,
+        and the destination lives in the Keycloak POD's environment.
+
+        Not theoretical. This switch was really turned off on production on 21 August 2026
+        during the relay's crash loop, and a realm that verifies while it cannot send locks
+        every new local user out of their own account.
+        """
+        return bool(settings.MAIL_RELAY_API_URL)
+
+    async def _apply_realm_fields(self, realm_name: str, item: dict[str, Any], realm: dict[str, Any]) -> None:
+        """Bring the blueprint-decided realm fields in line with the blueprint.
+
+        Only the fields the blueprint NAMES, and only when they actually differ. Both halves
+        matter: an unnamed field is not the blueprint's business, and a write that changes
+        nothing still shows up in the admin event log of every realm on every reconcile.
+
+        ``verifyEmail`` is the one exception to "the blueprint decides": turning it ON is
+        held back while the platform has no relay, because that realm would lock out every
+        new local user (``create_user`` makes them with ``emailVerified: false`` exactly when
+        the realm verifies). Turning it OFF is never held back -- that direction only ever
+        un-blocks people.
+
+        A blueprint is not wrong for asking; the CLUSTER is not ready. So this warns and
+        carries on, and the next reconcile after the relay is configured completes it.
+        """
+        gewenst = {veld: item[veld] for veld in _BLUEPRINT_REALM_FIELDS if veld in item}
+        if gewenst.get("verifyEmail") and not self._platform_can_send_mail():
+            logger.warning(
+                f"Geen mailrelay op dit cluster, dus verifyEmail blijft uit op realm {realm_name}: een realm "
+                "die verifieert en niet kan mailen sluit nieuwe gebruikers buiten. Stel MAIL_RELAY_API_URL in; "
+                "de volgende verwerking zet het dan alsnog aan."
+            )
+            del gewenst["verifyEmail"]
+        if not gewenst:
+            return
+
+        verschil = {veld: waarde for veld, waarde in gewenst.items() if realm.get(veld) != waarde}
+        await self.keycloak.update_realm_settings(realm_name, verschil)
+
+    async def _apply_smtp_server(self, realm_name: str, realm: dict[str, Any]) -> None:
+        """Give the realm the MINIMAL ``smtpServer``: one key, ``from``, and no destination.
+
+        Keycloak's own ``EmailSenderProvider`` is replaced on this platform
+        (``keycloak-migration/relay-email-sender/``): the relay, the credentials and the
+        sender come out of the POD's environment and the realm's ``smtpServer`` is ignored
+        entirely. So there is nothing a realm NEEDS here -- and that is the point, because a
+        realm that names a destination is a realm whose administrator can move that
+        destination to a listener of their own and read the platform's shared relay password
+        out of Keycloak's AUTH exchange. Measured, with the attack, in RC-158.
+
+        Then why write anything at all? Because of exactly one authenticator that decides
+        BEFORE the SPI is in the picture:
+        ``IdpEmailVerificationAuthenticator`` checks ``realm.getSmtpConfig().isEmpty()`` and
+        skips itself. That is the "Verify existing account by Email" step in the
+        first-broker-login flow. Measured minimum to keep that step working: an
+        ``smtpServer`` that is not empty. ONE key is enough and the content does not matter,
+        so it is the one key that names no destination.
+
+        ``from`` is DESCRIPTIVE, not steering. The relay rewrites the sender itself, so what
+        belongs here is the address that actually comes out; it comes from
+        ``get_keycloak_mail_from_address``, the same derivation ``MailManager`` hands to the
+        relay, so the two cannot drift.
+
+        Nothing happens on a cluster with no relay, and that is not laziness: on such a
+        cluster the post does not work either way, and writing this key would take the
+        ``isEmpty()`` fallback away from that one authenticator -- turning a working
+        "authenticate to link your account" screen into a failed send.
+
+        Everything OPI does not write survives, ``replyTo`` above all: the relay does not
+        touch ``Reply-To:``, so that is the one field a realm can really have of its own.
+        """
+        if not self._platform_can_send_mail():
+            logger.debug(f"Geen mailrelay op dit cluster, realm {realm_name} krijgt geen smtpServer")
+            return
+
+        gewenst = self._smtp_server_settings()
+        huidig = dict(realm.get("smtpServer") or {})
+        nieuw = {
+            **{sleutel: waarde for sleutel, waarde in huidig.items() if sleutel not in _SMTP_CONNECTION_KEYS},
+            **gewenst,
+        }
+        if nieuw == huidig:
+            return
+
+        await self.keycloak.update_realm_settings(realm_name, {"smtpServer": nieuw})
+
+    @staticmethod
+    def _smtp_server_settings() -> dict[str, str]:
+        """The whole of what OPI writes into a realm's ``smtpServer``: one key.
+
+        There is deliberately no ``host``, no ``user`` and no ``password``. A ``host`` is
+        the field this entire feature exists to remove; and without one, a silent fallback
+        to Keycloak's own sender cannot deliver anywhere either -- it fails with "Please
+        provide a valid address" and a ``SEND_VERIFY_EMAIL_ERROR``. That is the fail-closed
+        property, and it holds only as long as this map names no destination. What a tenant
+        writes there anyway is swept off again; see ``_SMTP_CONNECTION_KEYS``.
+        """
+        return {"from": get_keycloak_mail_from_address(settings.CLUSTER_MANAGER)}
+
     async def ensure_realm_self_service(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
-        """Ensure the identity self-service restrictions are applied (idempotent).
+        """Reconcile every realm in this blueprint against what the blueprint says (idempotent).
 
         Reconcile counterpart of the create path: ``create_realm()`` only runs when a realm is
         actually created, so without this an existing realm would never pick these up. That is
-        exactly why the identity-field lock never reached any pre-existing realm.
+        exactly why the identity-field lock never reached any pre-existing realm, and it is why
+        the realm fields and the ``smtpServer`` go through the same method.
         """
         config = self._load_yaml(yaml_path)
         variables = {**config.get("variables", {}), **context}

@@ -91,6 +91,43 @@ def build_project_realm_context(
     }
 
 
+def merge_user_variables(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    """Merge a project's own ``variables:`` under the context the platform computed.
+
+    THE PLATFORM KEYS WIN, and that is the whole point of this function. ``variables`` is a
+    free-form dict on the keycloak service config with no ``PLATFORM_MANAGED`` marker, so a
+    project may write it through the API. The context it used to be merged ON TOP of holds
+    ``realm_name``, ``project_realm_name``, ``platform_realm_name``, ``platform_client_id``
+    and ``keycloak_url`` -- the names that decide WHICH realm the blueprint is applied to.
+    A project that set ``project_realm_name`` to another project's realm had the blueprint
+    land there, and nothing anywhere checked that the target realm belonged to the caller.
+
+    That override predates this task; what RC-159 added is what then gets WRITTEN through
+    it -- ``registrationAllowed``, ``loginWithEmailAllowed``, ``resetPasswordAllowed``,
+    ``verifyEmail`` and an ``smtpServer``. Turning ``resetPasswordAllowed`` off on somebody
+    else's realm is a cross-tenant write, so the direction of the merge is now the other way
+    around: a user variable only ever fills a name the platform did NOT compute.
+
+    An ignored key is logged and not refused: the blueprints ship template-level variables
+    of their own and a project that carries an old, harmless override should keep being
+    processed rather than fail at realm reconcile time.
+    """
+    user_variables = config.get("variables") or {}
+    if not isinstance(user_variables, dict):
+        # Non-dicts are already refused where the config is read (_get_keycloak_service_config);
+        # reaching this with anything else means the config was not read there, and silently
+        # ignoring it would hide that.
+        raise TypeError(f"Template variables must be a dict, got {type(user_variables).__name__}")
+
+    genegeerd = sorted(set(user_variables) & set(context))
+    if genegeerd:
+        logger.warning(
+            f"Genegeerde template-variabelen uit de projectconfiguratie: {genegeerd}. Deze namen worden "
+            "door het platform bepaald en mogen niet door een project worden overschreven."
+        )
+    return {**user_variables, **context}
+
+
 def find_realm_entry_for_admin(project_data: dict[str, Any], admin_username: str) -> dict[str, Any] | None:
     """The project file's own realm entry for this realm-admin account, if it has one.
 
@@ -1434,10 +1471,8 @@ class KeycloakManager:
             "project_realm_name": realm_name,
         }
 
-        # Merge user-provided variables
-        user_variables = config.get("variables", {})
-        if isinstance(user_variables, dict):
-            context.update(user_variables)
+        # Merge the project's own variables UNDER the platform context (merge_user_variables).
+        context = merge_user_variables(context, config)
 
         # Process authentication flows (idempotent - updates if needed). This MUST run
         # before the browser flow is pointed at them: Keycloak rejects a browserFlow
@@ -1520,10 +1555,8 @@ class KeycloakManager:
             context["frontend_redirect_uris"] = first_redirect_uri
             logger.debug(f"Added frontend_redirect_uris to context: {first_redirect_uri}")
 
-        # Merge user-provided variables
-        user_variables = config.get("variables", {})
-        if isinstance(user_variables, dict):
-            context.update(user_variables)
+        # Merge the project's own variables UNDER the platform context (merge_user_variables).
+        context = merge_user_variables(context, config)
 
         # Process clients (idempotent - skips existing clients)
         handler = KeycloakYamlHandler(keycloak)
@@ -1575,9 +1608,7 @@ class KeycloakManager:
             "account_link": config.get("account_link"),  # None = stock flow (opt-in)
         }
 
-        user_variables = config.get("variables", {})
-        if isinstance(user_variables, dict):
-            context.update(user_variables)
+        context = merge_user_variables(context, config)
 
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_identity_providers(yaml_path, context)
@@ -1619,9 +1650,7 @@ class KeycloakManager:
             "realm_display_name": display_name,
         }
 
-        user_variables = config.get("variables", {})
-        if isinstance(user_variables, dict):
-            context.update(user_variables)
+        context = merge_user_variables(context, config)
 
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_realm_self_service(yaml_path, context)
@@ -1909,12 +1938,9 @@ class KeycloakManager:
                     f"Additional hosts: {', '.join(ingress_hosts[1:])}"
                 )
 
-        # Merge user-provided variables (overrides defaults)
-        user_variables = config.get("variables", {})
-        if not isinstance(user_variables, dict):
-            raise TypeError(f"Template variables must be a dict, got {type(user_variables).__name__}")
-
-        context.update(user_variables)
+        # Merge the project's own variables UNDER the platform context: a project may fill a
+        # name the platform did not compute, never move one it did. See merge_user_variables.
+        context = merge_user_variables(context, config)
 
         logger.debug(f"Template context variables: {list(context.keys())}")
 

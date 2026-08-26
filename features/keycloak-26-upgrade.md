@@ -20,6 +20,7 @@ fixes, 25.0 has been out of support since October 2024).
 |---|---|---|
 | Image pin (all environments) | `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml` | `quay.io/keycloak/keycloak:25.0.6` |
 | Custom provider JAR | built from `keycloak-migration/custom-mapper/`, fetched by init container from GitHub release | `keycloak-saml-nameid-mapper-1.1.0.jar`, pom pins `keycloak.version` 25.0.6 |
+| Relay email sender JAR | built from `keycloak-migration/relay-email-sender/`, delivered by a `configMapGenerator` (no network) | `keycloak-relay-email-sender-1.0.0.jar`, pom pins `keycloak.version` 25.0.6 |
 | Login theme | init container, MinBZK release | `keycloak-nl-design-system.jar` v1.4.2 |
 | OPI admin client | `operations-manager/python` | `python-keycloak>=5.3.0`, compatible with 26.x, no change needed |
 | Database | CNPG `rig-db`, database `keycloak` | no backups configured (relevant for rollback) |
@@ -35,8 +36,47 @@ The pom depends on private Keycloak APIs (`keycloak-services`, `keycloak-model-j
 `keycloak-server-spi-private`). These have no compatibility guarantee between minors and are
 the most likely thing to break.
 
+### En een vijfde SPI, in een tweede jar, die een HERTOETS vraagt en niet alleen een hercompilatie
+
+`keycloak-relay-email-sender` implementeert `emailSender`, en dat is een **INTERNE** SPI.
+Keycloak zegt dat zelf bij elke start: `KC-SERVICES0047 ... is implementing the internal SPI
+emailSender`. Een interne SPI mag zonder aankondiging veranderen, en deze draagt een
+veiligheidseigenschap: zolang hij draait, leest Keycloak de `smtpServer` van geen enkele realm
+en is er nergens een bestemming die een projectbeheerder kan verzetten. Zie
+`features/keycloak-mail.md`.
+
+Wat er bij deze upgrade dus **gemeten** moet worden, niet aangenomen (de meetopstelling en de
+verwachte uitkomsten staan in `docs/rc158-emailsender-spi-meting.md`):
+
+1. **Wordt de provider in 26.7 in PRODUCTIEMODUS daadwerkelijk gebruikt?** Het merkteken
+   `X-ZAD-Email-Sender` op een bericht in de sink is het bewijs; de terugval uit
+   [keycloak#14522](https://github.com/keycloak/keycloak/issues/14522) is precies waarop dit
+   kan stukgaan, en die faalt STIL.
+2. **Is de vlagvorm nog `--spi-email-sender-provider=`?** De camelCase-vorm wordt genegeerd
+   zonder waarschuwing. `RelayEmailSenderProviderFactoryTest` leidt de vorm af uit
+   `EmailSenderSpi.getName()`, dus die toets valt vanzelf om als de naam verandert - maar
+   alleen als de pom naar 26.7 is gezet.
+3. **Grendelt `IdpEmailVerificationAuthenticator` nog op `realm.getSmtpConfig().isEmpty()`?**
+   Zo niet, dan is de minimale `smtpServer` op elke realm overbodig of juist onvoldoende.
+4. **De aanvalsproef opnieuw:** een testrealm met `smtpServer.host` naar een eigen luisteraar,
+   een bevestigingsmail eroverheen, en de log van die luisteraar leeg. Mét de tegenproef
+   (zonder de vlag lukt de aanval wel), want zonder tegenproef zegt een lege log niets.
+
+Gaat (1) of (2) stuk, dan verstuurt de standaardprovider en is de omleidingsvector terug
+**zonder dat er ergens een foutmelding verschijnt**. Dat is de reden dat dit een eigen
+paragraaf heeft en geen regel in een checklist.
+
 ## Phase 0: retarget the extensions
 
+0. In `keycloak-migration/relay-email-sender/pom.xml` set `keycloak.version` to `26.7.0` and
+   bump the artifact version. Die versie zit in de BESTANDSNAAM van de jar, dus hij staat op
+   vier plekken: de pom, `RelayMailConfig.VERSION` (`RelayVersieTest` houdt die twee gelijk),
+   de bestandsnaam onder `.../keycloak/controller/base/providers/` plus de
+   `configMapGenerator` die hem noemt, en het `cp`-commando in de initContainer (in de basis
+   EN in de local-overlay, die het hele commando vervangt). Bouwen en meecommitten met
+   `task build-keycloak-relay-email-sender`; `task check-keycloak-relay-email-sender` en CI
+   vergelijken de ingecheckte jar byte voor byte met een verse bouw. Deze jar wordt NIET als
+   release gepubliceerd - hij komt uit git.
 1. In `keycloak-migration/custom-mapper/pom.xml` set `keycloak.version` to `26.7.0`, bump the
    artifact version to `1.2.0`, build via `task build-keycloak-custom-mapper` (plus
    `task test-keycloak-custom-mapper` / `test-keycloak-custom-mapper-docker`) and fix what
@@ -84,6 +124,10 @@ All changes in `infrastructure/bootstrap/infrastructure/keycloak/controller/base
     - OPI startup bootstrap replays cleanly (realm create/update path, including the
       audit-event settings from the realm blueprints)
     - invite flow and wizard-driven realm provisioning
+    - **de vier metingen van de emailSender-SPI hierboven**, met de aanvalsproef en de
+      tegenproef. Een bevestigingsmail die aankomt is NIET genoeg: kijk of het merkteken
+      `X-ZAD-Email-Sender` erop staat, want zonder dat merkteken heeft de standaardprovider
+      hem verstuurd en is de omleidingsvector terug.
 
 ## Phase 3: production
 
