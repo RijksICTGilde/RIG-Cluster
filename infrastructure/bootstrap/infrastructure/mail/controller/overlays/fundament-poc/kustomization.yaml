@@ -40,16 +40,34 @@ patches:
                   - name: MAIL_DB_HOST
                     value: rig-db-rw.rig-system.svc.cluster.local
 
-# LET OP het verschil met de sandbox-overlay, en waarom het hier NIET nodig is.
+  - target:
+      kind: Namespace
+      name: rig-ron
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: rig-ron
+
+# LET OP het verschil met de sandbox-overlay, en wat er WEL en NIET van overgenomen is.
 #
-# Daar wordt de Namespace uit de base met `$patch: delete` weggehaald en handmatig
-# aangemaakt, omdat ArgoCD er in namespaced mode draait en cluster-scoped resources weigert.
-# En daar draait de relay via een aparte Application `ron-infrastructure`, omdat de hele
-# infrastructuur er in een platte Application zit met bestemming rig-system, wat rig-ron
-# platsloeg tot een ID-conflict op een dubbel secret.
+# WEL: de Namespace gaat er hier ook uit. Niet omdat ArgoCD hem niet zou mogen maken (dat
+# mag hij: hij draait cluster-scoped en Namespace staat op de clusterResourceWhitelist van
+# zad-platform, en cert-manager en cloudnative-pg beheren hun eigen namespace aantoonbaar),
+# maar omdat de CMP-plugin weigert te RENDEREN zolang de doelnamespace niet bestaat:
 #
-# Geen van beide speelt hier. ArgoCD is op dit cluster cluster-scoped, Namespace staat op de
-# clusterResourceWhitelist van het AppProject zad-platform, en de app-of-apps geeft elke
-# component al een eigen Application met een eigen bestemming: cert-manager beheert zo
-# Namespace/cert-manager en cloudnative-pg beheert Namespace/cnpg-system, allebei Synced
-# (gemeten 26 augustus 2026). De Namespace komt hier dus gewoon uit de base mee.
+#     ERROR: Namespace 'rig-ron' does not exist
+#
+# De namespace zit in de manifesten die hij moet renderen, dus GitOps kan hem per definitie
+# niet zelf brengen. Diezelfde pre-check zoekt er ook het sops-age-key-secret. Allebei
+# worden ze vooraf aangemaakt, met:
+#
+#     kubectl --context <ctx> create namespace rig-ron
+#     task create-sops-age-secret NAMESPACE=rig-ron
+#
+# NIET: de aparte Application ron-infrastructure. Die bestaat op de sandbox omdat daar alle
+# infrastructuur in EEN platte Application zit met bestemming rig-system, wat rig-ron
+# platsloeg tot een ID-conflict op een dubbel secret. De app-of-apps geeft elke component
+# hier al een eigen Application met een eigen bestemming, dus mail is gewoon
+# fundament-poc-mail met destination rig-ron.
