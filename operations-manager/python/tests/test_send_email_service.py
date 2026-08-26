@@ -851,6 +851,24 @@ class TestDeStartuptaakTrektDeBootNietOm:
         assert await startup.ensure_platform_mail_account() is False
 
 
+def _cluster_zonder_relay(monkeypatch) -> str:
+    """Een cluster dat geen relay draait, verzonnen en niet gekozen uit de echte lijst.
+
+    Welk cluster geen relay heeft verandert -- fundament-poc kreeg er een -- en een test die
+    op zo'n naam staat verschuift dan stilletjes van "zonder relay" naar "met relay" zonder
+    ook maar een keer rood te worden.
+    """
+    from opi.core import cluster_config
+
+    naam = "cluster-zonder-relay"
+    monkeypatch.setitem(
+        cluster_config.CLUSTER_CONFIG,
+        naam,
+        {"namespace_prefix": "rig", "argo_namespace": "rig-system"},
+    )
+    return naam
+
+
 class TestEenClusterZonderRelayHoudtDeBootOvereind:
     """De boot moet dit overleven, en niet dankzij een except maar dankzij de vraag vooraan.
 
@@ -860,18 +878,6 @@ class TestEenClusterZonderRelayHoudtDeBootOvereind:
     dus door ``run_startup_tasks`` heen en kwam OPI niet verder dan fase 3b: geen Keycloak,
     geen OAuth, geen portaal.
     """
-
-    ZONDER_RELAY: ClassVar[dict] = {
-        "namespace_prefix": "rig",
-        "argo_namespace": "rig-system",
-    }
-
-    def _cluster_zonder_relay(self, monkeypatch) -> str:
-        from opi.core import cluster_config
-
-        naam = "cluster-zonder-relay"
-        monkeypatch.setitem(cluster_config.CLUSTER_CONFIG, naam, dict(self.ZONDER_RELAY))
-        return naam
 
     def test_de_getters_geven_de_fout_die_ze_beloven(self, monkeypatch) -> None:
         """``KeyError`` of ``ValueError`` is hier geen smaakverschil: de aanroeper vangt er
@@ -883,7 +889,7 @@ class TestEenClusterZonderRelayHoudtDeBootOvereind:
             get_mail_relay_port,
         )
 
-        naam = self._cluster_zonder_relay(monkeypatch)
+        naam = _cluster_zonder_relay(monkeypatch)
 
         for getter in (
             get_mail_relay_namespace,
@@ -901,7 +907,7 @@ class TestEenClusterZonderRelayHoudtDeBootOvereind:
         naar een relay te gaan die niet bestaat."""
         from opi.core import startup
 
-        naam = self._cluster_zonder_relay(monkeypatch)
+        naam = _cluster_zonder_relay(monkeypatch)
         monkeypatch.setattr(settings, "CLUSTER_MANAGER", naam)
         poging = AsyncMock()
         monkeypatch.setattr(MailManager, "ensure_platform_account", poging)
@@ -941,27 +947,32 @@ class TestDeDienstWordtAlleenAangebodenWaarDeRelayDraait:
     opslaan.
     """
 
-    @pytest.mark.parametrize("cluster", ["local", "sandboxed-local", "odcn-production"])
+    @pytest.mark.parametrize("cluster", ["local", "sandboxed-local", "odcn-production", "fundament-poc"])
     def test_beschikbaar_waar_de_configuratie_een_relay_kent(self, cluster: str) -> None:
         assert SERVICE.available_on_cluster(cluster) is True
 
-    def test_niet_beschikbaar_op_een_cluster_zonder_relay(self) -> None:
-        assert SERVICE.available_on_cluster("fundament-poc") is False
+    def test_niet_beschikbaar_op_een_cluster_zonder_relay(self, monkeypatch) -> None:
+        """Tegen een verzonnen cluster en niet tegen een echte naam. Deze test stond op
+        ``fundament-poc`` en werd zinloos op de dag dat dat cluster wel een relay kreeg:
+        hij bleef groen bewijzen dat een cluster ZONDER relay de dienst niet krijgt, terwijl
+        hij een cluster MET relay aan het bevragen was."""
+        assert SERVICE.available_on_cluster(_cluster_zonder_relay(monkeypatch)) is False
 
     def test_een_onbekend_cluster_krijgt_de_dienst_evenmin(self) -> None:
         """Een naam die de configuratie niet kent is geen reden om SMTP-gegevens uit te
         delen die nergens werken."""
         assert SERVICE.available_on_cluster("bestaat-niet") is False
 
-    def test_een_project_op_een_cluster_zonder_relay_wordt_geweigerd(self) -> None:
+    def test_een_project_op_een_cluster_zonder_relay_wordt_geweigerd(self, monkeypatch) -> None:
         """De weigering die telt: de API en een handgeschreven projectbestand zien nooit
         een wizardkaart."""
+        naam = _cluster_zonder_relay(monkeypatch)
         project = _project()
-        project["deployments"][0]["cluster"] = "fundament-poc"
+        project["deployments"][0]["cluster"] = naam
         errors = validate_service_availability(project)
         assert len(errors) == 1
         assert ServiceType.SEND_EMAIL.value in errors[0]
-        assert "fundament-poc" in errors[0]
+        assert naam in errors[0]
 
     def test_hetzelfde_project_op_een_cluster_met_relay_wordt_geaccepteerd(self) -> None:
         assert validate_service_availability(_project()) == []

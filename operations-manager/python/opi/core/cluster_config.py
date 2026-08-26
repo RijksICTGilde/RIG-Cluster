@@ -176,6 +176,19 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        # De relay draait hier echt: rig-mail-relay in rig-ron, Service 587 -> pod 2525,
+        # gemeten op het cluster. Zelfde vorm als de sandbox, want de namespace draagt hier
+        # geen Calico-egressannotatie -- die reden om apart te staan geldt alleen op ODCN.
+        # De upstream is de Mailpit-sink in diezelfde namespace, dus er verlaat geen post
+        # het cluster. Toch hetzelfde afzenderadres als de andere clusters: het adres doet
+        # er pas toe bij echte bezorging (SPF-alignment onder de p=reject van de
+        # Rijksoverheid, zie docs/ron-koppeling.md), en een afwijkend adres hier zou het
+        # enige zijn dat op dit cluster anders is dan in productie. Wat je in de sink ziet,
+        # is dan ook precies wat een ontvanger zou krijgen.
+        "mail_relay_namespace": "rig-ron",
+        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
+        "mail_relay_port": 587,
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         "database_operator_namespace": "cnpg-system",
         # Zelf geïnstalleerde ingress-nginx (cloud-variant, niet de Kind-variant): het
         # platform levert geen ingresscontroller. Podlabel gemeten op de draaiende controller.
