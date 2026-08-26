@@ -373,14 +373,14 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
 
             # Schedule fire-and-forget OOM watcher
             from opi.core.config import settings
-            from opi.services.oom_watcher import reset_inline_oom_attempts, schedule_oom_check
+            from opi.services.oom_watcher import reset_oom_tune_attempts, schedule_oom_check
 
             # A user-initiated refresh is a fresh start, so its OOM tune budget is
             # cleared. The automated refresh a tune queues for itself carries
             # ``automated_remediation`` and must NOT clear it -- doing so reset the
             # brake once per escalation round (asses-k2n/pr-494).
             if not automated_remediation:
-                reset_inline_oom_attempts(project_name, deployment_name)
+                reset_oom_tune_attempts(project_name, deployment_name)
 
             if settings.OOM_WATCHER_ENABLED:
                 oom_attempt = payload.get("oom_watch_attempt", 1)

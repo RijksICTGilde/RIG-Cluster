@@ -54,7 +54,7 @@ stopped the 24 August 2026 incident, where `asses-k2n/pr-494` walked from 45Mi t
 live on every check. It deliberately survives a round: every committed tune queues a
 `refresh_deployment` task, and that task schedules a new check starting at `attempt=1`.
 A counter that reset there would reset the very brake it is. Only an explicit
-`reset_inline_oom_attempts` clears it, and only for a user action: a deploy, an upsert, a
+`reset_oom_tune_attempts` clears it, and only for a user action: a deploy, an upsert, a
 manual refresh, an image bump. The automated refresh a tune queues for itself carries
 `automated_remediation: True` precisely so it can be told apart.
 
