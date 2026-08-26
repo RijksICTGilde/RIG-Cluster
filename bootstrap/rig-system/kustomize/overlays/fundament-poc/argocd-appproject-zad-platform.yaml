@@ -20,7 +20,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: rig-platform
+  name: zad-platform
   namespace: rig-system
   finalizers:
     - resources-finalizer.argocd.argoproj.io

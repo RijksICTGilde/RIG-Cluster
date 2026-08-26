@@ -6,7 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
-  project: rig-platform
+  project: zad-platform
   source:
     repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     path: infrastructure/bootstrap/infrastructure/cloudnative-pg/controller/overlays/fundament-poc
