@@ -19,7 +19,6 @@ from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DeploymentStateFact
 from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING, SleepState, write
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
-from opi.services.services import ServiceAdapter
 
 TEMPLATE = "bg/_argocd-deployment-card.html.j2"
 CLUSTER = "odcn-production"
@@ -56,9 +55,12 @@ def _render(project_data: dict, *, health: str = "Healthy", state: DeploymentSta
         argocd_status={deployment["name"]: {"health": health, "sync": "Synced", "errors": []}},
         current_cluster=CLUSTER,
         deployment_states={deployment["name"]: state},
-        # De kaart noemt de dienst achter een feit bij naam in de melding eronder. De
-        # route geeft ServiceAdapter mee (opi/web/router.py); zonder valt de render om.
-        ServiceAdapter=ServiceAdapter,
+        # EXACT de context die de route meegeeft, en niets meer. De kaart wordt lazy
+        # nageladen door argocd_status_fragment (opi/web/router.py) en die context draagt
+        # geen ServiceAdapter. Hier stond hij wel, met de aanname dat de route hem gaf:
+        # daarmee rendeerde deze test een context die geen enkele route produceert, en
+        # bleef een 500 op elke slapende deployment onzichtbaar. Voeg hier niets toe wat
+        # de route niet heeft.
     )
 
 
