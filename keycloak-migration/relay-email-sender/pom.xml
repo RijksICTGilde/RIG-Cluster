@@ -5,18 +5,24 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>nl.minbzk.rig</groupId>
-    <artifactId>keycloak-relay-email-sender-proef</artifactId>
-    <version>0.1.0-proef</version>
+    <artifactId>keycloak-relay-email-sender</artifactId>
+    <version>1.0.0</version>
     <packaging>jar</packaging>
 
-    <name>Keycloak relay email sender (PROEF)</name>
-    <description>PROEF: EmailSenderProvider die de relay uit de podomgeving leest en smtpServer van de realm negeert. Meting RC-158, niet voor productie.</description>
+    <name>Keycloak relay email sender</name>
+    <description>EmailSenderProvider die de mailrelay van het platform uit de podomgeving leest en de smtpServer van de realm negeert.</description>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <keycloak.version>25.0.6</keycloak.version>
+        <!-- REPRODUCEERBARE BOUW. De jar staat in git (zie README) en een CI-stap bouwt
+             hem opnieuw en vergelijkt byte voor byte. Dat kan alleen als de bouw geen
+             klok gebruikt: deze eigenschap zet elke tijdstempel in het archief en in het
+             manifest op deze vaste waarde (maven-jar-plugin >= 3.2.0, `Reproducible
+             Builds`). Haal hem weg en de vergelijking in CI faalt op elke commit. -->
+        <project.build.outputTimestamp>2026-08-26T00:00:00Z</project.build.outputTimestamp>
     </properties>
 
     <dependencies>
@@ -44,6 +50,9 @@
             <version>${keycloak.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- provided, net als de rest: Keycloak draagt jakarta.mail zelf al voor zijn
+             eigen verzender. Er wordt hier dus niets geschaduwd en de jar blijft een
+             handvol kilobytes - klein genoeg om in een ConfigMap te passen. -->
         <dependency>
             <groupId>com.sun.mail</groupId>
             <artifactId>jakarta.mail</artifactId>

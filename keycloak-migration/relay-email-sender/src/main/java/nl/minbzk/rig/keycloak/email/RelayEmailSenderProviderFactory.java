@@ -8,18 +8,21 @@ import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 
 /**
- * PROEF (RC-158). Registreert {@link RelayEmailSenderProvider} onder {@link #PROVIDER_ID}.
+ * Registreert {@link RelayEmailSenderProvider} onder {@link RelayMailConfig#PROVIDER_ID}.
  *
  * <p>De {@code emailSender}-SPI is SYSTEEMBREED: er is er precies EEN voor de hele server en
  * hij is niet per realm in te stellen. Dat is hier de bedoeling, geen beperking.
  *
- * <p>{@code order()} wordt bewust NIET overschreven. Zo kan alleen een expliciete
- * standaardprovider-vlag deze fabriek aanwijzen, en meet de proef dus de vlag en niet een
- * volgorde die toevallig wint.
+ * <p>Het is bovendien een INTERNE SPI - Keycloak zegt dat zelf bij het opstarten met
+ * {@code KC-SERVICES0047} - en die mag zonder aankondiging veranderen. Een major upgrade
+ * vraagt dus een hertoets; zie {@code features/keycloak-26-upgrade.md}.
+ *
+ * <p>{@code order()} wordt bewust NIET overschreven. Zo kan alleen de expliciete
+ * standaardprovider-vlag deze fabriek aanwijzen, en niet een volgorde die toevallig wint.
  */
 public class RelayEmailSenderProviderFactory implements EmailSenderProviderFactory {
 
-    public static final String PROVIDER_ID = "zad-relay-proef";
+    public static final String PROVIDER_ID = RelayMailConfig.PROVIDER_ID;
 
     private static final Logger LOG = Logger.getLogger(RelayEmailSenderProviderFactory.class);
 
@@ -31,7 +34,8 @@ public class RelayEmailSenderProviderFactory implements EmailSenderProviderFacto
         if (relay == null) {
             throw configuratieFout != null
                     ? configuratieFout
-                    : new IllegalStateException("ZAD-RELAY-PROEF: geen relayconfiguratie");
+                    : new IllegalStateException(
+                            "ZAD-RELAY: geen relayconfiguratie in de omgeving van de pod; er wordt niets verstuurd");
         }
         return new RelayEmailSenderProvider(relay);
     }
@@ -41,13 +45,16 @@ public class RelayEmailSenderProviderFactory implements EmailSenderProviderFacto
         try {
             relay = RelayMailConfig.fromEnvironment(System.getenv());
             LOG.infof(
-                    "ZAD-RELAY-PROEF: aangezet, relay %s:%s als %s, afzender %s",
-                    relay.getHost(), relay.getPort(), relay.getUsername(), relay.getFrom());
+                    "ZAD-RELAY %s: aangezet, relay %s:%s als %s, afzender %s",
+                    RelayMailConfig.VERSION, relay.getHost(), relay.getPort(), relay.getUsername(), relay.getFrom());
         } catch (IllegalStateException e) {
-            // Bewust geen harde fout bij het opstarten: de meting moet ook de situatie
-            // kunnen laten zien waarin de provider WEL is aangewezen maar GEEN relay kent.
+            // GEEN harde fout bij het opstarten, en dat is een afweging en geen slordigheid.
+            // Deze fabriek zit in het opstartpad van Keycloak zelf; hier gooien betekent dat
+            // een ontbrekende mailvariabele het INLOGGEN van het hele platform plat legt.
+            // De fout wordt bewaard en gegooid zodra er werkelijk iets verstuurd moet
+            // worden: dan faalt de mail, luid en zichtbaar, en blijft de rest overeind.
             configuratieFout = e;
-            LOG.errorf("ZAD-RELAY-PROEF: geen bruikbare relayconfiguratie in de omgeving: %s", e.getMessage());
+            LOG.errorf("ZAD-RELAY: geen bruikbare relayconfiguratie in de omgeving: %s", e.getMessage());
         }
     }
 
