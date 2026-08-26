@@ -11,6 +11,8 @@ pod-inspectie teruggeeft, de harde grens op een stapnaam, en de groepering van d
 componentfouten voor het paneel eronder.
 """
 
+from typing import Any, ClassVar
+
 from opi.core.task_manager import MAX_STEP_NAME, clamp_step_text
 from opi.services.event_interpreter import group_component_failures
 from opi.services.oom_watcher import _describe_pod_waiting
@@ -256,7 +258,7 @@ class TestDeLogboeklinkVolgtDePagina:
     en dat is precies het soort scoping dat stil kapot gaat. Vandaar een poort.
     """
 
-    CONTEXT = {
+    CONTEXT: ClassVar[dict[str, Any]] = {
         "task_id": "t",
         "progress_url": "/x",
         "progress": 100,

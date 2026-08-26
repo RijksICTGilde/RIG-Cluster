@@ -472,8 +472,13 @@ async def _analyze_component_resources(
         logger.warning(f"Failed to query memory usage for {unique_name}: {e}")
         return None
 
-    # Check for OOM kills
-    has_oom_kills = False
+    # Check for OOM kills. Start from the watcher's signal: it read reason=OOMKilled
+    # straight off the pod status, so it is a FACT, not a measurement to be confirmed.
+    # Precisely on the path where the tuner MUST act there is by definition no metric
+    # data -- the faster something OOMs, the emptier the backend (asses-k2n/pr-469,
+    # 21 August: 45Mi, no scrape interval reached, tune skipped entirely).
+    # Initialising here rather than after the query keeps it true when the query throws.
+    has_oom_kills = oom_triggered
     try:
         oom_query = (
             f"kube_pod_container_status_last_terminated_reason{{"
@@ -482,7 +487,7 @@ async def _analyze_component_resources(
             f'pod=~"{unique_name}.*"}}'
         )
         oom_results = await connector.custom_query(oom_query)
-        has_oom_kills = bool(oom_results)
+        has_oom_kills = has_oom_kills or bool(oom_results)
     except Exception as e:
         logger.warning(f"Failed to query OOM kills for {unique_name}: {e}, assuming none")
 

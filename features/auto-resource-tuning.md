@@ -43,7 +43,7 @@ For each component in the target deployment(s):
 4. Determine the recommendation source:
    - **CPU**: if the cluster has VPA and the component's `VerticalPodAutoscaler` has a populated `.status` → use its CPU `target`. (No Prometheus CPU path exists.)
    - **Memory**: use the VPA memory `target` **only if it exceeds `VPA_MEMORY_FLOOR_MI`** (the recommender's floor). Otherwise (no VPA, empty `.status`, or target at the floor) fall back to Prometheus `max_over_time(container_memory_working_set_bytes{...})` over `window_hours`.
-   - OOM kills are always read from Prometheus (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`); when OOM kills are present the VPA target is not used (the OOM path drives the limit instead).
+   - OOM kills come from **two** sources, ORed together: the watcher's own signal (`oom_triggered`, read straight off the pod status as `reason=OOMKilled`) and a Prometheus confirmation query (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`). The watcher's signal is a fact, not a measurement, so an empty or failing query can never cancel it — exactly the path where Prometheus is emptiest, because a container that OOMs a second after start reaches no scrape interval. When OOM kills are present the VPA target is not used (the OOM path drives the limit instead).
 5. Skip if the observed max is below `min_observed_mi` (see Plausibility Floor below), unless OOM kills were detected.
 6. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps.
 7. **Leave the fields the user set by hand alone** for as long as that intent lives (see
@@ -162,7 +162,7 @@ OOM-killed containers produce misleading usage data (the pod was killed before r
 - The **not-Available guard is skipped** (`oom_triggered`), so the OOM path is not blocked precisely when it needs to raise the limit.
 - Only the component(s) that actually OOM'd are analysed (a targeted tune, no wasted Prometheus queries on healthy components).
 - The limit is set using a sliding factor: at least **3x** the current limit below 64Mi, 2x below 256Mi, else 1.5x — regardless of observed usage.
-- If the pod was OOM-killed on startup with zero Prometheus metrics, the current YAML values are used as a baseline.
+- If the pod was OOM-killed on startup with zero Prometheus metrics, the current YAML values are used as a baseline. This fallback hangs on the OOM signal, and until RC-160 it silently did not fire for a watcher-reported OOM that Prometheus knew nothing about: the tuner discarded the watcher's fact and re-asked the backend, so `has_oom_kills` fell back to `False` and the whole deploy task ended on "auto-tune could not determine new limits" (asses-k2n/pr-469, 21 August, 45Mi).
 - OOM kills bypass the change threshold - any OOM kill triggers an update.
 
 ### Root Component

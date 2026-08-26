@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
+from opi.services.oom_watcher import reset_oom_tune_attempts
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,13 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
             )
 
         progress.complete_task(delete_task)
+
+        # A deleted deployment leaves no OOM tune state behind. This is tidiness, not a
+        # leak: the two module dicts hold 256 bytes per orphan, and a deployment that
+        # comes back runs past handle_create_project or handle_upsert_deployment, which
+        # both reset anyway. Hence a plain reset call rather than a cleanup mechanism.
+        reset_oom_tune_attempts(project_name, deployment_name)
+
         # Both outcomes are success, and the answer says which one it was: in a script
         # "deleted" and "was not there" read the same otherwise (RC-66, bevinding 6).
         already_absent = bool(deletion_results.get("already_absent")) if isinstance(deletion_results, dict) else False
