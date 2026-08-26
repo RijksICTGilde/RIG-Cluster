@@ -47,7 +47,11 @@ Het wachtwoord volgt de regel die voor dit platform al geldt: **het wordt als ge
 
 Vandaag halen twee initContainers hun jars bij elke podstart van github.com (`deployment.yaml`, `keycloak-theme-puller`). Die twee samen betekenen: een hapering bij GitHub legt het inloggen van het hele platform plat. Dat risico bestaat nu al voor het thema en de mapper, maar wij mogen het niet vergroten met een derde download waar bovendien een startvlag aan hangt.
 
-Voorstel: onze jar komt uit een bron die het cluster altijd heeft. De schoonste weg is een eigen Keycloak-image met de provider erin gebakken, wat meteen de ongeveer tien seconden augmentatie per start scheelt en `--optimized` mogelijk maakt. Dat is wel een nieuwe bouw- en publicatieketen, met de ODCN-herschrijving naar `rcr` erbij. **Open beslissing**: die eigen image nu bouwen, of eerst dezelfde initContainer-vorm gebruiken en de image als vervolgtaak. Wie voor het tweede kiest, schrijft op dat de startvlag dan aan een netwerkfetch hangt.
+Onze jar hoeft daarvoor NIET in een eigen image. Alle afhankelijkheden staan op `provided`, ook `jakarta.mail`, want Keycloak gebruikt die zelf al voor zijn eigen verzender. Er wordt niets geschaduwd, dus wat overblijft zijn drie klassen plus het registratiebestand: een handvol kilobytes, ruim binnen de 1 MiB van een ConfigMap.
+
+Lever hem zo: een `configMapGenerator` met het jar-bestand, en de bestaande initContainer kopieert hem uit die mount naar de providersmap naast de twee andere jars. Geen netwerk, geen nieuwe image, geen registry. Bijkomend voordeel is dat de generator een hash van de inhoud in de naam zet, dus een nieuwe jar is vanzelf een rollout. Dat is precies het patroon dat `config.toml` van de relay gebruikt, en daar is twee keer op misgegaan toen het ontbrak.
+
+Wat je daarmee wel binnenhaalt is een gebouwd artefact in git, dat kan gaan afwijken van de bron ernaast. Dek dat af met een CI-stap die de jar herbouwt en vergelijkt, of, als dat nu te veel is, met een taak in de Taskfile plus een regel in de README dat bron en jar in dezelfde commit horen. Noteer welke van de twee het is geworden.
 
 Pin de vlagvorm met een toets. De camelCase-val is gemeten en geeft geen enkel signaal.
 
@@ -102,7 +106,8 @@ Dat de upstream externe ontvangers accepteert. Op 21 augustus 2026 was dat niet 
 
 - STARTTLS op de submission-listener van de relay. Aparte taak, helpt alle tenants.
 - Declaratieve platformaccounts in de relay (het `memory`-directoryidee uit stap 3). Vraagt eerst een meting.
-- Een eigen Keycloak-image, als stap 2 voor de initContainer kiest.
+- Een eigen Keycloak-image met de provider erin gebakken. Niet nodig, zie stap 2, en alleen interessant als je ooit de ongeveer tien seconden augmentatie per start wilt wegnemen met `--optimized`.
+- De twee bestaande jars die bij elke podstart van github.com komen. Die fragiliteit bestaat al en wordt hier niet vergroot, maar hij is een eigen taak waard.
 - Een bounce-postbus, het spamfilter, de burst-limiter en de MTA-STS-lookup. Alle vier open in `plans/mail-vervolgpunten.md`.
 - De vraag of `sso-support` echt zelfregistratie hoort te geven. Stap 5 legt de huidige toestand vast; wat het zou moeten zijn is een productbeslissing.
 
