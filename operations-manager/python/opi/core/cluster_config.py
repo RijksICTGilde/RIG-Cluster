@@ -795,6 +795,26 @@ def get_redis_server(cluster_name: str) -> str:
     return cluster_config["redis_server"]
 
 
+def _mail_setting(cluster_name: str, key: str) -> str | int:
+    """One of the four ``mail_*`` keys, or a ValueError naming what is missing.
+
+    The four getters below all promised ``ValueError`` and all raised ``KeyError`` on a
+    cluster that runs no relay -- and that is not a theoretical cluster: ``has_mail_relay``
+    exists precisely because such clusters are normal. The mismatch is not cosmetic.
+    ``ensure_platform_mail_account`` catches ``ValueError`` and calls itself non-critical,
+    so a ``KeyError`` walked straight through it, out of ``run_startup_tasks``, and took
+    the whole boot down before Keycloak and OAuth were set up. Ask first with
+    ``has_mail_relay``; this is the backstop for when someone forgets.
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    if key not in cluster_config:
+        raise ValueError(
+            f"Cluster '{cluster_name}' heeft geen '{key}': dit cluster draait geen mailrelay. "
+            "Vraag has_mail_relay() voordat je de mailinstellingen opvraagt."
+        )
+    return cluster_config[key]
+
+
 def get_mail_relay_namespace(cluster_name: str) -> str:
     """
     Get the namespace the SMTP relay runs in.
@@ -812,10 +832,9 @@ def get_mail_relay_namespace(cluster_name: str) -> str:
         Namespace name the relay and its Service live in
 
     Raises:
-        ValueError: If cluster is not found in configuration
+        ValueError: If cluster is not found, or runs no mail relay
     """
-    cluster_config = get_cluster_config(cluster_name)
-    return cluster_config["mail_relay_namespace"]
+    return str(_mail_setting(cluster_name, "mail_relay_namespace"))
 
 
 def get_mail_relay_host(cluster_name: str) -> str:
@@ -829,10 +848,9 @@ def get_mail_relay_host(cluster_name: str) -> str:
         Relay hostname for internal pod use
 
     Raises:
-        ValueError: If cluster is not found in configuration
+        ValueError: If cluster is not found, or runs no mail relay
     """
-    cluster_config = get_cluster_config(cluster_name)
-    return cluster_config["mail_relay_host"]
+    return str(_mail_setting(cluster_name, "mail_relay_host"))
 
 
 def get_mail_relay_port(cluster_name: str) -> int:
@@ -846,10 +864,9 @@ def get_mail_relay_port(cluster_name: str) -> int:
         Submission port (587) for internal pod use
 
     Raises:
-        ValueError: If cluster is not found in configuration
+        ValueError: If cluster is not found, or runs no mail relay
     """
-    cluster_config = get_cluster_config(cluster_name)
-    return cluster_config["mail_relay_port"]
+    return int(_mail_setting(cluster_name, "mail_relay_port"))
 
 
 def get_mail_from_address(cluster_name: str) -> str:
@@ -880,10 +897,9 @@ def get_mail_from_address(cluster_name: str) -> str:
         The bare sender address (e.g. ``noreply-rijksapp@rijksoverheid.nl``)
 
     Raises:
-        ValueError: If cluster is not found in configuration
+        ValueError: If cluster is not found, or runs no mail relay
     """
-    cluster_config = get_cluster_config(cluster_name)
-    return cluster_config["mail_from_address"]
+    return str(_mail_setting(cluster_name, "mail_from_address"))
 
 
 def has_mail_relay(cluster_name: str) -> bool:
@@ -1071,6 +1087,8 @@ def supports_custom_domain_certificates(cluster_name: str) -> bool:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("supports_custom_domain_certificates", True)
+
+
 def assigns_uid_via_scc(cluster_name: str) -> bool:
     """
     Check if the platform assigns a UID to pods itself (OpenShift SCC).
