@@ -20,7 +20,7 @@ Audit of all container images used across the repository, performed February 202
 
 - **Current**: `quay.io/argoprojlabs/argocd-operator:v0.14.0`
 - **Latest**: v0.17.0 (released 2026-01-19)
-- **Files**: `bootstrap/crd/operator/argocd-operator-install.yaml`
+- **Files**: `bootstrap/argocd-operator/argocd-operator-install.yaml`
 - **Impact**: Must be upgraded together with ArgoCD. v0.17.0 internally depends on ArgoCD v3.1.x.
 
 **Consider migrating from operator to Helm chart (`argo/argo-cd`)**:

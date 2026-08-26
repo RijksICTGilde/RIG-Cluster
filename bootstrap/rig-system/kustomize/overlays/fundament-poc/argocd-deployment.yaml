@@ -9,11 +9,6 @@ spec:
   image: ghcr.io/minbzk/base-images/argocd-rig
   version: v3.5.1-rig1
   extraConfig:
-    resource.customizations.health.cert-manager.io_Issuer: |
-      hs = {}
-      hs.status = "Healthy"
-      hs.message = "Fake CRD - no controller"
-      return hs
     # Zonder deze check doen de sync-waves van de app-of-apps niets. ArgoCD levert voor
     # het type Application geen health-check mee (resource_customizations/argoproj.io/
     # Application bevat alleen 'actions'), en een wave wacht op Healthy. Een kind zonder

@@ -10,8 +10,10 @@ The ArgoCD operator v0.14.0 requires the following modifications to work properl
    - In `config/default/kustomization.yaml`: Comment out the line `- ../webhook`
    - In `config/default/kustomization.yaml`: Comment out the line `- path: manager_webhook_patch.yaml`
 
-2. **Use Latest Image**
-   - In `config/manager/kustomization.yaml`: Change `newTag: v0.14.0` to `newTag: latest`
+2. ~~**Use Latest Image**~~ **Vervallen.** Deze stap stond uitgeschakeld in
+   `prepare-argocd-operator` met de notitie dat image v0.14.0 gewoon bestaat en dat we die
+   moeten gebruiken in plaats van `latest`. De taak doet hem dus niet meer; de gepinde versie
+   is wat er draait.
 
 3. **Fake cert-manager CRD: verhuisd naar GitOps**
    - Stond hier als een kale `kubectl apply` in `prepare-argocd-operator`. Dat was een tweede

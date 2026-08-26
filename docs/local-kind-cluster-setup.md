@@ -154,7 +154,7 @@ Downloads and customizes the ArgoCD operator for local development:
 
 **Verify:**
 ```bash
-ls -l bootstrap/crd/operator/argocd-operator-install.yaml
+ls -l bootstrap/argocd-operator/argocd-operator-install.yaml
 ```
 
 ### 7. Build and Load Docker Images

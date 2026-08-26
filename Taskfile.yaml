@@ -140,7 +140,7 @@ tasks:
     desc: "Download and prepare a customized ArgoCD operator"
     vars:
       VERSION: '{{default "v0.14.0" .VERSION}}'
-      OUTPUT_DIR: '{{default "bootstrap/crd/operator" .OUTPUT_DIR}}'
+      OUTPUT_DIR: '{{default "bootstrap/argocd-operator" .OUTPUT_DIR}}'
       APPLY: '{{default "true" .APPLY}}'
       # Een kaal Kubernetes-cluster is het normale geval: ArgoCD beheert daar ook de
       # operators, en dat vraagt namespaces, CRD's en cluster-brede RBAC. Vandaar true als
@@ -190,10 +190,6 @@ tasks:
         # 1. Disable webhooks in kustomization.yaml
         sed -i.bak 's/- path: manager_webhook_patch.yaml/#- path: manager_webhook_patch.yaml/' config/default/kustomization.yaml
         sed -i.bak 's/- ..\/webhook/#- ..\/webhook/' config/default/kustomization.yaml
-
-        # TODO: delete step 2, it seems image 0.14 exists and we need to use that instead of latest
-        # 2. Use latest image tag in manager kustomization.yaml
-        # sed -i.bak 's/newTag: {{.VERSION}}/newTag: latest/' config/manager/kustomization.yaml
 
         # Create output directory with absolute path
         mkdir -p "$ORIGINAL_DIR/{{.OUTPUT_DIR}}"
