@@ -1,0 +1,54 @@
+# De web-UI van de SMTP-sink (Mailpit): alles wat de relay "bezorgd" heeft, in de browser.
+# De sink zelf komt uit de component ../../../sink/as-upstream; dit is alleen de ontsluiting.
+#
+# Anders dan de sandbox: daar staat het wildcard-certificaat als --default-ssl-certificate
+# op de ingresscontroller, dus daar volstaat een tls-blok zonder secretName. Hier draait een
+# echte cert-manager en haalt elke host zijn eigen certificaat, net als forgejo, keycloak en
+# de operations-manager. Vandaar de eigen Issuer hieronder.
+#
+# De Issuer staat in rig-ron en niet in rig-system: Issuers zijn namespaced, en cert-manager
+# kan er alleen een gebruiken die in dezelfde namespace staat als de Ingress.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-mailsink
+  namespace: rig-ron
+spec:
+  acme:
+    email: rig-platform@rijksoverheid.nl
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-mailsink-key
+    solvers:
+      - http01:
+          ingress:
+            serviceType: ClusterIP
+            ingressClassName: nginx
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rig-mail-sink
+  namespace: rig-ron
+  annotations:
+    cert-manager.io/issuer: letsencrypt-mailsink
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "384"
+    cert-manager.io/private-key-rotation-policy: Always
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: mailsink.fundament-poc.rijksapp.dev
+      http:
+        paths:
+          - backend:
+              service:
+                name: rig-mail-sink
+                port:
+                  number: 8025
+            path: /
+            pathType: Prefix
+  tls:
+    - hosts:
+        - mailsink.fundament-poc.rijksapp.dev
+      secretName: mailsink-fundament-poc-tls

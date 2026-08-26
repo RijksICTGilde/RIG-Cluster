@@ -1,0 +1,55 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-ron
+
+generators:
+  - decrypt-sops.yaml
+
+resources:
+  - ../../base
+  - network-policies/mail-relay-networkpolicy.yaml
+  - ingress-mailsink.yaml
+
+# De SMTP-sink als testupstream, MET de schakelaar die de relay zijn zelfondertekende
+# certificaat laat aannemen. De component levert die twee samen, zodat de ene niet zonder de
+# andere ingeladen kan worden; dat is precies de fout die op `local` een sink opleverde waar
+# niets aan bezorgd kon worden. Dit cluster kan niet bij het RON-netwerk, dus de echte
+# mailserver van de Rijksoverheid valt hier af en de sink is de enige zinnige upstream.
+components:
+  - ../../../sink/as-upstream
+
+patches:
+  # Zelfde als de sandbox: de gedeelde PostgreSQL draait hier in rig-system, niet in
+  # rig-prd-operations. Op naam en niet op index, want kustomize voegt env-lijsten samen op
+  # het veld `name` en dan blijft deze patch staan als de basis een variabele erbij krijgt.
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rig-mail-relay
+      spec:
+        template:
+          spec:
+            containers:
+              - name: stalwart
+                env:
+                  - name: MAIL_DB_HOST
+                    value: rig-db-rw.rig-system.svc.cluster.local
+
+# LET OP het verschil met de sandbox-overlay, en waarom het hier NIET nodig is.
+#
+# Daar wordt de Namespace uit de base met `$patch: delete` weggehaald en handmatig
+# aangemaakt, omdat ArgoCD er in namespaced mode draait en cluster-scoped resources weigert.
+# En daar draait de relay via een aparte Application `ron-infrastructure`, omdat de hele
+# infrastructuur er in een platte Application zit met bestemming rig-system, wat rig-ron
+# platsloeg tot een ID-conflict op een dubbel secret.
+#
+# Geen van beide speelt hier. ArgoCD is op dit cluster cluster-scoped, Namespace staat op de
+# clusterResourceWhitelist van het AppProject zad-platform, en de app-of-apps geeft elke
+# component al een eigen Application met een eigen bestemming: cert-manager beheert zo
+# Namespace/cert-manager en cloudnative-pg beheert Namespace/cnpg-system, allebei Synced
+# (gemeten 26 augustus 2026). De Namespace komt hier dus gewoon uit de base mee.
