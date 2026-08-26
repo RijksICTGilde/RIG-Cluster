@@ -6,6 +6,23 @@ resources:
   - service.yaml
   - ingress.yaml
 
+# De jar van de eigen emailSender, uit git in plaats van van het netwerk. Aan die jar hangt
+# de startvlag --spi-email-sender-provider, en Keycloak weigert te starten als de provider
+# er niet is; een netwerkfetch zou daarmee het inloggen van het hele platform afhankelijk
+# maken van github.com. Hij is een handvol kilobytes (alles staat op `provided`), dus ruim
+# binnen de 1 MiB van een ConfigMap.
+#
+# De generator zet een hash van de inhoud in de naam, dus een nieuwe jar is vanzelf een
+# rollout - hetzelfde patroon als config.toml van de mailrelay, waar het twee keer is
+# misgegaan toen dat ontbrak.
+#
+# Bron: keycloak-migration/relay-email-sender/. Bron en jar horen in dezelfde commit;
+# `task check-keycloak-relay-email-sender` en CI bouwen hem opnieuw en vergelijken.
+configMapGenerator:
+  - name: keycloak-zad-providers
+    files:
+      - providers/keycloak-relay-email-sender-1.0.0.jar
+
 namespace: rig-system
 
 labels:
