@@ -152,8 +152,15 @@ class SleepModeService(Service):
         from. Waking costs a cold start on a deployment somebody just touched, which is
         the moment they are least likely to mind.
 
-        No-op when sleep-mode is off for this cluster/project, or when the deployment does
-        not match the configured selection. Until RC-37 this lived as
+        The WAKING applies to every deployment sleep-mode is on for; the DEADLINE only to
+        the ones ``match`` selects. Those are two different questions. New content that
+        stays scaled to zero is not rolled out whatever the scope says, so a deployment
+        slept by hand outside the scope must wake here too. But a bedtime is the
+        sweeper's business, and the sweeper ignores an unmatched deployment: stamping one
+        anyway leaves a deadline that is long past by the time somebody adds a matching
+        pattern, and the deployment drops asleep on the sweeper's first look.
+
+        No-op when sleep-mode is off for this cluster/project. Until RC-37 this lived as
         ``project_manager._reset_sleep_deadline_on_activity`` -- generic code reaching into
         one named service, which is what the event removes.
         """
@@ -164,13 +171,16 @@ class SleepModeService(Service):
         from opi.services.catalog.sleep_mode.state import STATE_AWAKE, read
 
         config = sleep_config.load(ctx.project_data, ctx.cluster)
-        if config is None or not config.matches(ctx.deployment_name):
+        if config is None:
             return []
 
         was = read(ctx.project_data, ctx.deployment_name).state
-        sleep_service.set_sleep_deadline(
-            ctx.project_data, ctx.deployment_name, datetime.now(UTC), config.sleep_after_deploy_delta
-        )
+        if config.matches(ctx.deployment_name):
+            sleep_service.set_sleep_deadline(
+                ctx.project_data, ctx.deployment_name, datetime.now(UTC), config.sleep_after_deploy_delta
+            )
+        else:
+            sleep_service.wake_without_deadline(ctx.project_data, ctx.deployment_name)
         if was == STATE_AWAKE:
             # A deadline that moves on a deployment that is already awake is not something
             # a user needs told; only a state change is.
