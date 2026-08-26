@@ -24,8 +24,8 @@ Deploy/Refresh completes
              3. Trigger refresh on the deployment
                     |
                     v
-              Refresh completes -> schedules another OOM check (attempt 2/3)
-              ... until no OOM or max attempts (3) reached
+              Refresh completes -> schedules another OOM check (tune cycle 2/3)
+              ... until no OOM, or one of the brakes below closes
 ```
 
 ### Key properties
@@ -33,8 +33,39 @@ Deploy/Refresh completes
 - The deploy/refresh task completes immediately - the OOM check is a detached background coroutine
 - OOM detection uses **kubectl** (pod container status `lastState.terminated.reason == "OOMKilled"`)
 - The fix: increase memory in YAML via the existing resource tuning service, then git commit and trigger refresh
-- Natural recursion: each refresh schedules its own check, capped at 3 attempts
+- Natural recursion: each refresh schedules its own check, capped at 3 tune cycles per deployment
 - After 3 rounds of 1.5x increases (e.g., 256Mi -> 384Mi -> 576Mi -> 864Mi), manual intervention is needed
+
+## The brakes
+
+Four things bound the escalation. Each is independent: any one of them would have
+stopped the 24 August 2026 incident, where `asses-k2n/pr-494` walked from 45Mi to the
+4096Mi cluster ceiling in nine rounds.
+
+| Brake | What it bounds | Where |
+|---|---|---|
+| The tune budget | 3 tune cycles per deployment | `_oom_tune_attempts` in `oom_watcher.py` |
+| The pod-generation lock | one tune per pod generation | `_last_tuned_pod_template_hash` in `oom_watcher.py` |
+| The growth ceiling | 8x the declared limit | `max_growth_factor` in the resource-tuning service config |
+| The cluster ceiling | `get_max_memory_limit_mi` (4096Mi on odcn-production) | `cluster_config.py` |
+
+**The tune budget is per deployment, not per round.** One counter, keyed
+`"{project}/{deployment}"`, shared by the inline path and the fire-and-forget path, read
+live on every check. It deliberately survives a round: every committed tune queues a
+`refresh_deployment` task, and that task schedules a new check starting at `attempt=1`.
+A counter that reset there would reset the very brake it is. Only an explicit
+`reset_inline_oom_attempts` clears it, and only for a user action: a deploy, an upsert, a
+manual refresh, an image bump. The automated refresh a tune queues for itself carries
+`automated_remediation: True` precisely so it can be told apart.
+
+**The pod-generation lock.** A tune only means something once it is running. Both paths
+record the `pod-template-hash` of the pod the OOM was observed on; a later detection on
+that same hash is not new evidence, because the previous increase has not rolled out yet.
+(The existing superseded-generation filter cannot catch this: at that moment the pod still
+IS the current generation.) When the hash cannot be determined the OOM counts as fresh -
+blocking there would silence the auto-tune the moment kubectl hiccups.
+
+**The growth ceiling** is described in [Auto Resource Tuning](auto-resource-tuning.md).
 
 ## Configuration
 
@@ -76,10 +107,17 @@ The OOM watcher is scheduled at the end of:
 | `opi/core/config.py` | OOM watcher settings |
 | `opi/core/task_handlers_operations.py` | Refresh handler integration |
 | `opi/core/task_handlers_project.py` | Create/upsert handler integration |
+| `opi/services/catalog/resource_tuning/config.py` | `max_growth_factor`: the growth ceiling |
+| `scripts/oom_growth_report.py` | Read-only report on components an earlier, unbounded escalation left above the ceiling (`PROJECTS=... task oom-growth-report`) |
 
 ### Attempt tracking
 
-The `oom_watch_attempt` field in the task payload tracks which attempt number the current check is on. When the tune service triggers reprocessing, the refresh handler reads this field and passes `attempt + 1` to the next `schedule_oom_check` call.
+The tune budget lives in the module-level `_oom_tune_attempts` dict in `oom_watcher.py`,
+keyed `"{project}/{deployment}"`, and both paths gate on it (see "The brakes" above). The
+`oom_watch_attempt` field in the task payload and the `attempt` parameter of
+`schedule_oom_check` still exist, but they only bound the chain of SCHEDULED checks and
+appear in the log lines - they no longer decide whether tuning is still allowed. They
+cannot: every automated refresh starts a new chain at `attempt=1`.
 
 ## Troubleshooting
 
@@ -92,7 +130,9 @@ The `oom_watch_attempt` field in the task payload tracks which attempt number th
 ### OOM detected but not fixed
 
 - Check logs for `Health watcher: auto-tune committed changes` (the tune now runs through the generic after-sync hook scan; see auto-resource-tuning.md)
-- If max attempts reached, you'll see: `OOM watcher: max attempts (3) reached ... manual intervention required`
+- If the tune budget is spent, you'll see: `Health watcher: OOM tune budget (3 cycles) spent for ...` (background path) or `Health check: max OOM tune attempts (3) reached for ...` (inline path)
+- If the growth ceiling refuses the increase, the message names the declared limit, the current limit and the factor, and asks for manual intervention - a limit WAS computed, it was refused
+- If a detection lands on the generation a previous tune already answered: `... is on pod generation <hash>, the same one the previous tune answered - waiting for that increase to roll out`
 - Verify the metrics backend (Prometheus) is available - the tune service needs it to compute recommendations
 
 ### kubectl connectivity
