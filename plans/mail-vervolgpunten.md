@@ -260,8 +260,8 @@ voor platformcomponenten, met een eigen `directory` - is **niet gemeten**.
 
 ## Wat hier bewust NIET staat
 
-De fundament-migratie van de sandbox (app-of-apps): eigen traject, zie
-`docs/fundament-stand-van-zaken.md`. En de goedkeurings-UX rond "goedgekeurd maar aan
-geen component gekoppeld": besproken op 20 augustus en bewust niet gebouwd; de
-koppelvraag bij het aanvragen stellen is de minst ingrijpende variant als het toch gaat
-knellen.
+De fundament-migratie van de sandbox (app-of-apps): eigen traject, en er ligt op dit
+moment geen document dat de stand daarvan beschrijft. En de goedkeurings-UX rond
+"goedgekeurd maar aan geen component gekoppeld": besproken op 20 augustus en bewust
+niet gebouwd; de koppelvraag bij het aanvragen stellen is de minst ingrijpende variant
+als het toch gaat knellen.
