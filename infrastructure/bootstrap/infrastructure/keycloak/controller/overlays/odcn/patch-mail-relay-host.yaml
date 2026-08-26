@@ -1,0 +1,18 @@
+# De mailrelay van productie staat in rig-prd-ron, niet in rig-ron.
+#
+# Alleen de HOST verschilt: poort, account, afzender en de STARTTLS-keuze zijn op elk
+# cluster hetzelfde en staan in de basis. Het wachtwoord komt uit het geheim
+# keycloak-mail-credentials, dat de generatie van de clustergeheimen per cluster maakt.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: rig-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: keycloak
+          env:
+            - name: ZAD_MAIL_RELAY_HOST
+              value: "rig-mail-relay.rig-prd-ron.svc.cluster.local"
