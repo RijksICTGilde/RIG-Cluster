@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: operations-manager
-          image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:2026.08.24.1617-8d51a67e-fundament
+          image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:2026.08.26.0912-53b08148-fundament
           # LOG_ERRORS_FILE_PATH staat in opi/core/config.py op /data/logs/errors.log, dus
           # die map moet bestaan en beschrijfbaar zijn. odcn doet dit met een emptyDir; de
           # sandbox heeft er een PVC op /data staan en dekt hem daarmee af. Dit hoort
