@@ -1733,23 +1733,61 @@ tasks:
         ./test-local-docker.sh
     silent: false
 
-  build-keycloak-relay-email-sender-proef:
-    desc: "Build de PROEF-jar van de relay-emailSender (RC-158, niet voor productie)"
+  build-keycloak-relay-email-sender:
+    desc: "Bouw de relay-emailSender-jar en zet hem naast het Keycloak-manifest"
+    vars:
+      JAR: keycloak-relay-email-sender-1.0.0.jar
+      DOEL: infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers
     cmds:
       - |
-        echo "🔨 Bouwen van de relay-emailSender PROEF..."
+        echo "🔨 Bouwen van de relay-emailSender..."
         cd keycloak-migration/relay-email-sender
         mvn clean package
-        echo "✅ JAR gebouwd: keycloak-migration/relay-email-sender/target/keycloak-relay-email-sender-proef-0.1.0-proef.jar"
+        cd ../..
+        cp "keycloak-migration/relay-email-sender/target/{{.JAR}}" "{{.DOEL}}/{{.JAR}}"
+        echo "✅ JAR gebouwd en gekopieerd naar {{.DOEL}}/{{.JAR}}"
+        echo "   Commit de jar SAMEN met de broncode: de pod krijgt hem uit een ConfigMap,"
+        echo "   niet uit een build. Zie keycloak-migration/relay-email-sender/README.md."
     silent: false
 
-  test-keycloak-relay-email-sender-proef:
-    desc: "Draai de tests van de relay-emailSender PROEF"
+  test-keycloak-relay-email-sender:
+    desc: "Draai de tests van de relay-emailSender"
     cmds:
       - |
-        echo "🧪 Tests van de relay-emailSender PROEF..."
+        echo "🧪 Tests van de relay-emailSender..."
         cd keycloak-migration/relay-email-sender
         mvn test
+    silent: false
+
+  check-keycloak-relay-email-sender:
+    desc: "Toets dat de ingecheckte relay-emailSender-jar bij de broncode ernaast hoort"
+    vars:
+      JAR: keycloak-relay-email-sender-1.0.0.jar
+      DOEL: infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers
+    cmds:
+      - |
+        # De jar staat in git omdat de pod hem uit een ConfigMap krijgt en niet van het
+        # netwerk (zie de initContainer). Een gebouwd artefact in git kan gaan afwijken van
+        # de bron ernaast, en dan draait er iets anders dan er te lezen valt. Deze taak
+        # bouwt opnieuw en vergelijkt byte voor byte; CI draait hem bij elke PR.
+        #
+        # Dat kan alleen omdat de bouw reproduceerbaar is (project.build.outputTimestamp in
+        # de pom) EN met dezelfde JDK-major draait: de manifest van de jar noemt
+        # Build-Jdk-Spec. CI pint daarom Temurin 21.
+        set -e
+        echo "🔁 Herbouwen van de relay-emailSender..."
+        cd keycloak-migration/relay-email-sender
+        mvn -q -B clean package
+        cd ../..
+        if cmp -s "keycloak-migration/relay-email-sender/target/{{.JAR}}" "{{.DOEL}}/{{.JAR}}"; then
+          echo "✅ De ingecheckte jar is de bron ernaast."
+        else
+          echo "❌ {{.DOEL}}/{{.JAR}} wijkt af van een verse bouw van de bron."
+          echo "   Draai 'task build-keycloak-relay-email-sender' en commit de jar mee."
+          echo "   Bouw je met een andere JDK-major dan 21, dan verschilt alleen het"
+          echo "   manifest (Build-Jdk-Spec); gebruik dan Temurin 21."
+          exit 1
+        fi
     silent: false
 
   publish-keycloak-custom-mapper:
