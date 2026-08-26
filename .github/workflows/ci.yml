@@ -48,6 +48,37 @@ jobs:
       - name: Coverage report
         run: uv run coverage report --fail-under=21
 
+  # De jar van de Keycloak-emailSender staat in git (de pod krijgt hem uit een ConfigMap en
+  # niet van het netwerk, want aan die jar hangt een startvlag waarzonder Keycloak weigert
+  # te starten). Een gebouwd artefact in git kan gaan afwijken van de bron ernaast, en dan
+  # draait er iets anders dan er te lezen valt. Deze job bouwt hem opnieuw en vergelijkt
+  # byte voor byte.
+  #
+  # Dat kan omdat de bouw reproduceerbaar is (project.build.outputTimestamp in de pom). De
+  # JDK-MAJOR moet wel gelijk zijn aan die waarmee de ingecheckte jar is gebouwd: het
+  # manifest noemt Build-Jdk-Spec. Vandaar Temurin 21, hier gepind.
+  keycloak-relay-email-sender:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Tests van de provider
+        working-directory: keycloak-migration/relay-email-sender
+        run: mvn -B test
+      - name: De ingecheckte jar is de bron ernaast
+        run: |
+          set -e
+          JAR=keycloak-relay-email-sender-1.0.0.jar
+          DOEL=infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers/$JAR
+          (cd keycloak-migration/relay-email-sender && mvn -q -B clean package)
+          if ! cmp -s "keycloak-migration/relay-email-sender/target/$JAR" "$DOEL"; then
+            echo "::error file=$DOEL::De ingecheckte jar wijkt af van een verse bouw van de bron. Draai 'task build-keycloak-relay-email-sender' en commit de jar mee."
+            exit 1
+          fi
+
   license-check:
     runs-on: ubuntu-latest
     defaults:
