@@ -442,6 +442,28 @@ class DeploymentStateFact:
     #: for a decision).
     details: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def service_name(self) -> str:
+        """The reporting service's display name, for a template that shows the fact.
+
+        Resolved here and not in the template. The card used to do the registry lookup
+        itself (``ServiceAdapter.get_service_definition(...)``), which meant it only
+        rendered when a route happened to put ``ServiceAdapter`` in the context -- the
+        lazily loaded ArgoCD card did not, so every deployment that had a fact to report
+        answered with a 500. A fact that carries its own name cannot be rendered wrong.
+
+        Falls back to the raw ``ServiceType`` value for a service that is not in the
+        registry: a display name is not worth failing a page over.
+        """
+        from opi.services.services import ServiceAdapter
+        from opi.services.services_enums import ServiceType
+
+        try:
+            definition = ServiceAdapter.SERVICE_DEFINITIONS.get(ServiceType(self.service))
+        except ValueError:
+            return self.service
+        return definition.name if definition is not None else self.service
+
 
 @dataclass
 class RedeployContext:
