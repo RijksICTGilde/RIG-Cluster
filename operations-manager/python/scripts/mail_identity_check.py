@@ -14,9 +14,18 @@ toetst dus vijf dingen, en alle vijf zijn ze eerder stuk geweest of ongemeten:
 2. De weergavenaam is die uit de projectconfiguratie, ook wanneer de applicatie zelf een
    naam meestuurt. Dat laatste is het geval dat tot RC-145 juist ANDERS liep: de naam van
    de applicatie bleef staan, dus `e2e-allservices` stond boven de post van elk project.
-3. De envelope is HETZELFDE adres als de From:. Dit is de belangrijkste:
-   `rijksoverheid.nl` publiceert p=reject en wij ondertekenen niet met DKIM, dus
-   SPF-uitlijning tussen envelope en From: is het ENIGE dat een bericht door DMARC krijgt.
+3. De envelope lijnt uit met de From:. Dit is de belangrijkste: `rijksoverheid.nl`
+   publiceert p=reject en wij ondertekenen niet met DKIM, dus SPF-uitlijning tussen
+   envelope en From: is het ENIGE dat een bericht door DMARC krijgt.
+
+   Uitlijnen is niet hetzelfde als GELIJK zijn, en sinds RC-159 lopen de twee voor een
+   account met een eigen afzenderadres bewust uiteen. De relay leidt de ENVELOPE altijd af
+   uit de accountnaam (`[session.mail] rewrite` in zijn config.toml, waar geen
+   sieve-variabele bij komt) terwijl het sieve-script alleen de From: overschrijft. Voor
+   `zad-keycloak` is dat dus `noreply-inloggen@...` in de From: en `noreply-rijksapp@...`
+   in de envelope. DMARC vergelijkt de DOMEINEN en die blijven gelijk, en het plusdeel in
+   de envelope blijft de bounce dragen. Vandaar --verwacht-envelope: de toets is
+   domeinuitlijning plus het adres dat je opgeeft, en niet "de twee zijn dezelfde string".
 4. De Reply-To: van de applicatie komt ONGEWIJZIGD aan. Dat is de scheiding waar het
    ontwerp op staat: de From: is identiteit en ligt vast, de Reply-To: zegt alleen waar
    een antwoord heen moet en is dus wel van de applicatie.
@@ -27,19 +36,36 @@ Draaien tegen de sandbox, met twee port-forwards open:
     kubectl -n rig-ron port-forward svc/rig-mail-relay 1587:587 &
     kubectl -n rig-ron port-forward svc/rig-mail-sink 8025:8025 &
     cd operations-manager/python
-    uv run python scripts/mail_identity_check.py --user project-ai1-uit --password <geheim> \\
+    MAIL_RELAY_PASSWORD=<geheim> uv run python scripts/mail_identity_check.py \\
+        --user project-ai1-uit \\
         --verwacht-adres noreply-rijksapp+ai1-uit@rijksoverheid.nl \\
         --verwacht-naam "Robbert Uittenbroek"
 
+Voor het Keycloak-account van het platform, waarvan de From: en de envelope uiteenlopen:
+
+    MAIL_RELAY_PASSWORD=<geheim> uv run python scripts/mail_identity_check.py \\
+        --user zad-keycloak \\
+        --verwacht-adres noreply-inloggen@rijksoverheid.nl \\
+        --verwacht-envelope noreply-rijksapp@rijksoverheid.nl \\
+        --verwacht-naam "Rijksapps"
+
+Het wachtwoord komt uit de omgevingsvariabele MAIL_RELAY_PASSWORD, of anders uit een
+prompt. Er is met opzet GEEN --password: een wachtwoord op de opdrachtregel staat in de
+procestabel van iedereen op de machine en in de shellgeschiedenis, en dit script wordt
+gedraaid met het gedeelde relaywachtwoord van het platform in de hand.
+
 De inloggegevens zijn die van een send-email-account; die van ZAD zelf staan in de Secret
-uit MAIL_PLATFORM_SECRET_NAME in de namespace van OPI. Zonder --verwacht-adres toetst het
-script de TERUGVAL: een account waarvoor de relay geen afzender houdt, hoort onder het kale
-platformadres en zonder naam te vertrekken.
+uit MAIL_PLATFORM_SECRET_NAME in de namespace van OPI, en die van Keycloak in
+MAIL_KEYCLOAK_SECRET_NAME. Zonder --verwacht-adres toetst het script de TERUGVAL: een
+account waarvoor de relay geen afzender houdt, hoort onder het kale platformadres en zonder
+naam te vertrekken.
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
+import os
 import smtplib
 import sys
 import time
@@ -97,6 +123,31 @@ def received_fouten(ontvangen: list[str]) -> list[str]:
     return []
 
 
+def envelope_fouten(envelope: str, from_adres: str, verwacht: str) -> list[str]:
+    """Toetst de envelope van een aangekomen bericht tegen de From: en tegen de verwachting.
+
+    Twee eisen, en de eerste is de eis die ertoe doet. `rijksoverheid.nl` publiceert
+    p=reject en wij ondertekenen niet met DKIM, dus SPF-UITLIJNING tussen envelope en From:
+    is het enige dat een bericht door DMARC krijgt. Uitlijning kijkt naar het DOMEIN.
+
+    Hier stond "envelope == From: == een adres", en dat is sinds RC-159 aantoonbaar te
+    streng: de relay leidt de envelope af uit de ACCOUNTNAAM (`[session.mail] rewrite`)
+    terwijl het sieve-script alleen de From: overschrijft, dus een account met een eigen
+    afzenderadres LOOPT UITEEN in het lokale deel. Voor `zad-keycloak` is dat expres zo, en
+    de oude toets kon voor dat account dus nooit slagen - hij mat een gelijkheid die het
+    ontwerp niet belooft.
+
+    Wat hij WEL belooft: hetzelfde domein (anders faalt DMARC) en het adres dat de beller
+    opgeeft (anders is de bounce niet meer te herleiden tot het account).
+    """
+    fouten = []
+    if envelope.rpartition("@")[2] != from_adres.rpartition("@")[2]:
+        fouten.append(f"envelope {envelope!r} en From: {from_adres!r} zitten niet in hetzelfde domein: DMARC faalt")
+    if envelope != verwacht:
+        fouten.append(f"envelope is {envelope!r}, verwacht {verwacht!r}")
+    return fouten
+
+
 def _stuur(host: str, poort: int, user: str, password: str, from_header: str, onderwerp: str, ontvanger: str) -> None:
     """Biedt een bericht aan met een expres afwijkende From:."""
     bericht = EmailMessage()
@@ -135,6 +186,22 @@ def _haal_bericht(api: str, onderwerp: str, seconden: int = 20) -> dict:
     raise SystemExit(f"FOUT: geen bericht met onderwerp {onderwerp!r} bij de sink binnen {seconden}s")
 
 
+def _wachtwoord() -> str:
+    """Het relaywachtwoord, uit de omgeving of anders uit een prompt.
+
+    Met opzet niet uit een argument: een wachtwoord op de opdrachtregel staat in
+    /proc/<pid>/cmdline voor iedereen op de machine en blijft in de shellgeschiedenis
+    staan. Dit script wordt gedraaid met het GEDEELDE relaywachtwoord van het platform
+    (zad-platform, zad-keycloak) in de hand, en dat is precies het geheim waarvan de
+    meting van RC-158 (docs/rc158-emailsender-spi-meting.md) liet zien wat een aanvaller
+    ermee kan: een luisteraar die het opgeloste wachtwoord in platte tekst in zijn log zet.
+    """
+    uit_omgeving = os.environ.get("MAIL_RELAY_PASSWORD")
+    if uit_omgeving:
+        return uit_omgeving
+    return getpass.getpass("Wachtwoord van het relayaccount: ")
+
+
 def _headers(api: str, bericht_id: str) -> dict:
     return requests.get(f"{api}/api/v1/message/{bericht_id}/headers", timeout=10).json()
 
@@ -145,12 +212,19 @@ def main() -> int:
     parser.add_argument("--relay-port", type=int, default=1587)
     parser.add_argument("--api", default="http://127.0.0.1:8025", help="Mailpit-API van de sink")
     parser.add_argument("--user", required=True, help="SMTP-account op de relay")
-    parser.add_argument("--password", required=True)
     parser.add_argument(
         "--verwacht-adres",
         default=KAAL_ADRES,
         help="Het adres dat in From: en Return-Path hoort te staan. Standaard het kale "
         "platformadres, wat de terugval toetst voor een account zonder afzender.",
+    )
+    parser.add_argument(
+        "--verwacht-envelope",
+        default="",
+        help="Het adres dat in Return-Path hoort te staan. Leeg betekent: hetzelfde als "
+        "--verwacht-adres, wat voor een projectaccount en voor de terugval klopt. Een "
+        "account met een eigen afzenderadres (zad-keycloak) loopt hier bewust uiteen: de "
+        "relay leidt de envelope af uit de accountnaam en overschrijft alleen de From:.",
     )
     parser.add_argument(
         "--verwacht-naam",
@@ -159,6 +233,8 @@ def main() -> int:
         "uitkomst: dan verstuurt het project met een kaal adres en zonder naam.",
     )
     args = parser.parse_args()
+    wachtwoord = _wachtwoord()
+    verwacht_envelope = args.verwacht_envelope or args.verwacht_adres
 
     stempel = str(int(time.time()))
     # Alle drie de gevallen bieden een andere From: aan, en alle drie horen ze dezelfde
@@ -173,7 +249,7 @@ def main() -> int:
     for volgnummer, (naam, from_header) in enumerate(gevallen):
         onderwerp = f"identiteitstoets {naam} {stempel}"
         ontvanger = f"ontvanger-{stempel}-{volgnummer}@example.org"
-        _stuur(args.relay_host, args.relay_port, args.user, args.password, from_header, onderwerp, ontvanger)
+        _stuur(args.relay_host, args.relay_port, args.user, wachtwoord, from_header, onderwerp, ontvanger)
         bericht = _haal_bericht(args.api, onderwerp)
 
         # 1 en 2: adres en weergavenaam komen allebei van het platform. Wat de applicatie
@@ -185,10 +261,9 @@ def main() -> int:
         if getoonde_naam != args.verwacht_naam:
             fouten.append(f"[{naam}] weergavenaam is {getoonde_naam!r}, verwacht {args.verwacht_naam!r}")
 
-        # 3: de envelope is hetzelfde adres als de From:, dus SPF lijnt per definitie uit.
+        # 3: de envelope lijnt uit met de From: op DOMEIN, en is het verwachte adres.
         envelope = (bericht.get("ReturnPath") or "").strip("<>")
-        if envelope != args.verwacht_adres:
-            fouten.append(f"[{naam}] envelope is {envelope!r}, verwacht {args.verwacht_adres!r}")
+        fouten.extend(f"[{naam}] {fout}" for fout in envelope_fouten(envelope, afzender, verwacht_envelope))
 
         headers = _headers(args.api, bericht["ID"])
         aanwezig = {k.lower(): v for k, v in headers.items()}

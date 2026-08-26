@@ -16,6 +16,7 @@ Four things are worth holding down, and they are the four the plan argues hardes
 from __future__ import annotations
 
 import asyncio
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
@@ -26,6 +27,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from opi.connectors.mail import (
+    MAIL_SENDER_ADDRESS_PREFIX,
+    MAIL_SENDER_DOMAIN_ALLOWLIST,
     MAIL_SENDER_NAME_PREFIX,
     MAIL_SENDER_SCRIPT_NAME,
     MAIL_SENDER_TABLE_KEY,
@@ -37,13 +40,14 @@ from opi.connectors.mail import (
     render_sender_table,
 )
 from opi.core.cluster_config import (
+    get_keycloak_mail_from_address,
     get_mail_from_address,
     get_mail_relay_host,
     get_mail_relay_namespace,
     get_mail_relay_port,
 )
 from opi.core.config import settings
-from opi.manager.mail_manager import MailManager
+from opi.manager.mail_manager import MailAccountNameError, MailManager
 from opi.services.catalog.approval import ApproverScope
 from opi.services.catalog.base import ConfigLayer, DeploymentManifestContext
 from opi.services.catalog.send_email import RELAY_POD_LABELS, RELAY_POD_PORT, SendEmailService
@@ -242,7 +246,7 @@ class TestTheOneAccountPath:
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
         # De weergavenaam is het tweede dat de relay moet horen: het ADRES leidt hij zelf
         # af uit de accountnaam, de naam valt nergens uit af te leiden.
-        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
         return connector
 
     @pytest.mark.asyncio
@@ -330,7 +334,7 @@ class TestHetPlatformaccountIsGeenProjectaccount:
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
         connector.delete_principal = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
         connector.delete_sender_name = AsyncMock()  # type: ignore[method-assign]
         return connector
 
@@ -1331,10 +1335,14 @@ class TestDeWeergavenaamStaatOpDeRelay:
             await server.close()
 
         assert gewijzigd is True
-        assert len(geschreven) == 2, "de sleutel en de tabel horen in een enkel verzoek te gaan"
+        assert len(geschreven) == 3, "de twee sleutels en de tabel horen in een enkel verzoek te gaan"
         assert geschreven[0]["values"] == [[f"{MAIL_SENDER_NAME_PREFIX}.project-ai1-uit", "Vrije Naam"]]
-        assert geschreven[1]["values"][0][0] == MAIL_SENDER_TABLE_KEY
-        assert 'set "naam" "Vrije Naam"' in geschreven[1]["values"][0][1]
+        # Een project kiest zijn adres NIET, dus die sleutel wordt verwijderd en niet gezet:
+        # de relay leidt het adres af uit de accountnaam.
+        assert geschreven[1]["type"] == "delete"
+        assert geschreven[1]["keys"] == [f"{MAIL_SENDER_ADDRESS_PREFIX}.project-ai1-uit"]
+        assert geschreven[2]["values"][0][0] == MAIL_SENDER_TABLE_KEY
+        assert 'set "naam" "Vrije Naam"' in geschreven[2]["values"][0][1]
         assert herladen == [1]
 
     @pytest.mark.asyncio
@@ -1353,7 +1361,7 @@ class TestDeWeergavenaamStaatOpDeRelay:
         finally:
             await server.close()
 
-        tabel = geschreven[1]["values"][0][1]
+        tabel = geschreven[2]["values"][0][1]
         assert 'set "naam" "Eerste"' in tabel
         assert 'set "naam" "Tweede"' in tabel
 
@@ -1390,7 +1398,9 @@ class TestDeWeergavenaamStaatOpDeRelay:
 
         assert geschreven[0]["type"] == "delete"
         assert geschreven[0]["keys"] == [f"{MAIL_SENDER_NAME_PREFIX}.project-zonder"]
-        assert "project-zonder" not in geschreven[1]["values"][0][1]
+        assert geschreven[1]["type"] == "delete"
+        assert geschreven[1]["keys"] == [f"{MAIL_SENDER_ADDRESS_PREFIX}.project-zonder"]
+        assert "project-zonder" not in geschreven[2]["values"][0][1]
 
 
 class TestDeGegenereerdeTabelIsGeenInvoerkanaal:
@@ -1437,7 +1447,19 @@ class TestDeGegenereerdeTabelIsGeenInvoerkanaal:
         with pytest.raises(MailSenderNameError):
             render_sender_table({"project-x": naam})
 
-    @pytest.mark.parametrize("account", ["project-x; set", 'project-"x', "PROJECT-X", "project x", ""])
+    @pytest.mark.parametrize(
+        "account",
+        [
+            "project-x; set",
+            'project-"x',
+            "PROJECT-X",
+            "project x",
+            "",
+            # Zelfde val als bij het adres: ``$`` matcht ook vlak voor een slot-newline, dus
+            # dit kwam erlangs en zette een regeleinde midden in de gegenereerde tabel.
+            "project-x\n",
+        ],
+    )
     def test_een_accountnaam_buiten_de_vorm_wordt_geweigerd(self, account: str) -> None:
         with pytest.raises(MailSenderNameError):
             render_sender_table({account: "Naam"})
@@ -1452,7 +1474,7 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
         connector.get_principal = AsyncMock(return_value=existing)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
         return connector
 
     async def _ensure(self, connector: MailConnector, from_name: str = "Vrije Naam") -> None:
@@ -1470,7 +1492,7 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
     async def test_een_nieuw_account_krijgt_meteen_zijn_weergavenaam(self) -> None:
         connector = self._connector(existing=None)
         await self._ensure(connector)
-        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "Vrije Naam")
+        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "Vrije Naam", "")
 
     @pytest.mark.asyncio
     async def test_een_bestaand_account_ook(self) -> None:
@@ -1479,7 +1501,7 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
         Of er dan echt iets naar de relay gaat, beslist de connector op een verschil."""
         connector = self._connector(existing={"name": "project-ai1-uit"})
         await self._ensure(connector, from_name="Nieuwe Naam")
-        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "Nieuwe Naam")
+        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "Nieuwe Naam", "")
 
     @pytest.mark.asyncio
     async def test_zonder_naam_gaat_er_een_lege_naam_heen(self) -> None:
@@ -1487,7 +1509,7 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
         hem ook op de relay kwijtraken."""
         connector = self._connector(existing={"name": "project-ai1-uit"})
         await self._ensure(connector, from_name="")
-        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "")
+        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "", "")
 
 
 class TestDeWeergavenaamWordtGetoetst:
@@ -1628,13 +1650,13 @@ class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
         connector = MailConnector("http://relay", "admin", "geheim")
         connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         manager = self._manager(secrets, monkeypatch)
         await manager.create_resources_for_deployment(project, project["deployments"][0])
 
-        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "Robbert Uittenbroek")
+        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "Robbert Uittenbroek", "")
 
         # En de applicatie krijgt hetzelfde adres te zien, want SMTP_FROM is een mededeling
         # over wat de ontvanger krijgt en niet iets waar de applicatie iets aan verandert.
@@ -1651,12 +1673,12 @@ class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
         connector = MailConnector("http://relay", "admin", "geheim")
         connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.set_sender_name = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         await self._manager(secrets, monkeypatch).create_resources_for_deployment(project, project["deployments"][0])
 
-        connector.set_sender_name.assert_awaited_once_with("project-ai1-uit", "")
+        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "", "")
         # En het adres dat de applicatie te zien krijgt, is het adres dat de relay zelf
         # samenstelt uit de accountnaam - zie TestHetAdresWordtEenKeerSamengesteld.
         assert secrets[0][2].from_address == "noreply-rijksapp+ai1-uit@rijksoverheid.nl"
@@ -1688,3 +1710,383 @@ class TestTweeProjectenTegelijk:
         tabel = opgeslagen[MAIL_SENDER_TABLE_KEY]
         assert 'set "naam" "Een"' in tabel
         assert 'set "naam" "Twee"' in tabel
+
+
+class TestHetAfzenderadresPerAccount:
+    """RC-159: het adres wordt AFGELEID, behalve voor een account dat er een heeft.
+
+    De afleiding (accountnaam min het voorvoegsel ``project-``) is de regel en blijft dat.
+    De uitzondering bestaat voor een account dat post moet versturen die van de post van de
+    portal te onderscheiden hoort te zijn -- vandaag alleen dat van Keycloak -- en het is
+    een uitzondering met een scherpe rand: een instelbaar afzenderadres is een spoofingknop,
+    en de enige reden dat hij hier mag bestaan is dat alleen het platform hem bedient.
+    """
+
+    def test_de_tabel_verklaart_beide_variabelen_global(self) -> None:
+        """``global`` is wat een waarde over de scriptgrens tilt (RFC 6609).
+
+        Zonder de verklaring aan BEIDE kanten leest het insluitende script stil leeg, en dan
+        vertrekt de post gewoon - alleen onder het verkeerde adres. Dat is precies het soort
+        stilte waar niets over meldt.
+        """
+        tabel = render_sender_table({"project-een": "Een"}, {})
+        assert 'global "naam";' in tabel
+        assert 'global "afzender";' in tabel
+
+    def test_een_account_met_een_adres_krijgt_beide_toekenningen(self) -> None:
+        tabel = render_sender_table(
+            {"zad-keycloak": "Rijksapps"}, {"zad-keycloak": "noreply-inloggen@rijksoverheid.nl"}
+        )
+        assert (
+            'if string :is "${env.authenticated_as}" "zad-keycloak" '
+            '{ set "naam" "Rijksapps"; set "afzender" "noreply-inloggen@rijksoverheid.nl"; }'
+        ) in tabel
+
+    def test_een_account_zonder_adres_krijgt_geen_afzenderregel(self) -> None:
+        """De afleiding is de regel: een project dat niets kiest, hoort geen ``afzender`` te
+        zetten, want een lege waarde zou de afleiding hieronder juist overrulen."""
+        tabel = render_sender_table({"project-een": "Een"}, {})
+        assert 'set "naam" "Een";' in tabel
+        assert "afzender" not in tabel.split("global", 2)[-1].split("\n", 1)[-1]
+
+    def test_een_account_met_alleen_een_adres_krijgt_toch_een_regel(self) -> None:
+        """Geen naam is een geldige uitkomst, ook naast een adres. De twee reeksen worden
+        daarom SAMEN doorlopen; alleen de namen doorlopen zou dit account overslaan."""
+        tabel = render_sender_table({}, {"zad-keycloak": "noreply-inloggen@rijksoverheid.nl"})
+        assert 'set "afzender" "noreply-inloggen@rijksoverheid.nl";' in tabel
+        assert '"naam"' not in tabel.split('global "afzender";', 1)[1]
+
+    @pytest.mark.parametrize(
+        "adres",
+        [
+            "zonder-apenstaart",
+            "spatie erin@rijksoverheid.nl",
+            'aanhaling"erin@rijksoverheid.nl',
+            "dollar${x}@rijksoverheid.nl",
+            "iemand@example.org",
+            "iemand@rijksoverheid.nl.evil.example",
+            "a" * 65 + "@rijksoverheid.nl",
+            # Een afsluitende newline: die kwam er tot RC-159 langs, want het patroon
+            # eindigde op ``$`` en dat matcht OOK vlak voor een slot-newline. Een newline
+            # is precies het teken dat de sieve-string beeindigt waar dit adres in gaat.
+            "iemand\n@rijksoverheid.nl",
+            "iemand@rijksoverheid.nl\n",
+        ],
+    )
+    def test_een_verkeerd_adres_wordt_geweigerd(self, adres: str) -> None:
+        """De weigering hoort HIER te vallen en niet halverwege een verwerking.
+
+        Twee soorten fout in een lijst, en dat is met opzet: tekens die de sieve-string
+        zouden beeindigen (dan is de gegenereerde tabel een invoerkanaal), en een domein
+        buiten de lijst (dan lijnt de From: niet meer uit met de envelope en haalt geen
+        enkel bericht nog DMARC).
+        """
+        with pytest.raises(MailSenderNameError):
+            render_sender_table({}, {"zad-keycloak": adres})
+
+    def test_de_lijst_met_domeinen_is_het_afzenderdomein(self) -> None:
+        """Uitlijning is het enige dat onze post door DMARC krijgt: wij ondertekenen niet met
+        DKIM, dus het From:-domein moet gelijk blijven aan dat van de envelope, en die houdt
+        het afgeleide adres."""
+        _, _, domein = get_mail_from_address("odcn-production").partition("@")
+        assert frozenset({domein}) == MAIL_SENDER_DOMAIN_ALLOWLIST
+
+    def test_de_relay_is_met_hetzelfde_adres_geconfigureerd(self) -> None:
+        """Het DERDE bestand waar dit afzenderdomein staat, en het enige dat nergens aan
+        vastzat.
+
+        ``MAIL_SENDER_DOMAIN_ALLOWLIST`` hangt aan ``cluster_config.py`` (de toets hierboven),
+        maar de relay leest zijn eigen ``MAIL_FROM_LOCAL``/``MAIL_DOMAIN`` uit zijn Secret en
+        stelt daar de envelope mee samen. Lopen die twee uiteen, dan meldt OPI een adres dat
+        niet vertrekt en lijnt de From: niet meer uit met de envelope: de fout die de
+        docstring van ``get_mail_from_address`` beschrijft als "a developer is shown one
+        address while another one leaves the building", zonder dat iets dat tegenhield.
+
+        De lijst blijft een HARDE lijst en wordt hier expres niet uit de configuratie
+        afgeleid: dan zou een tikfout in een clusterconfiguratie het toegestane domein stil
+        verbreden, en juist dat is wat een instelbaar afzenderadres gevaarlijk maakt.
+        """
+        template = (
+            Path(__file__).resolve().parents[3]
+            / "infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml"
+        ).read_text()
+        lokaal, _, domein = get_mail_from_address("odcn-production").partition("@")
+        assert f'MAIL_FROM_LOCAL: "{lokaal}"' in template, "de relay stelt een ander lokaal deel samen dan OPI meldt"
+        assert f'MAIL_DOMAIN: "{domein}"' in template, "de relay stelt een ander domein samen dan OPI toelaat"
+
+    def test_de_relayconfiguratie_verklaart_dezelfde_variabele(self) -> None:
+        """Drift tussen het gegenereerde script en het insluitende script faalt STIL.
+
+        Verklaart de ene kant ``afzender`` global en de andere niet, dan leest de waarde
+        leeg, valt de relay terug op de afleiding, en vertrekt Keycloak-post onder het adres
+        van de portal. Er komt geen foutmelding en niets in een log.
+        """
+        config = (
+            Path(__file__).resolve().parents[3]
+            / "infrastructure/bootstrap/infrastructure/mail/controller/base/config.toml"
+        ).read_text()
+        assert 'global "afzender";' in config, "het insluitende script verklaart de variabele niet"
+        assert 'set "adres" "${afzender}";' in config, "een ingeladen adres wint niet van de afleiding"
+
+    def test_de_envelope_houdt_het_afgeleide_adres(self) -> None:
+        """Bewust, en het ziet eruit als een vergissing.
+
+        DMARC-uitlijning vergelijkt de DOMEINEN van envelope en From:, en die blijven gelijk.
+        Het plusdeel blijft ondertussen in de envelope staan en blijft dus de bounce dragen.
+        Zou de rewrite-regel het ingeladen adres ook gaan gebruiken, dan is dat weg.
+        """
+        config = (
+            Path(__file__).resolve().parents[3]
+            / "infrastructure/bootstrap/infrastructure/mail/controller/base/config.toml"
+        ).read_text()
+        rewrite = config.split("[session.mail]", 1)[1].split("[session.data]", 1)[0]
+        assert "afzender" not in rewrite, "de envelope mag het ingeladen adres NIET gebruiken"
+
+
+class TestHetKeycloakAccountKomtUitDeBootstrap:
+    """RC-159: het derde geval, en het verschilt in precies een ding van het tweede.
+
+    ``zad-platform`` wordt door niemand anders gelezen, dus OPI genereert dat wachtwoord
+    zelf. Keycloak is een ander programma dat OPI niet kent en niet op OPI hoort te wachten,
+    dus zijn wachtwoord komt uit de bootstrap en OPI is hier de RECONCILER, niet de bron.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _relay(self, monkeypatch):
+        monkeypatch.setattr(settings, "MAIL_RELAY_API_URL", "http://relay")
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+
+    def _record_relay(self, monkeypatch) -> AsyncMock:
+        ensured = AsyncMock(
+            return_value=MailAccount(
+                username="zad-keycloak",
+                from_address="noreply-inloggen@rijksoverheid.nl",
+                bounce_address="noreply-inloggen@rijksoverheid.nl",
+                messages_per_day=2000,
+            )
+        )
+        monkeypatch.setattr(MailManager, "ensure_account", ensured)
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=object()))
+        return ensured
+
+    @pytest.mark.asyncio
+    async def test_zonder_relay_gebeurt_er_niets(self, monkeypatch) -> None:
+        monkeypatch.setattr(settings, "MAIL_RELAY_API_URL", "")
+        assert await MailManager.ensure_keycloak_account() is None
+
+    @pytest.mark.asyncio
+    async def test_zonder_geheim_is_dat_geen_fout(self, monkeypatch) -> None:
+        """Een cluster waarvan de infrastructuurgeheimen ouder zijn dan deze functie heeft
+        geen Keycloak-mail. Dat is een toestand en geen storing: het mag de start niet
+        tegenhouden, net als een cluster zonder relay."""
+        monkeypatch.setattr(MailManager, "_read_keycloak_secret", AsyncMock(return_value=None))
+        ensured = self._record_relay(monkeypatch)
+
+        assert await MailManager.ensure_keycloak_account() is None
+        ensured.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_het_wachtwoord_komt_uit_het_geheim_en_wordt_niet_gegenereerd(self, monkeypatch) -> None:
+        """De kern van deze weg. Genereert OPI hier alsnog iets, dan draagt de relay een
+        wachtwoord dat het BESTAND van Keycloak niet heeft, en faalt elke inlogmail op
+        authenticatie."""
+        monkeypatch.setattr(MailManager, "_read_keycloak_secret", AsyncMock(return_value="uit-de-bootstrap"))
+        ensured = self._record_relay(monkeypatch)
+
+        await MailManager.ensure_keycloak_account()
+
+        kwargs = ensured.await_args.kwargs
+        assert kwargs["password"] == "uit-de-bootstrap"
+        assert kwargs["username"] == settings.MAIL_KEYCLOAK_ACCOUNT
+        assert kwargs["is_platform_account"] is True
+
+    @pytest.mark.asyncio
+    async def test_een_gewijzigd_geheim_bereikt_de_relay(self, monkeypatch) -> None:
+        """Wat een rotatie werkend maakt: OPI leest bij elke start opnieuw uit het geheim en
+        zet door wat het daar vindt."""
+        monkeypatch.setattr(MailManager, "_read_keycloak_secret", AsyncMock(return_value="tweede-waarde"))
+        ensured = self._record_relay(monkeypatch)
+
+        await MailManager.ensure_keycloak_account()
+
+        assert ensured.await_args.kwargs["password"] == "tweede-waarde"
+
+    @pytest.mark.asyncio
+    async def test_het_account_krijgt_zijn_eigen_adres_en_naam(self, monkeypatch) -> None:
+        """Anders vertrekt inlogpost onder het kale adres van de portal, en is een bounce
+        erop niet te onderscheiden van een bounce op de post van ZAD zelf."""
+        monkeypatch.setattr(MailManager, "_read_keycloak_secret", AsyncMock(return_value="w"))
+        ensured = self._record_relay(monkeypatch)
+
+        await MailManager.ensure_keycloak_account()
+
+        kwargs = ensured.await_args.kwargs
+        assert kwargs["sender_address"] == "noreply-inloggen@rijksoverheid.nl"
+        assert kwargs["from_address"] == kwargs["sender_address"]
+        assert kwargs["from_name"] == settings.MAIL_KEYCLOAK_FROM_NAME
+
+    def test_het_adres_blijft_in_het_afzenderdomein(self) -> None:
+        """Het lokale deel is eigen, het domein is dat van het cluster en is niet instelbaar:
+        envelope en From: moeten in EEN domein blijven of DMARC valt om."""
+        for cluster in ("local", "sandboxed-local", "odcn-production"):
+            _, _, basisdomein = get_mail_from_address(cluster).partition("@")
+            _, _, domein = get_keycloak_mail_from_address(cluster).partition("@")
+            assert domein == basisdomein
+
+    def test_het_adres_verschilt_van_dat_van_de_portal(self) -> None:
+        assert get_keycloak_mail_from_address("odcn-production") != get_mail_from_address("odcn-production")
+
+    @pytest.mark.asyncio
+    async def test_de_projectweg_mag_ook_het_keycloak_account_niet_aanraken(self, monkeypatch) -> None:
+        """De grendel kende een naam en kent er nu twee.
+
+        Structureel kan een project er niet bij (projectaccounts dragen een voorvoegsel),
+        maar deze grendel bestaat juist omdat accountnamen ook uit een projectbestand kunnen
+        komen dat ouder is of gerepareerd is.
+        """
+        connector = MailConnector("http://relay", "admin", "geheim")
+        connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        with pytest.raises(MailAccountNameError):
+            await MailManager.ensure_account(
+                connector=connector,
+                username=settings.MAIL_KEYCLOAK_ACCOUNT,
+                password="x",
+                from_address="a@b",
+                bounce_address="a@b",
+                from_name="",
+                messages_per_day=1,
+            )
+
+    def test_beide_platformaccounts_staan_buiten_de_projectnaamruimte(self) -> None:
+        """Een platformaccount BINNEN het voorvoegsel is vanaf de projectweg bereikbaar."""
+        for naam in (settings.MAIL_PLATFORM_ACCOUNT, settings.MAIL_KEYCLOAK_ACCOUNT):
+            assert not naam.startswith(MAIL_PROJECT_ACCOUNT_PREFIX)
+
+    def test_de_twee_platformaccounts_zijn_niet_dezelfde(self) -> None:
+        """Een account voor allebei zou een bounce op inlogpost niet te onderscheiden maken
+        van een bounce op de post van de portal."""
+        assert settings.MAIL_PLATFORM_ACCOUNT != settings.MAIL_KEYCLOAK_ACCOUNT
+
+
+class TestDeKeycloakStartuptaakTrektDeBootNietOm:
+    """RC-159: dezelfde eis als bij ``ensure_platform_mail_account``, en om een scherpere reden.
+
+    ``server.py`` doet ``await run_startup_tasks(app)`` zonder ``try``, dus een uitzondering
+    die uit fase 3c ontsnapt haalt fase 4 (Keycloak) en 5 (OAuth) onderuit. Wat deze taak
+    inricht is de inlogpost van ALLE realms; een mislukte inrichting mag de portal dus niet
+    meenemen, want dan ligt bij een onbereikbare relay ook het inloggen zelf plat.
+
+    Vijf uitzonderingsvormen, en het zijn niet de exotische: de transportfout van aiohttp
+    (een relay die is ingesteld maar niet antwoordt geeft die EERDER dan er een HTTP-antwoord
+    is om er een ``MailRelayError`` van te maken), de DNS-fout, de twee kubectl-vormen van
+    het lezen van het Secret, en de kale ``ValueError`` uit het ontsleutelen van het
+    relay-wachtwoord.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_relay_is_logged_and_not_raised(self, monkeypatch) -> None:
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise aiohttp.ClientConnectorError(
+                connection_key=SimpleNamespace(ssl=None, host="relay", port=443, is_ssl=True),  # type: ignore[arg-type]
+                os_error=OSError("Network is unreachable"),
+            )
+
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", _boom)
+        assert await startup.ensure_keycloak_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_a_relay_that_refuses_the_call_is_logged_and_not_raised(self, monkeypatch) -> None:
+        from opi.connectors.mail import MailRelayError
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise MailRelayError("POST /api/principal gaf 500")
+
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", _boom)
+        assert await startup.ensure_keycloak_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_a_dns_failure_is_logged_and_not_raised(self, monkeypatch) -> None:
+        """``socket.gaierror`` is een ``OSError``, en het is wat een onbekende relayhostnaam
+        geeft voordat aiohttp iets eigens te werpen heeft."""
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise OSError("Name or service not known")
+
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", _boom)
+        assert await startup.ensure_keycloak_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_a_refused_secret_read_is_logged_and_not_raised(self, monkeypatch) -> None:
+        """Deze weg LEEST een Secret in plaats van er een te schrijven, en een cluster dat
+        die leesactie weigert moet gewoon opstarten zonder Keycloak-mail."""
+        from opi.connectors.kubectl import KubectlExecutionError
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise KubectlExecutionError('secrets "keycloak-mail-credentials" is forbidden')
+
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", _boom)
+        assert await startup.ensure_keycloak_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_api_server_is_logged_and_not_raised(self, monkeypatch) -> None:
+        """``KubectlConnectionError`` is GEEN subklasse van ``KubectlExecutionError``, en het
+        is juist de toestand waar de kubectl-connector zijn eigen herhaallus voor heeft: de
+        API-server is tijdens het opstarten nog niet bereikbaar."""
+        from opi.connectors.kubectl import KubectlConnectionError
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise KubectlConnectionError("kubectl connection is not available")
+
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", _boom)
+        assert await startup.ensure_keycloak_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_an_undecryptable_admin_password_is_logged_and_not_raised(self, monkeypatch) -> None:
+        """``create_mail_connector`` ontsleutelt ``MAIL_RELAY_ADMIN_PASSWORD``; een waarde die
+        nog niet te ontsleutelen is geeft een kale ``ValueError``."""
+        from opi.core import startup
+
+        async def _boom() -> None:
+            raise ValueError("Failed to decrypt password: no matching AGE key")
+
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", _boom)
+        assert await startup.ensure_keycloak_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_geen_relay_of_geen_geheim_is_false_zonder_uitzondering(self, monkeypatch) -> None:
+        """De twee toestanden die GEEN storing zijn. ``ensure_keycloak_account`` antwoordt dan
+        ``None``, en de taak hoort dat als "niets ingericht" door te geven, niet als fout."""
+        from opi.core import startup
+
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", AsyncMock(return_value=None))
+        assert await startup.ensure_keycloak_mail_account() is False
+
+    @pytest.mark.asyncio
+    async def test_een_ingericht_account_meldt_true(self, monkeypatch) -> None:
+        from opi.core import startup
+
+        account = MailAccount(
+            username=settings.MAIL_KEYCLOAK_ACCOUNT,
+            from_address="noreply-inloggen@rijksoverheid.nl",
+            bounce_address="noreply-inloggen@rijksoverheid.nl",
+            messages_per_day=settings.MAIL_KEYCLOAK_MESSAGES_PER_DAY,
+        )
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", AsyncMock(return_value=account))
+
+        assert await startup.ensure_keycloak_mail_account() is True
+
+    @pytest.mark.asyncio
+    async def test_de_boot_roept_deze_taak_ook_echt_aan(self, monkeypatch) -> None:
+        """Zonder deze schakel is alle dekking hierboven dood: de relay zou het account nooit
+        krijgen, en elke realm zou een verwijzing dragen naar een wachtwoord dat aan de
+        andere kant niet bestaat."""
+        from opi.core import startup
+
+        bron = inspect.getsource(startup.run_startup_tasks)
+        assert "ensure_keycloak_mail_account()" in bron

@@ -8,6 +8,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from opi.core.config import settings
+from opi.utils.naming import generate_keycloak_sender_address
+
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
     "local": {
@@ -790,6 +793,28 @@ def get_mail_from_address(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["mail_from_address"]
+
+
+def get_keycloak_mail_from_address(cluster_name: str) -> str:
+    """The address KEYCLOAK's login mail leaves under on this cluster.
+
+    Its own local part next to the portal's, on the cluster's own domain. ONE derivation
+    for the whole platform and not two, because this address is written down in three
+    places that have to agree: the relay gets it as this account's sender (MailManager),
+    the Keycloak pod gets it as ``ZAD_MAIL_RELAY_FROM``, and OPI writes it into every
+    realm's minimal ``smtpServer``. Drift between them shows up as a message that leaves
+    under one address while a realm claims another.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Keycloak's sender address (e.g. ``noreply-inloggen@rijksoverheid.nl``)
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    return generate_keycloak_sender_address(get_mail_from_address(cluster_name), settings.MAIL_KEYCLOAK_FROM_LOCAL)
 
 
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
