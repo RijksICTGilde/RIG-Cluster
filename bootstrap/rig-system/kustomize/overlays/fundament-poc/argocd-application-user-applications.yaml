@@ -8,8 +8,14 @@ metadata:
 spec:
   project: zad-platform
   sources:
-    - repoURL: https://user-applications@github.com/RijksICTGilde/argo-applications.git
-      # Deze map moet in de argo-applications repo bestaan voor de eerste sync slaagt.
+    # De Forgejo in dit cluster. Geen gebruikersnaam in de URL zoals bij de GitHub-repo's:
+    # die truc bestond om twee repo's op dezelfde host uit elkaar te houden voor ArgoCD.
+    # De credential is nu een repo-creds op de host-URL (secret forgejo-admin), en die
+    # geldt voor elke repo eronder.
+    - repoURL: http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-user-applications.git
+      # OPI schrijft per cluster in een eigen map (zie service_orphan_sweep.py), dus ook in
+      # een repo die alleen van dit cluster is blijft dit pad staan. De map moet bestaan
+      # voordat de eerste sync slaagt; OPI maakt hem bij het eerste project.
       path: fundament-poc
       targetRevision: main
       plugin:

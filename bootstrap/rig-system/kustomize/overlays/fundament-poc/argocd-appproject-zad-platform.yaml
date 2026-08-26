@@ -30,8 +30,14 @@ spec:
   # Geen wildcard. Dit alleen al sluit uit dat een push naar een willekeurige andere repo
   # automatisch op dit cluster landt.
   sourceRepos:
+    # De infrastructuur van dit cluster. Blijft GitHub: Forgejo wordt uitgerold DOOR deze
+    # Application, dus die kan niet zijn eigen bron zijn.
     - https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
-    - https://user-applications@github.com/RijksICTGilde/argo-applications.git
+    # De datarepo waar OPI de Applications van gebruikers in schrijft, in de Forgejo van dit
+    # cluster. Alleen deze ene repo: de andere twee datarepo's worden niet door een
+    # Application in DIT project gelezen. De per-project Applications die OPI genereert
+    # dragen hun eigen AppProject met hun eigen sourceRepos.
+    - http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-user-applications.git
 
   # De namespaces waar de dertien Applications aantoonbaar naartoe deployen, plus
   # rig-system voor de root en de user-applications.
@@ -46,6 +52,13 @@ spec:
       namespace: ingress-nginx
     - server: https://kubernetes.default.svc
       namespace: local-path-storage
+    # De mailrelay draait in een eigen namespace omdat de RON-koppeling op ODCN een
+    # annotatie op de namespace vraagt die exact een waarde aanneemt; RON en internet
+    # kunnen daar dus niet samen op een namespace staan. Dit cluster kan niet bij RON en
+    # levert aan een sink, maar houdt dezelfde indeling aan zodat de overlay op beide
+    # clusters dezelfde vorm heeft.
+    - server: https://kubernetes.default.svc
+      namespace: rig-ron
 
   # Geteld uit de render, niet geraden. Geen '*'.
   clusterResourceWhitelist:

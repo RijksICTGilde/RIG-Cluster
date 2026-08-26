@@ -1,3 +1,12 @@
+# Deze Job maakt het Forgejo-account aan en daarna de datarepo's waar de
+# operations-manager in schrijft. Hij is bewust hetzelfde op elk cluster: wat per cluster
+# verschilt staat in `env`, niet in het script.
+#
+# Er stond hier eerder een script dat per overlay volledig werd overschreven, en beide
+# varianten waren stuk op dezelfde manier (zie de uitleg bij GITEA_APP_INI hieronder).
+# Omdat elke stap in `|| true` stond, meldde de Job succes terwijl er niets was
+# aangemaakt. Vandaar dat hier nu geen enkele fout meer wordt opgeslikt en er aan het
+# eind een controleronde staat.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -7,7 +16,7 @@ metadata:
     app: forgejo
     component: bootstrap
 spec:
-  ttlSecondsAfterFinished: 86400  # Clean up after 24 hours
+  ttlSecondsAfterFinished: 86400
   backoffLimit: 3
   template:
     metadata:
@@ -26,19 +35,21 @@ spec:
           type: RuntimeDefault
 
       initContainers:
-      # Wait for Forgejo to be healthy before attempting bootstrap
       - name: wait-for-forgejo
         image: busybox:1.36
         command:
         - sh
         - -c
         - |
-          echo "Waiting for Forgejo to be healthy..."
-          until wget -q --spider http://forgejo.rig-system.svc.cluster.local:3000/api/healthz; do
-            echo "Forgejo not ready yet, sleeping 5 seconds..."
+          echo "Wachten tot Forgejo gezond is..."
+          until wget -q --spider "${FORGEJO_URL}/api/healthz"; do
+            echo "Nog niet bereikbaar, 5 seconden wachten..."
             sleep 5
           done
-          echo "Forgejo is healthy!"
+          echo "Forgejo is bereikbaar."
+        env:
+        - name: FORGEJO_URL
+          value: "http://forgejo.rig-system.svc.cluster.local:3000"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -48,153 +59,122 @@ spec:
 
       containers:
       - name: bootstrap
-        image: codeberg.org/forgejo/forgejo:14
+        # Zelfde image als de StatefulSet, zodat de CLI en de serverversie niet uit elkaar
+        # kunnen lopen.
+        image: codeberg.org/forgejo/forgejo:14-rootless
         command:
-        - sh
+        - bash
         - -c
         - |
-          set -e
+          set -euo pipefail
 
-          echo "========================================="
-          echo "Forgejo Bootstrap Job"
-          echo "========================================="
+          # In het rootless-image staat de configuratie op $GITEA_APP_INI, en dat is
+          # /var/lib/gitea/custom/conf/app.ini. NIET /etc/gitea/app.ini: die map is leeg.
+          # Deze Job overschrijft `command`, dus de entrypoint van het image draait niet
+          # en er is nog helemaal geen app.ini. Zonder de stap hieronder start de CLI
+          # zonder database en faalt `admin user create` met een fout die eruitziet als
+          # "bestaat al". Precies daar ging het eerder mis.
+          #
+          # docker-setup.sh is gereedschap uit het image zelf: het vult het sjabloon
+          # /etc/templates/app.ini en laat environment-to-ini de FORGEJO__*-variabelen
+          # hieronder erin zetten. Alles wijst naar /tmp/bootstrap, want de PVC van
+          # Forgejo is ReadWriteOnce en zit vast aan zijn eigen pod.
+          export GITEA_WORK_DIR=/tmp/bootstrap
+          export GITEA_CUSTOM=/tmp/bootstrap/custom
+          export GITEA_TEMP=/tmp/bootstrap/temp
+          export GITEA_APP_INI=/tmp/bootstrap/custom/conf/app.ini
+          export HOME=/tmp/bootstrap/home
+          mkdir -p /tmp/bootstrap
+          /usr/local/bin/docker-setup.sh
 
-          # Install required tools (curl and jq)
-          echo "Installing required tools..."
-          apk add --no-cache curl jq
-
-          FORGEJO_URL="http://forgejo.rig-system.svc.cluster.local:3000"
-          ADMIN_USER="admin"
-          ADMIN_PASSWORD="admin"
-          ADMIN_EMAIL="admin@example.com"
-
-          # Step 1: Create admin user
-          echo ""
-          echo "Step 1: Creating admin user..."
-          forgejo admin user create \
-            --admin \
-            --username "$ADMIN_USER" \
-            --password "$ADMIN_PASSWORD" \
-            --email "$ADMIN_EMAIL" \
-            --must-change-password=false \
-            -c /data/gitea/conf/app.ini 2>&1 || {
-            echo "Admin user may already exist (this is OK)"
+          # Geeft de HTTP-status op stdout; het antwoord komt in /tmp/bootstrap/response.
+          # Via een bestand en niet via een variabele, want de aanroeper vangt stdout in
+          # een subshell en een variabele zou die niet overleven.
+          api() {
+            local method="$1" path="$2" data="${3:-}"
+            local args=(-s -o /tmp/bootstrap/response -w '%{http_code}'
+                        -u "${FORGEJO_ADMIN_USER}:${FORGEJO_ADMIN_PASSWORD}"
+                        -X "${method}" -H 'Content-Type: application/json')
+            [[ -n "${data}" ]] && args+=(-d "${data}")
+            curl "${args[@]}" "${FORGEJO_URL}${path}"
           }
 
-          # Step 2: Generate API access token
-          echo ""
-          echo "Step 2: Generating API access token..."
-          TOKEN_RESPONSE=$(curl -s -X POST \
-            -H "Content-Type: application/json" \
-            -u "$ADMIN_USER:$ADMIN_PASSWORD" \
-            -d '{"name":"bootstrap-token","scopes":["write:repository","write:user","write:organization"]}' \
-            "$FORGEJO_URL/api/v1/users/$ADMIN_USER/tokens" || echo '{}')
-
-          TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.sha1 // empty')
-
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "Failed to create token, trying to use existing token..."
-            # Try to list existing tokens and use the first one
-            EXISTING_TOKENS=$(curl -s -X GET \
-              -u "$ADMIN_USER:$ADMIN_PASSWORD" \
-              "$FORGEJO_URL/api/v1/users/$ADMIN_USER/tokens")
-
-            # If we have existing tokens, we'll just log a message
-            # In production, you might want to store the token securely
-            echo "Using basic auth instead of token for repository creation"
-            USE_BASIC_AUTH=true
+          echo "Stap 1: account ${FORGEJO_ADMIN_USER}"
+          if output=$(forgejo admin user create \
+                --admin \
+                --username "${FORGEJO_ADMIN_USER}" \
+                --password "${FORGEJO_ADMIN_PASSWORD}" \
+                --email "${FORGEJO_ADMIN_EMAIL}" \
+                --must-change-password=false \
+                -c "${GITEA_APP_INI}" 2>&1); then
+            echo "  aangemaakt"
+          elif [[ "${output}" == *"already exists"* ]]; then
+            echo "  bestaat al"
           else
-            echo "API token created successfully"
-            USE_BASIC_AUTH=false
+            echo "${output}" >&2
+            exit 1
           fi
 
-          # Step 3: Create repositories
-          echo ""
-          echo "Step 3: Creating repositories..."
+          echo "Stap 2: datarepo's"
+          for repo in ${ZAD_REPOS}; do
+            code=$(api POST /api/v1/user/repos \
+              "{\"name\":\"${repo}\",\"description\":\"ZAD-datarepo, beheerd door de operations-manager\",\"private\":true,\"auto_init\":true,\"default_branch\":\"main\"}")
+            case "${code}" in
+              201) echo "  ${repo}: aangemaakt" ;;
+              409) echo "  ${repo}: bestaat al" ;;
+              *)   echo "  ${repo}: mislukt (HTTP ${code}) $(cat /tmp/bootstrap/response)" >&2; exit 1 ;;
+            esac
+          done
 
-          # Repository 1: user-applications
-          echo "Creating repository: user-applications"
-          if [ "$USE_BASIC_AUTH" = "true" ]; then
-            curl -s -X POST \
-              -H "Content-Type: application/json" \
-              -u "$ADMIN_USER:$ADMIN_PASSWORD" \
-              -d '{
-                "name":"user-applications",
-                "description":"User application deployments for RIG projects",
-                "private":false,
-                "auto_init":true,
-                "default_branch":"main",
-                "gitignores":"",
-                "license":"",
-                "readme":"Default"
-              }' \
-              "$FORGEJO_URL/api/v1/user/repos" || echo "Repository may already exist"
-          else
-            curl -s -X POST \
-              -H "Content-Type: application/json" \
-              -H "Authorization: token $TOKEN" \
-              -d '{
-                "name":"user-applications",
-                "description":"User application deployments for RIG projects",
-                "private":false,
-                "auto_init":true,
-                "default_branch":"main",
-                "gitignores":"",
-                "license":"",
-                "readme":"Default"
-              }' \
-              "$FORGEJO_URL/api/v1/user/repos" || echo "Repository may already exist"
-          fi
+          echo "Stap 3: controle"
+          # `auto_init` kan stil falen. De repo bestaat dan wel maar heeft geen enkele
+          # branch, en een kloon levert een lege werkmap op in plaats van een foutmelding.
+          # Daarom hier expliciet vaststellen dat main bestaat.
+          for repo in ${ZAD_REPOS}; do
+            code=$(api GET "/api/v1/repos/${FORGEJO_ADMIN_USER}/${repo}/branches/main")
+            if [[ "${code}" != "200" ]]; then
+              echo "  ${repo}: geen branch main (HTTP ${code}) $(cat /tmp/bootstrap/response)" >&2
+              exit 1
+            fi
+            echo "  ${repo}: main aanwezig"
+          done
 
-          # Repository 2: argo-user-applications
-          echo "Creating repository: argo-user-applications"
-          if [ "$USE_BASIC_AUTH" = "true" ]; then
-            curl -s -X POST \
-              -H "Content-Type: application/json" \
-              -u "$ADMIN_USER:$ADMIN_PASSWORD" \
-              -d '{
-                "name":"argo-user-applications",
-                "description":"ArgoCD application manifests for RIG projects",
-                "private":false,
-                "auto_init":true,
-                "default_branch":"main",
-                "gitignores":"",
-                "license":"",
-                "readme":"Default"
-              }' \
-              "$FORGEJO_URL/api/v1/user/repos" || echo "Repository may already exist"
-          else
-            curl -s -X POST \
-              -H "Content-Type: application/json" \
-              -H "Authorization: token $TOKEN" \
-              -d '{
-                "name":"argo-user-applications",
-                "description":"ArgoCD application manifests for RIG projects",
-                "private":false,
-                "auto_init":true,
-                "default_branch":"main",
-                "gitignores":"",
-                "license":"",
-                "readme":"Default"
-              }' \
-              "$FORGEJO_URL/api/v1/user/repos" || echo "Repository may already exist"
-          fi
-
-          echo ""
-          echo "========================================="
-          echo "Bootstrap completed successfully!"
-          echo "========================================="
-          echo "Forgejo URL: http://forgejo.kind"
-          echo "Admin user: $ADMIN_USER"
-          echo "Admin password: $ADMIN_PASSWORD"
-          echo ""
-          echo "Repositories created:"
-          echo "  - $FORGEJO_URL/admin/user-applications"
-          echo "  - $FORGEJO_URL/admin/argo-user-applications"
-          echo "========================================="
+          echo "Bootstrap klaar."
 
         env:
-        # Database configuration (same as StatefulSet)
+        # De repolijst is het enige dat een cluster hoeft te veranderen. De sandbox zet er
+        # zad-argo-infrastructure bij, omdat daar ook de infrastructuur uit Forgejo komt.
+        - name: ZAD_REPOS
+          value: "zad-projects zad-argo-user-applications zad-deployments"
+        - name: FORGEJO_URL
+          value: "http://forgejo.rig-system.svc.cluster.local:3000"
+
+        # Het account bestaat niet vóór dit secret maar erdoor: deze Job maakt het aan met
+        # de waarden die de secret-generatie heeft klaargezet. Hetzelfde secret is voor
+        # ArgoCD een repo-creds en wordt door OPI via secretKeyRef gelezen, dus het
+        # wachtwoord staat maar op één plek.
+        - name: FORGEJO_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: forgejo-admin
+              key: username
+        - name: FORGEJO_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: forgejo-admin
+              key: password
+        - name: FORGEJO_ADMIN_EMAIL
+          value: "rig-platform@rijksoverheid.nl"
+
+        # Zonder deze vlag houdt de CLI de instantie voor "nog niet geinstalleerd" en
+        # weigert hij te starten met: Unable to load config file for a installed Forgejo
+        # instance. De StatefulSet zet hem ook; de Job rendert zijn eigen app.ini en heeft
+        # hem dus zelf nodig.
+        - name: FORGEJO__security__INSTALL_LOCK
+          value: "true"
+
+        # Dezelfde databaseverbinding als de StatefulSet: `admin user create` praat
+        # rechtstreeks met de database en niet met de draaiende server.
         - name: FORGEJO__database__DB_TYPE
           value: "postgres"
         - name: FORGEJO__database__HOST
@@ -216,8 +196,6 @@ spec:
         volumeMounts:
         - name: temp
           mountPath: /tmp
-        - name: data
-          mountPath: /data
 
         resources:
           requests:
@@ -232,10 +210,8 @@ spec:
           capabilities:
             drop:
             - ALL
-          readOnlyRootFilesystem: false  # Need to write to /data
+          readOnlyRootFilesystem: true
 
       volumes:
       - name: temp
-        emptyDir: {}
-      - name: data
         emptyDir: {}

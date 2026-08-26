@@ -24,6 +24,30 @@ spec:
       containers:
         - name: operations-manager
           image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:2026.08.26.0912-53b08148-fundament
+          # De drie git-wachtwoorden komen uit het secret dat de init-Job gebruikt om het
+          # Forgejo-account aan te maken, en dat ArgoCD als repo-creds leest. Daardoor
+          # bestaat de waarde maar op één plek en kan een rotatie niet half doorwerken.
+          #
+          # Dit MOETEN echte omgevingsvariabelen zijn en geen regels in de configmap:
+          # pydantic-settings geeft omgevingsvariabelen voorrang boven het .env-bestand
+          # (opi/core/config.py:158), en een waarde zonder prefix wordt als platte tekst
+          # behandeld (opi/utils/age.py:329). Een AGE-blok is hier dus niet nodig.
+          env:
+            - name: GIT_PROJECTS_SERVER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: forgejo-admin
+                  key: password
+            - name: GIT_ARGO_APPLICATIONS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: forgejo-admin
+                  key: password
+            - name: PROJECT_REPO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: forgejo-admin
+                  key: password
           # LOG_ERRORS_FILE_PATH staat in opi/core/config.py op /data/logs/errors.log, dus
           # die map moet bestaan en beschrijfbaar zijn. odcn doet dit met een emptyDir; de
           # sandbox heeft er een PVC op /data staan en dekt hem daarmee af. Dit hoort

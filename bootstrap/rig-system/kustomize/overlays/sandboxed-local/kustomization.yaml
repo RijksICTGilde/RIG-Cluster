@@ -13,7 +13,7 @@ resources:
 - namespace.yaml
 - argocd-deployment.yaml
 - argocd-admin-secret.yaml
-- argocd-repo-forgejo-secret.yaml
+- forgejo-admin-secret.yaml
 - argocd-application-infrastructure.yaml
 - argocd-application-user-applications.yaml
 - argocd-application-ron-infrastructure.yaml

@@ -76,6 +76,18 @@ UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 5
 UMBRELLA_REFRESH_MAX_POGINGEN = 6
 
 
+def uses_http_basic_auth(repo_url: str) -> bool:
+    """Bepaal of een repository-URL met gebruikersnaam en wachtwoord werkt.
+
+    Dit stuurt de keuze tussen ``argo-repository-https.yaml.jinja`` (username/password) en
+    ``argo-repository.yaml.jinja`` (sshPrivateKey). Er stond viermaal een kale
+    ``startswith("https://")``, waardoor een gitserver binnen het cluster -- die op plain
+    http draait, want TLS voegt daar niets toe -- in de SSH-tak viel. ArgoCD kreeg dan een
+    secret met een lege sshPrivateKey en zonder wachtwoord, en kon de repo niet lezen.
+    """
+    return repo_url.startswith(("https://", "http://"))
+
+
 class ArgoManager:
     """Manager for ArgoCD-related operations and resources."""
 
@@ -213,7 +225,7 @@ class ArgoManager:
             )
 
             # Determine template path based on authentication method
-            is_https = repo_url.startswith("https://")
+            is_https = uses_http_basic_auth(repo_url)
             template_filename = "argo-repository-https.yaml.jinja" if is_https else "argo-repository.yaml.jinja"
             template_path = os.path.join(settings.MANIFESTS_PATH, template_filename)
             output_filename = get_output_filename_from_template(template_filename, unique_repo_name)
@@ -285,7 +297,7 @@ class ArgoManager:
         logger.debug(f"Unique URL for ArgoCD: {unique_url}")
 
         # Determine authentication method
-        is_https = unique_url.startswith("https://")
+        is_https = uses_http_basic_auth(unique_url)
 
         # Decrypt password if encrypted
         decrypted_password = None
@@ -333,7 +345,7 @@ class ArgoManager:
         variables = await self.prepare_repository_variables(name, namespace, repository, repo_type, project_name)
 
         # Choose template based on authentication method
-        is_https = repository_url.startswith("https://")
+        is_https = uses_http_basic_auth(repository_url)
 
         if is_https:
             # Use HTTPS template for all HTTPS repositories
@@ -753,7 +765,7 @@ class ArgoManager:
             )
 
             # Determine template path based on authentication method
-            is_https = repo_info.get("url", "").startswith("https://")
+            is_https = uses_http_basic_auth(repo_info.get("url", ""))
             template_filename = "argo-repository-https.yaml.jinja" if is_https else "argo-repository.yaml.jinja"
             template_path = os.path.join(settings.MANIFESTS_PATH, template_filename)
             output_filename = get_output_filename_from_template(template_filename, unique_repo_name)

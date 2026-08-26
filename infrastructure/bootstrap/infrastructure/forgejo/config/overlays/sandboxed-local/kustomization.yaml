@@ -1,3 +1,8 @@
+# Het secret forgejo-admin dat de init-Job leest staat NIET hier maar in de bootstrap-
+# overlay (bootstrap/rig-system/kustomize/overlays/sandboxed-local). Reden: in de sandbox
+# leest ArgoCD zijn eigen infrastructuur uit Forgejo, dus de credential moet er al zijn
+# voordat ArgoCD deze map uberhaupt kan ophalen. Zou hij hier staan, dan zit hij opgesloten
+# achter de repo waarvoor hij nodig is.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: rig-system

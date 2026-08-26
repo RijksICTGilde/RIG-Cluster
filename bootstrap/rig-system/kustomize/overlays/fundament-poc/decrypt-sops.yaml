@@ -7,4 +7,3 @@ metadata:
 files:
   - argocd-admin-secret.yaml.sops.yaml
   - argocd-repo-secret-infrastructure-secret.yaml.sops.yaml
-  - argocd-repo-users-applications-secret.yaml.sops.yaml
