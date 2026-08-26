@@ -16,21 +16,19 @@ metadata:
     app: forgejo
     component: bootstrap
   annotations:
-    # Een ArgoCD-hook en geen gewone resource, om twee redenen.
+    # spec.template van een Job is onveranderlijk. Zonder deze optie faalt de sync met
+    # "field is immutable" en blijft de OUDE Job staan: het cluster draaide 22 uur door op
+    # een Job die niets deed terwijl de operations-manager al naar de nieuwe repo's wees.
+    # Force+Replace laat ArgoCD verwijderen en opnieuw aanmaken in plaats van patchen.
     #
-    # 1. spec.template van een Job is onveranderlijk. Werk je het script hier bij, dan
-    #    faalt de sync met "field is immutable" en blijft de OUDE Job staan. Dat is echt
-    #    gebeurd: het cluster draaide 22 uur door op een Job die niets deed, terwijl de
-    #    operations-manager al naar de nieuwe repo's wees. BeforeHookCreation ruimt de
-    #    vorige op voordat de nieuwe wordt aangemaakt, dus het probleem bestaat niet meer.
-    # 2. Een mislukte hook laat de sync falen. Als gewone resource bleef de Application
-    #    groen terwijl de bootstrap stuk was, en dat is exact de klacht die in de
-    #    kustomization van deze component al stond.
-    #
-    # De Job is idempotent en klaar in enkele seconden, dus meedraaien op elke sync kost
-    # niets en herstelt zichzelf als Forgejo ooit leeggemaakt wordt.
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # BEWUST GEEN `argocd.argoproj.io/hook: Sync`. Dat leek de nette oplossing en is het
+    # niet, om twee redenen die pas op het cluster zichtbaar werden. Een hook telt niet mee
+    # als bijgehouden resource, dus (1) een gewijzigd script maakt de Application niet
+    # OutOfSync en de hook vuurt dus nooit bij een scriptwijziging, en (2) verdwijnt de Job,
+    # dan wordt de Application juist Synced en herstelt niemand hem. Als gewone resource
+    # geldt het omgekeerde: ontbreekt de Job, dan is de Application OutOfSync en maakt
+    # ArgoCD hem opnieuw aan, en dat is precies het zelfherstel dat een bootstrap nodig heeft.
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   ttlSecondsAfterFinished: 86400
   backoffLimit: 3
