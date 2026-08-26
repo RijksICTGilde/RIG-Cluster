@@ -1,0 +1,7 @@
+ERROR: Failed to run 'build' command.
+ERROR: io.quarkus.builder.BuildException: Build failure: Build failed due to errors
+	[error]: Build step org.keycloak.quarkus.deployment.KeycloakProcessor#configureKeycloakSessionFactory threw an exception: java.lang.RuntimeException: Failed to find provider bestaat-niet for emailSender
+	at org.keycloak.quarkus.deployment.KeycloakProcessor.checkProviders(KeycloakProcessor.java:896)
+ERROR: Build failure: Build failed due to errors
+	[error]: Build step org.keycloak.quarkus.deployment.KeycloakProcessor#configureKeycloakSessionFactory threw an exception: java.lang.RuntimeException: Failed to find provider bestaat-niet for emailSender
+1

