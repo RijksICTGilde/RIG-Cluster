@@ -35,9 +35,10 @@ patches:
   # De branch-override geldt alleen voor onze eigen infrastructuurcode in RIG-Cluster.
   # Die leest fundament-poc van de branch `fundament` zolang dit werk daar leeft.
   #
-  # NIET voor user-applications: die leest argo-applications, en dat is een datarepo waar
-  # OPI zelf in schrijft, op main. Daar bestaat geen fundament-branch. Zelfde geldt voor
-  # rig-cluster-projects en zad-deployments; die staan op main in de OPI-configmap.
+  # NIET voor user-applications: die leest zad-argo-user-applications uit de Forgejo van
+  # dit cluster, en dat is een datarepo waar OPI zelf in schrijft, op main. Daar bestaat
+  # geen fundament-branch. Zelfde geldt voor zad-projects en zad-deployments; die staan op
+  # main in de OPI-configmap.
   - target:
       kind: Application
       name: fundament-poc-infrastructure

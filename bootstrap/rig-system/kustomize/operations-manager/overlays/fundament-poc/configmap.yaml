@@ -7,31 +7,32 @@ data:
   .env: |
     CLUSTER_MANAGER=fundament-poc
 
-    # Git-backend: de gedeelde GitHub, zoals odcn. De sandbox draait een eigen Forgejo in
-    # het cluster; dat is de andere opzet en die staat hier bewust niet.
+    # Git-backend: de Forgejo in dit cluster. Elke PoC staat daarmee volledig op
+    # zichzelf en deelt geen repo met productie. De drie datarepo's worden aangemaakt door
+    # infrastructure/bootstrap/infrastructure/forgejo/config/base/bootstrap-job.yaml.
     #
-    # De drie wachtwoorden hieronder zijn nog niet ingevuld. Zet ze met
-    # `task encrypt-value-age-base64` (die versleutelt met de sleutel van het
-    # geselecteerde cluster) en plak de base64+age:-waarde erin. Bewust een eigen token
-    # voor dit cluster en niet die van odcn: dit is een PoC, en dan raakt een
-    # compromittering hier de productierepo's niet.
+    # De interne service-URL en niet de ingress: al het machineverkeer blijft binnen het
+    # cluster, waardoor dit blok op elk cluster identiek is en er geen TLS- of
+    # DNS-afhankelijkheid tussen OPI en git zit.
+    #
+    # De wachtwoorden staan hier bewust NIET. Ze komen via secretKeyRef uit het secret
+    # forgejo-admin, hetzelfde secret waarmee de init-Job het account aanmaakt en waarmee
+    # ArgoCD de repo's leest. Zie patches/deployment.yaml. Eén gegenereerde waarde, drie
+    # lezers, geen kopie die kan gaan afwijken.
     ENABLE_GIT_MONITOR=false
-    GIT_PROJECTS_SERVER_URL=https://github.com/RijksICTGilde/rig-cluster-projects.git
-    GIT_PROJECTS_SERVER_USERNAME=git
-    GIT_PROJECTS_SERVER_PASSWORD=base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NBNWEzcHJPWEpTWW01aE1reE5abFJOClprb3dXR1JGVEVWTllsVXdaamRtU1RKQmN5OVVVamR6V25vd0NqbHdXbk5TZUVaM1JYaGxNSE5IV2tKdVRXMVoKUlVoR09VbDJMMVZIWkc5NGVtbE9NakozVDJGb09Wa0tMUzB0SUhrMGRrOUJlRGd5YVhVek5HOXJORVpuUlVGSgpibmhpU0hWVE5VdEpRbkF4Y3pGR2RYcHpWV2MzVUdzS0wyRklWRFFMcDdEamtjbDRpSWVqdG1oOVk2enhldHRiCmR3MFVwY0R3V2RBL3hJRHN4OFh6cWJoK1dyTk9NSkhzQUw1L1p1QWdDV0Vrak45a3IzZTBGUkcxc2hjek5mdkwKLS0tLS1FTkQgQUdFIEVOQ1JZUFRFRCBGSUxFLS0tLS0K
+    GIT_PROJECTS_SERVER_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-projects.git
+    GIT_PROJECTS_SERVER_USERNAME=rig-admin
     GIT_PROJECTS_SERVER_REPO_PATH=/
     GIT_PROJECTS_SERVER_FILE_PATH=projects/simple-example.yaml
     GIT_PROJECTS_SERVER_BRANCH=main
     GIT_PROJECTS_SERVER_POLL_INTERVAL=120
 
-    GIT_ARGO_APPLICATIONS_URL=https://github.com/RijksICTGilde/argo-applications.git
-    GIT_ARGO_APPLICATIONS_USERNAME=git
-    GIT_ARGO_APPLICATIONS_PASSWORD=base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NBNWEzcHJPWEpTWW01aE1reE5abFJOClprb3dXR1JGVEVWTllsVXdaamRtU1RKQmN5OVVVamR6V25vd0NqbHdXbk5TZUVaM1JYaGxNSE5IV2tKdVRXMVoKUlVoR09VbDJMMVZIWkc5NGVtbE9NakozVDJGb09Wa0tMUzB0SUhrMGRrOUJlRGd5YVhVek5HOXJORVpuUlVGSgpibmhpU0hWVE5VdEpRbkF4Y3pGR2RYcHpWV2MzVUdzS0wyRklWRFFMcDdEamtjbDRpSWVqdG1oOVk2enhldHRiCmR3MFVwY0R3V2RBL3hJRHN4OFh6cWJoK1dyTk9NSkhzQUw1L1p1QWdDV0Vrak45a3IzZTBGUkcxc2hjek5mdkwKLS0tLS1FTkQgQUdFIEVOQ1JZUFRFRCBGSUxFLS0tLS0K
+    GIT_ARGO_APPLICATIONS_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-user-applications.git
+    GIT_ARGO_APPLICATIONS_USERNAME=rig-admin
     GIT_ARGO_APPLICATIONS_BRANCH=main
 
-    PROJECT_REPO_URL=https://github.com/RijksICTGilde/zad-deployments.git
-    PROJECT_REPO_USERNAME=git
-    PROJECT_REPO_PASSWORD=base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NBNWEzcHJPWEpTWW01aE1reE5abFJOClprb3dXR1JGVEVWTllsVXdaamRtU1RKQmN5OVVVamR6V25vd0NqbHdXbk5TZUVaM1JYaGxNSE5IV2tKdVRXMVoKUlVoR09VbDJMMVZIWkc5NGVtbE9NakozVDJGb09Wa0tMUzB0SUhrMGRrOUJlRGd5YVhVek5HOXJORVpuUlVGSgpibmhpU0hWVE5VdEpRbkF4Y3pGR2RYcHpWV2MzVUdzS0wyRklWRFFMcDdEamtjbDRpSWVqdG1oOVk2enhldHRiCmR3MFVwY0R3V2RBL3hJRHN4OFh6cWJoK1dyTk9NSkhzQUw1L1p1QWdDV0Vrak45a3IzZTBGUkcxc2hjek5mdkwKLS0tLS1FTkQgQUdFIEVOQ1JZUFRFRCBGSUxFLS0tLS0K
+    PROJECT_REPO_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-deployments.git
+    PROJECT_REPO_USERNAME=rig-admin
     PROJECT_REPO_BRANCH=main
 
     # Platformdiensten in dit cluster. Namen volgen cluster_config; wijzig ze daar.

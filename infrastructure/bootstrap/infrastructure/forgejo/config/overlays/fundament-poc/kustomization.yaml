@@ -1,11 +1,8 @@
+# Geen patch: de base doet precies wat dit cluster nodig heeft. Het account komt uit het
+# gegenereerde secret forgejo-admin (infrastructure/bootstrap/infrastructure/secrets), en
+# de repolijst in de base is exact de drie datarepo's van de operations-manager.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: rig-system
 resources:
 - ../../base
-
-patches:
-  - path: bootstrap-job-patch.yaml
-    target:
-      kind: Job
-      name: forgejo-bootstrap

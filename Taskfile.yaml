@@ -3004,68 +3004,35 @@ tasks:
     silent: true
 
   sandbox:init-forgejo:
-    desc: "Initialize Forgejo: create admin user and repositories"
+    desc: "Maak het Forgejo-account en de datarepo's aan via de init-Job"
     cmds:
       - |
-        echo "Initializing Forgejo..."
+        set -e
+        echo "Forgejo initialiseren..."
 
-        # Create admin user via kubectl exec (username "admin" is reserved in Forgejo)
-        echo "Creating rig-admin user..."
-        kubectl exec -n rig-system forgejo-0 -- forgejo admin user create \
-          --admin --username rig-admin --password admin1234 \
-          --email admin@example.com --must-change-password=false 2>&1 || {
-          echo "rig-admin user may already exist (this is OK)"
-        }
+        # Hier stond een reeks `kubectl exec`-aanroepen in de draaiende Forgejo-pod, plus
+        # een `git init --bare`-lus die een stille auto_init-fout repareerde. Dat werk doet
+        # nu dezelfde Job die ook op een echt cluster draait, dus er is nog maar een weg.
+        #
+        # De credential eerst: de Job maakt het account ermee aan. Hij staat in de
+        # bootstrap-overlay omdat ArgoCD hem straks als repo-creds leest, en die overlay
+        # komt pas in fase 4 langs. Los toepassen dus; fase 4 doet hetzelfde nog eens en
+        # dat is idempotent.
+        kubectl apply -f bootstrap/rig-system/kustomize/overlays/sandboxed-local/forgejo-admin-secret.yaml
 
-        # Wait a moment for the user to be fully created
-        sleep 2
+        # Imperatief, want Forgejo moet gevuld zijn voordat `task sandbox:sync` erin kan
+        # pushen en ArgoCD bestaat op dit punt nog niet. Een Job-template is onveranderlijk,
+        # dus een eerdere run moet eerst weg.
+        kubectl delete job forgejo-bootstrap -n rig-system --ignore-not-found --wait=true
+        kustomize build infrastructure/bootstrap/infrastructure/forgejo/config/overlays/sandboxed-local | kubectl apply -f -
 
-        # Create repositories via Forgejo API
-        echo "Creating repositories..."
-        for REPO in zad-projects zad-argo-user-applications zad-argo-infrastructure zad-deployments; do
-          echo "  Creating: $REPO"
-          kubectl exec -n rig-system forgejo-0 -- wget -q -O- \
-            --header="Content-Type: application/json" \
-            --post-data="{\"name\":\"$REPO\",\"private\":false,\"auto_init\":true,\"default_branch\":\"main\"}" \
-            "http://rig-admin:admin1234@localhost:3000/api/v1/user/repos" 2>/dev/null || echo "  $REPO may already exist"
-        done
-
-        # Verify git repos exist on disk, manually init if auto_init failed
-        # (The rootless image may fail to init bare repos if the repository root didn't exist yet)
-        echo "Verifying git repositories on disk..."
-        kubectl exec -n rig-system forgejo-0 -- sh -c '
-          REPO_ROOT="/var/lib/gitea/git/repositories/rig-admin"
-          mkdir -p "$REPO_ROOT"
-          # Ensure /tmp/gitea exists (rootless image sets TMPDIR=/tmp/gitea)
-          mkdir -p /tmp/gitea
-          for REPO in zad-projects zad-argo-user-applications zad-argo-infrastructure zad-deployments; do
-            REPO_PATH="$REPO_ROOT/${REPO}.git"
-            if [ ! -d "$REPO_PATH/refs" ]; then
-              echo "  Initializing bare repo on disk: $REPO"
-              git init --bare "$REPO_PATH" 2>/dev/null
-              git -C "$REPO_PATH" symbolic-ref HEAD refs/heads/main
-              # Create initial commit in a temp work dir
-              WORK="/tmp/gitea/init-${REPO}"
-              rm -rf "$WORK"
-              git clone "$REPO_PATH" "$WORK" 2>/dev/null
-              cd "$WORK"
-              git checkout -b main 2>/dev/null
-              git config user.email "admin@example.com"
-              git config user.name "rig-admin"
-              echo "# ${REPO}" > README.md
-              git add README.md
-              git commit -m "Initial commit" 2>/dev/null
-              git push origin main 2>/dev/null
-              cd /
-              rm -rf "$WORK"
-            else
-              echo "  $REPO: OK (already initialized)"
-            fi
-          done
-        '
-
-        echo ""
-        echo "Forgejo initialized with rig-admin/admin1234 and 4 repositories"
+        echo "Wachten tot de init-Job klaar is..."
+        if ! kubectl wait --for=condition=complete job/forgejo-bootstrap -n rig-system --timeout=180s; then
+          echo "De init-Job is niet goed afgerond:"
+          kubectl logs -n rig-system -l job-name=forgejo-bootstrap -c bootstrap --tail=50
+          exit 1
+        fi
+        kubectl logs -n rig-system -l job-name=forgejo-bootstrap -c bootstrap --tail=20
     silent: true
 
   sandbox:sync:
