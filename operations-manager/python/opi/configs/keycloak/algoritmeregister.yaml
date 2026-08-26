@@ -218,22 +218,14 @@ clients:
           access.token.claim: "true"
           userinfo.token.claim: "true"
 
-    # Service account roles for user management.
-    # NO manage-realm. The realm carries the platform's shared relay in smtpServer with the
-    # password as a vault reference, and Keycloak resolves that reference at SEND time against
-    # whatever host the realm names -- so anything that can write realm settings can point the
-    # host at a listener of its own and read the shared password out of the AUTH exchange.
-    # A project admin keeps view-clients, so the secret of this client is within their reach
-    # and this service account is theirs to use. It is the same role the platform withholds
-    # from the delegated realm administrator (REALM_ADMIN_WITHHELD_ROLES), and the handler
-    # refuses it here too; leaving it in the blueprint would only ask for something denied.
-    # Managing users, clients and groups -- what this backend actually does -- is unaffected.
+    # Service account roles for user management
     serviceAccountClientRoles:
       realm-management:
         - "manage-users"
         - "view-users"
         - "manage-clients"
         - "view-clients"
+        - "manage-realm"
         - "query-users"
         - "query-groups"
         - "view-realm"
