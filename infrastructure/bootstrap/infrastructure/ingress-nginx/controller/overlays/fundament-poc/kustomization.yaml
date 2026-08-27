@@ -53,6 +53,23 @@ patches:
           argocd.argoproj.io/hook: PreSync
           argocd.argoproj.io/hook-delete-policy: HookSucceeded
 
+  # De naam waar OPI elke tenant-ingress met een CNAME naartoe wijst
+  # (external_dns_target in cluster_config). external-dns publiceert hem vanaf deze
+  # service, dus het adres volgt vanzelf als de LoadBalancer een ander IP krijgt.
+  # Clusterspecifiek: de zone staat in de naam.
+  #
+  # Zonder dit record weigert TransIP elke tenant-CNAME, en external-dns eindigt daarop
+  # met level=fatal en werkt daarna niets meer bij. Dat is precies wat er gebeurde: 534
+  # herstarts en twee dagen geen DNS op dit cluster.
+  - target:
+      kind: Service
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
+    patch: |-
+      - op: add
+        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
+        value: router.fundament-poc.rijksapp.dev
+
   # Zonder deze vlag pakt nginx alleen ingresses op die expliciet ingressClassName: nginx
   # dragen, en OPI zet die nergens: `ingressClassName` komt in geen enkel manifest-sjabloon
   # voor. Op de sandbox valt dat niet op omdat die de Kind-variant van de upstream

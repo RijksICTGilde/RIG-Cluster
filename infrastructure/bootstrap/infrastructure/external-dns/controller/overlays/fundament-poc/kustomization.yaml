@@ -25,6 +25,22 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --domain-filter=fundament-poc.rijksapp.dev
+      # Naast ingresses ook services, zodat router.<zone> uit de hostname-annotatie op de
+      # LoadBalancer-service van ingress-nginx komt in plaats van uit een handmatig
+      # A-record. OPI zet op elke tenant-ingress een external_dns_target naar die naam
+      # (cluster_config), en TransIP weigert een CNAME naar een hostnaam die niet bestaat.
+      # Dat is geen theoretisch geval: het record ontbrak, external-dns eindigde daarop met
+      # level=fatal, en is 534 keer herstart zonder ooit nog iets bij te werken. Een van
+      # de tenant-records legde daarmee ALLE DNS van dit cluster plat.
+      #
+      # `cluster:check` drukte hiervoor een instructie af om zelf een A-record te zetten.
+      # Dat blijft een stap die iemand moet onthouden, en bij het volgende cluster gaat
+      # het dan opnieuw mis. Via de annotatie volgt het record bovendien vanzelf als het
+      # LoadBalancer-adres verschuift, en dat waarschuwde diezelfde taak ook al.
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --source=service
+
       # TransIP handhaaft RFC 1035 strikt: een CNAME kan niet naast een ander record met
       # dezelfde naam bestaan. Daarom staat het eigendoms-TXT op een buurnaam.
       - op: add
