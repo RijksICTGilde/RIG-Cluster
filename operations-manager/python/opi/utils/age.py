@@ -60,7 +60,7 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
     return stdout.decode("utf-8").strip()
 
 
-async def _encrypt_with_age_and_base64encode_as_prefixed_string(client_secret: str, public_key: str | None) -> str:
+async def encrypt_age_content_as_base64_prefixed(client_secret: str, public_key: str | None) -> str:
     """
     Encrypt the client secret using age+base64 encoding.
 
@@ -293,6 +293,21 @@ async def decrypt_if_encrypted(content: str, private_key: str | None) -> str:
         raise ValueError("Failed to decrypt content")
 
     return decrypted
+
+
+def has_password_prefix(password: str) -> bool:
+    """Whether a password already states how it is stored.
+
+    ``parse_password_with_prefix`` answers ``plain`` both for ``plain:secret`` and for a
+    bare ``secret``, and here that difference matters. The first is a deliberate choice to
+    keep something readable; the second is a value that arrived straight from a Kubernetes
+    Secret and has not been through anything yet. Only the second still needs encrypting
+    before it can be written to a file that goes to git.
+    """
+    if not password:
+        return False
+    password = password.strip()
+    return password.startswith(("age:", "base64+age:", "plain:")) or is_age_encrypted(password)
 
 
 def parse_password_with_prefix(password: str) -> tuple[str, str]:

@@ -15,7 +15,12 @@ from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.project_service import get_project_service
-from opi.utils.age import encrypt_age_content, is_age_encrypted
+from opi.utils.age import (
+    encrypt_age_content,
+    encrypt_age_content_as_base64_prefixed,
+    has_password_prefix,
+    is_age_encrypted,
+)
 from opi.utils.api_keys import generate_api_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.sops import generate_sops_key_pair
@@ -344,8 +349,21 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         logger.error(f"Failed to generate encrypted API key: {e}")
         raise HTTPException(status_code=500, detail=f"Cannot create project: API key encryption failed. {e!s}")
 
-    # Repository password from settings (supports plain:, age:, base64+age: prefixes)
+    # Repository password from settings (supports plain:, age:, base64+age: prefixes).
+    #
+    # Zonder prefix is de waarde nog plat, en dat betekent hier dat hij rechtstreeks uit
+    # een Kubernetes Secret komt: fundament-poc mapt PROJECT_REPO_PASSWORD met een
+    # secretKeyRef uit forgejo-admin, zodat het wachtwoord op een plek staat en ArgoCD en
+    # de init-Job hetzelfde secret lezen. Het projectbestand gaat naar git, dus daar hoort
+    # platte tekst niet in, en het schema weigert hem ook: repositories[].password moet een
+    # AGE-blok zijn of een expliciete `plain:`. Hier versleutelen scheelt een tweede,
+    # vooraf versleutelde kopie van hetzelfde wachtwoord die bij rotatie uit de pas loopt.
+    #
+    # Een waarde die al een prefix draagt blijft ongemoeid, dus odcn (base64+age:) en de
+    # sandbox (plain:admin1234, bewust leesbaar) veranderen niet.
     repo_password = settings.PROJECT_REPO_PASSWORD
+    if repo_password and not has_password_prefix(repo_password):
+        repo_password = await encrypt_age_content_as_base64_prefixed(repo_password, settings.SOPS_AGE_PUBLIC_KEY)
 
     # Parse project-level services using the service adapter
     project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])
