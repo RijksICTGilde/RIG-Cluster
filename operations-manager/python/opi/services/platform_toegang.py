@@ -78,7 +78,9 @@ DIENSTEN: tuple[DienstBron, ...] = (
     ),
     DienstBron(
         naam="ArgoCD",
-        icoon="synchroniseren",
+        # "sync" en niet "synchroniseren": NLDD kent de Nederlandse naam niet en rendert
+        # hem leeg, zonder foutmelding. Gecontroleerd tegen opi/web/nldd_iconen.py.
+        icoon="sync",
         # Niet uit onze eigen blauwdruk: de argocd-operator maakt dit wachtwoord zelf aan
         # en zet het in <cr-naam>-cluster, in platte tekst. De blauwdruk
         # bootstrap/rig-system/kustomize/secrets/templates/argocd-admin-secret.yaml maakt

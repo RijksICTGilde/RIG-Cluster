@@ -264,3 +264,19 @@ class TestHetSjabloon:
         html = self._render([self._regel(waarschuwing="De Ingress wijst ergens anders heen.")])
 
         assert "De Ingress wijst ergens anders heen." in html
+
+
+def test_de_iconen_van_de_diensten_bestaan_echt() -> None:
+    """Een iconnaam die NLDD niet kent rendert LEEG, zonder foutmelding.
+
+    Er staat al een test op iconnamen (tests/test_lotc_icon_mapping.py), maar die scant
+    alleen sjablonen. De iconen van deze pagina staan in Python, in DIENSTEN, en vielen
+    daarmee buiten dat net: `synchroniseren` stond er ongemerkt in en bestaat niet.
+    """
+    from opi.web.navigation_lotc import to_nldd_icon
+    from opi.web.nldd_iconen import nldd_icon_names
+
+    woordenschat = set(nldd_icon_names())
+    onbekend = {d.naam: d.icoon for d in DIENSTEN if to_nldd_icon(d.icoon) not in woordenschat}
+
+    assert not onbekend, f"iconen die NLDD niet kent: {onbekend}"
