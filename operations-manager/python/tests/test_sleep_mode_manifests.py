@@ -65,6 +65,47 @@ class TestSelectWakerComponent:
         config = SleepModeConfig(enabled=True, waker_component="worker")
         assert manifests.select_waker_component(project, project["deployments"][0], config, handler) is None
 
+    def test_a_component_behind_the_authorization_wall_is_excluded(self, handler: ProjectFileHandler) -> None:
+        """Same reason as passthrough TLS: the waker cannot serve that hostname the way it
+        is meant to be served.
+
+        The wall moves the Service to the oauth2-proxy port and the waker carries no
+        sidecars, so a waker there answers on the proxy's port WITHOUT the proxy. An
+        anonymous visitor would get the application's title and a button that starts it,
+        on a hostname whose entire purpose is that it is not anonymous.
+        """
+        project = _project(
+            [{"name": "frontend", "services": ["publish-on-web", "authorization-wall"]}],
+            [{"reference": "frontend"}],
+        )
+        config = SleepModeConfig(enabled=True)
+        assert manifests.select_waker_component(project, project["deployments"][0], config, handler) is None
+
+    def test_naming_a_walled_component_explicitly_does_not_override_it(self, handler: ProjectFileHandler) -> None:
+        """Asking for it by name is not consent to publish it unauthenticated."""
+        project = _project(
+            [
+                {"name": "frontend", "services": ["publish-on-web"]},
+                {"name": "admin", "services": ["publish-on-web", "authorization-wall"]},
+            ],
+            [{"reference": "frontend"}, {"reference": "admin"}],
+        )
+        config = SleepModeConfig(enabled=True, waker_component="admin")
+        assert manifests.select_waker_component(project, project["deployments"][0], config, handler) is None
+
+    def test_an_unwalled_component_next_to_a_walled_one_is_still_picked(self, handler: ProjectFileHandler) -> None:
+        """Excluding the walled one must not take the whole deployment down with it: with
+        one candidate left, that candidate is the waker."""
+        project = _project(
+            [
+                {"name": "frontend", "services": ["publish-on-web"]},
+                {"name": "admin", "services": ["publish-on-web", "authorization-wall"]},
+            ],
+            [{"reference": "frontend"}, {"reference": "admin"}],
+        )
+        config = SleepModeConfig(enabled=True)
+        assert manifests.select_waker_component(project, project["deployments"][0], config, handler) == "frontend"
+
     def test_passthrough_tls_excluded(self, handler: ProjectFileHandler) -> None:
         project = _project(
             [
