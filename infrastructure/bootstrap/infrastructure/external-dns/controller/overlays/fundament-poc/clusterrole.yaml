@@ -8,3 +8,8 @@ rules:
   - apiGroups: ["extensions", "networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "watch", "list"]
+  # Voor --source=service, nodig om router.<zone> te publiceren vanaf de
+  # LoadBalancer-service van ingress-nginx. Zie de toelichting in kustomization.yaml.
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "pods"]
+    verbs: ["get", "watch", "list"]
