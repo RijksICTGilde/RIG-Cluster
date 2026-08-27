@@ -1,0 +1,327 @@
+# De clustercatalogus: welke clusters er zijn en wat elk cluster levert.
+#
+# Dit stond als een dict van 350 regels in opi/core/cluster_config.py, met bovenaan een
+# TODO die vroeg om precies deze verhuizing. Het is data en geen code: de omzetting is
+# gecontroleerd door de geladen YAML te vergelijken met de oorspronkelijke dict, en die
+# vergelijking staat als test vast in tests/test_cluster_catalogus.py.
+#
+# De accessors blijven Python (opi/core/cluster_config.py). Daar zit kennis in die niet
+# in YAML past, zoals de reden waarom OPI en de mailrelay het over het afzenderadres
+# eens moeten zijn.
+
+clusters:
+  local:
+    # Development offers a choice of target clusters in the create wizard; production
+    # (odcn-production) omits this key and so offers only itself. See
+    # get_selectable_clusters().
+    create_wizard_clusters: [local, sandboxed-local, odcn-production]
+    ingress_postfix: .kind
+    namespace_prefix: rig-
+    argo_namespace: rig-system
+    namespace: rig-system
+    keycloak_discovery_url: https://keycloak.kind  # For pods in cluster
+    database_server: rig-db-rw.rig-system.svc.cluster.local
+    minio_host: minio.rig-system.svc.cluster.local
+    minio_port: 9000
+    redis_server: rig-redis.rig-system.svc.cluster.local
+    backup_namespace: rig-backup-destination
+    mail_relay_namespace: rig-ron
+    mail_relay_host: rig-mail-relay.rig-ron.svc.cluster.local
+    mail_relay_port: 587
+    mail_from_address: noreply-rijksapp@rijksoverheid.nl
+    # Namespace of the CloudNativePG operator, which must reach the dedicated
+    # CNPG cluster's pods to extract instance status; the infra-namespace
+    # NetworkPolicy allows ingress from here.
+    database_operator_namespace: cnpg-system
+    ingress_controller_selector:
+      namespace: ingress-nginx
+      pod_labels: {}
+    ingress:
+      enable_tls: true
+      cluster_issuer: kind-ca-issuer
+      ip_whitelist: 0.0.0.0
+    storage:
+      storage_class_name: csi-hostpath-sc
+      access_modes: [ReadWriteOnce]
+      volume_snapshot_class: csi-hostpath-snapclass
+    keycloak:
+      support_http: true  # Generate both HTTP and HTTPS redirect URIs
+    min_memory_limit_mi: 25
+    max_memory_limit_mi: 4096
+    max_memory_request_mi: 1024
+    uses_capsule: false
+    min_cpu_m: 25
+    max_cpu_request_m: 250
+    max_cpu_limit_m: 4000
+    supports_vpa: false
+    # Geen supports_custom_domain_certificates hier: dit cluster draait een eigen CA
+    # (cluster_issuer kind-ca-issuer) en of die ook een eigen domein tekent is niet
+    # nagemeten. Afwezig betekent zwijgen, en dat is het eerlijke antwoord bij een
+    # cluster waarvan we het niet weten.
+    assigns_uid_via_scc: false
+    # Geen platformafspraak op dit cluster: tenant-namespaces krijgen niets extra's.
+    namespace_metadata:
+      labels: {}
+      annotations: {}
+    ca_certificate:
+      enabled: true
+      node_path: /etc/ssl/certs/kind-local-ca.crt
+      container_path: /etc/ssl/certs/custom-ca.crt
+      env_vars:
+        REQUESTS_CA_BUNDLE: /etc/ssl/certs
+        NODE_EXTRA_CA_CERTS: /etc/ssl/certs/custom-ca.crt
+        SSL_CERT_DIR: /etc/ssl/certs  # For Python's native SSL (httpx, etc.)
+    letsencrypt:
+      contact_email: rig-platform@rijksoverheid.nl  # Default contact for Let's Encrypt certificates
+    nice_url:
+      supported_domains:
+        - domain: kind
+          supports_dots: true
+          restricted_subdomains: true
+        - domain: local
+          supports_dots: true
+          restricted_subdomains: true
+  sandboxed-local:
+    ingress_postfix: .sandbox.rijksapp.dev
+    namespace_prefix: rig-
+    argo_namespace: rig-system
+    namespace: rig-system
+    keycloak_discovery_url: https://keycloak.sandbox.rijksapp.dev
+    database_server: rig-db-rw.rig-system.svc.cluster.local
+    minio_host: minio.rig-system.svc.cluster.local
+    minio_port: 9000
+    redis_server: rig-redis.rig-system.svc.cluster.local
+    backup_namespace: rig-backup-destination
+    mail_relay_namespace: rig-ron
+    mail_relay_host: rig-mail-relay.rig-ron.svc.cluster.local
+    mail_relay_port: 587
+    mail_from_address: noreply-rijksapp@rijksoverheid.nl
+    # Namespace of the CloudNativePG operator, which must reach the dedicated
+    # CNPG cluster's pods to extract instance status; the infra-namespace
+    # NetworkPolicy allows ingress from here.
+    database_operator_namespace: cnpg-system
+    ingress_controller_selector:
+      namespace: ingress-nginx
+      pod_labels: {}
+    ingress:
+      enable_tls: true
+      ip_whitelist: 0.0.0.0/0,::/0
+    storage:
+      storage_class_name: csi-hostpath-sc
+      access_modes: [ReadWriteOnce]
+      volume_snapshot_class: csi-hostpath-snapclass
+    keycloak:
+      support_http: false
+    min_memory_limit_mi: 25
+    max_memory_limit_mi: 4096
+    max_memory_request_mi: 1024
+    uses_capsule: false
+    min_cpu_m: 25
+    max_cpu_request_m: 250
+    max_cpu_limit_m: 4000
+    supports_vpa: false
+    # The sandbox serves *.sandbox.rijksapp.dev from a pre-installed wildcard
+    # certificate and runs a fake cert-manager CRD with no controller, so nothing is
+    # ever issued here. See supports_custom_domain_certificates().
+    supports_custom_domain_certificates: false
+    # Er is geen VLAM en geen RON in de sandbox: dit is een PLAATSHOUDER, alleen
+    # zodat de bedrading van de dienst (kaart, env-var, netwerkregel) hier
+    # end-to-end te doorlopen is. Het adres wijst naar een project dat hier niet
+    # bestaat, dus een pod die het probeert krijgt geen antwoord. Zie
+    # features/vlam-service.md.
+    vlam:
+      project: vlam-wt8
+      deployment: productie
+      component: vlam-proxy-intern
+      namespace: vlam-wt8
+      port: 8081
+    assigns_uid_via_scc: false
+    # Geen platformafspraak op dit cluster: tenant-namespaces krijgen niets extra's.
+    namespace_metadata:
+      labels: {}
+      annotations: {}
+    letsencrypt:
+      contact_email: rig-platform@rijksoverheid.nl
+    nice_url:
+      supported_domains:
+        - domain: sandbox.rijksapp.dev
+          supports_dots: false
+          restricted_subdomains: true
+        - domain: robbertuittenbroek.nl
+          supports_dots: true
+          issuer: letsencrypt
+          restricted_subdomains: true
+  # Fundament-platform (Gardener shoot op metal-stack), organisatie zad, cluster zad-cluster.
+  # Alle waarden hieronder zijn op het cluster gemeten, niet overgenomen van een ander cluster.
+  # Zie docs/fundament-cluster-checklist.md voor de metingen en wat er nog open staat.
+  fundament-poc:
+    ingress_postfix: .fundament-poc.rijksapp.dev
+    namespace_prefix: rig-
+    argo_namespace: rig-system
+    namespace: rig-system
+    keycloak_discovery_url: https://keycloak.fundament-poc.rijksapp.dev
+    database_server: rig-db-rw.rig-system.svc.cluster.local
+    minio_host: minio.rig-system.svc.cluster.local
+    minio_port: 9000
+    redis_server: rig-redis.rig-system.svc.cluster.local
+    backup_namespace: rig-backup-destination
+    # De relay draait hier echt: rig-mail-relay in rig-ron, Service 587 -> pod 2525,
+    # gemeten op het cluster. Zelfde vorm als de sandbox, want de namespace draagt hier
+    # geen Calico-egressannotatie -- die reden om apart te staan geldt alleen op ODCN.
+    # De upstream is de Mailpit-sink in diezelfde namespace, dus er verlaat geen post
+    # het cluster. Toch hetzelfde afzenderadres als de andere clusters: het adres doet
+    # er pas toe bij echte bezorging (SPF-alignment onder de p=reject van de
+    # Rijksoverheid, zie docs/ron-koppeling.md), en een afwijkend adres hier zou het
+    # enige zijn dat op dit cluster anders is dan in productie. Wat je in de sink ziet,
+    # is dan ook precies wat een ontvanger zou krijgen.
+    mail_relay_namespace: rig-ron
+    mail_relay_host: rig-mail-relay.rig-ron.svc.cluster.local
+    mail_relay_port: 587
+    mail_from_address: noreply-rijksapp@rijksoverheid.nl
+    database_operator_namespace: cnpg-system
+    # Zelf geïnstalleerde ingress-nginx (cloud-variant, niet de Kind-variant): het
+    # platform levert geen ingresscontroller. Podlabel gemeten op de draaiende controller.
+    ingress_controller_selector:
+      namespace: ingress-nginx
+      pod_labels:
+        app.kubernetes.io/name: ingress-nginx
+    ingress:
+      enable_tls: true
+      ip_whitelist: 0.0.0.0/0,::/0
+    # CoreDNS luistert hier op 8053; de kube-dns Service vertaalt 53 daarheen. Zie
+    # get_dns_ports voor waarom een NetworkPolicy dan beide poorten nodig heeft.
+    dns_ports: [53, 8053]
+    # local-path-provisioner op de vrije ruimte van de node. Bewust geen
+    # volume_snapshot_class: die kan local-path niet, dus PVC-back-ups melden dat en
+    # stoppen (zie PVCBackupManager._backup_pvc). Database- en bucketback-ups werken wel.
+    # Vervalt zodra het platform zijn Rook/Ceph-plugin levert; dan komt de snapshotclass mee.
+    storage:
+      storage_class_name: local-path
+      access_modes: [ReadWriteOnce]
+    keycloak:
+      support_http: false
+    # Geen LimitRange of ResourceQuota op dit cluster, dus dit zijn onze eigen grenzen.
+    # Ruimer dan de andere clusters: de node heeft 32 cores en 122 GiB allocatable.
+    # Deze waarden begrenzen zowel wat een project mag vragen als het plafond van de
+    # resource-tuner (resource_analyzer kapt aanbevelingen hierop af), en die tuner
+    # draait hier echt omdat supports_vpa aanstaat.
+    # Bewust niet tot aan de nodegrootte: het is een enkele node, dus een component
+    # dat alles opeist verhongert de rest inclusief OPI zelf. Met deze maxima passen
+    # er nog ruim tien zware componenten naast elkaar.
+    min_memory_limit_mi: 25
+    max_memory_limit_mi: 16384
+    max_memory_request_mi: 8192
+    uses_capsule: false
+    min_cpu_m: 25
+    max_cpu_request_m: 2000
+    max_cpu_limit_m: 8000
+    # VPA draait hier wel en levert aanbevelingen, anders dan op de andere niet-ODCN clusters.
+    supports_vpa: true
+    # Een ECHTE cert-manager (wave -1) en van buiten bereikbaar over 80, dus een
+    # ACME HTTP-01-challenge voor een eigen domein kan hier aflopen. Afwezig zou
+    # hetzelfde betekenen, maar dit is precies het veld waar zwijgen eerder een
+    # verkeerd certificaat opleverde (zad-cli, bevinding 22), dus het staat er.
+    supports_custom_domain_certificates: true
+    # Geen SCC en geen Pod Security Admission: niemand wijst een UID toe, dus wij pinnen er een.
+    assigns_uid_via_scc: false
+    # Geen policy-engine die iets van een namespace verlangt.
+    namespace_metadata:
+      labels: {}
+      annotations: {}
+    # Egress staat open naar 0.0.0.0/0 op 443, dus ghcr.io en docker.io zijn direct
+    # bereikbaar en er is geen registry-mirror nodig.
+    extensions: []
+    letsencrypt:
+      contact_email: rig-platform@rijksoverheid.nl
+    nice_url:
+      supported_domains:
+        - domain: fundament-poc.rijksapp.dev
+          supports_dots: false
+          issuer: letsencrypt
+          restricted_subdomains: true
+          external_dns_target: router.fundament-poc.rijksapp.dev
+  odcn-production:
+    ingress_postfix: .rig.prd1.gn2.quattro.rijksapps.nl
+    namespace_prefix: rig-prd-
+    namespace: rig-prd-operations
+    argo_namespace: rig-prd-operations
+    keycloak_discovery_url: https://keycloak.rijksapp.nl
+    database_server: rig-db-rw.rig-prd-operations.svc.cluster.local  # Assuming production DB is in operations namespace
+    minio_host: minio.rig-prd-operations.svc.cluster.local
+    minio_port: 9000
+    redis_server: rig-redis.rig-prd-operations.svc.cluster.local
+    backup_namespace: rig-prd-backup
+    # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus daar
+    # heet hij rig-prd-ron; op local en sandbox rig-ron. Zelfde vorm als
+    # backup_namespace hierboven.
+    mail_relay_namespace: rig-prd-ron
+    mail_relay_host: rig-mail-relay.rig-prd-ron.svc.cluster.local
+    mail_relay_port: 587
+    mail_from_address: noreply-rijksapp@rijksoverheid.nl
+    # Namespace of the CloudNativePG operator (see the note in the other clusters).
+    database_operator_namespace: cnpg-system
+    ingress_controller_selector:
+      namespace: openshift-ingress
+      pod_labels:
+        ingresscontroller.operator.openshift.io/deployment-ingresscontroller: rig
+    ingress:
+      enable_tls: true
+      # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
+      ip_whitelist: 0.0.0.0/0,::/0  # VPN only: "147.181.0.0/16"
+    storage:
+      storage_class_name: ocs-storagecluster-ceph-rbd
+      access_modes: [ReadWriteOnce]
+      volume_snapshot_class: ocs-storagecluster-rbdplugin-snapclass
+    keycloak:
+      support_http: false  # Only generate HTTPS redirect URIs in production
+    min_memory_limit_mi: 25
+    max_memory_limit_mi: 4096
+    max_memory_request_mi: 1024
+    uses_capsule: true
+    min_cpu_m: 25
+    max_cpu_request_m: 250
+    max_cpu_limit_m: 4000
+    supports_vpa: true
+    # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
+    # challenge for a domain of the user's own can complete here.
+    supports_custom_domain_certificates: true
+    # VLAM (de taalmodel-API van SSC-ICT) is alleen hier bereikbaar: de RON-koppeling
+    # bestaat op dit cluster en nergens anders. De sleutels beschrijven WAAR de
+    # interne proxy van het vlam-project draait; de dienst leidt daar zowel het
+    # adres als de netwerkregel uit af, zodat die twee niet uiteen kunnen lopen.
+    # ``namespace`` is de onvoorvoegde naam uit het projectbestand; het cluster zet
+    # er ``rig-prd-`` voor (get_prefixed_namespace).
+    vlam:
+      project: vlam-wt8
+      deployment: productie
+      component: vlam-proxy-intern
+      namespace: vlam-wt8
+      port: 8081
+    assigns_uid_via_scc: true
+    # De egress-gateway-annotatie is een ODCN-afspraak, door Kyverno gecontroleerd:
+    # https://docs.rijksapps.nl/egress-internet-traffic/. Bij een foutieve waarde
+    # wordt de namespace onbruikbaar, dus alleen hier zetten.
+    namespace_metadata:
+      labels: {}
+      annotations:
+        egress.projectcalico.org/egressGatewayPolicy: internet
+    letsencrypt:
+      contact_email: rig-platform@rijksoverheid.nl  # Default contact for Let's Encrypt certificates
+    nice_url:
+      supported_domains:
+        - domain: rijks.app
+          supports_dots: true
+          issuer: letsencrypt
+          restricted_subdomains: true
+          external_dns_target: router.rijks.app
+        - domain: rijksapp.nl
+          supports_dots: true
+          issuer: letsencrypt
+          restricted_subdomains: true
+          external_dns_target: router.rijksapp.nl
+        - domain: rijksapp.dev
+          supports_dots: true
+          issuer: letsencrypt
+          restricted_subdomains: true
+          external_dns_target: router.rijksapp.dev
+    extensions: [odcn-registry-rewrite]
