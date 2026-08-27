@@ -728,6 +728,48 @@ async def _resolve_running_image() -> None:
         set_running_image(image)
 
 
+def normalize_repo_password() -> None:
+    """Zorg dat PROJECT_REPO_PASSWORD zijn opslagvorm benoemt voordat er iets mee geschreven wordt.
+
+    De waarde kan kaal binnenkomen: fundament-poc mapt hem met een secretKeyRef uit het
+    Secret ``forgejo-admin``, zodat het wachtwoord op een plek staat en ArgoCD (als
+    repo-creds) en de init-Job hetzelfde secret lezen. Een prefix in dat Secret zetten kan
+    niet, want die twee willen juist de kale waarde.
+
+    De instelling belandt in projectbestanden die naar git gaan, en het schema eist daar een
+    AGE-blok of een expliciete ``plain:``. Hier normaliseren en niet bij de bouwers, want het
+    zijn er twee: ``generate_self_service_project_yaml`` (API en self-service) en
+    ``configs/project-template.yaml`` (de wizard). Een van de twee repareren laat de andere
+    stuk, en precies zo werd dit de eerste keer gemist.
+
+    De enkelregelige base64-vorm, want het sjabloon substitueert in een YAML-scalar op een
+    regel en een meerregelig AGE-blok breekt daar.
+
+    Niet in ``config._get_settings``: ``opi.utils.age`` importeert ``settings`` op
+    moduleniveau, dus daar bestaat het object nog niet.
+    """
+    from opi.utils.age import encrypt_age_content_as_base64_prefixed_sync, has_password_prefix
+
+    wachtwoord = settings.PROJECT_REPO_PASSWORD
+    if not wachtwoord or has_password_prefix(wachtwoord):
+        return
+
+    if not settings.SOPS_AGE_PUBLIC_KEY:
+        # Niet fataal: zonder AGE-sleutel kan OPI toch geen projecten schrijven, en de boot
+        # laten omvallen op een configuratiedetail kost meer dan het oplevert. De schrijfweg
+        # weigert de waarde straks luid genoeg.
+        logger.warning(
+            "PROJECT_REPO_PASSWORD heeft geen prefix en er is geen AGE-sleutel om hem te "
+            "versleutelen; projectbestanden worden door het schema geweigerd"
+        )
+        return
+
+    settings.PROJECT_REPO_PASSWORD = encrypt_age_content_as_base64_prefixed_sync(
+        wachtwoord, settings.SOPS_AGE_PUBLIC_KEY
+    )
+    logger.info("PROJECT_REPO_PASSWORD kwam zonder prefix binnen en is versleuteld voor opslag")
+
+
 async def run_startup_tasks(app: FastAPI) -> bool:
     """
     Run all startup tasks for the application.
@@ -739,6 +781,8 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     Returns:
         True if all startup tasks completed successfully on first attempt
     """
+    normalize_repo_password()
+
     from opi.core.readiness import get_readiness_state
 
     readiness = get_readiness_state()

@@ -150,6 +150,16 @@ def encrypt_age_content_sync(plain_content: str, public_key: str | None) -> str:
     return process.stdout.strip()
 
 
+def encrypt_age_content_as_base64_prefixed_sync(client_secret: str, public_key: str | None) -> str:
+    """De enkelregelige ``base64+age:``-vorm, zonder event loop.
+
+    Zelfde uitkomst als de async variant. Nodig omdat de instellingen bij het opstarten
+    genormaliseerd worden, en dat gebeurt buiten een draaiende loop.
+    """
+    encrypted_content = encrypt_age_content_sync(client_secret, public_key)
+    return f"base64+age:{base64.b64encode(encrypted_content.encode()).decode()}"
+
+
 def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | None:
     """
     Decrypt age-encrypted content using the provided private key (synchronous version).
