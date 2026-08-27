@@ -1,0 +1,22 @@
+{#
+  Toegang: waar de platformdiensten staan en hoe je erin komt.
+
+  De pagina is de omlijsting; de diensten zelf staan in bg/_toegang-diensten.html.j2. Die
+  splitsing heeft niets met hergebruik te maken: het basissjabloon vraagt een echte
+  ``request``, waardoor deze pagina alleen in een browsertest te renderen is. Het fragment
+  heeft dat niet nodig, dus daar kan een gewone test op staan die controleert dat de
+  ROOS-componenten kloppen.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import page_head %}
+
+{% block page_title %}Toegang - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "Toegang",
+        "De diensten van dit platform waar je zelf op inlogt, met hun adres en de beheerderstoegang. De waarden komen bij het laden rechtstreeks uit het cluster; ze worden hier niet bewaard."
+    ) }}
+
+    {% include "bg/_toegang-diensten.html.j2" %}
+{% endblock %}
