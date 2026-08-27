@@ -63,11 +63,17 @@ Modus A uit de volgende paragraaf is dezelfde generator met `FIXED_PASSWORD` gez
 
 **Wat de generator vandaag NIET kan**, en dat is de echte bouwlijst:
 
-1. Er is geen pad dat rechtstreeks toepast. Hij schrijft bestanden en gaat uit van SOPS. De bestemming "apply, nooit een bestand" bestaat nog niet.
-2. Hij kent geen reconciliatie. Draai je hem twee keer, dan krijg je twee keer nieuwe wachtwoorden, ook voor de geheimen die al goed op het cluster stonden. Een tweede run hoort te zien wat er al is en alleen aan te vullen.
+1. Er is geen pad dat rechtstreeks toepast. Hij schrijft bestanden en gaat uit van SOPS. De bestemming "apply, nooit een bestand" bestaat nog niet. *Wel makkelijker geworden: de generatie staat sinds `0ecfcd1e` in `scripts/generate-secrets.sh` en krijgt zijn invoer uit omgevingsvariabelen, dus er is nu een plek om die bestemming aan toe te voegen.*
+2. ~~Hij kent geen reconciliatie.~~ **Bijgesteld, en de eerste formulering was fout.** Hij roteerde niet: een bestaand uitvoerbestand werd overgeslagen. Het gat zat een niveau dieper, op VELDNIVEAU. Kreeg een blauwdruk er later een veld bij, dan bestond het bestand al, werd het in zijn geheel overgeslagen, en landde dat veld op een draaiend cluster nooit meer. Gemeten op odcn: `keycloak-admin-secret` mist vier velden die de blauwdruk wel heeft. **Opgelost in `0ecfcd1e`**: bestaat het bestand niet, dan wordt het volledig gegenereerd; bestaat het wel, dan worden alleen ontbrekende velden aangevuld, en wordt een bestaande waarde nooit overschreven.
 3. Het overzichtsbestand dat hij oplevert is de kiem van de export uit fase 3a, maar het faalde tot voor kort stil (zie daar).
 
-**En hier hoort een keuze over vorm bij.** De notitie stelde standalone een installerscript voor naast het `Start()`-pad van de plugin. Dat zijn dan twee implementaties van fase 2, en de standalone is degene die verrot omdat hij minder gedraaid wordt. Bouw in plaats daarvan de reconciler, en geef die een standalone ingang. Een reconciler die één keer draait is een prima script; een script dat moet leren reconciliëren is een herschrijving.
+**En hier hoort een keuze over vorm bij.** De notitie stelde standalone een installerscript voor naast het `Start()`-pad van de plugin. Dat zijn dan twee implementaties van fase 2, en de standalone is degene die verrot omdat hij minder gedraaid wordt. Bouw in plaats daarvan één ding en roep het van twee kanten aan.
+
+Hoe dat eruitziet is af te kijken bij fundament zelf. Een plugin is daar een container-image dat een HTTP-server op poort 8080 draait met `/livez` en `/readyz`, configuratie krijgt als `FUNP_`-omgevingsvariabelen, en optioneel `Reconcile` implementeert (standaard elke vijf minuten). Hun eigen referentieplugin, `plugins/cert-manager/plugin.go`, is 121 regels Go die het echte werk doen met `exec.CommandContext(ctx, "helm", ...)`, en de Dockerfile is het binary plus `apk add helm`. **Het contract is dus een image met een klein serverlaagje; het werk daarbinnen mag gewoon CLI-aanroepen zijn.**
+
+Daarmee vervalt het idee dat we alles naar een andere taal moeten overzetten om plugin-ready te zijn. Wat wel moet is dat elke stap (a) zijn configuratie uit omgevingsvariabelen haalt, (b) veilig herhaald kan worden, en (c) geen interactieve stap en geen lokaal bestand nodig heeft dat moet overleven. Punt (c) is de AGE-sleutel opnieuw, nu met een scherpere rand: een plugin-pod heeft geen plek voor `security/key.txt`.
+
+En let op wat er in fundament ontbreekt aan invoer: `spec.config` is een platte `map[string]string` zonder schema. De rijke UI-machinerie in de PluginDefinition (`menu`, `uiHints.formGroups`, `customComponents`) gaat over de CRD's die de plugin MEEBRENGT, niet over het installeren ervan. Voor ZAD betekent dat: onze fase-1-keuzes zijn geen handvol platte knoppen en horen dus een eigen CRD te worden met een formulier eromheen, niet in `spec.config` geperst.
 
 ## De invariant, en de puzzel die eronder ligt
 
