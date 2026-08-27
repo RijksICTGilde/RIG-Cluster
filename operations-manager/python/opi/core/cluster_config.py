@@ -4,362 +4,144 @@ Cluster configuration for different environments.
 This module defines cluster-specific settings including ingress postfixes.
 """
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Any
 
-# TODO: In the future, read this configuration from YAML file
-CLUSTER_CONFIG = {
-    "local": {
-        # Development offers a choice of target clusters in the create wizard; production
-        # (odcn-production) omits this key and so offers only itself. See
-        # get_selectable_clusters().
-        "create_wizard_clusters": ["local", "sandboxed-local", "odcn-production"],
-        "ingress_postfix": ".kind",
-        "namespace_prefix": "rig-",
-        "argo_namespace": "rig-system",
-        "namespace": "rig-system",
-        "keycloak_discovery_url": "https://keycloak.kind",  # For pods in cluster
-        "database_server": "rig-db-rw.rig-system.svc.cluster.local",
-        "minio_host": "minio.rig-system.svc.cluster.local",
-        "minio_port": 9000,
-        "redis_server": "rig-redis.rig-system.svc.cluster.local",
-        "backup_namespace": "rig-backup-destination",
-        "mail_relay_namespace": "rig-ron",
-        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
-        "mail_relay_port": 587,
-        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
-        # Namespace of the CloudNativePG operator, which must reach the dedicated
-        # CNPG cluster's pods to extract instance status; the infra-namespace
-        # NetworkPolicy allows ingress from here.
-        "database_operator_namespace": "cnpg-system",
-        "ingress_controller_selector": {
-            "namespace": "ingress-nginx",
-            "pod_labels": {},
-        },
-        "ingress": {
-            "enable_tls": True,
-            "cluster_issuer": "kind-ca-issuer",
-            "ip_whitelist": "0.0.0.0",
-        },
-        "storage": {
-            "storage_class_name": "csi-hostpath-sc",
-            "access_modes": ["ReadWriteOnce"],
-            "volume_snapshot_class": "csi-hostpath-snapclass",
-        },
-        "keycloak": {
-            "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
-        },
-        "min_memory_limit_mi": 25,
-        "max_memory_limit_mi": 4096,
-        "max_memory_request_mi": 1024,
-        "uses_capsule": False,
-        "min_cpu_m": 25,
-        "max_cpu_request_m": 250,
-        "max_cpu_limit_m": 4000,
-        "supports_vpa": False,
-        # Geen supports_custom_domain_certificates hier: dit cluster draait een eigen CA
-        # (cluster_issuer kind-ca-issuer) en of die ook een eigen domein tekent is niet
-        # nagemeten. Afwezig betekent zwijgen, en dat is het eerlijke antwoord bij een
-        # cluster waarvan we het niet weten.
-        "assigns_uid_via_scc": False,
-        # Geen platformafspraak op dit cluster: tenant-namespaces krijgen niets extra's.
-        "namespace_metadata": {"labels": {}, "annotations": {}},
-        "ca_certificate": {
-            "enabled": True,
-            "node_path": "/etc/ssl/certs/kind-local-ca.crt",
-            "container_path": "/etc/ssl/certs/custom-ca.crt",
-            "env_vars": {
-                "REQUESTS_CA_BUNDLE": "/etc/ssl/certs",
-                "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/custom-ca.crt",
-                "SSL_CERT_DIR": "/etc/ssl/certs",  # For Python's native SSL (httpx, etc.)
-            },
-        },
-        "letsencrypt": {
-            "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
-        },
-        "nice_url": {
-            "supported_domains": [
-                {"domain": "kind", "supports_dots": True, "restricted_subdomains": True},
-                {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
-            ],
-        },
-    },
-    "sandboxed-local": {
-        "ingress_postfix": ".sandbox.rijksapp.dev",
-        "namespace_prefix": "rig-",
-        "argo_namespace": "rig-system",
-        "namespace": "rig-system",
-        "keycloak_discovery_url": "https://keycloak.sandbox.rijksapp.dev",
-        "database_server": "rig-db-rw.rig-system.svc.cluster.local",
-        "minio_host": "minio.rig-system.svc.cluster.local",
-        "minio_port": 9000,
-        "redis_server": "rig-redis.rig-system.svc.cluster.local",
-        "backup_namespace": "rig-backup-destination",
-        "mail_relay_namespace": "rig-ron",
-        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
-        "mail_relay_port": 587,
-        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
-        # Namespace of the CloudNativePG operator, which must reach the dedicated
-        # CNPG cluster's pods to extract instance status; the infra-namespace
-        # NetworkPolicy allows ingress from here.
-        "database_operator_namespace": "cnpg-system",
-        "ingress_controller_selector": {
-            "namespace": "ingress-nginx",
-            "pod_labels": {},
-        },
-        "ingress": {
-            "enable_tls": True,
-            "ip_whitelist": "0.0.0.0/0,::/0",
-        },
-        "storage": {
-            "storage_class_name": "csi-hostpath-sc",
-            "access_modes": ["ReadWriteOnce"],
-            "volume_snapshot_class": "csi-hostpath-snapclass",
-        },
-        "keycloak": {
-            "support_http": False,
-        },
-        "min_memory_limit_mi": 25,
-        "max_memory_limit_mi": 4096,
-        "max_memory_request_mi": 1024,
-        "uses_capsule": False,
-        "min_cpu_m": 25,
-        "max_cpu_request_m": 250,
-        "max_cpu_limit_m": 4000,
-        "supports_vpa": False,
-        # The sandbox serves *.sandbox.rijksapp.dev from a pre-installed wildcard
-        # certificate and runs a fake cert-manager CRD with no controller, so nothing is
-        # ever issued here. See supports_custom_domain_certificates().
-        "supports_custom_domain_certificates": False,
-        # Er is geen VLAM en geen RON in de sandbox: dit is een PLAATSHOUDER, alleen
-        # zodat de bedrading van de dienst (kaart, env-var, netwerkregel) hier
-        # end-to-end te doorlopen is. Het adres wijst naar een project dat hier niet
-        # bestaat, dus een pod die het probeert krijgt geen antwoord. Zie
-        # features/vlam-service.md.
-        "vlam": {
-            "project": "vlam-wt8",
-            "deployment": "productie",
-            "component": "vlam-proxy-intern",
-            "namespace": "vlam-wt8",
-            "port": 8081,
-        },
-        "assigns_uid_via_scc": False,
-        # Geen platformafspraak op dit cluster: tenant-namespaces krijgen niets extra's.
-        "namespace_metadata": {"labels": {}, "annotations": {}},
-        "letsencrypt": {
-            "contact_email": "rig-platform@rijksoverheid.nl",
-        },
-        "nice_url": {
-            "supported_domains": [
-                {"domain": "sandbox.rijksapp.dev", "supports_dots": False, "restricted_subdomains": True},
-                {
-                    "domain": "robbertuittenbroek.nl",
-                    "supports_dots": True,
-                    "issuer": "letsencrypt",
-                    "restricted_subdomains": True,
-                },
-            ],
-        },
-    },
-    # Fundament-platform (Gardener shoot op metal-stack), organisatie zad, cluster zad-cluster.
-    # Alle waarden hieronder zijn op het cluster gemeten, niet overgenomen van een ander cluster.
-    # Zie docs/fundament-cluster-checklist.md voor de metingen en wat er nog open staat.
-    "fundament-poc": {
-        "ingress_postfix": ".fundament-poc.rijksapp.dev",
-        "namespace_prefix": "rig-",
-        "argo_namespace": "rig-system",
-        "namespace": "rig-system",
-        "keycloak_discovery_url": "https://keycloak.fundament-poc.rijksapp.dev",
-        "database_server": "rig-db-rw.rig-system.svc.cluster.local",
-        "minio_host": "minio.rig-system.svc.cluster.local",
-        "minio_port": 9000,
-        "redis_server": "rig-redis.rig-system.svc.cluster.local",
-        "backup_namespace": "rig-backup-destination",
-        # De relay draait hier echt: rig-mail-relay in rig-ron, Service 587 -> pod 2525,
-        # gemeten op het cluster. Zelfde vorm als de sandbox, want de namespace draagt hier
-        # geen Calico-egressannotatie -- die reden om apart te staan geldt alleen op ODCN.
-        # De upstream is de Mailpit-sink in diezelfde namespace, dus er verlaat geen post
-        # het cluster. Toch hetzelfde afzenderadres als de andere clusters: het adres doet
-        # er pas toe bij echte bezorging (SPF-alignment onder de p=reject van de
-        # Rijksoverheid, zie docs/ron-koppeling.md), en een afwijkend adres hier zou het
-        # enige zijn dat op dit cluster anders is dan in productie. Wat je in de sink ziet,
-        # is dan ook precies wat een ontvanger zou krijgen.
-        "mail_relay_namespace": "rig-ron",
-        "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
-        "mail_relay_port": 587,
-        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
-        "database_operator_namespace": "cnpg-system",
-        # Zelf geïnstalleerde ingress-nginx (cloud-variant, niet de Kind-variant): het
-        # platform levert geen ingresscontroller. Podlabel gemeten op de draaiende controller.
-        "ingress_controller_selector": {
-            "namespace": "ingress-nginx",
-            "pod_labels": {"app.kubernetes.io/name": "ingress-nginx"},
-        },
-        "ingress": {
-            "enable_tls": True,
-            "ip_whitelist": "0.0.0.0/0,::/0",
-        },
-        # CoreDNS luistert hier op 8053; de kube-dns Service vertaalt 53 daarheen. Zie
-        # get_dns_ports voor waarom een NetworkPolicy dan beide poorten nodig heeft.
-        "dns_ports": [53, 8053],
-        # local-path-provisioner op de vrije ruimte van de node. Bewust geen
-        # volume_snapshot_class: die kan local-path niet, dus PVC-back-ups melden dat en
-        # stoppen (zie PVCBackupManager._backup_pvc). Database- en bucketback-ups werken wel.
-        # Vervalt zodra het platform zijn Rook/Ceph-plugin levert; dan komt de snapshotclass mee.
-        "storage": {
-            "storage_class_name": "local-path",
-            "access_modes": ["ReadWriteOnce"],
-        },
-        "keycloak": {
-            "support_http": False,
-        },
-        # Geen LimitRange of ResourceQuota op dit cluster, dus dit zijn onze eigen grenzen.
-        # Ruimer dan de andere clusters: de node heeft 32 cores en 122 GiB allocatable.
-        # Deze waarden begrenzen zowel wat een project mag vragen als het plafond van de
-        # resource-tuner (resource_analyzer kapt aanbevelingen hierop af), en die tuner
-        # draait hier echt omdat supports_vpa aanstaat.
-        # Bewust niet tot aan de nodegrootte: het is een enkele node, dus een component
-        # dat alles opeist verhongert de rest inclusief OPI zelf. Met deze maxima passen
-        # er nog ruim tien zware componenten naast elkaar.
-        "min_memory_limit_mi": 25,
-        "max_memory_limit_mi": 16384,
-        "max_memory_request_mi": 8192,
-        "uses_capsule": False,
-        "min_cpu_m": 25,
-        "max_cpu_request_m": 2000,
-        "max_cpu_limit_m": 8000,
-        # VPA draait hier wel en levert aanbevelingen, anders dan op de andere niet-ODCN clusters.
-        "supports_vpa": True,
-        # Een ECHTE cert-manager (wave -1) en van buiten bereikbaar over 80, dus een
-        # ACME HTTP-01-challenge voor een eigen domein kan hier aflopen. Afwezig zou
-        # hetzelfde betekenen, maar dit is precies het veld waar zwijgen eerder een
-        # verkeerd certificaat opleverde (zad-cli, bevinding 22), dus het staat er.
-        "supports_custom_domain_certificates": True,
-        # Geen SCC en geen Pod Security Admission: niemand wijst een UID toe, dus wij pinnen er een.
-        "assigns_uid_via_scc": False,
-        # Geen policy-engine die iets van een namespace verlangt.
-        "namespace_metadata": {"labels": {}, "annotations": {}},
-        # Egress staat open naar 0.0.0.0/0 op 443, dus ghcr.io en docker.io zijn direct
-        # bereikbaar en er is geen registry-mirror nodig.
-        "extensions": [],
-        "letsencrypt": {
-            "contact_email": "rig-platform@rijksoverheid.nl",
-        },
-        "nice_url": {
-            "supported_domains": [
-                {
-                    "domain": "fundament-poc.rijksapp.dev",
-                    "supports_dots": False,
-                    "issuer": "letsencrypt",
-                    "restricted_subdomains": True,
-                    "external_dns_target": "router.fundament-poc.rijksapp.dev",
-                },
-            ],
-        },
-    },
-    "odcn-production": {
-        "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
-        "namespace_prefix": "rig-prd-",
-        "namespace": "rig-prd-operations",
-        "argo_namespace": "rig-prd-operations",
-        "keycloak_discovery_url": "https://keycloak.rijksapp.nl",
-        "database_server": "rig-db-rw.rig-prd-operations.svc.cluster.local",  # Assuming production DB is in operations namespace
-        "minio_host": "minio.rig-prd-operations.svc.cluster.local",
-        "minio_port": 9000,
-        "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
-        "backup_namespace": "rig-prd-backup",
-        # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus daar
-        # heet hij rig-prd-ron; op local en sandbox rig-ron. Zelfde vorm als
-        # backup_namespace hierboven.
-        "mail_relay_namespace": "rig-prd-ron",
-        "mail_relay_host": "rig-mail-relay.rig-prd-ron.svc.cluster.local",
-        "mail_relay_port": 587,
-        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
-        # Namespace of the CloudNativePG operator (see the note in the other clusters).
-        "database_operator_namespace": "cnpg-system",
-        "ingress_controller_selector": {
-            "namespace": "openshift-ingress",
-            "pod_labels": {
-                "ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "rig",
-            },
-        },
-        "ingress": {
-            "enable_tls": True,
-            # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
-            "ip_whitelist": "0.0.0.0/0,::/0",  # VPN only: "147.181.0.0/16"
-        },
-        "storage": {
-            "storage_class_name": "ocs-storagecluster-ceph-rbd",
-            "access_modes": ["ReadWriteOnce"],
-            "volume_snapshot_class": "ocs-storagecluster-rbdplugin-snapclass",
-        },
-        "keycloak": {
-            "support_http": False,  # Only generate HTTPS redirect URIs in production
-        },
-        "min_memory_limit_mi": 25,
-        "max_memory_limit_mi": 4096,
-        "max_memory_request_mi": 1024,
-        "uses_capsule": True,
-        "min_cpu_m": 25,
-        "max_cpu_request_m": 250,
-        "max_cpu_limit_m": 4000,
-        "supports_vpa": True,
-        # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
-        # challenge for a domain of the user's own can complete here.
-        "supports_custom_domain_certificates": True,
-        # VLAM (de taalmodel-API van SSC-ICT) is alleen hier bereikbaar: de RON-koppeling
-        # bestaat op dit cluster en nergens anders. De sleutels beschrijven WAAR de
-        # interne proxy van het vlam-project draait; de dienst leidt daar zowel het
-        # adres als de netwerkregel uit af, zodat die twee niet uiteen kunnen lopen.
-        # ``namespace`` is de onvoorvoegde naam uit het projectbestand; het cluster zet
-        # er ``rig-prd-`` voor (get_prefixed_namespace).
-        "vlam": {
-            "project": "vlam-wt8",
-            "deployment": "productie",
-            "component": "vlam-proxy-intern",
-            "namespace": "vlam-wt8",
-            "port": 8081,
-        },
-        "assigns_uid_via_scc": True,
-        # De egress-gateway-annotatie is een ODCN-afspraak, door Kyverno gecontroleerd:
-        # https://docs.rijksapps.nl/egress-internet-traffic/. Bij een foutieve waarde
-        # wordt de namespace onbruikbaar, dus alleen hier zetten.
-        "namespace_metadata": {
-            "labels": {},
-            "annotations": {"egress.projectcalico.org/egressGatewayPolicy": "internet"},
-        },
-        "letsencrypt": {
-            "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
-        },
-        "nice_url": {
-            "supported_domains": [
-                {
-                    "domain": "rijks.app",
-                    "supports_dots": True,
-                    "issuer": "letsencrypt",
-                    "restricted_subdomains": True,
-                    "external_dns_target": "router.rijks.app",
-                },
-                {
-                    "domain": "rijksapp.nl",
-                    "supports_dots": True,
-                    "issuer": "letsencrypt",
-                    "restricted_subdomains": True,
-                    "external_dns_target": "router.rijksapp.nl",
-                },
-                {
-                    "domain": "rijksapp.dev",
-                    "supports_dots": True,
-                    "issuer": "letsencrypt",
-                    "restricted_subdomains": True,
-                    "external_dns_target": "router.rijksapp.dev",
-                },
-            ],
-        },
-        "extensions": ["odcn-registry-rewrite"],
-    },
-}
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+logger = logging.getLogger(__name__)
+
+#: Waar de catalogus staat. De GEMOUNTE versie wint van de MEEGELEVERDE.
+#:
+#: De ConfigMap operations-manager-config wordt als volume op /etc/config gezet, zonder
+#: subPath, dus elke sleutel in die ConfigMap wordt daar een bestand. Een sleutel
+#: clusters.yaml toevoegen laat dit pad dus vanzelf verschijnen; de Deployment hoeft niet
+#: aangeraakt te worden. Daarmee kost een nieuw cluster geen codewijziging en geen nieuwe
+#: image meer.
+#:
+#: Het meegeleverde bestand is de BRON en niet slechts een terugval, en dat is een bewuste
+#: keuze. De verleiding is om de catalogus in elke overlay in de ConfigMap te zetten zodat
+#: hij altijd gemount is. Dat kan hier niet zonder er kopieen van te maken: de CMP-plugin
+#: van ArgoCD bouwt ZONDER --load-restrictor, dus een configMapGenerator mag geen bestand
+#: buiten zijn eigen map lezen (de external-dns-overlay draagt om dezelfde reden lokale
+#: kopieen). Drie overlays met elk een kopie van deze catalogus is precies de tweede kopie
+#: die kan verouderen.
+#:
+#: Dus: een bron in git, en een gemounte versie alleen op een cluster dat echt wil afwijken.
+#: Wie dat doet zet de sleutel clusters.yaml in de ConfigMap van die ene overlay en neemt
+#: daarmee bewust het onderhoud van die kopie op zich. De logregel hieronder zegt welke van
+#: de twee het geworden is.
+GEMOUNTE_CATALOGUS = Path("/etc/config/clusters.yaml")
+MEEGELEVERDE_CATALOGUS = Path(__file__).resolve().parent.parent / "configs" / "clusters.yaml"
+
+
+class _IngressControllerSelector(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    namespace: str
+    pod_labels: dict[str, str] = Field(default_factory=dict)
+
+
+class _ClusterEntry(BaseModel):
+    """Wat een cluster in de catalogus mag zeggen.
+
+    ``extra="forbid"`` met opzet: een typefout in een sleutelnaam gaf tot nu toe een
+    ``KeyError`` diep in een aanroep, en die klasse van fout nam deze week nog de hele boot
+    van OPI mee. Nu is het een leesbare startfout die het cluster en het veld noemt.
+
+    Dat betekent ook dat een NIEUWE sleutel deze klasse moet aanraken. Dat is de bedoeling:
+    een nieuw CLUSTER is configuratie en kost geen code, een nieuw VELD is nieuw gedrag en
+    kost dus wel code.
+
+    De mail-sleutels staan optioneel terwijl alle vier de clusters ze vandaag hebben. Dat is
+    geen slordigheid: ``has_mail_relay`` bestaat juist omdat een cluster zonder relay een
+    normale toestand is, en die functie leest de afwezigheid van ``mail_relay_host``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ingress_postfix: str
+    namespace_prefix: str
+    argo_namespace: str
+    namespace: str
+    keycloak_discovery_url: str
+    database_server: str
+    database_operator_namespace: str
+    minio_host: str
+    minio_port: int
+    redis_server: str
+    backup_namespace: str
+    ingress_controller_selector: _IngressControllerSelector
+    ingress: dict[str, Any]
+    storage: dict[str, Any]
+    keycloak: dict[str, Any]
+    letsencrypt: dict[str, Any]
+    namespace_metadata: dict[str, Any]
+    nice_url: dict[str, Any]
+    min_memory_limit_mi: int
+    max_memory_limit_mi: int
+    max_memory_request_mi: int
+    min_cpu_m: int
+    max_cpu_request_m: int
+    max_cpu_limit_m: int
+    uses_capsule: bool
+    supports_vpa: bool
+    assigns_uid_via_scc: bool
+
+    # Optioneel, en de afwezigheid betekent iets. Zie de klasse-docstring voor mail.
+    mail_relay_namespace: str | None = None
+    mail_relay_host: str | None = None
+    mail_relay_port: int | None = None
+    mail_from_address: str | None = None
+    create_wizard_clusters: list[str] | None = None
+    supports_custom_domain_certificates: bool | None = None
+    ca_certificate: dict[str, Any] | None = None
+    dns_ports: list[Any] | None = None
+    extensions: list[str] | None = None
+    vlam: dict[str, Any] | None = None
+
+
+def _laad_catalogus() -> dict[str, dict[str, Any]]:
+    """Leest clusters.yaml en geeft hem terug als de gewone dict die dit bestand altijd had.
+
+    Bewust GEEN Pydantic-objecten teruggeven. De 58 accessors hieronder lezen dicts, een
+    handvol modules leest ``CLUSTER_CONFIG`` rechtstreeks, en drie tests zetten er met
+    ``patch.dict`` een sleutel in. Het model is er om te VALIDEREN bij het laden, niet om de
+    vorm te veranderen; zo blijft de verhuizing van code naar configuratie een verhuizing.
+    """
+    pad = GEMOUNTE_CATALOGUS if GEMOUNTE_CATALOGUS.is_file() else MEEGELEVERDE_CATALOGUS
+    herkomst = "gemount" if pad == GEMOUNTE_CATALOGUS else "meegeleverd"
+
+    try:
+        rauw = yaml.safe_load(pad.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as fout:
+        raise RuntimeError(f"Clustercatalogus {pad} kon niet gelezen worden: {fout}") from fout
+
+    if not isinstance(rauw, dict) or not isinstance(rauw.get("clusters"), dict):
+        # RuntimeError en niet TypeError: dit is geen programmeerfout in een aanroep maar een
+        # bestand dat er anders uitziet dan afgesproken, en de aanroeper kan er niets mee
+        # anders dan stoppen.
+        raise RuntimeError(  # noqa: TRY004
+            f"Clustercatalogus {pad} heeft geen sleutel 'clusters' met clusters erin"
+        )
+
+    catalogus: dict[str, dict[str, Any]] = rauw["clusters"]
+    for naam, gegevens in catalogus.items():
+        try:
+            _ClusterEntry.model_validate(gegevens)
+        except ValidationError as fout:
+            raise RuntimeError(f"Cluster '{naam}' in {pad} klopt niet:\n{fout}") from fout
+
+    # Welke van de twee bronnen het geworden is, hoort in de log. Een stille terugval op het
+    # meegeleverde bestand terwijl iemand een ConfigMap dacht te hebben gezet is precies het
+    # soort verschil dat je pas ontdekt als er iets niet werkt.
+    logger.info(f"Clustercatalogus geladen ({herkomst}): {pad}, {len(catalogus)} clusters")
+    return catalogus
+
+
+CLUSTER_CONFIG = _laad_catalogus()
 
 
 def get_cluster_config(cluster_name: str) -> dict:
