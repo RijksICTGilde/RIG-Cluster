@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.utils.age import (
-    encrypt_age_content_as_base64_prefixed,
     decrypt_if_encrypted,
     encrypt_age_content,
+    encrypt_age_content_as_base64_prefixed,
     get_project_public_key,
     is_age_encrypted,
 )

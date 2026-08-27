@@ -51,7 +51,11 @@ async def test_create_git_connector_with_ssh():
     ssh_port = 2222
 
     # Call create_git_connector
-    connector = create_git_connector(repo_url=repo_url, ssh_key_path=ssh_key_path, ssh_port=ssh_port)
+    # Bewuste uitzondering op F821: create_git_connector bestaat niet meer in
+    # opi/connectors/git.py, dus deze test is dood. Hij wordt standaard niet verzameld
+    # (marker), en juist daardoor is het nooit opgevallen. Importeren op moduleniveau
+    # breekt de verzameling van dit bestand; repareren of weggooien is een eigen keuze.
+    connector = create_git_connector(repo_url=repo_url, ssh_key_path=ssh_key_path, ssh_port=ssh_port)  # noqa: F821
 
     # Verify SSH parameters were passed
     assert connector.ssh_key_path == ssh_key_path

@@ -11,6 +11,7 @@ sys.path.insert(0, ".")
 
 # Import directly to avoid other dependencies
 from opi.connectors.postgres import PostgresConnector
+from opi.core.config import settings
 
 pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 

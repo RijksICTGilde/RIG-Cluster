@@ -1,14 +1,22 @@
 """PVC manager for handling PersistentVolumeClaim resources and lifecycle."""
 
+from __future__ import annotations
+
 import glob
 import logging
 import os
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services import CloneFromType
 from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE
 from opi.utils.naming import generate_manifest_name, generate_pvc_manifest_type
+
+if TYPE_CHECKING:
+    from opi.generation.manifests import ManifestGenerator
+    from opi.manager.project_manager import ProjectManager
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
+
 
 logger = logging.getLogger(__name__)
 
