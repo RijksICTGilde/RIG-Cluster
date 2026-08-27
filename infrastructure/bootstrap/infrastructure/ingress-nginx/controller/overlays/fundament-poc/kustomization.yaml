@@ -53,6 +53,24 @@ patches:
           argocd.argoproj.io/hook: PreSync
           argocd.argoproj.io/hook-delete-policy: HookSucceeded
 
+  # Zonder deze vlag pakt nginx alleen ingresses op die expliciet ingressClassName: nginx
+  # dragen, en OPI zet die nergens: `ingressClassName` komt in geen enkel manifest-sjabloon
+  # voor. Op de sandbox valt dat niet op omdat die de Kind-variant van de upstream
+  # deploy.yaml gebruikt, en die draagt de vlag standaard; de cloud-variant hierboven niet.
+  # Gevolg op dit cluster: elke tenant-ingress bleef zonder adres en werd door niemand
+  # bediend, terwijl de pod en de service gewoon gezond waren.
+  #
+  # De IngressClass als default markeren zou ook werken, maar dat verandert het gedrag voor
+  # elke controller op het cluster in plaats van alleen voor deze.
+  - target:
+      kind: Deployment
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --watch-ingress-without-class=true
+
   # Ook generiek: zonder deze vlag negeert nginx de ssl-passthrough-annotatie en werkt de
   # passthrough-modus van publish-on-web niet.
   - target:
