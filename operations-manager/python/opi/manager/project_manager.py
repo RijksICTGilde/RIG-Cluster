@@ -1404,6 +1404,7 @@ class ProjectManager:
         namespace: str,
         cluster: str,
         project_name: str,
+        service_port: int | None,
         output_dir: str,
         created_files: list[str],
     ) -> None:
@@ -1414,6 +1415,11 @@ class ProjectManager:
         is asleep/waking and this is the chosen waker component. The token comes from the
         deployment's own ``sleep.wake-token`` (minted by the sweeper). All files go into
         ``created_files`` so the obsolete-manifest prune removes them once awake.
+
+        ``service_port`` is what this component's Service targets -- the value the caller
+        already resolved for the Service itself, contributions included. The waker has to
+        listen there or the Service selects a pod that answers nothing, so it is taken
+        from the caller rather than assumed.
         """
         from opi.services.catalog.sleep_mode import config as sleep_config
         from opi.services.catalog.sleep_mode import manifests as sleep_manifests
@@ -1432,6 +1438,17 @@ class ProjectManager:
         selected = sleep_manifests.select_waker_component(project_data, deployment, config, self._project_file_handler)
         if selected != component_reference:
             return
+        if not service_port:
+            # No Service to sit behind, so nothing would reach the waker anyway. Same
+            # honesty as the other no-waker branches: the deployment still sleeps and is
+            # wakeable from the portal or the API.
+            logger.warning(
+                "sleep-mode: component '%s' on %s/%s has no service port; skipping waker manifests",
+                component_reference,
+                project_name,
+                deployment_name,
+            )
+            return
         if not current.wake_token:
             logger.warning(
                 "sleep-mode: no wake token stored for %s/%s; skipping waker manifests",
@@ -1449,6 +1466,7 @@ class ProjectManager:
             project_name=project_name,
             deployment_name=deployment_name,
             cluster=cluster,
+            port=service_port,
             generated_at=generated_at,
         )
         deployment_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "deployment.yaml.jinja")
@@ -1471,6 +1489,7 @@ class ProjectManager:
             component_reference=component_reference,
             config=config,
             cluster=cluster,
+            port=service_port,
         )
         configmap_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "configmap.yaml.jinja")
         configmap_manifest_name = generate_manifest_name(component_name, "waker-config")
@@ -6427,6 +6446,10 @@ class ProjectManager:
                 namespace=namespace,
                 cluster=cluster,
                 project_name=project_name,
+                # The Service's own targetPort, contributions applied (the authorization
+                # wall moves it to the oauth2-proxy port). Taken from the built values so
+                # the waker can never drift from the Service it sits behind.
+                service_port=variables.get("service_port"),
                 output_dir=full_output_dir,
                 created_files=created_files,
             )
