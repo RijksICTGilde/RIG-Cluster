@@ -43,6 +43,17 @@ spec:
                 secretKeyRef:
                   name: forgejo-admin
                   key: password
+            # ArgoCD's adminwachtwoord wordt door de argocd-operator zelf aangemaakt en in
+            # <cr-naam>-cluster gezet. Hier lezen in plaats van kopieren, om dezelfde reden
+            # als bij Forgejo: het env-secret van OPI droeg een ARGOCD_PASSWORD van 80
+            # tekens terwijl het echte er 32 heeft, en dat leverde bij elke aanroep een
+            # 401 op. Een env-regel wint van envFrom, dus deze waarde overschrijft de oude
+            # uit operations-manager-env-secrets.
+            - name: ARGOCD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: argocd-cluster
+                  key: admin.password
             - name: PROJECT_REPO_PASSWORD
               valueFrom:
                 secretKeyRef:
