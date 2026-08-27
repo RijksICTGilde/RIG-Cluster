@@ -84,7 +84,8 @@ spec:
   egress:
     # DNS resolution against the cluster DNS service.
     #
-    # Zowel 53 als 8053, en dat is geen overdaad. Op Gardener luistert CoreDNS op 8053 en
+    # De poorten komen uit get_dns_ports(cluster) en niet uit dit sjabloon, want dit
+    # sjabloon geldt voor elk cluster. Op Gardener luistert CoreDNS op 8053 en
     # vertaalt de kube-dns Service 53 naar 8053; een NetworkPolicy toetst de poort NA die
     # vertaling, dus met alleen 53 komt er niets door. Een pod krijgt dan een i/o timeout
     # naar de DNS-service terwijl het beleid er correct uitziet, en de fout wijst naar de
@@ -100,14 +101,12 @@ spec:
             matchLabels:
               k8s-app: kube-dns
       ports:
+{% for dns_port in dns_ports | default([53]) %}
         - protocol: UDP
-          port: 53
+          port: {{ dns_port }}
         - protocol: TCP
-          port: 53
-        - protocol: UDP
-          port: 8053
-        - protocol: TCP
-          port: 8053
+          port: {{ dns_port }}
+{% endfor %}
     # Pods of this deployment may talk to each other.
 {% if deployment_selector %}
     - to:

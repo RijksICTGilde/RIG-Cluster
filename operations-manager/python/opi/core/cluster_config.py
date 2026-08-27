@@ -200,6 +200,9 @@ CLUSTER_CONFIG = {
             "enable_tls": True,
             "ip_whitelist": "0.0.0.0/0,::/0",
         },
+        # CoreDNS luistert hier op 8053; de kube-dns Service vertaalt 53 daarheen. Zie
+        # get_dns_ports voor waarom een NetworkPolicy dan beide poorten nodig heeft.
+        "dns_ports": [53, 8053],
         # local-path-provisioner op de vrije ruimte van de node. Bewust geen
         # volume_snapshot_class: die kan local-path niet, dus PVC-back-ups melden dat en
         # stoppen (zie PVCBackupManager._backup_pvc). Database- en bucketback-ups werken wel.
@@ -548,6 +551,35 @@ def get_ingress_config(cluster_name: str) -> dict:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("ingress", {"enable_tls": False, "ip_whitelist": "0.0.0.0/0,::/0"})
+
+
+def get_dns_ports(cluster_name: str) -> list[int]:
+    """De poorten waarop de cluster-DNS te bereiken is, voor NetworkPolicy-regels.
+
+    Standaard alleen 53. Een cluster dat CoreDNS op een andere poort draait zet
+    ``dns_ports`` in zijn blok; op Gardener luistert CoreDNS op 8053 en vertaalt de
+    kube-dns Service 53 daarheen. Een NetworkPolicy toetst de poort NA die vertaling, dus
+    met alleen 53 komt er niets door en krijgt een pod een i/o timeout naar DNS terwijl
+    het beleid er correct uitziet.
+
+    Bewust een clusterinstelling en geen vaste waarde in het sjabloon: dat sjabloon geldt
+    voor elk cluster, en 8053 daar hardcoderen zou de egress op sandbox en ODCN verruimen
+    voor iets wat daar niet speelt.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Lijst met poortnummers, altijd minstens [53]
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    poorten = cluster_config.get("dns_ports")
+    if not poorten:
+        return [53]
+    return list(poorten)
 
 
 def get_ingress_tls_enabled(cluster_name: str) -> bool:

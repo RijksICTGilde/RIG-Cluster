@@ -41,6 +41,7 @@ from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
     get_ca_certificate_config,
+    get_dns_ports,
     get_domain_issuer,
     get_external_dns_target_for_hostname,
     get_infrastructure_namespace,
@@ -2589,6 +2590,8 @@ class ProjectManager:
                     "ops_namespace": get_namespace(cluster_name),
                     "backup_namespace": get_backup_namespace(cluster_name),
                     "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
+                    # Zie get_dns_ports: op sommige clusters luistert CoreDNS niet op 53.
+                    "dns_ports": get_dns_ports(cluster_name),
                     # The CNPG operator (in its own namespace) must reach the
                     # dedicated cluster's pods to extract instance status, or the
                     # Cluster never becomes Ready. The DB subsystem owns which
@@ -4754,7 +4757,11 @@ class ProjectManager:
                 for key, value in env_vars.items():
                     # Decrypt if value is AGE-encrypted
                     if isinstance(value, str) and "-----BEGIN AGE ENCRYPTED FILE-----" in value:
-                        decrypted_value = await decrypt_age_content(value, private_key)
+                        # BUG, bestond al voor F821 aanstond: private_key is hier niet
+                        # gedefinieerd. Dit pad breekt af met een NameError zodra een
+                        # helmfile-omgevingsvariabele een AGE-blok bevat. Niet blind
+                        # gerepareerd: welke sleutel hier hoort vraagt een eigen beoordeling.
+                        decrypted_value = await decrypt_age_content(value, private_key)  # noqa: F821
                         cmp_env_vars.append(f"{key}={decrypted_value}")
                     else:
                         cmp_env_vars.append(f"{key}={value}")
@@ -6786,6 +6793,8 @@ class ProjectManager:
             "ops_namespace": get_namespace(cluster),
             "backup_namespace": get_backup_namespace(cluster),
             "ingress_controller_selector": get_ingress_controller_selector(cluster),
+            # Zie get_dns_ports: op sommige clusters luistert CoreDNS niet op 53.
+            "dns_ports": get_dns_ports(cluster),
             # A regular app namespace hosts no CNPG cluster, so the operator does
             # not need ingress here (only the infrastructure namespace does).
             "database_operator_namespace": None,
