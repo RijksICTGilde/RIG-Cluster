@@ -41,6 +41,7 @@ from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
     get_ca_certificate_config,
+    get_domain_issuer,
     get_external_dns_target_for_hostname,
     get_infrastructure_namespace,
     get_ingress_cluster_issuer,
@@ -162,6 +163,7 @@ from opi.utils.naming import (
     generate_tls_secret_name,
     generate_unique_name,
     get_component_ingress_map,
+    resolve_effective_base_domain,
 )
 from opi.utils.project_utils import (
     ComponentValidationError,
@@ -561,6 +563,26 @@ def assert_cluster_owns_project(project_data: dict[str, Any]) -> None:
             f"Dit cluster is '{settings.CLUSTER_MANAGER}'; de deployments in dit bestand draaien op "
             f"{', '.join(vreemde)}. Bewerk het project op het cluster waar het thuishoort."
         )
+
+
+def resolve_domain_and_issuer(deployment: dict[str, Any], cluster_name: str) -> tuple[str, str | None]:
+    """Het effectieve basisdomein van een deployment plus de issuer die erbij hoort.
+
+    ``base-domain`` is niet verplicht. Staat het er niet, dan draait de deployment op het
+    domein van het cluster, en dat is precies wat ``resolve_effective_base_domain`` al doet
+    voor de hostnaam. De issuer-generatie deed dat NIET: die las het rauwe ``base-domain``
+    en sloeg alles over zodra het ontbrak. Gevolg: een project op de clusterstandaard kreeg
+    geen Issuer en geen certificaat, en de ingress viel terug op het nepcertificaat van
+    nginx. Dat viel alleen niet op waar iets anders het certificaat al leverde.
+
+    De issuer komt uit het projectbestand als die er staat, en anders uit de clusterconfig
+    voor dat domein (``nice_url.supported_domains[].issuer``). Beide fallbacks bestonden al
+    los van elkaar; ze werden hier alleen niet gebruikt.
+    """
+    base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+    effective = resolve_effective_base_domain(base_domain, get_ingress_postfix(cluster_name))
+    issuer = get_domain_setting(deployment, DomainSetting.ISSUER) or get_domain_issuer(cluster_name, effective)
+    return effective, issuer
 
 
 class ProjectManager:
@@ -4055,8 +4077,7 @@ class ProjectManager:
         # Add deployment-level variables for hostname, subdomain, base-domain, issuer
         cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
         subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
-        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        base_domain, issuer_config = resolve_domain_and_issuer(deployment, cluster_name)
         use_https = get_ingress_tls_enabled(cluster_name)
 
         # Calculate hostname based on configuration
@@ -4404,8 +4425,7 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
-        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+        base_domain, issuer_config = resolve_domain_and_issuer(deployment, cluster_name)
 
         # Only auto-generate issuer if issuer_config is exactly "letsencrypt" or "letsencrypt-staging"
         # If issuer_config already contains a domain suffix, use it as-is (no generation needed)
@@ -4787,8 +4807,7 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
-        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+        base_domain, issuer_config = resolve_domain_and_issuer(deployment, cluster_name)
 
         if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
             project_contact_email = project_data.get("config", {}).get("contact-email")
@@ -5759,8 +5778,7 @@ class ProjectManager:
             ingress_postfix = get_ingress_postfix(cluster)
             use_https = get_ingress_tls_enabled(cluster)
             subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
-            base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-            issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+            base_domain, issuer_config = resolve_domain_and_issuer(deployment, cluster_name)
             domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
             expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
             logger.info(
