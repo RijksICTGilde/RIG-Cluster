@@ -64,16 +64,17 @@ def _obfuscate_git_command(cmd_str: str) -> str:
     Returns:
         Command string with sensitive information replaced by asterisks
     """
-    # Pattern to match URLs with credentials (https://user:password@host or https://token@host)
-    # This handles various formats including GitHub personal access tokens (ghp_*)
-    url_pattern = r"https://([^:/@\s]+):([^@\s]+)@"
+    # Elk schema, niet alleen https. Dit stond op `https://` en liet daarmee een gitserver
+    # binnen het cluster ongemaskeerd door: fundament-poc praat over
+    # http://rig-admin:<wachtwoord>@forgejo.rig-system.svc.cluster.local:3000/... en dat
+    # wachtwoord stond leesbaar in de DEBUG-log, dus in kubectl logs en in Loki.
+    url_pattern = r"([a-zA-Z][a-zA-Z0-9+.\-]*)://([^:/@\s]+):([^@\s]+)@"
+    obfuscated = re.sub(url_pattern, r"\1://\2:***@", cmd_str)
 
-    # Replace with obfuscated version
-    obfuscated = re.sub(url_pattern, r"https://\1:***@", cmd_str)
-
-    # Also handle the case where there's just a token without username (https://token@host)
-    token_pattern = r"https://([^@\s]*ghp_[^@\s]+)@"
-    obfuscated = re.sub(token_pattern, r"https://***@", obfuscated)
+    # En het geval zonder gebruikersnaam, waar de hele userinfo het token is
+    # (https://ghp_xxx@host). Ook hier elk schema.
+    token_pattern = r"([a-zA-Z][a-zA-Z0-9+.\-]*)://([^@\s]*ghp_[^@\s]+)@"
+    obfuscated = re.sub(token_pattern, r"\1://***@", obfuscated)
 
     return obfuscated
 
@@ -506,7 +507,7 @@ class GitConnector:
         Returns:
             Dictionary mapping reference names to commit hashes
         """
-        logger.debug(f"Fetching remote refs from: {self.repo_url_with_path}")
+        logger.debug(f"Fetching remote refs from: {_obfuscate_git_command(self.repo_url_with_path)}")
 
         # Use git ls-remote to get all references
         cmd = ["ls-remote", self.repo_url_with_path]
@@ -1947,7 +1948,9 @@ async def poll_for_changes(
         stop_event: Optional asyncio Event to signal stopping the polling
     """
     logger.info(f"Starting to poll for changes to {file_path} every {interval} seconds")
-    logger.debug(f"Monitoring branch: {connector.branch}, Repo URL: {connector.repo_url_with_path}")
+    logger.debug(
+        f"Monitoring branch: {connector.branch}, Repo URL: {_obfuscate_git_command(connector.repo_url_with_path)}"
+    )
 
     # 1. On startup: Clone the repository and do initial load
     try:
