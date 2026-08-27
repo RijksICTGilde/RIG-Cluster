@@ -1572,227 +1572,26 @@ tasks:
           echo "❌ {{.KEY_FILE}} not found. Please generate an AGE key first."
           exit 1
         fi
+      # De generatie zelf staat in scripts/generate-secrets.sh. Hier stond 250 regels shell
+      # met lussen, vertakkingen en sinds kort ook toestand, en dat is een programma en geen
+      # taak. Wat hier overblijft is wat een taak hoort te zijn: de voorwaarden controleren
+      # en het programma aanroepen.
+      #
+      # De invoer gaat via omgevingsvariabelen en niet via vlaggen, want zo krijgt een
+      # fundament-plugin zijn configuratie ook (FUNP_-variabelen op de Deployment). Het
+      # script is daarmee zonder tussenlaag bruikbaar vanuit een plugin, vanuit CI, en
+      # vanaf een laptop met alleen een checkout.
       - |
-        echo "🔐 Generating {{.MODE}} secrets for cluster: {{.CLUSTER_NAME}}"
-        echo "📁 Templates directory: {{.TEMPLATES_DIR}}"
-        echo "📁 Output directory: {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
-        echo ""
-
-        # Create output directory
-        mkdir -p "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
-
-        # Bestaande geheimen worden PER BESTAND overgeslagen (zie de check in de lus), niet
-        # met een map-brede stop. Zo wordt een bestaand geheim nooit geroteerd, maar komt
-        # een NIEUWE template (zoals mail-db-credentials op een al draaiend cluster) er wel
-        # gewoon bij. De oude map-brede stop kon dat alleen door ALLES weg te gooien, en
-        # dat roteert Keycloak, MinIO en PostgreSQL mee.
-
-        # Het overzicht wordt in een tijdelijk bestand opgebouwd en pas aan het eind
-        # weggeschreven, en alleen als er daadwerkelijk iets gegenereerd is.
-        #
-        # Hier stond eerst een `>` op het echte bestand, boven de lus. Dat kapte het af,
-        # waarna elk secret werd overgeslagen omdat het al bestond en er dus niets meer
-        # bijkwam: het schrijven naar het overzicht staat ná die `continue`. Een tweede run
-        # meldde dan netjes "Skipping (already exists)" voor alles, eindigde met een vinkje,
-        # en had ondertussen alle wachtwoorden gewist. Onherstelbaar, want in git staan
-        # alleen bcrypt-hashes en AGE-blokken.
-        OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
-        OVERVIEW_TMP=$(mktemp)
-
-        # Process each template
-        for template in {{.TEMPLATES_DIR}}/*.yaml; do
-          if [ ! -f "$template" ]; then
-            echo "No template files found in {{.TEMPLATES_DIR}}"
-            continue
-          fi
-
-          filename=$(basename "$template")
-
-          # Only process files that are clearly secrets (contain '-secret' or '.secret' in filename)
-          if [[ "$filename" != *"-secret.yaml" ]] && [[ "$filename" != *".secret.yaml" ]]; then
-            echo "Skipping non-secret file: $filename"
-            continue
-          fi
-
-          # Een geheim dat er al staat blijft staan: overslaan is de bescherming tegen
-          # ongevraagde rotatie. Opnieuw genereren = het .sops.yaml-bestand weggooien.
-          if [ -f "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/${filename}.sops.yaml" ]; then
-            echo "Skipping (already exists): ${filename}.sops.yaml"
-            continue
-          fi
-
-          echo "Processing: $filename"
-
-          # Copy template to temp file
-          temp_file=$(mktemp)
-          cp "$template" "$temp_file"
-
-          # Add filename to overview
-          echo "# === $filename ===" >> "$OVERVIEW_TMP"
-
-          # Find all @secret-gen annotations and process them
-          grep -n "# @secret-gen:" "$template" | while IFS=':' read -r line_num rest; do
-            # Get the full line
-            full_line=$(sed -n "${line_num}p" "$template")
-
-            # Extract field name (everything before first colon)
-            field_name=$(echo "$full_line" | cut -d':' -f1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-
-            # Extract annotation details (everything after # @secret-gen:)
-            annotation=$(echo "$full_line" | sed 's/.*# @secret-gen://')
-
-            # Parse annotation: type:length[,path=...] or skip
-            if echo "$annotation" | grep -q "skip"; then
-              echo "  Skipping line $line_num (marked with @secret-gen:skip)"
-              continue
-            fi
-
-            # Parse type and length
-            type_length=$(echo "$annotation" | cut -d',' -f1)
-            password_type=$(echo "$type_length" | cut -d':' -f1)
-            password_length=$(echo "$type_length" | cut -d':' -f2)
-
-            # Parse path if present
-            path_annotation=""
-            if echo "$annotation" | grep -q "path="; then
-              path_annotation=$(echo "$annotation" | sed 's/.*path=//')
-            fi
-
-            if [ -z "$field_name" ]; then
-              echo "  ❌ Could not find field name on line $line_num"
-              continue
-            fi
-
-            # Generate password based on type
-            case "$password_type" in
-              "random")
-                if [ -n "{{.FIXED_PASSWORD}}" ]; then
-                  password="{{.FIXED_PASSWORD}}"
-                else
-                  password=$(openssl rand -base64 $password_length | tr -d "=+/" | cut -c1-$password_length)
-                fi
-                ;;
-              "bcrypt")
-                if [ -n "{{.FIXED_PASSWORD}}" ]; then
-                  plain_password="{{.FIXED_PASSWORD}}"
-                else
-                  plain_password=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
-                fi
-                password=$(htpasswd -nbBC 10 "" "$plain_password" | tr -d ':\n' | sed 's/$2b/$2y/')
-                ;;
-              *)
-                echo "❌ Unknown password type: $password_type"
-                continue
-                ;;
-            esac
-
-            echo "  Generated $password_type password for field: $field_name"
-
-            # Use yq to replace the field value (more reliable than sed)
-            yq eval ".stringData.\"$field_name\" = \"$password\"" -i "$temp_file"
-
-            # Add to overview file
-            if [ "$password_type" = "bcrypt" ]; then
-              echo "$field_name: \"$plain_password\"  # Original password (bcrypt hash in secret)" >> "$OVERVIEW_TMP"
-            else
-              echo "$field_name: \"$password\"" >> "$OVERVIEW_TMP"
-            fi
-          done
-
-          echo "" >> "$OVERVIEW_TMP"
-
-          # Path substitution not needed - path annotation is only for informational purposes
-
-          # Always replace namespace with the cluster-specific namespace from env settings
-          echo "  Setting namespace to: {{.RIG_NAMESPACE}}"
-          yq eval '.metadata.namespace = "{{.RIG_NAMESPACE}}"' -i "$temp_file"
-
-          # Copy to final location and encrypt with SOPS using AGE key
-          output_file="{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/${filename}.sops.yaml"
-          cp "$temp_file" "$output_file"
-
-          AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
-          echo "  Encrypting: $output_file"
-          sops --encrypt --output-type yaml --age "$AGE_PUBLIC_KEY" --in-place "$output_file"
-
-          # Clean up temp file
-          rm "$temp_file"
-        done
-
-        # Update or create decrypt-sops.yaml
-        echo ""
-        echo "Updating decrypt-sops.yaml..."
-        DECRYPT_FILE="{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/decrypt-sops.yaml"
-
-        # Create decrypt-sops.yaml if it doesn't exist
-        if [ ! -f "$DECRYPT_FILE" ]; then
-          echo "  Creating new decrypt-sops.yaml"
-          cat > "$DECRYPT_FILE" << 'DECRYPT_EOF'
-        apiVersion: viaduct.ai/v1
-        kind: ksops
-        metadata:
-          name: secret-generator
-          annotations:
-            config.kubernetes.io/function: "exec:\n  path: ksops\n"
-        files:
-        DECRYPT_EOF
-        fi
-
-        # Add all .sops.yaml files from output directory if not already present
-        for sops_file in "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"/*.sops.yaml; do
-          if [ -f "$sops_file" ]; then
-            filename=$(basename "$sops_file")
-            # Check if this file is already referenced
-            if ! grep -qF "$filename" "$DECRYPT_FILE"; then
-              echo "  - $filename" >> "$DECRYPT_FILE"
-              echo "  ✅ Added: $filename"
-            else
-              echo "  ℹ️  Already present: $filename"
-            fi
-          fi
-        done
-
-        # Create kustomization.yaml if it doesn't exist
-        KUSTOMIZATION_FILE="{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/kustomization.yaml"
-        if [ ! -f "$KUSTOMIZATION_FILE" ]; then
-          echo "  Creating kustomization.yaml"
-          cat > "$KUSTOMIZATION_FILE" << 'KUSTOMIZATION_EOF'
-        apiVersion: kustomize.config.k8s.io/v1beta1
-        kind: Kustomization
-
-        generators:
-        - decrypt-sops.yaml
-        KUSTOMIZATION_EOF
-          echo "  ✅ Created kustomization.yaml"
-        fi
-
-        # Alleen overschrijven als er echt iets gegenereerd is. Draait de taak zonder werk,
-        # dan blijft een eerder overzicht met de platte wachtwoorden staan.
-        if [ -s "$OVERVIEW_TMP" ]; then
-          {
-            echo "# {{.MODE | title}} Secrets Overview - {{.CLUSTER_TYPE}}"
-            echo "# Generated on $(date)"
-            echo "# WARNING: This file contains plaintext passwords - handle with care!"
-            echo "# This file is added to .gitignore - copy passwords and delete this file manually"
-            echo ""
-            cat "$OVERVIEW_TMP"
-          } > "$OVERVIEW_FILE"
-          OVERVIEW_MSG="📄 Overview file: $OVERVIEW_FILE (added to .gitignore)"
-        else
-          OVERVIEW_MSG="📄 Niets gegenereerd, dus $OVERVIEW_FILE is ongemoeid gelaten."
-        fi
-        rm -f "$OVERVIEW_TMP"
-
-        echo ""
-        echo "✅ {{.MODE | title}} secrets generated successfully!"
-        echo "$OVERVIEW_MSG"
-        echo "🗂️  Encrypted secrets: {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/"
-        if [ "{{.MODE}}" = "infrastructure" ]; then
-          echo "📝 Configuration files: kustomization.yaml, decrypt-sops.yaml"
-        fi
-        echo ""
-        echo "⚠️  IMPORTANT: The overview file contains plaintext passwords."
-        echo "   Copy any needed passwords and delete the overview file manually for security."
+        MODE='{{.MODE}}' \
+        TEMPLATES_DIR='{{.TEMPLATES_DIR}}' \
+        OUTPUT_DIR='{{.OUTPUT_DIR}}' \
+        CLUSTER_TYPE='{{.CLUSTER_TYPE}}' \
+        CLUSTER_FOLDER='{{.CLUSTER_FOLDER}}' \
+        CLUSTER_NAME='{{.CLUSTER_NAME}}' \
+        KEY_FILE='{{.KEY_FILE}}' \
+        RIG_NAMESPACE='{{.RIG_NAMESPACE}}' \
+        FIXED_PASSWORD='{{.FIXED_PASSWORD}}' \
+        ./scripts/generate-secrets.sh
 
   generate-infrastructure-secrets-for-cluster:
     desc: "Generate infrastructure secrets for selected cluster from templates (run 'task select-cluster' first)"
