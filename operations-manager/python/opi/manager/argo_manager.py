@@ -887,6 +887,11 @@ class ArgoManager:
         if not await argo_connector.login():
             raise RuntimeError("Failed to login to ArgoCD")
 
+        # De eerlijke tweede mening, zie de toelichting in de lus hieronder.
+        from opi.connectors.kubectl import create_kubectl_connector
+
+        kubectl_connector = create_kubectl_connector()
+
         import asyncio
 
         elapsed_time = 0
@@ -898,6 +903,26 @@ class ArgoManager:
                 # Check if application exists
                 if await argo_connector.application_exists(app_name):
                     logger.info(f"ArgoCD application '{app_name}' has been created!")
+                    return True
+
+                # ArgoCD zegt "bestaat niet", en dat antwoord is niet betrouwbaar genoeg om
+                # op te wachten: zijn API geeft 403 voor zowel een niet-bestaande applicatie
+                # als voor een die hij niet mag of kan zien. Dezelfde dubbelzinnigheid die
+                # wait_for_application_deletion op de verwijderweg al afvangt; die kant kreeg
+                # de controle wel en deze nooit.
+                #
+                # Wat het kost als je het niet doet: toen ArgoCD de user-applications-repo
+                # niet kon lezen bleef deze lus zes minuten pollen en eindigde met "timed out
+                # waiting for application to be created", terwijl het echte probleem een
+                # autorisatiefout was. De Kubernetes-API antwoordt wel eenduidig.
+                #
+                # Alleen een harde True telt. False (echt afwezig) en None (de controle zelf
+                # faalde) betekenen allebei doorwachten, net als aan de verwijderkant.
+                if await kubectl_connector.argocd_application_exists(app_name) is True:
+                    logger.warning(
+                        f"ArgoCD meldt applicatie '{app_name}' als afwezig, maar de Kubernetes-API "
+                        f"heeft hem wel. Verder op de Kubernetes-API; ArgoCD loopt achter of mag niet kijken."
+                    )
                     return True
 
                 # Not created yet, wait and retry
