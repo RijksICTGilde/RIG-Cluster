@@ -225,7 +225,6 @@ class TestHetSjabloon:
             "url": "https://keycloak.voorbeeld.nl",
             "gebruiker": "admin",
             "wachtwoord": "geheimpje",
-            "toelichting": "De beheerder van het master-realm.",
         }
         basis.update(overrides)
         return ToegangRegel(**basis)

@@ -13,10 +13,7 @@
 {% block page_title %}Toegang - Self Service Portal{% endblock %}
 
 {% block content %}
-    {{ page_head(
-        "Toegang",
-        "De diensten van dit platform waar je zelf op inlogt, met hun adres en de beheerderstoegang. De waarden komen bij het laden rechtstreeks uit het cluster; ze worden hier niet bewaard."
-    ) }}
+    {{ page_head("Toegang") }}
 
     {% include "bg/_toegang-diensten.html.j2" %}
 {% endblock %}

@@ -1,44 +1,38 @@
 {#
-  De diensten van de Toegangspagina.
+  De diensten van de Toegangspagina: de dienst, het adres en de inloggegevens. Verder niets.
 
-  DE VORM IS OVERGENOMEN van het Keycloak-blok op de projectpagina
-  (opi/services/catalog/keycloak/section-detail.html.j2), en dat is geen luiheid maar het
-  punt: een beheerder ziet hier hetzelfde soort veld als daar. Label boven, waarde in een
-  <c-secret-field>, het klembord IN het veld, en het onthul-oogje alleen bij wat echt geheim
-  is. Adres en gebruikersnaam staan dus open (`revealed show-copy`), het wachtwoord niet.
+  GEEN UITLEG OP DIT SCHERM. Hier stond een toelichting per dienst, een alinea over waar het
+  wachtwoord vandaan komt en een zin over hoe lang een OTP-code geldig is. Dat verdrinkt de
+  drie waarden waar je voor komt. Wat er te zeggen valt staat in features/toegangspagina.md.
 
-  EEN DING IS BEWUST NIET OVERGENOMEN. Dat blok opent zijn console met een window.open()
-  via :attrs, met de URL in een data-attribuut, omdat <c-button> geen onclick als los
-  attribuut toelaat. Dat hoeft hier niet: <c-button> kent gewoon `href` en `target`
-  (nagekeken in de componentregistratie, niet aangenomen). Een echte link is bovendien
-  beter: hij is met het middelste muisknopje te openen en met rechtsklikken te kopieren.
+  DE VORM. Label boven, waarde in een <c-secret-field>, het klembord IN het veld, en het
+  onthul-oogje alleen bij wat echt geheim is. Adres en gebruikersnaam staan dus open
+  (`revealed show-copy`), het wachtwoord niet. Zelfde velden als het Keycloak-blok op de
+  projectpagina (opi/services/catalog/keycloak/section-detail.html.j2).
 
-  <c-alert> DRAAGT ALLEEN EEN HEADING. Geen `content`, geen `text`, en geen slot; de
-  registratie kent type/heading/padding/max-width/closable/class en verder niets. De
-  toelichting staat daarom in een <c-paragraph> eronder. Zulke dingen kosten een renderfout
-  en geen waarschuwing, en daarom staat er een test op die dit fragment echt rendert.
+  <c-button> KENT `href` EN `target` (nagekeken in de componentregistratie), dus de
+  window.open-omweg via :attrs uit dat Keycloak-blok is hier niet nodig; een echte link is
+  bovendien met het middelste muisknopje te openen.
 
-  DE WAARSCHUWING IS GEEN SIERAAD. Hij verschijnt als de Ingress en de clusterconfiguratie
-  het oneens zijn over het adres, en dat betekent dat een domeinmigratie half is blijven
-  staan. Dat wil je hier zien en niet later in een SERVFAIL.
+  <c-alert> DRAAGT ALLEEN EEN HEADING. Geen `content`, geen `text`, en geen slot. De
+  boodschap staat daarom IN de heading. Zulke dingen kosten een renderfout en geen
+  waarschuwing, en daarom staat er een test op die dit fragment echt rendert.
+
+  DE WAARSCHUWING BLIJFT, want dat is geen uitleg maar een melding: hij verschijnt als de
+  Ingress en de clusterconfiguratie het oneens zijn over het adres, en dat betekent dat een
+  domeinmigratie half is blijven staan.
 #}
 {% from "bg/_patterns.html.j2" import panel %}
 
 {% if not diensten %}
-    <c-alert type="warning" heading="Geen diensten gevonden" />
-    <c-paragraph>De geheimen staan niet in deze namespace, of de operations-manager mag ze niet lezen.</c-paragraph>
+    <c-alert type="warning" heading="Geen diensten gevonden." />
 {% endif %}
 
 {% for dienst in diensten %}
     {% call panel(dienst.naam, dienst.icoon) %}
         <c-stack gap="md">
-            {% if dienst.toelichting %}
-                <c-paragraph size="sm">{{ dienst.toelichting }}</c-paragraph>
-            {% endif %}
-
             {% if dienst.waarschuwing %}
-                <c-alert type="warning" heading="Let op het adres" />
-                <c-paragraph size="sm">{{ dienst.waarschuwing }}</c-paragraph>
+                <c-alert type="warning" heading="{{ dienst.waarschuwing }}" />
             {% endif %}
 
             <c-stack gap="xs">
@@ -72,10 +66,6 @@
                     <c-secret-field value="{{ waarde }}" show-copy />
                 </c-stack>
             {% endfor %}
-
-            {% if dienst.extra_velden %}
-                <c-paragraph size="sm">De OTP-code hoort bij het moment dat je deze pagina laadde en verloopt binnen 30 seconden. Laad de pagina opnieuw voor een verse code.</c-paragraph>
-            {% endif %}
         </c-stack>
     {% endcall %}
 {% endfor %}
