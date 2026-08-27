@@ -39,6 +39,16 @@ import (
 // it applies whenever there is such a someone. See waiting.
 const idlePollInterval = 30 * time.Second
 
+// defaultPort is the fallback when ZAD_PORT is absent or unusable.
+//
+// The waker has no Service of its own: it joins the application's Service by carrying the
+// same app label, so it has to listen on whatever port that Service targets. That port is
+// the application component's, and it is 8080 for some projects and not for others -- a
+// waker on the wrong port is selected by the Service, passes its own probes, and answers
+// nothing, which is exactly how this went unnoticed. OPI passes the right port in ZAD_PORT;
+// this default only keeps an older OPI, which passes nothing, behaving as it did.
+const defaultPort = 8080
+
 // config is the waker's runtime configuration, all from the ConfigMap/Secret env.
 type config struct {
 	apiURL       string
@@ -50,12 +60,20 @@ type config struct {
 	pollInterval time.Duration // while someone is waiting
 	idleInterval time.Duration // while nobody is
 	token        string
+	port         int // the HTTP port to listen on
 }
 
 func loadConfig() config {
 	poll := 3
 	if v, err := strconv.Atoi(os.Getenv("ZAD_POLL_INTERVAL_SEC")); err == nil && v > 0 {
 		poll = v
+	}
+	port := defaultPort
+	// A port outside 1-65535 is not a port. Falling back beats refusing to start: the
+	// waker is what a visitor sees instead of an error page, so a bad value must not turn
+	// the wait into a CrashLoopBackOff.
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("ZAD_PORT"))); err == nil && v > 0 && v <= 65535 {
+		port = v
 	}
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv("ZAD_WAKE_MODE")))
 	switch mode {
@@ -73,6 +91,7 @@ func loadConfig() config {
 		pollInterval: time.Duration(poll) * time.Second,
 		idleInterval: idlePollInterval,
 		token:        os.Getenv("ZAD_WAKE_TOKEN"),
+		port:         port,
 	}
 }
 
@@ -367,7 +386,7 @@ func main() {
 	defer cancel()
 	go w.poll(ctx)
 
-	addr := ":8080"
+	addr := fmt.Sprintf(":%d", cfg.port)
 	log.Printf("zad-waker listening on %s (project=%s deployment=%s mode=%s)", addr, cfg.project, cfg.deployment, cfg.mode)
 	server := &http.Server{Addr: addr, Handler: w.routes(), ReadHeaderTimeout: 5 * time.Second}
 	if err := server.ListenAndServe(); err != nil {
