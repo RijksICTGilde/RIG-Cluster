@@ -6,7 +6,9 @@ Een beheerpagina op `/admin/toegang` die per platformdienst laat zien waar hij s
 
 Drie diensten waar een mens zelf op inlogt: Keycloak, Forgejo en ArgoCD. Per dienst het adres, de gebruikersnaam en het wachtwoord. Adres en gebruikersnaam staan open, het wachtwoord zit achter een onthul-oogje, en alles is met een knop naar het klembord te kopieren. Dezelfde velden als het Keycloak-blok op de projectpagina, zodat het herkenbaar is.
 
-Bij Keycloak komt de OTP-beheerder erbij als die in het geheim staat, met de code van dit moment. Niet de seed: een seed geeft voor altijd codes, de code vergaat binnen dertig seconden.
+Bij Keycloak komt de OTP-beheerder erbij als die in het geheim staat, met de code van dit moment. Niet de seed: een seed geeft voor altijd codes, de code vergaat binnen dertig seconden. Laad de pagina opnieuw voor een verse code.
+
+**Geen uitleg op het scherm.** Er stond een toelichting per dienst, een alinea over waar het wachtwoord vandaan komt en een zin over de geldigheid van de OTP-code. Dat verdronk de drie waarden waar je voor komt. Wat er te zeggen valt staat in dit document.
 
 ## Gebruik
 

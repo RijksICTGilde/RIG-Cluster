@@ -55,7 +55,6 @@ class DienstBron:
     host_prefix: str
     gebruiker_veld: str | None = None
     vaste_gebruiker: str | None = None
-    toelichting: str = ""
 
 
 # De volgorde is de volgorde op het scherm, en die is niet willekeurig: Keycloak eerst,
@@ -68,7 +67,6 @@ DIENSTEN: tuple[DienstBron, ...] = (
         gebruiker_veld="KEYCLOAK_ADMIN",
         wachtwoord_veld="KEYCLOAK_ADMIN_PASSWORD",
         host_prefix="keycloak",
-        toelichting="De beheerder van het master-realm. Hiermee kom je bij elk realm op dit cluster.",
     ),
     DienstBron(
         naam="Forgejo",
@@ -77,7 +75,6 @@ DIENSTEN: tuple[DienstBron, ...] = (
         gebruiker_veld="username",
         wachtwoord_veld="password",
         host_prefix="forgejo",
-        toelichting="De git-achtergrond van dit cluster: de projectbestanden, de manifesten en de ArgoCD-applicaties.",
     ),
     DienstBron(
         naam="ArgoCD",
@@ -91,7 +88,6 @@ DIENSTEN: tuple[DienstBron, ...] = (
         vaste_gebruiker="admin",
         wachtwoord_veld="admin.password",
         host_prefix="argo",
-        toelichting="De uitrol. Het wachtwoord komt van de argocd-operator zelf, niet uit onze geheimen.",
     ),
 )
 
@@ -105,7 +101,6 @@ class ToegangRegel:
     url: str
     gebruiker: str
     wachtwoord: str
-    toelichting: str = ""
     # Alleen gevuld als de Ingress en de clusterconfiguratie het oneens zijn. Dat is geen
     # schoonheidsfoutje: een dienst die niet onder de postfix van zijn eigen cluster hangt
     # betekent een halve domeinmigratie, en die vind je liever hier dan in een SERVFAIL.
@@ -168,7 +163,6 @@ async def _lees_dienst(bron: DienstBron, namespace: str, hosts: dict[str, str], 
         url=url,
         gebruiker=gebruiker,
         wachtwoord=wachtwoord or "",
-        toelichting=bron.toelichting,
         waarschuwing=waarschuwing,
     )
 
