@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import get_cluster_config
 from opi.core.config import settings
+from opi.handlers.project_file_handler import extract_service_names_from_component
 from opi.services.catalog.base import SERVICE_ROLE_LABEL_KEY
 from opi.services.catalog.sleep_mode.secret import WakeTokenSecret
+from opi.services.services_enums import ServiceType
 
 if TYPE_CHECKING:
     from opi.handlers.project_file_handler import ProjectFileHandler
@@ -50,6 +52,18 @@ def ops_api_url(cluster: str) -> str:
     return f"http://operations-manager.{ops_namespace}.svc.cluster.local:8000"
 
 
+def _is_behind_authorization_wall(project_data: dict[str, Any], component_reference: str) -> bool:
+    """Whether the component's Service is fronted by the auth wall's oauth2-proxy.
+
+    Read from the root component definition, the same place ``project_manager`` reads it
+    when it decides to add the sidecar and move ``service_port`` to the proxy.
+    """
+    for component in project_data.get("components", []) or []:
+        if component.get("name") == component_reference:
+            return ServiceType.AUTHORIZATION_WALL.value in extract_service_names_from_component(component)
+    return False
+
+
 def select_waker_component(
     project_data: dict[str, Any],
     deployment: dict[str, Any],
@@ -63,6 +77,13 @@ def select_waker_component(
     3. Zero, or two-or-more without ``waker-component`` -> no waker, and a log line
        naming the candidates. Not picking is honest: the deployment still sleeps and is
        wakeable via the UI/API, and one waker per hostname would waste a pod each.
+
+    A component behind an authorization wall is not a candidate either, for the same
+    reason ``passthrough`` TLS is not: the waker cannot serve that hostname the way it is
+    supposed to be served. The wall moves the Service to the oauth2-proxy port, and the
+    waker has no sidecars, so a waker there would answer on the proxy's port WITHOUT the
+    proxy -- an anonymous visitor would see the application's title and get a button that
+    starts it, on a hostname whose whole point is that it is not anonymous.
     """
     deployment_name = deployment.get("name", "")
     web: list[str] = []
@@ -72,6 +93,13 @@ def select_waker_component(
             continue
         tls = handler.extract_component_publish_on_web_tls(project_data, ref, deployment_name)
         if tls in _UNSUPPORTED_TLS:
+            continue
+        if _is_behind_authorization_wall(project_data, ref):
+            logger.info(
+                "sleep-mode: component '%s' on deployment '%s' is behind an authorization wall; no waker for it",
+                ref,
+                deployment_name,
+            )
             continue
         web.append(ref)
 
