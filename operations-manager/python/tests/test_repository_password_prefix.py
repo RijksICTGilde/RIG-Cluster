@@ -73,3 +73,41 @@ def test_benoemde_opslagvormen_komen_erdoor(password: str) -> None:
 )
 def test_has_password_prefix(password: str, verwacht: bool) -> None:
     assert has_password_prefix(password) is verwacht
+
+
+def test_wizard_en_api_delen_hetzelfde_repositories_skelet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Het repositories-blok mag maar op een plek beschreven staan.
+
+    Het stond eerder twee keer: als Python-dict in ``generate_self_service_project_yaml``
+    en als YAML in ``configs/project-template.yaml``. Beide lazen dezelfde vier
+    instellingen, en juist daardoor repareerde een wijziging aan het wachtwoordveld maar
+    een van de twee paden: de API werkte weer en de wizard bleef stuk.
+
+    Deze test legt vast dat het sjabloon de bron is en dat het de instelling leest, want
+    dat is wat ``normalize_repo_password`` bij het opstarten kan normaliseren.
+    """
+    from opi.core.config import settings
+    from opi.forms.editables.template import load_project_template
+
+    monkeypatch.setattr(settings, "PROJECT_REPO_PASSWORD", "base64+age:VOORBEELD")
+    monkeypatch.setattr(settings, "PROJECT_REPO_URL", "http://forgejo.rig-system.svc.cluster.local:3000/x/y.git")
+
+    repo = load_project_template()["repositories"][0]
+    assert repo["password"] == "base64+age:VOORBEELD"
+    assert repo["url"] == "http://forgejo.rig-system.svc.cluster.local:3000/x/y.git"
+    assert repo["name"] == "main-repo"
+
+
+def test_normalisatie_maakt_een_kale_waarde_schemawaardig(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Een kaal wachtwoord uit een Secret wordt versleuteld en komt dan door het schema."""
+    from opi.core.config import settings
+    from opi.core.startup import normalize_repo_password
+
+    monkeypatch.setattr(settings, "PROJECT_REPO_PASSWORD", "CArczGkFfMyUB9nKCVYsipSw")
+    if not settings.SOPS_AGE_PUBLIC_KEY:
+        pytest.skip("geen AGE-sleutel in deze testomgeving")
+
+    normalize_repo_password()
+
+    assert has_password_prefix(settings.PROJECT_REPO_PASSWORD)
+    validate_project_schema(_project(settings.PROJECT_REPO_PASSWORD))
