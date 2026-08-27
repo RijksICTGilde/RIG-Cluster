@@ -5778,7 +5778,7 @@ class ProjectManager:
             ingress_postfix = get_ingress_postfix(cluster)
             use_https = get_ingress_tls_enabled(cluster)
             subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
-            base_domain, issuer_config = resolve_domain_and_issuer(deployment, cluster_name)
+            base_domain, issuer_config = resolve_domain_and_issuer(deployment, cluster)
             domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
             expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
             logger.info(
