@@ -83,6 +83,17 @@ spec:
 {% endif %}
   egress:
     # DNS resolution against the cluster DNS service.
+    #
+    # Zowel 53 als 8053, en dat is geen overdaad. Op Gardener luistert CoreDNS op 8053 en
+    # vertaalt de kube-dns Service 53 naar 8053; een NetworkPolicy toetst de poort NA die
+    # vertaling, dus met alleen 53 komt er niets door. Een pod krijgt dan een i/o timeout
+    # naar de DNS-service terwijl het beleid er correct uitziet, en de fout wijst naar de
+    # database of naar de applicatie in plaats van naar DNS. Gemeten op fundament-poc:
+    # met 8053 erbij lost dezelfde pod wel op. 53 blijft staan voor de clusters waar
+    # CoreDNS wel op 53 luistert (sandbox, ODCN).
+    #
+    # Dezelfde reparatie kregen de mail-relay- en minio-policies al in 70a707d4; dit
+    # sjabloon is de tenant-kant en was daar niet bij.
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -93,6 +104,10 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+        - protocol: UDP
+          port: 8053
+        - protocol: TCP
+          port: 8053
     # Pods of this deployment may talk to each other.
 {% if deployment_selector %}
     - to:
