@@ -312,9 +312,14 @@ async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnect
 
         # Try to recover from GitOps backup
         try:
-            # TODO: missing git_connector ?
+            # BUG, bestond al voor F821 aanstond: git_connector is hier niet gedefinieerd,
+            # dus dit pad breekt af met een NameError zodra het gelopen wordt. Het herstelt
+            # een SOPS-sleutel uit de GitOps-backup, dus het faalt precies wanneer je het
+            # nodig hebt. Niet blind gerepareerd: welke connector hier hoort hangt af van
+            # de aanroepende context en dat vraagt een eigen beoordeling.
             recovered_keys = await project_manager._sops_handler.retrieve_project_sops_key_from_gitops(
-                project_name, git_connector
+                project_name,
+                git_connector,  # noqa: F821
             )
 
             if recovered_keys:

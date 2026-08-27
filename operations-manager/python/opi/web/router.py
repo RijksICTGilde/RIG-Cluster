@@ -2,6 +2,8 @@
 Web routes for serving HTML pages (non-API endpoints).
 """
 
+from __future__ import annotations
+
 import asyncio
 import copy
 import logging
@@ -11,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for

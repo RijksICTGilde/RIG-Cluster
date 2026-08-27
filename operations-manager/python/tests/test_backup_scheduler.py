@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from freezegun import freeze_time
 from opi.core.async_task_service import TaskType
+
+if TYPE_CHECKING:
+    from opi.manager.backup.base import SnapshotInfo
 from opi.core.backup_scheduler import (
     BackupScheduler,
     _is_freq_target_day,

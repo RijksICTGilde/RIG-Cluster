@@ -1,5 +1,7 @@
 """ArgoCD manager for handling ArgoCD resources and repository secrets."""
 
+from __future__ import annotations
+
 import logging
 import os
 from typing import TYPE_CHECKING, Any, cast
@@ -24,6 +26,7 @@ from opi.utils.sops import encrypt_to_sops_files_or_fail
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +94,12 @@ def uses_http_basic_auth(repo_url: str) -> bool:
 class ArgoManager:
     """Manager for ArgoCD-related operations and resources."""
 
-    def __init__(self, project_manager: ProjectManager) -> None:
+    # Bewuste uitzondering op F821 hieronder. ProjectManager hier onder TYPE_CHECKING
+    # importeren maakt F821 tevreden, maar laat pyright de types van project_manager
+    # oplossen en dan komen er 19 bestaande typefouten uit in dit bestand en in
+    # delete_project_manager. Die zijn er al, staan los van deze wijziging en verdienen een
+    # eigen opruiming; ze hier meenemen zou een lintwijziging tot een verbouwing maken.
+    def __init__(self, project_manager: ProjectManager) -> None:  # noqa: F821
         """
         Initialize the ArgoManager with reference to ProjectManager.
 

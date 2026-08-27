@@ -2,12 +2,18 @@
 E2E tests for the AGE Encryption Tools page.
 """
 
+from typing import TYPE_CHECKING
+
 import pytest
 from playwright.sync_api import Page, expect
 
 pytestmark = pytest.mark.e2e
 
 TOOLS_URL = "/tools"
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_tools_page_renders(app_server: str, auth_page: Page) -> None:

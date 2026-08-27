@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.wizard.state import WizardState
+    from opi.manager.project_manager import ProjectManager
 
 logger = logging.getLogger(__name__)
 
