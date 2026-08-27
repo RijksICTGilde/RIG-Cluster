@@ -1,0 +1,81 @@
+{#
+  De diensten van de Toegangspagina.
+
+  DE VORM IS OVERGENOMEN van het Keycloak-blok op de projectpagina
+  (opi/services/catalog/keycloak/section-detail.html.j2), en dat is geen luiheid maar het
+  punt: een beheerder ziet hier hetzelfde soort veld als daar. Label boven, waarde in een
+  <c-secret-field>, het klembord IN het veld, en het onthul-oogje alleen bij wat echt geheim
+  is. Adres en gebruikersnaam staan dus open (`revealed show-copy`), het wachtwoord niet.
+
+  EEN DING IS BEWUST NIET OVERGENOMEN. Dat blok opent zijn console met een window.open()
+  via :attrs, met de URL in een data-attribuut, omdat <c-button> geen onclick als los
+  attribuut toelaat. Dat hoeft hier niet: <c-button> kent gewoon `href` en `target`
+  (nagekeken in de componentregistratie, niet aangenomen). Een echte link is bovendien
+  beter: hij is met het middelste muisknopje te openen en met rechtsklikken te kopieren.
+
+  <c-alert> DRAAGT ALLEEN EEN HEADING. Geen `content`, geen `text`, en geen slot; de
+  registratie kent type/heading/padding/max-width/closable/class en verder niets. De
+  toelichting staat daarom in een <c-paragraph> eronder. Zulke dingen kosten een renderfout
+  en geen waarschuwing, en daarom staat er een test op die dit fragment echt rendert.
+
+  DE WAARSCHUWING IS GEEN SIERAAD. Hij verschijnt als de Ingress en de clusterconfiguratie
+  het oneens zijn over het adres, en dat betekent dat een domeinmigratie half is blijven
+  staan. Dat wil je hier zien en niet later in een SERVFAIL.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+
+{% if not diensten %}
+    <c-alert type="warning" heading="Geen diensten gevonden" />
+    <c-paragraph>De geheimen staan niet in deze namespace, of de operations-manager mag ze niet lezen.</c-paragraph>
+{% endif %}
+
+{% for dienst in diensten %}
+    {% call panel(dienst.naam, dienst.icoon) %}
+        <c-stack gap="md">
+            {% if dienst.toelichting %}
+                <c-paragraph size="sm">{{ dienst.toelichting }}</c-paragraph>
+            {% endif %}
+
+            {% if dienst.waarschuwing %}
+                <c-alert type="warning" heading="Let op het adres" />
+                <c-paragraph size="sm">{{ dienst.waarschuwing }}</c-paragraph>
+            {% endif %}
+
+            <c-stack gap="xs">
+                <c-heading type="h3" size="6" label="Adres" />
+                <c-secret-field value="{{ dienst.url }}" revealed show-copy />
+                <c-action-group align="start">
+                    <c-button type="secondary" size="sm" label="Openen" show-icon="after" icon="externe-link"
+                              href="{{ dienst.url }}" target="_blank" />
+                </c-action-group>
+            </c-stack>
+
+            {% if dienst.gebruiker %}
+                <c-stack gap="xs">
+                    <c-heading type="h3" size="6" label="Gebruikersnaam" />
+                    <c-secret-field value="{{ dienst.gebruiker }}" revealed show-copy />
+                </c-stack>
+            {% endif %}
+
+            <c-stack gap="xs">
+                <c-heading type="h3" size="6" label="Wachtwoord" />
+                {% if dienst.wachtwoord %}
+                    <c-secret-field value="{{ dienst.wachtwoord }}" show-copy />
+                {% else %}
+                    <c-paragraph size="sm">Niet gevonden in het geheim van deze dienst.</c-paragraph>
+                {% endif %}
+            </c-stack>
+
+            {% for label, waarde in dienst.extra_velden %}
+                <c-stack gap="xs">
+                    <c-heading type="h3" size="6" label="{{ label }}" />
+                    <c-secret-field value="{{ waarde }}" show-copy />
+                </c-stack>
+            {% endfor %}
+
+            {% if dienst.extra_velden %}
+                <c-paragraph size="sm">De OTP-code hoort bij het moment dat je deze pagina laadde en verloopt binnen 30 seconden. Laad de pagina opnieuw voor een verse code.</c-paragraph>
+            {% endif %}
+        </c-stack>
+    {% endcall %}
+{% endfor %}

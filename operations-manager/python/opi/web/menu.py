@@ -68,6 +68,10 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         # dienst declareert, en dat is er sinds send-email meer dan een.
         menu_items.append({"label": "Aanvragen", "link": "/admin/approvals", "icon": "vinkje"})
         menu_items.append({"label": "Services status", "link": "/admin/diensten", "icon": "weegschaal"})
+        # Onderaan het beheerblok, want dit is naslag en geen dagelijks scherm. De
+        # pagina zelf zit achter require_platform_admin; dit menu-item verbergt hem
+        # alleen, en verbergen is geen grendel.
+        menu_items.append({"label": "Toegang", "link": "/admin/toegang", "icon": "sleutel"})
 
     # Add user-specific menu items
     if user:
