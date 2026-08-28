@@ -428,6 +428,20 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
 # ---------------------------------------------------------------------------
 
 
+class SupersededByResponse(BaseModel):
+    """The task that took over the work of a task that gave way.
+
+    A superseded task is recorded as ``completed`` - the durable work was done and a
+    newer task reprocesses from there - so a client that only reads ``status`` cannot
+    tell the difference. This field can be read without knowing the result shape of
+    any particular task type.
+    """
+
+    task_id: str = Field(..., description="Task that took over; poll this one to see how the work ended.")
+    task_type: str = Field(..., description="Kind of the task that took over (e.g. 'refresh_project').")
+    project_name: str = Field(..., description="Project the taking-over task belongs to; always this project.")
+
+
 class TaskResponse[TResult: BaseModel](BaseModel):
     """Generic async task response wrapper.
 
@@ -444,8 +458,12 @@ class TaskResponse[TResult: BaseModel](BaseModel):
         ...,
         description=(
             "Task status: pending, claimed, running, completed, failed, cancelled. "
-            "A task whose work failed reports 'failed' here, also when it failed part-way; "
-            "'completed' means the whole task succeeded."
+            "A task whose work failed reports 'failed' here, also when it failed part-way. "
+            "'completed' means the task reached its end state without failing - usually that "
+            "the whole task succeeded, but a task can also be 'completed' while its result "
+            "carries status 'superseded': it gave way to a newer task that redoes its work. "
+            "In that case 'superseded_by' names that task, and this task's result carries no "
+            "outcome of its own."
         ),
     )
     progress_percent: int = Field(default=0, description="Completion percentage (0-100)")
@@ -456,6 +474,15 @@ class TaskResponse[TResult: BaseModel](BaseModel):
         description="Task result, populated when the task finished, on 'completed' and on 'failed'",
     )
     error_message: str | None = Field(default=None, description="Error details when status is 'failed'")
+    superseded_by: SupersededByResponse | None = Field(
+        default=None,
+        description=(
+            "The task that took over this task's remaining work, when this task gave way. "
+            "Null in every other case, so a client can act on a hand-over without knowing "
+            "the result shape of this task type. The work is not lost: the named task "
+            "reprocesses from the state this task committed."
+        ),
+    )
     pending_rollout: PendingRolloutResponse | None = Field(
         default=None,
         description=(
@@ -489,6 +516,17 @@ def _with_error_category(result: object) -> object:
     return {**result, "error_category": error_category_for(result.get("error_type")).value}
 
 
+def _superseded_by(result: object) -> dict | None:
+    """The identity of the task that took over, lifted out of a superseded result.
+
+    Only for a result the worker wrote for a hand-over; anything else answers None.
+    """
+    if not isinstance(result, dict) or result.get("status") != "superseded":
+        return None
+    superseded_by = result.get("superseded_by")
+    return superseded_by if isinstance(superseded_by, dict) else None
+
+
 def task_response_from_dict(task: dict) -> dict:
     """Convert a task record dict to a TaskResponse-compatible dict.
 
@@ -504,6 +542,11 @@ def task_response_from_dict(task: dict) -> dict:
         "subtasks": task.get("subtasks"),
         "result": _with_error_category(task.get("result")),
         "error_message": task.get("error_message"),
+        # Uit het resultaat naar het topniveau getild: dit is het enige punt waar een
+        # opgeslagen taakrecord een API-antwoord wordt (V1 en V2 allebei), net als
+        # error_category. Altijd aanwezig, null als er niets is - een sleutel die soms
+        # ontbreekt dwingt elke lezer tot een extra controle.
+        "superseded_by": _superseded_by(task.get("result")),
         # Altijd aanwezig, ook als er niets te tellen valt: een sleutel die soms ontbreekt
         # dwingt elke lezer tot een extra controle, en null zegt hetzelfde. Gevuld door de
         # taakroute zodra de taak klaar is (zad-cli, punt 24).
