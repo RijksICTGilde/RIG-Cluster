@@ -619,12 +619,12 @@ uitrollen kan ik niets meten.
 
 | Bron | Rekenwijze | Per dag |
 |---|---|---|
-| Automatische stemmer | nachtelijke sweep over de component-instanties; hij schrijft alleen als de afwijking de drempel haalt (`increase_threshold: 10`, `decrease_threshold: 30`, `opi/services/catalog/resource_tuning/config.py:25-26`). **Aanname: 10 procent van 137 beweegt op een nacht.** | ~14 |
+| Automatische stemmer | nachtelijke sweep over de **261** component-instanties: de lus loopt per deployment over zijn componenten (`opi/services/resource_tuning_service.py:765` en `:778`) en de sweep meldt per component (`opi/core/resource_tuning_scheduler.py:120`, "%d component(s) changed"). Hij schrijft alleen als de afwijking de drempel haalt (`increase_threshold: 10`, `decrease_threshold: 30`, `opi/services/catalog/resource_tuning/config.py:25-26`). **Aanname: 10 procent van de 261 component-instanties beweegt op een nacht.** | ~26 |
 | Geplande backups | per deployment een RRULE, opt-in. **Aanname: de helft van de 137 deployments heeft een dagelijkse backup.** Elke run is een taak (`TaskType.BACKUP`) en dus een gebeurtenis, geslaagd of niet. | ~68 |
 | Reconciliatie | draait om 03:00, maar `RECONCILIATION_DRY_RUN` blijft op productie `True` (paragraaf 3), dus geen mutaties. Eén samenvattingsregel. | ~1 |
 | Slaapstand | staat op productie uit (paragraaf 3). | 0 |
 | Logbewaker | draait al en gaat naar ntfy, niet naar een postvak. | 0 |
-| **Ondergrens, niemand doet iets** | 14 + 68 + 1 | **~83** |
+| **Ondergrens, niemand doet iets** | 26 + 68 + 1 | **~95** |
 
 Daarbovenop komt alles wat mensen wél doen: uitrollen, images bijwerken, componenten
 toevoegen, diensten configureren, verwijderen. Dat zijn 23 taaksoorten over 137 deployments.
