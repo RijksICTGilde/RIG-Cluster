@@ -268,6 +268,7 @@ twee zijn de grote.**
 def is_user_authorized_for_project(project_name: str, user_email: str) -> bool:
     """Check whether a user may access a project. Platform admins always may."""
     if get_user_service().is_platform_admin(user_email):
+        logger.debug(f"User {user_email} authorized for project {project_name} (admin)")
         return True
     ...
 
@@ -278,7 +279,7 @@ def get_user_role_for_project(project_name: str, user_email: str) -> str | None:
     ...
 ```
 
-`opi/services/project_authorization.py:39-45` en `:59-70`.
+`opi/services/project_authorization.py:40-44` en `:60-63`.
 
 Die twee functies worden samen **36 keer** aangeroepen in productiecode: 23 keer
 `is_user_authorized_for_project` en 13 keer `get_user_role_for_project`, verspreid over
@@ -312,9 +313,11 @@ Wat daar concreet uit volgt:
 - **De logstroom mag ook** (`opi/api/logs_websocket_router.py:355`).
 
 **En er staat geen enkele meting tegenover.** Geen logregel op INFO, geen gebeurtenis, geen
-teller. De twee functies loggen hun beslissing op DEBUG (`opi/services/project_authorization.py:43`,
-`:51`), en `LOG_TO_FILE=false` op productie. Wie wil weten of een beheerder ooit in een
-projectbestand heeft gekeken dat niet van hem is, kan dat niet nagaan.
+teller. Alleen de eerste van de twee functies logt haar beslissing, en dan op DEBUG
+(`opi/services/project_authorization.py:43`). `get_user_role_for_project` (`:60-73`) bevat geen
+enkele logaanroep: de platformbeheerderstak is `return "admin"` en verder niets. En op productie
+staat `LOG_TO_FILE=false`, dus ook die DEBUG-regels landen nergens. Wie wil weten of een
+beheerder ooit in een projectbestand heeft gekeken dat niet van hem is, kan dat niet nagaan.
 
 **Dat is één vinkje met 36 gevolgen, zonder spoor.** Dat is de zwaarste bevinding van dit
 document, en deel 2 gaat erover.
@@ -543,7 +546,7 @@ metingen.
 | Project-deployments op productie | **127**, in **44** namespaces | `opi/core/startup.py:582-583`, een meting uit de opstartlus zelf ("127 `get namespace` plus 127 `label namespace` for 44 distinct namespaces") |
 | Platformbeheerders op productie | **2** | `opi/core/startup.py:559-561` (één vast) plus `ADMIN_EMAILS` (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:46`, één adres) |
 | Toegelaten gebruikers uit de ConfigMap | 6 | `ALLOWED_EMAILS`, idem `:45` |
-| Taaksoorten | **23** | `TaskType`, `opi/core/async_task_service.py:54-76` |
+| Taaksoorten | **23** | `TaskType`, `opi/core/async_task_service.py:54-77` |
 
 De twee tellingen van de deploymentaantallen (137 uit de bestanden, 127 uit de opstartlus)
 liggen 8 procent uit elkaar en zijn van verschillende momenten. Voor een orde van grootte maakt
