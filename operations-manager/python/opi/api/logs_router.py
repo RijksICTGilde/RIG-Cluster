@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 #: someone else chose the size of.
 MAX_POD_NAME_LENGTH = 253
 
+#: Same idea for the deployment and component names a client sends along. Kept next to the
+#: bound above so the two live in one place instead of as bare numbers at their use sites.
+MAX_NAME_LENGTH = 256
+
 
 async def resolve_component_pods(
     kubectl: KubectlConnector,
@@ -247,7 +251,7 @@ async def get_component_pods(
     if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    if len(component) > 256 or len(deployment) > 256:
+    if len(component) > MAX_NAME_LENGTH or len(deployment) > MAX_NAME_LENGTH:
         raise HTTPException(status_code=400, detail="Invalid name")
 
     pods = await resolve_component_pods(
