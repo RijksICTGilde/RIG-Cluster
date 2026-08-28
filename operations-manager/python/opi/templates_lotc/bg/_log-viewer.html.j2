@@ -50,7 +50,8 @@
 
   De componentkiezer blijft een KALE <select> in een <c-dropdown>: dat component is
   bedoeld als schil om een echte <select>, precies zodat de browser zijn eigen keuzelijst
-  houdt. Het script vult hem met new Option() en leest this.value - onveranderd.
+  houdt. Het script vult hem met new Option() en leest this.value - onveranderd. De
+  podkiezer die er sinds RC-162 naast staat is dezelfde vorm, om dezelfde reden.
 #}
 <c-sheet id="log-viewer-panel" accessible-label="Logboek" width="62rem">
     {# De kop van het thema. Hij levert de titel, de ondertitel en de sluitknop; die knop
@@ -110,6 +111,36 @@
             <select id="log-component-selector" aria-label="Component"
                     onchange="switchLogComponent(this.value)"></select>
         </c-dropdown>
+
+        {# De podkiezer, in dezelfde vorm als de componentkiezer hierboven en om dezelfde
+           reden: <c-dropdown> is de schil zonder eigen label om een echte <select>, en
+           <nldd-dropdown> tekent de gekozen tekst zelf en werkt die alleen bij op een
+           'change' van die select. log_viewer.js stuurt er daarom een na het vullen -
+           zonder dat oogt de lijst leeg terwijl er pods in staan.
+
+           WAAROM DEZE KIEZER ER STAAT. Zonder podnaam volgt kubectl een label-selector,
+           en die levert de regels van ELKE matchende pod door elkaar heen, zonder erbij
+           te zeggen welke regel bij welke pod hoort. Bij pr-114 (productie, 21 augustus
+           2026) liepen de regels van de bedienende pod en die van de crashende pod dus
+           ongescheiden door elkaar: je kon de crashende pod niet kiezen en hem ook niet
+           herkennen. "Alle pods" is die oude stand, en blijft de eerste optie. #}
+        <c-dropdown size="sm" width="20rem">
+            <select id="log-pod-selector" aria-label="Pod"
+                    onchange="switchLogPod(this.value)"></select>
+        </c-dropdown>
+
+        {# De vorige poging. Een pod in CrashLoopBackOff zit tussen twee pogingen in een
+           backoff-venster van minuten, en 'kubectl logs -f' levert dan NIETS tot de
+           volgende poging - je kijkt op precies het verkeerde moment tegen een leeg
+           scherm aan. De fout die de crash verklaart staat in de vorige poging.
+
+           Alleen bedienbaar met een gekozen pod die zo'n poging heeft: op "Alle pods"
+           bestaat de vraag niet, want --previous geldt per container. Het script zet
+           .disabled en .checked; de statusregel zegt erbij dat dit een AFGESLOTEN
+           logboek is en geen lopende stroom, anders leest een stilstaand paneel als een
+           kapotte verbinding. #}
+        <c-switch-field id="log-previous-attempt" label="Vorige poging"
+                        :attrs="{'onchange': 'toggleLogPrevious()'}" />
 
         {# Het zoekveld van het thema, inclusief zijn eigen vergrootglas en wisknop. Dat
            laatste verving .log-search-clear met zijn .is-visible; het wissen loopt nu via
