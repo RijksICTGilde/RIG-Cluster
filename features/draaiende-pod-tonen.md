@@ -49,7 +49,10 @@ Is er voor een component geen bedienende pod, dan staat er een rode melding "Er 
 niets voor `<component>`". Dan ligt dat deel van de applicatie er wel echt uit.
 
 De digest wordt afgekort tot twaalf tekens. De volle 64 passen niet op een regel en zeggen
-niet meer dan het begin.
+niet meer dan het begin. Dat afkorten doet het filter `korte_digest`
+(`shorten_image_digest` in `opi/core/template_helpers.py`) en niet een `[:N]` in het
+sjabloon: de kaart toont twee imageverwijzingen -- de draaiende en de ingestelde -- dus
+anders stond die grens op twee plekken. Een verwijzing met een tag blijft heel.
 
 ### Waarom RollingUpdate en Recreate een ander bericht krijgen
 
