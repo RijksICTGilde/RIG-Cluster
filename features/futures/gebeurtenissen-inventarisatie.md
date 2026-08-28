@@ -510,20 +510,28 @@ Dit is de knop waar iemand straks per stuk aan draait. Het aantal is een echt on
 
 | # | Type (VOORSTEL) | Wat erin zit | Publiek | Standaard voor projectbeheerder | Standaard voor projectlid |
 |---|---|---|---|---|---|
-| 1 | `uitrol` | de uitrolgroep uit paragraaf 1, plus ArgoCD-renderfouten | A en C | postvak + mail bij mislukking | postvak |
+| 1 | `uitrol` | de uitrolgroep uit paragraaf 1, plus ArgoCD-renderfouten en een afgekeurd projectbestand | A, B en C | postvak + mail bij mislukking | postvak |
 | 2 | `verwijdering` | de verwijdergroep uit paragraaf 1 | A en C | postvak + mail | postvak |
-| 3 | `gezondheid` | OOM, image-pull, crashlus, probe-kill, uitgeschakelde component | A en C | postvak + mail | postvak |
-| 4 | `platform-ingreep` | automatische stemmer, slaapstand, weesopruiming | A | postvak + mail | geen |
-| 5 | `gegevens` | backup, herstel, kloon, schemabeheer, bewaartermijn | A en C | postvak + mail bij mislukking | geen |
+| 3 | `gezondheid` | OOM, image-pull, crashlus, probe-kill, uitgeschakelde component, een mail van het project die niet is bezorgd | A en C | postvak + mail | postvak |
+| 4 | `platform-ingreep` | automatische stemmer, slaapstand, weesopruiming op een resource van een project, sleutelrotatie | A, B en C | postvak + mail | geen |
+| 5 | `gegevens` | backup, herstel, kloon, schemabeheer, bewaartermijn | A, B en C | postvak + mail bij mislukking | geen |
 | 6 | `aanvraag-ingediend` | een goedkeuring wacht op MIJ | B | postvak + mail | n.v.t. |
 | 7 | `aanvraag-besloten` | mijn aanvraag is goedgekeurd of afgewezen | A | postvak + mail | postvak |
-| 8 | `leden-en-toegang` | leden, rollen, uitnodigingen ingewisseld, cross-domain-access | A | postvak + mail | postvak |
+| 8 | `leden-en-toegang` | leden, rollen, uitnodigingen ingewisseld, cross-domain-access | A en B | postvak + mail | postvak |
 | 9 | `dienstwijziging` | dienst toegevoegd of verwijderd, dienstconfiguratie, bijlagen | A en C | postvak | geen |
-| 10 | `werkomgeving` | databaseconsole, ad-hoc jobs | A en B | postvak | geen |
+| 10 | `werkomgeving` | databaseconsole, ad-hoc jobs | A, B en C | postvak | geen |
 | 11 | `platform-mededeling` | release, onderhoud, clusterbrede berichten | A en B | postvak + mail | postvak + mail |
-| 12 | `beheer-en-beveiliging` | gebruikersbeheer, wezen, drift, scanbevindingen, geweigerde sleutels en tokens, allowlist-weigeringen | B | n.v.t. | n.v.t. |
+| 12 | `beheer-en-beveiliging` | gebruikersbeheer, de weessweep en de reconciliatie zelf, drift, scanbevindingen, geweigerde sleutels en tokens, allowlist-weigeringen, de takenmachinerie van OPI | B | n.v.t. | n.v.t. |
 
-Type 12 is alleen zichtbaar voor platformbeheerders; type 6 alleen voor wie beoordeelt. Voor de andere tien geldt de gewone regel: je ziet wat er met jouw projecten gebeurt. Type 12 is ook het type dat in deel 2 een eigen, langere bewaartermijn krijgt, want daar zitten de beveiligingsgebeurtenissen in.
+**Hoe de kolom `Publiek` is afgeleid.** Elke gebeurtenis uit de catalogus valt in precies een type; dat is wat regel 2 hierboven afdwingt, want een type dat te klein is gaat bij een buur in. De kolom `Publiek` is daarom geen tweede oordeel naast de tabellen maar de VERENIGING van de `publiek`-waarden van de rijen die in dat type vallen. Dat is dezelfde reden waarom het publiek in die tabellen een kolom is en geen tweede lijst: twee lijsten over dezelfde gebeurtenissen lopen gegarandeerd uit de pas, en dat geldt hier net zo goed. Wie het wil narekenen heeft aan de kolom `Wat erin zit` genoeg, op drie plekken na waar de toewijzing niet uit die kolom volgt:
+
+- De vier algemene taakrijen uit paragraaf 1 (mislukt, hersteld na een mislukking, klaar terwijl de aanvrager weg is, afgebroken; alle vier publiek A en C) horen niet bij een eigen type maar bij de vijf taakgroepen uit diezelfde paragraaf: Uitrol bij type 1, Verwijderen bij type 2, Gegevens bij type 5, Diensten bij type 9 en Slaapstand bij type 4. Dat breekt de regel niet, want die vier zijn zelf verzamelrijen: elk staat voor 23 taaksoorten, en het is de taaksoort die het type bepaalt. Daarom draagt type 4 publiek C, en daarom draagt type 10 het niet uit die hoek maar uit zijn eigen rijen.
+- De weesopruiming komt in twee omschrijvingen terug. De grens loopt bij het onderwerp: raakt de ingreep een resource van een project, dan is het type 4 (`orphan_candidate`, en de definitieve verwijdering van een gemarkeerde resource); gaat het over de sweep zelf, dan is het type 12 (`in_use_anomaly`, een teruggedraaide markering, een overgeslagen reconciliatieronde). Diezelfde grens legt de twee taakrijen die over de takenmachinerie van OPI gaan (de herstellus, de weggegooide wizardtaak) in type 12 en niet in type 1.
+- De negen rijen van paragraaf 10 staan nergens als groep genoemd. Ze landen zo: het afgekeurde projectbestand in type 1, de niet bezorgde mail in type 3, de sleutelrotatie in type 4, de nieuwe clonegeneratie in type 5, `cross-domain-access` in type 8, de bijlage en de dienstwijziging in type 9, en de bootstrap-drift en het volle cluster in type 12.
+
+**Wat een `B` op een type wel en niet betekent.** Dat de platformbeheerder rijen in dat type heeft staan, niet dat het type van hem is. Alleen de typen 6 en 12 zijn helemaal zonder publiek A. Bij de typen 1, 4, 5, 8, 10 en 11 zit de `B` op een deel van de rijen ("het geheugenplafond is bereikt" in type 4, "een geplande backup is niet eens gestart" in type 5, "een inwisseling is geweigerd" in type 8, "een databaseconsole is gestart" in type 10), en de projectbeheerder ziet dezelfde gebeurtenis met een eigen drempel. Dat is wat de leeswijzer bedoelt met "elk met een eigen drempel".
+
+Type 12 is alleen zichtbaar voor platformbeheerders; type 6 alleen voor wie beoordeelt. Dat type draagt daarom publiek B en in dezelfde rij toch een standaard voor de projectbeheerder, en dat is geen tegenspraak: wie beoordeelt is een eigenschap van de goedkeuring en niet van de rol. `ApproverScope` kent naast `PLATFORM_ADMIN` ook `PROJECT_ADMIN` en `PROJECT_MEMBER` (`opi/services/catalog/approval.py:45-56`), en `service_use_approval` neemt de beoordelaar als parameter met `PLATFORM_ADMIN` alleen als standaardwaarde (`:170-176`). Vandaag staan alle drie de gedeclareerde goedkeuringen op `PLATFORM_ADMIN` (paragraaf 2), dus vandaag is de vereniging over de rijen `B`; zodra de eerste goedkeuring binnen een project komt te liggen komt A erbij. De standaard staat er alvast omdat het scherm over typen gaat en niet over de goedkeuringen die er toevallig zijn; deel 3 werkt dat uit bij het voorkeurenscherm. Voor de andere tien geldt de gewone regel: je ziet wat er met jouw projecten gebeurt. Type 12 is ook het type dat in deel 2 een eigen, langere bewaartermijn krijgt, want daar zitten de beveiligingsgebeurtenissen in.
 
 **Waarom niet minder.** Vier of vijf typen ("uitrol, gezondheid, aanvragen, beheer") leest prettiger maar levert een scherm op waar de enige zinnige handeling is om alles aan te laten. De typen 4 en 5 zijn precies de twee waarvan de opdrachtgever zegt dat de eigenaar ze achteraf moet weten, en die moet je apart kunnen aanzetten zonder ook elke geslaagde uitrol binnen te krijgen.
 
