@@ -669,7 +669,7 @@ tweede regel:
 
 > **Een gebeurtenis met `severity = "informational"` levert geen postvakrij op, tenzij zij op
 > de tak "gepasseerd" van toets 1 valt: er is namens de ontvanger iets met zijn eigendom of
-> zijn bevoegdheid gedaan dat hij niet zelf in gang zette.**
+> zijn bevoegdheid gedaan wat hij niet meer kan terugdraaien.**
 
 Dat is geen derde knop maar de codering van de eerste toets van de grensregel
 (`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). **De uitzondering hoort erbij en is geen
@@ -677,10 +677,11 @@ verzachting**, want die toets heeft twee takken: **aan zet** (er wacht een hande
 **gepasseerd** (er is namens jou iets met jouw eigendom gedaan wat je niet meer kunt
 terugdraaien). `severity` volgt alleen de eerste tak. Iets waar niets meer aan te doen valt is
 juist daarom `informational`, en dat is precies wat de tak "gepasseerd" opvangt: je rol is
-gewijzigd, een collega opende een console op jouw productiedatabase, het platform zette je
-deployment in slaapstand. Zonder de uitzondering zou de ernstregel die hele tak wegvagen, en
-daarmee ook de garantie in "Wat niet uitgezet mag kunnen worden" hieronder, die "je rol is
-gewijzigd" onuitschakelbaar noemt terwijl hij dan bij niemand meer aankomt.
+gewijzigd, een ander besliste op je aanvraag, een collega opende een console op jouw
+productiedatabase, het platform zette je deployment in slaapstand. Zonder de uitzondering zou
+de ernstregel die hele tak wegvagen, en daarmee ook de garantie in "Wat niet uitgezet mag
+kunnen worden" hieronder, die "je rol is gewijzigd" onuitschakelbaar noemt terwijl hij dan bij
+niemand meer aankomt.
 
 Wat de regel wél wegneemt is de eerste tak zonder handeling: een geslaagde uitrol, een
 geslaagde backup en een gewekt deployment zijn `informational`, er wacht niets en er is niets
@@ -712,7 +713,7 @@ Ze vallen in vier groepen, en per groep staat erbij wat de bedoelde uitkomst is:
 
 | # | Regel (`meldingen-inventarisatie.md`) | Type | Uitkomst |
 |---|---|---|---|
-| 1 | :171 Een aanvraag is goedgekeurd | 7 | **houdt het postvak** via de uitzondering: een besluit op je eigen aanvraag is de tak "gepasseerd" bij de aanvrager. Zo staat het ook in de grensregeltabel, rij 7 |
+| 1 | :171 Een aanvraag is goedgekeurd | 7 | **houdt het postvak** via de uitzondering: een ander besliste over zijn aanvraag en ZAD verwerkte zijn project meteen op dat besluit opnieuw (`opi/forms/visualizers/wizard_sections.py:981`), dus er wacht geen handeling op hem en terugdraaien kan hij het besluit niet. Dat is de tak "gepasseerd" bij de aanvrager, en zo staat het ook in de grensregeltabel, rij 7 |
 | 2 | :257 Een deployment is in slaapstand gezet | 4 | **houdt het postvak**: het platform veranderde jouw deployment. Grensregeltabel rij 4, tak "gepasseerd" |
 | 3 | :324 Iemand heeft een uitnodiging ingewisseld via SSO | 8 | **houdt het postvak**: er is iemand bij jouw project gekomen. Grensregeltabel rij 8 |
 | 4 | :325 Iemand heeft een uitnodiging ingewisseld met een lokaal account | 8 | idem |
@@ -1095,8 +1096,13 @@ regels met "ter informatie" én "postvak" houden er zeven hun postvak via de tak
 verliezen er twee het al op de `reason`-regel, en verliezen er elf het op de ernstregel (twee
 daarvan alleen op hun uitroltak, want ze zijn generiek over 23 taaksoorten). Die elf
 zijn geen correctie op de inventarisatie: hun ernst klopt, en de grensregeltabel in
-`plans/beheer-in-zad-plan-van-aanpak.md` zette ze al op een pagina. Wat verandert is de kolom
-"standaardkanaal", die uit RC-148 komt en van vóór de grensregel is.
+`plans/beheer-in-zad-plan-van-aanpak.md` zette ze al op een pagina, of in elk geval buiten het
+postvak. **Twee vallen daarbuiten** en staan hierboven op hun eigen redenering: regel 13 (een
+afgebroken taak) past op geen van de twee takken die rij 1 en rij 2 van de grensregeltabel
+beschrijven, en regel 20 (de sleutelrotatie) hoort bij geen enkel type, zodat de
+grensregeltabel haar nergens toewijst. Dat laatste zegt de tabel hierboven zelf al in dezelfde
+cel. Wat verandert is de kolom "standaardkanaal", die uit RC-148 komt en van vóór de
+grensregel is.
 
 **En één bevinding die geen correctie is maar wel gemeld moet worden.** De inventarisatie zegt
 in paragraaf 7 over "Iemand is platformbeheerder geworden of afgevoerd": "**bestaat nog niet**:

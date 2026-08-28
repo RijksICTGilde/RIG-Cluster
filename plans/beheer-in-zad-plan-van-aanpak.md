@@ -340,7 +340,7 @@ de correctie op RC-148.
 | 4 | `platform-ingreep` | **postvak** (gepasseerd: het platform veranderde zijn deployment) | **overzicht** | 1 op de tak "gepasseerd"; dit is de tak waarvoor die tak bestaat |
 | 5 | `gegevens` | backup mislukt: **postvak** (handeling: schema of planning nakijken). Backup geslaagd: **pagina** | **overzicht** | 1 alleen bij mislukking |
 | 6 | `aanvraag-ingediend` | n.v.t. | **postvak** | 1, en dit is de schoonste doorgang van de hele lijst |
-| 7 | `aanvraag-besloten` | **postvak** bij de aanvrager | **overzicht** | 1 bij de aanvrager (aan zet: hij kan nu verder, of hij moet iets anders bedenken) |
+| 7 | `aanvraag-besloten` | goedgekeurd: **postvak** (gepasseerd: een ander besliste over zijn aanvraag, en ZAD verwerkte zijn project meteen op dat besluit opnieuw: `opi/forms/visualizers/wizard_sections.py:981`, uitgevoerd in `opi/web/router_detail_edit.py:1443`; er wacht dus geen handeling op hem en terugdraaien kan hij het besluit niet). Afgewezen: **postvak** (aan zet: hij moet iets anders bedenken, bijvoorbeeld een ander domein of subdomein aanvragen) | **overzicht** | 1 bij de aanvrager: bij goedkeuring op de tak "gepasseerd", bij afwijzing op de tak "aan zet" |
 | 8 | `leden-en-toegang` | **postvak**, en bij een wijziging aan je eigen toegang niet uitzetbaar | **overzicht** | 1 op de tak "gepasseerd" |
 | 9 | `dienstwijziging` | **pagina** (de projectdetailpagina toont de diensten) | **overzicht** | 2 |
 | 10 | `werkomgeving` | **postvak** bij de andere projectbeheerders (een console op de productiedatabase is iets waar collega's van horen te weten), **pagina** bij de actor zelf | **overzicht** | 1 op de tak "gepasseerd", ruim uitgelegd; zie de wrijving hieronder |
