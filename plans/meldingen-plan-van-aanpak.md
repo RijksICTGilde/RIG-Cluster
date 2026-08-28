@@ -594,7 +594,7 @@ kloppen, en wie ze nooit aanraakt krijgt iets bruikbaars.
 
 **Voor een platformbeheerder is het hetzelfde scherm, met één zin erboven.** Hij is voor zijn
 eigen projecten een gewone projectbeheerder, dus alle twaalf rijen gelden voor hem, alleen niet
-voor de 47 projecten van anderen. Dat verschil hoort niet in een extra kolom of een tweede
+voor de projecten van anderen. Dat verschil hoort niet in een extra kolom of een tweede
 tabel maar in één regel boven de tabel, voorstel:
 
 > Als platformbeheerder krijg je gebeurtenissen van projecten waar je zelf geen lid van bent
@@ -741,9 +741,11 @@ paragraaf 4 als "ter informatie". Dat klopt niet met de werkelijkheid: de eigena
 iets aan doen, want een handmatig gezette waarde wint van de automatische stemmer
 (`features/handmatig-gezette-resources.md`). Die regel hoort dus `actionable` te zijn. Dat is de
 enige regel waar RC-161 de ernstkolom van de eventcatalogus zelf op corrigeert; de elf regels
-11 tot en met 21 hierboven veranderen niet van ernst maar van bestemming, en die bestemming
-stond in de grensregeltabel al zo. Bij de regels 11 en 12 geldt dat alleen op hun uitroltak: een
-geslaagde verwijdertaak valt op "gepasseerd" en houdt daar zijn postvak.
+11 tot en met 21 hierboven veranderen niet van ernst maar van bestemming. Op negen ervan stond
+die bestemming al zo in de grensregeltabel; regel 13 (een afgebroken taak) en regel 20 (de
+sleutelrotatie, die bij geen enkel type hoort) staan op hun eigen redenering. Bij de regels 11
+en 12 geldt dat alleen op hun uitroltak: een geslaagde verwijdertaak valt op "gepasseerd" en
+houdt daar zijn postvak.
 
 **Wat er niet overgenomen is, en waarom niet.** De opdracht noemt vier mechanismen; twee zijn
 er hierboven overgenomen, één deels, en één niet.
@@ -838,8 +840,8 @@ hele catalogus (`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). Er veranderen
 2. **Fase 1 levert de gecorrigeerde standaardentabel**, niet de oude. Concreet: de twee regels
    uit "De standaarden per rol" hierboven (geen aflevering bij `reason = "platform-admin"`, geen
    aflevering bij `severity = "informational"` behalve op de tak "gepasseerd") horen bij het
-   uitwaaieren dat in deze fase gebouwd wordt, en niet in een latere fase. Ze zijn later toevoegen betekent een uitgerolde
-   standaard corrigeren, en dat is duurder dan hem meteen goed leggen.
+   uitwaaieren dat in deze fase gebouwd wordt, en niet in een latere fase. Ze later toevoegen
+   betekent een uitgerolde standaard corrigeren, en dat is duurder dan hem meteen goed leggen.
 3. **Fase 1 repareert de ontbrekende aanvraagdatum.** De generieke dienstgebruik-goedkeuring
    schrijft bij het aanvragen een lege history (`opi/services/catalog/approval.py:303`), waar
    domein en subdomein een tijdstip zetten (`opi/connectors/subdomain.py:511` en `:552`).
