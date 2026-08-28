@@ -157,8 +157,8 @@ hetzelfde geval.
 |---|---|---|
 | Aantal OPI-processen | **één** | `replicas: 1` (`bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml:9`) plus `uvicorn.run(app, host="0.0.0.0", port=8000, loop="asyncio")` zonder `workers=` (`opi/server.py:729`) |
 | Wat de CSP toestaat | **een `EventSource` naar dezelfde herkomst mag** | `connect-src 'self'` (`opi/middleware/security_headers.py:60`); `EventSource` valt onder `connect-src`, dus SSE vraagt geen CSP-wijziging |
-| Routetijdslimiet op `zad.rijksapp.nl` | **300 seconden** | `haproxy.router.openshift.io/timeout: "300s"` (`bootstrap/.../overlays/odcn-production/ingress-rijksapp.yaml:13`) |
-| Idem op `operations-manager.rig.prd1.gn2.quattro.rijksapps.nl` | 600 seconden | `.../odcn-production/ingress.yaml:9` |
+| Routetijdslimiet op `zad.rijksapp.nl` | **300 seconden** | `haproxy.router.openshift.io/timeout: "300s"` (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/ingress-rijksapp.yaml:13`) |
+| Idem op `operations-manager.rig.prd1.gn2.quattro.rijksapps.nl` | 600 seconden | `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/ingress.yaml:9` |
 | SSE in de code vandaag | **bestaat niet** | nul treffers op `EventSource` en op `text/event-stream` in `opi/`; de htmx-SSE-uitbreiding zit niet in `static/js/` (daar staan `htmx.min.js`, `json-enc.js` en eigen scripts) |
 | Postgres-verbindingen | 250 | `infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml:44` |
 | asyncpg | ligt er al | `opi/connectors/postgres.py`, `opi/core/database_pools.py` |
@@ -284,7 +284,7 @@ projectsleutel is dat expliciet niet.
 
 - **De vorm.** `opi/api/v2/models.py` en `opi/api/task_models.py` laten precies zien hoe een
   antwoordmodel er hier uitziet, inclusief `StrEnum`-velden en generieke responses
-  (`TaskResponse[TResult]`, `task_models.py:416`).
+  (`TaskResponse[TResult]`, `opi/api/task_models.py:416`).
 - **De persoonsgebonden authenticatie.** `opi/api/user_token_auth.py`.
 - **De OpenAPI-documentatie is zelfbeschrijvend** en wordt op `/openapi.json` geserveerd, dus
   de zad-cli en een agent zien nieuwe endpoints vanzelf.
@@ -994,6 +994,7 @@ de metingen staan in `plans/beheer-in-zad-inventarisatie.md` en
 | "Fase 1" | drie wijzigingen: er komt een kleine fase 0 vóór, fase 1 levert de gecorrigeerde standaardentabel, en fase 1 repareert de ontbrekende aanvraagdatum | de bronkeuze (goedkeuringen) blijft; wat verandert is de volgorde en de standaard die erin gebakken wordt |
 | "De openstaande beslissingen", punt 3 | een regel erbij over fase 0 en de standaardentabel | anders spreekt de beslissingenlijst de fasering erboven tegen |
 | "De openstaande beslissingen", punt 12 | "je eigen toegang" werd "je eigen bevoegdheid" | dezelfde verbreding als in de lijst hierboven |
+| Kanaal 2, "Wat er al ligt" | het anker naar TaskResponse kreeg zijn volledige pad: `opi/api/task_models.py:416` | een kaal bestandsnaam-anker is niet na te lopen; de rest van het document schrijft het volledige pad |
 | "De openstaande beslissingen" | drie punten erbij (13, 14, 15) | de `reason`-regel met zijn rangorde, de ernstregel, en het besluit om per-projectdempen niet te bouwen. Elk is met ja of nee te beantwoorden en heeft gevolgen voor de bouw, dus ze horen in deze lijst en niet alleen in de proza |
 
 ### Wat er in de andere twee documenten van RC-148 verandert
