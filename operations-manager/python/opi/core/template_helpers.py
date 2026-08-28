@@ -124,6 +124,32 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True, s
         return str(value)[:19] if value else "-"
 
 
+def shorten_image_digest(image: str | None) -> str:
+    """Een imageverwijzing met de digest afgekort tot twaalf tekens.
+
+    ``ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344a1b2c3d4...`` wordt
+    ``ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344a1b2``. Een verwijzing met een tag
+    en niet met een digest blijft heel: daar valt niets af te korten.
+
+    De volle 64 tekens passen niet op een regel en voegen niets toe: wie versies vergelijkt
+    heeft aan het begin genoeg, en wie de volle digest nodig heeft kijkt in het
+    projectbestand.
+
+    Dit is met opzet een filter en geen ``[:19]`` in het sjabloon. De afkapping stond twee
+    keer in dezelfde kaart, dus de grens "twaalf tekens" stond op twee plekken; en een
+    ``[:N]`` in een sjabloon valt op de witte lijst van
+    tests/test_dates_go_through_one_filter.py, die afkappingen tegenhoudt omdat ze bijna
+    altijd een tijdstempel zijn dat via ``dutch_date`` hoort te gaan.
+    """
+    repository, scheiding, digest = (image or "").partition("@")
+    if not scheiding:
+        return image or ""
+    algoritme, dubbele_punt, hex_deel = digest.partition(":")
+    if not dubbele_punt:
+        return repository + scheiding + digest[:12]
+    return f"{repository}@{algoritme}:{hex_deel[:12]}"
+
+
 def format_rrule_schedule(rrule: str | None) -> str:
     """Format an RRULE schedule string into a human-readable Dutch label.
 
