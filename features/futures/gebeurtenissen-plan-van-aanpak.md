@@ -304,7 +304,7 @@ Niets technisch. Wel drie ontwerpregels die vooraf moeten staan:
 
 1. **Het geheim.** Een HMAC-handtekening over de body met een geheim per abonnement, zodat de ontvanger weet dat het bericht van ons komt. Dat geheim wordt AGE-versleuteld opgeslagen als het in het projectbestand belandt, en anders in de database naast het abonnement.
 2. **Waar het aan-uit-vinkje staat.** Zolang een webhook binnen het bestaande netwerkbeleid past, staat het abonnement volledig in de database (deel 2). Zodra een webhook een eigen NetworkPolicy nodig heeft, hoort het aan-uit-vinkje in het projectbestand, precies zoals `vlam` en `send-email` dat doen (`features/vlam-service.md`, `features/send-email.md`). De ontvanger-URL en het bezorgbeleid blijven dan nog steeds in de database.
-3. **Wat er in de body staat.** Dezelfde grens als bij de mail: de gebeurtenis in CloudEvents-vorm, met `subject` op de projectnaam en de actor in `data`, en nooit een ongefilterde foutmelding. Zie deel 2, punt 4.
+3. **Wat er in de body staat.** Dezelfde grens als bij de mail: de gebeurtenis in CloudEvents-VORM, met `subject` op de projectnaam en de actor in `data`, en nooit een ongefilterde foutmelding. Zie deel 2, punt 4. **In vorm, en niet als geldig CloudEvent.** Zolang de OIN openstaat draagt `source` een plaatshouder, en regel 1 van de beslechting "CloudEvents als intern opslagformaat" in deel 2 verbiedt dat zo'n record zich als CloudEvent aandient. Die beslechting zondert deze webhook uit van het exportverbod, want de ontvanger is de eigen tooling van het project en er is geen standaard in het spel die iets belooft, en zij noemt de voorwaarde: content-type `application/json` en niet `application/cloudevents+json`, en de webhookdocumentatie noemt de body CloudEvents-vormig. Daarmee wacht dit kanaal niet op de OIN uit openstaande beslissing 12; de exporteur in fase 9 wel.
 
 ### Waarom dit het eerste push-kanaal is
 
@@ -479,7 +479,7 @@ Plus een projecttijdlijn naast de deploymenttijdlijn, omdat een deel van deze br
 
 **Waarde op zichzelf**: de agent hoeft niet meer te pollen op een taakstatus die na een uur verdwijnt.
 
-**Verifieerbare uitkomst**: een testontvanger krijgt precies een bezorging voor een gebeurtenis waarop hij is geabonneerd; een ontvanger die 500 teruggeeft krijgt herhalingen met oplopende tussenpozen en geen oneindige lus; een OPI-herstart midden in een venster levert geen tweede bezorging van al bezorgde gebeurtenissen.
+**Verifieerbare uitkomst**: een testontvanger krijgt precies een bezorging voor een gebeurtenis waarop hij is geabonneerd, met content-type `application/json` en niet `application/cloudevents+json` zolang `source` een plaatshouder draagt (de uitzondering op regel 1 uit deel 2, zie Kanaal 5 ontwerpregel 3); een ontvanger die 500 teruggeeft krijgt herhalingen met oplopende tussenpozen en geen oneindige lus; een OPI-herstart midden in een venster levert geen tweede bezorging van al bezorgde gebeurtenissen.
 
 ### Fase 7: Alertmanager en de metriekhelft
 
