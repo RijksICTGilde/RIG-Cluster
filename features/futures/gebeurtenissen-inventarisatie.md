@@ -529,11 +529,11 @@ Type 12 is alleen zichtbaar voor platformbeheerders; type 6 alleen voor wie beoo
 
 **Waarom niet meer.** Per taaksoort (23), per dienst (23 diensttypen in `ServiceType`, `opi/services/services_enums.py:4`) of per `failure_type` levert honderden knoppen op. Ergens moet de grens liggen en dit is een verdedigbare plek. Wie meer verfijning wil, krijgt hem in de gebeurtenis zelf (die draagt de taaksoort en de dienst) en niet in het instellingenscherm.
 
-**De open beslissing.** Twaalf is een voorstel, geen wet. Wat de opdrachtgever hier moet beslissen is niet het getal maar de regel eronder: **draait iemand per type aan een knop (aan/uit), of per type per kanaal (postvak / mail / webhook / Mattermost)?** Het tweede is wat GitHub doet en wat de wens beschrijft; het is ook meer scherm. De aanbeveling staat in deel 3: per type per kanaal, maar met werkbare standaarden per rol zodat niemand het scherm hoeft te openen om iets zinnigs te krijgen.
+**De open beslissing.** Twaalf is een voorstel, geen wet. Wat de opdrachtgever hier moet beslissen is niet het getal maar de regel eronder: **draait iemand per type aan een knop (aan/uit), of per type per kanaal (postvak / mail / Mattermost)?** Het tweede is wat GitHub doet en wat de wens beschrijft; het is ook meer scherm. De aanbeveling staat in deel 3: per type per kanaal, maar met werkbare standaarden per rol zodat niemand het scherm hoeft te openen om iets zinnigs te krijgen.
 
 ## Wat hier bewust niet in staat
 
-- **Metrieken en drempelwaarden.** "CPU boven 80 procent", "de wachtrij loopt op", "drie backups op rij gemist" is bewaking en geen gebeurtenis. Dat hoort in een metriek met een regel eroverheen; Prometheus draait al en Alertmanager is de ontbrekende helft. Zie deel 3, Kanaal 5.
+- **Metrieken en drempelwaarden.** "CPU boven 80 procent", "de wachtrij loopt op", "drie backups op rij gemist" is bewaking en geen gebeurtenis. Dat hoort in een metriek met een regel eroverheen; Prometheus draait al en Alertmanager is de ontbrekende helft. Zie deel 3, Kanaal 6.
 - **Applicatielogs van de klant.** Wat er in de container van een project gebeurt is van dat project. ZAD meldt over het platform en over de deployment, niet over de applicatie.
 - **De inhoud van de meldingsteksten.** Wat er precies staat is werk voor de bouwfase, met een regel die nu al vastligt: de gebruiker wordt aangeschreven met "je".
 

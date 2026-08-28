@@ -296,7 +296,7 @@ Een bezorger met een herhaalbeleid, een geheim per abonnement, een abonnementsta
 
 ### Wat er al ligt
 
-De outbox uit deel 2, punt 2, doet het meeste al: de pogingsteller, de exponentiële herhaling met een plafond, de claim per werker, en het opgeven met een gebeurtenis erbij. Een webhook is voor die machinerie een kanaal naast `email`. Het netwerkpad ligt er ook: de namespace draagt `egressGatewayPolicy: "internet"` en het beleid laat uitgaand 443 naar elke bestemming toe.
+Niet de outbox uit deel 2, punt 2: die hangt via `delivery_id` aan een rij die voor EEN PERSOON is neergelegd, en een projectwebhook heeft geen persoon (deel 2, punt 7). Wat er wel ligt is het PATROON van die outbox, en dat is regel voor regel over te nemen op het abonnement: de pogingsteller, de exponentiële herhaling met een plafond, de claim per werker, en het opgeven met een gebeurtenis erbij. De bezorgstand hangt dan aan het abonnement en aan het watermerk `reported_through` uit deel 2, punt 3, en niet aan een ontvangerrij. Het netwerkpad ligt er ook: de namespace draagt `egressGatewayPolicy: "internet"` en het beleid laat uitgaand 443 naar elke bestemming toe.
 
 ### Wat blokkeert
 
@@ -479,7 +479,7 @@ Plus een projecttijdlijn naast de deploymenttijdlijn, omdat een deel van deze br
 
 **Waarde op zichzelf**: de agent hoeft niet meer te pollen op een taakstatus die na een uur verdwijnt.
 
-**Verifieerbare uitkomst**: een testontvanger krijgt precies een aflevering voor een gebeurtenis waarop hij is geabonneerd; een ontvanger die 500 teruggeeft krijgt herhalingen met oplopende tussenpozen en geen oneindige lus; een OPI-herstart midden in een venster levert geen tweede aflevering van al bezorgde gebeurtenissen.
+**Verifieerbare uitkomst**: een testontvanger krijgt precies een bezorging voor een gebeurtenis waarop hij is geabonneerd; een ontvanger die 500 teruggeeft krijgt herhalingen met oplopende tussenpozen en geen oneindige lus; een OPI-herstart midden in een venster levert geen tweede bezorging van al bezorgde gebeurtenissen.
 
 ### Fase 7: Alertmanager en de metriekhelft
 
