@@ -185,7 +185,7 @@ Dat werkt door zonder dat er ergens anders iets hoeft te veranderen, en dat is g
 
 | Laag | Aantal grendels | Vorm |
 |---|---|---|
-| Sjablonen | **13** | `{% if user_role in ["admin", "owner"] %}`, in `project-tabs.html.j2` (10: `:103`, `:143`, `:163`, `:347`, `:380`, `:405`, `:452`, `:789`, `:822`, `:898`), plus `_pending-rollout.html.j2:34`, `_section-deployments.html.j2:87` en `_deployment-actions.html.j2:28` |
+| Sjablonen | **13** | `{% if user_role in ["admin", "owner"] %}`, in `opi/templates_lotc/bg/project-tabs.html.j2` (10: `:103`, `:143`, `:163`, `:347`, `:380`, `:405`, `:452`, `:789`, `:822`, `:898`), plus `opi/templates_lotc/bg/_pending-rollout.html.j2:34`, `opi/templates_lotc/bg/_section-deployments.html.j2:87` en `opi/templates_lotc/bg/_deployment-actions.html.j2:28` |
 | Webroutes | **9** | `if user_role not in ["admin", "owner"]` in `opi/web/router.py` |
 | Bewerkgrendel | **1** | `opi/web/project_edit_security.py:46`, tegen `PROJECT_EDIT_ROLES` |
 | API | **1** | `opi/api/v2/router.py:1177`, de sleutel in de projectlijst |
