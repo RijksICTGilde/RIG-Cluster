@@ -314,13 +314,49 @@ Wat daar concreet uit volgt:
 
 **En er staat geen enkele meting tegenover.** Geen logregel op INFO, geen gebeurtenis, geen
 teller. Alleen de eerste van de twee functies logt haar beslissing, en dan op DEBUG
-(`opi/services/project_authorization.py:43`). `get_user_role_for_project` (`:60-73`) bevat geen
-enkele logaanroep: de platformbeheerderstak is `return "admin"` en verder niets. En op productie
-staat `LOG_TO_FILE=false`, dus ook die DEBUG-regels landen nergens. Wie wil weten of een
-beheerder ooit in een projectbestand heeft gekeken dat niet van hem is, kan dat niet nagaan.
+(`opi/services/project_authorization.py:43`, `f"User {user_email} authorized for project
+{project_name} (admin)"`). `get_user_role_for_project` (`:60-73`) bevat geen enkele logaanroep:
+de platformbeheerderstak is `return "admin"` en verder niets. Van de 36 doorwerkingen laten er
+dus 23 een regel achter en 13 niets.
 
-**Dat is één vinkje met 36 gevolgen, zonder spoor.** Dat is de zwaarste bevinding van dit
-document, en deel 2 gaat erover.
+**Die 23 regels landen wel degelijk ergens, en dat is precies het punt.** De stdout-handler
+wordt onvoorwaardelijk toegevoegd op `DEBUG` (`opi/utils/logging_config.py:65-69`) en de
+`opi`-logger staat op `DEBUG` (`:59`); er is geen `LOG_LEVEL`-instelling in
+`opi/core/config.py`. `LOG_TO_FILE` (`opi/core/config.py:282`) schakelt alleen een **extra**
+filehandler in, "Enable file logging alongside stdout", en die tak begint pas op
+`opi/utils/logging_config.py:71`. Op productie staat die vlag op `false`
+(`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:42`),
+maar dat zet de stdout-regel niet uit. Sterker: de OPI-logs van productie worden verzameld in
+Loki, en het platform bevraagt ze zelf. De logbewaker doet per ronde "one triage cycle over the
+OPI production logs (Loki)" (`opi/core/logwatcher_scheduler.py:3-4`) met een selector op
+namespace en container (`opi/services/log_watcher.py:101-102`), en hij is voor productie
+geconfigureerd: `GRAFANA_URL`, `GRAFANA_TOKEN` en `LOGWATCHER_ENABLED` staan in het
+productie-env-secret
+(`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/operations-manager-env-secrets.yaml:22-27`).
+Die drie waarden zijn SOPS-versleuteld en ik heb ze in deze omgeving niet kunnen lezen, maar
+dat de logs in Loki staan volgt al uit het bestaan van die configuratie.
+
+**Wat er dan wél ontbreekt.** Niet het spoor, maar de bruikbaarheid ervan als spoor:
+
+- **Het is een regel in de bulk, geen gebeurtenis.** De logbewaker filtert zelf op
+  `detected_level` juist omdat dat "the debug/info bulk" overslaat
+  (`opi/services/log_watcher.py:110-112`). Een DEBUG-regel is per definitie wat er wordt
+  weggefilterd. Er is geen zoekweg die begint bij "welke projecten heeft deze beheerder
+  geopend"; je moet weten dat je in Loki moet zijn, en met welke tekst.
+- **De regel is onvolledig naar 8.15.01.** Hij draagt actor (`user_email`), object
+  (`project_name`), resultaat (authorized) en, via het logformaat
+  (`opi/utils/logging_config.py:48`), een tijdstempel. De **oorsprong** ontbreekt: er staat geen
+  bron-IP, sessie of aanroeppad bij. `plans/technische-review-bio-en-nora-bevindingen.md:99`
+  somt de zes velden van overheidsmaatregel 8.15.01 op (actie, object, resultaat, oorsprong,
+  actor, tijdstempel).
+- **De bewaartermijn is niet van ZAD.** Hoe lang die regel terugvindbaar is, bepaalt Loki bij
+  ODCN. In deze repository staat geen Loki-configuratie, dus ZAD kan de termijn niet aanwijzen
+  en niet garanderen.
+- **De 13 zonder logregel blijven volledig onzichtbaar.** `get_user_role_for_project` geeft een
+  beheerder overal `admin` en zwijgt daarover.
+
+**Dat is één vinkje met 36 gevolgen, waarvan 23 alleen als debugregel terug te vinden zijn en
+13 helemaal niet.** Dat is de zwaarste bevinding van dit document, en deel 2 gaat erover.
 
 ### De tweede beheerderssleutel, die niemand een naam heeft
 
