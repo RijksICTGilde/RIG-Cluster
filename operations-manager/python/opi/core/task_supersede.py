@@ -25,6 +25,12 @@ so the broad ``except Exception`` handlers along the processing path do not catc
 it and turn a deliberate hand-over into a failed task. This mirrors how
 ``asyncio.CancelledError`` propagates. Only the worker catches it, and records the
 task as completed-superseded rather than failed.
+
+It carries the identity of the task that took over - ``task_id``, ``task_type`` and
+``project_name`` - beside its message. The message is for people and is logged in
+several places; the three fields are what the worker writes into the task result and
+what the API lifts to ``superseded_by``, so a client can see that its work was handed
+over, and to whom, without reading a sentence.
 """
 
 from __future__ import annotations
@@ -42,7 +48,17 @@ class TaskSuperseded(BaseException):
 
     BaseException on purpose: a broad ``except Exception`` must not catch this, or
     a clean hand-over is reported as a failure. See module docstring.
+
+    Carries the identity of the task that took over (``task_id``, ``task_type``,
+    ``project_name``) beside the human-readable message, so the worker can record
+    WHO took over in a form a client can act on without parsing a sentence.
     """
+
+    def __init__(self, message: str, *, task_id: str, task_type: str, project_name: str) -> None:
+        super().__init__(message)
+        self.task_id = task_id
+        self.task_type = task_type
+        self.project_name = project_name
 
 
 # A task's deployment scope is either "the whole project" (project-wide, expressed
@@ -159,10 +175,18 @@ async def raise_if_superseded(what: str) -> None:
     if newer is None:
         return
     current = _current_task.get()
+    newer_task_id = str(newer.get("task_id", "?"))
+    newer_task_type = str(newer.get("task_type", "?"))
+    newer_project_name = str(newer.get("project_name", "?"))
     message = (
-        f"Superseded while {what}: task {newer.get('task_id', '?')} "
-        f"({newer.get('task_type', '?')}) for project '{newer.get('project_name', '?')}' "
+        f"Superseded while {what}: task {newer_task_id} "
+        f"({newer_task_type}) for project '{newer_project_name}' "
         f"covers this task's scope"
     )
     logger.info("Task %s giving way: %s", current.task_id if current else "?", message)
-    raise TaskSuperseded(message)
+    raise TaskSuperseded(
+        message,
+        task_id=newer_task_id,
+        task_type=newer_task_type,
+        project_name=newer_project_name,
+    )
