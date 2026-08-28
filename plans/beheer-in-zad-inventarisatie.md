@@ -60,8 +60,9 @@ een pagina nalaadt.
 vijf pagina's met volledige CRUD op iets dat wordt opgeslagen; `/admin/approvals` legt wel een
 oordeel vast maar maakt niets aan en verwijdert niets.
 
-**Wat de tabel toont**: twee gegevenskolommen, volledige naam en e-mailadres, plus een
-knoppenkolom (`opi/templates_lotc/bg/admin-users.html.j2:49-64`). De ORM-tabel heeft ook niet
+**Wat de tabel toont**: drie gegevenskolommen, volledige naam, e-mailadres en aanmaakdatum,
+plus een knoppenkolom (de vier kopregels op `opi/templates_lotc/bg/admin-users.html.j2:42-45`,
+de `created_at`-cel op `:51`, de knoppencel vanaf `:52`). De ORM-tabel heeft ook niet
 meer: `id`, `email`, `full_name`, `created_at`, `updated_at`
 (`opi/services/persistence/users.py:22-28`).
 
@@ -281,7 +282,7 @@ def get_user_role_for_project(project_name: str, user_email: str) -> str | None:
 
 Die twee functies worden samen **36 keer** aangeroepen in productiecode: 23 keer
 `is_user_authorized_for_project` en 13 keer `get_user_role_for_project`, verspreid over
-`opi/web/router.py` (18 plus 12), `opi/api/v2/router.py`, `opi/web/project_edit_security.py`,
+`opi/web/router.py` (17 plus 11), `opi/api/v2/router.py`, `opi/web/project_edit_security.py`,
 `opi/web/router_detail_edit.py`, `opi/api/logs_websocket_router.py`,
 `opi/services/catalog/cross_domain_access/context.py` en
 `opi/services/catalog/shared/backups.py`. Op elk van die 36 plekken zegt het vinkje ja.
@@ -299,8 +300,12 @@ Wat daar concreet uit volgt:
   beheerder haalt allebei.
 - **De projectsleutel ligt op de pagina.** Het paneel "Configuratie & Secrets" met de
   `api-key` staat achter `{% if user_role in ["admin", "owner"] %}`
-  (`opi/templates_lotc/bg/project-tabs.html.j2:163`, het veld op `:177`; ook
-  `opi/templates_lotc/bg/project-details.html.j2:89`). Die sleutel opent volgens het
+  (`opi/templates_lotc/bg/project-tabs.html.j2:163`, het veld op `:177`). Dat is de enige
+  plek waar die grendel om de sleutel staat: het tweede sjabloon dat de `api-key` toont,
+  `opi/templates_lotc/bg/project-details.html.j2:89`, bevat geen enkele `user_role`-verwijzing,
+  maar dat is geen productiepagina. Geen route in `opi/web/` rendert dat sjabloon; het is
+  alleen bereikbaar via de publieke proefopstelling `/lotc/bg/project-details` en die vult het
+  met verzonnen gegevens (`opi/web/lotc_fixtures.py:521`). Die sleutel opent volgens het
   commentaar bij `PROJECT_EDIT_ROLES` "every mutating per-project API route and carries no
   role of its own" (`opi/services/project_authorization.py:24-27`). Een beheerder kan hem dus
   van elk van de 47 projectpagina's kopiëren.
@@ -391,9 +396,12 @@ wat die rol vervult, met 113 taken.
 Vier dingen springen eruit.
 
 **Ten eerste: het beheerdeel is niet de plek waar het beheer gebeurt.** Van de zeventien
-regels hierboven zit er geen enkele in het menu. Vier lopen als achtergrondtaak zonder dat
-iemand ze aanstuurt of ziet, zeven lopen via de Taskfile of git, en zes via een API die op
-productie niet aan staat.
+regels hierboven zit er geen enkele in het menu. Geteld uit de kolom "vorm": **zes** lopen als
+achtergrondtaak zonder dat iemand ze aanstuurt of ziet, **vier** via de Taskfile of git, en
+**vier** via een API die op productie niet aan staat. De drie die dan nog overblijven zijn een
+instelling in de ConfigMap (de bewaartermijn van backups), `kubectl exec` plus `psql` (wat er
+in de database staat) en de regel die als "bestaat niet" in de tabel staat (alle taken over
+alle projecten). Zes plus vier plus vier plus drie is zeventien.
 
 **Ten tweede: de weesopruiming is een keten met een gat erin.** De reconciliatie is
 uitdrukkelijk report-first: stap 3 in `opi/jobs/reconciliation.py:391-398` zegt met zoveel
@@ -577,7 +585,7 @@ uitrollen kan ik niets meten.
 | Reconciliatie | draait om 03:00, maar `RECONCILIATION_DRY_RUN` blijft op productie `True` (paragraaf 3), dus geen mutaties. Eén samenvattingsregel. | ~1 |
 | Slaapstand | staat op productie uit (paragraaf 3). | 0 |
 | Logbewaker | draait al en gaat naar ntfy, niet naar een postvak. | 0 |
-| **Ondergrens, niemand doet iets** | | **~85** |
+| **Ondergrens, niemand doet iets** | 14 + 68 + 1 | **~83** |
 
 Daarbovenop komt alles wat mensen wél doen: uitrollen, images bijwerken, componenten
 toevoegen, diensten configureren, verwijderen. Dat zijn 23 taaksoorten over 137 deployments.
