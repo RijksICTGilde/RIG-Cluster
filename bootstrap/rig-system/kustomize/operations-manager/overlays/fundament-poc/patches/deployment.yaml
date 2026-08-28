@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: operations-manager
-          image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:2026.08.27.1558-3024ae4f-fundament
+          image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:2026.08.28.0914-f34f83eb-fundament
           # De drie git-wachtwoorden komen uit het secret dat de init-Job gebruikt om het
           # Forgejo-account aan te maken, en dat ArgoCD als repo-creds leest. Daardoor
           # bestaat de waarde maar op één plek en kan een rotatie niet half doorwerken.
