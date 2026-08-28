@@ -15,6 +15,7 @@ alleen het openen toetst.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -219,6 +220,21 @@ async def test_endpoint_lists_the_pods_with_the_source_registry_image():
 # ---------------------------------------------------------------------------
 
 
+def _stdout_met(regels: list[bytes]) -> Any:
+    """Een stdout die deze regels levert en daarna EOF blijft geven, zoals kubectl doet."""
+    resterend = list(regels)
+
+    async def readline() -> bytes:
+        if resterend:
+            return resterend.pop(0)
+        await asyncio.sleep(0.05)
+        return b""
+
+    stdout = MagicMock()
+    stdout.readline = readline
+    return stdout
+
+
 @pytest.fixture
 def stream_start() -> Any:
     """Een nagebootste ``stream_deployment_logs``, zodat er nooit een kubectl start."""
@@ -337,3 +353,31 @@ def test_a_switch_to_an_own_pod_restarts_the_stream_on_that_pod(stream_start: An
     assert gestroomd["previous"] is True
     assert stream_start.call_args.kwargs["pod_name"] == EIGEN_POD
     assert stream_start.call_args.kwargs["previous"] is True
+
+
+def test_the_previous_attempt_actually_delivers_its_lines(stream_start: Any):
+    """Een afgesloten logboek moet WEL binnenkomen; alleen het opnieuw aanhaken vervalt.
+
+    Deze toets bestaat omdat het mis ging. De voorwaarde die het aanhaken uitzet stond
+    boven aan de leeslus in plaats van bij het aanhaakbesluit, en sloeg daarmee de
+    ``readline`` zelf over: op de sandbox gaf de vorige poging nul regels terwijl
+    ``kubectl logs --previous`` er twee had (gemeten 28 augustus 2026). Het commando was
+    goed opgebouwd, dus de commandotoets bleef groen - dit is de toets die het wel ziet.
+    """
+    process = stream_start.return_value
+    process.stdout = _stdout_met(
+        [b"ERROR Migration checksum mismatch for migration 4\n", b"FATAL Flyway validation failed, shutting down\n"]
+    )
+    client, auth, kubectl = _client(stream_start, [_pod(EIGEN_POD, "pr-114-profielservice", ready=False, restarts=5)])
+
+    regels = []
+    with auth, kubectl, client.websocket_connect(f"{URL}&pod={EIGEN_POD}&previous=true") as ws:
+        while len(regels) < 2:
+            bericht = ws.receive_json()
+            if bericht["type"] == "log":
+                regels.append(bericht["line"])
+
+    assert regels == [
+        "ERROR Migration checksum mismatch for migration 4",
+        "FATAL Flyway validation failed, shutting down",
+    ]

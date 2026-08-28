@@ -21,7 +21,7 @@ from opi.services.catalog.deployment_health.disabled import deployment_disabled_
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
 from opi.services.config_location import binding_label, project_step_config_hint
-from opi.services.deployment_state import collect_deployment_state
+from opi.services.deployment_state import DeploymentState, collect_deployment_state
 from opi.services.project import Project
 from opi.services.project_authorization import (
     get_user_role_for_project,
@@ -2013,7 +2013,7 @@ async def _fetch_argocd_deployment_status(
     deployment: dict[str, Any],
     argo: Any,
     kubectl: Any,
-    deployment_state: Any = None,
+    deployment_state: DeploymentState | None = None,
 ) -> dict[str, Any]:
     """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy.
 
@@ -2071,9 +2071,7 @@ async def _fetch_argocd_deployment_status(
                 status_data=status_data,
                 disabled_components=disabled_components,
             )
-            expects_no_pods = bool(
-                deployment_state is not None and getattr(deployment_state, "expects_no_application_pods", False)
-            )
+            expects_no_pods = deployment_state is not None and deployment_state.expects_no_application_pods
             if kubectl is not None and not expects_no_pods:
                 try:
                     pods = await kubectl.get_application_pods(
