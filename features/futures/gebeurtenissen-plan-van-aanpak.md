@@ -328,7 +328,7 @@ Wat een drempelwaarde over een reeks is (wachtrijlengte, foutpercentage, backups
 
 ### Het scherm
 
-Op `/account/meldingen` (VOORSTEL), naast de bestaande accountpagina. Een tabel: de twaalf typen uit deel 1 als rijen, de persoonlijke kanalen als kolommen, een aanvinkvakje per snijpunt.
+Op `/account/meldingen` (VOORSTEL), naast de bestaande accountpagina. Een tabel: de typen uit deel 1 als rijen, de persoonlijke kanalen als kolommen, een aanvinkvakje per snijpunt. Voor een gewone gebruiker zijn dat er elf van de twaalf: type 12 (`beheer-en-beveiliging`) is alleen voor platformbeheerders en staat niet in zijn scherm.
 
 ```
                                     Postvak    E-mail    Mattermost
@@ -347,7 +347,7 @@ Mededelingen van het platform          x         x           .
 
 Boven de tabel: welke rol je hebt en dus welk standaardprofiel je krijgt, met een knop om terug te zetten naar de standaard. Onder de tabel: de koppeling met Mattermost, als dat kanaal er is.
 
-**Twaalf rijen keer drie kolommen is 36 vakjes.** Dat is veel, en het is de prijs van "per type per kanaal". De rem erop is dat niemand het scherm hoeft te openen: de standaarden per rol kloppen, en wie ze nooit aanraakt krijgt iets bruikbaars.
+**Elf rijen keer drie kolommen is 33 vakjes.** Dat is veel, en het is de prijs van "per type per kanaal". De rem erop is dat niemand het scherm hoeft te openen: de standaarden per rol kloppen, en wie ze nooit aanraakt krijgt iets bruikbaars.
 
 **De webhook staat hier bewust niet bij**, en dat is dezelfde regel als bij de Mattermost-kanaalwebhook: hij is een PROJECTabonnement en geen persoonlijk kanaal. Hij hoort op de projectpagina en niet op de accountpagina, want anders gaat iemand ervan uit dat zijn persoonlijke instelling ook bepaalt wat de tooling van het project binnenkrijgt.
 
@@ -395,7 +395,7 @@ Zo weinig mogelijk, want elke onuitschakelbare melding is er een die mensen leer
 
 ### Fase 1: de tabel, een bron, en een tijdlijn
 
-**Wat**: de vier ORM-modellen en de migratie (alle vier de tabellen in een keer, zodat latere fasen geen migratie zijn), een schrijfdienst in de lijn van `AsyncTaskService`, de gesloten soortenenum met de eerste waarden erin, de schrijfweg in de resource-tuner, en een tijdlijnblok op de deploymentpagina achter `is_user_authorized_for_project`.
+**Wat**: de vier ORM-modellen en de migratie (alle vier de tabellen in een keer, zodat de fasen 2 tot en met 5 geen migratie zijn; de twee kanaaltabellen uit deel 2 komen wel als migratie, in fase 6 en fase 9), een schrijfdienst in de lijn van `AsyncTaskService`, de gesloten soortenenum met de eerste waarden erin, de schrijfweg in de resource-tuner, en een tijdlijnblok op de deploymentpagina achter `is_user_authorized_for_project`.
 
 **Waarde op zichzelf**: de vraag "waarom heeft mijn component ineens meer geheugen" is beantwoordbaar zonder het projectbestand te openen.
 

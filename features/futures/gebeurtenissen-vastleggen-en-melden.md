@@ -309,7 +309,7 @@ Dat werkt hier omdat de meeste handelingen al door Postgres gaan: de takenrij, d
 
 ## 3. Ontdubbelen, samenvoegen en drempels
 
-Dit is niet een probleem maar vier, en ze vragen om verschillende antwoorden. Dat het er vier zijn is geen theorie: de log watcher heeft alle drempels die hij heeft nodig gehad om bruikbaar te blijven, en er zijn er vijf (deel 1, paragraaf 9). Een gebeurtenissensysteem met vijftien soorten heeft ze allemaal nodig, en het is goedkoper ze in het ontwerp te zetten dan er later omheen te bouwen.
+Dit is niet een probleem maar vijf, en ze vragen om verschillende antwoorden: ernst, ontdubbelen, samenhang tussen gebeurtenissen over hetzelfde onderwerp, samenvoegen richting de push-kanalen, en wat er bij een herstart gebeurt. Dat ruisonderdrukking echt werk is en geen theorie, blijkt uit de log watcher: die heeft er vijf lagen voor nodig gehad om bruikbaar te blijven op een systeem dat een ding doet (deel 1, paragraaf 9). Een gebeurtenissensysteem met vijftien soorten heeft ze allemaal nodig, en het is goedkoper ze in het ontwerp te zetten dan er later omheen te bouwen.
 
 ### Ernst
 
