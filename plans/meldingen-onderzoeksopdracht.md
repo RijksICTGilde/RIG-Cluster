@@ -1,5 +1,19 @@
 # Meldingen in ZAD: inventarisatie en plan van aanpak
 
+## Uitkomst van deze opdracht
+
+Deze opdracht is uitgevoerd en de oplevering is er. Ze is daarna in RC-163 samengevoegd met een tweede, onafhankelijk geschreven set over hetzelfde onderwerp, en het resultaat staat in `features/futures/`:
+
+| Opgeleverd als | Staat nu in |
+|---|---|
+| `plans/meldingen-inventarisatie.md` | `features/futures/gebeurtenissen-inventarisatie.md` |
+| `plans/meldingen-oplossingsrichtingen.md` | `features/futures/gebeurtenissen-vastleggen-en-melden.md` |
+| `plans/meldingen-plan-van-aanpak.md` | `features/futures/gebeurtenissen-plan-van-aanpak.md` |
+
+De drie `plans/meldingen-*.md` bestaan niet meer; hun inhoud zit volledig in de drie documenten hierboven. Waar hieronder nog naar de oude paden wordt verwezen, staat het nieuwe pad erbij. Het woord *event* uit deze opdracht heet in het resultaat een *gebeurtenis*; de reden staat in `features/futures/gebeurtenissen-vastleggen-en-melden.md` onder "De begripsbotsing, en het besluit".
+
+De tekst hieronder is de opdracht zoals hij is verstrekt, en blijft staan als de vraag waar die documenten het antwoord op zijn.
+
 **Dit is een onderzoeks- en schrijfopdracht, geen bouwopdracht.** De oplevering bestaat uit
 markdown in `plans/`. Er wordt in deze PR geen productiecode gewijzigd, niets uitgerold en
 geen migratie toegevoegd. Schemaschetsen mogen wel, maar dan als codeblok IN het document.
@@ -27,8 +41,8 @@ staan:
 
 Verplicht:
 
-- `plans/meldingen-inventarisatie.md` -- de eventcatalogus (zie "Deel 1").
-- `plans/meldingen-plan-van-aanpak.md` -- de aanbevolen weg, met fasering (zie "Deel 3").
+- `plans/meldingen-inventarisatie.md` -- de eventcatalogus (zie "Deel 1"). Opgeleverd; staat nu in `features/futures/gebeurtenissen-inventarisatie.md`.
+- `plans/meldingen-plan-van-aanpak.md` -- de aanbevolen weg, met fasering (zie "Deel 3"). Opgeleverd; staat nu in `features/futures/gebeurtenissen-plan-van-aanpak.md`.
 - Per uitgewerkte oplossingsrichting een eigen document, of één vergelijkingsdocument met de
   richtingen naast elkaar op dezelfde beoordelingsassen. Minimaal drie richtingen (zie "Deel 2").
 
@@ -198,7 +212,7 @@ aanbeveling erbij, zodat er ja of nee op te zeggen is.
 
 ## Klaar als
 
-1. `plans/meldingen-inventarisatie.md` bestaat, en elke regel in de eventtabel heeft een
+1. `plans/meldingen-inventarisatie.md` (nu `features/futures/gebeurtenissen-inventarisatie.md`) bestaat, en elke regel in de eventtabel heeft een
    codeanker of staat expliciet als "bestaat nog niet". De acht bronnen uit Deel 1 komen alle
    acht terug.
 2. Er staan minimaal drie oplossingsrichtingen uitgewerkt op dezelfde beoordelingsassen, met
