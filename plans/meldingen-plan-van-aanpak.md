@@ -8,6 +8,12 @@ Dit deel gaat over de vier kanalen (wat is er nodig, wat ligt er al, wat blokkee
 voorkeurenscherm, en daarna over de fasering en de beslissingen die de opdrachtgever moet
 nemen.
 
+**Bijgewerkt op 28 augustus 2026 door RC-161.** De standaardentabel voor de platformbeheerder,
+het voorkeurenscherm, de "waarom kreeg ik dit"-regel, de lijst van wat niet uitgezet mag
+worden, de verversingsweg en fase 1 zijn gewijzigd. Wat er precies veranderd is en waarom staat
+onderaan dit document onder **"Wijzigingslijst RC-161"**. De onderbouwing staat in
+`plans/beheer-in-zad-inventarisatie.md` en `plans/beheer-in-zad-plan-van-aanpak.md`.
+
 **Alle namen van tabellen, endpoints en routes hieronder zijn een voorstel**, tenzij er een
 codeanker bij staat.
 
@@ -95,7 +101,7 @@ verdwenen (`features/roos-eruit.md`), en `CLAUDE.md` zegt het ook met zoveel woo
 oude ROOS-referentie is met de bibliotheek verdwenen"). De geldende referentie is
 `features/lotc-bouwlijn.md` plus `request_for_components.md` voor wat het thema nog niet kan.
 
-### De verversingsweg: peilen vanuit de browser, en niet de websocket
+### De verversingsweg: peilen vanuit de browser, en niet de websocket of SSE
 
 Er is een websocket-router (`opi/api/logs_websocket_router.py`, 926 regels) met
 sessie-authenticatie, Origin-controle, verbindingslimieten en snelheidsbegrenzing. Hij is
@@ -138,6 +144,99 @@ wél, om dezelfde reden als bij `opi/templates_lotc/bg/_tasks.html.j2:28` (daar 
 `hx-swap="outerHTML"`): dat is één pagina die iemand bewust openzet, niet iets wat overal
 meereist. Wie ook daar netjes wil zijn, hangt er dezelfde zichtbaarheidshaak onder; verplicht
 is het niet.
+
+#### De middenweg die hier eerst werd overgeslagen: server-sent events
+
+De vorige versie van deze paragraaf zette websocket tegenover peilen en sloeg SSE over. Dat is
+alsnog gewogen, en dan per plek in plaats van in het algemeen, want de drie plekken zijn niet
+hetzelfde geval.
+
+**Eerst de metingen, en dan pas de weging.**
+
+| Gegeven | Waarde | Bron |
+|---|---|---|
+| Aantal OPI-processen | **één** | `replicas: 1` (`bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml:9`) plus `uvicorn.run(app, host="0.0.0.0", port=8000, loop="asyncio")` zonder `workers=` (`opi/server.py:729`) |
+| Wat de CSP toestaat | **een `EventSource` naar dezelfde herkomst mag** | `connect-src 'self'` (`opi/middleware/security_headers.py:60`); `EventSource` valt onder `connect-src`, dus SSE vraagt geen CSP-wijziging |
+| Routetijdslimiet op `zad.rijksapp.nl` | **300 seconden** | `haproxy.router.openshift.io/timeout: "300s"` (`bootstrap/.../overlays/odcn-production/ingress-rijksapp.yaml:13`) |
+| Idem op `operations-manager.rig.prd1.gn2.quattro.rijksapps.nl` | 600 seconden | `.../odcn-production/ingress.yaml:9` |
+| SSE in de code vandaag | **bestaat niet** | nul treffers op `EventSource` en op `text/event-stream` in `opi/`; de htmx-SSE-uitbreiding zit niet in `static/js/` (daar staan `htmx.min.js`, `json-enc.js` en eigen scripts) |
+| Postgres-verbindingen | 250 | `infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml:44` |
+| asyncpg | ligt er al | `opi/connectors/postgres.py`, `opi/core/database_pools.py` |
+
+**Het bezwaar tegen de websocket, nagemeten.** Dat bezwaar was: "Connection limits are
+per-worker" (`opi/api/logs_websocket_router.py:17-19` en `:55`). **Op processen bijt dat vandaag
+niet.** OPI draait als één proces met één event loop, dus er is precies één boekhouding en die
+is compleet. Dat is de "deels" die uitgezocht moest worden, en het antwoord is: het
+per-werker-bezwaar is vandaag geen bezwaar, en het wordt er meteen weer een zodra `replicas` of
+`workers` boven één gaat.
+
+**Wat wél bijt, en dat geldt voor de websocket en voor SSE even hard:**
+
+- één event loop houdt N langlopende verbindingen aan, naast het uitrolwerk dat hetzelfde
+  proces doet;
+- een herstart van OPI verbreekt ze allemaal tegelijk;
+- **elke stroom via `zad.rijksapp.nl` wordt na uiterlijk vijf minuten door de router
+  afgeknipt.** `EventSource` verbindt daarna zelf opnieuw, dus dat is te overleven, maar het
+  betekent twaalf herverbindingen per uur per open tabblad en niet één verbinding die de dag
+  doorkomt.
+
+**Waarin SSE wél goedkoper is dan de websocket**: een SSE-stroom is een gewone HTTP-respons.
+De sessieauthenticatie, de Origin-controle en de CSP gelden er ongewijzigd voor, dus er is geen
+tweede authenticatiepad nodig zoals de websocket-router dat heeft opgebouwd.
+
+**En `LISTEN/NOTIFY` eronder?** Kan, en asyncpg ligt er al. Eén voorwaarde die makkelijk
+vergeten wordt: de luisterende verbinding moet **buiten de pool** staan, want een verbinding die
+teruggaat naar de pool raakt zijn listener kwijt. Met één OPI-proces kost dat precies één extra
+verbinding op een server die er 250 aankan. Dat is dus geen bezwaar. Het bezwaar zit ergens
+anders, en dat is per plek verschillend.
+
+**De beslissing per plek.**
+
+| Plek | Uitkomst |
+|---|---|
+| De teller in de kop | **peilen, één keer per minuut, zichtbaarheidsbewust** (ongewijzigd) |
+| De postvakpagina | **peilen, 10 seconden** (ongewijzigd) |
+| Het beheerdersoverzicht `/beheer` | **peilen, per blok een eigen cadans** |
+
+*De teller in de kop.* Een SSE-stroom per open tabblad is dezelfde soort last als een
+websocket per open tabblad, alleen goedkoper per bericht. Voor een teller die een minuut mag
+achterlopen levert die stroom niets op wat de peiling niet ook geeft, en hij kost drie dingen
+die de peiling niet kost: een openstaande verbinding per tabblad, een herverbindingslus die om
+de vijf minuten afgaat, en een cursor (`Last-Event-ID` tegen `notification_deliveries.created_at`)
+om te voorkomen dat een herstart meldingen overslaat. Dat laatste is het echte verschil: een
+peiling vraagt een **stand** op en heeft daarom geen enkel probleem met een herstart, een stroom
+levert **gebeurtenissen** en moet dus weten waar hij gebleven was.
+
+*De postvakpagina.* Hier is SSE het meest verdedigbaar: één pagina, bewust opengezet, iemand
+kijkt ernaar. En toch nee. Het verschil tussen "binnen een seconde" en "binnen tien seconden" op
+een pagina waar je zelf naar zit te kijken is niet waarneembaar, en dit zou het enige
+SSE-endpoint in de hele applicatie zijn. Een mechanisme voor één pagina is een mechanisme dat
+niemand onderhoudt.
+
+*Het beheerdersoverzicht.* Hier zou een muurscherm de meeste baat hebben, en toch is het
+antwoord hier het duidelijkst nee, en wel om een reden die niets met last te maken heeft:
+**het overzicht leest de brontoestand en niet de meldingentabel**
+(`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). Er is dus geen tabel om `LISTEN/NOTIFY` op
+te zetten die zijn blokken voedt. De gezondheid komt van ArgoCD (bevraagd, met een cache van 15
+seconden, `opi/services/argocd_overview.py:44`), de aanvragen komen uit de projectbestanden in
+de `ProjectStore`, en de markeringen uit `marked_for_deletion`. Geen van die drie duwt. Een
+SSE-stroom zou daar dus een peiling aan de serverkant zijn met een stroom aan de browserkant:
+dezelfde bevragingen, plus een verbinding.
+
+**De uitkomst is dus: peilen blijft, ook hier.** Dat is nu een beslissing met een reden, en geen
+overgeslagen alternatief.
+
+**Wat de rekensom zou omdraaien**, zodat dit later te herwegen is zonder de hele afweging
+opnieuw te doen:
+
+1. **`replicas` of `workers` boven één.** Dan komt het per-werker-bezwaar terug, en dan is een
+   gedeelde bron (Redis, of juist `LISTEN/NOTIFY`) nodig voor elke vorm van duwen.
+2. **Een bron die zelf duwt.** Komt de gezondheidstoestand ooit uit een tabel die OPI zelf
+   schrijft, in plaats van uit een bevraging bij ArgoCD, dan heeft `LISTEN/NOTIFY` iets om op te
+   luisteren en verandert het antwoord voor het overzicht.
+3. **Een hogere routetijdslimiet.** De 300 seconden op `zad.rijksapp.nl` is de bindende
+   beperking en het is een annotatie, dus hij is te veranderen. Zonder die verandering is elke
+   langlopende verbinding daar een verbinding van vijf minuten.
 
 ### Wat blokkeert
 
@@ -493,23 +592,127 @@ er is.
 per kanaal". De rem erop is dat niemand het scherm hoeft te openen: de standaarden per rol
 kloppen, en wie ze nooit aanraakt krijgt iets bruikbaars.
 
+**Voor een platformbeheerder is het hetzelfde scherm, met één zin erboven.** Hij is voor zijn
+eigen projecten een gewone projectbeheerder, dus alle twaalf rijen gelden voor hem, alleen niet
+voor de 47 projecten van anderen. Dat verschil hoort niet in een extra kolom of een tweede
+tabel maar in één regel boven de tabel, voorstel:
+
+> Als platformbeheerder krijg je gebeurtenissen van projecten waar je zelf geen lid van bent
+> niet in je postvak. Die staan op het beheerdersoverzicht.
+
+Met een link naar dat overzicht erachter. Een tweede tabel voor de beheerder zou suggereren dat
+hij twee verzamelingen voorkeuren heeft, en dat is niet zo: hij heeft er één, en de regel die
+zijn beheerdersrol betreft staat niet in een vinkje maar in het uitwaaieren.
+
 ### De standaarden per rol
 
-Uit de tabel in deel 1, samengevat:
+Uit de tabel in deel 1, samengevat, en voor de platformbeheerder herzien door RC-161:
 
 | Rol | Postvak | E-mail | Redenering |
 |---|---|---|---|
-| **Platformbeheerder** | alles, inclusief type 12 (beheer) | aanvragen, storingen, onomkeerbare ingrepen | hij is de eerstelijns; de rest ziet hij als hij kijkt |
-| **Projectbeheerder** (`admin`, `owner`) | alles van zijn projecten | uitrol-mislukkingen, gezondheid, platformingrepen, gegevens, besluiten over zijn aanvragen, ledenwijzigingen | hij is verantwoordelijk voor wat er met het project gebeurt |
-| **Projectlid** (`member`, `developer`) | uitrol, gezondheid, verwijderingen, leden, mededelingen | alleen mededelingen van het platform, en wat hij zelf startte | hij werkt eraan mee, hij bestuurt het niet |
+| **Platformbeheerder**, in die hoedanigheid | **alleen type 6 (een aanvraag wacht op mij) en wijzigingen aan zijn eigen bevoegdheid** | dezelfde twee | de rest van het platform is een toestand en geen bericht, en die staat op `/beheer` |
+| **Platformbeheerder**, als gewone gebruiker | type 11 (platformmededelingen en gepland onderhoud), net als iedereen | idem | dat krijgt hij omdat hij gebruiker is, niet omdat hij beheerder is; de reden erbij is `platform-user` en niet `platform-admin` |
+| **Platformbeheerder**, voor projecten waar hij zelf lid van is | de projectbeheerdersstandaard hieronder | idem | een beheerder met een eigen project is voor dat project een gewone projectbeheerder |
+| **Projectbeheerder** (`admin`, `owner`) | alles van zijn projecten met ernst `actionable` of `outage` | uitrol-mislukkingen, gezondheid, platformingrepen, gegevens, besluiten over zijn aanvragen, ledenwijzigingen | hij is verantwoordelijk voor wat er met het project gebeurt |
+| **Projectlid** (`member`, `developer`) | uitrol, gezondheid, verwijderingen, leden, mededelingen, alle met ernst `actionable` of `outage` | alleen mededelingen van het platform, en wat hij zelf startte | hij werkt eraan mee, hij bestuurt het niet |
 | **Actor** (bovenop je rol) | wat je zelf startte | mislukkingen van wat je zelf startte | je eigen handeling is altijd van jou, ook als je verder geen rol hebt |
+
+**De regel die dit afdwingt, en hij is één regel in het uitwaaieren:**
+
+> **Een aflevering met `reason = "platform-admin"` wordt niet aangemaakt.**
+
+Dat is de hele correctie. De kolom `reason` draagt `platform-admin` al als aparte waarde naast
+`approver`, `actor`, `project-admin` en `project-member`
+(`plans/meldingen-oplossingsrichtingen.md`, `notification_deliveries`), dus het onderscheid zit
+al in het model en werd alleen niet gebruikt.
+
+**Maar de regel werkt alleen met een rangorde erbij, en dat is nagelopen.** De uniciteitsgrendel
+staat op `(event_id, recipient)`, dus een persoon krijgt per gebeurtenis **één** rij met **één**
+reden. Iemand kan tegelijk platformbeheerder én projectbeheerder van het getroffen project zijn.
+Pakt het uitwaaieren dan de eerste reden die het tegenkomt, en is dat `platform-admin`, dan
+verliest die persoon de melding over zijn eigen project. Daarom:
+
+> **De reden is de STERKSTE aanspraak, niet de eerste die gevonden wordt.**
+> Volgorde: `actor` > `approver` > `platform-owner` > `project-admin` > `project-member` >
+> `platform-user` > `platform-admin`.
+
+Met die volgorde betekent `reason = "platform-admin"` precies één ding: **deze persoon heeft
+geen enkele andere aanspraak op deze gebeurtenis.** En dan is "geen postvakrij" het juiste
+antwoord, want er is niets waar hij eigenaar van is en niets wat op hem wacht.
+
+**Er komen twee waarden bij**, allebei voorstellen en allebei zonder gevolgen voor het schema
+(`reason` is `String(64)` met een vaste waardenlijst in een commentaar,
+`plans/meldingen-oplossingsrichtingen.md`, regel 620):
+
+- **`platform-owner`**, als de gebeurtenis over de bevoegdheid van de platformbeheerder zelf
+  gaat: hij is platformbeheerder geworden of afgevoerd, of iemand heeft het beheer van een
+  project overgenomen. Dat zijn de gevallen waarin hij wél eigenaar is, en zonder deze waarde
+  zouden ze onder `platform-admin` vallen en dus verdwijnen.
+- **`platform-user`**, voor een bericht dat iedereen krijgt omdat hij gebruiker van het platform
+  is: type 11, gepland onderhoud en clusterbrede mededelingen. **Dit is een gat in de
+  oorspronkelijke lijst van redenen**, en RC-161 vond het door de regel toe te passen: een
+  onderhoudsbericht heeft geen actor, geen goedkeurder en geen project, dus geen van de vijf
+  bestaande waarden past erop. Zonder deze waarde zou een platformbeheerder een
+  onderhoudsbericht als `platform-admin` binnenkrijgen en het dus juist NIET zien, terwijl hij
+  het als iedere andere gebruiker hoort te krijgen.
+
+De volledige rangorde wordt daarmee:
+
+> `actor` > `approver` > `platform-owner` > `project-admin` > `project-member` >
+> `platform-user` > `platform-admin`
+
+En de onderdrukkingsregel raakt uitsluitend de laatste.
+
+**En de ernst doet de rest.** De kolom `severity` bestaat (`informational`, `actionable`,
+`outage`) en werd nergens gebruikt om te bepalen wat iemand standaard krijgt. Dat wordt nu de
+tweede regel:
+
+> **Een gebeurtenis met `severity = "informational"` levert geen postvakrij op.**
+
+Dat is geen derde knop maar de codering van de eerste toets van de grensregel
+(`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3): die toets eist dat er een handeling op je
+wacht of dat er iets onomkeerbaars met jouw eigendom is gebeurd, en allebei die gevallen zijn
+`actionable` of `outage`. Een geslaagde uitrol, een geslaagde backup en een gewekt deployment
+zijn `informational` en horen op een pagina, niet in een postvak.
+
+**Eén regel in deel 1 moet daarvoor van ernst veranderen.** "Het platform heeft het geheugen van
+een component bijgesteld" staat in `plans/meldingen-inventarisatie.md` paragraaf 4 als "ter
+informatie". Dat klopt niet met de tweede regel hierboven, en het klopt ook niet met de
+werkelijkheid: de eigenaar kan er wél iets aan doen, want een handmatig gezette waarde wint van
+de automatische stemmer (`features/handmatig-gezette-resources.md`). Die regel hoort dus
+`actionable` te zijn. Dat is de enige inhoudelijke correctie die RC-161 in de eventcatalogus
+aanbrengt.
+
+**Wat er niet overgenomen is, en waarom niet.** De opdracht noemt vier mechanismen; twee zijn
+er hierboven overgenomen, één deels, en één niet.
+
+| Mechanisme | Overgenomen? | Reden |
+|---|---|---|
+| Aan mij gericht versus platformbreed (`reason`) | **ja**, met de rangorde erbij | goedkoopst, en het onderscheid zit al in het model |
+| Een drempel op ernst (`severity`) | **ja**, als één vaste regel en niet als een schuifje | het is de codering van de grensregel, geen extra knop |
+| Escalatie als niemand kijkt | **deels**: als sortering op ouderdom in het blok "wacht op jou" van `/beheer`, met een markering boven een grens. Een escalerende mail is fase 3 | de sortering kost niets en is er zodra het overzicht er is; een mail kan pas als het e-mailkanaal er is. **Voorwaarde**: de generieke dienstgebruik-goedkeuring schrijft bij het aanvragen een lege history (`opi/services/catalog/approval.py:303`), waar domein en subdomein wél een tijdstip zetten (`opi/connectors/subdomain.py:511` en `:552`). Zonder die ene regel is er geen ouderdom om op te sorteren |
+| Per project volgen of dempen (het GitHub-model) | **nee** | met de `reason`-regel hierboven staat er in het postvak van de platformbeheerder alleen nog wat een echte aanspraak heeft. Per-projectdempen lost dan een probleem op dat hij niet meer heeft, en het kost een tabel plus een scherm. Voor gewone projectleden kan het later alsnog waarde hebben; het model sluit het niet uit, want `reason` en een latere abonnementstabel bijten elkaar niet. **En voor het ene geval waarin het wél nodig is, bestaat er al een antwoord**: een platformbeheerder die tijdelijk het beheer van een project overneemt krijgt daarmee `project-admin` als aanspraak, en die vervalt vanzelf met de overname (`plans/beheer-in-zad-plan-van-aanpak.md`, deel 2, beslissing 4). Dat is een abonnement dat je niet hoeft te beheren |
 
 ### "Waarom kreeg ik dit bericht"
 
 Elke melding draagt hem: de kolom `reason` in `notification_deliveries`
-(`project-admin`, `project-member`, `actor`, `approver`, `platform-admin`). In het postvak
-staat hij als een regel onder de melding ("Je krijgt dit omdat je beheerder bent van
+(`actor`, `approver`, `platform-owner`, `project-admin`, `project-member`, `platform-user`;
+`platform-admin` staat ook in de lijst maar levert geen postvakrij op, zie "De standaarden per
+rol"). In het
+postvak staat hij als een regel onder de melding ("Je krijgt dit omdat je beheerder bent van
 project X"); in de mail staat hij onderaan, naast de link naar het voorkeurenscherm.
+
+**De reden is de sterkste aanspraak en niet de eerste die gevonden wordt**, in de volgorde
+`actor` > `approver` > `platform-owner` > `project-admin` > `project-member` >
+`platform-user` > `platform-admin`. Dat is niet alleen een kwestie van een mooiere zin: de
+uniciteitsgrendel staat op `(event_id, recipient)`, dus wie twee aanspraken heeft krijgt één rij, en welke reden daarop
+belandt bepaalt of hij de melding überhaupt krijgt. Zonder de rangorde raakt een
+platformbeheerder die ook projectbeheerder is de meldingen over zijn eigen project kwijt.
+
+**De zin die bij `platform-admin` zou horen bestaat dus niet in het postvak**, en dat is met
+opzet. "Je krijgt dit omdat je platformbeheerder bent" is precies de zin waarmee een postvak
+ophoudt iets te betekenen: het is geen reden die met dit bericht te maken heeft, het is een
+eigenschap van de lezer.
 
 **Dit is de kolom die het model verdient.** Zonder hem is de enige eerlijke tekst "je krijgt dit
 omdat een regel ergens vond dat je het moest hebben", en dat is precies de tekst die mensen
@@ -524,8 +727,15 @@ mag altijd uit):
 1. **Onomkeerbare ingrepen door het platform.** "Een gemarkeerde resource is definitief
    verwijderd" (deel 1, paragraaf 4). De melding komt achter de daad aan en er is niets meer aan
    te doen. Dat mag niemand hebben gemist, ook niet door een vinkje.
-2. **Je bent uit een project verwijderd, of je rol is gewijzigd.** Het gaat over jouw eigen
-   toegang. Iemand die dit uitzet, weet niet meer waar hij bij mag.
+2. **Er is iets veranderd aan wat jij mag.** Je bent uit een project verwijderd, je rol is
+   gewijzigd, je bent platformbeheerder geworden of afgevoerd, of iemand heeft het beheer van
+   een van jouw projecten overgenomen. Het gaat over jouw eigen toegang. Iemand die dit uitzet,
+   weet niet meer waar hij bij mag.
+
+   Dit geval is door RC-161 verbreed van "je projectrol" naar "je bevoegdheid", zodat de twee
+   platformbrede gevallen erbij horen zonder dat er een derde onuitschakelbaar type bij komt.
+   Dat is dezelfde regel als hierboven, alleen consequent doorgetrokken: het gaat om jouw
+   toegang, en op welk niveau die toegang zit is voor de lezer niet het verschil.
 
 **En expliciet WEL uitzetbaar, ook al is het verleidelijk om anders te kiezen**: mislukte
 deploys. Een projectlid dat er tien per dag heeft omdat hij aan het uitproberen is, moet ze uit
@@ -550,6 +760,33 @@ platformbeheerder (dus weinig autorisatiewerk), de aanroeppunten zijn twee funct
 
 **Waarde op zichzelf**: een platformbeheerder ziet aan de teller in de kop dat er een aanvraag
 op hem wacht. Dat is af, ook als er nooit een tweede fase komt.
+
+**Wat RC-161 aan deze fase verandert.** De keuze voor goedkeuringen als eerste bron blijft
+staan, en de grensregel bevestigt hem: type 6 is de schoonste doorgang van de eerste toets in de
+hele catalogus (`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). Er veranderen drie dingen:
+
+1. **Er komt een fase 0 vóór deze fase**, en die is klein: het beheerdersoverzicht `/beheer` met
+   de blokken "wacht op jou" en "niet gezond". Geen tabel, geen migratie, geen planner: allebei
+   die blokken bevragen toestand die er al is. De reden voor die volgorde is dat fase 1 de
+   standaardentabel in code vastlegt en fase 2 hem erft; het overzicht eerst bouwen maakt "naar
+   het overzicht" een bestaande bestemming in plaats van een belofte. **Wat het kost**: de
+   meldingen schuiven op met de bouwtijd van fase 0. Zie beslissing 8 in
+   `plans/beheer-in-zad-plan-van-aanpak.md`, waar ook staat wat het alternatief is als de
+   opdrachtgever die vertraging niet wil.
+2. **Fase 1 levert de gecorrigeerde standaardentabel**, niet de oude. Concreet: de twee regels
+   uit "De standaarden per rol" hierboven (geen aflevering bij `reason = "platform-admin"`, geen
+   aflevering bij `severity = "informational"`) horen bij het uitwaaieren dat in deze fase
+   gebouwd wordt, en niet in een latere fase. Ze zijn later toevoegen betekent een uitgerolde
+   standaard corrigeren, en dat is duurder dan hem meteen goed leggen.
+3. **Fase 1 repareert de ontbrekende aanvraagdatum.** De generieke dienstgebruik-goedkeuring
+   schrijft bij het aanvragen een lege history (`opi/services/catalog/approval.py:303`), waar
+   domein en subdomein een tijdstip zetten (`opi/connectors/subdomain.py:511` en `:552`).
+   Zonder die ene regel is bij een `send-email`-aanvraag niet vast te stellen hoe lang hij
+   ligt, en dan kan het blok "wacht op jou" niet op ouderdom sorteren en kan de escalatievraag
+   later niet beantwoord worden.
+
+**Wat er NIET aan deze fase verandert**: de bestandenlijst hieronder, het datamodel, de
+outboxplanner, de keuze voor een eigen planner in de lifespan en de bewaartermijnen.
 
 **Bestanden die geraakt worden:**
 
@@ -657,6 +894,9 @@ redelijk mens anders zou nemen) is dat minder.
 *Aanbeveling: ja.* Weinig volume, weinig autorisatiewerk, twee aanroeppunten, en de pijn is
 echt. Het alternatief (beginnen met mislukte taken) is waardevoller voor de gebruiker maar
 raakt meteen het volume, de dedup en de bewaartermijn.
+*Bijgewerkt door RC-161*: de bronkeuze blijft, maar er komt een kleine fase 0 vóór (het
+beheerdersoverzicht) en fase 1 levert de gecorrigeerde standaardentabel. Zie "Fase 1" hierboven
+en beslissing 8 in `plans/beheer-in-zad-plan-van-aanpak.md`.
 
 **4. De gebeurtenissen ontstaan met losse aanroepen op de plek waar ze gebeuren, plus een
 vergelijking oud-nieuw op de opslagweg van het projectbestand.**
@@ -701,6 +941,88 @@ afnemer en de standaard ervoor is nog niet vastgesteld.
 invullen is.* Dit is het enige punt in deze lijst waar de bouwer niets kan beslissen.
 
 **12. Twee dingen mogen niet uitgezet worden in het postvak: onomkeerbare ingrepen door het
-platform, en wijzigingen aan je eigen toegang.**
+platform, en wijzigingen aan je eigen bevoegdheid.**
 *Aanbeveling: ja, en niet meer dan die twee.* Elke onuitschakelbare melding erbij leert mensen
 dat het voorkeurenscherm niet werkt.
+*Bijgewerkt door RC-161*: het tweede geval heette "je eigen toegang" en betrof alleen je rol in
+een project. Het is verbreed naar je bevoegdheid, zodat "je bent platformbeheerder geworden of
+afgevoerd" en "iemand nam het beheer van jouw project over" erbij horen zonder dat er een derde
+onuitschakelbaar type bij komt.
+
+**13. Een aflevering met `reason = "platform-admin"` wordt niet aangemaakt, en de reden is de
+sterkste aanspraak in plaats van de eerste die gevonden wordt.**
+*Aanbeveling: ja.* Dit is de kern van de correctie op "platformbeheerder: alles". Zonder de
+rangorde erbij is de regel fout, want de uniciteitsgrendel op `(event_id, recipient)` laat maar
+één reden toe en dan verliest een platformbeheerder die ook projectbeheerder is de meldingen
+over zijn eigen project.
+
+**14. Een gebeurtenis met `severity = "informational"` levert geen postvakrij op.**
+*Aanbeveling: ja.* `severity` bestond al en werd nergens gebruikt om te bepalen wat iemand
+krijgt. Dit is geen extra knop maar de codering van de eerste toets van de grensregel. Let op de
+consequentie: de regel "Het platform heeft het geheugen van een component bijgesteld" in deel 1
+paragraaf 4 moet dan van "ter informatie" naar "actie nodig", anders komt hij bij niemand aan.
+
+**15. Per project volgen of dempen (het GitHub-model) komt er niet.**
+*Aanbeveling: ja, niet doen.* Met beslissing 13 staat er in het postvak van de platformbeheerder
+alleen nog wat een echte aanspraak heeft, en dan lost per-projectdempen een probleem op dat hij
+niet meer heeft. Het model sluit het niet uit voor later.
+
+---
+
+## Wijzigingslijst RC-161
+
+Op 28 augustus 2026 is dit document bijgewerkt naar aanleiding van RC-161 ("Het beheerdeel van
+ZAD: rollen, overzicht, en wat een beheerder moet weten"). De aanleiding: de standaard
+"platformbeheerder: alles, inclusief type 12" is niet wat de opdrachtgever wil, en het gat
+eronder is dat er geen beheerdersoverzicht is om de rest naartoe te sturen. De onderbouwing en
+de metingen staan in `plans/beheer-in-zad-inventarisatie.md` en
+`plans/beheer-in-zad-plan-van-aanpak.md`.
+
+| Waar | Wat | Waarom |
+|---|---|---|
+| Kop van het document | een verwijzing naar deze lijst | twee documenten die elkaar tegenspreken zijn erger dan één dat is bijgewerkt |
+| "De verversingsweg", kop | "en niet de websocket" werd "en niet de websocket of SSE" | de kop beloofde een afweging die de middenweg oversloeg |
+| "De verversingsweg", nieuwe subparagraaf | de weging van server-sent events, met of zonder `LISTEN/NOTIFY`, per plek in plaats van in het algemeen, plus de metingen eronder | de uitkomst blijft peilen, maar hij is nu een beslissing en geen overgeslagen alternatief. Gemeten: OPI draait als één proces, dus het per-werker-bezwaar tegen de websocket bijt vandaag niet; de CSP staat een `EventSource` toe zonder wijziging; en de router knipt elke stroom via `zad.rijksapp.nl` na 300 seconden af |
+| "Het scherm" | een regel boven de voorkeurentabel voor de platformbeheerder | hij is voor zijn eigen projecten een gewone projectbeheerder; een tweede tabel zou suggereren dat hij twee verzamelingen voorkeuren heeft |
+| "De standaarden per rol", tabel | de regel voor de platformbeheerder is gesplitst in twee regels (als beheerder, en als lid van zijn eigen projecten) en teruggebracht van "alles" naar type 6 plus wijzigingen aan zijn eigen bevoegdheid; bij projectbeheerder en projectlid is `severity` toegevoegd | de opdrachtgever hoeft niet voor alle projecten alles te zien, en de grensregel wijst van de twaalf typen er precies één naar zijn postvak |
+| "De standaarden per rol", nieuw | de regel "een aflevering met `reason = platform-admin` wordt niet aangemaakt", mét de rangorde van redenen eronder | het onderscheid zat al in de kolom `reason` en werd niet gebruikt. De rangorde is nodig, want zonder hem verliest een platformbeheerder die ook projectbeheerder is de meldingen over zijn eigen project: de uniciteitsgrendel op `(event_id, recipient)` laat maar één reden toe |
+| "De standaarden per rol", nieuw | twee redenen erbij: `platform-owner` en `platform-user` (allebei voorstel) | zonder `platform-owner` zouden "je bent platformbeheerder geworden" en "iemand nam het beheer van jouw project over" onder `platform-admin` vallen en dus verdwijnen, terwijl hij daar juist eigenaar is. `platform-user` dekt een **gat in de oorspronkelijke lijst**: een clusterbrede mededeling heeft geen actor, geen goedkeurder en geen project, dus geen van de vijf bestaande waarden paste erop |
+| "De standaarden per rol", nieuw | de regel "`severity = informational` levert geen postvakrij op" | `severity` bestond en werd nergens gebruikt om te bepalen wat iemand krijgt; dit is de codering van de eerste toets van de grensregel en geen extra knop |
+| "De standaarden per rol", nieuw | een tabel met wat er van de vier voorgestelde mechanismen wél en niet is overgenomen | per-project volgen of dempen is bewust niet overgenomen; dat hoort erbij te staan met de reden |
+| "Waarom kreeg ik dit bericht" | de rangorde van redenen, en de vaststelling dat de zin bij `platform-admin` niet bestaat | "je krijgt dit omdat je platformbeheerder bent" is geen reden die met het bericht te maken heeft, maar een eigenschap van de lezer |
+| "Wat niet uitgezet mag kunnen worden" | geval 2 is verbreed van "je projectrol" naar "je bevoegdheid" | zo horen de twee platformbrede gevallen erbij zonder dat er een derde onuitschakelbaar type bij komt, en het document blijft bij zijn eigen regel dat het er zo weinig mogelijk moeten zijn |
+| "Fase 1" | drie wijzigingen: er komt een kleine fase 0 vóór, fase 1 levert de gecorrigeerde standaardentabel, en fase 1 repareert de ontbrekende aanvraagdatum | de bronkeuze (goedkeuringen) blijft; wat verandert is de volgorde en de standaard die erin gebakken wordt |
+| "De openstaande beslissingen", punt 3 | een regel erbij over fase 0 en de standaardentabel | anders spreekt de beslissingenlijst de fasering erboven tegen |
+| "De openstaande beslissingen", punt 12 | "je eigen toegang" werd "je eigen bevoegdheid" | dezelfde verbreding als in de lijst hierboven |
+| "De openstaande beslissingen" | drie punten erbij (13, 14, 15) | de `reason`-regel met zijn rangorde, de ernstregel, en het besluit om per-projectdempen niet te bouwen. Elk is met ja of nee te beantwoorden en heeft gevolgen voor de bouw, dus ze horen in deze lijst en niet alleen in de proza |
+
+### Wat er in de andere twee documenten van RC-148 verandert
+
+**`plans/meldingen-oplossingsrichtingen.md`: niets in dit document zelf.** Het datamodel blijft
+staan zoals het er ligt. De twee dingen die RC-161 toevoegt passen erin zonder wijziging:
+`platform-owner` en `platform-user` zijn extra waarden in een kolom die al een vaste
+waardenlijst heeft (`reason`, `String(64)`, `plans/meldingen-oplossingsrichtingen.md` regel
+620), en de rangorde van redenen is gedrag in het uitwaaieren en geen schema. Wat er wél in dat
+document mag: het commentaar achter die kolom noemt vijf waarden en er worden er zeven, dus dat
+commentaar loopt achter zodra dit gebouwd wordt. Ook `severity` wordt gebruikt zoals hij
+bedoeld was, met de drie waarden die er al staan. **Er is dus geen migratie en geen kolom
+bij.**
+
+**`plans/meldingen-inventarisatie.md`: één inhoudelijke correctie, nog niet doorgevoerd.** In
+paragraaf 4 staat "Het platform heeft het geheugen van een component bijgesteld" met ernst "ter
+informatie". Dat hoort `actie nodig` te zijn: de eigenaar kan er wel degelijk iets aan doen,
+want een handmatig gezette waarde wint van de automatische stemmer
+(`features/handmatig-gezette-resources.md`). Met de nieuwe ernstregel zou de melding anders bij
+niemand aankomen, terwijl dit juist het type is waarvan de opdrachtgever zegt dat de eigenaar
+het achteraf moet weten. Deze correctie staat hier gemeld en is bewust niet in dat document
+doorgevoerd, omdat de inventarisatie een meting is en de reden voor de wijziging in dit document
+thuishoort.
+
+**En één bevinding die geen correctie is maar wel gemeld moet worden.** De inventarisatie zegt
+in paragraaf 7 over "Iemand is platformbeheerder geworden of afgevoerd": "**bestaat nog niet**:
+de allowlist komt uit de configuratie". Dat klopt en het blijft kloppen, maar het is met dit
+voorstel geen permanente toestand meer: beslissing 9 in
+`plans/beheer-in-zad-plan-van-aanpak.md` verhuist die lijst naar de database met een handeling
+erachter, en daarmee wordt die regel wél een gebeurtenis. Het is dus geen fout in de
+inventarisatie maar een regel die door dit voorstel van kolom verandert.
+

@@ -330,6 +330,22 @@ de correctie op RC-148.
 | 11 | `platform-mededeling` | onderhoud: **postvak** voor iedereen (handeling: niet uitrollen tijdens het venster). Release: **pagina** | idem | 1 voor onderhoud, 2 voor een release |
 | 12 | `beheer` | n.v.t. | **overzicht**, behalve "iemand is platformbeheerder geworden of afgevoerd" en "beheer overgenomen van project X": die twee naar het **postvak** van de andere platformbeheerders | 2, met twee uitzonderingen die op tak "gepasseerd" van toets 1 slagen |
 
+### Hoe de regel in de gegevens landt
+
+De toewijzing hierboven is niet iets dat per melding met de hand gedaan wordt. Hij komt neer op
+twee regels in het uitwaaieren, en die staan uitgewerkt in
+`plans/meldingen-plan-van-aanpak.md` onder "De standaarden per rol":
+
+1. **De reden is de sterkste aanspraak**, in de volgorde `actor` > `approver` >
+   `platform-owner` > `project-admin` > `project-member` > `platform-user` > `platform-admin`.
+2. **Wat als `platform-admin` overblijft, krijgt geen postvakrij**, en wat `informational` is
+   ook niet.
+
+De kolom "Platformbeheerder" van de tabel hierboven is dus geen aparte configuratie: hij is wat
+er overblijft als je die twee regels toepast. De twee uitzonderingen in type 12 en de
+onderhoudsberichten in type 11 zijn precies de gevallen waarvoor `platform-owner` en
+`platform-user` bestaan.
+
 ### Waar het schuurt, en dat is de eerlijke helft
 
 **Type 10 is de zwakste toewijzing.** "Een collega opende een databaseconsole op productie" is
