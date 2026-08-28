@@ -18,6 +18,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
 from opi.core.cluster_config import get_argo_namespace
 from opi.core.config import settings
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 
 logger = logging.getLogger(__name__)
 
@@ -1040,6 +1041,91 @@ class KubectlConnector:
         except Exception as e:
             logger.error(f"Error getting namespace events: {e}")
             return []
+
+    async def get_application_pods(self, namespace: str, deployment_name: str) -> list[dict[str, Any]]:
+        """The application pods of one deployment, with what each of them is actually doing.
+
+        This answers the question the ArgoCD status cannot: *which pod is serving traffic
+        right now*. During a rolling update two pods sit behind one Service -- the previous
+        version still serving and the new one failing to come up -- and ArgoCD reports the
+        deployment Degraded for both. Only the pod list tells them apart.
+
+        One ``kubectl get pods -l <selector> -o json``; the selector comes from
+        ``deployment_pod_selector`` so the service-owned pods (sleep-mode's waker and
+        friends) are excluded exactly as everywhere else.
+
+        Args:
+            namespace: The (cluster-prefixed) namespace the deployment runs in
+            deployment_name: The deployment whose pods are wanted
+
+        Returns:
+            One dict per pod with ``name``, ``app`` (the component's unique name),
+            ``pod_template_hash``, ``deleting`` and -- read from the ``app`` container's
+            status -- ``ready``, ``image``, ``restart_count``, ``started_at`` and
+            ``has_previous_attempt``. Best-effort like the rest of this connector: a
+            failing command or unparsable output logs and yields an empty list, never
+            raises.
+        """
+        if not KubectlConnector.isConnected:
+            logger.debug("kubectl not available; no application pods for %s", deployment_name)
+            return []
+
+        args = [
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            deployment_pod_selector(deployment_name),
+            "-o",
+            "json",
+        ]
+        try:
+            stdout, stderr, code = await self._run_kubectl_command(args, timeout=15)
+        except Exception as exc:
+            logger.warning(f"Could not list application pods for {namespace}/{deployment_name}: {exc}")
+            return []
+
+        if code != 0:
+            logger.warning(f"Could not list application pods for {namespace}/{deployment_name}: {stderr}")
+            return []
+
+        try:
+            items = json.loads(stdout).get("items", []) or []
+        except (json.JSONDecodeError, AttributeError) as exc:
+            logger.warning(f"Unparsable pod list for {namespace}/{deployment_name}: {exc}")
+            return []
+
+        pods: list[dict[str, Any]] = []
+        for item in items:
+            metadata = item.get("metadata", {}) or {}
+            labels = metadata.get("labels", {}) or {}
+            pod: dict[str, Any] = {
+                "name": metadata.get("name", ""),
+                "app": labels.get("app", ""),
+                "pod_template_hash": labels.get("pod-template-hash", ""),
+                "deleting": bool(metadata.get("deletionTimestamp")),
+                "ready": False,
+                "image": "",
+                "restart_count": 0,
+                "started_at": None,
+                "has_previous_attempt": False,
+            }
+            for container in (item.get("status", {}) or {}).get("containerStatuses", []) or []:
+                if container.get("name") != APPLICATION_CONTAINER_NAME:
+                    continue
+                pod["ready"] = bool(container.get("ready"))
+                pod["image"] = container.get("image", "") or ""
+                pod["restart_count"] = int(container.get("restartCount") or 0)
+                # The container's own start, not ``status.startTime`` of the pod: after a
+                # restart the first is the truth and the second is when the pod was created.
+                pod["started_at"] = ((container.get("state", {}) or {}).get("running", {}) or {}).get("startedAt")
+                pod["has_previous_attempt"] = bool((container.get("lastState", {}) or {}).get("terminated"))
+                break
+            pods.append(pod)
+
+        logger.debug("Found %d application pod(s) for %s/%s", len(pods), namespace, deployment_name)
+        return pods
 
     async def get_pod_container_image(self, namespace: str, pod_name: str, container_name: str) -> str | None:
         """Get the image a running container was started from.

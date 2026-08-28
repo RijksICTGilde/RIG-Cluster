@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
@@ -2008,13 +2009,24 @@ def _annotate_argocd_error_ages(errors: list[dict[str, Any]]) -> None:
 
 
 async def _fetch_argocd_deployment_status(
-    project_name: str, deployment: dict[str, Any], argo: Any, kubectl: Any
+    project_name: str,
+    deployment: dict[str, Any],
+    argo: Any,
+    kubectl: Any,
+    deployment_state: Any = None,
 ) -> dict[str, Any]:
-    """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy."""
+    """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy.
+
+    ``deployment_state`` is what the services report about this deployment (see
+    ``collect_deployment_state``). It only decides whether the pod summary is worth
+    asking for: a deployment whose pods are MEANT to be absent -- asleep, switched off --
+    would otherwise be told "nothing is running", which is true and not a problem.
+    """
     from opi.services.deployment_diagnostics import (
         conditions_to_errors,
         gather_deployment_errors,
         gather_sync_deviations,
+        summarize_component_pods,
     )
     from opi.services.event_interpreter import interpret_argocd_errors
     from opi.utils.naming import generate_argocd_application_name
@@ -2040,6 +2052,12 @@ async def _fetch_argocd_deployment_status(
             if comp.get("disabled") and (ref := comp.get("reference"))
         )
 
+        # What is actually serving traffic, per component. Deliberately only on the
+        # unhealthy branch, next to the diagnostics that already cost a cluster call: a
+        # green deployment answers "is it running" with its own badge and must not pay for
+        # a pod query on every render.
+        pod_summaries: list[Any] = []
+
         if app_health != "Healthy":
             # Not healthy: the full (more expensive) diagnostics, which already include the
             # app-level conditions along with the resource tree and namespace events.
@@ -2053,6 +2071,19 @@ async def _fetch_argocd_deployment_status(
                 status_data=status_data,
                 disabled_components=disabled_components,
             )
+            expects_no_pods = bool(
+                deployment_state is not None and getattr(deployment_state, "expects_no_application_pods", False)
+            )
+            if kubectl is not None and not expects_no_pods:
+                try:
+                    pods = await kubectl.get_application_pods(
+                        get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", "")),
+                        deployment_name,
+                    )
+                except Exception as exc:
+                    logger.debug("Could not list application pods for %s: %s", deployment_name, exc)
+                    pods = []
+                pod_summaries = summarize_component_pods(pods, deployment=deployment)
         else:
             # Healthy last-known state can still hide a fresh ComparisonError (sync=Unknown):
             # read the cheap app-level conditions unconditionally - no extra API call - so a
@@ -2060,7 +2091,12 @@ async def _fetch_argocd_deployment_status(
             raw_errors = conditions_to_errors(status_data)
 
         component_names = [c.get("reference") for c in deployment.get("components", []) or [] if c.get("reference")]
-        errors = interpret_argocd_errors(raw_errors, deployment_name=deployment_name, component_names=component_names)
+        errors = interpret_argocd_errors(
+            raw_errors,
+            deployment_name=deployment_name,
+            component_names=component_names,
+            serving_components={s.reference for s in pod_summaries if s.is_serving},
+        )
         _annotate_argocd_error_ages(errors)
 
         # Afwijkingen naast fouten: welke resources houden de badges van groen af, en
@@ -2087,6 +2123,7 @@ async def _fetch_argocd_deployment_status(
             "operation_message": operation_state.get("message"),
             "errors": errors,
             "deviations": deviations,
+            "pods": pod_summaries,
         }
     except Exception as app_error:
         logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
@@ -2289,13 +2326,21 @@ async def argocd_status_fragment(
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
+    # What the services report about this deployment (RC-35). Read from the project file,
+    # not from the cluster: zero replicas can also mean something went wrong, and the card
+    # has to tell those two apart. Computed BEFORE the fetch because the fetch needs it too
+    # -- it decides whether asking the cluster which pod is serving makes sense at all.
+    deployment_state = collect_deployment_state(project.data or {}, deployment_name)
+
     argo = create_argo_connector()
     if argo.auth_token is None:
         status = _argocd_unavailable_result(
             generate_argocd_application_name(project_name, deployment_name), "ArgoCD niet beschikbaar"
         )
     else:
-        status = await _fetch_argocd_deployment_status(project_name, deployment, argo, create_kubectl_connector())
+        status = await _fetch_argocd_deployment_status(
+            project_name, deployment, argo, create_kubectl_connector(), deployment_state
+        )
 
     return render(
         request,
@@ -2307,10 +2352,7 @@ async def argocd_status_fragment(
             "argocd_status": {deployment_name: status},
             "_argocd_card_id_prefix": prefix or deployment_name,
             "current_cluster": settings.CLUSTER_MANAGER,
-            # What the services report about this deployment (RC-35). Read from the project
-            # file, not from the cluster: zero replicas can also mean something went wrong,
-            # and the card has to tell those two apart.
-            "deployment_states": {deployment_name: collect_deployment_state(project.data or {}, deployment_name)},
+            "deployment_states": {deployment_name: deployment_state},
         },
     )
 
