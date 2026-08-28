@@ -589,7 +589,7 @@ Waarom die volgorde:
 opdrachtgever wacht op meldingen en niet op een pagina. Mijn oordeel is dat het het waard is,
 omdat fase 1 zonder overzicht een standaard vastlegt die daarna weer gecorrigeerd moet worden,
 en een correctie op een uitgerolde standaard is duurder dan wachten. Maar het is een oordeel
-en het staat als beslissing 3 hieronder.
+en het staat als beslissing 8 hieronder.
 
 **2. Fase 1 levert de gecorrigeerde standaardentabel, niet de oude.**
 
@@ -602,8 +602,9 @@ De generieke dienstgebruik-goedkeuring schrijft bij het aanvragen een lege histo
 (`opi/services/catalog/approval.py:303`), waar domein en subdomein er wel een tijdstip in
 zetten (`opi/connectors/subdomain.py:511` en `:552`). Gevolg: bij een `send-email`-aanvraag is
 niet vast te stellen hoe lang hij ligt. Dat is één regel, en zonder die regel kan het blok
-"wacht op jou" niet op ouderdom sorteren en kan de escalatievraag (deel 4 van de
-meldingenopdracht) later niet beantwoord worden.
+"wacht op jou" niet op ouderdom sorteren en kan de escalatievraag later niet beantwoord
+worden (`plans/meldingen-plan-van-aanpak.md`, "De standaarden per rol", de regel "Escalatie als
+niemand kijkt").
 
 **Wat er NIET verandert aan fase 1**: de bestandenlijst, het datamodel, de outboxplanner, de
 keuze voor een eigen planner in de lifespan, en de bewaartermijnen. Die staan en dit document
