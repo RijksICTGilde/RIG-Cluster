@@ -464,7 +464,7 @@ Dat de enige bestaande meldketen (log watcher naar ntfy) afhangt van een Loki en
 
 ## Wat een agent of script op de API vandaag kan zien
 
-Dit is geen tweede catalogus maar het mechanisme voor publiek C. De agent is vandaag structureel het slechtst bediend, en om een reden die niet in de tabellen zichtbaar is: hij is niet te onderscheiden van elke andere houder van dezelfde sleutel. Een taak die via de API is gestart krijgt `created_by = "API"` (`opi/core/task_helpers.py:63`), letterlijk die string, want de sleutel identificeert het project en niet de handelende partij.
+Dit is geen tweede catalogus maar het mechanisme voor publiek C. De agent is vandaag structureel het slechtst bediend, en om een reden die niet in de tabellen zichtbaar is: hij is niet te onderscheiden van elke andere houder van dezelfde sleutel. Een taak die op de projectSLEUTEL is gestart krijgt `created_by = "API"` (`opi/core/task_helpers.py:63`), letterlijk die string, want de sleutel identificeert het project en niet de handelende partij. Dat is de vergelijking waar het hier om gaat en niet "de API" als geheel: dezelfde functie zet op `:61` wel het e-mailadres zodra de weg een identiteit draagt, en dat is behalve de sessie ook het SSO-bearer-token uit `opi/api/user_token_auth.py` (bijvoorbeeld `create_project_v2`, `opi/api/v2/router.py:1199`). Wat deel 2 en deel 3 met die tweedeling doen staat in deel 2, punt 7: op de sleutelweg blijft `actor` leeg en draagt `actor_kind` het agentschap.
 
 | Wat hij wil weten | Waar hij het vandaag vandaan haalt | Wat daaraan schort |
 |---|---|---|
