@@ -63,6 +63,13 @@
     // voor RC-162 als enige was. En of we naar de VORIGE poging van die pod kijken.
     let currentPod = null;
     let previousAttempt = false;
+    // En wat de LOPENDE stroom draagt. Twee variabelen en niet een, omdat de kiezer en de
+    // verbinding uit elkaar kunnen lopen: de podlijst komt na het openen binnen en zet dan
+    // de standaardkeuze, terwijl de WebSocket al op de label-selector staat. Wie alleen de
+    // kiezer bijhoudt ziet die twee standen als gelijk (nieuw === currentPod) en stuurt de
+    // wissel nooit - dan noemt het paneel een pod terwijl alle pods door elkaar binnenkomen.
+    let streamPod = null;
+    let streamPrevious = false;
     // De pods zoals het endpoint ze laatst gaf, op naam. De schakelaar "vorige poging"
     // leest hieruit of de gekozen pod er een HEEFT.
     let podsByName = {};
@@ -140,6 +147,11 @@
         // blijft dus op "Alle pods" openen.
         currentPod = pod || null;
         previousAttempt = false;
+        // De verbinding die zo opgezet wordt draagt precies deze stand. Hier al gelijk
+        // zetten, zodat het vullen van de kiezer hieronder geen wissel uitlokt naar iets
+        // wat er toch al op gaat.
+        streamPod = currentPod;
+        streamPrevious = previousAttempt;
 
         // Update UI. De kop is een <nldd-top-title-bar>: die draagt zijn tekst op
         // properties en niet in kindelementen, dus geen textContent maar .text/.supportingText.
@@ -165,9 +177,10 @@
         // functie keert dan meteen terug.
         componentSelector.dispatchEvent(new Event('change', {bubbles: true}));
 
-        // De podlijst komt van de server en is er dus nog niet; zet de kiezer alvast op
-        // een bruikbare stand zodat het paneel nooit met een lege keuzelijst opengaat.
-        renderPodOptions([]);
+        // De podlijst komt van de server en is er dus nog niet; zet de kiezer alvast neer.
+        // NIET met renderPodOptions: die gooit een pod weg die niet in zijn lijst staat, en
+        // op een lege lijst is dat altijd - ook de pod die de kaartknop net meegaf.
+        renderPodPlaceholder();
         loadPods();
 
         // Clear previous logs
@@ -199,8 +212,10 @@
      * functie die de WebSocket gebruikt om een podnaam te toetsen - dus wat hier
      * binnenkomt is per definitie wat er te kiezen valt.
      *
-     * Mislukt het ophalen, dan blijft er "Alle pods" staan. Dat is precies het gedrag van
-     * voor deze keuzelijst, dus een pod die niet op te halen is kost geen logs.
+     * Mislukt het ophalen, dan blijft de kiezer staan zoals hij stond: "Alle pods", of de
+     * pod waarop de kaartknop geopend heeft. Die keuze mag een mislukte lijst niet kosten -
+     * de server toetst de podnaam zelf, en zonder pod kijk je weer naar alle pods door
+     * elkaar heen, wat precies het gedrag is dat deze kiezer opheft.
      */
     function loadPods() {
         const component = currentComponent;
@@ -218,7 +233,7 @@
             })
             .catch(err => {
                 console.warn('Kon de pods niet ophalen:', err);
-                if (component === currentComponent) renderPodOptions([]);
+                if (component === currentComponent) renderPodPlaceholder();
             });
     }
 
@@ -279,11 +294,44 @@
         }
         podSelector.value = currentPod || '';
 
+        // VOOR de change en niet erna: de schakelaar zet previousAttempt, en de wissel
+        // hieronder vergelijkt juist die stand met wat de stroom draagt. Andersom stuurt
+        // hij de vorige-poging-stand een ronde te laat, of helemaal niet.
+        syncPreviousToggle();
+
         // Zonder deze change tekent <nldd-dropdown> de gekozen tekst niet bij en oogt de
         // lijst leeg terwijl er pods in staan. Zelfde reden als bij de componentkiezer.
+        // En hij doet meer dan tekenen: switchLogPod zet de keuze die hierboven gevallen
+        // is ook echt op de verbinding. Een keuze die alleen in de kiezer staat is geen
+        // keuze - dan noemt het paneel een pod terwijl de server nog alle pods stuurt.
         podSelector.dispatchEvent(new Event('change', {bubbles: true}));
+    }
 
+    /**
+     * Zet de kiezer neer voordat de podlijst binnen is.
+     *
+     * Het paneel gaat meteen open en verbindt meteen, dus er is op dat moment al een
+     * keuze: de pod die de kaartknop meegaf, of "Alle pods". Die keuze mag hier NIET
+     * sneuvelen - renderPodOptions gooit een pod weg die niet in zijn lijst staat, en met
+     * een lege lijst is dat altijd, ook de pod waar net op geklikt is. Zodra de echte
+     * lijst er is neemt renderPodOptions het over.
+     */
+    function renderPodPlaceholder() {
+        podsByName = {};
+        podSelector.innerHTML = '';
+        const alle = document.createElement('option');
+        alle.value = '';
+        alle.textContent = 'Alle pods';
+        podSelector.appendChild(alle);
+        if (currentPod) {
+            const option = document.createElement('option');
+            option.value = currentPod;
+            option.textContent = '...' + currentPod.slice(-6);
+            podSelector.appendChild(option);
+        }
+        podSelector.value = currentPod || '';
         syncPreviousToggle();
+        podSelector.dispatchEvent(new Event('change', {bubbles: true}));
     }
 
     /**
@@ -327,6 +375,10 @@
      */
     function connectLogWebSocket() {
         updateStatus('connecting', 'Connecting...');
+
+        // Wat deze verbinding draagt. De url hieronder wordt hier letterlijk uit gebouwd.
+        streamPod = currentPod;
+        streamPrevious = previousAttempt;
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         let wsUrl = `${protocol}//${window.location.host}/api/logs/stream/${currentProject}?deployment=${encodeURIComponent(currentDeployment)}&component=${encodeURIComponent(currentComponent)}&lines=250`;
@@ -381,6 +433,7 @@
                     // in zijn bericht. Dan hoort de schakelaar dat ook te weten.
                     if (data.previous === false && previousAttempt) {
                         previousAttempt = false;
+                        streamPrevious = false;
                         previousToggle.checked = false;
                     }
                     updateStatus('streaming', streamingStatusText(data.message || 'Streaming logs...'));
@@ -397,6 +450,7 @@
                 }
                 if (Object.prototype.hasOwnProperty.call(data, 'pod')) {
                     currentPod = data.pod || null;
+                    streamPod = currentPod;
                     podSelector.value = currentPod || '';
                 }
                 break;
@@ -735,6 +789,8 @@
                 previous: false
             }));
             currentComponent = component;
+            streamPod = null;
+            streamPrevious = false;
             updateStatus('connecting', `Switching to ${component}...`);
         } else {
             // Reconnect with new component
@@ -755,11 +811,16 @@
      * component - een geraden naam komt er niet doorheen.
      */
     window.switchLogPod = function(podName) {
-        const nieuw = podName || null;
-        if (nieuw === currentPod) return;
-
-        currentPod = nieuw;
+        currentPod = podName || null;
         syncPreviousToggle();
+
+        // De vergelijking gaat tegen wat de STROOM draagt en niet tegen wat de kiezer
+        // droeg. Anders valt precies de belangrijkste wissel weg: renderPodOptions zet de
+        // standaardkeuze zelf in currentPod en stuurt daarna deze change, en op
+        // 'nieuw === currentPod' keerde die meteen terug - de kiezer noemde een pod, de
+        // verbinding stond nog op de label-selector, en dat was met geen enkele handeling
+        // recht te trekken omdat de select al op die waarde stond en dus niets meer vuurt.
+        if (currentPod === streamPod && previousAttempt === streamPrevious) return;
 
         clearLogs();
         emptyState.querySelector('p').textContent = 'Switching pod...';
@@ -772,6 +833,7 @@
     window.toggleLogPrevious = function() {
         if (previousToggle.disabled) return;
         previousAttempt = !!previousToggle.checked;
+        if (currentPod === streamPod && previousAttempt === streamPrevious) return;
 
         clearLogs();
         emptyState.querySelector('p').textContent = previousAttempt
@@ -785,6 +847,8 @@
      */
     function sendPodSelection() {
         if (logSocket && logSocket.readyState === WebSocket.OPEN) {
+            streamPod = currentPod;
+            streamPrevious = previousAttempt;
             logSocket.send(JSON.stringify({
                 action: 'switch',
                 component: currentComponent,
@@ -793,8 +857,31 @@
             }));
             updateStatus('connecting', currentPod ? `Switching to ${currentPod}...` : 'Switching to alle pods...');
         } else {
-            connectLogWebSocket();
+            // Nog niet open - dat is de gewone gang bij het openen, want de podlijst kan
+            // binnen zijn voordat de verbinding staat. Dan opnieuw verbinden MET de oude
+            // socket opgeruimd: een socket die nog aan het verbinden is blijft anders
+            // naast de nieuwe doorlopen en levert een tweede stroom in hetzelfde paneel.
+            replaceLogWebSocket();
         }
+    }
+
+    /**
+     * Verbind opnieuw, en laat de vorige verbinding niet als storing achter.
+     *
+     * De handlers gaan er eerst af: een socket die WIJ vervangen mag geen
+     * 'Disconnected'-melding in de statusregel zetten over iets wat de gebruiker niet
+     * gevraagd heeft af te breken.
+     */
+    function replaceLogWebSocket() {
+        if (logSocket) {
+            logSocket.onopen = null;
+            logSocket.onmessage = null;
+            logSocket.onclose = null;
+            logSocket.onerror = null;
+            logSocket.close();
+            logSocket = null;
+        }
+        connectLogWebSocket();
     }
 
     // Keyboard shortcuts

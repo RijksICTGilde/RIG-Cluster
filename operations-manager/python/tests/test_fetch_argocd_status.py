@@ -102,6 +102,10 @@ async def test_out_of_sync_leftover_becomes_deviation_not_error():
     argo.get_application_resource_tree = AsyncMock(return_value=[])
     kubectl = MagicMock()
     kubectl.get_namespace_events = AsyncMock(return_value=[])
+    # Progressing is not healthy, so this run takes the diagnostics branch and that branch
+    # asks for the pods. Without this the mock hands back a MagicMock that cannot be
+    # awaited - which the removed blanket except used to swallow.
+    kubectl.get_application_pods = AsyncMock(return_value=[])
 
     deployment = {"name": "deploy-1", "namespace": "ns", "cluster": "local", "components": []}
     result = await _fetch_argocd_deployment_status("proj", deployment, argo, kubectl)

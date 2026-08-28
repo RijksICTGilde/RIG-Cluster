@@ -19,7 +19,9 @@ het gedrag.
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
+from urllib.parse import quote, unquote
 
 import pytest
 from playwright.sync_api import expect
@@ -421,6 +423,68 @@ def test_de_podkiezer_wordt_gevuld_met_alle_pods_eerst(paneel_met_pods: Page) ->
 def test_de_niet_gerede_pod_is_de_standaardkeuze(paneel_met_pods: Page) -> None:
     """Dat is de pod die niet opkomt, en dus de enige waarvoor je logs opent."""
     assert paneel_met_pods.locator("#log-pod-selector").input_value() == POD_DIE_CRASHT
+
+
+def _stroompod(page: Page) -> str | None:
+    """Welke pod de stroom op dit moment DRAAGT, uit de url of uit de laatste switch.
+
+    Dit is de meting die telt. Een kiezer die een podnaam toont en een schakelaar die
+    aanstaat zijn eigenschappen van het bedieningselement; ze zeggen niets over wat de
+    server stuurt. In r1 liepen die twee uit elkaar: het paneel noemde een pod terwijl de
+    verbinding nog op de label-selector stond en dus alle pods door elkaar binnenhaalde.
+
+    De laatste ``switch`` wint van de url, want zo werkt de verbinding ook: hij wordt
+    opgezet met wat er op dat moment gekozen is en daarna over dezelfde socket omgezet.
+    """
+    verstuurd = page.evaluate("() => window.__wsSent")
+    for bericht in reversed(verstuurd):
+        data = json.loads(bericht)
+        if data.get("action") == "switch":
+            return data.get("pod")
+    url = page.evaluate("() => window.__wsUrl") or ""
+    gevonden = re.search(r"[?&]pod=([^&]+)", url)
+    return unquote(gevonden.group(1)) if gevonden else None
+
+
+def test_de_standaardkeuze_bereikt_de_stroom(paneel_met_pods: Page) -> None:
+    """De standaardkeuze is pas een keuze als de server hem krijgt.
+
+    Gemeten op de VERBINDING en niet op de kiezer. Zonder deze toets bleef r1 groen
+    terwijl de kiezer de crashende pod noemde en de stroom nog alle pods door elkaar
+    leverde - precies de stand die deze feature opheft.
+    """
+    assert _stroompod(paneel_met_pods) == POD_DIE_CRASHT
+
+    # En de vorige poging gaat mee, want dat is de stand waarin de live stroom leeg blijft.
+    verstuurd = "".join(paneel_met_pods.evaluate("() => window.__wsSent")).replace(" ", "")
+    assert '"previous":true' in verstuurd
+
+
+def test_de_kaartknop_opent_de_stroom_op_die_pod(paneel_met_pods: Page) -> None:
+    """De knop naast een podregel op de kaart geeft zijn pod mee; die moet aankomen.
+
+    In r1 werd dat argument tijdens het openen weggegooid door een kiezer die op een lege
+    lijst gezet werd, en landde het paneel zelfs op de ANDERE pod.
+    """
+    paneel_met_pods.evaluate("() => closeLogViewer()")
+    paneel_met_pods.evaluate("() => { window.__wsSent = []; window.__wsUrl = null; }")
+    paneel_met_pods.evaluate(
+        "(pod) => openLogViewer('test-project-detail', 'deployment-1', 'component-1',"
+        " [{reference: 'component-1'}], pod)",
+        POD_DIE_DRAAIT,
+    )
+
+    # De verbinding wordt meteen opgezet, dus de pod staat al in de url - nog voordat de
+    # podlijst binnen is.
+    url = paneel_met_pods.evaluate("() => window.__wsUrl")
+    assert f"pod={quote(POD_DIE_DRAAIT)}" in url or f"pod={POD_DIE_DRAAIT}" in url
+
+    # En hij overleeft het binnenkomen van de lijst: geen wissel weg van deze pod.
+    paneel_met_pods.wait_for_function(
+        "() => document.getElementById('log-pod-selector').options.length > 1", timeout=5000
+    )
+    assert _stroompod(paneel_met_pods) == POD_DIE_DRAAIT
+    assert paneel_met_pods.locator("#log-pod-selector").input_value() == POD_DIE_DRAAIT
 
 
 def test_een_podkeuze_stuurt_een_switch_met_de_podnaam(paneel_met_pods: Page) -> None:

@@ -31,7 +31,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from itsdangerous import BadSignature, TimestampSigner
-from opi.api.logs_router import MAX_POD_NAME_LENGTH, resolve_component_pods
+from opi.api.logs_router import MAX_NAME_LENGTH, MAX_POD_NAME_LENGTH, resolve_component_pods
 from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
@@ -876,7 +876,7 @@ async def stream_logs(
                             new_pod = current_pod
                         new_previous = bool(data.get("previous", current_previous))
                         # Validate component name length to prevent memory issues
-                        if new_component and len(new_component) > 256:
+                        if new_component and len(new_component) > MAX_NAME_LENGTH:
                             logger.warning("Component name too long in switch request")
                             await send_message(websocket, "error", message="Invalid component name")
                             continue
