@@ -18,6 +18,7 @@ het gedrag.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -338,3 +339,184 @@ def test_beeld_van_het_paneel(paneel: Page) -> None:
     )
 
     paneel.screenshot(path=f"{SCREENSHOT_DIR}/logviewer-open.png", animations="disabled")
+
+
+# ---------------------------------------------------------------------------
+# De podkiezer en de vorige-poging-schakelaar (RC-162)
+# ---------------------------------------------------------------------------
+#
+# Zonder podnaam volgt de server een label-selector, en die levert de regels van ELKE
+# matchende pod door elkaar heen. Bij psd-law/pr-114 liepen de regels van de bedienende
+# pod en die van de crashende pod dus ongescheiden door elkaar.
+#
+# De podlijst komt van /api/logs/pods. Die route wordt hier onderschept, om dezelfde reden
+# als de WebSocket: de echte lijst komt uit een cluster, en deze test heeft er geen.
+
+POD_DIE_DRAAIT = "deployment-1-component-1-849d475c4-4qp6p"
+POD_DIE_CRASHT = "deployment-1-component-1-58cb9567c5-9t87d"
+
+PODLIJST = {
+    "project": PROJECT,
+    "deployment": "deployment-1",
+    "component": "component-1",
+    "pods": [
+        {
+            "name": POD_DIE_DRAAIT,
+            "ready": True,
+            "image": "ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344",
+            "running_since": "2026-08-18T11:59:12Z",
+            "restart_count": 0,
+            "has_previous_attempt": False,
+        },
+        {
+            "name": POD_DIE_CRASHT,
+            "ready": False,
+            "image": "ghcr.io/minbzk/moza-profiel-service@sha256:2c0728ed",
+            "running_since": None,
+            "restart_count": 5,
+            "has_previous_attempt": True,
+        },
+    ],
+}
+
+
+def _onderschep_podlijst(page: Page, payload: dict) -> None:
+    page.route(
+        "**/api/logs/pods/**",
+        lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(payload)),
+    )
+
+
+@pytest.fixture
+def paneel_met_pods(auth_page: Page, app_server: str) -> Page:
+    """Hetzelfde paneel, met een podlijst achter het endpoint."""
+    auth_page.add_init_script(FAKE_WEBSOCKET)
+    auth_page.set_viewport_size({"width": 1440, "height": 900})
+    _onderschep_podlijst(auth_page, PODLIJST)
+    auth_page.goto(f"{app_server}/projects/{PROJECT}/deployments")
+    _wait_for_nldd(auth_page)
+    _open_paneel(auth_page)
+    auth_page.wait_for_function("() => document.getElementById('log-pod-selector').options.length > 1", timeout=5000)
+    return auth_page
+
+
+def _podopties(page: Page) -> list[str]:
+    return page.evaluate(
+        "() => Array.from(document.getElementById('log-pod-selector').options).map(o => o.textContent)"
+    )
+
+
+def test_de_podkiezer_wordt_gevuld_met_alle_pods_eerst(paneel_met_pods: Page) -> None:
+    """ "Alle pods" is het gedrag van vandaag en blijft daarom de eerste keuze."""
+    opties = _podopties(paneel_met_pods)
+
+    assert opties[0] == "Alle pods"
+    assert len(opties) == 3
+    # Het staartje van de naam onderscheidt de pods; de rest is voor allebei hetzelfde.
+    assert "start niet" in opties[2]
+    assert "5 herstarten" in opties[2]
+    assert "draait sinds" in opties[1]
+
+
+def test_de_niet_gerede_pod_is_de_standaardkeuze(paneel_met_pods: Page) -> None:
+    """Dat is de pod die niet opkomt, en dus de enige waarvoor je logs opent."""
+    assert paneel_met_pods.locator("#log-pod-selector").input_value() == POD_DIE_CRASHT
+
+
+def test_een_podkeuze_stuurt_een_switch_met_de_podnaam(paneel_met_pods: Page) -> None:
+    paneel_met_pods.select_option("#log-pod-selector", POD_DIE_DRAAIT)
+
+    verstuurd = "".join(paneel_met_pods.evaluate("() => window.__wsSent")).replace(" ", "")
+    assert '"action":"switch"' in verstuurd
+    assert f'"pod":"{POD_DIE_DRAAIT}"' in verstuurd
+
+
+def test_alle_pods_kiezen_stuurt_een_switch_zonder_pod(paneel_met_pods: Page) -> None:
+    paneel_met_pods.select_option("#log-pod-selector", "")
+
+    verstuurd = "".join(paneel_met_pods.evaluate("() => window.__wsSent")).replace(" ", "")
+    assert '"pod":null' in verstuurd
+
+
+def _vorige_poging(page: Page):
+    """Het bedienbare element van de schakelaar zit in de shadow root van het veld."""
+    return page.locator("#log-previous-attempt")
+
+
+def test_de_vorige_poging_staat_aan_bij_de_pod_die_niet_opkomt(paneel_met_pods: Page) -> None:
+    """Precies het geval waarin de live stroom leeg blijft: een backoff-venster."""
+    assert _vorige_poging(paneel_met_pods).evaluate("el => el.checked") is True
+    assert _vorige_poging(paneel_met_pods).evaluate("el => el.disabled") is False
+
+
+def test_de_vorige_poging_is_uit_en_onbedienbaar_bij_alle_pods(paneel_met_pods: Page) -> None:
+    """--previous geldt per container, dus op "Alle pods" bestaat de vraag niet.
+
+    Op GEDRAG gemeten en niet alleen op de property: er wordt op geklikt, en de stand mag
+    niet omslaan. ``disabled`` op een webcomponent is een belofte die het component moet
+    waarmaken; hier is nagemeten dat <nldd-switch-field> dat doet (hij tekent zich ook
+    gedempt), en niet aangenomen.
+    """
+    paneel_met_pods.select_option("#log-pod-selector", "")
+    assert _vorige_poging(paneel_met_pods).evaluate("el => el.disabled") is True
+
+    _vorige_poging(paneel_met_pods).evaluate(
+        "el => (el.shadowRoot && el.shadowRoot.querySelector('nldd-switch') || el).click()"
+    )
+
+    assert _vorige_poging(paneel_met_pods).evaluate("el => el.checked") is False
+
+
+def test_de_vorige_poging_is_onbedienbaar_bij_een_pod_zonder_vorige_poging(paneel_met_pods: Page) -> None:
+    paneel_met_pods.select_option("#log-pod-selector", POD_DIE_DRAAIT)
+
+    assert _vorige_poging(paneel_met_pods).evaluate("el => el.disabled") is True
+    assert _vorige_poging(paneel_met_pods).evaluate("el => el.checked") is False
+
+
+def test_de_statusregel_zegt_dat_een_afgesloten_logboek_niet_meer_groeit(paneel_met_pods: Page) -> None:
+    """Zonder die zin leest een stilstaand paneel als een kapotte verbinding.
+
+    En dat is geen kosmetiek: de vorige poging is een AFGESLOTEN logboek. Er komt niets
+    meer bij, en wie dat niet weet gaat een storing zoeken die er niet is.
+    """
+    paneel_met_pods.evaluate(
+        "() => window.__logSocket.emit({type: 'status', status: 'streaming', message: 'Log streaming started'})"
+    )
+
+    tekst = (paneel_met_pods.locator("#log-status-text").text_content() or "").strip()
+    assert "Vorige poging" in tekst
+    assert "groeit niet meer" in tekst
+    # En hij leest niet als storing: het bolletje staat op streaming, niet op error.
+    klassen = paneel_met_pods.locator("#log-status-indicator").get_attribute("class") or ""
+    assert "is-error" not in klassen
+    assert "is-streaming" in klassen
+
+
+def test_zonder_vorige_poging_blijft_de_statusregel_gewoon(paneel_met_pods: Page) -> None:
+    paneel_met_pods.select_option("#log-pod-selector", POD_DIE_DRAAIT)
+    paneel_met_pods.evaluate(
+        "() => window.__logSocket.emit({type: 'status', status: 'streaming', message: 'Streaming logs...'})"
+    )
+
+    assert (paneel_met_pods.locator("#log-status-text").text_content() or "").strip() == "Streaming logs..."
+
+
+def test_beeld_van_het_paneel_met_de_podkiezer(paneel_met_pods: Page) -> None:
+    """Leg vast hoe de bedieningsrij er met de podkiezer erbij uitziet.
+
+    Geen assertie op pixels - dit beeld is er om BEKEKEN te worden. Een kiezer die de rij
+    over twee regels duwt of de zoekbalk wegdrukt is niet uit een groene test af te lezen.
+    """
+    for regel in [
+        "2026-08-21T06:20:03Z INFO  Starting MozaProfielService v2.2",
+        "2026-08-21T06:20:07Z ERROR Migration checksum mismatch for migration 4",
+        "2026-08-21T06:20:07Z ERROR Applied migration 5 is not in the image",
+        "2026-08-21T06:20:08Z FATAL Flyway validation failed, shutting down",
+    ]:
+        _stuur_regel(paneel_met_pods, regel)
+    paneel_met_pods.evaluate(
+        "() => window.__logSocket.emit({type: 'status', status: 'streaming', message: 'Log streaming started'})"
+    )
+
+    paneel_met_pods.screenshot(path=f"{SCREENSHOT_DIR}/logviewer-podkiezer.png", animations="disabled")

@@ -128,6 +128,16 @@ class TestEenPodDieBedient:
         assert "niet de image die in je projectbestand staat" in html
         assert "sha256:2c0728edaaaa" in html
 
+    def test_de_podregel_krijgt_een_eigen_logsknop_op_die_pod(self):
+        """De algemene knop opent op "Alle pods"; deze opent meteen op DEZE pod."""
+        html = _render([self._summary()])
+
+        assert "openLogViewer" in html
+        # De vijfde parameter is de podnaam. Geescaped, want hij staat in een attribuut.
+        assert "pr-114-profielservice-849d475c4-4qp6p&#34;)" in html
+        # En de bestaande knop blijft staan, zonder podnaam.
+        assert "Logs bekijken" in html
+
     def test_zonder_verdict_komt_er_geen_zin_over_een_andere_image(self):
         """Een digest tegenover een tag: ongelijkheid zegt daar niets, dus geen uitspraak."""
         html = _render(
