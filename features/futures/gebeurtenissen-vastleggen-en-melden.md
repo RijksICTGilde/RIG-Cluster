@@ -331,7 +331,7 @@ Die drie zijn niet verzonnen: `event_interpreter.EventSeverity` (`opi/services/e
 
 **Wat de verliezende redenering aandroeg en wat overeind blijft:** bijna alles, alleen een laag hoger.
 
-- **De `dedup_key` blijft, op de gebeurtenis.** Hij is een eigenschap van de soort, wordt bij het schrijven berekend en daarna nooit meer aangeraakt, en hij is de sleutel waarop de meldkant groepeert. Wat vervalt is de uniciteitsgrendel: er is geen grendel, want er is niets om tegen te houden.
+- **De `dedup_key` blijft, op de gebeurtenis.** Hij is een eigenschap van de soort, wordt bij het schrijven berekend en daarna nooit meer aangeraakt, en hij is de sleutel waarop de meldkant groepeert. Wat vervalt is de uniciteitsgrendel: er is geen grendel, want er is niets om tegen te houden. Op de ontvangerrij staat hij daarnaast nog een keer als gedenormaliseerde kopie, want daar draait de tellervraag op (punt 7).
 - **De vorm van de sleutel blijft.** `signature()` (`log_watcher.py:312`) normaliseert een melding tot een stabiele sleutel door tijdstempels, IP-adressen, gekoppelde identifiers en losse getallen weg te strippen, tot maximaal 120 tekens. Die functie is beproefd en wordt overgenomen. De toestand hoort in Postgres en niet in het geheugen; dat is de fout die in de bestaande planner zit (deel 1, paragraaf 9).
 - **`occurrences` en `last_seen_at` blijven ook, maar op de ontvangerrij.** Daar mag wel worden bijgewerkt (`read_at` en `archived_at` worden daar sowieso gezet), en daar horen ze semantisch ook: het is niet een gebeurtenis die vaker voorkwam, het is een MELDING die vaker bevestigd werd.
 - **De venstervorm blijft, en die is beter dan een vast getal.** De logbewaker staat op zes uur en dat is voor ops-alarmen verdedigbaar. Voor een postvak is dat te lang: als je een melding om negen uur leest en om elf uur gaat hetzelfde weer mis, hoor je dat te zien. **Het venster loopt daarom tot de melding gelezen is, met een plafond.** Ongelezen plus dezelfde sleutel betekent optellen op de bestaande ontvangerrij; gelezen betekent een nieuwe ontvangerrij. Dat is precies hoe een mens erover denkt en het vraagt geen instelbare duur.
@@ -392,7 +392,7 @@ De vraag is of "wat is er gebeurd" (bewijs, onveranderlijk, compleet) en "wat mo
 | Taken | de tabel `async_tasks` | rijen, **na een uur weg** |
 | Inloggen en uitloggen | Keycloak-auditevents, 90 dagen | alleen op realms die na 20 juli 2026 zijn aangemaakt; zie deel 1 |
 
-Er is dus **geen audittabel**. `plans/bio2-compliance-analysis.md` benoemt dat zelf als een HIGH-bevinding onder A8.15: "Logging exists but no structured audit trail (who did what, when)", en onder A5.28: "No forensic logging or tamper-proof audit trail". `plans/technische-review-bio-en-nora-bevindingen.md` komt bij bevinding E op dezelfde conclusie langs een andere weg.
+Er is dus **geen audittabel**. `plans/bio2-compliance-analysis.md` benoemt dat zelf twee keer, met twee verschillende zwaarten: onder A8.15 als HIGH ("Logging exists but no structured audit trail (who did what, when)", `:55`) en onder A5.28 als MEDIUM ("No forensic logging or tamper-proof audit trail", `:48`). `plans/technische-review-bio-en-nora-bevindingen.md` komt bij bevinding E op dezelfde conclusie langs een andere weg.
 
 **De BIO-kant, kort en concreet.** De relevante controls:
 
@@ -433,7 +433,7 @@ De drie overheidsmaatregelen die hier gelden, letterlijk:
 
 Met andere woorden: het gebeurtenissenwerk is niet alleen een gebruikerswens. Het is de compenserende maatregel die in een bestaande risicoafweging al is opgeschreven maar nog niet is waargemaakt.
 
-*Herkomst van deze drie teksten.* Een eerdere versie van dit document tekende bij deze uitspraken aan dat ze niet onafhankelijk waren geverifieerd, omdat ze uit twee documenten in deze repo kwamen en niet uit de normatieve bron. Dat voorbehoud is vervallen: de drie teksten hierboven zijn op 28 augustus 2026 nagelezen in de publicatie van BZK zelf, `MinBZK/Baseline-Informatiebeveiliging-Overheid`, deel 2 (BIO-overheidsmaatregelen) van BIO2 v1.3, en komen daar woordelijk zo voor. Dat is een sterkere bron dan de citaten in deze repo en sterker dan een samenvatting. Twee dingen horen erbij. Ten eerste draagt die GitHub-publicatie zelf een disclaimer: "De BIO2 versie 1.3 in de GitHub-omgeving heeft geen formele status. De inhoud van dit document kan afwijken van de formele documentatie. De officiele versie van de BIO2 is beschikbaar via de BIO-website." Wie hierop een Verklaring van Toepasselijkheid bouwt, leest bio-overheid.nl. Ten tweede: de twee citaten in deze repo klopten, alle drie, woord voor woord op de kern.
+*Herkomst van deze drie teksten.* Een eerdere versie van dit document tekende bij deze uitspraken aan dat ze niet onafhankelijk waren geverifieerd, omdat ze uit een ander document in deze repo kwamen en niet uit de normatieve bron. Dat voorbehoud is vervallen: de drie teksten hierboven zijn op 28 augustus 2026 nagelezen in de publicatie van BZK zelf, `MinBZK/Baseline-Informatiebeveiliging-Overheid`, deel 2 (BIO-overheidsmaatregelen) van BIO2 v1.3, en komen daar woordelijk zo voor. Dat is een sterkere bron dan de citaten in deze repo en sterker dan een samenvatting. Twee dingen horen erbij. Ten eerste draagt die GitHub-publicatie zelf een disclaimer: "De BIO2 versie 1.3 in de GitHub-omgeving heeft geen formele status. De inhoud van dit document kan afwijken van de formele documentatie. De officiele versie van de BIO2 is beschikbaar via de BIO-website." Wie hierop een Verklaring van Toepasselijkheid bouwt, leest bio-overheid.nl. Ten tweede: de citaten in deze repo klopten, alle drie, woord voor woord op de kern. Ze staan alle drie in `plans/technische-review-bio-en-nora-bevindingen.md`, op twee plekken: 8.15.01 en 8.15.04 bij bevinding E (`:99`), 8.15.02 bij bevinding G (`:113`). Een grep over de hele repo op de maatregelnummers geeft geen andere vindplaats, dus er is geen tweede document dat deze teksten citeert.
 
 Twee maatregelen uit dezelfde reeks kwamen er bij het nalezen bij, en ze raken dit ontwerp direct, dus ze horen genoemd:
 
@@ -539,6 +539,7 @@ class NotificationDelivery(Base):
     )
     recipient: Mapped[str] = mapped_column(String(255), nullable=False)   # e-mailadres, kleine letters
     reason: Mapped[str] = mapped_column(String(64), nullable=False)       # project-admin|project-member|actor|approver|platform-admin
+    dedup_key: Mapped[str] = mapped_column(String(160), nullable=False)   # gedenormaliseerde kopie van notification_events.dedup_key
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
@@ -565,7 +566,7 @@ class NotificationDelivery(Base):
 
 `reason` is de kolom die richting B niet kan hebben: hij bewaart WAAROM deze persoon deze melding kreeg, op het moment dat dat gold. Vandaar de vaste waardenlijst en niet een vrije tekst.
 
-`occurrences` en `last_seen_at` staan hier en niet op de gebeurtenis, en `idx_notification_deliveries_dedup` is de index die de vraag beantwoordt waar ze voor dienen: heeft deze ontvanger al een ONGELEZEN melding met deze dedupsleutel. Zo ja, dan hoogt de meldkant de teller op en zet `last_seen_at` bij; zo nee, dan komt er een nieuwe rij. Dat vraagt wel dat `dedup_key` ook op deze tabel staat als gedenormaliseerde kopie, want anders is elke tellervraag een join naar de gebeurtenissentabel; dat is de prijs en hij is klein, want de sleutel verandert nooit.
+`occurrences` en `last_seen_at` staan hier en niet op de gebeurtenis, en `idx_notification_deliveries_dedup` is de index die de vraag beantwoordt waar ze voor dienen: heeft deze ontvanger al een ONGELEZEN melding met deze dedupsleutel. Zo ja, dan hoogt de meldkant de teller op en zet `last_seen_at` bij; zo nee, dan komt er een nieuwe rij. Daarvoor staat `dedup_key` ook in het blok hierboven, als gedenormaliseerde kopie van de kolom op de gebeurtenis: zonder die kopie is elke tellervraag een join naar de gebeurtenissentabel. Dat is de prijs en hij is klein, want de sleutel wordt bij het schrijven van de gebeurtenis berekend en daarna nooit meer aangeraakt (punt 3), dus de kopie kan niet uit de pas gaan lopen.
 
 ### `notification_channel_deliveries` (VOORSTEL): de outbox
 
