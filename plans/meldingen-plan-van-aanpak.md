@@ -713,7 +713,7 @@ Ze vallen in vier groepen, en per groep staat erbij wat de bedoelde uitkomst is:
 
 | # | Regel (`meldingen-inventarisatie.md`) | Type | Uitkomst |
 |---|---|---|---|
-| 1 | :171 Een aanvraag is goedgekeurd | 7 | **houdt het postvak** via de uitzondering: een ander besliste over zijn aanvraag en ZAD verwerkte zijn project meteen op dat besluit opnieuw (`opi/forms/visualizers/wizard_sections.py:981`), dus er wacht geen handeling op hem en terugdraaien kan hij het besluit niet. Dat is de tak "gepasseerd" bij de aanvrager, en zo staat het ook in de grensregeltabel, rij 7 |
+| 1 | :171 Een aanvraag is goedgekeurd | 7 | **houdt het postvak** via de uitzondering: een ander besliste over zijn aanvraag en ZAD verwerkte zijn project meteen op dat besluit opnieuw. `opi/web/router_approvals.py:430` schrijft het besluit weg en `opi/web/router_approvals.py:521-528` maakt daarop onvoorwaardelijk een `create_project`-taak aan; bij een dienstaanvraag, die geen domein draagt, wordt daarbij geen enkele deployment opnieuw uitgerold (`opi/connectors/subdomain.py:344-346`). Er wacht dus geen handeling op hem en terugdraaien kan hij het besluit niet. Dat is de tak "gepasseerd" bij de aanvrager, en zo staat het ook in de grensregeltabel, rij 7 |
 | 2 | :257 Een deployment is in slaapstand gezet | 4 | **houdt het postvak**: het platform veranderde jouw deployment. Grensregeltabel rij 4, tak "gepasseerd" |
 | 3 | :324 Iemand heeft een uitnodiging ingewisseld via SSO | 8 | **houdt het postvak**: er is iemand bij jouw project gekomen. Grensregeltabel rij 8 |
 | 4 | :325 Iemand heeft een uitnodiging ingewisseld met een lokaal account | 8 | idem |
