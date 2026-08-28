@@ -409,7 +409,7 @@ Zo weinig mogelijk, want elke onuitschakelbare melding is er een die mensen leer
 | `opi/services/gebeurtenissen.py` | nieuw: schrijven, lezen per project en per deployment, de soortenenum |
 | `opi/core/resource_tuning_scheduler.py`, `opi/services/resource_tuning_service.py` | de schrijfweg |
 | `opi/core/config.py` | de instellingen (aan/uit, bewaartermijnen) |
-| `opi/web/router_detail.py` plus `opi/templates_lotc/` | het tijdlijnblok op de deploymentpagina |
+| `opi/web/router.py` (`project_deployment_details`, `:1385`) plus `opi/templates_lotc/` | het tijdlijnblok op de deploymentpagina |
 | `opi/web/lotc_fixtures.py` | de proefopstelling, met zichtbaar verzonnen waarden |
 | `tests/test_gebeurtenissen.py`, `tests/e2e/test_gebeurtenissen.py` | nieuw |
 | `features/gebeurtenissen.md` | nieuw |
