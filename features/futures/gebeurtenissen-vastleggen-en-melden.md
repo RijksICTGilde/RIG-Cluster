@@ -6,7 +6,7 @@ Dit is deel 2 van drie. Deel 1 is `features/futures/gebeurtenissen-inventarisati
 
 Dezelfde meetbasis als deel 1: commit `83ac4b9b` van 21 augustus 2026. Alle namen die hieronder voor tabellen, kolommen, gebeurtenissoorten, instellingen of endpoints worden gebruikt zijn **VOORSTEL** en als zodanig gemarkeerd. Ze staan er om over te kunnen praten, niet omdat ze zijn besloten.
 
-**Herkomst.** Dit document is de samenvoeging van het inmiddels verwijderde `plans/meldingen-oplossingsrichtingen.md` (22 augustus 2026) en de eerdere versie van dit bestand (21 augustus 2026), gedaan in RC-163 op 28 augustus 2026. De eerste leverde de vier richtingen op de zes assen, het datamodel en de vijf uitgewerkte onderdelen; de tweede leverde de begripsbotsing, de vier extra afgevallen richtingen, de autorisatie en de bewaartermijn met de AVG- en BIO-kant. Waar de twee elkaar tegenspraken staat de beslechting in de tekst, met de reden en met wat de verliezende redenering aandroeg dat overeind blijft. Er zijn vier zulke plekken: de naamgeving in het schema (hieronder), CloudEvents als intern formaat (na de aanbeveling), de Nederlandse naam van het middelste ernstniveau (punt 3, onder Ernst), en waar er wordt ontdubbeld (punt 3). De bewaartermijn is een vijfde; die is in punt 6 beslecht.
+**Herkomst.** Dit document is de samenvoeging van het inmiddels verwijderde `plans/meldingen-oplossingsrichtingen.md` (22 augustus 2026) en de eerdere versie van dit bestand (21 augustus 2026), gedaan in RC-163 op 28 augustus 2026. De eerste leverde de vier richtingen op de zes assen, het datamodel en de vijf uitgewerkte onderdelen; de tweede leverde de begripsbotsing, de vier extra afgevallen richtingen, de autorisatie en de bewaartermijn met de AVG- en BIO-kant. Waar de twee elkaar tegenspraken staat de beslechting in de tekst, met de reden en met wat de verliezende redenering aandroeg dat overeind blijft. Er zijn vier zulke plekken: de naamgeving in het schema (hieronder), CloudEvents als intern formaat (na de aanbeveling), de Nederlandse naam van het middelste ernstniveau (punt 3, onder Ernst), en waar er wordt ontdubbeld (punt 3). De bewaartermijn is een vijfde; die is in punt 6 beslecht, in twee helften: de twee klokken op dezelfde rij, en de kolom waarop de langere klok zijn uitzondering maakt.
 
 ---
 
@@ -448,23 +448,37 @@ Twee maatregelen uit dezelfde reeks kwamen er bij het nalezen bij, en ze raken d
 
 De twee bronstukken kwamen hier op verschillende getallen uit: het ene op een jaar voor de gebeurtenis, het andere op 90 dagen met pseudonimisering daarna. **Beslecht: het zijn twee verschillende klokken op dezelfde rij, en ze gelden allebei.**
 
-**Na 90 dagen wordt de actor gepseudonimiseerd; de rij blijft staan tot een jaar.** Negentig dagen voor het persoonsgegeven, omdat die termijn hier al een keer is gekozen en verdedigd, namelijk voor de Keycloak-auditevents (`eventsExpiration: 7776000`, in zes realm-configuraties); dezelfde termijn twee keer gebruiken is makkelijker uit te leggen dan een nieuw getal verzinnen. Wat er na die 90 dagen overblijft is "wat is er met dit project gebeurd", en dat is een beheergeschiedenis en geen persoonsgegeven; wat verdwijnt is "wie deed het", en dat is het persoonsgegeven. Een jaar voor de rij zelf, omdat de tabel de vraag "wat is er in het laatste kwartaal gebeurd" moet kunnen beantwoorden en omdat hij later een audittrail kan worden.
+**Na 90 dagen worden de actor en de oorsprong gepseudonimiseerd; de rij blijft staan tot een jaar.** Negentig dagen voor het persoonsgegeven, omdat die termijn hier al een keer is gekozen en verdedigd, namelijk voor de Keycloak-auditevents (`eventsExpiration: 7776000`, in zes realm-configuraties); dezelfde termijn twee keer gebruiken is makkelijker uit te leggen dan een nieuw getal verzinnen. Wat er na die 90 dagen overblijft is "wat is er met dit project gebeurd", en dat is een beheergeschiedenis en geen persoonsgegeven; wat verdwijnt is "wie deed het en waarvandaan", en dat zijn de persoonsgegevens. Het gaat dus om twee kolommen en niet om een: `actor` en `origin`, want de netwerklocatie uit 8.15.01 is er net zo goed een. Een jaar voor de rij zelf, omdat de tabel de vraag "wat is er in het laatste kwartaal gebeurd" moet kunnen beantwoorden en omdat hij later een audittrail kan worden.
 
 Dat lost ook het bezwaar op dat de twee getallen elk apart hadden. Een jaar met de actor erin is een jaar persoonsgegevens bewaren zonder grondslag. Negentig dagen met verwijdering van de rij gooit de beheergeschiedenis weg die je juist wilde houden.
 
-**Beveiligingsgebeurtenissen: langer, met de actor erin, en dat is een aparte beslissing.** Een geweigerde API-sleutel, een geweigerd bearer-token of een geblokkeerde allowlist-controle is precies het spoor dat je bij een incident maanden later terug wilt lezen; 8.15.04 noemt langdurig aanwezige aanvallers met zoveel woorden. Wat "langer" is, is een beslissing voor een mens (deel 3), en 90 dagen is daarvoor waarschijnlijk aan de korte kant. Dit is de reden dat categorie 12 uit deel 1 (`beheer-en-beveiliging`) een eigen behandeling krijgt en niet als gewone beheergebeurtenis meeloopt.
+**Beveiligingsgebeurtenissen: langer, met de actor erin, en dat is een aparte beslissing.** Een geweigerde API-sleutel, een geweigerd bearer-token of een geblokkeerde allowlist-controle is precies het spoor dat je bij een incident maanden later terug wilt lezen; 8.15.04 noemt langdurig aanwezige aanvallers met zoveel woorden. Wat "langer" is, is een beslissing voor een mens (deel 3), en 90 dagen is daarvoor waarschijnlijk aan de korte kant.
+
+**Beslecht: die uitzondering hangt aan de SOORT (`type`) en niet aan de categorie (`category`).** De twee bronstukken zeiden hier allebei te weinig om het verschil te zien: het ene gaf een termijn zonder enige categorie, het andere schreef "beveiligingsgebeurtenissen: langer" zonder erbij te zeggen waaraan je die herkent. Bij het samenvoegen is dat een tijdlang categorie 12 uit deel 1 (`beheer-en-beveiliging`) geweest, en dat is te grof. Deel 1 wijst drieentwintig catalogusrijen aan dat type toe (het telt ze af onder de typentabel) en daarvan gaan er drie over beveiliging: de allowlist-weigering (deel 1 `:295`), de geweigerde sleutel of token (deel 1 `:296`) en het inloggen (deel 1 `:297`). Dat zijn drie rijen die samen de vier beveiligingsregels dragen die deel 1 `:310` zo benoemt, want de sleutel en het token delen een rij. De twintig andere rijen van type 12 zijn gewoon beheer: een gebruiker is gewijzigd (deel 1 `:293`), een subdomein is geclaimd (deel 1 `:302`), een certificaat verloopt binnenkort (deel 1 `:308`), de reconciliatie sloeg een ronde over (deel 1 `:232`). Die de actor onbeperkt laten houden is precies wat de alinea hierboven verbiedt, want een jaar met de actor erin is een jaar persoonsgegevens bewaren zonder grondslag, en bij "een gebruiker is gewijzigd" is die grondslag er niet. Punt 3 legt het onderscheid trouwens al vast: soort en categorie zijn twee dingen, en alleen de categorie staat in het voorkeurenscherm. De bewaartermijn hoort bij de soort, net als de ernst.
+
+**De lijst is gesloten en staat in code**, naast de enum waar `type` uit komt (punt 7). Vandaag drie soorten: de allowlist-weigering, en de sleutel en het token elk apart, want die delen alleen in de catalogus een rij. Het zijn precies de drie schrijfwegen die fase 4 van deel 3 bouwt (VOORSTEL voor de namen):
+
+| Soort (VOORSTEL) | Catalogusrij | Waar hij ontstaat |
+|---|---|---|
+| `nl.rig.zad.beveiliging.allowlist-geweigerd.v1` | deel 1 `:295` | `opi/middleware/authorization.py:117` |
+| `nl.rig.zad.beveiliging.sleutel-geweigerd.v1` | deel 1 `:296` | `opi/api/endpoint_util.py:52`, `:69`, `:135`, `:176` |
+| `nl.rig.zad.beveiliging.token-geweigerd.v1` | deel 1 `:296` | `opi/api/user_token_auth.py:252` |
+
+Twee soorten horen erbij zodra ze bestaan, en ze staan hier zodat ze niet vergeten worden. Het inloggen en uitloggen (deel 1 `:297`) zodra ZAD dat zelf vastlegt in plaats van te leunen op de Keycloak-auditevents, die vandaag hun eigen klok van 90 dagen hebben (`eventsExpiration: 7776000`). En het oneigenlijk wijzigen of verwijderen van loggegevens uit 8.15.05, dat hierboven al een gebeurtenissoort wordt genoemd. Wat er NIET bij hoort is de rest van type 12, en ook de scanbevinding niet (deel 1 `:306`): een scanuitslag is geen aanvalsspoor en draagt geen actor.
+
+**Welke kolom de lus dan leest: `type`, en verder verandert er niets.** De pseudonimiseringslus draait op `idx_notification_events_actor_sweep` (punt 7), de partiele index op `time` over de rijen die nog een persoonsgegeven dragen, en de uitzondering is een `type <> ALL (:beveiligingssoorten)` in dezelfde `WHERE`. Dat vraagt geen tweede index en geen kolom erbij: de lijst is een constante van een handvol waarden en het filter valt op het handjevol rijen dat de index per dag overhoudt. Een `retention_class`-kolom zou hetzelfde doen met een schemawijziging erbij, en die is pas nodig als de termijn per geval gaat verschillen in plaats van per soort.
 
 | Tabel | Voorstel | Waarom |
 |---|---|---|
-| `notification_events`, gewoon | **actor gepseudonimiseerd na 90 dagen, rij verwijderd na 1 jaar** | het persoonsgegeven volgt de Keycloak-termijn; de beheergeschiedenis blijft nog een driekwart jaar bevraagbaar |
-| `notification_events`, categorie beveiliging | **actor blijft, termijn is een beslissing van een mens** | 8.15.04 vraagt een risicogerichte termijn; 90 dagen is voor een aanvalsspoor waarschijnlijk te kort |
+| `notification_events`, de gewone soorten | **`actor` en `origin` gepseudonimiseerd na 90 dagen, rij verwijderd na 1 jaar** | het persoonsgegeven volgt de Keycloak-termijn; de beheergeschiedenis blijft nog een driekwart jaar bevraagbaar |
+| `notification_events`, de beveiligingssoorten hierboven | **`actor` en `origin` blijven, termijn is een beslissing van een mens** | 8.15.04 vraagt een risicogerichte termijn; 90 dagen is voor een aanvalsspoor waarschijnlijk te kort |
 | `notification_deliveries` | **90 dagen na lezen; ongelezen blijven staan zolang de gebeurtenis bestaat** | een melding die je nooit las mag niet verdwijnen; een gelezen melding is klaar |
 | `notification_channel_deliveries` | **30 dagen na `sent_at`** | dit is uitsluitend werkadministratie |
 | `notification_preferences` | **niet opruimen**, wel mee met de gebruiker | een voorkeur is een instelling |
 
 **Wie hem opruimt: geen nieuwe planner.** Een tweede lus in de outboxplanner, in de vorm van `cleanup_old_tasks` (`opi/core/async_task_service.py:670`, aangeroepen uit `task_worker.py:420`) en van de retentiesweep die de backupplanner een keer per dag draait (`backup_scheduler.py:195`). Een keer per dag, na kantooruren, en de getallen instelbaar via `settings` met dezelfde naamgeving als de rest (`NOTIFICATIONS_EVENT_RETENTION_DAYS`, VOORSTEL).
 
-**Bij het verwijderen van een gebruiker**: zijn `notification_deliveries`, `notification_channel_deliveries` en `notification_preferences` gaan mee. De `notification_events` blijven, want die gaan over het platform; wel wordt zijn `actor` daar meteen gepseudonimiseerd in plaats van pas na 90 dagen. Dat hoort in `UserAdminService.delete_user` (`opi/services/user_admin_service.py:65`) en het is een regel die nu opgeschreven moet worden, want anders wordt hij vergeten.
+**Bij het verwijderen van een gebruiker**: zijn `notification_deliveries`, `notification_channel_deliveries` en `notification_preferences` gaan mee. De `notification_events` blijven, want die gaan over het platform; wel worden zijn `actor` en `origin` daar meteen gepseudonimiseerd in plaats van pas na 90 dagen, **met dezelfde uitzondering als bij de klok hierboven: op de beveiligingssoorten blijven ze staan.** Zonder die uitzondering is je account opzeggen de goedkoopste manier om je eigen aanvalsspoor te wissen, en dat is precies het scenario waar 8.15.04 op doelt; met de uitzondering blijft de verwerking begrensd, want ook die soorten hebben een termijn. Dat hoort in `UserAdminService.delete_user` (`opi/services/user_admin_service.py:65`) en het is een regel die nu opgeschreven moet worden, want anders wordt hij vergeten.
 
 **Het afmeldpad hoort goedkoop te zijn.** Iemand die geen mail meer wil, moet dat kunnen zonder dat er een deployment op gang komt. Dat is het praktische argument achter de keuze om abonnementen en voorkeuren in de database te zetten, en het is tegelijk een AVG-argument: een bezwaarrecht dat een commit veroorzaakt, is een bezwaarrecht met een drempel.
 
@@ -476,7 +490,7 @@ In de stijl die er ligt: SQLAlchemy-modellen onder `opi/services/persistence/`, 
 
 ### `notification_events` (VOORSTEL): de gebeurtenis
 
-Onveranderlijk. Alleen invoegen. De enige toegestane wijziging na het schrijven is de pseudonimisering van `actor` uit punt 6.
+Onveranderlijk. Alleen invoegen. De enige toegestane wijziging na het schrijven is de pseudonimisering van `actor` en `origin` uit punt 6.
 
 ```python
 class NotificationEvent(Base):
@@ -515,7 +529,7 @@ class NotificationEvent(Base):
         Index("idx_notification_events_dedup", "dedup_key", "time"),
         Index("idx_notification_events_project", text("project"), text("time DESC")),
         Index("idx_notification_events_thread", text("thread_key"), text("time DESC")),
-        Index("idx_notification_events_actor_sweep", "time", postgresql_where=text("actor IS NOT NULL")),
+        Index("idx_notification_events_actor_sweep", "time", postgresql_where=text("actor IS NOT NULL OR origin IS NOT NULL")),
     )
 ```
 
@@ -527,7 +541,7 @@ class NotificationEvent(Base):
 - `actor_kind` en `origin` komen uit BIO2 8.15.01. `origin` is leeg bij een scheduler of het cluster, en dat is correct en geen gat: er is dan geen netwerklocatie. Bij een mens of een agent is hij verplicht te vullen, en vandaag draagt geen enkele van de betrokken logregels dat gegeven, dus dat is nieuw werk.
 - `task_id` is met opzet geen vreemde sleutel: de rij in `async_tasks` verdwijnt na een uur en een `ON DELETE`-regel zou de gebeurtenis mee de afgrond in trekken.
 - **Geen `occurrences` en geen `last_seen_at` op deze tabel**, en geen uniciteitsgrendel op `dedup_key`. Beide zouden een `UPDATE` op een alleen-invoegen tabel betekenen; ze staan op de ontvangerrij hieronder. Zie de beslechting in punt 3. De index `idx_notification_events_dedup` blijft wel, want de meldkant groepeert daarop.
-- `idx_notification_events_actor_sweep` is de index waarop de pseudonimiseringslus uit punt 6 draait, en hij krimpt vanzelf: zodra een rij is gepseudonimiseerd valt hij eruit.
+- `idx_notification_events_actor_sweep` is de index waarop de pseudonimiseringslus uit punt 6 draait, en hij krimpt vanzelf: zodra een rij is gepseudonimiseerd valt hij eruit. Hij staat op allebei de persoonsgegevens, want de lus wist `actor` en `origin` samen. De uitzondering voor de beveiligingssoorten zit niet in de index maar in de `WHERE` van de lus, als een `type <> ALL (...)` op de gesloten lijst uit punt 6: de lus leest dus `type` en niet `category`, en er is geen tweede index en geen extra kolom voor nodig.
 
 ### `notification_deliveries` (VOORSTEL): de rij per persoon
 
