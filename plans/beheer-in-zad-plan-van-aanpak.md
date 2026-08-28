@@ -230,7 +230,10 @@ beheerder tijdelijk `admin` geeft op dat project. Wat die knop moet doen:
 1. een reden vragen (één tekstveld, verplicht);
 2. een gebeurtenis aanmaken van type `beheer` met `actor` = de beheerder, bezorgd aan de
    projectbeheerders met `reason = "project-admin"`, en aan de andere platformbeheerders met
-   `reason = "platform-admin"`;
+   `reason = "platform-owner"` (**niet** `platform-admin`: die waarde levert per de regel in
+   `plans/meldingen-plan-van-aanpak.md` geen aflevering op, en dan zou juist deze gebeurtenis
+   stil zijn. `platform-owner` bestaat precies hiervoor, zie dezelfde paragraaf en de
+   uitzonderingen bij type 12 hieronder);
 3. na een termijn (voorstel: 24 uur) vanzelf vervallen.
 
 Dat is de enige plek in dit hele voorstel waar nieuwe toestand nodig is, en het is één tabel
@@ -477,13 +480,15 @@ weggegooid of alleen gelogd.** Dat is de reden dat dit een goedkope pagina is en
 `ROOS_CLAUDE_REFERENCE.md` in `jinja-roos-components`; dat pad bestaat hier niet en dat klopt,
 want die bibliotheek is sinds RC-67 uit het project verdwenen, zie `features/roos-eruit.md` en
 de opmerking daarover in `plans/meldingen-plan-van-aanpak.md`, Kanaal 1.) Wat er van de
-componenten bruikbaar is, geteld in `opi/templates_lotc/`:
+componenten bruikbaar is, geteld met
+`grep -rohE '<c-NAAM([ />]|$)' opi/templates_lotc/ | wc -l` (dus alle voorkomens, ook de enkele
+die in een Jinja-commentaar staan: bij `c-card` is dat er 1 en bij `c-tag` 3):
 
 | Component | Vandaag in gebruik | Bruikbaar voor |
 |---|---|---|
 | `c-card` | 153 keer | het kader per blok |
 | `c-alert` | 109 keer | het "niet gezond"-blok |
-| `c-tag` | 44 keer | de statuswoorden |
+| `c-tag` | 49 keer | de statuswoorden |
 | `c-table` | 26 keer | de rijen, als een blok kolommen nodig heeft |
 | `c-metric` | 15 keer | de tellers rechtsboven per blok |
 | `c-section-head` | 9 keer | de kop per blok |
