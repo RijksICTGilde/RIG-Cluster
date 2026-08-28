@@ -667,21 +667,82 @@ En de onderdrukkingsregel raakt uitsluitend de laatste.
 `outage`) en werd nergens gebruikt om te bepalen wat iemand standaard krijgt. Dat wordt nu de
 tweede regel:
 
-> **Een gebeurtenis met `severity = "informational"` levert geen postvakrij op.**
+> **Een gebeurtenis met `severity = "informational"` levert geen postvakrij op, tenzij zij op
+> de tak "gepasseerd" van toets 1 valt: er is namens de ontvanger iets met zijn eigendom of
+> zijn bevoegdheid gedaan dat hij niet zelf in gang zette.**
 
 Dat is geen derde knop maar de codering van de eerste toets van de grensregel
-(`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3): die toets eist dat er een handeling op je
-wacht of dat er iets onomkeerbaars met jouw eigendom is gebeurd, en allebei die gevallen zijn
-`actionable` of `outage`. Een geslaagde uitrol, een geslaagde backup en een gewekt deployment
-zijn `informational` en horen op een pagina, niet in een postvak.
+(`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). **De uitzondering hoort erbij en is geen
+verzachting**, want die toets heeft twee takken: **aan zet** (er wacht een handeling op je) en
+**gepasseerd** (er is namens jou iets met jouw eigendom gedaan wat je niet meer kunt
+terugdraaien). `severity` volgt alleen de eerste tak. Iets waar niets meer aan te doen valt is
+juist daarom `informational`, en dat is precies wat de tak "gepasseerd" opvangt: je rol is
+gewijzigd, een collega opende een console op jouw productiedatabase, het platform zette je
+deployment in slaapstand. Zonder de uitzondering zou de ernstregel die hele tak wegvagen, en
+daarmee ook de garantie in "Wat niet uitgezet mag kunnen worden" hieronder, die "je rol is
+gewijzigd" onuitschakelbaar noemt terwijl hij dan bij niemand meer aankomt.
 
-**Eén regel in deel 1 moet daarvoor van ernst veranderen.** "Het platform heeft het geheugen van
-een component bijgesteld" staat in `plans/meldingen-inventarisatie.md` paragraaf 4 als "ter
-informatie". Dat klopt niet met de tweede regel hierboven, en het klopt ook niet met de
-werkelijkheid: de eigenaar kan er wél iets aan doen, want een handmatig gezette waarde wint van
-de automatische stemmer (`features/handmatig-gezette-resources.md`). Die regel hoort dus
-`actionable` te zijn. Dat is de enige inhoudelijke correctie die RC-161 in de eventcatalogus
-aanbrengt.
+Wat de regel wél wegneemt is de eerste tak zonder handeling: een geslaagde uitrol, een
+geslaagde backup en een gewekt deployment zijn `informational`, er wacht niets en er is niets
+gepasseerd, en die horen op een pagina.
+
+**Wat de regel in deel 1 raakt, geteld en niet geschat.** De ernstregel werkt op de
+eventcatalogus in `plans/meldingen-inventarisatie.md`, dus is hij daar tegenaan gelegd.
+**Eenentwintig** van de 73 tabelregels hebben ernst "ter informatie" én een standaardkanaal met
+"postvak" erin, en dat zijn dus de regels waar deze regel iets doet:
+
+```bash
+python3 - <<'EOF'
+rows = []
+for i, l in enumerate(open('plans/meldingen-inventarisatie.md'), 1):
+    if not l.startswith('|'):
+        continue
+    c = [x.strip() for x in l.strip().strip('|').split('|')]
+    if len(c) < 6 or set(c[0]) <= set('-: '):
+        continue
+    if 'ter informatie' in c[-2] and 'postvak' in c[-1]:
+        rows.append((i, c[0]))
+print(len(rows))
+for r in rows:
+    print(r)
+EOF
+```
+
+Ze vallen in vier groepen, en per groep staat erbij wat de bedoelde uitkomst is:
+
+| # | Regel (`meldingen-inventarisatie.md`) | Type | Uitkomst |
+|---|---|---|---|
+| 1 | :171 Een aanvraag is goedgekeurd | 7 | **houdt het postvak** via de uitzondering: een besluit op je eigen aanvraag is de tak "gepasseerd" bij de aanvrager. Zo staat het ook in de grensregeltabel, rij 7 |
+| 2 | :257 Een deployment is in slaapstand gezet | 4 | **houdt het postvak**: het platform veranderde jouw deployment. Grensregeltabel rij 4, tak "gepasseerd" |
+| 3 | :324 Iemand heeft een uitnodiging ingewisseld via SSO | 8 | **houdt het postvak**: er is iemand bij jouw project gekomen. Grensregeltabel rij 8 |
+| 4 | :325 Iemand heeft een uitnodiging ingewisseld met een lokaal account | 8 | idem |
+| 5 | :328 Iemand is als lid aan een project toegevoegd | 8 | **houdt het postvak**: het gaat over de bevoegdheid van de toegevoegde persoon |
+| 6 | :329 Iemands rol in een project is gewijzigd | 8 | **houdt het postvak**, en dit is de regel die "Wat niet uitgezet mag kunnen worden" hieronder met zoveel woorden onuitschakelbaar noemt |
+| 7 | :394 Een databaseconsole is gestart | 10 | **houdt het postvak**: grensregeltabel rij 10 plus de alinea "Waar het schuurt", die deze keuze uitdrukkelijk maakt met het argument dat een audittrail-gebeurtenis die niemand ziet geen audittrail is |
+| 8 | :255 Het platform heeft het geheugen van een component bijgesteld | 4 | **verandert van ernst**, naar `actie nodig`. Zie hieronder |
+| 9 | :174 Een aanvraag is ingetrokken | 6 of 7 | verliest het postvak, maar **op de `reason`-regel en niet op de ernstregel**, en dus onafhankelijk van het type: de enige belanghebbende is de platformbeheerder, dus dit is `platform-admin`. Intrekken staat overigens in geen van beide typebeschrijvingen met zoveel woorden |
+| 10 | :358 Een gebruiker is aangemaakt in het platformregister | 12 | idem, `platform-admin`. Grensregeltabel rij 12: het overzicht |
+| 11 | :122 Een taak is klaar na eerder te zijn mislukt (herstel) | 1 of 2, naar taaksoort | **verliest het postvak op de uitroltak, en dat is de bedoeling**: de taak is geslaagd, er wacht niets en er is niets gepasseerd. Grensregeltabel rij 1: geslaagd is een pagina. **Op de verwijdertak houdt hij het postvak** via de uitzondering, want grensregeltabel rij 2 zet die op "gepasseerd: het is weg". Deze drie regels zijn generiek over 23 taaksoorten en vallen dus niet op één type |
+| 12 | :123 Een langlopende taak is klaar terwijl de aanvrager weg is | 1 of 2, naar taaksoort | idem |
+| 13 | :124 Een taak is afgebroken | 1 of 2, naar taaksoort | verliest het postvak: een afgebroken taak heeft niets veranderd, dus er is ook op de verwijdertak niets gepasseerd |
+| 14 | :223 Een deployment is weer gezond | 3 | **verliest het postvak, en dat is de bedoeling**: herstel is een toestandsverschil en dus toets 2 |
+| 15 | :292 Een handmatige backup is klaar | 5 | idem. Grensregeltabel rij 5 zegt dit al: "Backup geslaagd: pagina" |
+| 16 | :363 Er is een nieuwe release van het platform | 11 | idem. Grensregeltabel rij 11 zegt dit al: "Release: pagina" |
+| 17 | :396 Een console is verlopen en opgeruimd | 10 | idem, bij de actor zelf: de pagina |
+| 18 | :398 Een ad-hoc job is klaar | 10 | idem |
+| 19 | :474 Een bijlage is toegevoegd, gewijzigd of verwijderd | 9 | idem. Grensregeltabel rij 9: de projectdetailpagina toont de diensten |
+| 20 | :475 Een geheim of sleutel is geroteerd | geen | verliest het postvak: de rotatie is het gevolg van het opnieuw verwerken van je eigen project, dus niet iets dat namens jou gebeurde. Rotatie staat in geen enkele typebeschrijving, en dat is zelf een gat in de groeperingstabel: wie hem wél op de tak "gepasseerd" wil zetten (de oude sleutel is weg en dat is onomkeerbaar), moet daar eerst een type voor aanwijzen |
+| 21 | :476 Een dienst is aan een project toegevoegd of eruit gehaald | 9 | verliest het postvak. Grensregeltabel rij 9: de projectdetailpagina toont de diensten |
+
+**Eén regel in deel 1 moet daarvoor van ernst veranderen**, nummer 8 hierboven. "Het platform
+heeft het geheugen van een component bijgesteld" staat in `plans/meldingen-inventarisatie.md`
+paragraaf 4 als "ter informatie". Dat klopt niet met de werkelijkheid: de eigenaar kan er wél
+iets aan doen, want een handmatig gezette waarde wint van de automatische stemmer
+(`features/handmatig-gezette-resources.md`). Die regel hoort dus `actionable` te zijn. Dat is de
+enige regel waar RC-161 de ernstkolom van de eventcatalogus zelf op corrigeert; de elf regels
+11 tot en met 21 hierboven veranderen niet van ernst maar van bestemming, en die bestemming
+stond in de grensregeltabel al zo. Bij de regels 11 en 12 geldt dat alleen op hun uitroltak: een
+geslaagde verwijdertaak valt op "gepasseerd" en houdt daar zijn postvak.
 
 **Wat er niet overgenomen is, en waarom niet.** De opdracht noemt vier mechanismen; twee zijn
 er hierboven overgenomen, één deels, en één niet.
@@ -775,8 +836,8 @@ hele catalogus (`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). Er veranderen
    opdrachtgever die vertraging niet wil.
 2. **Fase 1 levert de gecorrigeerde standaardentabel**, niet de oude. Concreet: de twee regels
    uit "De standaarden per rol" hierboven (geen aflevering bij `reason = "platform-admin"`, geen
-   aflevering bij `severity = "informational"`) horen bij het uitwaaieren dat in deze fase
-   gebouwd wordt, en niet in een latere fase. Ze zijn later toevoegen betekent een uitgerolde
+   aflevering bij `severity = "informational"` behalve op de tak "gepasseerd") horen bij het
+   uitwaaieren dat in deze fase gebouwd wordt, en niet in een latere fase. Ze zijn later toevoegen betekent een uitgerolde
    standaard corrigeren, en dat is duurder dan hem meteen goed leggen.
 3. **Fase 1 repareert de ontbrekende aanvraagdatum.** De generieke dienstgebruik-goedkeuring
    schrijft bij het aanvragen een lege history (`opi/services/catalog/approval.py:303`), waar
@@ -956,11 +1017,17 @@ rangorde erbij is de regel fout, want de uniciteitsgrendel op `(event_id, recipi
 één reden toe en dan verliest een platformbeheerder die ook projectbeheerder is de meldingen
 over zijn eigen project.
 
-**14. Een gebeurtenis met `severity = "informational"` levert geen postvakrij op.**
+**14. Een gebeurtenis met `severity = "informational"` levert geen postvakrij op, tenzij zij op
+de tak "gepasseerd" van toets 1 valt.**
 *Aanbeveling: ja.* `severity` bestond al en werd nergens gebruikt om te bepalen wat iemand
-krijgt. Dit is geen extra knop maar de codering van de eerste toets van de grensregel. Let op de
-consequentie: de regel "Het platform heeft het geheugen van een component bijgesteld" in deel 1
-paragraaf 4 moet dan van "ter informatie" naar "actie nodig", anders komt hij bij niemand aan.
+krijgt. Dit is geen extra knop maar de codering van de eerste toets van de grensregel. **De
+uitzondering hoort bij de beslissing en is niet vrijblijvend**: toets 1 heeft twee takken en
+`severity` volgt alleen "aan zet". Zonder de uitzondering vallen ook de zeven regels weg die
+deel 1 en de grensregeltabel juist uitdrukkelijk in het postvak zetten, waaronder "je rol is
+gewijzigd", dat in "Wat niet uitgezet mag kunnen worden" onuitschakelbaar heet. Let op de
+consequentie voor de ernstkolom: de regel "Het platform heeft het geheugen van een component
+bijgesteld" in deel 1 paragraaf 4 moet van "ter informatie" naar "actie nodig", anders komt hij
+bij niemand aan. De volledige telling van 21 geraakte regels staat in "De standaarden per rol".
 
 **15. Per project volgen of dempen (het GitHub-model) komt er niet.**
 *Aanbeveling: ja, niet doen.* Met beslissing 13 staat er in het postvak van de platformbeheerder
@@ -988,7 +1055,9 @@ de metingen staan in `plans/beheer-in-zad-inventarisatie.md` en
 | "De standaarden per rol", tabel | de E-mailkolom van de platformbeheerder ging van "aanvragen, storingen, onomkeerbare ingrepen" naar "dezelfde twee" (en "idem" op de twee regels eronder) | e-mail ruimer laten dan het postvak zou de correctie via de achterdeur ongedaan maken: dan is hij de firehose kwijt op het scherm en houdt hij hem in zijn mailbox |
 | "De standaarden per rol", nieuw | de regel "een aflevering met `reason = platform-admin` wordt niet aangemaakt", mét de rangorde van redenen eronder | het onderscheid zat al in de kolom `reason` en werd niet gebruikt. De rangorde is nodig, want zonder hem verliest een platformbeheerder die ook projectbeheerder is de meldingen over zijn eigen project: de uniciteitsgrendel op `(event_id, recipient)` laat maar één reden toe |
 | "De standaarden per rol", nieuw | twee redenen erbij: `platform-owner` en `platform-user` (allebei voorstel) | zonder `platform-owner` zouden "je bent platformbeheerder geworden" en "iemand nam het beheer van jouw project over" onder `platform-admin` vallen en dus verdwijnen, terwijl hij daar juist eigenaar is. `platform-user` dekt een **gat in de oorspronkelijke lijst**: een clusterbrede mededeling heeft geen actor, geen goedkeurder en geen project, dus geen van de vijf bestaande waarden paste erop |
-| "De standaarden per rol", nieuw | de regel "`severity = informational` levert geen postvakrij op" | `severity` bestond en werd nergens gebruikt om te bepalen wat iemand krijgt; dit is de codering van de eerste toets van de grensregel en geen extra knop |
+| "De standaarden per rol", nieuw | de regel "`severity = informational` levert geen postvakrij op, tenzij de gebeurtenis op de tak "gepasseerd" van toets 1 valt" | `severity` bestond en werd nergens gebruikt om te bepalen wat iemand krijgt; dit is de codering van de eerste toets van de grensregel en geen extra knop. De uitzondering hoort erbij omdat die toets twee takken heeft en `severity` alleen "aan zet" volgt: iets waar niets meer aan te doen valt is juist daarom `informational`. Zonder haar wist de regel de zeven regels uit die deel 1 en de grensregeltabel uitdrukkelijk in het postvak zetten, waaronder "je rol is gewijzigd", dat een regel verderop onuitschakelbaar heet |
+| "De standaarden per rol", nieuw | de tabel met de 21 regels uit deel 1 die de ernstregel raakt, met per regel de bedoelde uitkomst en het reproductiecommando erboven | de eerdere formulering ("één regel in deel 1 moet van ernst veranderen") was een schatting en geen meting: de regel raakt 21 van de 73 tabelregels. Zeven houden hun postvak via de uitzondering, twee verliezen het al op de `reason`-regel, elf verliezen het op de ernstregel, en één verandert werkelijk van ernst |
+| "Wat er in de andere twee documenten verandert" | "één inhoudelijke correctie" werd "één correctie op de ernstkolom, en elf regels die van bestemming veranderen" | dezelfde meting: die elf zijn geen correctie op de inventarisatie (hun ernst klopt), maar een wijziging van de kolom "standaardkanaal", die uit RC-148 komt en van vóór de grensregel is |
 | "De standaarden per rol", nieuw | een tabel met wat er van de vier voorgestelde mechanismen wél en niet is overgenomen | per-project volgen of dempen is bewust niet overgenomen; dat hoort erbij te staan met de reden |
 | "Waarom kreeg ik dit bericht" | de rangorde van redenen, en de vaststelling dat de zin bij `platform-admin` niet bestaat | "je krijgt dit omdat je platformbeheerder bent" is geen reden die met het bericht te maken heeft, maar een eigenschap van de lezer |
 | "Wat niet uitgezet mag kunnen worden" | geval 2 is verbreed van "je projectrol" naar "je bevoegdheid" | zo horen de twee platformbrede gevallen erbij zonder dat er een derde onuitschakelbaar type bij komt, en het document blijft bij zijn eigen regel dat het er zo weinig mogelijk moeten zijn |
@@ -1010,15 +1079,24 @@ commentaar loopt achter zodra dit gebouwd wordt. Ook `severity` wordt gebruikt z
 bedoeld was, met de drie waarden die er al staan. **Er is dus geen migratie en geen kolom
 bij.**
 
-**`plans/meldingen-inventarisatie.md`: één inhoudelijke correctie, nog niet doorgevoerd.** In
-paragraaf 4 staat "Het platform heeft het geheugen van een component bijgesteld" met ernst "ter
-informatie". Dat hoort `actie nodig` te zijn: de eigenaar kan er wel degelijk iets aan doen,
-want een handmatig gezette waarde wint van de automatische stemmer
-(`features/handmatig-gezette-resources.md`). Met de nieuwe ernstregel zou de melding anders bij
-niemand aankomen, terwijl dit juist het type is waarvan de opdrachtgever zegt dat de eigenaar
-het achteraf moet weten. Deze correctie staat hier gemeld en is bewust niet in dat document
-doorgevoerd, omdat de inventarisatie een meting is en de reden voor de wijziging in dit document
-thuishoort.
+**`plans/meldingen-inventarisatie.md`: één correctie op de ernstkolom, nog niet doorgevoerd, en
+elf regels die van bestemming veranderen.** De correctie: in paragraaf 4 staat "Het platform
+heeft het geheugen van een component bijgesteld" met ernst "ter informatie". Dat hoort `actie
+nodig` te zijn: de eigenaar kan er wel degelijk iets aan doen, want een handmatig gezette waarde
+wint van de automatische stemmer (`features/handmatig-gezette-resources.md`). Met de nieuwe
+ernstregel zou de melding anders bij niemand aankomen, terwijl dit juist het type is waarvan de
+opdrachtgever zegt dat de eigenaar het achteraf moet weten. Deze correctie staat hier gemeld en
+is bewust niet in dat document doorgevoerd, omdat de inventarisatie een meting is en de reden
+voor de wijziging in dit document thuishoort.
+
+**En het is de enige regel waar de ernstkolom zelf niet klopt, niet de enige regel die de
+ernstregel raakt.** Dat onderscheid is gemeten en staat in "De standaarden per rol": van de 21
+regels met "ter informatie" én "postvak" houden er zeven hun postvak via de tak "gepasseerd",
+verliezen er twee het al op de `reason`-regel, en verliezen er elf het op de ernstregel (twee
+daarvan alleen op hun uitroltak, want ze zijn generiek over 23 taaksoorten). Die elf
+zijn geen correctie op de inventarisatie: hun ernst klopt, en de grensregeltabel in
+`plans/beheer-in-zad-plan-van-aanpak.md` zette ze al op een pagina. Wat verandert is de kolom
+"standaardkanaal", die uit RC-148 komt en van vóór de grensregel is.
 
 **En één bevinding die geen correctie is maar wel gemeld moet worden.** De inventarisatie zegt
 in paragraaf 7 over "Iemand is platformbeheerder geworden of afgevoerd": "**bestaat nog niet**:
