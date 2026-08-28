@@ -356,7 +356,12 @@ twee regels in het uitwaaieren, en die staan uitgewerkt in
 1. **De reden is de sterkste aanspraak**, in de volgorde `actor` > `approver` >
    `platform-owner` > `project-admin` > `project-member` > `platform-user` > `platform-admin`.
 2. **Wat als `platform-admin` overblijft, krijgt geen postvakrij**, en wat `informational` is
-   ook niet.
+   ook niet, **behalve op de tak "gepasseerd" van toets 1**. Die uitzondering is nodig omdat
+   `severity` alleen de tak "aan zet" volgt: iets waar niets meer aan te doen valt is juist
+   daarom `informational`. Zonder haar zouden de rijen 4, 7, 8 en 10 van de tabel hierboven
+   zichzelf tegenspreken, en rij 2 op de tak "gepasseerd". Welke regels uit deel 1 dat precies
+   zijn en wat er met de rest gebeurt, staat geteld in `plans/meldingen-plan-van-aanpak.md`
+   onder "De standaarden per rol".
 
 De kolom "Platformbeheerder" van de tabel hierboven is dus geen aparte configuratie: hij is wat
 er overblijft als je die twee regels toepast. De twee uitzonderingen in type 12 en de
