@@ -23,6 +23,22 @@ from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod
 logger = logging.getLogger(__name__)
 
 
+#: What kubectl answers when a pod has no previous attempt to read. Measured on
+#: production, 28 August 2026:
+#:
+#:     Error from server (BadRequest): previous terminated container "app" in pod
+#:     "<naam>" not found
+#:
+#: That is not an error the user did anything about -- a pod that never crashed simply has
+#: no earlier log -- so it belongs in the panel as a sentence, not as raw stderr.
+_PREVIOUS_ATTEMPT_MISSING_MARKER = "previous terminated container"
+
+
+def is_previous_attempt_missing(stderr_text: str) -> bool:
+    """Whether kubectl's stderr says this pod has no previous attempt to read."""
+    return _PREVIOUS_ATTEMPT_MISSING_MARKER in stderr_text
+
+
 def _summarize_kubectl_command(args: list[str]) -> str:
     """Secret-free summary of a kubectl invocation for logging: the operation
     and the target project.
@@ -903,13 +919,21 @@ class KubectlConnector:
             return []
 
     async def stream_deployment_logs(
-        self, deployment_name: str, namespace: str, lines: int = 100
+        self,
+        deployment_name: str,
+        namespace: str,
+        lines: int = 100,
+        pod_name: str | None = None,
+        previous: bool = False,
     ) -> asyncio.subprocess.Process | None:
         """
         Start streaming logs from a deployment using kubectl logs -f.
 
-        Uses label selector instead of deployment/ to avoid needing deployment
-        get permissions - only requires pods and pods/log permissions.
+        Without ``pod_name`` this uses a label selector instead of deployment/ to avoid
+        needing deployment get permissions - only pods and pods/log permissions. That is
+        also what makes it show every matching pod at once: during a rolling update the
+        lines of the serving pod and of the crashing one arrive interleaved and, without
+        ``--prefix``, indistinguishable. Naming a pod is the way out of that.
 
         Returns a subprocess that streams logs in real-time. The caller is
         responsible for reading from process.stdout, terminating the process
@@ -922,6 +946,14 @@ class KubectlConnector:
             lines: Number of historical lines to retrieve initially. Pass 0
                 on reattach so the follower only streams NEW output and does
                 not re-dump the same stored tail every backoff cycle.
+            pod_name: One specific pod to follow. The caller MUST have checked that this
+                pod belongs to the project asking for it -- this method does not, and a
+                namespace carries the deployments of a whole team.
+            previous: Read the PREVIOUS attempt of the container instead of the current
+                one. Only meaningful together with ``pod_name``. There is nothing to
+                follow about a container that already stopped: the API hands over the
+                stored log and the process ends immediately, so a caller must not treat
+                that exit as a stream that needs reattaching.
 
         Returns:
             Subprocess with stdout stream, or None if failed to start
@@ -930,20 +962,36 @@ class KubectlConnector:
             logger.error("kubectl connection is not available for log streaming")
             return None
 
-        logger.debug(f"Starting log stream for deployment {deployment_name} in namespace {namespace} (tail={lines})")
+        target = pod_name or f"deployment {deployment_name}"
+        logger.debug(f"Starting log stream for {target} in namespace {namespace} (tail={lines}, previous={previous})")
 
         try:
-            # Use label selector instead of deployment/ to only require pod permissions
-            cmd = [
-                "kubectl",
-                "logs",
-                "-f",
-                "-l",
-                f"app={deployment_name}",
-                "-n",
-                namespace,
-                f"--tail={lines}",
-            ]
+            if pod_name:
+                cmd = [
+                    "kubectl",
+                    "logs",
+                    "-f",
+                    pod_name,
+                    "-c",
+                    APPLICATION_CONTAINER_NAME,
+                    "-n",
+                    namespace,
+                    f"--tail={lines}",
+                ]
+                if previous:
+                    cmd.append("--previous")
+            else:
+                # Use label selector instead of deployment/ to only require pod permissions
+                cmd = [
+                    "kubectl",
+                    "logs",
+                    "-f",
+                    "-l",
+                    f"app={deployment_name}",
+                    "-n",
+                    namespace,
+                    f"--tail={lines}",
+                ]
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -952,11 +1000,11 @@ class KubectlConnector:
                 env=self.env,
             )
 
-            logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid}, tail={lines})")
+            logger.info(f"Started log stream for {target} in {namespace} (PID: {process.pid}, tail={lines})")
             return process
 
         except Exception as e:
-            logger.error(f"Error starting log stream for {deployment_name}: {e}")
+            logger.error(f"Error starting log stream for {target}: {e}")
             return None
 
     # Event object prefixes and reasons that are infrastructure noise —
