@@ -77,6 +77,20 @@
         </form>
     {% endcall %}
 
+    {#
+      WAT ER IN DE GEBRUIKSKOLOM STAAT. Per maand het aantal GiB dat er die maand gehouden
+      is: de uurlijkse metingen opgeteld en gedeeld door het aantal uren in die maand. Dat
+      is de grootheid waarop gefactureerd wordt, want de prijs is euro per GiB per MAAND.
+      Een namespace die de halve maand 10 GiB hield telt dus voor 5 mee.
+
+      Daardoor zijn de maanden optelbaar: de Totaalrij is de SOM van de maanden, geen
+      gemiddelde van gemiddelden, en total_gib maal de prijs is het jaarbedrag.
+
+      DE LOPENDE MAAND IS NOG NIET VOL en wordt daarom aangemerkt. Hij toont wat er tot nu
+      toe is opgebouwd, dezelfde rekensom als bij een afgesloten maand, en dat getal groeit
+      door tot het einde van de maand. Zonder die markering leest een maand die halverwege
+      is als een daling.
+    #}
     {% call panel("Geheugengebruik en kosten " ~ year, "euro-sign") %}
         <c-table columns="2fr 1fr 1fr">
             <c-table-head>
@@ -86,17 +100,23 @@
             </c-table-head>
             {% for month in month_data %}
                 <c-table-row>
-                    <c-td>{{ month.name }} {{ month.year }}</c-td>
+                    <c-td>{{ month.name }} {{ month.year }}{% if month.loopt_nog %} (loopt nog){% endif %}</c-td>
                     <c-td>{{ month.gib }}</c-td>
                     <c-td>€ {{ month.cost }}</c-td>
                 </c-table-row>
             {% endfor %}
             <c-table-row>
-                <c-td><c-b>Totaal</c-b></c-td>
+                <c-td><c-b>Totaal {{ year }}</c-b></c-td>
                 <c-td><c-b>{{ total_gib }}</c-b></c-td>
                 <c-td><c-b>€ {{ total_cost }}</c-b></c-td>
             </c-table-row>
         </c-table>
+        <c-paragraph size="sm">
+            Per maand het aantal GiB dat er die maand gehouden is; dat is waarop
+            gefactureerd wordt, want de prijs geldt per GiB per maand. De totaalrij telt de
+            maanden op. Een maand die nog loopt is nog niet vol en telt door tot het einde
+            van de maand.
+        </c-paragraph>
     {% endcall %}
 {% endblock %}
 

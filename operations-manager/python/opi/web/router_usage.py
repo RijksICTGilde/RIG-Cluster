@@ -5,6 +5,7 @@ from __future__ import annotations
 import calendar
 import logging
 from datetime import UTC, datetime
+from math import ceil
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -25,18 +26,41 @@ DEFAULT_PRICE_PER_GIB = 27.0
 
 # Cheap query over the hourly recording rule (PrometheusRule
 # operations-manager-billing in de odcn-production bootstrap-overlay).
-# sum_over_time over de ruwe samples gedeeld door het verwachte aantal
-# samples (24 per dag) geeft het tijdgewogen maandgemiddelde; namespaces
-# die maar een deel van de maand bestonden tellen naar rato mee.
+#
+# WAT ER UIT KOMT. sum_over_time telt de uurlijkse samples van een maand op; delen door
+# het aantal UREN IN DIE MAAND geeft het aantal GiB dat er gemiddeld gehouden is. Dat is
+# geen tussenstap maar de grootheid waarop gefactureerd wordt: de prijs is euro per GiB
+# per MAAND, dus een namespace die de halve maand 10 GiB hield telt voor 5. Namespaces
+# die maar een deel van de maand bestonden tellen zo vanzelf naar rato mee, en de
+# maandbedragen zijn optelbaar tot een jaarbedrag.
+#
+# HET VENSTER IS NIET HETZELFDE ALS DE NOEMER, en dat was de bug. Hier stond een vast
+# venster van {days}d dat op het moment van bevragen eindigde. Voor een afgesloten maand
+# klopt dat, want daar wordt op de laatste dag van de maand geevalueerd. Voor de LOPENDE
+# maand werd op "nu" geevalueerd, en dan reikte een venster van 31 dagen terug tot in de
+# vorige maand: op 28 augustus 2026 stonden er vier dagen juli in de augustusrij en
+# ontbraken de laatste drie dagen van augustus. Het venster loopt daarom vanaf de EERSTE
+# van de maand ({venster}), terwijl de noemer de hele maand blijft ({noemer_uren}).
+#
+# De lopende maand toont daarmee wat er tot nu toe is opgebouwd en niet een voorspelling
+# van de hele maand. Dat is dezelfde rekensom als bij een afgesloten maand en hetzelfde
+# als op een rekening: het getal groeit door tot het einde van de maand. Het sjabloon
+# merkt die rij daarom aan als lopend, anders leest een halve maand als een daling.
 RECORDED_USAGE_QUERY = """round(
   sum(
-    sum_over_time(rig:namespace_memory_billed_bytes{{namespace=~"{namespace_filter}"}}[{days}d])
-  ) / ({days} * 24) / 1024^3
+    sum_over_time(rig:namespace_memory_billed_bytes{{namespace=~"{namespace_filter}"}}[{venster}])
+  ) / {noemer_uren} / 1024^3
 , 0.01) or on() vector(0)"""
 
 # Zware fallback die hetzelfde berekent uit de ruwe metrics. Alleen nodig
 # voor maanden van voor de recording rule (uitgerold juni 2026); kan weg
 # zodra er een vol jaar aan recorded data bestaat.
+#
+# Zelfde venster en zelfde noemer als hierboven, want de twee wegen horen hetzelfde
+# getal op te leveren. De subquery levert met stap 1h dezelfde uurlijkse samples als de
+# recording rule, dus delen door het aantal uren is genoeg; hier stond eerst een
+# omweg langs byte-seconden (* 3600 gedeeld door {days} * 86400) die op precies
+# hetzelfde neerkwam.
 MEMORY_USAGE_QUERY = """round(
   sum((
     sum_over_time(
@@ -64,9 +88,9 @@ MEMORY_USAGE_QUERY = """round(
           }}),
           0
         )
-      )[{days}d:1h]
-    ) * 3600
-  ) / ({days} * 86400) / 1024^3)
+      )[{venster}:1h]
+    )
+  ) / {noemer_uren} / 1024^3)
 , 0.01) or on() vector(0)"""
 
 
@@ -108,12 +132,42 @@ def _get_available_namespaces(cluster_name: str) -> list[str]:
     return namespaces
 
 
+def _is_lopende_maand(year: int, month: int) -> bool:
+    """Loopt deze maand nog, of is hij afgesloten?"""
+    now = datetime.now(UTC)
+    return year == now.year and month == now.month
+
+
 def _get_month_end(year: int, month: int, days: int) -> datetime:
     """Get the evaluation time for a month query (end of month, or now if current month)."""
-    now = datetime.now(UTC)
-    if year == now.year and month == now.month:
-        return now
+    if _is_lopende_maand(year, month):
+        return datetime.now(UTC)
     return datetime(year, month, days, 23, 59, 59, tzinfo=UTC)
+
+
+def _venster_en_noemer(year: int, month: int, days: int) -> tuple[str, int]:
+    """Het terugkijkvenster en het aantal uren waardoor gedeeld wordt.
+
+    De twee lopen ALLEEN in de lopende maand uiteen, en dat is precies waar het eerder
+    misging. Het venster wordt vanaf "nu" teruggerekend, dus voor een lopende maand moet
+    het tot de eerste van die maand reiken en niet een volle maand terug - anders schuift
+    het de vorige maand in. De noemer blijft de hele maand, zodat een lopende en een
+    afgesloten maand dezelfde grootheid opleveren: GiB gehouden over die maand.
+
+    Returns:
+        Het venster als PromQL-duur (bijvoorbeeld ``"672h"``) en de noemer in uren.
+    """
+    uren_in_maand = days * 24
+    if not _is_lopende_maand(year, month):
+        return f"{uren_in_maand}h", uren_in_maand
+
+    now = datetime.now(UTC)
+    begin = datetime(year, month, 1, tzinfo=UTC)
+    # Naar boven afgerond, zodat het venster het eerste uur van de maand omvat; en
+    # minstens een uur, want vlak na middernacht op de eerste is een venster van 0h geen
+    # geldige PromQL-duur.
+    verstreken_uren = max(1, ceil((now - begin).total_seconds() / 3600))
+    return f"{verstreken_uren}h", uren_in_maand
 
 
 async def _query_month_usage(
@@ -127,11 +181,13 @@ async def _query_month_usage(
     connector = GrafanaPrometheusConnector()
 
     eval_time = _get_month_end(month_info["year"], month_info["month"], month_info["days"])
+    venster, noemer_uren = _venster_en_noemer(month_info["year"], month_info["month"], month_info["days"])
 
     async def run(query_template: str) -> float:
         query = query_template.format(
             namespace_filter=namespace_filter,
-            days=month_info["days"],
+            venster=venster,
+            noemer_uren=noemer_uren,
         )
         results = await connector.custom_query(query, datasource_uid=datasource_uid, eval_time=eval_time)
         return float(results[0].get("value", [None, "0"])[1]) if results else 0.0
@@ -149,6 +205,9 @@ async def _query_month_usage(
     return {
         **month_info,
         "gib": value,
+        # Een lopende maand is nog niet vol. Zonder deze vlag leest een rij die halverwege
+        # de maand op de helft staat als een daling, terwijl er alleen nog minder maand is.
+        "loopt_nog": _is_lopende_maand(month_info["year"], month_info["month"]),
     }
 
 
@@ -177,7 +236,15 @@ async def usage_overview(request: Request) -> Response:
             result["cost"] = round(result["gib"] * price_per_gib, 2)
             month_data.append(result)
     else:
-        month_data.extend({**month_info, "gib": 0.0, "cost": 0.0} for month_info in months)
+        month_data.extend(
+            {
+                **month_info,
+                "gib": 0.0,
+                "cost": 0.0,
+                "loopt_nog": _is_lopende_maand(month_info["year"], month_info["month"]),
+            }
+            for month_info in months
+        )
 
     total_gib = round(sum(m["gib"] for m in month_data), 2)
     total_cost = round(sum(m["cost"] for m in month_data), 2)
