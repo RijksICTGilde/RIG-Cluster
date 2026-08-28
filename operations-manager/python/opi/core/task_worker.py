@@ -317,10 +317,24 @@ class TaskWorker:
                 # task whose scope covers this one will reprocess from that state.
                 # Completing (rather than failing) keeps retries and alerts off a
                 # deliberate hand-over.
+                #
+                # The result says exactly one thing: this task did not finish its work,
+                # and who took it over. No urls and no partial handler result: the ArgoCD
+                # sync is precisely the part being dropped, and the task that took over is
+                # about to regenerate those same manifests. Returning urls here would
+                # assert a cluster state nobody verified any more.
                 await progress.close()
                 await self._task_service.complete_task(
                     task_id,
-                    {"status": "superseded", "message": str(superseded)},
+                    {
+                        "status": "superseded",
+                        "message": str(superseded),
+                        "superseded_by": {
+                            "task_id": superseded.task_id,
+                            "task_type": superseded.task_type,
+                            "project_name": superseded.project_name,
+                        },
+                    },
                 )
                 progress.mark_legacy_completed()
                 logger.info("Task %s superseded after %.1fs: %s", task_id, time.monotonic() - started, superseded)
