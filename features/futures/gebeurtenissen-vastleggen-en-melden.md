@@ -362,6 +362,8 @@ Gebeurtenissen zonder project zijn platformgebeurtenissen en zijn alleen voor be
 
 De enige regel die hier een uitzondering nodig heeft is `cross-domain-access` (deel 1, paragraaf 10): daar is de belanghebbende een beheerder van een van TWEE projecten. In de ontvangertabel is dat geen probleem (er worden rijen voor beide gelegd, met een `reason` die zegt welke). In de tijdlijn is het dat wel, en het antwoord is dat zo'n gebeurtenis op beide tijdlijnen verschijnt door hem twee keer te schrijven, met verschillende `subject`. Dat is eerlijker dan een uitzondering in de bevraging.
 
+**Deze paragraaf gaat over LEZEN, en dat is niet de hele vraag.** Er zijn meer wegen waarlangs gebeurtenissen naar buiten gaan zonder dat iemand ze opvraagt, maar er is er precies een waarvan de BESTEMMING door een gebruiker wordt gekozen in plaats van door een bekende ontvanger te zijn: de webhook per project uit deel 3. Wie daar een abonnement mag neerzetten bepaalt WAARHEEN de gebeurtenissen van een heel project stromen, en dat is een zwaardere handeling dan lezen, niet een lichtere. Die regel hoort bij het kanaal en staat daarom in deel 3, Kanaal 5, ontwerpregel 5: aanmaken is een handeling van een projectbeheerder met een identiteit en niet iets dat op de projectsleutel kan. Waar de aanvraag heen mag is ontwerpregel 4 daarnaast.
+
 ### Wat er in een gebeurtenis terechtkomt
 
 Dit is de scherpste rand van het hele ontwerp. Een `error_message` uit een connector kan een geheim dragen, en de weg daarheen is kort.
@@ -637,7 +639,7 @@ class NotificationPreference(Base):
 
 Ze horen bij een kanaal en niet bij de kern, en ze komen daarom in deel 3 aan bod:
 
-- **`notification_subscriptions`** (VOORSTEL) voor de webhook per project: ontvanger-URL, geheim, welke categorieen, en het watermerk `reported_through` uit punt 3. Dit is een abonnement van een PROJECT en niet van een persoon, en het draait daarom op het watermerk en niet op de outbox hierboven.
+- **`notification_subscriptions`** (VOORSTEL) voor de webhook per project: ontvanger-URL, geheim, welke categorieen, en het watermerk `reported_through` uit punt 3. Dit is een abonnement van een PROJECT en niet van een persoon, en het draait daarom op het watermerk en niet op de outbox hierboven. De ontvanger-URL is de enige waarde in dit hele model die bepaalt waar OPI zelf een verbinding heen opzet, en zij komt van een gebruiker; wat er in die kolom mag staan en wie er een rij mag neerzetten zijn daarom ontwerpregels en geen validatiedetails. Ze staan in deel 3, Kanaal 5, als ontwerpregel 4 (welke bestemmingen zijn toegestaan, en waarom het uitgaande netwerkbeleid daar niets aan bijdraagt) en ontwerpregel 5 (aanmaken vraagt een projectbeheerder met identiteit en gaat uitdrukkelijk niet op de `X-API-Key`).
 - **`notification_channel_identities`** (VOORSTEL) voor Mattermost: `recipient`, `channel`, `external_id` en `verified_at`, gevuld via de zelfkoppeling met verificatiecode.
 
 ### De migratieweg
