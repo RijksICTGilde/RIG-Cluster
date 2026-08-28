@@ -116,8 +116,21 @@ waar een beheerder een besluit neemt dat iets in beweging zet.
 
 **Wat er ontbreekt**:
 
-- **Geen leeftijd en geen escalatie.** Een aanvraag die drie dagen ligt ziet er precies zo uit
-  als een aanvraag van vijf minuten oud. Niets meet hoe lang iets openstaat.
+- **Er staat wel een datum, maar geen leeftijd en geen escalatie.** De tabel toont de datum
+  van de laatste history-regel, zonder tijd
+  (`opi/templates_lotc/bg/admin-approvals.html.j2:192-194`). De lijst is gesorteerd op
+  projectnaam (`opi/web/router_approvals.py:166`), niet op ouderdom, er is geen filter op
+  ouderdom (de filters gaan over status, `APPROVAL_STATUSSEN`, `:193`) en er is geen grens
+  waarboven iets opvalt. "Wat ligt hier het langst" is dus wel af te leiden, maar alleen door
+  de hele lijst te lezen.
+- **En bij een van de drie soorten staat die datum er niet.** Domein- en
+  subdomeinaanvragen schrijven bij het aanvragen een history-regel met tijdstip
+  (`opi/connectors/subdomain.py:511` en `:552`,
+  `{"date": now, "status": "requested"}`). De generieke dienstgebruik-goedkeuring, die
+  `send-email` gebruikt, schrijft een **lege** history
+  (`opi/services/catalog/approval.py:303`). Het sjabloon toont de datum alleen als er een
+  history is (`{% if item.history %}`), dus bij een `send-email`-aanvraag staat de kolom leeg
+  en is de ouderdom nergens vandaan te halen.
 - **Geen melding.** Niemand hoort dat er een aanvraag is. Dit is precies de pijn waarmee
   RC-148 zijn fase 1 verdedigt (`plans/meldingen-plan-van-aanpak.md`, "Fase 1").
 - **De aanvraag kan niet naar een ander.** `ApproverScope` kent drie waarden
@@ -413,7 +426,8 @@ het zelf: de bevraging haalt alle applicaties op en gooit die van andere project
 **Half.** `/admin/approvals` toont de openstaande aanvragen, en dat is de enige soort werk die
 op een beheerder kan wachten en ook echt getoond wordt. Maar:
 
-- niets zegt hoe lang het er ligt;
+- er staat een datum bij, maar de lijst is niet op ouderdom te sorteren of te filteren, en
+  bij een `send-email`-aanvraag ontbreekt die datum helemaal (paragraaf 1);
 - niets meldt dat het er is;
 - de bevestigingsstap van de weesopruiming, die óók op een beheerder wacht, staat er niet
   bij en is op productie zelfs niet uitvoerbaar (paragraaf 3).
