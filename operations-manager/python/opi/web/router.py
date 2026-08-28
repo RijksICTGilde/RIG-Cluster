@@ -2073,14 +2073,12 @@ async def _fetch_argocd_deployment_status(
             )
             expects_no_pods = deployment_state is not None and deployment_state.expects_no_application_pods
             if kubectl is not None and not expects_no_pods:
-                try:
-                    pods = await kubectl.get_application_pods(
-                        get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", "")),
-                        deployment_name,
-                    )
-                except Exception as exc:
-                    logger.debug("Could not list application pods for %s: %s", deployment_name, exc)
-                    pods = []
+                # No net of its own: get_application_pods is best-effort by contract - a
+                # non-zero exit or unparsable output logs and returns [].
+                pods = await kubectl.get_application_pods(
+                    get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", "")),
+                    deployment_name,
+                )
                 pod_summaries = summarize_component_pods(pods, deployment=deployment)
         else:
             # Healthy last-known state can still hide a fresh ComparisonError (sync=Unknown):
