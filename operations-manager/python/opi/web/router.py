@@ -1038,6 +1038,26 @@ async def collect_dashboard_metrics(
                 except Exception as e:
                     logger.warning(f"Dashboard memory limits query failed: {e}")
 
+                # De REQUEST erbij, en alleen voor geheugen. ODCN factureert geheugen als
+                # request + clamp_min(gebruik - request, 0), oftewel per pod het hoogste van
+                # de twee. De meter toonde gebruik tegen limiet, en dat zijn allebei niet het
+                # getal waarop de rekening staat: op 28 augustus 2026 stond het dashboard op
+                # 25,5 GiB gebruikt van 71,6 GiB limiet terwijl er 43,1 GiB gevraagd was, en
+                # dat verschil van bijna 18 GiB is precies wat er betaald wordt zonder
+                # gebruikt te worden. Zie /admin/usage voor de maandrekening zelf.
+                #
+                # CPU krijgt dit NIET: daar wordt niet op gefactureerd, dus zou het alleen
+                # een getal meer op een regel zijn.
+                mem_request_val = 0.0
+                try:
+                    result = await prom.custom_query(
+                        f'sum(kube_pod_container_resource_requests{{namespace=~"{ns_regex}",resource="memory"}})'
+                    )
+                    if result and result[0].get("value"):
+                        mem_request_val = float(result[0]["value"][1])
+                except Exception as e:
+                    logger.warning(f"Dashboard memory requests query failed: {e}")
+
                 # Storage usage and capacity
                 storage_used_val = 0.0
                 storage_cap_val = 0.0
@@ -1128,6 +1148,7 @@ async def collect_dashboard_metrics(
                     "cpu_limit_display": _format_cores(cpu_limit_val),
                     "memory_percentage": _pct(mem_usage_val, mem_limit_val),
                     "memory_usage_display": _format_gib(mem_usage_val),
+                    "memory_request_display": _format_gib(mem_request_val),
                     "memory_limit_display": _format_gib(mem_limit_val),
                     "storage_percentage": _pct(storage_used_val, storage_cap_val),
                     "storage_usage_display": _format_gib(storage_used_val),
