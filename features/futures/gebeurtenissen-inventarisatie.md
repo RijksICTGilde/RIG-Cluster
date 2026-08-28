@@ -468,13 +468,13 @@ Dit is geen tweede catalogus maar het mechanisme voor publiek C. De agent is van
 
 | Wat hij wil weten | Waar hij het vandaag vandaan haalt | Wat daaraan schort |
 |---|---|---|
-| Mijn taak is klaar of mislukt | pollen op `GET /api/v2/.../tasks/{id}` tot de status verandert | Alleen als hij de taak zelf startte; en na een uur is de rij weg |
+| Mijn taak is klaar of mislukt | pollen op `GET /api/tasks/{task_id}` tot de status verandert (`opi/api/task_router.py:154` zet de prefix, de statusroute staat op `:160-161`) | Pollen is de enige weg, want er is geen push; en na een uur is de rij weg |
 | De deployment die ik zojuist bijwerkte is nu gezond | pollen op `GET /api/v2/projects/{p}/deployments/{d}`, die `errors` en `deviations` teruggeeft | Elke bevraging herberekent alles; er is geen "sinds wanneer" en geen push |
 | Mijn image is uitgerold | pollen | Geen signaal; `features/upsert-deployment-api.md` beschrijft alleen de heenweg |
 | Er is iets aan mijn project veranderd door iemand anders | de commits in `zad-projects` lezen | Kan alleen wie leestoegang tot de repo heeft; en de auteur is altijd dezelfde |
 | Mijn project heeft een quotum of grens geraakt | nergens | Bestaat niet |
 
-Er is dus geen enkel push-kanaal richting een agent, en het enige pull-kanaal is een taakstatus met een uur bewaartijd.
+Er is dus geen enkel push-kanaal richting een agent, en het enige pull-kanaal is een taakstatus met een uur bewaartijd. **En let op de eerste rij van deze tabel, want die is op twee punten gecorrigeerd ten opzichte van het bronstuk.** Het pad stond er als `GET /api/v2/.../tasks/{id}` (`features/futures/gebeurtenissen-inventarisatie.md:102` op `e98a7811`), en dat bestaat niet. Op `83ac4b9b` zet `opi/api/task_router.py:154` de prefix op `/api/tasks` met de statusroute op `:160-161`, terwijl de v2-router (`opi/api/v2/router.py:159`, prefix `/api/v2` op `:160`) geen enkele route met `tasks` in het pad heeft: die deelt juist `Location: /api/tasks/{task_id}` uit (`:177`, `:1284`, `:3338`, `:3669`) en zet dat pad ook in `poll_url` (`:1279`, `:3334`). Een sweep over alle `prefix=`-waarden in `opi/api/` geeft geen tweede tasks-prefix, dus de puntjes waren niet in te vullen. Het pad staat er nu voluit, met het anker erbij. De tweede correctie zit in de laatste kolom, waar "Alleen als hij de taak zelf startte" stond. Dat klopt niet: `_validate_task_access` (`opi/api/task_router.py:111`) laat de `X-API-Key` van het project toe op ELKE taak van dat project, en `GET /api/tasks` (`:225` en `:229`, met `project_name` als verplichte parameter) somt ze ook op, dus een agent ziet net zo goed de taken die een collega via de portal startte. Wat er wel schort is dat er geen push is en dat de rij na een uur weg is, en dat staat er nu. De conclusie van deze paragraaf verandert daar niet van, en deel 3, `:123` raakt het evenmin: die alinea gaat over de projectroutes in `opi/api/v2/router.py`, en de taakstatus is er daar geen van.
 
 ---
 

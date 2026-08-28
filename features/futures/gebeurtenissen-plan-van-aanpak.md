@@ -438,7 +438,7 @@ Zo weinig mogelijk, want elke onuitschakelbare melding is er een die mensen leer
 | `opi/api/v2/models.py` | de antwoordmodellen |
 | `opi/web/router_notifications.py` | nieuw: het postvak en het tellerfragment |
 | `opi/templates_lotc/base_lotc.html.j2` | de teller in de hulpbalk |
-| `opi/templates_lotc/notifications/*.html.j2` | nieuw: de pagina en het fragment |
+| `opi/templates_lotc/bg/postvak.html.j2` en `opi/templates_lotc/bg/_meldingen-teller.html.j2` (beide namen VOORSTEL) | nieuw: de pagina en het fragment. De map is `bg/` en niet een nieuwe map `notifications/`, om dezelfde reden als bij fase 8 hieronder: elke ingelogde pagina van dit portaal staat daar al, en het fragment volgt de naamvorm met liggend streepje van `opi/templates_lotc/bg/_tasks.html.j2`, dat hierboven ook het patroon voor de verversing levert |
 | `opi/web/menu.py` | het postvak in het menu |
 
 **Niet doen in deze fase**: geen e-mail, geen webhook, geen Mattermost (alleen het postvak); geen voorkeurenscherm (de standaarden per rol staan vast in de code; de tabel is er al); geen draadgroepering in de UI (de kolom `thread_key` wordt wel gevuld); geen samenvattingen.
