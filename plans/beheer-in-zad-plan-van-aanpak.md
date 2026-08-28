@@ -70,9 +70,19 @@ Een tweede punt uit dezelfde bron, zwakker maar wel relevant: bij de compenseren
 staat "Detectie/herleidbaarheid: Logging (8.15) + monitoring (8.16)". Van de 36 doorwerkingen
 van `is_platform_admin` loggen er 23 op DEBUG (die via `is_user_authorized_for_project`,
 `opi/services/project_authorization.py:43`) en 13 helemaal niet (die via
-`get_user_role_for_project`, `:60-73`, dat geen enkele logaanroep bevat), en op productie staat
-`LOG_TO_FILE=false`. Er is dus geen spoor van beheerderstoegang tot een project. Dat is geen
-harde overtreding van een control die ik in deze documenten kan aanwijzen, maar het is wel precies wat 8.15 en 8.16 beogen.
+`get_user_role_for_project`, `:60-73`, dat geen enkele logaanroep bevat).
+
+Die 23 regels verdwijnen niet: de stdout-handler staat onvoorwaardelijk op `DEBUG` en de
+`opi`-logger ook (`opi/utils/logging_config.py:59`, `:65-69`), en `LOG_TO_FILE=false` op
+productie schakelt alleen de **extra** filehandler uit ("Enable file logging alongside stdout",
+`opi/core/config.py:282`). De productielogs staan in Loki en het platform bevraagt ze zelf
+(`opi/core/logwatcher_scheduler.py:3-4`). **Het spoor is er dus wel; het is alleen geen spoor
+waar je een bevoegdheid mee kunt verantwoorden.** Zie deel 1, paragraaf 2, voor de meting: de
+regel staat in de debug/info-bulk die de logbewaker juist wegfiltert
+(`opi/services/log_watcher.py:110-112`), hij mist de oorsprong die 8.15.01 vraagt, en de
+bewaartermijn ligt bij Loki en niet bij ZAD. Dat is geen harde overtreding van een control die
+ik in deze documenten kan aanwijzen, maar wat 8.15 en 8.16 beogen is een herleidbaar
+gebeurtenisspoor, en een debugregel is dat niet.
 
 **Functiescheiding.** Ik heb in de drie BIO-documenten in deze repository geen control
 gevonden die hier functiescheiding tussen beheerderstaken afdwingt. `plans/bio2-compliance-analysis.md:29`
@@ -94,7 +104,7 @@ meldingen) wordt opgelost in het overzicht (deel 3) en in de standaardentabel
 |---|---|
 | **Kosten** | nul in het autorisatiepad |
 | **Voor** | het probleem is een verdelingsprobleem en een schermprobleem, niet een rollenprobleem. Een rollenmodel voor twee mensen is overhead. KISS en YAGNI wijzen allebei deze kant op. |
-| **Tegen** | de BIO-eis 8.02.01 blijft onvervulbaar zolang de lijst nergens staat. En de 36 doorwerkingen blijven zonder spoor. |
+| **Tegen** | de BIO-eis 8.02.01 blijft onvervulbaar zolang de lijst nergens staat. En van de 36 doorwerkingen laten er 23 alleen een debugregel in de bulk achter en 13 helemaal niets. |
 | **Maar** | allebei die bezwaren gaan over **zichtbaarheid**, niet over **rollen**, en zijn dus binnen dit model op te lossen. |
 
 #### Model B: een leesrol naast de beheerrol
@@ -170,7 +180,7 @@ alleen omweg.
    (`opi/api/v2/router.py:1177`). Die sleutel draagt zelf geen rol en opent elke muterende
    route van dat project (`opi/services/project_authorization.py:24-27`). Een beheerder kan
    hem dus van elk van de 47 projectpagina's meenemen, en daarna is de grens weg.
-3. **Er is geen spoor.** Zie deel 1, paragraaf 2.
+3. **Er is geen bruikbaar spoor.** 23 van de 36 doorwerkingen laten een DEBUG-regel achter en 13 niets. Zie deel 1, paragraaf 2.
 
 **Waarom "niet stilzwijgend" belangrijker is dan "niet".** Wie overal bij kan, is ook overal
 belanghebbende, en dat is precies waarom de RC-148-standaard op "alles" uitkwam: als de
@@ -192,11 +202,13 @@ Dat werkt door zonder dat er ergens anders iets hoeft te veranderen, en dat is g
 | Bewerkgrendel | **1** | `opi/web/project_edit_security.py:46`, tegen `PROJECT_EDIT_ROLES` |
 | API | **1** | `opi/api/v2/router.py:1177`, de sleutel in de projectlijst |
 
-**Alle 24 zijn positieve lijsten.** Er is geen enkele controle van de vorm "als de rol niet X
-is", dus een waarde die niet in `["admin","owner"]` staat valt overal door naar geen rechten.
-Dat is nagelopen: `grep` op `user_role` levert in de sjablonen dertien keer `in [...]` en nul
-keer een ontkenning, en in `opi/web/router.py` negen keer `not in ["admin", "owner"]` als
-weigering.
+**Alle 24 kennen rechten toe op een positieve lijst.** Er is geen enkele controle die iets
+toestaat op een **ontkenning**, dus een waarde die niet in `["admin","owner"]` staat valt overal
+door naar geen rechten. De negen webroutes zijn wel in ontkennende vorm geschreven
+(`if user_role not in ["admin", "owner"]`), maar die ontkenning bewaakt de **weigering**: een
+onbekende waarde valt in de weigertak, niet erlangs. Dat is nagelopen: `grep` op `user_role`
+levert in de sjablonen dertien keer `in [...]` en nul keer een ontkenning, en in
+`opi/web/router.py` negen keer `not in ["admin", "owner"]` en nul keer een `in [...]`.
 
 **Welke waarde.** Twee opties, en ik heb een voorkeur:
 
