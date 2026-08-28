@@ -4,14 +4,15 @@
   Wat een gebruiker in zijn eigen project doet staat hier NIET; dat hoort op de
   projectpagina. De meetlaag trekt de projectnamespaces er daarom af.
 
-  De pagina zelf meet NIETS. De twee blokken worden lui opgehaald, elk met een eigen
+  De pagina zelf meet NIETS. De blokken worden lui opgehaald, elk met een eigen
   verzoek, zoals het dashboard en de projectdetailpagina dat al doen: zo staat de pagina
   er meteen, houdt een trage metriekbron hem niet op, en kost een kapot blok alleen dat
   blok in plaats van de hele pagina.
 
   DE VOLGORDE IS EEN KEUZE. Opslag bovenaan, want daar komt de eerste echte melding
-  vandaan. Daarna de databases. Daarna - en nadrukkelijk NIET weggelaten - wat er niet
-  gemeten wordt: zonder dat blok leest de afwezigheid van Redis en MinIO als "die zijn in
+  vandaan. Daarna de databases en Keycloak. Daarna het resourcegebruik, dat geen
+  toestand kent en dus niet voor de meldende blokken hoort. Daarna - en nadrukkelijk
+  NIET weggelaten - wat er niet gemeten wordt: zonder dat blok leest de afwezigheid van Redis en MinIO als "die zijn in
   orde". En onderaan de drempels, zodat een rode rij hierboven navraagbaar is.
 #}
 {% extends "base_lotc.html.j2" %}
@@ -44,6 +45,15 @@
          hx-trigger="load"
          hx-swap="innerHTML">
         <c-paragraph>Keycloak wordt opgehaald...</c-paragraph>
+    </div>
+
+    {# Onder de drie meldende blokken en niet erboven: dit blok heeft geen toestand en
+       hoort de plek waar de eerste melding vandaan komt niet in te nemen. #}
+    <div id="diensten-resources"
+         hx-get="/admin/diensten/resources"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <c-paragraph>Resourcegebruik wordt opgehaald...</c-paragraph>
     </div>
 
     {% include "bg/_gedeelde-diensten-ongemeten.html.j2" %}
