@@ -371,10 +371,16 @@ uitzondering op de volgorde (toets 3 loopt ernaast). Zonder die uitzondering zou
 kiezen tussen "op het overzicht" en "naar ntfy", en dat is een valse keuze.
 
 **En de belangrijkste uitkomst van de hele oefening:** loop de kolom "Platformbeheerder" van
-boven naar beneden. **Van de twaalf typen levert er precies één een postvakrij op** (type 6,
-plus twee uitzonderingen in type 12). Alle andere gaan naar het overzicht. Dat is de correctie
-op "platformbeheerder: alles, inclusief type 12", en hij komt niet uit een voorkeur maar uit de
-regel.
+boven naar beneden. **Van de twaalf typen levert er precies één een postvakrij op die hij
+krijgt omdát hij platformbeheerder is** (type 6, plus de twee uitzonderingen in type 12). Alle
+andere gaan naar het overzicht. Dat is de correctie op "platformbeheerder: alles, inclusief
+type 12", en hij komt niet uit een voorkeur maar uit de regel.
+
+Die kwalificatie "omdát hij platformbeheerder is" hoort er letterlijk bij, want rij 11 zegt in
+die kolom "idem" en dat is voor onderhoud óók een postvakrij. Die krijgt hij alleen niet als
+beheerder maar als **gebruiker** van het platform, met `reason = platform-user`, precies zoals
+iedere andere gebruiker die tijdens het onderhoudsvenster niet moet uitrollen. Wie de kolom
+letterlijk natelt komt dus op twee, en de tweede staat niet op zijn beheerdersstapel.
 
 ### De beheerdersstartpagina
 
