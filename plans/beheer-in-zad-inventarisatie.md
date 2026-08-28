@@ -212,7 +212,7 @@ Op productie staat `ADMIN_EMAILS=robbert.bos@rijksoverheid.nl`
 kennen door twee bestanden te lezen die geen van beide in de applicatie zichtbaar zijn.
 
 Op de sandbox staat `ADMIN_EMAILS=admin@sandbox.rijksapp.dev`
-(`.../overlays/sandboxed-local/configmap.yaml:55`), plus dezelfde vaste eerste. Ook twee.
+(`bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/configmap.yaml:55`), plus dezelfde vaste eerste. Ook twee.
 
 ### Hoe de lijst zich verhoudt tot de `users`-tabel
 
@@ -307,7 +307,7 @@ Wat daar concreet uit volgt:
 - **De logstroom mag ook** (`opi/api/logs_websocket_router.py:355`).
 
 **En er staat geen enkele meting tegenover.** Geen logregel op INFO, geen gebeurtenis, geen
-teller. De twee functies loggen hun beslissing op DEBUG (`project_authorization.py:43`,
+teller. De twee functies loggen hun beslissing op DEBUG (`opi/services/project_authorization.py:43`,
 `:51`), en `LOG_TO_FILE=false` op productie. Wie wil weten of een beheerder ooit in een
 projectbestand heeft gekeken dat niet van hem is, kan dat niet nagaan.
 
@@ -341,11 +341,11 @@ Drie dingen kloppen hier niet met elkaar:
    wie hem heeft is geen platformbeheerder. Twee beheerdersrollen dus, die elkaar niet kennen.
 3. **Op productie is hij niet gezet.** `ADMIN_API_KEY` komt in `bootstrap/rig-system/` maar
    één keer voor, en dat is de sandbox
-   (`.../overlays/sandboxed-local/configmap.yaml:18`). In de productie-ConfigMap staat hij
+   (`bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/configmap.yaml:18`). In de productie-ConfigMap staat hij
    niet, en in het versleutelde env-secret ook niet: dat bestand draagt 21 sleutels, met hun
    NAMEN in leesbare vorm (SOPS versleutelt de waarden, niet de sleutels), en `ADMIN_API_KEY`
    zit er niet bij
-   (`.../overlays/odcn-production/operations-manager-env-secrets.yaml`).
+   (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/operations-manager-env-secrets.yaml`).
 
 **Gevolg**: op productie antwoorden alle zeven met **501**
 ("This endpoint requires ADMIN_API_KEY to be configured",
@@ -415,7 +415,7 @@ een verdedigbare keuze, maar hij is nergens zichtbaar: de uitkomst gaat naar de 
 `sandboxed-local` de waarde `enabled: True`
 (`opi/services/catalog/sleep_mode/config.py:22-24`), en de productie-ConfigMap zegt het er
 zelf bij ("Sleep-mode itself stays off in production (cluster default) until validated",
-`.../overlays/odcn-production/configmap.yaml`). Dat scheelt een hele klasse gebeurtenissen, en
+`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml`). Dat scheelt een hele klasse gebeurtenissen, en
 dat is relevant voor de schatting in paragraaf 5.
 
 ---
@@ -533,7 +533,7 @@ metingen.
 | Componentdefinities | 90 | idem |
 | Component-instanties in deployments | **261** | idem |
 | Project-deployments op productie | **127**, in **44** namespaces | `opi/core/startup.py:582-583`, een meting uit de opstartlus zelf ("127 `get namespace` plus 127 `label namespace` for 44 distinct namespaces") |
-| Platformbeheerders op productie | **2** | `opi/core/startup.py:559-561` (één vast) plus `ADMIN_EMAILS` (`.../odcn-production/configmap.yaml:46`, één adres) |
+| Platformbeheerders op productie | **2** | `opi/core/startup.py:559-561` (één vast) plus `ADMIN_EMAILS` (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:46`, één adres) |
 | Toegelaten gebruikers uit de ConfigMap | 6 | `ALLOWED_EMAILS`, idem `:45` |
 | Taaksoorten | **23** | `TaskType`, `opi/core/async_task_service.py:54-76` |
 
