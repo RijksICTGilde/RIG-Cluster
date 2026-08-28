@@ -67,10 +67,12 @@ de herleidbaarheid van de bevoegdheid die er is.** Dat is een belangrijk ondersc
 maakt de goedkoopste optie ook de meest conforme.
 
 Een tweede punt uit dezelfde bron, zwakker maar wel relevant: bij de compenserende maatregelen
-staat "Detectie/herleidbaarheid: Logging (8.15) + monitoring (8.16)". De 36 doorwerkingen van
-`is_platform_admin` loggen op DEBUG, en `LOG_TO_FILE=false` op productie. Er is dus geen spoor
-van beheerderstoegang tot een project. Dat is geen harde overtreding van een control die ik in
-deze documenten kan aanwijzen, maar het is wel precies wat 8.15 en 8.16 beogen.
+staat "Detectie/herleidbaarheid: Logging (8.15) + monitoring (8.16)". Van de 36 doorwerkingen
+van `is_platform_admin` loggen er 23 op DEBUG (die via `is_user_authorized_for_project`,
+`opi/services/project_authorization.py:43`) en 13 helemaal niet (die via
+`get_user_role_for_project`, `:60-73`, dat geen enkele logaanroep bevat), en op productie staat
+`LOG_TO_FILE=false`. Er is dus geen spoor van beheerderstoegang tot een project. Dat is geen
+harde overtreding van een control die ik in deze documenten kan aanwijzen, maar het is wel precies wat 8.15 en 8.16 beogen.
 
 **Functiescheiding.** Ik heb in de drie BIO-documenten in deze repository geen control
 gevonden die hier functiescheiding tussen beheerderstaken afdwingt. `plans/bio2-compliance-analysis.md:29`
@@ -160,7 +162,7 @@ alleen omweg.
 
 1. **De rol zegt niets over het project.** `get_user_role_for_project` geeft `admin` terug op
    grond van een lijst die niets met dat project te maken heeft
-   (`opi/services/project_authorization.py:59-62`). Voor de projecteigenaar is dat niet te
+   (`opi/services/project_authorization.py:60-63`). Voor de projecteigenaar is dat niet te
    zien: het teamblok toont zijn eigen leden, en de beheerder staat daar niet tussen.
 2. **De projectsleutel ligt op de pagina.** Het paneel met de `api-key` staat achter
    `user_role in ["admin","owner"]` (`opi/templates_lotc/bg/project-tabs.html.j2:163`, veld op
@@ -558,9 +560,12 @@ Waarom die volgorde:
   voordat hij wordt vastgelegd, want er is een pagina om "naar het overzicht" naartoe te laten
   wijzen.
 - **Het haalt het grootste deel van het volume weg vóór het bestaat.** Volgens de tabel in deel
-  3 levert van de twaalf typen er één een postvakrij op voor een platformbeheerder. Zonder een
-  overzicht is er geen plek voor de andere elf, en dan komen ze alsnog in het postvak terecht,
-  omdat "nergens" geen bestemming is die iemand durft te kiezen.
+  3 levert van de twaalf typen er één een postvakrij op die hij krijgt omdát hij
+  platformbeheerder is (type 6), plus de twee uitzonderingen in type 12; type 11 levert er bij
+  onderhoud ook één op, maar die krijgt hij als gebruiker van het platform en niet als beheerder.
+  De overige tien wijst de regel naar het overzicht. Zonder dat overzicht is er voor die tien
+  geen plek, en dan komen ze alsnog in het postvak terecht, omdat "nergens" geen bestemming is
+  die iemand durft te kiezen.
 - **Het is klein.** Twee blokken op één pagina, geen nieuwe opslag.
 
 **Wat het kost: de meldingen schuiven op met de bouwtijd van fase 0.** Dat moet gezegd, want de
