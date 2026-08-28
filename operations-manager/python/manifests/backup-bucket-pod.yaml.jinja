@@ -186,8 +186,8 @@ spec:
         limits:
           memory: "4Gi"
           cpu: "2000m"
-          ephemeral-storage: "{{ staging_size_limit | default('50Gi') }}"
+          ephemeral-storage: "{{ staging_size_limit | default('5Gi') }}"
   volumes:
     - name: staging
       emptyDir:
-        sizeLimit: {{ staging_size_limit | default('50Gi') }}
+        sizeLimit: {{ staging_size_limit | default('5Gi') }}
