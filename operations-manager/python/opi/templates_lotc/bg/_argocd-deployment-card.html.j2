@@ -270,9 +270,32 @@
                                kijkt in het projectbestand. Een tagverwijzing blijft heel. #}
                             {% set repo, digest_scheiding, digest = (pod.image or '').partition('@') %}
                             {% set getoonde_image = repo ~ digest_scheiding ~ digest[:19] if digest_scheiding else (pod.image or '') %}
+                            {# De aanroep boven de tag opgebouwd, en door forceescape. Dat
+                               is dezelfde val als bij "Logs bekijken" hieronder: tojson
+                               levert MARKUP op ("dit is al veilig") en het gewone
+                               escapefilter dat LOTC op :attrs loslaat slaat markup over,
+                               waardoor een aanhalingsteken het attribuut vroegtijdig
+                               sluit en de rest van de aanroep als losse attributen wordt
+                               gelezen. Staat uitgeschreven in de kop van dat blok. #}
+                            {% set pod_logs_js = ('openLogViewer('
+                                ~ (project.name | tojson) ~ ', '
+                                ~ (deployment.name | tojson) ~ ', '
+                                ~ (pod.reference | tojson) ~ ', '
+                                ~ (deployment.components | tojson) ~ ', '
+                                ~ (pod.pod_name | tojson) ~ ')') | forceescape %}
                             <c-cluster gap="xs" align="center">
                                 <c-icon icon="check-mark-circle" size="sm" />
                                 <c-span>{{ pod.reference }} draait sinds {{ pod.running_since | dutch_date }} op {{ getoonde_image }}</c-span>
+                                {# secondary en niet tertiary. Gemeten in een browser: een
+                                   tertiaire knop is randloos en las achter een lange
+                                   regel als losse tekst, niet als iets waar je op klikt.
+                                   Dezelfde vorm als "Logs bekijken" hieronder dus. #}
+                                <c-button
+                                    type="secondary"
+                                    size="sm"
+                                    label="Logs"
+                                    icon="file-text"
+                                    :attrs="{'onclick': pod_logs_js, 'title': 'Bekijk de logs van deze pod'}" />
                             </c-cluster>
                             {% if pod.runs_configured_image is false %}
                                 {% set repo_c, scheiding_c, digest_c = (pod.configured_image or '').partition('@') %}
