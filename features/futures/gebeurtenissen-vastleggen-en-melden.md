@@ -305,7 +305,7 @@ Dat werkt hier omdat de meeste handelingen al door Postgres gaan: de takenrij, d
 - **Bij het aanleggen van de aflevering**: een uniciteitsgrendel op (aflevering, kanaal). Twee keer dezelfde aflevering plannen levert een rij op.
 - **Bij het afleveren**: een aflevering gaat van `pending` naar `claimed` naar `sent`/`failed`, en de overgang naar `claimed` is de claim. Een werker die halverwege omvalt, laat een aflevering in `claimed` staan; die wordt na een tijdsdrempel teruggezet, net zoals `recover_stale_tasks` dat voor taken doet. Dat betekent dat een bericht in het ergste geval twee keer aankomt in plaats van nul keer, en dat is de goede kant om op te falen. Een gat is erger dan een herhaling: een herhaling is irritant, een gat is een gemiste storing.
 
-**Wat als een kanaal plat ligt.** Het postvak en de tijdlijn zijn geen kanaal in deze zin: die rijen staan er al, want die zijn de gebeurtenis. Alleen mail, webhook en Mattermost zijn afleveringen die kunnen falen, en die stapelen zich op in de outbox. Als de mailrelay een uur weg is, komen na dat uur alle berichten alsnog. Voor de gebruiker betekent dat een stapel; dat is een reden om per persoon per tijdvak samen te vatten (zie punt 3 en deel 3, "E-mail").
+**Wat als een kanaal plat ligt.** Het postvak en de tijdlijn zijn geen kanaal in deze zin: die rijen staan er al, want die zijn de gebeurtenis. De push-kanalen kunnen wel falen. Mail en Mattermost zijn afleveringen in de zin van deze outbox en stapelen zich daar op: als de mailrelay een uur weg is, komen na dat uur alle berichten alsnog. Voor de gebruiker betekent dat een stapel; dat is een reden om per persoon per tijdvak samen te vatten (zie punt 3 en deel 3, "E-mail"). De webhook per project kan even goed falen, maar hij is geen aflevering in deze zin en loopt niet over deze outbox: hij hangt aan een projectabonnement en niet aan een persoon, en zijn herhaling loopt op het watermerk uit punt 3. Zie punt 7.
 
 ## 3. Ontdubbelen, samenvoegen en drempels
 
@@ -342,15 +342,15 @@ Een uitrol die faalt, gevolgd door een automatische stemming, gevolgd door een g
 
 ### Samenvoeging aan de kant van de push-kanalen
 
-Voor het postvak is de draad genoeg. Voor mail en webhook niet, want daar is elk bericht een aflevering. **Een melding per ontvanger per venster, met de gebeurtenissen erin gegroepeerd,** en niet een melding per gebeurtenis. Dit is dezelfde keuze die de log watcher al maakt (een ntfy-bericht met maximaal tien regels, gegroepeerd, `MAX_BODY_LINES = 10`) en om dezelfde reden: het aantal dat telt is het aantal berichten, niet het aantal gebeurtenissen.
+Voor het postvak is de draad genoeg. Voor de push-kanalen niet, want daar gaat elk bericht als een eigen bezorging de deur uit: bij mail en Mattermost als een aflevering in de outbox, bij de webhook als een aanroep op het watermerk. **Een melding per ontvanger per venster, met de gebeurtenissen erin gegroepeerd,** en niet een melding per gebeurtenis. Dit is dezelfde keuze die de log watcher al maakt (een ntfy-bericht met maximaal tien regels, gegroepeerd, `MAX_BODY_LINES = 10`) en om dezelfde reden: het aantal dat telt is het aantal berichten, niet het aantal gebeurtenissen.
 
 ### Wat er gebeurt bij een herstart
 
 De log watcher heeft hier vandaag een bekend gat: `self._state: dict[str, str] = {}` in `opi/core/logwatcher_scheduler.py:32`, met het commentaar "it resets on an OPI restart, which at worst repeats one alert". Voor een ntfy-topic is dat aanvaardbaar. Voor mail naar gebruikers is het dat niet: een herstart tijdens een uitrol zou iedereen een dubbele mail sturen.
 
-**Geen dedup-toestand in het geheugen.** Voor de push-kanalen hoort de laatst gemelde stand in dezelfde database als de gebeurtenissen, als een watermerk per abonnement (VOORSTEL: `reported_through`, een tijdstip). Melden is dan "alles sinds het watermerk, gegroepeerd", en het watermerk schuift pas op na een geslaagde bezorging. Een herstart midden in een melding levert dan hooguit een herhaling van een venster, en een bezorging die mislukt levert een herhaling in plaats van een gat.
+**Geen dedup-toestand in het geheugen.** De laatst gemelde stand hoort voor elk push-kanaal in dezelfde database als de gebeurtenissen, maar hij staat niet voor elk kanaal op dezelfde plek, en dat volgt uit punt 7. Voor mail en Mattermost is die stand de outboxrij zelf: die is er al voordat de bezorging begint, hij overleeft de herstart, en een rij die in `claimed` bleef staan wordt na een tijdsdrempel teruggezet. Voor de webhook per project, die geen ontvangerrij en dus geen outboxrij heeft, is het een watermerk per abonnement (VOORSTEL: `reported_through`, een tijdstip). Melden is daar "alles sinds het watermerk, gegroepeerd", en het watermerk schuift pas op na een geslaagde bezorging. In beide vormen levert een herstart midden in een melding hooguit een herhaling van een venster op, en een bezorging die mislukt een herhaling in plaats van een gat.
 
-**Een absolute bovengrens per abonnement per dag,** zodat een lus die duizend gebeurtenissen produceert niet duizend meldingen produceert. Bij overschrijding: een melding die zegt dat de grens is geraakt, met een verwijzing naar de tijdlijn. Dit is een noodrem, geen beleid.
+**Een absolute bovengrens per ontvanger en per abonnement per dag,** zodat een lus die duizend gebeurtenissen produceert niet duizend meldingen produceert. Bij overschrijding: een melding die zegt dat de grens is geraakt, met een verwijzing naar de tijdlijn. Dit is een noodrem, geen beleid.
 
 ## 4. Wie mag welke gebeurtenis zien
 
@@ -397,7 +397,7 @@ Er is dus **geen audittabel**. `plans/bio2-compliance-analysis.md` benoemt dat z
 **De BIO-kant, kort en concreet.** De relevante controls:
 
 - **A8.15 (logging)**: een gebeurtenissentabel met wie, wat, wanneer en waarover is precies wat daar ontbreekt. Gebeurtenissen leveren dat als bijvangst, mits de gebeurtenis de actor draagt.
-- **A8.16 (monitoring)**: het gaat over waarnemen, en dat doet Prometheus. Gebeurtenissen raken dit niet; de metriekhelft wel (deel 3, Kanaal 5).
+- **A8.16 (monitoring)**: het gaat over waarnemen, en dat doet Prometheus. Gebeurtenissen raken dit niet; de metriekhelft wel (deel 3, Kanaal 6).
 - **A5.24 (incidentbeheer)**: nu genoteerd als "errors logged but no escalation/notification". Dit is letterlijk wat hier gebouwd wordt.
 - **A5.28 (bewijs)**: vraagt om onveranderlijkheid. Dat is een ontwerpregel voor de gebeurtenissentabel: alleen invoegen, nooit bijwerken, nooit verwijderen binnen de bewaartermijn. De pseudonimisering uit punt 6 is de enige toegestane wijziging, en die is er een die verwijdert en niet toevoegt.
 
