@@ -89,6 +89,53 @@ paragraaf heeft en geen regel in een checklist.
    so it is probably built against 26.x, but its release notes state no compatibility. If it
    breaks, raise an issue at MinBZK/keycloak-theme.
 
+## Overweging bij deze upgrade: één jar, en misschien een eigen image
+
+Fase 0 laat zien hoeveel handwerk er aan de huidige opzet hangt: twee pom's naar 26.7, twee
+artefactversies omhoog, een versienummer dat in een BESTANDSNAAM staat en daardoor op vier
+plekken herhaald wordt, en een jar die met de hand als GitHub release gepubliceerd moet worden
+omdat de initContainer hem via een release-URL ophaalt. Dat komt bij elke volgende upgrade terug.
+
+Er staan bovendien twee leverwegen naast elkaar, en niemand heeft die combinatie gekozen. De
+relay-emailSender mag niet van het netwerk komen, want aan die jar hangt de startvlag
+`--spi-email-sender-provider` en Keycloak weigert te starten als de provider ontbreekt; een
+hapering bij GitHub zou het inloggen platleggen. De andere jar is ouder dan die eis en wordt nog
+bij elke podstart van github.com gehaald.
+
+Dat laatste is de zwakkere helft, en niet alleen voor het gemak. De providers in die jar dragen
+GEEN startvlag, dus als GitHub hapert komt Keycloak gewoon op, zonder
+`RequireClientRoleAuthenticator` (de rolcontrole van `restrict-access`) en zonder de SAML
+NameID-mapper. Stil verdergaan zonder die twee is een slechtere uitkomst dan niet opkomen.
+
+**Onze eigen providers passen in één jar.** Dat is geen nieuwe constructie: de custom-mapper-jar
+draagt vandaag al vijf providers over vier SPI's, en er `org.keycloak.email.EmailSenderProviderFactory`
+bij zetten is een regel in `META-INF/services/`. Gemeten op 28 augustus 2026:
+
+| | grootte | als base64 in een ConfigMap | van de 1 MiB-limiet |
+|---|---|---|---|
+| `keycloak-relay-email-sender-1.0.0.jar` | 9.583 bytes | ~13 KB | ~1% |
+| `keycloak-saml-nameid-mapper-1.1.0.jar` | 37.473 bytes | ~50 KB | ~5% |
+| allebei samengevoegd | ~47 KB | ~63 KB | ~6% |
+| `keycloak-nl-design-system.jar` (MinBZK) | 2.110.641 bytes | ~2,8 MB | **past niet** |
+
+Onze jars zijn klein omdat het een handvol klassen zonder afhankelijkheden zijn. Het externe thema
+past niet in een ConfigMap en blijft dus een eigen vraag, ook als de rest samengaat.
+
+Wat er dan te kiezen valt, en waarom het HIER thuishoort en niet als los project:
+
+- **Samenvoegen tot één jar, geleverd uit git.** Haalt de netwerkafhankelijkheid weg voor de
+  security-relevante providers, laat de handmatige releasestap vervallen en halveert het
+  versiewerk uit fase 0. Prijs: één versie voor alles, dus een reparatie aan de mailer rolt de
+  mapper mee uit.
+- **Een eigen klein Keycloak-image met alle drie de jars erin.** Lost ook het thema op en haalt
+  de initContainer helemaal weg. Prijs: een bouwpijplijn, een registry en een pin per cluster,
+  en op ODCN komt daar de image-rewrite naar `rcr` bij.
+- **Laten zoals het is.** Verdedigbaar, want het draait en het is gemeten. Dan is dit de plek
+  waar staat dat het een bewuste keuze was en niet een vergeten opruiming.
+
+Beslis dit vóór fase 0, want in fase 0 raak je beide jars, beide versies en de initContainer toch
+al aan. Los uitgevoerd is het dezelfde verbouwing een tweede keer.
+
 ## Phase 1: modernize the deployment manifest
 
 All changes in `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml`:
