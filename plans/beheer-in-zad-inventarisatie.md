@@ -56,8 +56,9 @@ een pagina nalaadt.
 
 ### Gebruikersbeheer (`/admin/users`)
 
-**Wat je kunt doen**: een gebruiker aanmaken, bewerken en verwijderen. Dat is de enige van de
-vijf pagina's waar je iets kunt veranderen.
+**Wat je kunt doen**: een gebruiker aanmaken, bewerken en verwijderen. Dit is de enige van de
+vijf pagina's met volledige CRUD op iets dat wordt opgeslagen; `/admin/approvals` legt wel een
+oordeel vast maar maakt niets aan en verwijdert niets.
 
 **Wat de tabel toont**: twee gegevenskolommen, volledige naam en e-mailadres, plus een
 knoppenkolom (`opi/templates_lotc/bg/admin-users.html.j2:49-64`). De ORM-tabel heeft ook niet
@@ -170,9 +171,13 @@ zes staat hard in de code en groeit niet mee met de diensten die het platform aa
 
 ### Wat opvalt als je de vijf naast elkaar zet
 
-Vier van de vijf zijn read-only. De vijfde beheert een toegangslijst zonder rollen. **Er is
-geen enkele pagina die over het platform als geheel gaat**: geen lijst van projecten met hun
-toestand, geen lijst van wat er vandaag mis ging, geen lijst van wat er op iemand wacht. De
+**Drie van de vijf zijn volledig read-only**: gebruik en kosten, dienstenstatus en de
+metrics-explorer, samen zeven van de zestien routes en alle zeven GET. Van de twee die wel iets
+doen, beheert er één een toegangslijst zonder rollen en legt de ander een oordeel vast over een
+aanvraag.
+
+**Er is geen enkele pagina die over het platform als geheel gaat**: geen lijst van projecten met
+hun toestand, geen lijst van wat er vandaag mis ging, geen lijst van wat er op iemand wacht. De
 vijf pagina's zijn vijf losse antwoorden op vijf losse vragen, en de vraag "hoe staat het
 ervoor" zit er niet bij.
 
@@ -241,7 +246,10 @@ geworden of afgevoerd").
 
 ### Waar het vinkje wordt uitgelezen
 
-Vier plekken in productiecode:
+**Vier plekken in productiecode, en niet zes.** De opdracht zegt "zes plekken", en dat getal is
+te herleiden: `grep -rn is_platform_admin --include="*.py" opi/` geeft **zes regels**, maar twee
+daarvan zijn geen aanroep. `opi/services/user_service.py:279` is de definitie zelf en
+`opi/web/router.py:2534` is een codecommentaar dat de naam noemt. De vier die overblijven:
 
 | Waar | Wat het doet |
 |---|---|
@@ -351,6 +359,14 @@ dus niet uit te voeren. Zie paragraaf 3.
 
 Alles hieronder is werk dat een platformbeheerder doet of moet kunnen doen, en dat niet achter
 een van de vijf menu-items zit.
+
+**Over de kolom "vorm"**: de opdracht noemt UI, API, CLI, Taskfile en `kubectl` als
+mogelijkheden. **"CLI" komt in de tabel niet voor**, en dat verdient een woord. De `zad-cli`
+staat niet in deze repository, dus wat hij kan is hier niet te meten; wat wel te meten is, is
+waar hij mee praat. Volgens `workflow/build.md:93` is dat de API, en de plannen die over hem
+gaan (`plans/een-project-aanmaken-vanaf-de-cli.md`, `plans/de-cli-vindt-zijn-eigen-projecten.md`,
+`plans/vragen-uit-zad-cli.md`) gaan alle drie over projectwerk. Voor beheerwerk is `Taskfile.yaml`
+wat die rol vervult, met 113 taken.
 
 | Wat | Waar het vandaag zit | Vorm | Wie mag |
 |---|---|---|---|
