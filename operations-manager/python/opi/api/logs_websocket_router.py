@@ -31,7 +31,8 @@ from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from itsdangerous import BadSignature, TimestampSigner
-from opi.connectors.kubectl import KubectlConnector
+from opi.api.logs_router import MAX_POD_NAME_LENGTH, resolve_component_pods
+from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.manager.run_support import LABEL_RUN
@@ -278,6 +279,38 @@ def _sanitize_log_line(line: str) -> str:
     return line
 
 
+async def _pod_belongs_to_component(
+    kubectl: KubectlConnector,
+    project_name: str,
+    deployment_name: str,
+    component: str,
+    pod_name: str,
+) -> bool:
+    """Whether ``pod_name`` is one of this component's pods, and may therefore be followed.
+
+    THIS IS THE WHOLE POINT OF THE POD PARAMETER'S SECURITY. A project namespace holds the
+    deployments of everyone on the team; without this check a member who guessed a pod name
+    could tail any of them, because ``kubectl logs <pod>`` does not care which component the
+    pod belongs to. Asked of ``resolve_component_pods`` so the answer is the same one the
+    pod-list endpoint gives -- a second implementation would be a second answer.
+
+    Also applied on ``switch``, not only when the socket opens: a connection that switched
+    component would otherwise keep a pod name that was validated against the previous one.
+    """
+    if not pod_name or len(pod_name) > MAX_POD_NAME_LENGTH:
+        logger.warning("Rejecting pod name of %d characters for %s", len(pod_name), project_name)
+        return False
+    pods = await resolve_component_pods(
+        kubectl,
+        project_name=project_name,
+        deployment_name=deployment_name,
+        component=component,
+    )
+    if not pods:
+        return False
+    return any(candidate.get("name") == pod_name for candidate in pods)
+
+
 def _retrieve_done_task_exceptions(done: set[asyncio.Task[Any]]) -> None:
     """Consume finished tasks' exceptions so asyncio does not later log
     "Future exception was never retrieved" when the Task is garbage-collected.
@@ -302,6 +335,8 @@ async def stream_logs(
     deployment: str = Query(..., description="Deployment name"),
     component: str = Query(..., description="Component reference name"),
     lines: int = Query(250, description="Initial historical lines", ge=1, le=1000),
+    pod: str | None = Query(None, description="One specific pod to follow, instead of every matching pod"),
+    previous: bool = Query(False, description="Read the pod's previous attempt instead of the running container"),
 ) -> None:
     """
     WebSocket endpoint for streaming deployment logs in real-time.
@@ -314,6 +349,13 @@ async def stream_logs(
         deployment: Deployment name within the project
         component: Component reference name
         lines: Number of historical log lines to retrieve initially
+        pod: A single pod to follow. Without it the label selector is used and the lines
+            of EVERY matching pod arrive interleaved -- which is the behaviour that made a
+            crashing pod unreadable next to a serving one. Never trusted: the name is
+            checked against the pods of this project/deployment/component before it
+            reaches a kubectl command, because the namespace holds the deployments of the
+            whole team.
+        previous: Read the pod's previous attempt. Only with ``pod``.
     """
     user_email: str | None = None
     process: asyncio.subprocess.Process | None = None
@@ -412,6 +454,17 @@ async def stream_logs(
                 return
 
             k8s_deployment_name = generate_unique_name(deployment, component)
+
+            # A pod name from the client only ever reaches kubectl after it has been
+            # found among THIS component's pods. Same function the pod-list endpoint
+            # uses, so the panel can never offer something the stream then refuses --
+            # and, more to the point, so a guessed name is never followed.
+            if pod is not None and not await _pod_belongs_to_component(
+                kubectl, project_name, deployment, component, pod
+            ):
+                await send_message(websocket, "error", message="Resource not found")
+                await websocket.close(code=4004)
+                return
         else:
             # Ad-hoc run pod (database console / job): the `deployment` param is the
             # pod's `app` label. Only allow it if that pod is actually a run bundle
@@ -423,6 +476,11 @@ async def stream_logs(
                 await websocket.close(code=4004)
                 return
             k8s_deployment_name = deployment
+            # The ad-hoc run path (database console, jobs) gets no pod selection: it is
+            # already one pod, addressed by its own label, and it has no component to
+            # validate a pod name against.
+            pod = None
+            previous = False
 
         await send_message(
             websocket,
@@ -440,6 +498,8 @@ async def stream_logs(
         # Shared state for tasks
         current_component = component
         current_k8s_name = k8s_deployment_name
+        current_pod = pod
+        current_previous = bool(pod and previous)
         sequence = 0
         paused = False
         running = True
@@ -457,6 +517,8 @@ async def stream_logs(
             deployment_name=current_k8s_name,
             namespace=namespace,
             lines=lines,
+            pod_name=current_pod,
+            previous=current_previous,
         )
 
         if process is None or process.stdout is None:
@@ -476,6 +538,55 @@ async def stream_logs(
         last_reattach_at = 0.0
         consecutive_quick_exits = 0
 
+        async def _restart_stream(*, tail: int) -> bool:
+            """Stop the running follower and start a fresh one for the CURRENT selection.
+
+            One place that does the terminate-drain-restart sequence, so the three callers
+            -- a component switch, a pod switch, and the fall back out of the
+            previous-attempt stand -- cannot each get a different part of it wrong. Leaving
+            a queue unemptied bleeds the old pod's lines into the new one; leaving the old
+            process running leaves a kubectl per switch.
+
+            Returns whether a stream is running afterwards.
+            """
+            nonlocal process, sequence
+
+            async with process_lock:
+                if process:
+                    logger.info(f"restart: terminating PID {process.pid}")
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=2.0)
+                    except OSError, TimeoutError:
+                        logger.warning(f"restart: terminate timeout, killing PID {process.pid}")
+                        with contextlib.suppress(OSError):
+                            process.kill()
+                            await asyncio.wait_for(process.wait(), timeout=5.0)
+                    process = None
+
+                # Clear queues so the previous selection's logs don't bleed through
+                while not log_queue.empty():
+                    try:
+                        log_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                while not stderr_queue.empty():
+                    try:
+                        stderr_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+
+                sequence = 0
+                process = await kubectl.stream_deployment_logs(
+                    deployment_name=current_k8s_name,
+                    namespace=namespace,
+                    lines=tail,
+                    pod_name=current_pod,
+                    previous=current_previous,
+                )
+                logger.info(f"restart: new process PID {process.pid if process else 'None'}")
+                return bool(process and process.stdout)
+
         async def drain_stdout() -> None:
             """Drain subprocess stdout into bounded queue, dropping oldest when full.
 
@@ -487,6 +598,14 @@ async def stream_logs(
             """
             nonlocal running, process, last_reattach_at, consecutive_quick_exits
             while running:
+                # In the previous-attempt stand there is nothing to follow: the container
+                # already stopped, the API hands over the stored log and kubectl exits.
+                # Reattaching there would re-dump the same closed logbook every few
+                # seconds forever, which reads as a stream that will not stop repeating
+                # itself.
+                if current_previous:
+                    await asyncio.sleep(1.0)
+                    continue
                 async with process_lock:
                     current_process = process
                     current_stdout = current_process.stdout if current_process else None
@@ -564,6 +683,7 @@ async def stream_logs(
                     deployment_name=current_k8s_name,
                     namespace=namespace,
                     lines=0,
+                    pod_name=current_pod,
                 )
                 last_reattach_at = time.monotonic()
                 async with process_lock:
@@ -662,7 +782,7 @@ async def stream_logs(
 
         async def read_stderr() -> None:
             """Read stderr from bounded queue and forward warnings."""
-            nonlocal running
+            nonlocal running, current_previous
 
             while running:
                 try:
@@ -679,6 +799,22 @@ async def stream_logs(
                 if any(s in sanitized_text for s in _BENIGN_KUBECTL_STDERR_SUBSTRINGS):
                     continue
 
+                # Er is geen vorige poging voor deze pod. Dat is geen storing en de rauwe
+                # kubectl-tekst ("Error from server (BadRequest): previous terminated
+                # container ... not found") leest wel als een. Zeg het in een zin en val
+                # terug op de gewone stroom, zodat het paneel niet leeg blijft.
+                if current_previous and is_previous_attempt_missing(sanitized_text):
+                    current_previous = False
+                    await send_message(
+                        websocket,
+                        "status",
+                        status="streaming",
+                        message="Deze pod heeft geen vorige poging; je kijkt naar de lopende stroom.",
+                        previous=False,
+                    )
+                    await _restart_stream(tail=lines)
+                    continue
+
                 await send_message(
                     websocket,
                     "log",
@@ -693,6 +829,7 @@ async def stream_logs(
         async def handle_client_messages() -> None:
             """Handle incoming messages from client."""
             nonlocal paused, current_component, process, sequence, current_k8s_name, running
+            nonlocal current_pod, current_previous
 
             while running:
                 try:
@@ -718,13 +855,33 @@ async def stream_logs(
                         await send_message(websocket, "status", status="streaming", message="Log streaming resumed")
 
                     elif action == "switch":
-                        new_component = data.get("component")
+                        new_component = data.get("component") or current_component
+                        component_changes = new_component != current_component
+                        # De podkeuze en de vorige-poging-stand horen bij dezelfde
+                        # omschakeling: het paneel wisselt van pod zonder van component te
+                        # wisselen, en de schakelaar "vorige poging" doet dat ook.
+                        # Ontbreekt de sleutel, dan blijft de huidige stand staan -- BEHALVE
+                        # bij een componentwissel, want een pod hoort bij een component. Hem
+                        # daar laten staan zou een pod van het vorige component doorgeven,
+                        # die de toets hieronder terecht weigert, en de gebruiker krijgt een
+                        # foutmelding op een wissel die hij gewoon vroeg.
+                        if "pod" in data:
+                            new_pod = data["pod"]
+                        elif component_changes:
+                            new_pod = None
+                        else:
+                            new_pod = current_pod
+                        new_previous = bool(data.get("previous", current_previous))
                         # Validate component name length to prevent memory issues
                         if new_component and len(new_component) > 256:
                             logger.warning("Component name too long in switch request")
                             await send_message(websocket, "error", message="Invalid component name")
                             continue
-                        if new_component and new_component != current_component:
+                        if new_pod is not None and not isinstance(new_pod, str):
+                            await send_message(websocket, "error", message="Invalid pod name")
+                            continue
+
+                        if component_changes:
                             # Re-fetch project data to get current components
                             fresh_project = get_project_store().get(project_name)
                             if fresh_project is None:
@@ -757,68 +914,43 @@ async def stream_logs(
                                 await send_message(websocket, "error", message="Component not found")
                                 continue
 
-                            # Stop current process and start new one
-                            logger.info("switch: acquiring process_lock")
-                            async with process_lock:
-                                logger.info("switch: lock acquired")
-                                if process:
-                                    logger.info(f"switch: terminating PID {process.pid}")
-                                    process.terminate()
-                                    try:
-                                        await asyncio.wait_for(process.wait(), timeout=2.0)
-                                        logger.info("switch: process terminated cleanly")
-                                    except OSError, TimeoutError:
-                                        logger.warning(f"switch: terminate timeout, killing PID {process.pid}")
-                                        with contextlib.suppress(OSError):
-                                            process.kill()
-                                            await asyncio.wait_for(process.wait(), timeout=5.0)
-                                        logger.info("switch: process killed")
+                        elif new_pod == current_pod and new_previous == current_previous:
+                            # Niets gewijzigd: geen omschakeling, geen leeg paneel.
+                            continue
 
-                                # Clear queues so old component logs don't bleed through
-                                while not log_queue.empty():
-                                    try:
-                                        log_queue.get_nowait()
-                                    except asyncio.QueueEmpty:
-                                        break
-                                while not stderr_queue.empty():
-                                    try:
-                                        stderr_queue.get_nowait()
-                                    except asyncio.QueueEmpty:
-                                        break
+                        # Een podnaam van de client wordt ook HIER getoetst en niet alleen
+                        # bij het openen: zonder dit kan iemand met een verbinding op zijn
+                        # eigen component een pod van een collega noemen in een switch.
+                        if new_pod is not None and not await _pod_belongs_to_component(
+                            kubectl, project_name, deployment, new_component, new_pod
+                        ):
+                            await send_message(websocket, "error", message="Resource not found")
+                            continue
 
-                                current_component = new_component
-                                current_k8s_name = generate_unique_name(deployment, current_component)
-                                sequence = 0
+                        current_component = new_component
+                        current_k8s_name = generate_unique_name(deployment, current_component)
+                        current_pod = new_pod
+                        current_previous = bool(new_pod and new_previous)
 
-                                await send_message(
-                                    websocket,
-                                    "status",
-                                    status="switching",
-                                    message=f"Switching to {new_component}",
-                                )
+                        await send_message(
+                            websocket,
+                            "status",
+                            status="switching",
+                            message=f"Switching to {new_pod or new_component}",
+                        )
 
-                                # Start new process
-                                logger.info(f"switch: starting new stream for {current_k8s_name}")
-                                process = await kubectl.stream_deployment_logs(
-                                    deployment_name=current_k8s_name,
-                                    namespace=namespace,
-                                    lines=lines,
-                                )
-                                logger.info(f"switch: new process PID {process.pid if process else 'None'}")
-
-                                if process and process.stdout:
-                                    await send_message(
-                                        websocket,
-                                        "status",
-                                        status="streaming",
-                                        message=f"Now streaming {new_component}",
-                                        component=new_component,
-                                    )
-                                else:
-                                    await send_message(
-                                        websocket, "error", message="Failed to start stream for component"
-                                    )
-                            logger.info("switch: process_lock released")
+                        if await _restart_stream(tail=lines):
+                            await send_message(
+                                websocket,
+                                "status",
+                                status="streaming",
+                                message=f"Now streaming {new_pod or new_component}",
+                                component=new_component,
+                                pod=current_pod,
+                                previous=current_previous,
+                            )
+                        else:
+                            await send_message(websocket, "error", message="Failed to start stream for component")
 
                 except TimeoutError:
                     continue

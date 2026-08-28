@@ -453,6 +453,60 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
         call_kwargs = mock_exec.call_args[1]
         self.assertEqual(call_kwargs["stderr"], asyncio.subprocess.PIPE)
 
+    @patch("opi.connectors.kubectl.asyncio.create_subprocess_exec")
+    async def test_stream_one_pod_names_the_pod_and_the_app_container(self, mock_exec):
+        """De podstand: een label-selector levert de regels van ALLE pods door elkaar."""
+        cmd = await self._command(mock_exec, pod_name="pr-114-profielservice-58cb9567c5-9t87d")
+
+        self.assertEqual(cmd[:4], ["kubectl", "logs", "-f", "pr-114-profielservice-58cb9567c5-9t87d"])
+        self.assertIn("-c", cmd)
+        self.assertEqual(cmd[cmd.index("-c") + 1], "app")
+        self.assertNotIn("-l", cmd)
+        self.assertNotIn("--previous", cmd)
+
+    @patch("opi.connectors.kubectl.asyncio.create_subprocess_exec")
+    async def test_stream_previous_attempt_adds_the_flag(self, mock_exec):
+        """De crash van pr-114 stond in de VORIGE poging; zonder deze vlag zie je niets."""
+        cmd = await self._command(mock_exec, pod_name="pr-114-profielservice-58cb9567c5-9t87d", previous=True)
+
+        self.assertIn("--previous", cmd)
+
+    @patch("opi.connectors.kubectl.asyncio.create_subprocess_exec")
+    async def test_stream_without_a_pod_keeps_the_label_selector(self, mock_exec):
+        """Het bestaande gedrag blijft byte-voor-byte het bestaande gedrag."""
+        cmd = await self._command(mock_exec)
+
+        self.assertEqual(
+            cmd,
+            ["kubectl", "logs", "-f", "-l", "app=test-deployment", "-n", "test-namespace", "--tail=100"],
+        )
+
+    async def _command(self, mock_exec, **kwargs) -> list[str]:
+        """Het kubectl-commando dat deze stand oplevert. Geen echte kubectl aan te pas."""
+        from opi.connectors.kubectl import KubectlConnector
+
+        mock_process = MagicMock()
+        mock_process.stdout = MagicMock()
+        mock_process.stderr = MagicMock()
+        mock_process.pid = 12345
+        mock_process.returncode = None
+        mock_exec.return_value = mock_process
+
+        connector = KubectlConnector()
+        if connector._retry_task:
+            connector._retry_task.cancel()
+            connector._retry_task = None
+
+        with patch.object(KubectlConnector, "isConnected", True):
+            await connector.stream_deployment_logs(
+                deployment_name="test-deployment",
+                namespace="test-namespace",
+                lines=100,
+                **kwargs,
+            )
+
+        return list(mock_exec.call_args[0])
+
     async def test_stream_deployment_logs_not_connected(self):
         """Test log streaming when kubectl is not connected."""
         from opi.connectors.kubectl import KubectlConnector
