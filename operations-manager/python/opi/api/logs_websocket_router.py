@@ -598,14 +598,6 @@ async def stream_logs(
             """
             nonlocal running, process, last_reattach_at, consecutive_quick_exits
             while running:
-                # In the previous-attempt stand there is nothing to follow: the container
-                # already stopped, the API hands over the stored log and kubectl exits.
-                # Reattaching there would re-dump the same closed logbook every few
-                # seconds forever, which reads as a stream that will not stop repeating
-                # itself.
-                if current_previous:
-                    await asyncio.sleep(1.0)
-                    continue
                 async with process_lock:
                     current_process = process
                     current_stdout = current_process.stdout if current_process else None
@@ -634,8 +626,19 @@ async def stream_logs(
                 # EOF on stdout — decide whether to reattach or just keep
                 # looping (the snapshot may be a process that's already been
                 # replaced by a component-switch).
+                #
+                # NIET in de vorige-poging-stand. Daar valt niets te volgen: de container
+                # is al gestopt, de API levert het bewaarde logboek en kubectl eindigt
+                # meteen. Opnieuw aanhaken zou datzelfde afgesloten logboek elke paar
+                # seconden opnieuw dumpen. De lus blijft wel gewoon LEZEN -- deze
+                # voorwaarde stond eerst boven aan de lus en sloeg daarmee de readline
+                # zelf over, waardoor de vorige poging op de sandbox nul regels gaf
+                # terwijl kubectl er twee had (gemeten 28 augustus 2026).
                 should_reattach = False
                 exited_quickly = False
+                if current_previous:
+                    await asyncio.sleep(0.5)
+                    continue
                 async with process_lock:
                     if process is not None and process.returncode is not None:
                         # If kubectl exited within ~1s the matched pod has no
