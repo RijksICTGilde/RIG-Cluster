@@ -16,7 +16,7 @@ Dit is deel 1 van drie. Het beschrijft alleen wat er is; de oplossingsrichtingen
 
 **Padconventie.** Een pad dat met `opi/`, `tests/` of `manifests/` begint is relatief aan `operations-manager/python/`; dat is de wortel van het Python-pakket. Elk ander pad is relatief aan de wortel van de repository. Dat onderscheid is nodig omdat de repository zelf ook een `docs/`, een `scripts/` en een `plans/` heeft.
 
-Regels die niet in code te controleren waren staan gemarkeerd als **niet geverifieerd**. Zelfbedachte namen komen in dit document niet voor; die staan in deel 2 en deel 3 en zijn daar als VOORSTEL gemarkeerd.
+Regels die niet in code te controleren waren staan gemarkeerd als **niet geverifieerd**. Zelfbedachte namen komen in dit document alleen als voorstel voor, en op twee plekken: de vijf taakgroepen in paragraaf 1, en de twaalf typen onder "De groepering naar type" onderaan, in een tabel waarvan de kopkolom letterlijk `Type (VOORSTEL)` heet en waarin die vijf opgaan. Uit die twaalf worden namen in deel 2 en deel 3 als identifier aangehaald. De overige zelfbedachte namen staan in deel 2 en deel 3 en zijn daar op dezelfde manier als VOORSTEL gemarkeerd.
 
 ## Woordkeuze
 
@@ -397,7 +397,7 @@ Dit is de tegenhanger van "bestaat nog niet, en de toestand ook niet": hier IS e
 - **Renderfouten van ArgoCD.** `features/argocd-render-error-surfacing.md` beschrijft hoe ze zichtbaar worden gemaakt; ze worden niet bewaard.
 - **Het onderscheid tussen een probe-kill en een echte crash.** `features/probe-kill-is-geen-crash.md` beschrijft de logica; de uitkomst wordt getoond, niet bewaard.
 
-Dit is de reden dat de gezondheidsregels in paragraaf 3 duurder zijn dan ze lijken, en het is de openstaande beslissing die deel 3 als laatste zet: gezondheidsovergangen vastleggen is het enige dat "sinds wanneer" echt beantwoordt, en tegelijk de grootste bron van ruis.
+Dit is de reden dat de gezondheidsregels in paragraaf 3 duurder zijn dan ze lijken, en het is de openstaande beslissing die deel 3 achteraan zet (beslissing 14 van de vijftien): gezondheidsovergangen vastleggen is het enige dat "sinds wanneer" echt beantwoordt, en tegelijk de grootste bron van ruis.
 
 ---
 
