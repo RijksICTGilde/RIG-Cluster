@@ -461,7 +461,7 @@ Plus een projecttijdlijn naast de deploymenttijdlijn, omdat een deel van deze br
 
 ### Fase 4: wie deed het
 
-**Wat**: de actor doorgeven op de menselijke en de agentwegen. De taakwegen dragen hem al (`created_by`, gezet in `opi/core/task_helpers.py:63`), de directe bewerkingswegen in `opi/web/router_detail_edit.py` niet. Plus de beveiligingsgebeurtenissen uit deel 1, paragraaf 7: een geweigerde allowlist-controle (`opi/middleware/authorization.py:117`), een geweigerde API-sleutel (`opi/api/endpoint_util.py`), een geweigerd bearer-token (`opi/api/user_token_auth.py:252`), elk met het `origin`-veld uit BIO2 8.15.01 erbij.
+**Wat**: de actor doorgeven op de menselijke en de agentwegen. De taakwegen dragen hem al (`created_by`, gezet in `opi/core/task_helpers.py:63`), de directe bewerkingswegen in `opi/web/router_detail_edit.py` niet. Plus de beveiligingsgebeurtenissen uit deel 1, paragraaf 7: een geweigerde allowlist-controle (`opi/middleware/authorization.py:117`), een geweigerde API-sleutel (`opi/api/endpoint_util.py`), een geweigerd bearer-token (`opi/api/user_token_auth.py:252`), elk met het `origin`-veld uit BIO2 8.15.01 erbij. **Dat zijn precies de drie soorten waarop de langere bewaartermijn uit deel 2 punt 6 staat**, en hun namen staan daar als gesloten lijst; fase 5 heeft die lijst nodig om meetbaar te zijn.
 
 **Waarde op zichzelf**: dit is de fase die de compenserende maatregel uit `features/bio-network-access-no-vpn-compliance.md` waarmaakt en die bevinding E uit `plans/technische-review-bio-en-nora-bevindingen.md` dicht: een verslag met een actor, dat langer bestaat dan een uur. Het is ook de fase die de openstaande regel uit de post-mortem-tijdlijn ("Controle toegang tot Wies/ZAD/Keycloak wijzigingen") in de toekomst beantwoordbaar maakt.
 
@@ -471,11 +471,11 @@ Plus een projecttijdlijn naast de deploymenttijdlijn, omdat een deel van deze br
 
 ### Fase 5: retentie en redactie
 
-**Wat**: een tweede lus in de outboxplanner, in de vorm van `cleanup_old_tasks` (`opi/core/async_task_service.py:670`), die na 90 dagen de actor pseudonimiseert in plaats van de rij te verwijderen, de rij na een jaar opruimt, en beveiligingsgebeurtenissen apart behandelt. Plus de redactiefunctie op de schrijfweg, zodat een connectorfout nooit ongefilterd in `data` belandt, en de opruiming die meeloopt met `UserAdminService.delete_user`.
+**Wat**: een tweede lus in de outboxplanner, in de vorm van `cleanup_old_tasks` (`opi/core/async_task_service.py:670`), die na 90 dagen `actor` en `origin` pseudonimiseert in plaats van de rij te verwijderen, de rij na een jaar opruimt, en daarbij de gesloten lijst beveiligingssoorten uit deel 2 punt 6 overslaat: een `type <> ALL (...)` in dezelfde `WHERE`, dus op de soort en niet op de categorie. Plus de redactiefunctie op de schrijfweg, zodat een connectorfout nooit ongefilterd in `data` belandt, en de opruiming die meeloopt met `UserAdminService.delete_user`.
 
 **Waarde op zichzelf**: de verwerking is begrensd en uitlegbaar, en de tabel groeit niet onbeperkt.
 
-**Verifieerbare uitkomst**: een gebeurtenis ouder dan de termijn heeft geen actor meer maar staat er verder nog steeds; een beveiligingsgebeurtenis van dezelfde leeftijd staat er nog wel volledig; een testgebeurtenis met een wachtwoord in het foutveld komt geredigeerd in de database terecht en niet pas geredigeerd op het scherm.
+**Verifieerbare uitkomst**: een gebeurtenis ouder dan de termijn heeft geen `actor` en geen `origin` meer maar staat er verder nog steeds, en dat geldt ook voor een gebeurtenis van categorie 12 die niet op de lijst staat (bijvoorbeeld "een gebruiker is gewijzigd"); een gebeurtenis van een soort die er wel op staat (`nl.rig.zad.beveiliging.sleutel-geweigerd.v1`) is op dezelfde leeftijd nog volledig, actor en oorsprong incluis; een testgebeurtenis met een wachtwoord in het foutveld komt geredigeerd in de database terecht en niet pas geredigeerd op het scherm.
 
 ### Fase 6: de webhook per project
 
@@ -552,11 +552,11 @@ Elk punt is met ja of nee te beantwoorden, of het is een vraag aan iemand buiten
 **5. Een eigen outboxplanner in de lifespan van `server.py`, niet de bestaande takenwerker.**
 *Aanbeveling: ja.* De takenwerker verwerkt een zware taak tegelijk; een melding zou achter een uitrol in de wachtrij komen. Een eigen planner is de vorm die er al zeven keer staat.
 
-**6. De bewaartermijnen: de actor gepseudonimiseerd na 90 dagen, de gebeurtenis weg na een jaar, gelezen meldingen 90 dagen, ongelezen meldingen zolang de gebeurtenis bestaat, afleveringen 30 dagen.**
+**6. De bewaartermijnen: de actor en de oorsprong gepseudonimiseerd na 90 dagen, de gebeurtenis weg na een jaar, gelezen meldingen 90 dagen, ongelezen meldingen zolang de gebeurtenis bestaat, afleveringen 30 dagen.**
 *Aanbeveling: ja.* Merk op dat dit veel langer is dan wat er nu voor taken geldt (een uur), en dat is de bedoeling: dat uur is precies het probleem dat dit oplost.
 
 **7. Hoe lang beveiligingsgebeurtenissen bewaard worden.**
-*Aanbeveling: langer dan 90 dagen, en het getal is niet vanuit de code te bepalen.* BIO2 8.15.04 vraagt een risicogerichte termijn met langdurig aanwezige aanvallers in gedachten. Dit is een gesprek met wie verantwoordelijk is voor de risicoafweging in `features/bio-network-access-no-vpn-compliance.md`. Dit is het enige punt in deze lijst dat de bouwer echt blokkeert zodra fase 4 landt.
+*Aanbeveling: langer dan 90 dagen, en het getal is niet vanuit de code te bepalen.* BIO2 8.15.04 vraagt een risicogerichte termijn met langdurig aanwezige aanvallers in gedachten. Dit is een gesprek met wie verantwoordelijk is voor de risicoafweging in `features/bio-network-access-no-vpn-compliance.md`. Dit is het enige punt in deze lijst dat de bouwer echt blokkeert zodra fase 4 landt. Wat hier NIET meer open staat is welke gebeurtenissen het betreft: deel 2 punt 6 geeft daarvoor een gesloten lijst van soorten, en uitdrukkelijk niet de hele categorie 12.
 
 **8. Het platformaccount op de relay krijgt een weergavenaam ("ZAD"), en geen eigen plusdeel-adres.**
 *Aanbeveling: ja.* De machinerie bestaat (`set_sender_name`), het adres blijft het kale `noreply-rijksapp@rijksoverheid.nl`, en de conventie "plusdeel = project" blijft intact.
