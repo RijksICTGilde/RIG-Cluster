@@ -4731,10 +4731,20 @@ class ProjectManager:
             # These can be plain text or AGE-encrypted values
             env_vars = helmfile_ref.get("env-vars", {})
             if env_vars and isinstance(env_vars, dict):
+                # Only fetched when an encrypted value is actually present, so a
+                # project without one keeps working even if no key is configured.
+                env_private_key: str | None = None
                 for key, value in env_vars.items():
                     # Decrypt if value is AGE-encrypted
                     if isinstance(value, str) and "-----BEGIN AGE ENCRYPTED FILE-----" in value:
-                        decrypted_value = await decrypt_age_content(value, private_key)
+                        if env_private_key is None:
+                            env_private_key = await self._sops_private_key_for(project_data)
+                        if not env_private_key:
+                            raise ValueError(
+                                f"Helmfile deployment {deployment_name} has AGE-encrypted env var "
+                                f"'{key}' but no project age-private-key is configured"
+                            )
+                        decrypted_value = await decrypt_age_content(value, env_private_key)
                         cmp_env_vars.append(f"{key}={decrypted_value}")
                     else:
                         cmp_env_vars.append(f"{key}={value}")
