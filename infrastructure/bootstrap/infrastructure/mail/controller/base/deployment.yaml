@@ -150,15 +150,28 @@ spec:
           # allebei 200 ZONDER inloggegevens, wat nodig is want een probe stuurt die niet
           # mee. Wat we ermee opgeven: dat de probe bewijst dat poort 2525 gebonden is.
           # Wat we ervoor terugkrijgen: een relay die na een dag nog post aanneemt.
-          # Een startupProbe, want liveness hoort het opstarten niet te bewaken. GEMETEN op
-          # fundament-poc 26-08-2026: met het egressbeleid dicht duurt het 60 seconden
-          # voor Stalwart zijn eerste logregel schrijft en poort 8080 bindt; met poort
-          # 80/443 tijdelijk open is dat 0 seconden. Er zit dus nog een uitgaande fetch in
-          # de start die pas op de TCP-timeout opgeeft, bovenop de twee die al uitgezet
-          # zijn (webadmin en asn). Zolang die niet gevonden is, kilde de liveness-probe
-          # (20s + 3 x 10s) de pod net voordat hij klaar was: een herstartlus waarin de
-          # container zelf niets fout doet. De startupProbe geeft hem 150 seconden en pas
-          # daarna begint liveness te tellen.
+          # De startupProbe is het VANGNET onder de twee hieronder, en liveness hoort het
+          # opstarten sowieso niet te bewaken. Hij staat er om een gemeten reden.
+          #
+          # De storing van 21 augustus 2026 was een crashloop ZONDER ook maar een logregel:
+          # Stalwart doet een blokkerende download voordat zijn logger bestaat, de
+          # liveness-probe kilde op ~50 seconden terwijl de listeners op 60 seconden bonden,
+          # en dat herhaalde zich eindeloos.
+          #
+          # WAT DIE DOWNLOAD IS, is inmiddels bekend. Op fundament-poc gemeten op 26 augustus
+          # (met het egressbeleid dicht 60 seconden tot de eerste logregel, met poort 80/443
+          # tijdelijk open 0 seconden) en op 29 augustus thuisgebracht door de relay tijdelijk
+          # op een eigen CoreDNS te zetten die vragen logt: hij zoekt `public.pyzor.org` op en
+          # hangt daarna tot de TCP-timeout. Pyzor is een gedeeld spamfilternetwerk. Dat is de
+          # derde opstart-fetch, naast de webadmin-bundel en de ASN/Geo-download die al
+          # uitstaan; hem uitzetten in config.toml staat op de lijst in TODO.md.
+          #
+          # Zolang deze probe loopt, staan liveness en readiness stil. 30 x 5 seconden geeft
+          # de start 150 seconden ruimte. Daarmee wordt een trage start voortaan ZICHTBAAR
+          # traag - de pod blijft 0/1 met een oplopende teller - in plaats van een
+          # herstartlus die eruitziet als een kapotte applicatie. Op dezelfde managementpoort
+          # als de andere twee, dus ook deze opent geen mailsessie en telt niet mee in
+          # queue.limiter.inbound.platform.
           startupProbe:
             httpGet:
               path: /healthz/live

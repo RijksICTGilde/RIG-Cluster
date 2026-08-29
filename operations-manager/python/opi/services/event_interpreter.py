@@ -748,3 +748,86 @@ def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
             enriched["original_message"] = message
             return enriched
     return error
+
+
+# --- Componentfouten groeperen voor de voortgangspagina --------------------------------
+#
+# Zestien kapotte componenten leverden zestien losse meldingen op, elk met dezelfde
+# suggestie van ruim vierhonderd tekens eronder. Dat leest niet als zes problemen maar als
+# een muur, en juist het verband -- welke componenten hebben HETZELFDE probleem -- was
+# nergens te zien.
+#
+# Groeperen gebeurt op de vertaalde titel, niet op de rauwe message: twee componenten die
+# allebei hun image niet kunnen ophalen zijn voor de lezer één ding, ook al verschilt de
+# registry-tekst per image. De suggestie is per titel praktisch identiek (dezelfde raad,
+# een ander voorbeeld-image), dus daarvan blijft er één staan.
+
+
+def group_component_failures(failures: list[dict] | None) -> list[dict]:
+    """Vat een platte lijst componentfouten samen tot één groep per soort probleem.
+
+    Elke groep draagt de vertaalde titel, de ernst, de betrokken componenten (per
+    deployment) en één suggestie. De volgorde van binnenkomst blijft behouden, zodat de
+    lijst niet van run tot run wisselt.
+
+    Returns:
+        Een lijst groepen met ``title``, ``severity``, ``failure_type``, ``suggestion``,
+        ``suggestion_is_example`` (waar als de leden verschillende suggesties hadden),
+        ``component_count``, ``deployments`` (lijst van ``{"name", "components"}``) en
+        ``members`` (de oorspronkelijke fouten, voor de logboeklinks per component).
+    """
+    if not failures:
+        return []
+
+    groups: dict[tuple[str, str], dict] = {}
+    for failure in failures:
+        title = failure.get("title") or failure.get("message") or "Onbekend probleem"
+        failure_type = failure.get("failure_type") or ""
+        key = (title, failure_type)
+        group = groups.get(key)
+        if group is None:
+            group = {
+                "title": title,
+                "failure_type": failure_type,
+                # Een groep is zo ernstig als zijn ernstigste lid: één component waar de
+                # gebruiker iets aan moet doen maakt de hele groep actionable.
+                "severity": failure.get("severity") or EventSeverity.ACTIONABLE.value,
+                "suggestion": failure.get("suggestion") or "",
+                # De suggesties binnen een groep verschillen als ze een image noemen: elk
+                # component heeft zijn eigen image. Er wordt er EEN getoond -- twaalf keer
+                # dezelfde raad met een ander voorbeeld erin is de muur die we juist
+                # weghalen -- maar dan moet er wel bij staan dat het een voorbeeld is.
+                "suggestions_seen": set(),
+                "deployments": {},
+                "members": [],
+            }
+            groups[key] = group
+        elif failure.get("severity") == EventSeverity.ACTIONABLE.value:
+            group["severity"] = EventSeverity.ACTIONABLE.value
+
+        if failure.get("suggestion"):
+            group["suggestions_seen"].add(failure["suggestion"])
+
+        deployment = failure.get("deployment") or ""
+        component = failure.get("component") or ""
+        components = group["deployments"].setdefault(deployment, [])
+        if component and component not in components:
+            components.append(component)
+        group["members"].append(failure)
+
+    result = []
+    for group in groups.values():
+        deployments = [{"name": name, "components": comps} for name, comps in group["deployments"].items()]
+        result.append(
+            {
+                "title": group["title"],
+                "failure_type": group["failure_type"],
+                "severity": group["severity"],
+                "suggestion": group["suggestion"],
+                "suggestion_is_example": len(group["suggestions_seen"]) > 1,
+                "deployments": deployments,
+                "component_count": sum(len(d["components"]) for d in deployments),
+                "members": group["members"],
+            }
+        )
+    return result

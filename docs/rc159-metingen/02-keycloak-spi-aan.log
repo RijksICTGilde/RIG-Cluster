@@ -1,0 +1,5 @@
+2026-08-26 08:19:29,021 WARN  [org.key.services] (build-13) KC-SERVICES0047: zad-relay (nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory) is implementing the internal SPI emailSender. This SPI is internal and may change without notice
+	kc.sh start --proxy-headers=forwarded --hostname-strict=false --spi-theme-welcome-theme=nl-design-system --spi-email-sender-provider=zad-relay --optimized
+2026-08-26 08:19:47,767 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory] (main) ZAD-RELAY 1.0.0: aangezet, relay rig-mail-relay.rig-ron.svc.cluster.local:587 als zad-keycloak, afzender noreply-inloggen@rijksoverheid.nl
+2026-08-26 08:21:08,618 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY: bericht gaat naar de relay rig-mail-relay.rig-ron.svc.cluster.local:587; smtpServer van de realm genegeerd (8 sleutels, eigen host: true)
+2026-08-26 08:21:08,710 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY: bericht aangeboden aan de relay

@@ -770,6 +770,33 @@ def generate_mail_sender_address(base_address: str, project_name: str) -> str:
     return f"{local_part}+{mail_project_label(project_name)}@{domain}"
 
 
+def generate_keycloak_sender_address(base_address: str, local_part: str) -> str:
+    """The address Keycloak's login mail leaves under: ``<local_part>@<domain>``.
+
+    Its own LOCAL part so a recipient, and a bounce, can tell login mail from the portal's
+    own post. The DOMAIN is taken from the cluster's bare address and is not settable:
+    envelope and ``From:`` must stay in one domain or DMARC fails, and the envelope keeps
+    the derived address.
+
+    No plus part, unlike a project address. ``zad-keycloak`` sends for every realm at once,
+    so there is no single project to name -- which is exactly the limitation that would end
+    the one-account arrangement if per-realm branding were ever wanted.
+
+    Args:
+        base_address: The cluster's bare sender address, e.g. ``noreply-rijksapp@rijksoverheid.nl``
+        local_part: The local part Keycloak sends under, e.g. ``noreply-inloggen``
+
+    Returns:
+        Keycloak's sender address
+
+    Example:
+        >>> generate_keycloak_sender_address("noreply-rijksapp@rijksoverheid.nl", "noreply-inloggen")
+        'noreply-inloggen@rijksoverheid.nl'
+    """
+    _, _, domain = base_address.partition("@")
+    return f"{local_part}@{domain}"
+
+
 def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:
     """
     Generate a consistent Redis key prefix (bare namespace token).
@@ -2021,13 +2048,7 @@ def get_deployment_hostnames(
     # files migrated to ``component.subdomain`` (schema v2.8), and the same pair gates the
     # root INGRESS in project_manager, so the Keycloak redirect list and the ingress set
     # cannot disagree.
-    if (
-        domain_approved
-        and domain_format in ROOT_COMPONENT_FORMAT_IDS
-        and root_component
-        and subdomain
-        and base_domain
-    ):
+    if domain_approved and domain_format in ROOT_COMPONENT_FORMAT_IDS and root_component and subdomain and base_domain:
         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)

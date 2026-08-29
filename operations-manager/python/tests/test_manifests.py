@@ -735,6 +735,91 @@ class TestRenderRealTemplates:
         )
         assert "cert: |" in result
 
+    def test_generic_secret_backslash_value(self):
+        """Values with a backslash (passwords, connection strings) must be
+        JSON-escaped before quoting; a naive "..." wrap turns them into
+        invalid YAML escapes and SOPS refuses to encrypt the file
+        ("found unknown escape character")."""
+        pairs = {
+            "password": r"p@\ssw\d",  # invalid YAML escapes \s and \d
+            "windows_path": r"C:\Apps\rig",  # \U is a YAML escape prefix expecting hex
+            "quote_and_backslash": 'q"\\c',  # both triggers at once
+        }
+        result = render_template(
+            "generic-secret.yaml.to-sops.jinja",
+            {"name": "s", "namespace": "ns", "secret_pairs": pairs},
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["stringData"] == pairs
+
+    def test_generic_secret_carriage_return_value(self):
+        """A lone carriage return does not hit the block-scalar branch, and inside a
+        quoted scalar YAML folds it into a space. Unescaped it fails silently: the pod
+        gets a different value than the user typed, with nothing in the log."""
+        pairs = {"folded": "regel1\rregel2", "trailing": "eind\r"}
+        result = render_template(
+            "generic-secret.yaml.to-sops.jinja",
+            {"name": "s", "namespace": "ns", "secret_pairs": pairs},
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["stringData"] == pairs
+
+    def test_generic_secret_astral_character_value(self):
+        """``| tojson`` writes an astral character as a surrogate pair, which SOPS
+        rejects outright ("found invalid Unicode character escape code") -- the same
+        aborted deployment as an unescaped backslash, one encoding layer down."""
+        pairs = {"emoji": "sleutel-\U0001f511", "euro": "prijs-\u20ac"}
+        result = render_template(
+            "generic-secret.yaml.to-sops.jinja",
+            {"name": "s", "namespace": "ns", "secret_pairs": pairs},
+        )
+        assert "\\ud83d" not in result, "surrogate pair leaked into the manifest"
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["stringData"] == pairs
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "gewoon-wachtwoord",
+            r"C:\Apps\rig",
+            r"^\d{4}\s+[a-z]",
+            'quote"in"waarde',
+            'beide"en\\',
+            "regel1\rregel2",
+            "tab\there",
+            "wachtwoord ",
+            " voorloopspatie",
+            "unicode-\u00e9\u00e9n-\u20ac",
+            "sleutel-\U0001f511",
+            "a\u2028b",
+            "a\u0085b",
+            "a: b #geen commentaar",
+            "0755",
+            "true",
+            "~",
+            "*",
+            "x" * 500,
+        ],
+    )
+    def test_generic_secret_value_round_trips(self, value):
+        """Whatever a tenant puts in an env var must come out of the manifest byte for
+        byte. This sweep is the durable detector: it fails on any quoting scheme that
+        drops, folds or re-encodes a legal value instead of escaping it."""
+        result = render_template(
+            "generic-secret.yaml.to-sops.jinja",
+            {"name": "s", "namespace": "ns", "secret_pairs": {"k": value}},
+        )
+        yaml = YAML()
+        assert yaml.load(result)["stringData"]["k"] == value
+
+        # One key per line: a folded scalar rewrites runs of whitespace, so a wrapped
+        # long value would round-trip here but change once YAML folding kicks in.
+        body = result.split("stringData:\n", 1)[1]
+        assert len(body.strip("\n").split("\n")) == 1
+
     def test_deployment_template_with_authorization_wall_sidecar(self):
         result = render_template(
             "deployment.yaml.jinja",

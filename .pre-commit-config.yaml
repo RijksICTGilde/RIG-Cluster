@@ -1,6 +1,14 @@
-# Hooks that rewrite files run at pre-commit only. At pre-push pre-commit
-# stashes the working tree, so an auto-fix there conflicts with the stash and
-# aborts the push ("Stashed changes conflicted with hook auto-fixes").
+# Alles draait op pre-commit. Er staat bewust GEEN pre-push-stage meer in dit bestand.
+#
+# Pre-commit stasht bij pre-push de hele werkboom. Dat gaf twee soorten problemen: een
+# hook die bestanden herschrijft botst met die stash en breekt de push af ("Stashed
+# changes conflicted with hook auto-fixes"), en in een gedeelde checkout verdwijnt het
+# niet-gecommitte werk van iedereen die op dat moment meewerkt onder je vandaan.
+#
+# De twee hooks die hier stonden (pytest en pip-audit) draaien onveranderd in CI:
+# .github/workflows/ci.yml met dezelfde testselectie, .github/workflows/security.yml met
+# hetzelfde pip-audit-commando, bij elke push naar main en bij elke pull request. Lokaal
+# zijn ze er ook nog: `task security-audit` en `uv run pytest` in operations-manager/python.
 default_stages: [pre-commit]
 
 repos:
@@ -43,24 +51,3 @@ repos:
         language: system
         files: ^operations-manager/python/.*\.(html|html\.j2)$
         pass_filenames: false
-
-      # Pre-push hooks: run before `git push`, not on every commit.
-      # Install once with: pre-commit install --hook-type pre-push
-      #
-      # pytest excludes tests/integration (slow, ~5 min) — CI runs those. The
-      # unit subset is ~45s locally and catches the failures we saw today.
-      - id: pytest
-        name: pytest (unit tests)
-        entry: uv run --directory operations-manager/python pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q --tb=line -o log_cli=false -m "not slow and not e2e and not requires_infra and not sandbox"
-        language: system
-        files: ^operations-manager/python/.*\.py$
-        pass_filenames: false
-        stages: [pre-push]
-
-      - id: pip-audit
-        name: pip-audit (dependency CVEs)
-        entry: uv run --directory operations-manager/python pip-audit --strict --desc --skip-editable -s osv
-        language: system
-        files: ^operations-manager/python/(pyproject\.toml|uv\.lock)$
-        pass_filenames: false
-        stages: [pre-push]

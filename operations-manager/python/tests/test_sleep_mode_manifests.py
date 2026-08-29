@@ -65,6 +65,47 @@ class TestSelectWakerComponent:
         config = SleepModeConfig(enabled=True, waker_component="worker")
         assert manifests.select_waker_component(project, project["deployments"][0], config, handler) is None
 
+    def test_a_component_behind_the_authorization_wall_is_excluded(self, handler: ProjectFileHandler) -> None:
+        """Same reason as passthrough TLS: the waker cannot serve that hostname the way it
+        is meant to be served.
+
+        The wall moves the Service to the oauth2-proxy port and the waker carries no
+        sidecars, so a waker there answers on the proxy's port WITHOUT the proxy. An
+        anonymous visitor would get the application's title and a button that starts it,
+        on a hostname whose entire purpose is that it is not anonymous.
+        """
+        project = _project(
+            [{"name": "frontend", "services": ["publish-on-web", "authorization-wall"]}],
+            [{"reference": "frontend"}],
+        )
+        config = SleepModeConfig(enabled=True)
+        assert manifests.select_waker_component(project, project["deployments"][0], config, handler) is None
+
+    def test_naming_a_walled_component_explicitly_does_not_override_it(self, handler: ProjectFileHandler) -> None:
+        """Asking for it by name is not consent to publish it unauthenticated."""
+        project = _project(
+            [
+                {"name": "frontend", "services": ["publish-on-web"]},
+                {"name": "admin", "services": ["publish-on-web", "authorization-wall"]},
+            ],
+            [{"reference": "frontend"}, {"reference": "admin"}],
+        )
+        config = SleepModeConfig(enabled=True, waker_component="admin")
+        assert manifests.select_waker_component(project, project["deployments"][0], config, handler) is None
+
+    def test_an_unwalled_component_next_to_a_walled_one_is_still_picked(self, handler: ProjectFileHandler) -> None:
+        """Excluding the walled one must not take the whole deployment down with it: with
+        one candidate left, that candidate is the waker."""
+        project = _project(
+            [
+                {"name": "frontend", "services": ["publish-on-web"]},
+                {"name": "admin", "services": ["publish-on-web", "authorization-wall"]},
+            ],
+            [{"reference": "frontend"}, {"reference": "admin"}],
+        )
+        config = SleepModeConfig(enabled=True)
+        assert manifests.select_waker_component(project, project["deployments"][0], config, handler) == "frontend"
+
     def test_passthrough_tls_excluded(self, handler: ProjectFileHandler) -> None:
         project = _project(
             [
@@ -98,6 +139,7 @@ class TestBuildWakerDeploymentValues:
             project_name="proj",
             deployment_name="PR-1",
             cluster="local",
+            port=8080,
         )
         assert values["object_name"] == "PR-1-frontend-waker"
         assert values["name"] == "PR-1-frontend"
@@ -113,7 +155,7 @@ class TestBuildWakerDeploymentValues:
 
         monkeypatch.setattr(settings, "SLEEP_MODE_WAKER_IMAGE", "zad-waker:test")
         values = manifests.build_waker_deployment_values(
-            app_name="a", namespace="ns", project_name="p", deployment_name="PR-1", cluster="local"
+            app_name="a", namespace="ns", project_name="p", deployment_name="PR-1", cluster="local", port=8080
         )
         assert values["imagePullPolicy"] == "IfNotPresent"
 
@@ -124,6 +166,7 @@ class TestBuildWakerDeploymentValues:
             project_name="proj",
             deployment_name="PR-1",
             cluster="local",
+            port=8080,
             generated_at="2026-01-01T00:00:00Z",
         )
         doc = YAML().load(render_template("deployment.yaml.jinja", values))
@@ -148,6 +191,7 @@ class TestBuildWakerConfigmapValues:
             component_reference="frontend",
             config=config,
             cluster="local",
+            port=8080,
         )
         data = values["data"]
         assert values["name"] == "PR-1-frontend-waker-config"
@@ -168,6 +212,7 @@ class TestBuildWakerConfigmapValues:
             component_reference="frontend",
             config=config,
             cluster="local",
+            port=8080,
         )
         assert values["data"]["ZAD_APP_TITLE"] == "proj - PR-9"
 
@@ -181,7 +226,77 @@ class TestBuildWakerConfigmapValues:
             component_reference="frontend",
             config=config,
             cluster="local",
+            port=8080,
         )
         doc = YAML().load(render_template("configmap.yaml.jinja", values))
         assert doc["kind"] == "ConfigMap"
         assert doc["data"]["ZAD_DEPLOYMENT"] == "PR-1"
+
+
+class TestTheWakerListensWhereTheServiceSends:
+    """The waker has no Service of its own; it joins the application's by carrying the
+    same ``app`` label. So its port is not a property of the waker, it is a property of
+    the Service it sits behind, and the two drifting apart is invisible: the Service
+    selects the pod, the pod passes its own probes, and the hostname answers nothing.
+
+    That is what a hardcoded 8080 did. On production, wies serves on 8000 and had sixteen
+    sleeping previews with no waiting page; asses-k2n happens to use 8080 and worked.
+    """
+
+    def test_the_container_port_follows_the_service(self) -> None:
+        values = manifests.build_waker_deployment_values(
+            app_name="pr-274-frontend",
+            namespace="rig-prd-wies",
+            project_name="wies",
+            deployment_name="pr-274",
+            cluster="odcn-production",
+            port=8000,
+        )
+        assert values["inbound_ports"] == [8000]
+        assert values["application_port"] == 8000
+
+        doc = YAML().load(render_template("deployment.yaml.jinja", values))
+        container = doc["spec"]["template"]["spec"]["containers"][0]
+        assert container["ports"][0]["containerPort"] == 8000
+        # The probes ride along, or a correct container port would still be reported
+        # unhealthy on the old one.
+        assert container["readinessProbe"]["httpGet"]["port"] == 8000
+        assert container["livenessProbe"]["httpGet"]["port"] == 8000
+
+    def test_the_process_is_told_the_same_port(self) -> None:
+        """Declaring the container port is half of it: the image has to listen there too,
+        and it reads ZAD_PORT (default 8080 when absent, so an older image is unchanged)."""
+        values = manifests.build_waker_configmap_values(
+            app_name="pr-274-frontend",
+            namespace="rig-prd-wies",
+            project_name="wies",
+            deployment_name="pr-274",
+            component_reference="frontend",
+            config=SleepModeConfig(enabled=True),
+            cluster="odcn-production",
+            port=8000,
+        )
+        assert values["data"]["ZAD_PORT"] == "8000"
+
+    def test_the_manifest_and_the_configmap_never_disagree(self) -> None:
+        """The two halves come from one argument, so they cannot drift apart."""
+        for port in (8000, 8080, 3000):
+            deployment = manifests.build_waker_deployment_values(
+                app_name="a",
+                namespace="ns",
+                project_name="p",
+                deployment_name="d",
+                cluster="local",
+                port=port,
+            )
+            configmap = manifests.build_waker_configmap_values(
+                app_name="a",
+                namespace="ns",
+                project_name="p",
+                deployment_name="d",
+                component_reference="c",
+                config=SleepModeConfig(enabled=True),
+                cluster="local",
+                port=port,
+            )
+            assert deployment["application_port"] == int(configmap["data"]["ZAD_PORT"])

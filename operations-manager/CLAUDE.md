@@ -190,3 +190,18 @@ uv run pytest tests/ -k "test_name" -q     # Specific test
 ```
 
 Note: templates live in `opi/templates_lotc/`; `opi/templates/` (jinja-roos) is gone since RC-67.
+
+### The test Postgres
+
+The 80 ORM-backed tests (the `orm_db` fixture) need a real Postgres. They share **one**
+long-lived container named `zad-test-postgres` on port 55432 (`ZAD_TEST_PG_PORT` to change
+it), and each pytest run gets its own database inside it (`zad_test_<pid>`), dropped when
+the run ends. Databases left by a run that died are swept at the start of the next one.
+
+The container is supposed to stay up between runs -- that is what stops it from ever
+becoming an orphan you have to hunt for. Remove it whenever you like:
+
+```bash
+task test-db-stop    # docker rm -f zad-test-postgres
+task test-db-reset   # remove it, then let the next run recreate it
+```

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Iterator
 
 
 @pytest.fixture
@@ -247,102 +247,157 @@ def reset_readiness_state() -> Any:
 
 
 # --- Real Postgres for ORM-backed repository tests (RC-5 persistence phase 2) --------
-# A throwaway Postgres (testcontainers) so service-owned ORM repositories are tested
-# against real SQL -- ON CONFLICT uniqueness, transactions -- not mocks. Session-scoped
-# container; each `orm_db` test starts from a truncated schema.
+# Een ECHTE Postgres, zodat de ORM-repositories van de diensten tegen echt SQL draaien
+# (ON CONFLICT-uniciteit, transacties) en niet tegen mocks.
+#
+# Eén server met een vaste naam, die blijft staan; per pytest-sessie een eigen database
+# erin. Dat is de hele regeling, en ze vervangt drie mechanismen die er eerder omheen
+# stonden (een wegwerpcontainer per run, een label met de pid van de maker, een veeg over
+# achtergebleven containers, en Ryuk met een socket-override). Wat die moesten dekken was
+# steeds hetzelfde: een run die hard eindigt laat zijn Postgres draaien, want die container
+# hangt onder de Docker-daemon en niet onder pytest. Gemeten op 20 augustus 2026 stonden er
+# elf, de oudste 45 uur.
+#
+# Een container die per definitie blijft staan kan dat niet lekken. Er is er één, hij heet
+# altijd hetzelfde, en opruimen is gewoon werk dat een mens doet:
+#
+#     task test-db-stop     # docker rm -f zad-test-postgres
+#     task test-db-reset    # weg en opnieuw
+#
+# Het lek verhuist daarmee naar de databases IN die server, en dat is een ruil die de
+# moeite waard is: die kosten niets, zijn onzichtbaar, en de veeg hieronder haalt ze weg
+# zodra hun maker dood is.
+
+#: Vaste naam, want daar draait dit hele ontwerp om: wat een mens kan noemen, kan hij
+#: opruimen.
+ZAD_TEST_PG_CONTAINER = "zad-test-postgres"
+ZAD_TEST_PG_IMAGE = "postgres:16-alpine"
+ZAD_TEST_PG_PASSWORD = "zadtest"
+#: Alleen van belang bij het AANMAKEN. Staat de container er al, dan lezen we zijn
+#: werkelijke poort uit Docker: die is leidend, anders praat een tweede run tegen een
+#: poort waar niets luistert.
+ZAD_TEST_PG_PORT = os.environ.get("ZAD_TEST_PG_PORT", "55432")
+#: Prefix van de database per run. ``zad_test_<pid>``: de pid maakt een verweesde database
+#: herkenbaar, precies zoals het pid-label dat eerder voor containers deed.
+ZAD_TEST_DB_PREFIX = "zad_test_"
 
 
-#: Ons eigen etiket op de wegwerp-Postgres. Testcontainers zet er zelf ook een op
-#: (``org.testcontainers``), maar dat draagt elk project dat deze bibliotheek gebruikt, en
-#: op deze machine draaien er meer. Wij ruimen alleen op wat van ons is.
-ORM_CONTAINER_LABEL = "nl.rijksapp.zad.orm-test"
-#: De pid van de pytest-run die de container maakte. Dit is wat een DRAAIENDE wees
-#: herkenbaar maakt: leeft die pid nog, dan is de container van een lopende suite en
-#: blijven we eraf; is hij dood, dan is de container een wees en mag hij weg.
-ORM_CONTAINER_PID_LABEL = "nl.rijksapp.zad.orm-test.pid"
+class TestPostgresError(RuntimeError):
+    """De test-Postgres is er niet en kan er niet komen. Luid falen, nooit stil."""
 
 
-def _ruim_achtergebleven_containers_op() -> None:
-    """Weg met wat een vorige run heeft laten staan.
-
-    Wie ze maakt, ruimt ze op, en dat moet ook gelden als de vorige run NIET netjes
-    eindigde. De context manager hieronder stopt de container bij een normale afloop, maar
-    bij een harde onderbreking (ctrl-c, een gekilde sessie, een timeout) loopt hij niet af
-    en blijft er een Postgres draaien. Er stonden er zo vier tegelijk, waarvan de oudste
-    drie dagen.
-
-    Normaal is dat het werk van Ryuk, de opruimsidecar van testcontainers. Die kan hier
-    niet: hij mount de dockersocket, en op Docker Desktop staat die onder
-    ``~/.docker/run/docker.sock``, wat de daemon weigert te mounten ("operation not
-    supported"). Met ``TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`` start hij wel, maar dan is
-    zijn poort niet te bereiken. Dus doen we het zelf, en dan ook echt zelf: bij het
-    STARTEN van een run, want dat is het enige moment waarop we zeker weten dat we draaien.
-
-    Faalt Docker of ontbreekt hij, dan gebeurt er niets. Opruimen mag nooit de reden zijn
-    dat een suite niet start.
-    """
+def _docker(*args: str, check: bool = True, timeout: int = 60):
     import subprocess
 
     try:
-        # Gestopte containers met ons etiket zijn altijd van een afgelopen run: weg ermee.
-        gevonden = subprocess.run(
-            ["docker", "ps", "-aq", "--filter", f"label={ORM_CONTAINER_LABEL}", "--filter", "status=exited"],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-        containers = gevonden.stdout.split()
+        klaar = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False)
+    except FileNotFoundError as exc:
+        raise TestPostgresError(
+            "docker niet gevonden; de ORM-tests hebben een echte Postgres nodig. Start Docker en draai opnieuw."
+        ) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TestPostgresError(f"docker {' '.join(args)} mislukte: {exc}") from exc
+    if check and klaar.returncode != 0:
+        raise TestPostgresError(f"docker {' '.join(args)} gaf {klaar.returncode}: {klaar.stderr.strip()}")
+    return klaar
 
-        # DRAAIENDE containers zijn het echte lek. De vorige versie liet ze allemaal staan,
-        # op de aanname dat een gekilde run zijn container in 'exited' achterlaat. Dat is
-        # niet zo: de container draait onder de Docker-daemon, niet onder pytest, dus een
-        # SIGKILL op de suite laat de Postgres gewoon doorlopen. Gemeten op 20 augustus
-        # 2026: elf draaiende weeskes, de oudste 45 uur.
-        #
-        # Zomaar alle draaiende weghalen mag ook niet: hier draaien suites naast elkaar
-        # (agents in eigen worktrees) en een levende run zijn database weghalen gaf ooit
-        # veertig fouten. Daarom draagt elke container de pid van zijn maker, en ruimen we
-        # alleen op wat een DODE maker heeft. Hergebruik van pids kan een wees tijdelijk
-        # laten staan; die valt dan bij een volgende run alsnog om.
-        draaiend = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "--filter",
-                f"label={ORM_CONTAINER_LABEL}",
-                "--format",
-                f'{{{{.ID}}}} {{{{.Label "{ORM_CONTAINER_PID_LABEL}"}}}}',
-            ],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-        for regel in draaiend.stdout.splitlines():
-            container_id, _, pid_tekst = regel.partition(" ")
-            if not container_id:
-                continue
-            if _maker_leeft(pid_tekst.strip()):
-                continue
-            containers.append(container_id)
 
-        if containers:
-            subprocess.run(["docker", "rm", "-f", *containers], capture_output=True, timeout=60, check=False)
-    except OSError, subprocess.SubprocessError:
-        return
+def _container_staat() -> tuple[bool, str]:
+    """(draait hij, op welk image). Bestaat hij niet, dan (False, "")."""
+    klaar = _docker("inspect", "--format", "{{.State.Running}} {{.Config.Image}}", ZAD_TEST_PG_CONTAINER, check=False)
+    if klaar.returncode != 0:
+        return False, ""
+    draait, _, image = klaar.stdout.strip().partition(" ")
+    return draait == "true", image
+
+
+def _wacht_tot_hij_luistert(seconden: int = 60) -> None:
+    import time
+
+    einde = time.monotonic() + seconden
+    while time.monotonic() < einde:
+        if _docker("exec", ZAD_TEST_PG_CONTAINER, "pg_isready", "-U", "postgres", check=False).returncode == 0:
+            return
+        time.sleep(0.5)
+    logboek = _docker("logs", "--tail", "20", ZAD_TEST_PG_CONTAINER, check=False).stdout
+    raise TestPostgresError(f"'{ZAD_TEST_PG_CONTAINER}' werd niet klaar binnen {seconden}s. Laatste regels:\n{logboek}")
+
+
+def _zorg_voor_container() -> str:
+    """Start de vaste Postgres als hij er niet is, en geef zijn poort op de host terug.
+
+    Draait hij al, dan blijft hij draaien: hergebruik is het punt. Draait hij op een ander
+    image dan we hier vragen, dan gaat hij eraf en komt hij terug -- anders test een
+    volgende versie stilzwijgend tegen de oude.
+    """
+    draait, image = _container_staat()
+    if draait and image != ZAD_TEST_PG_IMAGE:
+        _docker("rm", "-f", ZAD_TEST_PG_CONTAINER)
+        draait = False
+    elif not draait and image:
+        # Bestaat maar staat stil (machine herstart, handmatig gestopt): opnieuw beginnen
+        # is voorspelbaarder dan een oude container weer aanzetten.
+        _docker("rm", "-f", ZAD_TEST_PG_CONTAINER)
+
+    if not draait:
+        gemaakt = _docker(
+            "run",
+            "-d",
+            "--name",
+            ZAD_TEST_PG_CONTAINER,
+            "-e",
+            f"POSTGRES_PASSWORD={ZAD_TEST_PG_PASSWORD}",
+            "-p",
+            f"{ZAD_TEST_PG_PORT}:5432",
+            ZAD_TEST_PG_IMAGE,
+            check=False,
+            timeout=180,
+        )
+        # Twee suites die tegelijk beginnen zien allebei geen container en doen allebei dit
+        # commando; een van de twee krijgt "name already in use". Dat is geen fout maar het
+        # antwoord: de ander was eerder. Alleen als er daarna nog steeds niets draait, is er
+        # echt iets mis.
+        if gemaakt.returncode != 0 and not _container_staat()[0]:
+            raise TestPostgresError(
+                f"'{ZAD_TEST_PG_CONTAINER}' kon niet starten: {gemaakt.stderr.strip()}\n"
+                f"Zit poort {ZAD_TEST_PG_PORT} bezet, zet dan ZAD_TEST_PG_PORT."
+            )
+
+    _wacht_tot_hij_luistert()
+    poort = _docker("port", ZAD_TEST_PG_CONTAINER, "5432/tcp").stdout.strip().splitlines()[0]
+    return poort.rsplit(":", 1)[1]
+
+
+def _psql(sql: str) -> str:
+    """Eén statement op de onderhoudsdatabase, via de container zelf.
+
+    Bewust met ``docker exec`` en niet met een driver: dit draait in een sessie-fixture,
+    die synchroon is, en zo hoeft er geen tweede verbindingsweg (en geen event loop) naast
+    die van de tests te bestaan.
+    """
+    klaar = _docker(
+        "exec",
+        "-e",
+        f"PGPASSWORD={ZAD_TEST_PG_PASSWORD}",
+        ZAD_TEST_PG_CONTAINER,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-tAc",
+        sql,
+    )
+    return klaar.stdout.strip()
 
 
 def _maker_leeft(pid_tekst: str) -> bool:
-    """Leeft het proces dat deze container maakte nog?
+    """Leeft het proces dat dit maakte nog?
 
-    Geen pid-etiket betekent een container van voor deze regeling, en die run is hoe dan
-    ook voorbij: niet levend dus. Een pid die we niet mogen signaleren (PermissionError)
-    leeft wel; alleen kijken mag altijd, dus die fout betekent "bestaat, maar is niet van
-    ons".
+    Geen leesbare pid betekent iets van voor deze regeling, en die run is hoe dan ook
+    voorbij: niet levend dus. Een pid die we niet mogen signaleren (PermissionError) leeft
+    wel; alleen kijken mag altijd, dus die fout betekent "bestaat, maar is niet van ons".
     """
-    if not pid_tekst:
-        return False
     try:
         pid = int(pid_tekst)
     except ValueError:
@@ -356,47 +411,44 @@ def _maker_leeft(pid_tekst: str) -> bool:
     return True
 
 
+def _ruim_verweesde_databases_op() -> None:
+    """Weg met de databases van runs die niet meer draaien.
+
+    Hergebruik van pids kan een wees even laten staan; die valt bij een volgende run
+    alsnog om. Een database van een LEVENDE run blijft staan, en dat is niet vrijblijvend:
+    hier draaien suites naast elkaar (agents in eigen worktrees), en dat is precies waarom
+    elke run zijn eigen database heeft in plaats van zijn eigen container.
+    """
+    namen = _psql(f"SELECT datname FROM pg_database WHERE datname LIKE '{ZAD_TEST_DB_PREFIX}%'")
+    for naam in namen.splitlines():
+        naam = naam.strip()
+        if not naam or _maker_leeft(naam.removeprefix(ZAD_TEST_DB_PREFIX)):
+            continue
+        _psql(f'DROP DATABASE IF EXISTS "{naam}" WITH (FORCE)')
+
+
 @pytest.fixture(scope="session")
-def _orm_pg_container():
-    # Ryuk (de reaper van testcontainers) staat AAN, en dat is de eigenlijke opruiming:
-    # hij houdt een verbinding met deze run open en ruimt de containers van deze sessie op
-    # zodra die wegvalt -- ook bij kill -9, want dan sluit de kernel de socket. Zo ruimt de
-    # maker zelf op in plaats van dat een volgende run de rommel opveegt.
-    #
-    # De override is nodig op Docker Desktop: zonder wil Ryuk ``~/.docker/run/docker.sock``
-    # mounten en dat weigert de daemon ("operation not supported"). Met het pad zoals de
-    # daemon het zelf ziet start hij wel, EN doet hij zijn werk -- de oude aantekening dat
-    # zijn poort onbereikbaar zou zijn is op 20 augustus 2026 nagemeten en klopt niet meer
-    # (ryuk 0.8.1): na een kill -9 was alles binnen ~2 minuten weg. De vertraging komt van
-    # de poortproxy van Docker Desktop, die de verbroken verbinding pas laat doorgeeft.
-    # ``setdefault``, dus op Linux/CI (waar dit pad sowieso de standaard is) verandert er
-    # niets.
-    #
-    # ``_ruim_achtergebleven_containers_op`` hieronder blijft staan als vangnet voor het
-    # gat dat Ryuk zelf heeft: wordt DOCKER herstart terwijl er een wees staat, of sneuvelt
-    # Ryuk zelf, dan is er niemand meer die het opruimt behalve de volgende run.
-    os.environ.setdefault("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
+def _orm_db_url() -> Iterator[str]:
+    """De verbinding naar de database van DEZE run, in de gedeelde server."""
+    poort = _zorg_voor_container()
+    _ruim_verweesde_databases_op()
 
-    from testcontainers.postgres import PostgresContainer
-
-    _ruim_achtergebleven_containers_op()
-
-    # Het etiket is wat het opruimen mogelijk maakt: zonder dat weten we bij de volgende
-    # run niet welke van deze containers van ons was.
-    container = PostgresContainer("postgres:16-alpine").with_kwargs(
-        labels={ORM_CONTAINER_LABEL: "true", ORM_CONTAINER_PID_LABEL: str(os.getpid())}
-    )
-    with container:
-        yield container
+    naam = f"{ZAD_TEST_DB_PREFIX}{os.getpid()}"
+    # IF EXISTS, want een pid kan hergebruikt zijn en de vorige eigenaar is dan dood.
+    _psql(f'DROP DATABASE IF EXISTS "{naam}" WITH (FORCE)')
+    _psql(f'CREATE DATABASE "{naam}"')
+    try:
+        yield f"postgresql+asyncpg://postgres:{ZAD_TEST_PG_PASSWORD}@127.0.0.1:{poort}/{naam}"
+    finally:
+        _psql(f'DROP DATABASE IF EXISTS "{naam}" WITH (FORCE)')
 
 
 @pytest.fixture
-async def orm_db(_orm_pg_container):
+async def orm_db(_orm_db_url):
     from opi.core.db import Base, configure_engine, create_all_orm_tables, dispose_engine, session_scope
     from sqlalchemy import text
 
-    url = _orm_pg_container.get_connection_url().replace("+psycopg2", "+asyncpg")
-    configure_engine(url)
+    configure_engine(_orm_db_url)
     await create_all_orm_tables()
     tables = ", ".join(Base.metadata.tables)
     async with session_scope() as session:

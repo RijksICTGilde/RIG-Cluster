@@ -111,17 +111,22 @@
            bericht dat niet te herhalen - de foutmelding noemt bovendien de OORZAAK, en dat
            is het enige waar je iets aan hebt.
 
+           WIE dat mag zeggen is de dienst, niet deze kaart. Hier stond een check op de
+           WOORDEN van de melding ('uitgeschakeld', 'staat uit'); een herformulering in de
+           dienst brak de ontdubbeling dan stil. Het feit draagt het nu zelf
+           (superseded_by_component_details) en de kaart weegt alleen nog of de opsomming
+           er staat.
+
            Alleen dat ene bericht wordt onderdrukt, niet alle. Slaapstand is ook een
            dienstenbericht en daar weet ArgoCD niets van; die stil laten verdwijnen zou een
            echte toestand onzichtbaar maken. #}
         {% set facts = (deployment_states | default({})).get(deployment.name) %}
         {% for fact in (facts.facts if facts else []) %}
-            {% set zegt_uitgeschakeld = 'uitgeschakeld' in (fact.summary | lower) or 'staat uit' in (fact.summary | lower) %}
-            {% if not (disabled_components and zegt_uitgeschakeld) %}
+            {% if not (disabled_components and fact.superseded_by_component_details) %}
                 <c-cluster gap="md" align="center">
                     <c-icon icon="info-circle" size="lg" />
                     <c-stack gap="xs">
-                        <strong>{{ ServiceAdapter.get_service_definition(ServiceAdapter.get_service_by_value(fact.service)).name }}</strong>
+                        <strong>{{ fact.service_name }}</strong>
                         <c-span>{{ fact.summary }}</c-span>
                     </c-stack>
                 </c-cluster>

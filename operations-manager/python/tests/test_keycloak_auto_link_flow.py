@@ -30,6 +30,7 @@ class FakeAdmin:
     def __init__(self) -> None:
         self.top_level: set[str] = set()
         self.flows: dict[str, list[dict[str, Any]]] = {}
+        self.configs: dict[str, dict[str, Any]] = {}
         self._next_id = 0
 
     def _new_id(self) -> str:
@@ -46,6 +47,9 @@ class FakeAdmin:
     def create_authentication_flow(self, payload: dict[str, Any]) -> None:
         self.top_level.add(payload["alias"])
         self.flows.setdefault(payload["alias"], [])
+
+    def get_authentication_flows(self) -> list[dict[str, Any]]:
+        return [{"id": f"flow-{alias}", "alias": alias} for alias in sorted(self.top_level)]
 
     def create_authentication_flow_subflow(
         self, payload: dict[str, Any], flow_alias: str, skip_exists: bool = False
@@ -97,6 +101,17 @@ class FakeAdmin:
                 # sends a partial dict silently loses the explicit ordering (the fresh-build bug).
                 execution["priority"] = payload.get("priority", 0)
                 return
+
+    def create_execution_config(self, payload: dict[str, Any], execution_id: str) -> None:
+        config_id = f"config-{execution_id}"
+        self.configs[config_id] = payload
+        for executions in self.flows.values():
+            for execution in executions:
+                if execution["id"] == execution_id:
+                    execution["authenticationConfig"] = config_id
+
+    def update_authenticator_config(self, payload: dict[str, Any], config_id: str) -> None:
+        self.configs[config_id] = payload
 
     def delete_authentication_flow_execution(self, execution_id: str) -> None:
         for executions in self.flows.values():

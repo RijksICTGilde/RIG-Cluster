@@ -221,15 +221,41 @@ class TestASleepingDeploymentWakesUp:
         assert after.expires_at > "2020-01-01"
         assert notices == []
 
-    def test_a_deployment_outside_the_match_is_left_asleep(self) -> None:
-        """Sleep-mode's own selection still decides; the hook does not override it."""
+    def test_a_deployment_outside_the_match_wakes_too_but_gets_no_deadline(self) -> None:
+        """Waking and scheduling are two questions, and only the second is ``match``'s.
+
+        A deployment outside the selection can be asleep: the sleep button is manual and
+        is not scoped by ``match``. Rolling new content onto it while it stays scaled to
+        zero rolls out nothing at all, which is the report this hook exists for, so it
+        wakes here like any other.
+
+        It gets no bedtime, though. The sweeper ignores an unmatched deployment, so a
+        deadline stamped here is dead weight until somebody adds a matching pattern --
+        at which point it is long past and the deployment falls asleep on the first
+        sweep. Awake with no expiry is how ``state.write`` records "nobody schedules
+        this": the whole sleep block goes.
+        """
         project = _project(components=[{"reference": "web", "image": "reg/app:v2"}], with_sleep_mode=True)
         project["deployments"][0]["name"] = "productie"
         write(project, "productie", SleepState(state=STATE_SLEEPING))
 
         notices = _rollout(project, ["web"])
 
-        assert read(project, "productie").state == STATE_SLEEPING
+        after = read(project, "productie")
+        assert after.state == STATE_AWAKE
+        assert after.expires_at is None
+        assert "sleep" not in project["deployments"][0]
+        assert any("gewekt" in notice for notice in notices)
+
+    def test_an_awake_deployment_outside_the_match_is_not_given_a_bedtime(self) -> None:
+        """The other half of the same rule: no deadline appears out of a rollout on a
+        deployment the sweeper does not manage."""
+        project = _project(components=[{"reference": "web", "image": "reg/app:v2"}], with_sleep_mode=True)
+        project["deployments"][0]["name"] = "productie"
+
+        notices = _rollout(project, ["web"])
+
+        assert read(project, "productie").expires_at is None
         assert notices == []
 
     def test_sleep_mode_off_means_nothing_happens(self) -> None:
