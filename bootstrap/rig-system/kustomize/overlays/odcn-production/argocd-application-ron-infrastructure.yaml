@@ -12,13 +12,12 @@
 #
 # VOORDAT deze app kan renderen (de CMP stopt er anders hard mee, en de namespaced
 # ArgoCD kan het geen van beide zelf):
-#   1. de namespace rig-prd-ron bestaat, met de RON-annotatie
-#      egress.projectcalico.org/egressGatewayPolicy: rig-ron en het label
-#      argocd.argoproj.io/managed-by: rig-prd-operations;
+#   1. de namespace rig-prd-ron bestaat: die staat als namespace-ron.yaml in deze
+#      bootstrap-overlay en wordt door task bootstrap-argo-system met kubectl
+#      aangebracht, met de RON-annotatie en het managed-by-label erop;
 #   2. het secret sops-age-key staat in rig-prd-ron (de CMP leest de AGE-sleutel in de
-#      namespace van de app).
-# De exacte manifesten staan in features/send-email.md, "Wat er bij het aanzetten
-# werkelijk moet gebeuren". CreateNamespace staat bewust uit: zie punt 1.
+#      namespace van de app); het kopieercommando staat in features/send-email.md.
+# CreateNamespace staat bewust uit: zie punt 1.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -42,6 +41,10 @@ spec:
     automated:
       prune: true
       selfHeal: true
+      # Expliciet, al is false de default: een lege render mag geen veegactie worden.
+      # De inzet is hier klein (de relay is stateless, zijn data staat in rig-db en die
+      # valt onder production-infrastructure), maar het contract hoort op elke app.
+      allowEmpty: false
     syncOptions:
       - CreateNamespace=false
       - SyncTimeout=60s

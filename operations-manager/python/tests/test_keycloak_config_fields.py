@@ -103,13 +103,14 @@ async def test_lege_keuzes_laten_geen_lege_sleutels_achter() -> None:
 
 
 def test_variables_blijft_bewust_buiten_het_scherm() -> None:
-    """``variables`` overschrijft de door het platform berekende templatewaarden.
+    """``variables`` raakt de door het platform berekende templatewaarden.
 
-    ``KeycloakManager`` doet ``context.update(user_variables)``, en in die context staan
-    ``realm_name``, ``project_realm_name``, ``platform_realm_name`` en
-    ``platform_client_id``. Een vrij invulveld daarvoor geeft een projectbeheerder een
-    hendel op de realm-template van het platform. Het veld blijft dus buiten de
-    zelfbediening, met de reden in de dienstdocumentatie -- niet stil weggevallen.
+    In die context staan ``realm_name``, ``project_realm_name``, ``platform_realm_name`` en
+    ``platform_client_id``. Sinds RC-159 legt ``merge_user_variables`` de projectwaarden
+    ERONDER in plaats van erover, dus een project kan de doelrealm niet meer verzetten --
+    maar een vrij invulveld hiervoor blijft een hendel op de realm-template van het
+    platform, en het veld blijft dus buiten de zelfbediening, met de reden in de
+    dienstdocumentatie. Niet stil weggevallen.
     """
     section = _section()
     paden = [vis.editable.yaml_path for vis in section.editables]

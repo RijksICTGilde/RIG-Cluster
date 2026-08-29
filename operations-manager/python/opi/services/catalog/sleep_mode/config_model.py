@@ -56,8 +56,15 @@ def validate_match_pattern(pattern: str) -> str:
 class SleepModeConfig(BaseModel):
     """Sleep-mode config for a project, after the cluster default is merged in.
 
-    This doubles as the runtime object callers use: ``matches(name)`` answers whether
-    a deployment is in scope, and the parsed durations drive the deadlines.
+    This doubles as the runtime object callers use: ``matches(name)`` answers whether a
+    deployment is scheduled to sleep, and the parsed durations drive the deadlines.
+
+    ``enabled`` and ``match`` answer different questions, and conflating them is what
+    made switching this service on look like it did nothing. ``enabled`` says sleep-mode
+    applies to this project at all -- it is what the manual sleep/wake buttons hang on.
+    ``match`` says which deployments the sweeper puts to sleep on a deadline, and it is
+    empty by default, so an ``enabled`` project with no patterns sleeps nothing by itself
+    and can still be slept by hand.
     """
 
     # extra="forbid" turns a config typo into a loud failure; populate_by_name lets
@@ -74,8 +81,10 @@ class SleepModeConfig(BaseModel):
     match: list[str] = Field(
         default_factory=list,
         description=(
-            "Which deployments are in scope, by name: an exact name, 'prefix*' (starts with) or "
-            "'*suffix' (ends with). Anything else is refused."
+            "Which deployments the sweeper puts to sleep on a deadline, by name: an exact name, "
+            "'prefix*' (starts with) or '*suffix' (ends with). Anything else is refused. Empty means "
+            "nothing sleeps automatically; the manual sleep/wake buttons are governed by 'enabled', "
+            "not by this."
         ),
     )
     sleep_after_deploy: str = Field(
@@ -132,7 +141,8 @@ class SleepModeConfig(BaseModel):
         return [validate_match_pattern(pattern) for pattern in value]
 
     def matches(self, deployment_name: str) -> bool:
-        """Whether ``deployment_name`` is in scope, per the ``match`` globs (case-sensitive)."""
+        """Whether the sweeper schedules ``deployment_name``, per the ``match`` globs
+        (case-sensitive). Not a gate on the service: see the class docstring."""
         import fnmatch
 
         return any(fnmatch.fnmatchcase(deployment_name, pattern) for pattern in self.match)

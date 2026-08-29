@@ -120,6 +120,7 @@ from opi.services.project_store import ConcurrencyError, ConflictError, get_proj
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
     deployment_manifest_services,
+    deployment_runtime_keys,
     generate_missing_values,
     manifest_services,
     provisioning_services,
@@ -1488,6 +1489,7 @@ class ProjectManager:
         namespace: str,
         cluster: str,
         project_name: str,
+        service_port: int | None,
         output_dir: str,
         created_files: list[str],
     ) -> None:
@@ -1498,6 +1500,11 @@ class ProjectManager:
         is asleep/waking and this is the chosen waker component. The token comes from the
         deployment's own ``sleep.wake-token`` (minted by the sweeper). All files go into
         ``created_files`` so the obsolete-manifest prune removes them once awake.
+
+        ``service_port`` is what this component's Service targets -- the value the caller
+        already resolved for the Service itself, contributions included. The waker has to
+        listen there or the Service selects a pod that answers nothing, so it is taken
+        from the caller rather than assumed.
         """
         from opi.services.catalog.sleep_mode import config as sleep_config
         from opi.services.catalog.sleep_mode import manifests as sleep_manifests
@@ -1516,6 +1523,17 @@ class ProjectManager:
         selected = sleep_manifests.select_waker_component(project_data, deployment, config, self._project_file_handler)
         if selected != component_reference:
             return
+        if not service_port:
+            # No Service to sit behind, so nothing would reach the waker anyway. Same
+            # honesty as the other no-waker branches: the deployment still sleeps and is
+            # wakeable from the portal or the API.
+            logger.warning(
+                "sleep-mode: component '%s' on %s/%s has no service port; skipping waker manifests",
+                component_reference,
+                project_name,
+                deployment_name,
+            )
+            return
         if not current.wake_token:
             logger.warning(
                 "sleep-mode: no wake token stored for %s/%s; skipping waker manifests",
@@ -1533,6 +1551,7 @@ class ProjectManager:
             project_name=project_name,
             deployment_name=deployment_name,
             cluster=cluster,
+            port=service_port,
             generated_at=generated_at,
         )
         deployment_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "deployment.yaml.jinja")
@@ -1555,6 +1574,7 @@ class ProjectManager:
             component_reference=component_reference,
             config=config,
             cluster=cluster,
+            port=service_port,
         )
         configmap_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "configmap.yaml.jinja")
         configmap_manifest_name = generate_manifest_name(component_name, "waker-config")
@@ -3233,6 +3253,12 @@ class ProjectManager:
             # closing sentence of the user-facing notice blames the tenant's own app,
             # which is wrong for a platform-side registry outage.
             registry_outage_seen = False
+            # health_warnings blijft de rauwe, volledige tekst dragen: die gaat naar de LOG,
+            # en daar hoort alle detail te staan. Wat de GEBRUIKER krijgt wordt hieronder uit
+            # deze twee opgebouwd, als telling. Het per-component-verhaal staat al in
+            # component_failures, met een vertaalde titel en een suggestie.
+            unhealthy_deployments: list[str] = []
+            synced_deployment_count = 0
 
             if deployments and project_name:
                 from opi.services.catalog.base import ComponentHealth
@@ -3368,7 +3394,7 @@ class ProjectManager:
                     # rollout is no longer silent. Falls back to None when there is
                     # no progress manager (e.g. non-task callers).
                     app_subtask = (
-                        progress_manager.add_subtask(argo_task, f"{dep_name}: uitrol voorbereiden…")
+                        progress_manager.add_subtask(argo_task, dep_name, subject="uitrol voorbereiden…")
                         if progress_manager and argo_task
                         else None
                     )
@@ -3389,20 +3415,29 @@ class ProjectManager:
                                 )
                             except Exception:
                                 statuses = []
-                            if statuses:
-                                detail = " · ".join(f"{ref}: {reason}" for ref, reason in statuses)
-                                line = f"{dep_name} — {detail}"
-                            else:
-                                line = f"{dep_name} — wachten tot componenten gereed zijn"
+                            # Componenten met dezelfde reden op één regel. Twee componenten
+                            # die op hetzelfde image wachten zijn één ding dat misgaat, geen
+                            # twee, en zo is ook te zien welke reden bij welke componenten hoort.
+                            by_reason: dict[str, list[str]] = {}
+                            for ref, reason in statuses:
+                                by_reason.setdefault(reason, []).append(ref)
 
-                            if line != stall["line"]:
-                                stall["line"] = line
+                            if statuses:
+                                detail = " · ".join(
+                                    f"{', '.join(refs)}: {reason}" for reason, refs in by_reason.items()
+                                )
+                            else:
+                                detail = "wachten tot componenten gereed zijn"
+
+                            if detail != stall["line"]:
+                                stall["line"] = detail
                                 stall["since"] = elapsed
                             waited = elapsed - stall["since"]
                             if waited >= STALL_NOTICE_SECONDS and statuses:
-                                comps = ", ".join(ref for ref, _ in statuses)
-                                line = f"{line}  (al {waited}s onveranderd — controleer eventueel de logs van: {comps})"
-                            progress_manager.update_task(app_subtask, line)
+                                detail = f"{detail} (al {waited}s onveranderd, bekijk de logs)"
+                            # De deploymentnaam is de titel van de regel, de reden staat
+                            # eronder. Beide in de titel proppen gaf één onleesbare regel.
+                            progress_manager.update_task(app_subtask, dep_name, subject=detail)
 
                         # Failure detection (OOM / ImagePull / CrashLoop) runs after
                         # reporting so the user still sees the live status before a
@@ -3451,17 +3486,20 @@ class ProjectManager:
                         )
                         logger.info(f"Application '{app_name}' is synced and healthy")
                         if app_subtask:
-                            progress_manager.update_task(app_subtask, f"{dep_name}: uitgerold en gezond")
+                            progress_manager.update_task(app_subtask, dep_name, subject="uitgerold en gezond")
                             progress_manager.complete_subtask(app_subtask)
                         return {"app_name": app_name, "dep_name": dep_name, "status": "ok"}
                     except DeploymentHealthError as e:
                         logger.warning("Pod health issues during sync of '%s': %s", app_name, e)
                         if app_subtask:
-                            comps = ", ".join(f.component_reference or f.component_name for f in e.failures)
-                            progress_manager.fail_subtask(
-                                app_subtask,
-                                f"{dep_name}: probleem bij {comps} — controleer de logs van dit/deze component(en)",
+                            comps = ", ".join(
+                                dict.fromkeys(f.component_reference or f.component_name for f in e.failures)
                             )
+                            # Geen update_task: de naam IS de deploymentnaam en het onderwerp
+                            # draagt de laatste waargenomen reden. fail_subtask zet alleen de
+                            # uitkomst erbij; het volledige verhaal staat in component_failures.
+                            logger.info("Deployment '%s' not healthy: %s", dep_name, comps)
+                            progress_manager.fail_subtask(app_subtask, "niet gezond geworden")
                         return {"app_name": app_name, "dep_name": dep_name, "status": "health_error", "error": e}
                     except TimeoutError:
                         last_state = stall["line"] or "no progress reported"
@@ -3470,16 +3508,12 @@ class ProjectManager:
                             f"last observed state: {last_state}"
                         )
                         if app_subtask:
-                            last = stall["line"] or f"{dep_name}: nog niet gezond"
-                            progress_manager.fail_subtask(
-                                app_subtask,
-                                f"Time-out na 300s: {last}. Controleer de logs van het component.",
-                            )
+                            progress_manager.fail_subtask(app_subtask, "time-out na 300s")
                         return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
                     except RuntimeError as e:
                         logger.error(f"Application '{app_name}' failed to sync: {e}")
                         if app_subtask:
-                            progress_manager.fail_subtask(app_subtask, f"{dep_name}: {e}")
+                            progress_manager.fail_subtask(app_subtask, str(e))
                         return {"app_name": app_name, "dep_name": dep_name, "status": "error", "error": e}
 
                 pending_apps = [(a, d) for a, d in app_deployments if not any(a in f for f in sync_failures)]
@@ -3488,6 +3522,7 @@ class ProjectManager:
                         argo_task, f"Wachten tot {len(pending_apps)} applicatie(s) gesynchroniseerd zijn"
                     )
                 outcomes = await asyncio.gather(*(_refresh_and_wait(a, d) for a, d in pending_apps))
+                synced_deployment_count = len(outcomes)
 
                 # Serial remediation pass over the outcomes. OOM tuning and
                 # image-pull disabling write to the project file in git, so
@@ -3525,9 +3560,15 @@ class ProjectManager:
                             else f"Component '{f.component_reference or f.component_name}'"
                         )
                         suggestion = translation[1] if translation else f.message
+                        # De ernst kwam al uit de vertaler en werd hier weggegooid, waardoor
+                        # een registry die even niet antwoordt net zo rood op het scherm kwam
+                        # als een image dat echt niet bestaat. Dat is precies het verschil
+                        # tussen "hier moet jij iets doen" en "hier hoef je niets te doen".
+                        severity = translation[2].value if translation else "actionable"
 
                         self._component_failures.append(
                             {
+                                "severity": severity,
                                 "component": f.component_reference or f.component_name,
                                 "deployment": f.deployment_name or dep_name,
                                 "failure_type": f.failure_type,
@@ -3644,6 +3685,8 @@ class ProjectManager:
                                 sync_failures.append(msg)
                             else:
                                 health_warnings.append(msg)
+                                if dep_name not in unhealthy_deployments:
+                                    unhealthy_deployments.append(dep_name)
 
                     # Registry outage: nothing to remediate and nothing the tenant did
                     # wrong, so only report it -- named as a registry problem, so the
@@ -3657,12 +3700,16 @@ class ProjectManager:
                             f"'{f.component_name}'{image} niet leveren: {reason}. "
                             "Het component blijft aan staan en probeert het opnieuw."
                         )
+                        if dep_name not in unhealthy_deployments:
+                            unhealthy_deployments.append(dep_name)
 
                     # CrashLoopBackOff is the user's app crashing at runtime, not a
                     # deploy/sync failure - report it as a warning, don't fail the task.
                     if crash_loop_failures:
                         names = ", ".join(f.component_name for f in crash_loop_failures)
                         health_warnings.append(f"{app_name}: CrashLoopBackOff for {names}")
+                        if dep_name not in unhealthy_deployments:
+                            unhealthy_deployments.append(dep_name)
 
             if health_warnings:
                 logger.warning(
@@ -3686,12 +3733,29 @@ class ProjectManager:
                 # caller read that as failure, and a crash-looping PR environment
                 # produced a failed task and a useless "Deployment processing failed"
                 # alert on every push. Complete the task and report the reason instead.
-                summary = "; ".join(health_warnings)
                 logger.info("ArgoCD applications synced (%d runtime health warning(s) above)", len(health_warnings))
                 if progress_manager and argo_task:
                     progress_manager.complete_task(argo_task)
+                    # Een TELLING, geen aaneenschakeling. Hier stond "; ".join(health_warnings),
+                    # en die waarschuwingen dragen elk de volledige kubelet-tekst: voor een
+                    # project met vijftien deployments werd dat één melding van dertienduizend
+                    # tekens in wat de titel van een lijstregel is. Wat er per component aan de
+                    # hand is staat in component_failures, met een vertaalde titel en een
+                    # suggestie, en dat paneel staat onder deze lijst.
+                    if len(unhealthy_deployments) <= 5:
+                        which = ", ".join(unhealthy_deployments)
+                    else:
+                        rest = len(unhealthy_deployments) - 5
+                        which = f"{', '.join(unhealthy_deployments[:5])} en {rest} andere"
+                    aantal = len(unhealthy_deployments)
+                    hoeveel = (
+                        f"{aantal} van de {synced_deployment_count} deployments"
+                        if synced_deployment_count > aantal
+                        else f"{aantal} deployment" + ("" if aantal == 1 else "s")
+                    )
+                    draait = "draait" if aantal == 1 else "draaien"
                     cause = (
-                        "Een deel daarvan ligt aan het platform: de registry kon een image niet leveren. "
+                        "Een deel ligt aan het platform: de registry kon een image niet leveren. "
                         "Daar hoef je zelf niets voor te doen, het ophalen wordt vanzelf opnieuw geprobeerd."
                         if registry_outage_seen
                         else "Dat ligt aan de applicatie zelf (bijvoorbeeld een crashende pod of een image dat "
@@ -3699,8 +3763,8 @@ class ProjectManager:
                     )
                     notice = progress_manager.add_subtask(
                         argo_task,
-                        f"Let op: de deployment is uitgerold, maar de applicatie draait niet gezond: {summary}. "
-                        f"{cause}",
+                        f"Uitgerold, maar {hoeveel} {draait} niet gezond",
+                        subject=f"{which}. {cause}",
                     )
                     progress_manager.complete_task(notice)
                 return True
@@ -6471,6 +6535,10 @@ class ProjectManager:
                 namespace=namespace,
                 cluster=cluster,
                 project_name=project_name,
+                # The Service's own targetPort, contributions applied (the authorization
+                # wall moves it to the oauth2-proxy port). Taken from the built values so
+                # the waker can never drift from the Service it sits behind.
+                service_port=variables.get("service_port"),
                 output_dir=full_output_dir,
                 created_files=created_files,
             )
@@ -7317,8 +7385,7 @@ class ProjectManager:
                 # An upsert rolls new content onto this deployment exactly as an image
                 # update does, so the services clear what they recorded about the old
                 # content through the same hook (RC-37). Only the components this call
-                # actually names, and only in this UPDATE branch: a deployment being
-                # created has no earlier state to clear.
+                # actually names.
                 upsert_deployment_dict = next(
                     (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
                 )
@@ -7412,7 +7479,13 @@ class ProjectManager:
                         # are an explicit per-deployment choice, and inheriting the
                         # source's schedule made every PR preview accumulate nightly
                         # snapshots.
-                        clone_exclude_keys = ["name", "components", "backup"]
+                        #
+                        # On top of those, every key a service uses for its own runtime
+                        # state about the SOURCE deployment: that state describes the
+                        # deployment it was recorded on, so it must not travel to this
+                        # one. Asked of the catalog rather than listed here, so a service
+                        # that starts recording state does not need an edit in this file.
+                        clone_exclude_keys = ["name", "components", "backup", *deployment_runtime_keys()]
                         new_deployment.update(
                             {
                                 key: copy.deepcopy(value)
@@ -7522,6 +7595,18 @@ class ProjectManager:
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
+                # Creating a deployment rolls content onto it just as an update does, so
+                # the services get the same moment (RC-37). There is no earlier state to
+                # clear here -- the clone drops it -- but the hook is also where a service
+                # sets what a rollout implies: sleep-mode starts the sleep clock at this
+                # commit instead of leaving the new deployment for the next sweep.
+                state_notices_create = await run_redeploy_hooks(
+                    project_name,
+                    project_data,
+                    new_deployment,
+                    [component.reference for component in components],
+                )
+
                 commit_message = f"Add deployment '{deployment_name}' to project '{project_name}'"
                 if clone_from:
                     commit_message += f" (cloned from '{clone_from}')"
@@ -7539,6 +7624,8 @@ class ProjectManager:
                 }
                 if normalized_warnings_create:
                     result_create["warnings"] = normalized_warnings_create
+                if state_notices_create:
+                    result_create["state_cleared"] = state_notices_create
                 return result_create
 
         except ConflictError, ConcurrencyError:
@@ -9056,7 +9143,11 @@ class ProjectManager:
 
         # Schedule fire-and-forget health watcher so an image bump to a missing
         # image (ImagePullBackOff) gets auto-disabled, same as the deploy path.
-        from opi.services.oom_watcher import schedule_oom_check
+        from opi.services.oom_watcher import reset_oom_tune_attempts, schedule_oom_check
+
+        # A new image is a new workload: its memory needs are unrelated to what the
+        # previous image spent, so the OOM tune budget starts fresh.
+        reset_oom_tune_attempts(project_name, deployment_name)
 
         if settings.OOM_WATCHER_ENABLED:
             schedule_oom_check(project_name, deployment_name)

@@ -53,6 +53,32 @@ def format_step_line(name: str, subject: str | None) -> str:
     return f"{name} - {subject}" if subject else name
 
 
+# Een stapnaam is een LABEL, geen alinea: de voortgangspagina zet hem in de TITEL van een
+# lijstitem (progress_task_list in widgets/_macros.html.j2). Zonder grens kan een aanroeper
+# er een rauwe kubelet-dump in leggen, en dat gebeurde ook: 762 tekens per component, maal
+# twee componenten, maal vijftien deployments.
+#
+# De grens staat bewust ruim. Hij is geen opmaakmiddel maar een vangnet: elke eerlijke zin
+# blijft eronder (de langste bestaande melding, de ArgoCD-geruststelling bij een nieuw
+# project, is 195 tekens) en elke machinedump gaat eroverheen. Wie hem raakt hoort dat te
+# merken, dus het volledige bericht gaat naar de log en niet stilletjes verloren.
+MAX_STEP_NAME = 400
+
+
+def clamp_step_text(text: str) -> str:
+    """Kort een stapnaam in tot iets dat als regeltitel leesbaar blijft."""
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= MAX_STEP_NAME:
+        return collapsed
+    logger.warning(
+        "Stapnaam van %d tekens ingekort tot %d; hoort deze tekst in component_failures? Volledig: %s",
+        len(collapsed),
+        MAX_STEP_NAME,
+        collapsed,
+    )
+    return collapsed[: MAX_STEP_NAME - 1].rstrip() + "\u2026"
+
+
 @dataclass
 class ProjectInfo:
     """Project information for the progress page."""
@@ -108,6 +134,8 @@ class TaskProgressManager:
         name instead of inside it, so the page can show and group them separately.
         """
         task_id = str(uuid.uuid4())
+        name = clamp_step_text(name)
+        subject = clamp_step_text(subject) if subject else subject
         task = Task(id=task_id, name=name, status=TaskStatus.RUNNING, subject=subject)
         self.tasks[task_id] = task
         logger.info(f"Project {self.project_id}: Added task: {name} ({task_id})")
@@ -117,18 +145,29 @@ class TaskProgressManager:
     def add_subtask(self, parent_task_id: str, name: str, subject: str | None = None) -> str:
         """Add a subtask and start it immediately. Returns subtask ID."""
         subtask_id = str(uuid.uuid4())
+        name = clamp_step_text(name)
+        subject = clamp_step_text(subject) if subject else subject
         subtask = Task(id=subtask_id, name=name, status=TaskStatus.RUNNING, parent_id=parent_task_id, subject=subject)
         self.tasks[subtask_id] = subtask
         logger.info(f"Project {self.project_id}: Added subtask: {name} ({subtask_id}) under {parent_task_id}")
         self.update_current_step(format_step_line(name, subject))
         return subtask_id
 
-    def update_task(self, task_id: str, message: str) -> None:
-        """Update a task's name/description."""
+    def update_task(self, task_id: str, message: str, subject: str | None = None) -> None:
+        """Update a task's name, and its subject when one is given.
+
+        Zonder ``subject`` blijft het bestaande onderwerp staan: het onderwerp is niet van
+        deze methode, zoals test_task_step_subject vastlegt. Meegeven overschrijft het, en
+        dat is wat een stap doet die per poll een nieuwe reden te melden heeft.
+        """
         if task_id in self.tasks:
+            message = clamp_step_text(message)
             self.tasks[task_id].name = message
-            logger.info(f"Project {self.project_id}: Updated task: {message} ({task_id})")
-            self.update_current_step(message)
+            if subject is not None:
+                self.tasks[task_id].subject = clamp_step_text(subject)
+            gecombineerd = format_step_line(message, self.tasks[task_id].subject)
+            logger.info(f"Project {self.project_id}: Updated task: {gecombineerd} ({task_id})")
+            self.update_current_step(gecombineerd)
 
     def complete_task(self, task_id: str) -> None:
         """Mark a task as completed."""

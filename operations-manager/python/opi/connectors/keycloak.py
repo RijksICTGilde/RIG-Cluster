@@ -28,6 +28,26 @@ logger = logging.getLogger(__name__)
 AUTO_LINK_FIRST_BROKER_LOGIN_FLOW = "first broker login auto-link"
 
 
+def role_gate_flow_alias(client_id: str) -> str:
+    """Alias van de browser flow die alleen rolhouders binnenlaat, voor deze client.
+
+    Bewust een ANDERE naam dan de flow die hier tot 2026-08 stond
+    (``browser-restricted-<client>``): die zette de rolcontrole in de forms-subflow, en
+    daar draaide hij niet wanneer de Cookie-stap een bestaande realm-sessie hergebruikte.
+    Een realm-sessie die bij een andere client van dezelfde realm was ontstaan (de
+    ingebouwde account-console, de publieke client van de deployment) kwam er zo zonder
+    rol langs. De structuur moest daarvoor veranderen, en dan is bijwerken van de oude
+    flow gevaarlijker dan hem vervangen: half omgebouwd sluit hij iedereen buiten. Dus een
+    nieuwe naam, de client daarheen omhangen, en de oude opruimen.
+    """
+    return f"browser-role-gate-{client_id}"
+
+
+def legacy_restricted_flow_alias(client_id: str) -> str:
+    """De flow die ``role_gate_flow_alias`` vervangt; bestaat alleen in oudere realms."""
+    return f"browser-restricted-{client_id}"
+
+
 class RealmType(Enum):
     """Type of Keycloak realm for determining mapper configuration."""
 
@@ -170,6 +190,12 @@ class KeycloakConnector:
         if admin_events_details_enabled is not None:
             event_settings["adminEventsDetailsEnabled"] = admin_events_details_enabled
 
+        # The SEED a realm is born with. Four of these are also decided by the blueprint
+        # (see ``_BLUEPRINT_REALM_FIELDS`` in the YAML handler), and that is not a second
+        # source of truth: the handler applies the blueprint immediately after this call,
+        # on the create path and on the 409 path alike, so whatever a blueprint says wins
+        # within the same run. They stay here as the CLOSED value a realm has in the
+        # meantime, and as what a realm gets whose blueprint says nothing about them.
         realm_data = {
             "realm": realm_name,
             "displayName": display_name or realm_name.title(),
@@ -204,6 +230,10 @@ class KeycloakConnector:
                     # Apply only the session and audit-event settings to the existing
                     # realm. A full realm_data update would reset browserFlow etc. and
                     # break the custom "External IDP Redirector" flow on the platform realm.
+                    # The blueprint-decided fields and the smtpServer are NOT applied here:
+                    # they are applied by ``_apply_realm_self_service`` right after this
+                    # call, which is also the reconcile path, so an existing realm picks
+                    # them up whether it got here or not.
                     replay_settings = {**session_settings, **event_settings}
                     if replay_settings:
                         self.admin.update_realm(realm_name=realm_name, payload=replay_settings)
@@ -455,6 +485,24 @@ class KeycloakConnector:
             return self.admin.get_realm(realm_name=realm_name)
         except KeycloakGetError:
             return None
+
+    async def update_realm_settings(self, realm_name: str, payload: dict[str, Any]) -> None:
+        """Apply a partial realm representation to an existing realm.
+
+        Partial on purpose: Keycloak merges what it is given, so only the named fields
+        move. A full representation would reset ``browserFlow`` and friends and break the
+        custom "External IDP Redirector" flow on the platform realm -- the same reason the
+        409 branch of ``create_realm`` never sends one.
+
+        Args:
+            realm_name: Name of the realm
+            payload: The fields to set. An empty payload is a no-op, so a caller that
+                found no difference does not have to check.
+        """
+        if not payload:
+            return
+        self.admin.update_realm(realm_name=realm_name, payload=payload)
+        logger.info(f"Updated realm {realm_name}: {sorted(payload)}")
 
     def get_discovery_url(self, realm_name: str) -> str:
         """
@@ -2398,194 +2446,143 @@ class KeycloakConnector:
         """
         Create a browser flow that restricts access to users with a specific client role.
 
-        This creates a copy of the browser flow with a conditional sub-flow that:
-        1. Checks if the user does NOT have the specified client role
-        2. If they don't have the role, denies access with a custom error message
-
         Args:
             realm_name: Name of the realm
-            flow_alias: Alias for the new flow (e.g., "browser-restricted-myapp")
+            flow_alias: Alias for the new flow (see ``role_gate_flow_alias``)
             client_id: Client ID for the role check
             role_name: Client role name that grants access
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
         """
-        logger.info(f"Creating restricted browser flow '{flow_alias}' for client '{client_id}' in realm '{realm_name}'")
+        await self._build_role_gate_flow(
+            realm_name=realm_name,
+            flow_alias=flow_alias,
+            role_name=role_name,
+            error_message=error_message,
+            client_id=client_id,
+        )
 
-        try:
-            self.admin.change_current_realm(realm_name)
-
-            # Step 1: Copy the browser flow
-            await self._copy_browser_flow(flow_alias)
-
-            # Step 2: Find the "forms" sub-flow in our new flow
-            forms_flow_id = await self._find_forms_subflow(flow_alias)
-
-            # Step 3: Create a conditional sub-flow for role check
-            conditional_subflow_alias = f"{flow_alias}-deny-no-role"
-            await self._create_conditional_deny_subflow(
-                flow_alias=flow_alias,
-                parent_flow_id=forms_flow_id,
-                subflow_alias=conditional_subflow_alias,
-                role_name=role_name,
-                error_message=error_message,
-                client_id=client_id,
-            )
-
-            self.admin.change_current_realm("master")
-            logger.info(f"Successfully created restricted browser flow '{flow_alias}'")
-
-        except KeycloakError as e:
-            logger.error(f"Failed to create restricted browser flow '{flow_alias}': {e}")
-            self.admin.change_current_realm("master")
-            raise
-
-    async def _copy_browser_flow(self, new_flow_alias: str) -> None:
-        """
-        Copy the browser flow to create a new flow.
-
-        Args:
-            new_flow_alias: Alias for the new flow
-        """
-        logger.debug(f"Copying browser flow to '{new_flow_alias}'")
-
-        # Check if flow already exists
-        flows = self.admin.get_authentication_flows()
-        for flow in flows:
-            if flow.get("alias") == new_flow_alias:
-                logger.debug(f"Flow '{new_flow_alias}' already exists, will reuse it")
-                return
-
-        # Copy the browser flow
-        copy_payload = {"newName": new_flow_alias}
-        try:
-            self.admin.copy_authentication_flow(payload=copy_payload, flow_alias="browser")
-            logger.debug(f"Copied browser flow to '{new_flow_alias}'")
-        except KeycloakPostError as e:
-            if "409" in str(e) or "Conflict" in str(e):
-                logger.debug(f"Flow '{new_flow_alias}' already exists")
-            else:
-                raise
-
-    async def _find_forms_subflow(self, flow_alias: str) -> str:
-        """
-        Find the forms sub-flow ID within a browser flow copy.
-
-        Args:
-            flow_alias: Alias of the parent flow
-
-        Returns:
-            The flow ID of the forms sub-flow
-        """
-        executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
-
-        for execution in executions:
-            # The forms sub-flow is named "{flow_alias} forms" when copied
-            display_name = execution.get("displayName", "")
-            if "forms" in display_name.lower() and execution.get("authenticationFlow"):
-                logger.debug(f"Found forms sub-flow: {display_name} (ID: {execution.get('flowId')})")
-                return execution.get("flowId")
-
-        raise KeycloakError(f"Forms sub-flow not found in flow '{flow_alias}'")
-
-    async def _create_conditional_deny_subflow(
+    async def _build_role_gate_flow(
         self,
+        realm_name: str,
         flow_alias: str,
-        parent_flow_id: str,
-        subflow_alias: str,
         role_name: str,
         error_message: str,
         client_id: str | None = None,
     ) -> None:
-        """
-        Create a conditional sub-flow that denies access if user lacks a role.
+        """Bouw een browser flow waarin de rolcontrole NAAST de authenticators staat.
 
-        Supports both client roles and realm roles:
-        - Client role: pass client_id
-        - Realm role: omit client_id (None)
+        De structuur, en waarom hij zo is::
 
-        Args:
-            flow_alias: Alias of the top-level flow
-            parent_flow_id: ID of the parent sub-flow (forms)
-            subflow_alias: Alias for the new conditional sub-flow
-            role_name: Role name that grants access
-            error_message: Error message key from theme
-            client_id: Client ID for client roles, None for realm roles
+            <flow>
+              <flow>-authenticate            REQUIRED
+                Cookie                          ALTERNATIVE
+                Identity Provider Redirector    ALTERNATIVE
+                <flow>-forms                    ALTERNATIVE
+                  Username Password Form           REQUIRED
+                  <flow>-otp                       CONDITIONAL
+                    Condition - user configured       REQUIRED
+                    OTP Form                          REQUIRED
+              <flow>-deny-no-role            CONDITIONAL
+                Condition - user role (negate)  REQUIRED
+                Deny Access                     REQUIRED
+
+        De rolcontrole hoort op hetzelfde niveau als het inloggen zelf, want alleen daar
+        draait hij ongeacht HOE iemand binnenkwam. Stond hij in de forms-subflow, dan sloeg
+        de Cookie-stap hem over en kwam een bestaande realm-sessie er ongetoetst langs.
+
+        Het omhulsel ``-authenticate`` is geen opsmuk maar de kern van de reparatie:
+        Keycloak negeert ALTERNATIVE-stappen zodra er op datzelfde niveau iets REQUIRED
+        staat. De rolcontrole rechtstreeks naast Cookie/forms zetten schakelt die dus
+        allemaal uit en weigert iedereen, ook rolhouders (gemeten op 25.0.6: ook een
+        gebruiker MET de rol kreeg "Invalid username or password"). Door de authenticators
+        samen in een REQUIRED subflow te zetten staan ze onderling weer alleen tussen
+        elkaar, en staat de conditionele rolcontrole ernaast in plaats van ertussen.
+
+        Binnen ``-deny-no-role`` maakt de volgorde niet uit: Keycloak kiest de voorwaarde
+        van een CONDITIONAL subflow op type en niet op plek. Nagemeten door Deny Access
+        expliciet vooraan te zetten; rolhouders kwamen er nog steeds door en de rest nog
+        steeds niet. Daarom dragen die twee stappen geen expliciete prioriteit.
+
+        Elke stap wordt apart opgezocht voor hij wordt aangemaakt, zodat herhaald
+        toepassen (elke reprocess doet dit) niets verdubbelt.
         """
         role_desc = f"{client_id}.{role_name}" if client_id else role_name
-        logger.debug(f"Creating conditional deny sub-flow '{subflow_alias}' for role '{role_desc}'")
+        logger.info(f"Building role gate browser flow '{flow_alias}' for role '{role_desc}' in realm '{realm_name}'")
 
-        # Get the forms sub-flow alias from the parent flow
-        flows = self.admin.get_authentication_flows()
-        forms_flow_alias = None
-        for flow in flows:
-            if flow.get("id") == parent_flow_id:
-                forms_flow_alias = flow.get("alias")
-                break
-
-        if not forms_flow_alias:
-            # Try to find it from executions
-            executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
-            for execution in executions:
-                if execution.get("flowId") == parent_flow_id:
-                    forms_flow_alias = execution.get("displayName")
-                    break
-
-        if not forms_flow_alias:
-            raise KeycloakError(f"Could not find forms sub-flow alias for ID '{parent_flow_id}'")
-
-        logger.debug(f"Forms sub-flow alias: {forms_flow_alias}")
-
-        # Step 1: Create the conditional sub-flow
-        subflow_data = {
-            "alias": subflow_alias,
-            "type": "basic-flow",
-            "provider": "registration-page-form",
-            "description": f"Deny access if user does not have role {role_desc}",
-        }
+        authenticate = f"{flow_alias}-authenticate"
+        forms = f"{flow_alias}-forms"
+        otp = f"{flow_alias}-otp"
+        deny = f"{flow_alias}-deny-no-role"
 
         try:
-            self.admin.create_authentication_flow_subflow(
-                payload=subflow_data, flow_alias=forms_flow_alias, skip_exists=True
+            self.admin.change_current_realm(realm_name)
+
+            if not any(flow.get("alias") == flow_alias for flow in self.admin.get_authentication_flows()):
+                self.admin.create_authentication_flow(
+                    payload={
+                        "alias": flow_alias,
+                        "providerId": "basic-flow",
+                        "topLevel": True,
+                        "builtIn": False,
+                        "description": f"Browser flow that only admits holders of role {role_desc}",
+                    }
+                )
+                logger.debug(f"Created top-level flow '{flow_alias}'")
+
+            # Volgorde, en waarom die hier de beveiliging draagt: staat ``-deny-no-role``
+            # vóór ``-authenticate``, dan draait de rolcontrole voordat er een gebruiker is
+            # en wordt IEDEREEN geweigerd. Hij wordt op dezelfde manier vastgelegd als in
+            # ``ensure_auto_link_first_broker_login_flow``: een expliciete prioriteit op de
+            # executions, en subflows op hun aanmaakvolgorde, waar de server
+            # getNextPriority (hoogste + 1) voor teruggeeft. Wat de prioriteit WEL kwijtraakt
+            # is een handgeschreven, partiele PUT op de requirement; daarom loopt alles hier
+            # via ``_ensure_execution_in_flow`` en ``_ensure_subflow``, die het opgehaalde
+            # object compleet terugsturen.
+            await self._ensure_subflow(flow_alias, authenticate, "REQUIRED", "Authenticate the user")
+            await self._ensure_execution_in_flow(authenticate, "auth-cookie", "ALTERNATIVE", priority=10)
+            await self._ensure_execution_in_flow(
+                authenticate, "identity-provider-redirector", "ALTERNATIVE", priority=20
             )
-            logger.debug(f"Created conditional sub-flow '{subflow_alias}'")
-        except KeycloakPostError as e:
-            if "409" in str(e) or "Conflict" in str(e):
-                logger.debug(f"Sub-flow '{subflow_alias}' already exists")
-            else:
-                raise
+            await self._ensure_subflow(authenticate, forms, "ALTERNATIVE", "Username, password, otp")
+            await self._ensure_execution_in_flow(forms, "auth-username-password-form", "REQUIRED", priority=10)
+            await self._ensure_subflow(forms, otp, "CONDITIONAL", "Browser - conditional OTP")
+            await self._ensure_execution_in_flow(otp, "conditional-user-configured", "REQUIRED", priority=10)
+            await self._ensure_execution_in_flow(otp, "auth-otp-form", "REQUIRED", priority=20)
 
-        # Step 2: Set the sub-flow to CONDITIONAL requirement (if not already)
-        executions = self.admin.get_authentication_flow_executions(flow_alias=forms_flow_alias)
-        subflow_execution = None
-        for execution in executions:
-            if execution.get("displayName") == subflow_alias:
-                subflow_execution = execution
-                break
+            await self._ensure_subflow(flow_alias, deny, "CONDITIONAL", f"Deny access without role {role_desc}")
+            await self._add_condition_user_role(
+                subflow_alias=deny, role_name=role_name, negate=True, client_id=client_id
+            )
+            await self._add_deny_access(subflow_alias=deny, error_message=error_message)
 
-        if subflow_execution:
-            current_requirement = subflow_execution.get("requirement")
-            if current_requirement == "CONDITIONAL":
-                logger.debug(f"Sub-flow '{subflow_alias}' is already CONDITIONAL, skipping update")
-            else:
-                update_data = {
-                    "id": subflow_execution.get("id"),
-                    "requirement": "CONDITIONAL",
-                    "displayName": subflow_alias,
-                    "level": subflow_execution.get("level", 1),
-                    "index": subflow_execution.get("index", 0),
-                    "configurable": False,
-                    "authenticationFlow": True,
-                }
-                self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=forms_flow_alias)
-                logger.debug(f"Set sub-flow '{subflow_alias}' to CONDITIONAL")
+            self.admin.change_current_realm("master")
+            logger.info(f"Role gate browser flow '{flow_alias}' is in place")
 
-        # Step 3: Add "Condition - User Role" execution (negated - check if user does NOT have role)
-        await self._add_condition_user_role(
-            subflow_alias=subflow_alias, role_name=role_name, negate=True, client_id=client_id
-        )
+        except KeycloakError as e:
+            logger.error(f"Failed to build role gate browser flow '{flow_alias}': {e}")
+            self.admin.change_current_realm("master")
+            raise
 
-        # Step 4: Add "Deny Access" execution
-        await self._add_deny_access(subflow_alias=subflow_alias, error_message=error_message)
+    async def delete_authentication_flow_by_alias(self, realm_name: str, flow_alias: str) -> bool:
+        """Verwijder een top-level flow als hij bestaat; zegt of er iets weg is.
+
+        Opruimen mag nooit de reden zijn dat een uitrol faalt, dus een weigering van
+        Keycloak (bijvoorbeeld omdat er nog een client aan hangt) wordt gelogd en niet
+        doorgegeven.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            flow = next((f for f in self.admin.get_authentication_flows() if f.get("alias") == flow_alias), None)
+            if flow is None:
+                return False
+            self.admin.delete_authentication_flow(flow_id=flow["id"])
+            logger.info(f"Deleted authentication flow '{flow_alias}' from realm '{realm_name}'")
+            return True
+        except KeycloakError as e:
+            logger.warning(f"Could not delete authentication flow '{flow_alias}' in realm '{realm_name}': {e}")
+            return False
+        finally:
+            self.admin.change_current_realm("master")
 
     async def _add_condition_user_role(
         self, subflow_alias: str, role_name: str, negate: bool = True, client_id: str | None = None
@@ -2768,50 +2765,20 @@ class KeycloakConnector:
         """
         Create a browser flow that restricts access to users with a specific realm role.
 
-        This creates a copy of the browser flow with a conditional sub-flow that:
-        1. Checks if the user does NOT have the specified realm role
-        2. If they don't have the role, denies access with a custom error message
-
-        This is similar to create_restricted_browser_flow but uses realm roles
-        instead of client roles, enabling unified access control across multiple apps.
+        Realm roles enable unified access control across multiple apps in the same realm.
 
         Args:
             realm_name: Name of the realm
-            flow_alias: Alias for the new flow (e.g., "browser-restricted-mijnbureau")
+            flow_alias: Alias for the new flow (see ``role_gate_flow_alias``)
             role_name: Realm role name that grants access
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
         """
-        logger.info(
-            f"Creating restricted browser flow '{flow_alias}' for realm role '{role_name}' in realm '{realm_name}'"
+        await self._build_role_gate_flow(
+            realm_name=realm_name,
+            flow_alias=flow_alias,
+            role_name=role_name,
+            error_message=error_message,
         )
-
-        try:
-            self.admin.change_current_realm(realm_name)
-
-            # Step 1: Copy the browser flow
-            await self._copy_browser_flow(flow_alias)
-
-            # Step 2: Find the "forms" sub-flow in our new flow
-            forms_flow_id = await self._find_forms_subflow(flow_alias)
-
-            # Step 3: Create a conditional sub-flow for realm role check
-            conditional_subflow_alias = f"{flow_alias}-deny-no-role"
-            await self._create_conditional_deny_subflow(
-                flow_alias=flow_alias,
-                parent_flow_id=forms_flow_id,
-                subflow_alias=conditional_subflow_alias,
-                role_name=role_name,
-                error_message=error_message,
-                # client_id=None means realm role
-            )
-
-            self.admin.change_current_realm("master")
-            logger.info(f"Successfully created restricted browser flow '{flow_alias}' for realm role")
-
-        except KeycloakError as e:
-            logger.error(f"Failed to create restricted browser flow '{flow_alias}': {e}")
-            self.admin.change_current_realm("master")
-            raise
 
     async def set_client_authentication_flow_override(
         self, realm_name: str, client_id: str, browser_flow_alias: str
@@ -3604,6 +3571,24 @@ class KeycloakConnector:
 
     # ==================== User Operations ====================
 
+    async def _realm_verifies_email(self, realm_name: str) -> bool:
+        """Whether this realm makes a user confirm their e-mail address.
+
+        Falls back to False when the realm cannot be read, which keeps a new user
+        pre-verified exactly as before. That direction is deliberate: the other one would
+        turn one unreadable moment into a user who has to click a confirmation mail that
+        may not have been sent, and being locked out is worse than being let in the way
+        yesterday's code let everyone in.
+        """
+        try:
+            realm = self.admin.get_realm(realm_name=realm_name)
+        except KeycloakError as e:
+            logger.warning(
+                f"Could not read realm '{realm_name}' to decide emailVerified, assuming no verification: {e}"
+            )
+            return False
+        return bool((realm or {}).get("verifyEmail"))
+
     async def create_user(
         self,
         realm_name: str,
@@ -3649,7 +3634,20 @@ class KeycloakConnector:
 
         if email:
             user_data["email"] = email
-            user_data["emailVerified"] = True
+            # EMAILVERIFIED VOLGT DE REALM, en dat is de hele reden dat verifyEmail iets doet.
+            #
+            # Hier stond onvoorwaardelijk True. Elke gebruiker die via de invite-weg werd
+            # aangemaakt was daarmee vooraf geverifieerd zonder dat er ooit iets bevestigd
+            # was, en omdat SSO-gebruikers via ``trustEmail`` al geverifieerd binnenkomen
+            # bleef er als aanleiding voor een bevestigingsmail alleen het WIJZIGEN van een
+            # adres over. Dat is bijna nooit, dus verifyEmail zou een keten opleveren die
+            # in de praktijk stil blijft.
+            #
+            # Verifieert de realm, dan komt een nieuwe gebruiker binnen met False en
+            # bevestigt hij zijn adres bij zijn eerste login. Verifieert de realm niet, dan
+            # blijft het gedrag zoals het was: emailVerified heeft dan geen betekenis voor
+            # het inloggen.
+            user_data["emailVerified"] = not await self._realm_verifies_email(realm_name)
 
         if first_name:
             user_data["firstName"] = first_name

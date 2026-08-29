@@ -11,6 +11,7 @@ This module provides functionality to:
 import glob
 import logging
 import os
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,28 @@ CONFIG_HASH_IGNORE_LABEL_KEY = "zad.rig/config-hash"
 CONFIG_HASH_IGNORE_LABEL_VALUE = "ignore"
 
 logger = logging.getLogger(__name__)
+
+
+def yaml_scalar(value: str) -> str:
+    """Render ``value`` as a YAML double-quoted scalar that survives a round-trip.
+
+    Tenant values reach a Secret manifest verbatim, so the quoting has to hold for
+    every legal string. Naive ``"{{ value }}"`` quoting breaks on a backslash: it
+    becomes an invalid YAML escape, SOPS refuses the whole file and the deployment
+    aborts. It also folds a lone carriage return into a space, silently. ``| tojson``
+    fixes the backslash but writes an astral character as a surrogate pair, which
+    SOPS rejects with "found invalid Unicode character escape code". Letting the
+    YAML emitter do it escapes exactly what YAML requires and nothing else.
+    """
+    emitter = YAML(typ="safe", pure=True)
+    emitter.default_style = '"'
+    emitter.allow_unicode = True
+    # A width this large keeps the scalar on one line; the emitter would otherwise
+    # fold a long value across lines, and folding rewrites runs of whitespace.
+    emitter.width = 10**9
+    buffer = StringIO()
+    emitter.dump(value, buffer)
+    return buffer.getvalue().rstrip("\n")
 
 
 def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:
@@ -132,6 +155,7 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
         keep_trailing_newline=True,  # preserve an included partial's final newline so the next line doesn't merge onto it
         autoescape=False,
     )
+    env.filters["yaml_scalar"] = yaml_scalar
     template = env.from_string(template_content)
 
     # Render the template with variables
@@ -184,6 +208,7 @@ class ManifestGenerator:
                 lstrip_blocks=True,
                 keep_trailing_newline=True,
             )
+            env.filters["yaml_scalar"] = yaml_scalar
             template = env.from_string(manifest_content)
 
             # Render the template with variables

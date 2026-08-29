@@ -129,6 +129,11 @@ must-match-sender = false
 #    Envelope en From: zijn nu HETZELFDE adres. Ze verschilden eerder een voorvoegsel
 #    (de envelope droeg de accountnaam) en dat verschil diende niets: uitlijning kijkt
 #    naar het domein, en de ontvanger zag het project juist niet.
+#    LET OP: sinds RC-159 kan de From: hiervan AFWIJKEN. Een account met een sleutel
+#    onder `zad.afzender.adres.` krijgt in het script hieronder een eigen From:-adres,
+#    terwijl de envelope hier de AFGELEIDE waarde houdt. Uitlijning blijft heel omdat OPI
+#    alleen adressen in ons eigen afzenderdomein toelaat, en het plusdeel blijft hier de
+#    bounce dragen. Vandaag geldt dat voor precies een account: dat van Keycloak.
 [session.mail]
 rewrite = [
   {if = "starts_with(authenticated_as, 'project-')", eq = true, then = "'%{env:MAIL_FROM_LOCAL}%+' + strip_prefix(authenticated_as, 'project-') + '@%{env:MAIL_DOMAIN}%'"},
@@ -155,6 +160,12 @@ set "domein" "%{env:MAIL_DOMAIN}%";
 # kanten global zijn (RFC 6609), en zonder die verklaring blijft de naam hier stil leeg.
 global "naam";
 set "naam" "";
+# En hetzelfde voor het ADRES. Bijna elk account heeft er geen: het adres wordt hieronder
+# uit de accountnaam AFGELEID. Een account dat het script wel een adres geeft, stapt uit
+# die afleiding - vandaag alleen het Keycloak-account van ZAD, zodat inlogpost te
+# onderscheiden is van de post van de portal.
+global "afzender";
+set "afzender" "";
 include :optional :personal "zad-afzenders";
 
 # Het adres uit de accountnaam. LET OP de vorm: een `let` BINNEN een if-blok overleeft
@@ -165,6 +176,15 @@ let "projectadres" "'%{env:MAIL_FROM_LOCAL}%+' + strip_prefix(account, 'project-
 set "adres" "%{env:MAIL_FROM_LOCAL}%@%{env:MAIL_DOMAIN}%";
 if eval "starts_with(account, 'project-')" {
     set "adres" "${projectadres}";
+}
+# Een ingeladen adres wint van de afleiding, en RAAKT ALLEEN DE From:. De envelope
+# hierboven (`[session.mail] rewrite`) houdt de afgeleide waarde, en dat is geen
+# vergissing maar de bedoeling: DMARC-uitlijning vergelijkt de DOMEINEN van envelope en
+# From:, en die blijven gelijk zolang OPI alleen adressen in ons afzenderdomein toelaat
+# (MAIL_SENDER_DOMAIN_ALLOWLIST in opi/connectors/mail.py). Het plusdeel blijft
+# ondertussen in de envelope staan en blijft dus de bounce dragen.
+if eval "afzender != ''" {
+    set "adres" "${afzender}";
 }
 
 # 2. De From: wordt OVERSCHREVEN met de afzender van DIT account: het projectadres en
@@ -388,17 +408,41 @@ store = "db"
 user = "%{env:MAIL_RELAY_ADMIN_USERNAME}%"
 secret = "%{env:MAIL_RELAY_ADMIN_PASSWORD}%"
 
-# Stalwart haalt bij elke start een bijgewerkte spamfilter-regelset op van GitHub
-# (spam-filter.auto-update, default aan). Ons egress-netwerkbeleid staat geen
-# internet-egress toe, dus die fetch strandt en levert een config.build-error op
-# namespace "*" - gemeten 19 augustus 2026. Daarom uit. (Een eerdere versie van deze
-# regel noemde github.com onbereikbaar terwijl jsdelivr wel lukte; dat bleek een race
-# in de netpol-handhaving van Kind bij een verse pod, gemeten 21 augustus 2026 -
-# allebei zitten ze dicht. Zie plans/mail-vervolgpunten.md, punt 6.)
-# NB: dit zegt niets over of het filter zelf AAN hoort - dat is een van de open
-# vervolgpunten in plans/mail-vervolgpunten.md.
+# De spamfilter-regelset. De sleutel `resource` zet de STARTHANG uit, `auto-update` doet
+# dat niet, en dat verschil heeft de relay op productie plat gelegd (21 augustus 2026).
+#
+# GELEZEN IN boot.rs VAN v0.11.8, want uit de documentatie is dit niet af te leiden.
+# Staat `version.spam-filter` niet in de configopslag, dan draait `fetch_spam_rules()`
+# ONVOORWAARDELIJK bij elke start (boot.rs:233). Zonder de sleutel hieronder pakt die
+# DEFAULT_SPAMFILTER_URL op github.com, met een HARDGECODEERDE timeout van 60 seconden
+# (manager/mod.rs:39-49). Op ODCN gaat al het uitgaande verkeer van deze namespace door
+# de RON-egressgateway - de annotatie egress.projectcalico.org/egressGatewayPolicy neemt
+# exact een waarde - dus github is onbereikbaar en die 60 seconden lopen voluit.
+#
+# Dat gebeurt VOOR telemetry.enable() (boot.rs:384), dus er komt geen enkele logregel.
+# Gemeten op productie: containerstart 14:10:26, eerste logregel 14:11:26, listeners
+# gebonden in diezelfde seconde. De liveness-probe kilt op ~50 seconden, dus de relay was
+# 10 seconden te laat en kwam nooit omhoog. En omdat de download nooit slaagt, wordt
+# `version.spam-filter` nooit weggeschreven en doet elke herstart het opnieuw:
+# zelfherstel is uitgesloten.
+#
+# `auto-update` hieronder helpt hier NIET tegen. Die sleutel wordt pas op boot.rs:410
+# gelezen, na de telemetrie, en gaat alleen over de periodieke verversing.
+#
+# LET OP BIJ HET LEZEN VAN DE LOG: spamfilter en webadmin schrijven hun bouwfout allebei
+# op sleutel "*", en `config.errors` is een AHashMap. Webadmin komt later en OVERSCHRIJFT
+# de spamfilterfout, dus je ziet alleen de download die al is afgevangen. Wie op die
+# logregel afgaat, zoekt in de verkeerde hoek. Dat is precies wat er is gebeurd.
+#
+# DIT IS EEN BLOKKADE, GEEN BESLUIT. Het filter HOORT aan te staan. Het staat nu uit
+# omdat de regels er niet zijn, niet omdat we ze niet willen, en het pad terug is het
+# bestand VENDOREN in plaats van het op te halen. Dat is haalbaar: spam-filter.toml is
+# 76 KB (past ruim in een ConfigMap) en versie 2.0.5 eist server 0.11.0, dus v0.11.8
+# voldoet. Wat er dan nog aan uitgezocht moet worden staat in
+# plans/mail-vervolgpunten.md, punt 2.
 [spam-filter]
 auto-update = false
+resource = "file:///nonexistent/spamfilter-nog-niet-gevendord.toml"
 
 # De webadmin-bundel. Bij de EERSTE start ontbreekt hij in de blobopslag en haalt
 # Stalwart hem VOOR de logger-initialisatie op van GitHub (boot.rs v0.11.8; gemeten

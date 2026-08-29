@@ -26,6 +26,11 @@ spec:
     automated:
       prune: true
       selfHeal: true
+      # Expliciet, al is false de default: een lege render mag NOOIT een automatische
+      # veegactie worden. Dit is de app met het CNPG-cluster en de PVC's erin; de
+      # kroonjuwelen dragen daarnaast zelf Prune=false-annotaties, zodat ook een
+      # GEDEELTELIJK verdwenen render ze niet meeneemt.
+      allowEmpty: false
     syncOptions:
       - CreateNamespace=false
       - SyncTimeout=60s

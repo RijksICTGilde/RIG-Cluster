@@ -1,0 +1,3 @@
+2026-08-26 08:24:05,558 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProviderFactory] (main) ZAD-RELAY 1.0.0: aangezet, relay rig-mail-relay.rig-ron.svc.cluster.local:587 als zad-keycloak, afzender noreply-inloggen@rijksoverheid.nl
+2026-08-26 08:27:00,004 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY: bericht gaat naar de relay rig-mail-relay.rig-ron.svc.cluster.local:587; smtpServer van de realm genegeerd (1 sleutels, eigen host: false)
+2026-08-26 08:27:00,101 INFO  [nl.minbzk.rig.keycloak.email.RelayEmailSenderProvider] (executor-thread-1) ZAD-RELAY: bericht aangeboden aan de relay

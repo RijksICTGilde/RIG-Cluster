@@ -274,6 +274,21 @@ starten, want allebei lezen ze de waarde uit hun omgeving.
 Roteren raakt geen enkel projectaccount. De accounts staan als principals in de database van
 de relay; het beheerderswachtwoord is alleen waarmee OPI zich meldt om ze te beheren.
 
+### En het account van KEYCLOAK, dat er niet op lijkt
+
+Er is sinds RC-159 een TWEEDE platformaccount: `zad-keycloak`, waarmee Keycloak zijn
+inlogpost en bevestigingsmail verstuurt. Het is opzettelijk geen variant van het account
+hierboven, want het verschilt in het enige dat telt: **waar het wachtwoord vandaan komt.**
+
+`zad-platform` wordt door niemand anders gelezen, dus OPI genereert dat wachtwoord zelf.
+Keycloak is een ander programma dat OPI niet kent en niet op OPI hoort te wachten, dus zijn
+wachtwoord komt uit de BOOTSTRAP en OPI is daar de reconciler in plaats van de bron. De regel
+die de twee uit elkaar houdt staat in `mail-relay-secret.yaml` zelf.
+
+De hele keten - het geheim, de eigen verzender in de Keycloak-pod, de minimale `smtpServer`
+op elke realm, het eigen afzenderadres en wat `verifyEmail` betekent voor de invite-weg -
+staat in **`features/keycloak-mail.md`**.
+
 ### Als de relay er bij het opstarten nog niet is
 
 De taak is non-critical en vangt ook de transportfouten (een onbereikbare relay geeft geen
@@ -295,6 +310,11 @@ omgeving). Dat herstartmoment is precies wanneer het account ontstaat.
 | `MAIL_PLATFORM_SECRET_NAME` | de Secret in de eigen namespace waarin OPI dat wachtwoord bewaart |
 | `MAIL_PLATFORM_MESSAGES_PER_DAY` | het budget van dat account (de afzender is geen instelling: dit account hoort bij geen project en verstuurt daarom als het kale basisadres, zonder plusdeel en zonder naam) |
 | `MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY` | het budget van een project dat er zelf geen kiest |
+| `MAIL_KEYCLOAK_ACCOUNT` | de naam van het account waarmee Keycloak verstuurt (zie `features/keycloak-mail.md`) |
+| `MAIL_KEYCLOAK_SECRET_NAME` | het Secret uit de BOOTSTRAP waaruit OPI dat wachtwoord leest - het genereert het hier niet |
+| `MAIL_KEYCLOAK_SECRET_KEY` | de sleutel in dat Secret, en de naam die het bootstraptemplate, de `secretKeyRef` van de Keycloak-deployment en de leesweg van OPI gemeen hebben |
+| `MAIL_KEYCLOAK_MESSAGES_PER_DAY` | het budget van dat account, gedeeld door alle realms |
+| `MAIL_KEYCLOAK_FROM_LOCAL` / `MAIL_KEYCLOAK_FROM_NAME` | het eigen afzenderadres en de eigen naam van dat account, zodat inlogpost te onderscheiden is van de post van de portal |
 
 Per cluster staan de relay-hostnaam, de poort, de namespace en het BASISadres in
 `opi/core/cluster_config.py` (`get_mail_from_address`). Het adres dat een project
@@ -342,8 +362,21 @@ Daarmee is de identiteitscontrole een assertie geworden in plaats van een handma
 kubectl -n rig-ron port-forward svc/rig-mail-relay 1587:587 &
 kubectl -n rig-ron port-forward svc/rig-mail-sink 8025:8025 &
 cd operations-manager/python
-uv run python scripts/mail_identity_check.py --user <account> --password <geheim>
+MAIL_RELAY_PASSWORD=<geheim> uv run python scripts/mail_identity_check.py --user <account>
 ```
+
+Het wachtwoord komt uit `MAIL_RELAY_PASSWORD` en anders uit een prompt; er is met opzet geen `--password`. Een wachtwoord op de opdrachtregel staat in `/proc/<pid>/cmdline` voor iedereen op de machine en blijft in de shellgeschiedenis staan, en dit script wordt gedraaid met een GEDEELD platformwachtwoord in de hand.
+
+Voor een account met een EIGEN afzenderadres lopen de `From:` en de envelope bewust uiteen — de relay leidt de envelope af uit de accountnaam en het sieve-script overschrijft alleen de `From:`. De toets is daarom domeinuitlijning (dat is wat DMARC vergelijkt) plus de twee adressen die je opgeeft:
+
+```bash
+MAIL_RELAY_PASSWORD=<geheim> uv run python scripts/mail_identity_check.py --user zad-keycloak \
+    --verwacht-adres noreply-inloggen@rijksoverheid.nl \
+    --verwacht-envelope noreply-rijksapp@rijksoverheid.nl \
+    --verwacht-naam "Rijksapps"
+```
+
+Zonder `--verwacht-envelope` is de verwachte envelope hetzelfde adres als `--verwacht-adres`, wat voor een projectaccount en voor de terugval klopt.
 
 De eerste sandbox-run beantwoordde en passant een vraag die openstond: de relay praat STARTTLS met strikte certificaatcontrole, en nergens stond wat Stalwart doet als de tegenpartij STARTTLS niet aanbiedt. **Gemeten op 19 augustus 2026: het is een garantie.** Zonder STARTTLS weigert hij permanent (`STARTTLS was not advertised by host`) en bouncet het bericht; met een certificaat dat niet valideert weigert hij tijdelijk en blijft het bericht in de wachtrij. Hij valt in geen van beide gevallen terug op platte tekst. Daar hoort een tweede uitkomst bij die productie raakt: Stalwart leest de trust store van het besturingssysteem niet, dus een interne CA valt niet te vertrouwen. Beide staan uitgewerkt in `docs/ron-koppeling.md`. De sink biedt STARTTLS daarom nu wel aan, met een certificaat dat een initContainer bij elke start maakt.
 
@@ -384,31 +417,16 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
    wachtwoord uit `mail-db-credentials`) en de database staan declaratief in
    `infrastructure/bootstrap/infrastructure/postgresql/database/base/`, dus CNPG maakt
    ze ook op een al draaiend cluster aan zodra de wijziging synct.
-2. **De RON-namespace vooraf aanmaken (ODCN).** De ArgoCD op ODCN draait in namespaced
-   mode: hij kan geen Namespace-resource aanmaken, en de CMP weigert zelfs te renderen
-   zolang de doelnamespace of het sleutelsecret ontbreekt. Beide dus handmatig, eenmalig,
-   VOOR stap 2b:
-
-   ```yaml
-   apiVersion: v1
-   kind: Namespace
-   metadata:
-     name: rig-prd-ron
-     labels:
-       app.kubernetes.io/name: operations-ron
-       app.kubernetes.io/component: mail
-       app.kubernetes.io/part-of: rig-platform
-       # De namespaced ArgoCD krijgt hiermee (via de operator) de beheer-RBAC voor
-       # deze namespace; zonder dit label kan de app er niets aanmaken.
-       argocd.argoproj.io/managed-by: rig-prd-operations
-     annotations:
-       # DE RON-KOPPELING. Deze annotatie neemt exact een waarde, dus RON en internet
-       # kunnen niet allebei op dezelfde namespace staan; dat is de reden dat de relay
-       # een eigen namespace heeft (plans/mailrelay.md, aanvulling 2).
-       egress.projectcalico.org/egressGatewayPolicy: rig-ron
-   ```
-
-   En daarna het sleutelsecret erin (dezelfde inhoud als in `rig-prd-operations`):
+2. **De RON-namespace komt uit de bootstrap (ODCN).** De ArgoCD op ODCN draait in
+   namespaced mode: hij kan geen Namespace-resource aanmaken, en de CMP weigert zelfs te
+   renderen zolang de doelnamespace of het sleutelsecret ontbreekt. De namespace staat
+   daarom als `namespace-ron.yaml` in de bootstrap-overlay
+   (`bootstrap/rig-system/kustomize/overlays/odcn-production/`), met de RON-annotatie
+   (`egress.projectcalico.org/egressGatewayPolicy: rig-ron`) en het
+   `argocd.argoproj.io/managed-by`-label erop; `task bootstrap-argo-system` past hem met
+   kubectl toe, buiten ArgoCD om. Wat daarna nog een handeling is (de sleutel staat niet
+   in git): het sleutelsecret in de namespace zetten, dezelfde inhoud als in
+   `rig-prd-operations`:
 
    ```bash
    kubectl get secret sops-age-key -n rig-prd-operations -o yaml \
