@@ -72,6 +72,9 @@ def mock_task_service() -> AsyncMock:
     service.list_tasks.return_value = {"tasks": [], "total": 0}
     service.update_task_status.return_value = None
     service.create_task.return_value = _make_task()
+    # Standaard is een pending taak niet geblokkeerd; de tests die dat wel meten zetten
+    # deze zelf. Zonder deze regel geeft de AsyncMock een MagicMock terug, en die is waar.
+    service.find_blocking_task.return_value = None
     return service
 
 
@@ -138,6 +141,93 @@ class TestGetTask:
 
         assert response.status_code == 202
         assert response.json()["status"] == "pending"
+
+    def test_een_geblokkeerde_taak_zegt_waarop_hij_wacht(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """Een taak die wacht mag er niet uitzien alsof hij hangt (RC-166).
+
+        Sinds een overlappende taak een andere taak echt tegenhoudt, is "Queued" te weinig:
+        wie een delete start terwijl er een projectbrede taak loopt moet kunnen zien dat er
+        niets stuk is, en waarop gewacht wordt.
+        """
+        mock_task_service.get_task.return_value = _make_task(
+            status="pending", progress_percent=0, current_step="Queued", started_at=None
+        )
+        mock_task_service.find_blocking_task.return_value = {
+            "task_id": "11111111-1111-1111-1111-111111111111",
+            "task_type": "configure_service",
+            "deployment_name": None,
+            "status": "running",
+        }
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        assert response.status_code == 202
+        data = response.json()
+        assert data["waiting_for"] == {
+            "task_id": "11111111-1111-1111-1111-111111111111",
+            "task_type": "configure_service",
+            "deployment_name": None,
+            "reason": "running",
+        }
+        assert data["current_step"] == "Wacht op configure_service (hele project)"
+
+    def test_een_taak_die_zelf_ook_nog_wacht_heet_queued_ahead(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        mock_task_service.get_task.return_value = _make_task(status="pending", started_at=None)
+        mock_task_service.find_blocking_task.return_value = {
+            "task_id": "22222222-2222-2222-2222-222222222222",
+            "task_type": "delete_deployment",
+            "deployment_name": "pr-244",
+            "status": "pending",
+        }
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        data = response.json()
+        assert data["waiting_for"]["reason"] == "queued_ahead"
+        assert data["current_step"] == "Wacht op delete_deployment (pr-244)"
+
+    def test_een_niet_geblokkeerde_pending_taak_draagt_null(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """Altijd aanwezig, null als er niets is: anders moet elke lezer een extra controle doen."""
+        mock_task_service.get_task.return_value = _make_task(
+            status="pending", progress_percent=0, current_step="Queued", started_at=None
+        )
+        mock_task_service.find_blocking_task.return_value = None
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        data = response.json()
+        assert "waiting_for" in data
+        assert data["waiting_for"] is None
+        assert data["current_step"] == "Queued"
+
+    def test_een_draaiende_taak_wordt_niet_op_blokkade_bevraagd(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """Alleen een pending taak kan wachten; voor de rest is het een overbodige query."""
+        mock_task_service.get_task.return_value = _make_task(status="running")
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        assert response.json()["waiting_for"] is None
+        mock_task_service.find_blocking_task.assert_not_awaited()
 
     def test_get_task_completed_returns_200(
         self,

@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import ARRAY, DateTime, Index, SmallInteger, String, Text, Uuid, text
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -49,6 +50,14 @@ class AsyncTask(Base):
     created_by: Mapped[str | None] = mapped_column(String(255))
     attempt_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"))
     max_attempts: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("3"))
+    #: De deployments die deze taak raakt; NULL is projectbreed, net als None in
+    #: ``scope_of()``, dat de enige schrijver van deze kolom is.
+    #:
+    #: De postgresql-ARRAY en niet de generieke uit ``sqlalchemy`` (die ``logs`` gebruikt):
+    #: alleen de dialect-variant heeft ``.overlap()`` in zijn comparator, en daarop draait
+    #: het overlappredicaat waarmee ``claim_next_task`` bepaalt of twee taken elkaar in de
+    #: weg kunnen zitten.
+    affects_deployments: Mapped[list[str] | None] = mapped_column(PG_ARRAY(String(63)))
 
     __table_args__ = (
         Index("idx_async_tasks_pending", "status", "created_at", postgresql_where=text("status = 'pending'")),
@@ -60,6 +69,7 @@ class AsyncTask(Base):
         ),
         Index("idx_async_tasks_project", text("project_name"), text("created_at DESC")),
         Index("idx_async_tasks_deployment", text("project_name"), text("deployment_name"), text("created_at DESC")),
+        Index("idx_async_tasks_affects", "affects_deployments", postgresql_using="gin"),
         Index(
             "idx_async_tasks_completed",
             "status",

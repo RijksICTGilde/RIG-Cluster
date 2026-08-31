@@ -81,7 +81,11 @@ from opi.handlers.project_file_handler import (
     remove_component_references,
 )
 from opi.handlers.sops import SopsHandler
-from opi.manager.argo_manager import UMBRELLA_REFRESH_MAX_POGINGEN, UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN
+from opi.manager.argo_manager import (
+    UMBRELLA_REFRESH_MAX_POGINGEN,
+    UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
+    ApplicationGone,
+)
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
@@ -3421,6 +3425,16 @@ class ProjectManager:
                         if app_subtask:
                             progress_manager.fail_subtask(app_subtask, "time-out na 300s")
                         return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
+                    except ApplicationGone as e:
+                        # Geen synchronisatiefout: een andere taak (meestal een
+                        # delete_deployment voor dezelfde deployment) heeft de Application
+                        # verwijderd terwijl wij erop stonden te wachten. Er valt niets meer
+                        # te melden over een deployment die er niet meer is.
+                        logger.info("Application '%s' (%s) verdween tijdens de wacht: %s", app_name, dep_name, e)
+                        if app_subtask:
+                            progress_manager.update_task(app_subtask, dep_name, subject="verwijderd tijdens de uitrol")
+                            progress_manager.complete_subtask(app_subtask)
+                        return {"app_name": app_name, "dep_name": dep_name, "status": "removed"}
                     except RuntimeError as e:
                         logger.error(f"Application '{app_name}' failed to sync: {e}")
                         if app_subtask:
@@ -3449,7 +3463,9 @@ class ProjectManager:
                 for outcome in outcomes:
                     app_name = outcome["app_name"]
                     dep_name = outcome["dep_name"]
-                    if outcome["status"] == "ok":
+                    # "removed" krijgt dezelfde behandeling als "ok": de deployment bestaat
+                    # niet meer, dus geen sync_failures en geen health_warnings.
+                    if outcome["status"] in ("ok", "removed"):
                         continue
                     if outcome["status"] == "timeout":
                         sync_failures.append(f"{app_name} ({dep_name}): timed out after 300s waiting for sync")
