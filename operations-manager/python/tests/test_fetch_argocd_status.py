@@ -102,6 +102,10 @@ async def test_out_of_sync_leftover_becomes_deviation_not_error():
     argo.get_application_resource_tree = AsyncMock(return_value=[])
     kubectl = MagicMock()
     kubectl.get_namespace_events = AsyncMock(return_value=[])
+    # Progressing is not healthy, so this run takes the diagnostics branch and that branch
+    # asks for the pods. Without this the mock hands back a MagicMock that cannot be
+    # awaited - which the removed blanket except used to swallow.
+    kubectl.get_application_pods = AsyncMock(return_value=[])
 
     deployment = {"name": "deploy-1", "namespace": "ns", "cluster": "local", "components": []}
     result = await _fetch_argocd_deployment_status("proj", deployment, argo, kubectl)
@@ -114,3 +118,85 @@ async def test_out_of_sync_leftover_becomes_deviation_not_error():
             "reason": "is verwijderd, maar het cluster maakt de verwijdering niet af",
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# De reikwijdte van de podsamenvatting (RC-162)
+# ---------------------------------------------------------------------------
+#
+# Deze twee zijn geen randgevallen maar de afspraak zelf: welke pod bedient is EXTRA
+# informatie voor een kaart die al niet groen is, en kost dus alleen daar een aanroep.
+# Een gezonde deployment mag er niets voor betalen. Daarom staan ze vastgelegd.
+
+
+@pytest.mark.asyncio
+async def test_healthy_deployment_does_not_ask_for_pods():
+    status_data = {"status": {"health": {"status": "Healthy"}, "sync": {"status": "Synced"}}}
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+    kubectl.get_application_pods = AsyncMock(return_value=[])
+
+    deployment = {"name": "deploy-1", "namespace": "ns", "cluster": "local", "components": [{"reference": "web"}]}
+    result = await _fetch_argocd_deployment_status("proj", deployment, argo, kubectl)
+
+    kubectl.get_application_pods.assert_not_called()
+    assert result["pods"] == []
+
+
+@pytest.mark.asyncio
+async def test_degraded_deployment_asks_for_pods_and_reports_them():
+    status_data = {"status": {"health": {"status": "Degraded"}, "sync": {"status": "Synced"}}}
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+    kubectl.get_namespace_events = AsyncMock(return_value=[])
+    kubectl.get_application_pods = AsyncMock(
+        return_value=[
+            {
+                "name": "deploy-1-web-849d475c4-4qp6p",
+                "app": "deploy-1-web",
+                "pod_template_hash": "849d475c4",
+                "deleting": False,
+                "ready": True,
+                "image": "ghcr.io/x/web:1",
+                "restart_count": 0,
+                "started_at": "2026-08-18T11:59:12Z",
+                "has_previous_attempt": False,
+            }
+        ]
+    )
+
+    deployment = {
+        "name": "deploy-1",
+        "namespace": "ns",
+        "cluster": "local",
+        "components": [{"reference": "web", "image": "ghcr.io/x/web:1"}],
+    }
+    result = await _fetch_argocd_deployment_status("proj", deployment, argo, kubectl)
+
+    kubectl.get_application_pods.assert_awaited_once()
+    assert [(s.reference, s.is_serving) for s in result["pods"]] == [("web", True)]
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_that_is_meant_to_have_no_pods_is_not_asked():
+    """Slaapstand of uitgeschakeld: nul pods is daar de bedoeling, niet een storing."""
+    status_data = {"status": {"health": {"status": "Degraded"}, "sync": {"status": "Synced"}}}
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+    kubectl.get_namespace_events = AsyncMock(return_value=[])
+    kubectl.get_application_pods = AsyncMock(return_value=[])
+
+    slaapt = MagicMock()
+    slaapt.expects_no_application_pods = True
+
+    deployment = {"name": "deploy-1", "namespace": "ns", "cluster": "local", "components": [{"reference": "web"}]}
+    result = await _fetch_argocd_deployment_status("proj", deployment, argo, kubectl, slaapt)
+
+    kubectl.get_application_pods.assert_not_called()
+    assert result["pods"] == []
