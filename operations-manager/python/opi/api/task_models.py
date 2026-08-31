@@ -442,6 +442,29 @@ class SupersededByResponse(BaseModel):
     project_name: str = Field(..., description="Project the taking-over task belongs to; always this project.")
 
 
+class WaitingForResponse(BaseModel):
+    """De taak waardoor deze taak nog niet aan de beurt is.
+
+    Zonder dit lijkt een geblokkeerde taak gewoon te hangen. Wie een delete start terwijl
+    er een projectbrede taak op hetzelfde project loopt, moet kunnen zien dat er niets
+    stuk is: er loopt iets anders dat dezelfde deployment raakt.
+    """
+
+    task_id: str = Field(..., description="De blokkerende taak; volg die om te zien wanneer hij klaar is.")
+    task_type: str = Field(..., description="Soort van de blokkerende taak (bijvoorbeeld 'configure_service').")
+    deployment_name: str | None = Field(
+        default=None,
+        description="Deployment van de blokkerende taak, of null als die het hele project raakt.",
+    )
+    reason: str = Field(
+        ...,
+        description=(
+            "'running' als de blokkerende taak bezig is, 'queued_ahead' als die zelf ook nog "
+            "wacht maar eerder werd aangemaakt."
+        ),
+    )
+
+
 class TaskResponse[TResult: BaseModel](BaseModel):
     """Generic async task response wrapper.
 
@@ -481,6 +504,14 @@ class TaskResponse[TResult: BaseModel](BaseModel):
             "Null in every other case, so a client can act on a hand-over without knowing "
             "the result shape of this task type. The work is not lost: the named task "
             "reprocesses from the state this task committed."
+        ),
+    )
+    waiting_for: WaitingForResponse | None = Field(
+        default=None,
+        description=(
+            "Waarom deze taak nog wacht, zolang zijn status 'pending' is. Null zodra hij "
+            "draait of klaar is. 'reason' is 'running' als de blokkerende taak bezig is, "
+            "en 'queued_ahead' als die zelf ook nog wacht maar eerder werd aangemaakt."
         ),
     )
     pending_rollout: PendingRolloutResponse | None = Field(
@@ -527,18 +558,32 @@ def _superseded_by(result: object) -> dict | None:
     return superseded_by if isinstance(superseded_by, dict) else None
 
 
+def _waiting_step(waiting_for: dict | None) -> str | None:
+    """De stapregel van een taak die op een andere taak wacht, of None.
+
+    Afgeleid, niet opgeslagen: de kolom houdt zijn "Queued", want de reden om te wachten
+    verandert continu terwijl de rij dat niet doet. ``current_step`` is wel het veld dat
+    het portaal en de CLI al tonen, dus daar hoort te staan waarop gewacht wordt.
+    """
+    if not waiting_for:
+        return None
+    waarop = waiting_for.get("deployment_name") or "hele project"
+    return f"Wacht op {waiting_for.get('task_type', '?')} ({waarop})"
+
+
 def task_response_from_dict(task: dict) -> dict:
     """Convert a task record dict to a TaskResponse-compatible dict.
 
     This replaces the old _task_to_response helper with proper datetime
     handling. The result is still a plain dict for JSONResponse serialization.
     """
+    waiting_for = task.get("waiting_for")
     return {
         "task_id": str(task.get("task_id", "")),
         "task_type": task.get("task_type", ""),
         "status": task.get("status", ""),
         "progress_percent": task.get("progress_percent", 0),
-        "current_step": task.get("current_step", ""),
+        "current_step": _waiting_step(waiting_for) or task.get("current_step", ""),
         "subtasks": task.get("subtasks"),
         "result": _with_error_category(task.get("result")),
         "error_message": task.get("error_message"),
@@ -547,6 +592,9 @@ def task_response_from_dict(task: dict) -> dict:
         # error_category. Altijd aanwezig, null als er niets is - een sleutel die soms
         # ontbreekt dwingt elke lezer tot een extra controle.
         "superseded_by": _superseded_by(task.get("result")),
+        # Zelfde reden als hierboven: altijd aanwezig, null als de taak niet wacht. Gevuld
+        # door de taakroute, die de wachtrij op leesmoment bevraagt.
+        "waiting_for": waiting_for,
         # Altijd aanwezig, ook als er niets te tellen valt: een sleutel die soms ontbreekt
         # dwingt elke lezer tot een extra controle, en null zegt hetzelfde. Gevuld door de
         # taakroute zodra de taak klaar is (zad-cli, punt 24).
