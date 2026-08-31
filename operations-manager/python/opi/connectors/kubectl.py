@@ -18,8 +18,25 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
 from opi.core.cluster_config import get_argo_namespace
 from opi.core.config import settings
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 
 logger = logging.getLogger(__name__)
+
+
+#: What kubectl answers when a pod has no previous attempt to read. Measured on
+#: production, 28 August 2026:
+#:
+#:     Error from server (BadRequest): previous terminated container "app" in pod
+#:     "<naam>" not found
+#:
+#: That is not an error the user did anything about -- a pod that never crashed simply has
+#: no earlier log -- so it belongs in the panel as a sentence, not as raw stderr.
+_PREVIOUS_ATTEMPT_MISSING_MARKER = "previous terminated container"
+
+
+def is_previous_attempt_missing(stderr_text: str) -> bool:
+    """Whether kubectl's stderr says this pod has no previous attempt to read."""
+    return _PREVIOUS_ATTEMPT_MISSING_MARKER in stderr_text
 
 
 def _summarize_kubectl_command(args: list[str]) -> str:
@@ -902,13 +919,21 @@ class KubectlConnector:
             return []
 
     async def stream_deployment_logs(
-        self, deployment_name: str, namespace: str, lines: int = 100
+        self,
+        deployment_name: str,
+        namespace: str,
+        lines: int = 100,
+        pod_name: str | None = None,
+        previous: bool = False,
     ) -> asyncio.subprocess.Process | None:
         """
         Start streaming logs from a deployment using kubectl logs -f.
 
-        Uses label selector instead of deployment/ to avoid needing deployment
-        get permissions - only requires pods and pods/log permissions.
+        Without ``pod_name`` this uses a label selector instead of deployment/ to avoid
+        needing deployment get permissions - only pods and pods/log permissions. That is
+        also what makes it show every matching pod at once: during a rolling update the
+        lines of the serving pod and of the crashing one arrive interleaved and, without
+        ``--prefix``, indistinguishable. Naming a pod is the way out of that.
 
         Returns a subprocess that streams logs in real-time. The caller is
         responsible for reading from process.stdout, terminating the process
@@ -921,6 +946,14 @@ class KubectlConnector:
             lines: Number of historical lines to retrieve initially. Pass 0
                 on reattach so the follower only streams NEW output and does
                 not re-dump the same stored tail every backoff cycle.
+            pod_name: One specific pod to follow. The caller MUST have checked that this
+                pod belongs to the project asking for it -- this method does not, and a
+                namespace carries the deployments of a whole team.
+            previous: Read the PREVIOUS attempt of the container instead of the current
+                one. Only meaningful together with ``pod_name``. There is nothing to
+                follow about a container that already stopped: the API hands over the
+                stored log and the process ends immediately, so a caller must not treat
+                that exit as a stream that needs reattaching.
 
         Returns:
             Subprocess with stdout stream, or None if failed to start
@@ -929,20 +962,36 @@ class KubectlConnector:
             logger.error("kubectl connection is not available for log streaming")
             return None
 
-        logger.debug(f"Starting log stream for deployment {deployment_name} in namespace {namespace} (tail={lines})")
+        target = pod_name or f"deployment {deployment_name}"
+        logger.debug(f"Starting log stream for {target} in namespace {namespace} (tail={lines}, previous={previous})")
 
         try:
-            # Use label selector instead of deployment/ to only require pod permissions
-            cmd = [
-                "kubectl",
-                "logs",
-                "-f",
-                "-l",
-                f"app={deployment_name}",
-                "-n",
-                namespace,
-                f"--tail={lines}",
-            ]
+            if pod_name:
+                cmd = [
+                    "kubectl",
+                    "logs",
+                    "-f",
+                    pod_name,
+                    "-c",
+                    APPLICATION_CONTAINER_NAME,
+                    "-n",
+                    namespace,
+                    f"--tail={lines}",
+                ]
+                if previous:
+                    cmd.append("--previous")
+            else:
+                # Use label selector instead of deployment/ to only require pod permissions
+                cmd = [
+                    "kubectl",
+                    "logs",
+                    "-f",
+                    "-l",
+                    f"app={deployment_name}",
+                    "-n",
+                    namespace,
+                    f"--tail={lines}",
+                ]
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -951,11 +1000,11 @@ class KubectlConnector:
                 env=self.env,
             )
 
-            logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid}, tail={lines})")
+            logger.info(f"Started log stream for {target} in {namespace} (PID: {process.pid}, tail={lines})")
             return process
 
         except Exception as e:
-            logger.error(f"Error starting log stream for {deployment_name}: {e}")
+            logger.error(f"Error starting log stream for {target}: {e}")
             return None
 
     # Event object prefixes and reasons that are infrastructure noise —
@@ -1040,6 +1089,91 @@ class KubectlConnector:
         except Exception as e:
             logger.error(f"Error getting namespace events: {e}")
             return []
+
+    async def get_application_pods(self, namespace: str, deployment_name: str) -> list[dict[str, Any]]:
+        """The application pods of one deployment, with what each of them is actually doing.
+
+        This answers the question the ArgoCD status cannot: *which pod is serving traffic
+        right now*. During a rolling update two pods sit behind one Service -- the previous
+        version still serving and the new one failing to come up -- and ArgoCD reports the
+        deployment Degraded for both. Only the pod list tells them apart.
+
+        One ``kubectl get pods -l <selector> -o json``; the selector comes from
+        ``deployment_pod_selector`` so the service-owned pods (sleep-mode's waker and
+        friends) are excluded exactly as everywhere else.
+
+        Args:
+            namespace: The (cluster-prefixed) namespace the deployment runs in
+            deployment_name: The deployment whose pods are wanted
+
+        Returns:
+            One dict per pod with ``name``, ``app`` (the component's unique name),
+            ``pod_template_hash``, ``deleting`` and -- read from the ``app`` container's
+            status -- ``ready``, ``image``, ``restart_count``, ``started_at`` and
+            ``has_previous_attempt``. Best-effort like the rest of this connector: a
+            failing command or unparsable output logs and yields an empty list, never
+            raises.
+        """
+        if not KubectlConnector.isConnected:
+            logger.debug("kubectl not available; no application pods for %s", deployment_name)
+            return []
+
+        args = [
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            deployment_pod_selector(deployment_name),
+            "-o",
+            "json",
+        ]
+        try:
+            stdout, stderr, code = await self._run_kubectl_command(args, timeout=15)
+        except Exception as exc:
+            logger.warning(f"Could not list application pods for {namespace}/{deployment_name}: {exc}")
+            return []
+
+        if code != 0:
+            logger.warning(f"Could not list application pods for {namespace}/{deployment_name}: {stderr}")
+            return []
+
+        try:
+            items = json.loads(stdout).get("items", []) or []
+        except (json.JSONDecodeError, AttributeError) as exc:
+            logger.warning(f"Unparsable pod list for {namespace}/{deployment_name}: {exc}")
+            return []
+
+        pods: list[dict[str, Any]] = []
+        for item in items:
+            metadata = item.get("metadata", {}) or {}
+            labels = metadata.get("labels", {}) or {}
+            pod: dict[str, Any] = {
+                "name": metadata.get("name", ""),
+                "app": labels.get("app", ""),
+                "pod_template_hash": labels.get("pod-template-hash", ""),
+                "deleting": bool(metadata.get("deletionTimestamp")),
+                "ready": False,
+                "image": "",
+                "restart_count": 0,
+                "started_at": None,
+                "has_previous_attempt": False,
+            }
+            for container in (item.get("status", {}) or {}).get("containerStatuses", []) or []:
+                if container.get("name") != APPLICATION_CONTAINER_NAME:
+                    continue
+                pod["ready"] = bool(container.get("ready"))
+                pod["image"] = container.get("image", "") or ""
+                pod["restart_count"] = int(container.get("restartCount") or 0)
+                # The container's own start, not ``status.startTime`` of the pod: after a
+                # restart the first is the truth and the second is when the pod was created.
+                pod["started_at"] = ((container.get("state", {}) or {}).get("running", {}) or {}).get("startedAt")
+                pod["has_previous_attempt"] = bool((container.get("lastState", {}) or {}).get("terminated"))
+                break
+            pods.append(pod)
+
+        logger.debug("Found %d application pod(s) for %s/%s", len(pods), namespace, deployment_name)
+        return pods
 
     async def get_pod_container_image(self, namespace: str, pod_name: str, container_name: str) -> str | None:
         """Get the image a running container was started from.
