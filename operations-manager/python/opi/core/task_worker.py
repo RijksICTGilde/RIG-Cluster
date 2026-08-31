@@ -22,7 +22,6 @@ from opi.core.task_supersede import (
     RunningTask,
     TaskSuperseded,
     reset_current_task,
-    scope_of,
     set_current_task,
 )
 
@@ -265,13 +264,15 @@ class TaskWorker:
 
             # Bind this task's identity and deployment scope so the ArgoCD waits
             # deep in the call chain can give way to a newer task that will redo
-            # this task's work. Scope is computed from the real work (payload for
-            # add_component), not the deployment_name column alone.
+            # this task's work. The scope comes from the affects_deployments column,
+            # written by create_task: one definition, one writer. A row from before
+            # the migration carries NULL, and that is project-wide - the safe side.
+            stored_scope = task.get("affects_deployments")
             supersede_token = set_current_task(
                 RunningTask(
                     task_id=task_id,
                     project_name=project_name,
-                    scope=scope_of(task_type, deployment_name, task.get("payload")),
+                    scope=None if stored_scope is None else frozenset(stored_scope),
                     task_service=self._task_service,
                 )
             )
