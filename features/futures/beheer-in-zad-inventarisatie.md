@@ -1,16 +1,23 @@
 # Het beheerdeel van ZAD: de inventarisatie
 
+**Status**: ontwerp, nog niet gebouwd. Vijf documenten in deze map horen bij elkaar, in deze
+leesvolgorde: `meldingen-inventarisatie.md`, `meldingen-oplossingsrichtingen.md`,
+`meldingen-plan-van-aanpak.md`, `beheer-in-zad-inventarisatie.md`,
+`beheer-in-zad-plan-van-aanpak.md`. De laatste twee corrigeren de standaarden voor
+beheerders in het derde. De opdrachten waaruit ze voortkwamen staan in
+`plans/meldingen-onderzoeksopdracht.md` en `plans/beheer-in-zad-onderzoeksopdracht.md`.
+
 **Geschreven op**: 28 augustus 2026, tegen commit `d32fb07e` op de tak
 `het-beheerdeel-van-zad-rollen-overzicht-en-wat-een`. Elk anker hieronder is nagelopen tegen
 de code van die commit. Wat er niet is staat als **bestaat niet**, en niet als aanname.
 
 Dit is deel 1 van twee. Deel 2 (het rollenmodel, de beheerdersstartpagina, de grensregel en
-de fasering) staat in `plans/beheer-in-zad-plan-van-aanpak.md`.
+de fasering) staat in `features/futures/beheer-in-zad-plan-van-aanpak.md`.
 
 ## Waarom dit document er is
 
-RC-148 (`plans/meldingen-inventarisatie.md`, `plans/meldingen-oplossingsrichtingen.md`,
-`plans/meldingen-plan-van-aanpak.md`) beschrijft een meldingssysteem en zet de standaard voor
+RC-148 (`features/futures/meldingen-inventarisatie.md`, `features/futures/meldingen-oplossingsrichtingen.md`,
+`features/futures/meldingen-plan-van-aanpak.md`) beschrijft een meldingssysteem en zet de standaard voor
 een platformbeheerder op "alles, inclusief type 12", met filters op de lijst als enige rem.
 De opdrachtgever wil dat niet: hij hoeft niet per se voor alle projecten alles te zien. En hij
 voegt eraan toe dat het beheerdeel van ZAD sowieso nog niet lekker is uitgewerkt.
@@ -134,7 +141,7 @@ waar een beheerder een besluit neemt dat iets in beweging zet.
   history is (`{% if item.history %}`), dus bij een `send-email`-aanvraag staat de kolom leeg
   en is de ouderdom nergens vandaan te halen.
 - **Geen melding.** Niemand hoort dat er een aanvraag is. Dit is precies de pijn waarmee
-  RC-148 zijn fase 1 verdedigt (`plans/meldingen-plan-van-aanpak.md`, "Fase 1").
+  RC-148 zijn fase 1 verdedigt (`features/futures/meldingen-plan-van-aanpak.md`, "Fase 1").
 - **De aanvraag kan niet naar een ander.** `ApproverScope` kent drie waarden
   (`opi/services/catalog/approval.py:45-56`): `PLATFORM_ADMIN`, `PROJECT_ADMIN` en
   `PROJECT_MEMBER`. Alle drie de specs zetten `PLATFORM_ADMIN`, en het veld `approver` wordt
@@ -242,7 +249,7 @@ is geen Keycloak-rol, geen groep en geen claim die op `is_platform_admin` wordt 
 een wijziging in een ConfigMap, een commit, een ArgoCD-sync en een herstart van OPI. Er is
 geen handeling in de applicatie, dus ook geen actor, geen tijdstip en geen spoor. RC-148 heeft
 dit al gezien en zet het in zijn eventcatalogus als "**bestaat nog niet**"
-(`plans/meldingen-inventarisatie.md`, paragraaf 7, de regel "Iemand is platformbeheerder
+(`features/futures/meldingen-inventarisatie.md`, paragraaf 7, de regel "Iemand is platformbeheerder
 geworden of afgevoerd").
 
 ### Waar het vinkje wordt uitgelezen
@@ -506,7 +513,7 @@ geen van drieën heeft een scherm:
 - de logbewaker draait elk halfuur en duwt ERROR-regels naar ntfy.
 
 De stemmer laat als enige een duurzaam spoor achter dat een mens kan lezen, en dat spoor staat
-in de YAML van het project (`plans/meldingen-inventarisatie.md`, paragraaf 4, "De automatische
+in de YAML van het project (`features/futures/meldingen-inventarisatie.md`, paragraaf 4, "De automatische
 stemmer verdient een aparte opmerking"). Er is geen pagina die de `history`-blokken van alle
 projecten naast elkaar zet.
 
@@ -520,7 +527,7 @@ waarvan `completed_at` ouder is (`opi/core/task_worker.py:420`,
 takenlijst.
 
 Dit is dezelfde bevinding die RC-148 als kern van zijn opdracht neerzet
-(`plans/meldingen-inventarisatie.md`, "Waarom 'op het scherm kijken' hier niet genoeg is, in
+(`features/futures/meldingen-inventarisatie.md`, "Waarom 'op het scherm kijken' hier niet genoeg is, in
 één getal"). Hij staat hier opnieuw omdat hij niet alleen een meldingsprobleem is: ook mét
 meldingen blijft er geen scherm waar je een dag kunt overzien.
 
@@ -539,7 +546,7 @@ zegt, en deel 2 gaat erop in.
 
 **Niet.** Certificaten: het contactadres in de clusterconfiguratie is dat van de
 ACME-account, dus Let's Encrypt mailt rechtstreeks en ZAD weet er niets van
-(`plans/meldingen-inventarisatie.md`, paragraaf 7). Images: `features/image-version-audit.md`
+(`features/futures/meldingen-inventarisatie.md`, paragraaf 7). Images: `features/image-version-audit.md`
 is een handmatig onderzoek van februari 2026, geen controle die draait. Backups: er is niets
 dat "al N dagen geen backup" waarneemt.
 

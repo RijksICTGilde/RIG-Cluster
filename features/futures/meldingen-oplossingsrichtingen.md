@@ -1,8 +1,15 @@
 # Meldingen in ZAD: de oplossingsrichtingen naast elkaar
 
+**Status**: ontwerp, nog niet gebouwd. Vijf documenten in deze map horen bij elkaar, in deze
+leesvolgorde: `meldingen-inventarisatie.md`, `meldingen-oplossingsrichtingen.md`,
+`meldingen-plan-van-aanpak.md`, `beheer-in-zad-inventarisatie.md`,
+`beheer-in-zad-plan-van-aanpak.md`. De laatste twee corrigeren de standaarden voor
+beheerders in het derde. De opdrachten waaruit ze voortkwamen staan in
+`plans/meldingen-onderzoeksopdracht.md` en `plans/beheer-in-zad-onderzoeksopdracht.md`.
+
 **Geschreven op**: 22 augustus 2026. Dit is deel 2 van drie; de eventcatalogus staat in
-`plans/meldingen-inventarisatie.md`, de kanalen en het plan in
-`plans/meldingen-plan-van-aanpak.md`.
+`features/futures/meldingen-inventarisatie.md`, de kanalen en het plan in
+`features/futures/meldingen-plan-van-aanpak.md`.
 
 Vier richtingen, alle vier op dezelfde assen. Daarna de aanbeveling, en daarna de vijf vragen
 die binnen de gekozen richting hoe dan ook beantwoord moeten worden: waar de gebeurtenis
