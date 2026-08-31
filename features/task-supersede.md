@@ -33,6 +33,11 @@ oorzaken, beide nu opgelost:
    taak haalt de lopende alleen in als **scope(nieuw) ⊇ scope(lopend)** (`covers`). Projectbreed
    (None) dekt alles; een concrete set dekt alleen een deelverzameling, en nooit projectbreed.
 
+   Sinds RC-166 draait `scope_of()` nog maar op één moment in het leven van een taak: bij het
+   aanmaken, waarna het antwoord in `async_tasks.affects_deployments` staat. `covers()` en de
+   claim-grendel lezen allebei die kolom, dus er is één definitie in plaats van twee die het
+   oneens kunnen zijn. Zie `features/taakscope-en-de-uitrolwacht.md`.
+
 2. **`TaskSuperseded` werd opgeslokt.** `process_project` en de handlers hebben brede
    `except Exception`-blokken. Daarom erft `TaskSuperseded` nu van **`BaseException`**, net als
    `asyncio.CancelledError`: `except Exception` vangt hem niet, hij bubbelt naar de worker. Die
@@ -94,8 +99,13 @@ Waarom dit nodig was: op 28 augustus 2026 liep in `mpfb-8wh` een deploy via zad-
 ArgoCD-wachtstap overgedragen, en het resultaat dat wij teruggaven vertelde dat niet - de CLI las
 `completed` als "klaar" en de action zocht urls die er niet waren. De veroorzaker was een
 projectbrede taak (handmatig portaalwerk) naast een lopende CI-deploy: twee deployments in
-hetzelfde project blokkeren elkaar niet, maar een projectbrede taak draagt geen `deployment_name`
-en ziet een deployment-gerichte taak dus nooit als in-flight.
+hetzelfde project blokkeren elkaar niet, maar een projectbrede taak droeg geen `deployment_name`
+en zag een deployment-gerichte taak dus nooit als in-flight.
+
+Die asymmetrie bestaat niet meer: de claim-grendel vergelijkt sinds RC-166 de opgeslagen scopes
+op overlap, en projectbreed overlapt met alles. Twee zulke taken lopen dus niet meer tegelijk, en
+supersede blijft doen waar het voor is - een wacht laten wijken voor een taak die het werk
+overdoet.
 
 ## Wat bewust niet wijkt
 
@@ -126,5 +136,7 @@ hem, in plaats van erover te struikelen.
 
 ## Zie ook
 
+- `features/taakscope-en-de-uitrolwacht.md` - de kolom waar `covers()` uit leest, en de
+  overlap-grendel die voorkomt dat twee taken op één project elkaar in de weg lopen.
 - `features/argocd-token-cache.md` - de andere ingreep op ArgoCD-wachttijd.
 - `features/e2e-reallife-tests.md` - de suite die dit gedrag onder gelijktijdige belasting uitoefent.

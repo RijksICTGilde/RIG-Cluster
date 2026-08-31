@@ -14,11 +14,14 @@ newer task actually covers the same ground*.
 That proviso is the subtle part. A task's real scope is not the deployment_name
 column: an ``add_component`` task reprocesses only ``payload.deployment_names``
 (a list) while its column is NULL, and an ``update_component`` reprocesses the
-whole project while its column is also NULL. So a newer task supersedes the
-current one only when its deployment scope is a SUPERSET of the current task's
-scope - then it is guaranteed to re-sync everything the current task was waiting
-on. Superseding a wider task with a narrower one would strand the deployments the
-narrower task never touches.
+whole project while its column is also NULL. ``scope_of()`` below is what works
+that out, and it does so once per task: ``create_task`` stores the answer in
+``async_tasks.affects_deployments``, and every reader - the claim guard in
+``claim_next_task`` and the check here - reads that column. So a newer task
+supersedes the current one only when its deployment scope is a SUPERSET of the
+current task's scope - then it is guaranteed to re-sync everything the current
+task was waiting on. Superseding a wider task with a narrower one would strand
+the deployments the narrower task never touches.
 
 ``TaskSuperseded`` deliberately subclasses ``BaseException``, not ``Exception``,
 so the broad ``except Exception`` handlers along the processing path do not catch
@@ -85,6 +88,10 @@ def scope_of(task_type: str, deployment_name: str | None, payload: dict | None) 
     Reads the payload for add_component because its scope is a list there, not in
     the column. Unknown task types default to project-wide: conservative, since a
     project-wide scope is only ever superseded by another project-wide task.
+
+    Called once per task, by ``create_task``, which stores the result in
+    ``async_tasks.affects_deployments``. Everything that asks about a task's scope
+    later reads that column, so there is one definition and not several.
     """
     if task_type in _PROJECT_WIDE_TASK_TYPES:
         return None
@@ -155,11 +162,11 @@ async def find_superseding_task() -> dict | None:
         return None
 
     for candidate in candidates:
-        candidate_scope = scope_of(
-            candidate.get("task_type", ""),
-            candidate.get("deployment_name"),
-            candidate.get("payload"),
-        )
+        # Uit de kolom, niet opnieuw afgeleid: ``scope_of()`` draait nog maar op een moment
+        # in het leven van een taak, bij het aanmaken. NULL is projectbreed, en dat is ook
+        # precies wat een taak van voor de migratie hoort te krijgen.
+        stored = candidate.get("affects_deployments")
+        candidate_scope = None if stored is None else frozenset(stored)
         if covers(candidate_scope, current.scope):
             return candidate
     return None
