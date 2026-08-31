@@ -677,3 +677,126 @@ class TestProbeKillVersusCrash:
         crash = [e for e in result if "crasht" in e["message"].lower()]
         assert len(crash) == 1
         assert crash[0]["resource"] == "worker"
+
+
+class TestCrashMessageWhenPreviousVersionKeepsServing:
+    """De crashmelding bij een mislukte uitrol naast een applicatie die het gewoon doet.
+
+    Dit is het geval van psd-law/pr-114 (productie, 21 augustus 2026): de pod uit
+    ReplicaSet 849d475c4 bediende sinds 18 augustus verkeer, de pod uit 58cb9567c5 kwam
+    negentien uur lang niet omhoog, en de kaart zei "Applicatie crasht herhaaldelijk" met
+    "Bekijk de logs voor de oorzaak". Niet onwaar, wel misleidend: de gebruiker las dat
+    zijn applicatie eruit lag terwijl hij bereikbaar was.
+    """
+
+    def test_crash_message_is_restated_when_a_pod_is_still_serving(self):
+        errors = [
+            {
+                "resource": "Pod/pr-114-profielservice-58cb9567c5-9t87d",
+                "message": "Applicatie crasht herhaaldelijk",
+                "severity": "actionable",
+            }
+        ]
+
+        result = interpret_argocd_errors(
+            errors,
+            deployment_name="pr-114",
+            component_names=["profielservice"],
+            serving_components={"profielservice"},
+        )
+
+        assert len(result) == 1
+        assert result[0]["message"] == "Nieuwe versie start niet op"
+        assert "vorige versie draait door" in result[0]["suggestion"]
+        assert "bereikbaar" in result[0]["suggestion"]
+
+    def test_crash_message_is_unchanged_without_a_serving_pod(self):
+        """Draait er niets, dan LIGT de applicatie eruit en blijft de oude tekst staan."""
+        errors = [
+            {
+                "resource": "Pod/pr-114-profielservice-58cb9567c5-9t87d",
+                "message": "Applicatie crasht herhaaldelijk",
+                "severity": "actionable",
+            }
+        ]
+
+        result = interpret_argocd_errors(
+            errors,
+            deployment_name="pr-114",
+            component_names=["profielservice"],
+            serving_components=set(),
+        )
+
+        assert result[0]["message"] == "Applicatie crasht herhaaldelijk"
+
+    def test_a_serving_pod_on_another_component_does_not_restate_this_one(self):
+        errors = [
+            {
+                "resource": "Pod/pr-114-profielservice-58cb9567c5-9t87d",
+                "message": "Applicatie crasht herhaaldelijk",
+                "severity": "actionable",
+            }
+        ]
+
+        result = interpret_argocd_errors(
+            errors,
+            deployment_name="pr-114",
+            component_names=["profielservice", "frontend"],
+            serving_components={"frontend"},
+        )
+
+        assert result[0]["message"] == "Applicatie crasht herhaaldelijk"
+
+    def test_restating_does_not_break_the_symptom_suppression(self):
+        """De crash blijft een OORZAAK, ook nadat hij anders is geformuleerd.
+
+        De bijstelling gebeurt daarom pas nadat de onderdrukking haar besluiten heeft
+        genomen: zou ze ervoor gebeuren, dan zag die stap geen crashtitel meer en bleef
+        "Deployment duurt te lang" er als tweede melding naast staan.
+        """
+        errors = [
+            {"resource": "Deployment/pr-114-profielservice", "message": "Deployment duurt te lang"},
+            {
+                "resource": "Pod/pr-114-profielservice-58cb9567c5-9t87d",
+                "message": "Applicatie crasht herhaaldelijk",
+                "severity": "actionable",
+            },
+        ]
+
+        result = interpret_argocd_errors(
+            errors,
+            deployment_name="pr-114",
+            component_names=["profielservice"],
+            serving_components={"profielservice"},
+        )
+
+        assert len(result) == 1
+        assert result[0]["message"] == "Nieuwe versie start niet op"
+
+    def test_a_probe_kill_still_wins_over_the_restated_crash(self):
+        """Een probe-kill weet WAAROM de container omging; die verdringt de crashmelding.
+
+        Ook als er nog een pod bedient: dan is er niets meer om bij te stellen, want de
+        crashmelding is er dan helemaal niet meer.
+        """
+        errors = [
+            {
+                "resource": "Pod/pr-114-profielservice-58cb9567c5-9t87d",
+                "message": "Applicatie crasht herhaaldelijk",
+                "severity": "actionable",
+            },
+            {
+                "resource": "Pod/pr-114-profielservice-58cb9567c5-9t87d",
+                "message": "Health-check faalt, de container wordt herstart",
+                "severity": "actionable",
+            },
+        ]
+
+        result = interpret_argocd_errors(
+            errors,
+            deployment_name="pr-114",
+            component_names=["profielservice"],
+            serving_components={"profielservice"},
+        )
+
+        assert [e["message"] for e in result] == ["Health-check faalt, de container wordt herstart"]

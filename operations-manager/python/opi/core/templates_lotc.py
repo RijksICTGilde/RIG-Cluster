@@ -25,6 +25,7 @@ from opi.core.template_helpers import (
     format_rrule_schedule,
     get_service_definition_for_entry,
     get_service_name,
+    shorten_image_digest,
     static_url,
 )
 from opi.core.version import get_version_info
@@ -141,6 +142,10 @@ templates_lotc.env.filters["is_verwijzing"] = _alias_is_reference
 templates_lotc.env.filters["dutch_date"] = format_dutch_date
 templates_lotc.env.filters["rrule_schedule"] = format_rrule_schedule
 templates_lotc.env.filters["deployment_action_key"] = deployment_action_key
+# De digest in een imageverwijzing afgekort tot twaalf tekens. Als filter en niet als
+# ``[:19]`` in het sjabloon: de deploymentkaart toont twee imageverwijzingen (de draaiende
+# en de ingestelde), dus anders staat de grens op twee plekken.
+templates_lotc.env.filters["korte_digest"] = shorten_image_digest
 
 # Als GLOBAL en niet als context: de hulproute rendert een .html.j2 met alleen het verzoek
 # erin (router_wizard.service_help), dus een hulptekst die gegevens nodig heeft kan er
