@@ -243,6 +243,29 @@ def application_pod_selector(app_name: str) -> str:
     return f"app={app_name},!{SERVICE_ROLE_LABEL_KEY}"
 
 
+#: The name of the container that runs the application itself, as rendered by
+#: ``manifests/deployment.yaml.jinja``. A pod can carry more containers (a sidecar an
+#: auth-wall puts in front of it), so anything reading "how is the application doing" --
+#: its readiness, its image, its logs -- has to name this container rather than take the
+#: first one it finds.
+APPLICATION_CONTAINER_NAME = "app"
+
+
+def deployment_pod_selector(deployment_name: str) -> str:
+    """Label selector for the application pods of a whole deployment, across its components.
+
+    The per-component variant above asks "how is this component doing"; this one asks
+    "what is running for this deployment" and gets every component's pods in one query.
+    Both live here so the two selectors cannot drift apart -- they exclude the same
+    service-owned pods for the same reason.
+
+    ``component=application`` is on every pod ``manifests/deployment.yaml.jinja`` renders;
+    the ``deployment`` label carries the deployment name. Together they scope the query to
+    one deployment inside a namespace that also holds the other deployments of the project.
+    """
+    return f"deployment={deployment_name},component=application,!{SERVICE_ROLE_LABEL_KEY}"
+
+
 @dataclass
 class SecretFileSpec:
     """A SOPS secret manifest a service needs written for a deployment (RC-5 Phase 6c).
