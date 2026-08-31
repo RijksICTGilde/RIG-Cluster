@@ -147,6 +147,9 @@ async def test_newer_covering_task_raises() -> None:
         "project_name": "demo",
         "deployment_name": None,
         "payload": {},
+        # Zoals create_task hem wegschreef: NULL is projectbreed. Dit is de kolom die
+        # gelezen wordt, niet het tasktype - scope_of() draait alleen bij het aanmaken.
+        "affects_deployments": None,
     }
     token = _bind(_service_with([candidate]), frozenset({"productie"}))
     try:
@@ -164,6 +167,7 @@ async def test_newer_non_covering_task_does_not_raise() -> None:
         "project_name": "demo",
         "deployment_name": None,
         "payload": {"deployment_names": ["acceptatie"]},
+        "affects_deployments": ["acceptatie"],
     }
     token = _bind(_service_with([candidate]), frozenset({"productie"}))
     try:

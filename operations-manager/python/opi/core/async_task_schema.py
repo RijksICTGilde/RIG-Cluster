@@ -29,7 +29,10 @@ CREATE TABLE IF NOT EXISTS async_tasks (
     completed_at TIMESTAMPTZ,
     created_by VARCHAR(255),
     attempt_count SMALLINT NOT NULL DEFAULT 0,
-    max_attempts SMALLINT NOT NULL DEFAULT 3
+    max_attempts SMALLINT NOT NULL DEFAULT 3,
+    -- De deployments die deze taak raakt. NULL betekent projectbreed, net als None
+    -- in scope_of(), dat de enige schrijver van deze kolom is.
+    affects_deployments VARCHAR(63)[]
 );
 
 CREATE INDEX IF NOT EXISTS idx_async_tasks_pending
@@ -46,4 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_async_tasks_deployment
 
 CREATE INDEX IF NOT EXISTS idx_async_tasks_completed
     ON async_tasks(status, completed_at) WHERE status IN ('completed', 'failed', 'cancelled');
+
+CREATE INDEX IF NOT EXISTS idx_async_tasks_affects
+    ON async_tasks USING GIN (affects_deployments);
 """
