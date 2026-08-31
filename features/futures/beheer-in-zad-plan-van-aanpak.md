@@ -1,8 +1,15 @@
 # Het beheerdeel van ZAD: het rollenmodel, het overzicht en de grensregel
 
+**Status**: ontwerp, nog niet gebouwd. Vijf documenten in deze map horen bij elkaar, in deze
+leesvolgorde: `meldingen-inventarisatie.md`, `meldingen-oplossingsrichtingen.md`,
+`meldingen-plan-van-aanpak.md`, `beheer-in-zad-inventarisatie.md`,
+`beheer-in-zad-plan-van-aanpak.md`. De laatste twee corrigeren de standaarden voor
+beheerders in het derde. De opdrachten waaruit ze voortkwamen staan in
+`plans/meldingen-onderzoeksopdracht.md` en `plans/beheer-in-zad-onderzoeksopdracht.md`.
+
 **Geschreven op**: 28 augustus 2026, tegen commit `d32fb07e` op de tak
 `het-beheerdeel-van-zad-rollen-overzicht-en-wat-een`. Dit is deel 2 van twee; deel 1 (de
-gemeten inventarisatie) staat in `plans/beheer-in-zad-inventarisatie.md`.
+gemeten inventarisatie) staat in `features/futures/beheer-in-zad-inventarisatie.md`.
 
 Dit document beantwoordt drie vragen en sluit af met de fasering:
 
@@ -16,7 +23,7 @@ Dit document beantwoordt drie vragen en sluit af met de fasering:
 codeanker bij staat.
 
 De correctie op de meldingen zelf (de standaarden per rol, het voorkeurenscherm, de
-verversingsweg) staat niet hier maar in `plans/meldingen-plan-van-aanpak.md`, met een
+verversingsweg) staat niet hier maar in `features/futures/meldingen-plan-van-aanpak.md`, met een
 wijzigingslijst onderaan dat document. Twee documenten die elkaar tegenspreken zijn erger dan
 één document dat is bijgewerkt.
 
@@ -98,7 +105,7 @@ die er niet is.
 
 `is_platform_admin` blijft wat hij is. Het probleem dat de opdrachtgever aankaart (te veel
 meldingen) wordt opgelost in het overzicht (deel 3) en in de standaardentabel
-(`plans/meldingen-plan-van-aanpak.md`).
+(`features/futures/meldingen-plan-van-aanpak.md`).
 
 | | |
 |---|---|
@@ -147,7 +154,7 @@ zijn twee dingen die geen van beide een rol toevoegen.
 - Daarmee is 8.02.01 in één scherm te vervullen, wordt "iemand is platformbeheerder geworden"
   een handeling met een actor en een tijdstip in plaats van een uitrol, en verdwijnt de regel
   "**bestaat nog niet**" uit de eventcatalogus van RC-148
-  (`plans/meldingen-inventarisatie.md`, paragraaf 7).
+  (`features/futures/meldingen-inventarisatie.md`, paragraaf 7).
 - **En zet `ADMIN_API_KEY` op dezelfde pagina, of haal hem weg.** Vandaag is hij op productie
   niet gezet en zijn de zeven endpoints erachter 501 (deel 1, paragraaf 2). Er zijn twee
   eerlijke uitkomsten: die endpoints achter `require_platform_admin` zetten en de sleutel
@@ -231,7 +238,7 @@ beheerder tijdelijk `admin` geeft op dat project. Wat die knop moet doen:
 2. een gebeurtenis aanmaken van type `beheer` met `actor` = de beheerder, bezorgd aan de
    projectbeheerders met `reason = "project-admin"`, en aan de andere platformbeheerders met
    `reason = "platform-owner"` (**niet** `platform-admin`: die waarde levert per de regel in
-   `plans/meldingen-plan-van-aanpak.md` geen aflevering op, en dan zou juist deze gebeurtenis
+   `features/futures/meldingen-plan-van-aanpak.md` geen aflevering op, en dan zou juist deze gebeurtenis
    stil zijn. `platform-owner` bestaat precies hiervoor, zie dezelfde paragraaf en de
    uitzonderingen bij type 12 hieronder);
 3. na een termijn (voorstel: 24 uur) vanzelf vervallen.
@@ -328,7 +335,7 @@ zin waarmee elk vol postvak begint.
 
 ### De twaalf typen langs de regel
 
-De typen komen uit `plans/meldingen-inventarisatie.md`, "De groepering naar type". Per type
+De typen komen uit `features/futures/meldingen-inventarisatie.md`, "De groepering naar type". Per type
 staat de uitkomst per rol, want de regel geeft niet één antwoord per type: dat is de kern van
 de correctie op RC-148.
 
@@ -351,7 +358,7 @@ de correctie op RC-148.
 
 De toewijzing hierboven is niet iets dat per melding met de hand gedaan wordt. Hij komt neer op
 twee regels in het uitwaaieren, en die staan uitgewerkt in
-`plans/meldingen-plan-van-aanpak.md` onder "De standaarden per rol":
+`features/futures/meldingen-plan-van-aanpak.md` onder "De standaarden per rol":
 
 1. **De reden is de sterkste aanspraak**, in de volgorde `actor` > `approver` >
    `platform-owner` > `project-admin` > `project-member` > `platform-user` > `platform-admin`.
@@ -360,7 +367,7 @@ twee regels in het uitwaaieren, en die staan uitgewerkt in
    `severity` alleen de tak "aan zet" volgt: iets waar niets meer aan te doen valt is juist
    daarom `informational`. Zonder haar zouden de rijen 4, 7, 8 en 10 van de tabel hierboven
    zichzelf tegenspreken, en rij 2 op de tak "gepasseerd". Welke regels uit deel 1 dat precies
-   zijn en wat er met de rest gebeurt, staat geteld in `plans/meldingen-plan-van-aanpak.md`
+   zijn en wat er met de rest gebeurt, staat geteld in `features/futures/meldingen-plan-van-aanpak.md`
    onder "De standaarden per rol".
 
 De kolom "Platformbeheerder" van de tabel hierboven is dus geen aparte configuratie: hij is wat
@@ -375,7 +382,7 @@ niet echt "namens jou iets onomkeerbaars gedaan met jouw eigendom". Hij is het b
 jouw database, en de handeling is niet terug te draaien. Maar wie de toets streng leest, komt
 op toets 2 uit en dus op de projectpagina. **Ik kies hier voor het postvak en dat is een
 oordeel bovenop de regel**, met deze reden: dit is het enige type in de hele catalogus dat
-tegelijk in een audittrail thuishoort (`plans/meldingen-inventarisatie.md`, paragraaf 8, "Een
+tegelijk in een audittrail thuishoort (`features/futures/meldingen-inventarisatie.md`, paragraaf 8, "Een
 console starten is een beheerdersgebeurtenis vermomd als gebruikersgebeurtenis"), en een
 audittrail-gebeurtenis die niemand ziet is geen audittrail. Wie dit anders wil, verandert één
 regel in de tabel en niet de regel zelf.
@@ -479,12 +486,12 @@ weggegooid of alleen gelogd.** Dat is de reden dat dit een goedkope pagina is en
 - **Geen logs.** Dat is de logbewaker en ntfy.
 - **Geen per-projectdetail.** Elke regel is een link naar de plek die het detail al toont.
 - **Geen automatische verversing sneller dan een minuut.** Zie de verversingsparagraaf in
-  `plans/meldingen-plan-van-aanpak.md`.
+  `features/futures/meldingen-plan-van-aanpak.md`.
 
 **Over de vorm.** De bouwlijn is `features/lotc-bouwlijn.md`. (De opdracht noemt
 `ROOS_CLAUDE_REFERENCE.md` in `jinja-roos-components`; dat pad bestaat hier niet en dat klopt,
 want die bibliotheek is sinds RC-67 uit het project verdwenen, zie `features/roos-eruit.md` en
-de opmerking daarover in `plans/meldingen-plan-van-aanpak.md`, Kanaal 1.) Wat er van de
+de opmerking daarover in `features/futures/meldingen-plan-van-aanpak.md`, Kanaal 1.) Wat er van de
 componenten bruikbaar is, geteld met
 `grep -rohE '<c-NAAM([ />]|$)' opi/templates_lotc/ | wc -l` (dus alle voorkomens, ook de enkele
 die in een Jinja-commentaar staan: bij `c-card` is dat er 1 en bij `c-tag` 3):
@@ -562,7 +569,7 @@ en daarom is de volgorde van de fasering hieronder wat hij is.
 
 RC-148 zet fase 1 op "het datamodel, de outbox met zijn planner, het postvak, de teller, de
 API voor lezen en markeren, en één bron: goedkeuringen"
-(`plans/meldingen-plan-van-aanpak.md`, "Fase 1"). **Die keuze blijft staan en de grensregel
+(`features/futures/meldingen-plan-van-aanpak.md`, "Fase 1"). **Die keuze blijft staan en de grensregel
 bevestigt hem**: goedkeuringen zijn de schoonste doorgang van toets 1 in de hele catalogus
 (deel 3, type 6).
 
@@ -598,7 +605,7 @@ en het staat als beslissing 8 hieronder.
 
 **2. Fase 1 levert de gecorrigeerde standaardentabel, niet de oude.**
 
-Zie `plans/meldingen-plan-van-aanpak.md`, "De standaarden per rol", zoals bijgewerkt door deze
+Zie `features/futures/meldingen-plan-van-aanpak.md`, "De standaarden per rol", zoals bijgewerkt door deze
 opdracht. Concreet: wat `reason = "platform-admin"` draagt, komt niet in een postvak.
 
 **3. Fase 1 repareert de ontbrekende aanvraagdatum.**
@@ -608,7 +615,7 @@ De generieke dienstgebruik-goedkeuring schrijft bij het aanvragen een lege histo
 zetten (`opi/connectors/subdomain.py:511` en `:552`). Gevolg: bij een `send-email`-aanvraag is
 niet vast te stellen hoe lang hij ligt. Dat is één regel, en zonder die regel kan het blok
 "wacht op jou" niet op ouderdom sorteren en kan de escalatievraag later niet beantwoord
-worden (`plans/meldingen-plan-van-aanpak.md`, "De standaarden per rol", de regel "Escalatie als
+worden (`features/futures/meldingen-plan-van-aanpak.md`, "De standaarden per rol", de regel "Escalatie als
 niemand kijkt").
 
 **Wat er NIET verandert aan fase 1**: de bestandenlijst, het datamodel, de outboxplanner, de

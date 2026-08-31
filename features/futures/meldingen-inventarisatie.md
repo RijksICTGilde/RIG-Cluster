@@ -1,5 +1,12 @@
 # Meldingen in ZAD: de inventarisatie
 
+**Status**: ontwerp, nog niet gebouwd. Vijf documenten in deze map horen bij elkaar, in deze
+leesvolgorde: `meldingen-inventarisatie.md`, `meldingen-oplossingsrichtingen.md`,
+`meldingen-plan-van-aanpak.md`, `beheer-in-zad-inventarisatie.md`,
+`beheer-in-zad-plan-van-aanpak.md`. De laatste twee corrigeren de standaarden voor
+beheerders in het derde. De opdrachten waaruit ze voortkwamen staan in
+`plans/meldingen-onderzoeksopdracht.md` en `plans/beheer-in-zad-onderzoeksopdracht.md`.
+
 **Geschreven op**: 22 augustus 2026, tegen commit `83ac4b9b` op de tak
 `meldingen-in-zad-inventarisatie-en-plan-van-aanpak`. Elk anker in de tabellen hieronder is
 nagelopen tegen de code. Wat er niet is staat als **bestaat nog niet**, en niet als aanname.
@@ -9,8 +16,8 @@ Dit is deel 1 van drie:
 | Deel | Document |
 |---|---|
 | 1. Welke events hebben we | dit document |
-| 2. Hoe leggen we ze slim vast | `plans/meldingen-oplossingsrichtingen.md` |
-| 3. Hoe melden we, en het plan | `plans/meldingen-plan-van-aanpak.md` |
+| 2. Hoe leggen we ze slim vast | `features/futures/meldingen-oplossingsrichtingen.md` |
+| 3. Hoe melden we, en het plan | `features/futures/meldingen-plan-van-aanpak.md` |
 
 ## De stand van zaken in een alinea
 
@@ -27,7 +34,7 @@ treffers in acht bestanden**: er komen zes regels bij in
 `opi/services/log_watch_ignore_patterns.txt`. Die zes zijn de LOTC-componenten
 `c-notification` en `c-notification-item` op de proefopstelling, en dat is een *vluchtige
 bevestiging na een actie*, geen postvak; de naamsbotsing staat in
-`plans/meldingen-plan-van-aanpak.md` onder Kanaal 1. De conclusie verandert er niet door: er
+`features/futures/meldingen-plan-van-aanpak.md` onder Kanaal 1. De conclusie verandert er niet door: er
 is niets om op voort te bouwen en ook niets om te slopen.
 
 Er zijn vandaag precies **drie manieren** waarop iemand te weten komt dat er iets gebeurd is:
