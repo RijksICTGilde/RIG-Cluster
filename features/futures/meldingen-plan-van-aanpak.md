@@ -1,8 +1,15 @@
 # Meldingen in ZAD: de kanalen en het plan van aanpak
 
+**Status**: ontwerp, nog niet gebouwd. Vijf documenten in deze map horen bij elkaar, in deze
+leesvolgorde: `meldingen-inventarisatie.md`, `meldingen-oplossingsrichtingen.md`,
+`meldingen-plan-van-aanpak.md`, `beheer-in-zad-inventarisatie.md`,
+`beheer-in-zad-plan-van-aanpak.md`. De laatste twee corrigeren de standaarden voor
+beheerders in het derde. De opdrachten waaruit ze voortkwamen staan in
+`plans/meldingen-onderzoeksopdracht.md` en `plans/beheer-in-zad-onderzoeksopdracht.md`.
+
 **Geschreven op**: 22 augustus 2026. Dit is deel 3 van drie. Deel 1 (de eventcatalogus) staat
-in `plans/meldingen-inventarisatie.md`, deel 2 (de oplossingsrichtingen en het datamodel) in
-`plans/meldingen-oplossingsrichtingen.md`.
+in `features/futures/meldingen-inventarisatie.md`, deel 2 (de oplossingsrichtingen en het datamodel) in
+`features/futures/meldingen-oplossingsrichtingen.md`.
 
 Dit deel gaat over de vier kanalen (wat is er nodig, wat ligt er al, wat blokkeert), over het
 voorkeurenscherm, en daarna over de fasering en de beslissingen die de opdrachtgever moet
@@ -12,7 +19,7 @@ nemen.
 het voorkeurenscherm, de "waarom kreeg ik dit"-regel, de lijst van wat niet uitgezet mag
 worden, de verversingsweg en fase 1 zijn gewijzigd. Wat er precies veranderd is en waarom staat
 onderaan dit document onder **"Wijzigingslijst RC-161"**. De onderbouwing staat in
-`plans/beheer-in-zad-inventarisatie.md` en `plans/beheer-in-zad-plan-van-aanpak.md`.
+`features/futures/beheer-in-zad-inventarisatie.md` en `features/futures/beheer-in-zad-plan-van-aanpak.md`.
 
 **Alle namen van tabellen, endpoints en routes hieronder zijn een voorstel**, tenzij er een
 codeanker bij staat.
@@ -216,7 +223,7 @@ niemand onderhoudt.
 *Het beheerdersoverzicht.* Hier zou een muurscherm de meeste baat hebben, en toch is het
 antwoord hier het duidelijkst nee, en wel om een reden die niets met last te maken heeft:
 **het overzicht leest de brontoestand en niet de meldingentabel**
-(`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). Er is dus geen tabel om `LISTEN/NOTIFY` op
+(`features/futures/beheer-in-zad-plan-van-aanpak.md`, deel 3). Er is dus geen tabel om `LISTEN/NOTIFY` op
 te zetten die zijn blokken voedt. De gezondheid komt van ArgoCD (bevraagd, met een cache van 15
 seconden, `opi/services/argocd_overview.py:44`), de aanvragen komen uit de projectbestanden in
 de `ProjectStore`, en de markeringen uit `marked_for_deletion`. Geen van die drie duwt. Een
@@ -623,7 +630,7 @@ Uit de tabel in deel 1, samengevat, en voor de platformbeheerder herzien door RC
 
 Dat is de hele correctie. De kolom `reason` draagt `platform-admin` al als aparte waarde naast
 `approver`, `actor`, `project-admin` en `project-member`
-(`plans/meldingen-oplossingsrichtingen.md`, `notification_deliveries`), dus het onderscheid zit
+(`features/futures/meldingen-oplossingsrichtingen.md`, `notification_deliveries`), dus het onderscheid zit
 al in het model en werd alleen niet gebruikt.
 
 **Maar de regel werkt alleen met een rangorde erbij, en dat is nagelopen.** De uniciteitsgrendel
@@ -642,7 +649,7 @@ antwoord, want er is niets waar hij eigenaar van is en niets wat op hem wacht.
 
 **Er komen twee waarden bij**, allebei voorstellen en allebei zonder gevolgen voor het schema
 (`reason` is `String(64)` met een vaste waardenlijst in een commentaar,
-`plans/meldingen-oplossingsrichtingen.md`, regel 620):
+`features/futures/meldingen-oplossingsrichtingen.md`, regel 620):
 
 - **`platform-owner`**, als de gebeurtenis over de bevoegdheid van de platformbeheerder zelf
   gaat: hij is platformbeheerder geworden of afgevoerd, of iemand heeft het beheer van een
@@ -672,7 +679,7 @@ tweede regel:
 > zijn bevoegdheid gedaan wat hij niet meer kan terugdraaien.**
 
 Dat is geen derde knop maar de codering van de eerste toets van de grensregel
-(`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). **De uitzondering hoort erbij en is geen
+(`features/futures/beheer-in-zad-plan-van-aanpak.md`, deel 3). **De uitzondering hoort erbij en is geen
 verzachting**, want die toets heeft twee takken: **aan zet** (er wacht een handeling op je) en
 **gepasseerd** (er is namens jou iets met jouw eigendom gedaan wat je niet meer kunt
 terugdraaien). `severity` volgt alleen de eerste tak. Iets waar niets meer aan te doen valt is
@@ -688,14 +695,14 @@ geslaagde backup en een gewekt deployment zijn `informational`, er wacht niets e
 gepasseerd, en die horen op een pagina.
 
 **Wat de regel in deel 1 raakt, geteld en niet geschat.** De ernstregel werkt op de
-eventcatalogus in `plans/meldingen-inventarisatie.md`, dus is hij daar tegenaan gelegd.
+eventcatalogus in `features/futures/meldingen-inventarisatie.md`, dus is hij daar tegenaan gelegd.
 **Eenentwintig** van de 73 tabelregels hebben ernst "ter informatie" én een standaardkanaal met
 "postvak" erin, en dat zijn dus de regels waar deze regel iets doet:
 
 ```bash
 python3 - <<'EOF'
 rows = []
-for i, l in enumerate(open('plans/meldingen-inventarisatie.md'), 1):
+for i, l in enumerate(open('features/futures/meldingen-inventarisatie.md'), 1):
     if not l.startswith('|'):
         continue
     c = [x.strip() for x in l.strip().strip('|').split('|')]
@@ -736,7 +743,7 @@ Ze vallen in vier groepen, en per groep staat erbij wat de bedoelde uitkomst is:
 | 21 | :476 Een dienst is aan een project toegevoegd of eruit gehaald | 9 | verliest het postvak. Grensregeltabel rij 9: de projectdetailpagina toont de diensten |
 
 **Eén regel in deel 1 moet daarvoor van ernst veranderen**, nummer 8 hierboven. "Het platform
-heeft het geheugen van een component bijgesteld" staat in `plans/meldingen-inventarisatie.md`
+heeft het geheugen van een component bijgesteld" staat in `features/futures/meldingen-inventarisatie.md`
 paragraaf 4 als "ter informatie". Dat klopt niet met de werkelijkheid: de eigenaar kan er wél
 iets aan doen, want een handmatig gezette waarde wint van de automatische stemmer
 (`features/handmatig-gezette-resources.md`). Die regel hoort dus `actionable` te zijn. Dat is de
@@ -755,7 +762,7 @@ er hierboven overgenomen, één deels, en één niet.
 | Aan mij gericht versus platformbreed (`reason`) | **ja**, met de rangorde erbij | goedkoopst, en het onderscheid zit al in het model |
 | Een drempel op ernst (`severity`) | **ja**, als één vaste regel en niet als een schuifje | het is de codering van de grensregel, geen extra knop |
 | Escalatie als niemand kijkt | **deels**: als sortering op ouderdom in het blok "wacht op jou" van `/beheer`, met een markering boven een grens. Een escalerende mail is fase 3 | de sortering kost niets en is er zodra het overzicht er is; een mail kan pas als het e-mailkanaal er is. **Voorwaarde**: de generieke dienstgebruik-goedkeuring schrijft bij het aanvragen een lege history (`opi/services/catalog/approval.py:303`), waar domein en subdomein wél een tijdstip zetten (`opi/connectors/subdomain.py:511` en `:552`). Zonder die ene regel is er geen ouderdom om op te sorteren |
-| Per project volgen of dempen (het GitHub-model) | **nee** | met de `reason`-regel hierboven staat er in het postvak van de platformbeheerder alleen nog wat een echte aanspraak heeft. Per-projectdempen lost dan een probleem op dat hij niet meer heeft, en het kost een tabel plus een scherm. Voor gewone projectleden kan het later alsnog waarde hebben; het model sluit het niet uit, want `reason` en een latere abonnementstabel bijten elkaar niet. **En voor het ene geval waarin het wél nodig is, bestaat er al een antwoord**: een platformbeheerder die tijdelijk het beheer van een project overneemt krijgt daarmee `project-admin` als aanspraak, en die vervalt vanzelf met de overname (`plans/beheer-in-zad-plan-van-aanpak.md`, deel 2, "En de handeling erbij", vastgelegd als beslissing 4 in deel 6). Dat is een abonnement dat je niet hoeft te beheren |
+| Per project volgen of dempen (het GitHub-model) | **nee** | met de `reason`-regel hierboven staat er in het postvak van de platformbeheerder alleen nog wat een echte aanspraak heeft. Per-projectdempen lost dan een probleem op dat hij niet meer heeft, en het kost een tabel plus een scherm. Voor gewone projectleden kan het later alsnog waarde hebben; het model sluit het niet uit, want `reason` en een latere abonnementstabel bijten elkaar niet. **En voor het ene geval waarin het wél nodig is, bestaat er al een antwoord**: een platformbeheerder die tijdelijk het beheer van een project overneemt krijgt daarmee `project-admin` als aanspraak, en die vervalt vanzelf met de overname (`features/futures/beheer-in-zad-plan-van-aanpak.md`, deel 2, "En de handeling erbij", vastgelegd als beslissing 4 in deel 6). Dat is een abonnement dat je niet hoeft te beheren |
 
 ### "Waarom kreeg ik dit bericht"
 
@@ -827,7 +834,7 @@ op hem wacht. Dat is af, ook als er nooit een tweede fase komt.
 
 **Wat RC-161 aan deze fase verandert.** De keuze voor goedkeuringen als eerste bron blijft
 staan, en de grensregel bevestigt hem: type 6 is de schoonste doorgang van de eerste toets in de
-hele catalogus (`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). Er veranderen drie dingen:
+hele catalogus (`features/futures/beheer-in-zad-plan-van-aanpak.md`, deel 3). Er veranderen drie dingen:
 
 1. **Er komt een fase 0 vóór deze fase**, en die is klein: het beheerdersoverzicht `/beheer` met
    de blokken "wacht op jou" en "niet gezond". Geen tabel, geen migratie, geen planner: allebei
@@ -835,7 +842,7 @@ hele catalogus (`plans/beheer-in-zad-plan-van-aanpak.md`, deel 3). Er veranderen
    standaardentabel in code vastlegt en fase 2 hem erft; het overzicht eerst bouwen maakt "naar
    het overzicht" een bestaande bestemming in plaats van een belofte. **Wat het kost**: de
    meldingen schuiven op met de bouwtijd van fase 0. Zie beslissing 8 in
-   `plans/beheer-in-zad-plan-van-aanpak.md`, waar ook staat wat het alternatief is als de
+   `features/futures/beheer-in-zad-plan-van-aanpak.md`, waar ook staat wat het alternatief is als de
    opdrachtgever die vertraging niet wil.
 2. **Fase 1 levert de gecorrigeerde standaardentabel**, niet de oude. Concreet: de twee regels
    uit "De standaarden per rol" hierboven (geen aflevering bij `reason = "platform-admin"`, geen
@@ -960,7 +967,7 @@ echt. Het alternatief (beginnen met mislukte taken) is waardevoller voor de gebr
 raakt meteen het volume, de dedup en de bewaartermijn.
 *Bijgewerkt door RC-161*: de bronkeuze blijft, maar er komt een kleine fase 0 vóór (het
 beheerdersoverzicht) en fase 1 levert de gecorrigeerde standaardentabel. Zie "Fase 1" hierboven
-en beslissing 8 in `plans/beheer-in-zad-plan-van-aanpak.md`.
+en beslissing 8 in `features/futures/beheer-in-zad-plan-van-aanpak.md`.
 
 **4. De gebeurtenissen ontstaan met losse aanroepen op de plek waar ze gebeuren, plus een
 vergelijking oud-nieuw op de opslagweg van het projectbestand.**
@@ -1045,8 +1052,8 @@ Op 28 augustus 2026 is dit document bijgewerkt naar aanleiding van RC-161 ("Het 
 ZAD: rollen, overzicht, en wat een beheerder moet weten"). De aanleiding: de standaard
 "platformbeheerder: alles, inclusief type 12" is niet wat de opdrachtgever wil, en het gat
 eronder is dat er geen beheerdersoverzicht is om de rest naartoe te sturen. De onderbouwing en
-de metingen staan in `plans/beheer-in-zad-inventarisatie.md` en
-`plans/beheer-in-zad-plan-van-aanpak.md`.
+de metingen staan in `features/futures/beheer-in-zad-inventarisatie.md` en
+`features/futures/beheer-in-zad-plan-van-aanpak.md`.
 
 | Waar | Wat | Waarom |
 |---|---|---|
@@ -1072,17 +1079,17 @@ de metingen staan in `plans/beheer-in-zad-inventarisatie.md` en
 
 ### Wat er in de andere twee documenten van RC-148 verandert
 
-**`plans/meldingen-oplossingsrichtingen.md`: niets in dit document zelf.** Het datamodel blijft
+**`features/futures/meldingen-oplossingsrichtingen.md`: niets in dit document zelf.** Het datamodel blijft
 staan zoals het er ligt. De twee dingen die RC-161 toevoegt passen erin zonder wijziging:
 `platform-owner` en `platform-user` zijn extra waarden in een kolom die al een vaste
-waardenlijst heeft (`reason`, `String(64)`, `plans/meldingen-oplossingsrichtingen.md` regel
+waardenlijst heeft (`reason`, `String(64)`, `features/futures/meldingen-oplossingsrichtingen.md` regel
 620), en de rangorde van redenen is gedrag in het uitwaaieren en geen schema. Wat er wél in dat
 document mag: het commentaar achter die kolom noemt vijf waarden en er worden er zeven, dus dat
 commentaar loopt achter zodra dit gebouwd wordt. Ook `severity` wordt gebruikt zoals hij
 bedoeld was, met de drie waarden die er al staan. **Er is dus geen migratie en geen kolom
 bij.**
 
-**`plans/meldingen-inventarisatie.md`: één correctie op de ernstkolom, nog niet doorgevoerd, en
+**`features/futures/meldingen-inventarisatie.md`: één correctie op de ernstkolom, nog niet doorgevoerd, en
 elf regels die van bestemming veranderen.** De correctie: in paragraaf 4 staat "Het platform
 heeft het geheugen van een component bijgesteld" met ernst "ter informatie". Dat hoort `actie
 nodig` te zijn: de eigenaar kan er wel degelijk iets aan doen, want een handmatig gezette waarde
@@ -1098,7 +1105,7 @@ regels met "ter informatie" én "postvak" houden er zeven hun postvak via de tak
 verliezen er twee het al op de `reason`-regel, en verliezen er elf het op de ernstregel (twee
 daarvan alleen op hun uitroltak, want ze zijn generiek over 23 taaksoorten). Die elf
 zijn geen correctie op de inventarisatie: hun ernst klopt, en de grensregeltabel in
-`plans/beheer-in-zad-plan-van-aanpak.md` zette ze al op een pagina, of in elk geval buiten het
+`features/futures/beheer-in-zad-plan-van-aanpak.md` zette ze al op een pagina, of in elk geval buiten het
 postvak. **Twee vallen daarbuiten** en staan hierboven op hun eigen redenering: regel 13 (een
 afgebroken taak) past op geen van de twee takken die rij 1 en rij 2 van de grensregeltabel
 beschrijven, en regel 20 (de sleutelrotatie) hoort bij geen enkel type, zodat de
@@ -1110,7 +1117,7 @@ grensregel is.
 in paragraaf 7 over "Iemand is platformbeheerder geworden of afgevoerd": "**bestaat nog niet**:
 de allowlist komt uit de configuratie". Dat klopt en het blijft kloppen, maar het is met dit
 voorstel geen permanente toestand meer: beslissing 9 in
-`plans/beheer-in-zad-plan-van-aanpak.md` verhuist die lijst naar de database met een handeling
+`features/futures/beheer-in-zad-plan-van-aanpak.md` verhuist die lijst naar de database met een handeling
 erachter, en daarmee wordt die regel wél een gebeurtenis. Het is dus geen fout in de
 inventarisatie maar een regel die door dit voorstel van kolom verandert.
 
