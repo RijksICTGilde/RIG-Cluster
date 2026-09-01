@@ -350,6 +350,23 @@ tasks:
         echo "📝 Edit the file: $OUTPUT_FILE"
         echo "🔐 When done, encrypt with: task encrypt-secret FILE=$OUTPUT_FILE"
 
+  project-decrypt:
+    desc: "Print a project file with every AGE-encrypted value decrypted (stdout only)"
+    vars:
+      FILE: '{{.FILE | default ""}}'
+      KEY: '{{.KEY | default "security/key.txt"}}'
+    cmds:
+      - |
+        if [[ -z "{{.FILE}}" ]]; then
+          echo "❌ Usage: task project-decrypt FILE=path/to/project.yaml [KEY=security/sandbox-key.txt]"
+          exit 1
+        fi
+        # Absolute paden, want uv moet vanuit operations-manager/python draaien
+        ROOT="$(pwd)"
+        FILE_ABS="$(cd "$(dirname "{{.FILE}}")" && pwd)/$(basename "{{.FILE}}")"
+        cd operations-manager/python
+        uv run python "$ROOT/scripts/project_decrypt.py" "$ROOT/{{.KEY}}" "$FILE_ABS"
+
   encrypt-secret:
     desc: "Encrypt a secret YAML file with SOPS (creates .sops.yaml version)"
     vars:
