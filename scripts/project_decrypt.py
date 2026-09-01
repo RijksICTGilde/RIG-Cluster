@@ -33,7 +33,12 @@ _OPI_ROOT = Path(__file__).resolve().parents[1] / "operations-manager" / "python
 if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
-from opi.utils.age import decrypt_age_content, decrypt_tree  # noqa: E402  (after sys.path bootstrap above)
+from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap above)
+    decrypt_age_block_to_bytes,
+    decrypt_age_content,
+    decrypt_tree,
+    is_age_encrypted,
+)
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string  # noqa: E402
 
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
@@ -60,18 +65,53 @@ def read_key(argument: str) -> str:
     raise SystemExit(f"Geen regel met {AGE_KEY_MARKER} gevonden in {argument}")
 
 
+async def decode_attachments(data: object, private_key: str) -> None:
+    """Maak bijlagen leesbaar: die dragen een extra base64-laag onder de AGE-laag.
+
+    ``encrypt_file_to_age_block`` base64't de bytes voordat het versleutelt, zodat een
+    binair bestand de string-gebaseerde helpers overleeft. De gewone boomwandeling haalt
+    er dus base64 uit in plaats van de inhoud. Herkenning gaat op vorm (een dict met
+    ``filename`` en ``content``) in plaats van op een vast pad, want een projectbestand
+    kan bijlagen op meer dan een plek dragen.
+    """
+    if isinstance(data, dict):
+        content = data.get("content")
+        if "filename" in data and isinstance(content, str) and is_age_encrypted(content):
+            try:
+                raw = await decrypt_age_block_to_bytes(content, private_key)
+            except Exception as e:
+                print(f"Bijlage '{data.get('filename')}' gaat niet open ({e})", file=sys.stderr)
+                return
+            try:
+                data["content"] = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                data["content"] = f"<binair bestand, {len(raw)} bytes>"
+            return
+        for value in data.values():
+            await decode_attachments(value, private_key)
+    elif isinstance(data, list):
+        for item in data:
+            await decode_attachments(item, private_key)
+
+
 async def decrypt_project(data: dict, system_key: str) -> None:
     """Ontsleutel de boom in plaats, eerst met de projectsleutel en dan met de systeemsleutel."""
     encrypted_project_key = data.get("config", {}).get("age-private-key")
     if encrypted_project_key:
         try:
             project_key = await decrypt_age_content(encrypted_project_key, system_key)
+            await decode_attachments(data, project_key)
             await decrypt_tree(data, project_key, include_prefixed=True)
-        except (ValueError, RuntimeError) as e:
-            print(f"Waarschuwing: projectsleutel gaat niet open met deze sleutel ({e})", file=sys.stderr)
+        except Exception as e:
+            # Geen reden om te stoppen: de sleutel die je meegaf kan de projectsleutel
+            # zelf zijn in plaats van de systeemsleutel. De ronde hieronder probeert hem
+            # alsnog rechtstreeks op de boom.
+            print(f"Projectsleutel gaat niet open met deze sleutel ({e}).", file=sys.stderr)
+            print("Ik probeer de meegegeven sleutel nu rechtstreeks op het bestand.", file=sys.stderr)
     else:
         print("Waarschuwing: geen config.age-private-key in dit bestand", file=sys.stderr)
 
+    await decode_attachments(data, system_key)
     await decrypt_tree(data, system_key, include_prefixed=True)
 
 
