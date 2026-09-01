@@ -12,6 +12,7 @@ client, en in geen van beide iets uit de infrastructuur.
 
 from __future__ import annotations
 
+import logging
 import re
 
 import pytest
@@ -247,3 +248,51 @@ class TestDeStoringZelf:
         regels = [r for r in caplog.records if STORING in (r.exc_text or "") or STORING in r.getMessage()]
         assert regels, "de volledige fout staat niet in de log"
         assert any(getattr(r, "flow_id", None) == kenmerk.group() for r in regels)
+
+
+class TestEenOnbekendeStatus:
+    """Een uitzondering in de foutafhandeling is het ene ding dat nooit mag gebeuren."""
+
+    def test_een_status_buiten_de_standaard_valt_niet_om(self) -> None:
+        from opi.core.errors import statusomschrijving
+
+        assert statusomschrijving(500) == "Internal Server Error"
+        assert statusomschrijving(599) == "599"
+
+
+class TestDeLogKrijgtHetRegelnummer:
+    """Het regelnummer en de bronregel van Jinja2 verhuisden van het antwoord naar de log."""
+
+    def _mislukking(self) -> Exception:
+        fout = ValueError("expected token 'end of print statement'")
+        fout.lineno = 12  # type: ignore[attr-defined]
+        fout.source = "\n".join(f"regel {n}" for n in range(1, 20))  # type: ignore[attr-defined]
+        return fout
+
+    def test_regelnummer_en_bronregel_staan_in_de_logregel(self, caplog: pytest.LogCaptureFixture) -> None:
+        from opi.core.errors import log_render_failure
+
+        logger = logging.getLogger("toets.render")
+        with caplog.at_level("ERROR"):
+            try:
+                raise self._mislukking()
+            except ValueError as exc:
+                log_render_failure(logger, "het dashboard", exc)
+
+        bericht = caplog.records[-1].getMessage()
+        assert "het dashboard" in bericht
+        assert "regel 12" in bericht
+        assert "bron: regel 12" in bericht
+        assert caplog.records[-1].exc_info is not None, "zonder traceback heeft de beheerder niets"
+
+    def test_een_fout_zonder_regelnummer_levert_gewoon_de_tekst(self, caplog: pytest.LogCaptureFixture) -> None:
+        from opi.core.errors import log_render_failure
+
+        logger = logging.getLogger("toets.render")
+        with caplog.at_level("ERROR"):
+            try:
+                raise OSError(STORING)
+            except OSError as exc:
+                log_render_failure(logger, "de projectpagina", exc)
+
+        assert STORING in caplog.records[-1].getMessage()

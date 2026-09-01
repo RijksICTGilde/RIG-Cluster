@@ -18,6 +18,7 @@ sjablonenmap of de sessie juist het probleem is.
 from __future__ import annotations
 
 import html
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from opi.core.flow_id import get_flow_id
@@ -65,6 +66,18 @@ NOT_FOUND_PAGE = _PAGE.format(
     tekst="De link klopt niet meer, of de pagina is verplaatst.",
     kenmerkregel="",
 )
+
+
+def statusomschrijving(status_code: int) -> str:
+    """De HTTP-omschrijving bij een status, of de code zelf als hij onbekend is.
+
+    ``HTTPStatus(599)`` werpt een ValueError, en een uitzondering in de foutafhandeling
+    is het ene ding dat hier nooit mag gebeuren.
+    """
+    try:
+        return HTTPStatus(status_code).phrase
+    except ValueError:
+        return str(status_code)
 
 
 def kenmerk_van(request: Request) -> str:
