@@ -233,7 +233,9 @@ Three kinds and no fourth: `IntegerSetting`, `QuantitySetting` (parsed and compa
 number -- `1Gi` is larger than `512Mi`, `2` larger than `100m`) and `ChoiceSetting`.
 `grow_only=True` marks a field that can only move up; that is a rule about a *change*, so
 it runs where both versions are in hand (`ProjectStore` hands the previous one to
-`validate_project_structure`).
+`validate_project_structure`). Both versions are read the same way -- the value if it is
+there, the service default if it is not -- so leaving the field, or the whole config block,
+out is the same reduction as writing a smaller number.
 
 What a service does not declare is not settable, and a layer it does not name is refused.
 A service that declares nothing -- the whole catalog today -- behaves exactly as before.

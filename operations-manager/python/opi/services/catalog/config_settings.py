@@ -53,7 +53,7 @@ from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.resource_analyzer import parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from opi.services.services_enums import ServiceType
 
@@ -82,7 +82,7 @@ class QuantityKind(Enum):
 #: The parser per kind. Both already existed and are reused rather than rewritten:
 #: ``opi/services/resource_analyzer.py`` is where the platform turns a Kubernetes
 #: quantity into a number, for auto-tune and for the storage ceiling.
-_QUANTITY_PARSERS: Final[dict[QuantityKind, Any]] = {
+_QUANTITY_PARSERS: Final[dict[QuantityKind, Callable[[str], float]]] = {
     QuantityKind.MEMORY: parse_k8s_memory_to_mi,
     QuantityKind.CPU: parse_k8s_cpu_to_m,
 }
@@ -372,9 +372,14 @@ def check_settings(settings: Sequence[ConfigSetting], config: Any, layer: Config
 def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, config: Any, layer: ConfigLayer) -> None:
     """Judge what ``config`` changes about the settings, against ``previous``.
 
-    A field that was not mentioned before was standing on the service default, so
-    dropping from the default counts as a change too. Only settings that declare a rule
-    about changes (``grow_only``) do anything here.
+    A field a version does not mention stands on the service default, and that holds for
+    BOTH versions. Judging only the fields the new one names would make the rule
+    avoidable by leaving the field out: the effective value drops to the default, which
+    is the very reduction the rule exists to refuse, and the empty wizard field is the
+    road to it. So each side is read the same way -- the value if it is there, the
+    default if it is not -- and a field neither version mentions is not a change at all.
+
+    Only settings that declare a rule about changes (``grow_only``) do anything here.
 
     Raises:
         SettingError: with the sentence the user reads.
@@ -382,8 +387,11 @@ def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, conf
     for setting in settings:
         if not setting.allows(layer):
             continue
-        new_value = read_setting_value(config, setting)
-        if new_value is MISSING:
-            continue
         old_value = read_setting_value(previous, setting)
-        setting.check_change(setting.default if old_value is MISSING else old_value, new_value)
+        new_value = read_setting_value(config, setting)
+        if old_value is MISSING and new_value is MISSING:
+            continue  # neither version mentions the field: both stand on the default
+        setting.check_change(
+            setting.default if old_value is MISSING else old_value,
+            setting.default if new_value is MISSING else new_value,
+        )
