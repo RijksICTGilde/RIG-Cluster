@@ -172,13 +172,16 @@ class ConfigSetting(ABC):
 
     @property
     def judges_changes(self) -> bool:
-        """Whether this setting overrides ``check_change``, i.e. judges a CHANGE.
+        """Whether this setting judges a CHANGE, i.e. overrides ``check_change``.
 
         Read by ``__post_init__``, because a rule about a change is only sound on a field
-        that lives on exactly one layer -- see the refusal there. A subclass that gives
-        ``check_change`` a body says so here; the base judges no change at all.
+        that lives on exactly one layer -- see the refusal there. Answered by asking the
+        class rather than by a flag someone has to remember to set: giving
+        ``check_change`` a body IS the answer, so a next kind of bound cannot inherit the
+        gap that refusal closes. A subclass whose hook only judges under a condition of
+        its own (``QuantitySetting.grow_only``) narrows it down from here.
         """
-        return False
+        return type(self).check_change is not ConfigSetting.check_change
 
     @property
     def path_parts(self) -> tuple[str, ...]:
@@ -423,10 +426,16 @@ def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, conf
     Only settings that declare a rule about changes (``grow_only``) do anything here, and
     such a setting lives on exactly one layer -- ``ConfigSetting.__post_init__`` refuses
     the declaration otherwise. That is what makes comparing per BLOCK the same thing as
-    comparing the EFFECTIVE value: with one layer open, the block at this location is the
+    comparing the EFFECTIVE value: with one layer open, the block at this PLACE is the
     only thing ``resolve_setting`` would consult for that field, so a value that does not
     shrink here cannot shrink there. Spread the same field over two layers and that stops
     holding, because the reduction can then be written on the layer that wins.
+
+    A place is finer-grained than a layer: where a service keeps a record per mount
+    (the storage services on the deployment-component layer), each mount is its own
+    place with its own effective value, and ``iter_service_config_blocks`` names the
+    mount in the location for exactly that reason. Pair two mounts up as one block and
+    the comparison is between unrelated values in both directions.
 
     Raises:
         SettingError: with the sentence the user reads.

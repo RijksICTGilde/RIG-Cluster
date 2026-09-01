@@ -118,7 +118,9 @@ ongeldig: 'storage' moet tussen 1Gi en 10Gi liggen; je gaf 50Gi.
 dus die regel heeft de vorige versie van het bestand nodig. `ProjectStore` geeft die mee
 (`validate_project_structure(data, previous=...)`), en `validate_service_setting_changes`
 koppelt de blokken op hun PLEK -- het project zelf, een component bij naam, een deployment
-bij naam -- zodat een verkleining niet met een ander component wordt vergeleken.
+bij naam, een component bij naam BINNEN een deployment, en daarbinnen een mount bij naam
+waar een dienst per mount iets bijhoudt -- zodat een verkleining niet met een ander
+component, of een andere mount, wordt vergeleken.
 
 Beide versies worden **hetzelfde gelezen**, en dat begint bij het opzoeken van de vorige:
 een blok wordt op zijn SLEUTEL (plek plus dienst) gepakt, niet op zijn waarde. Een dienst
@@ -144,9 +146,18 @@ per deployment op.
 
 Vergelijken per BLOK is hier hetzelfde als vergelijken per EFFECTIEVE waarde, en dat is
 geen toeval maar de reden voor de eis hierboven: staat het veld op een laag, dan is het
-blok op die laag het enige dat `resolve_setting` voor dat veld leest, dus een blok dat niet
+blok op die PLEK het enige dat `resolve_setting` voor dat veld leest, dus een blok dat niet
 krimpt is een waarde die niet krimpt. Zonder die eis houdt die gelijkstelling niet, en dan
 is de grendel te omzeilen door de verlaging op de laag te schrijven die wint.
+
+Een plek is fijnmaziger dan een laag. Op de deployment-componentlaag houdt een dienst soms
+een record per MOUNT bij -- zo beschrijft het schema de opslagdiensten -- en dan draagt een
+component daar meerdere blokken van dezelfde dienst, elk met een eigen effectieve waarde.
+Daarom noemt de wandeling de mount in de plek. Zonder dat deelden twee mounts een sleutel,
+en dan gaat het twee kanten op mis: een mount die van 8Gi naar 2Gi gaat wordt vergeleken
+met de andere mount en glipt erdoor, en een bestand waarin niets verandert wordt geweigerd
+zodra twee mounts ongelijk van grootte zijn -- dat project is daarna voor elke wijziging
+onopslaanbaar.
 
 Alle plekken waar een serviceconfig kan wonen staan in een wandeling,
 `iter_service_config_blocks`, die twee lezers bedient: de waardetoets gebruikt `where` en
