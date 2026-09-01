@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
-from opi.core.errors import kenmerk_van, log_render_failure, met_kenmerk
+from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
@@ -2108,9 +2108,15 @@ async def _fetch_argocd_deployment_status(
             "deviations": deviations,
             "pods": pod_summaries,
         }
-    except Exception as app_error:
-        logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
-        return _argocd_unavailable_result(app_name, str(app_error), source="API")
+    except Exception:
+        # De melding komt in ``errors`` en die tekent de kaart uit; wat ArgoCD hier
+        # opgooit noemt zijn eigen adres. Volledig in de log, met het kenmerk ernaast.
+        logger.exception("Failed to fetch ArgoCD status for %s", app_name)
+        return _argocd_unavailable_result(
+            app_name,
+            met_kenmerk("De status is nu niet op te halen. Probeer het over een minuut opnieuw.", kenmerk_nu()),
+            source="API",
+        )
 
 
 @web_router.get("/dashboard/resource-usage", response_class=HTMLResponse)
@@ -2266,9 +2272,15 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
                         [d for d in (project.data or {}).get("deployments", []) if d.get("cluster") == current_cluster]
                     ),
                 }
-        except Exception as e:
-            logger.warning(f"Failed to fetch project resource usage for {project_name}: {e}")
-            ctx["usage_error"] = str(e)
+        except Exception:
+            # De melding van de metingslaag ging tot nu toe onbewerkt het sjabloon in en
+            # kwam er op regel 40 letterlijk uit: bij een onbereikbare Prometheus stond
+            # daar de hostnaam, de poort en de errno van die dienst, op het tabblad
+            # Project. De volledige fout staat nu in de log, gekoppeld met het kenmerk.
+            logger.exception("Ophalen van het resourcegebruik voor %s mislukt", project_name)
+            # De kop van de melding zegt al WAT er niet lukt ("Resourcegebruik is niet
+            # op te halen"), dus zegt de zin eronder wat je eraan kunt doen.
+            ctx["usage_error"] = met_kenmerk("Probeer het over een minuut opnieuw.", kenmerk_van(request))
 
     # Ook dit fragment kent de LOTC-weergave. Zonder zou de projectpagina onder ?ui=lotc
     # wel LOTC zijn, maar het blokje dat htmx erin laadt nog roos - een pagina die

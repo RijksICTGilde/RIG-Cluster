@@ -22,6 +22,7 @@ from opi.api.params import ProjectNamePath
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.errors import kenmerk_van, met_kenmerk
 from opi.extensions.pipeline import get_registry_rewrite_mappings
 from opi.extensions.registry_rewrite import original_image
 from opi.middleware.authorization import get_user
@@ -191,8 +192,12 @@ async def get_deployment_logs(
                             "line_count": len(log_lines),
                         }
                     )
-                except Exception as e:
-                    logger.debug(f"Could not get logs for {k8s_deployment_name}: {e}")
+                except Exception:
+                    # Wat kubectl hier opgooit gaat over de infrastructuur -- een
+                    # onbereikbare API-server noemt zijn eigen adres -- en dat hoort
+                    # niet in een antwoord. Het veld blijft bestaan, want een client
+                    # leest eraan af dat dit onderdeel geen logs opleverde.
+                    logger.exception("Could not get logs for %s", k8s_deployment_name)
                     results.append(
                         {
                             "project": project_name,
@@ -202,7 +207,9 @@ async def get_deployment_logs(
                             "k8s_deployment": k8s_deployment_name,
                             "lines": [],
                             "line_count": 0,
-                            "error": str(e),
+                            "error": met_kenmerk(
+                                "De logs van dit onderdeel zijn niet op te halen.", kenmerk_van(request)
+                            ),
                         }
                     )
 
