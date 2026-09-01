@@ -224,7 +224,9 @@ async def get_deployment_logs(
 
     except Exception as e:
         logger.exception("Error getting deployment logs")
-        raise HTTPException(status_code=500, detail=f"Error getting logs: {e}") from e
+        raise HTTPException(
+            status_code=500, detail="De logs konden niet worden opgehaald. Probeer het over een minuut opnieuw."
+        ) from e
 
 
 @logs_router.get("/pods/{project_name}")

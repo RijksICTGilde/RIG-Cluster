@@ -47,6 +47,12 @@ from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
+#: Zes terugzet-eindpunten hebben twee takken die op hetzelfde uitkomen -- een RuntimeError
+#: die geen vergrendeling was, en alles wat verder kan breken -- dus zeggen ze de lezer
+#: hetzelfde. Wat er precies misging staat in de log, bij het kenmerk van dit verzoek.
+TERUGZETTEN_MISLUKT = "Het terugzetten is niet gelukt. Probeer het over een minuut opnieuw."
+SNAPSHOTS_NIET_OPGEHAALD = "De lijst met snapshots kon niet worden opgehaald. Probeer het over een minuut opnieuw."
+
 # ``project_name`` gates tenant isolation on every restore endpoint: it is what
 # ``validate_api_token`` matches the API key against, and it determines the only
 # namespace the caller may address (see ``_require_namespace_owned_by_project``).
@@ -641,7 +647,7 @@ async def list_snapshots(
 
     except Exception as e:
         logger.exception("Error listing snapshots for %s/%s", cluster, namespace)
-        raise HTTPException(status_code=500, detail=f"Error listing snapshots: {e}") from e
+        raise HTTPException(status_code=500, detail=SNAPSHOTS_NIET_OPGEHAALD) from e
 
 
 @restore_router.get("/snapshots/{cluster}/{namespace}/{pvc_name}", response_model=ListSnapshotsResponse)
@@ -682,7 +688,7 @@ async def list_pvc_snapshots(
 
     except Exception as e:
         logger.exception("Error listing snapshots for %s/%s/%s", cluster, namespace, pvc_name)
-        raise HTTPException(status_code=500, detail=f"Error listing snapshots: {e}") from e
+        raise HTTPException(status_code=500, detail=SNAPSHOTS_NIET_OPGEHAALD) from e
 
 
 @restore_router.post("/pvc/{cluster}/{namespace}/{pvc_name}", response_model=RestoreResponse)
@@ -786,11 +792,12 @@ async def restore_pvc(
         if "lock" in str(e).lower():
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error restoring PVC %s/%s/%s", cluster, namespace, pvc_name)
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error restoring PVC %s/%s/%s", cluster, namespace, pvc_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring PVC: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 @restore_router.post("/project/{project_name}", response_model=ProjectRestoreResponse)
@@ -1025,11 +1032,11 @@ async def restore_project_pvc(
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
         logger.exception("Error in project restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error in project restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring project PVC: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 # --- Backup Run Restore Helpers ---
@@ -1472,11 +1479,11 @@ async def restore_backup_run(
         if "lock" in str(e).lower():
             raise HTTPException(status_code=409, detail=str(e)) from e
         logger.exception("Error in backup run restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error in backup run restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring backup run: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 # Resolving the project's own service as restore target
@@ -1879,11 +1886,12 @@ async def restore_database(
         if "lock" in str(e).lower():
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error restoring database %s/%s/%s", cluster, namespace, reference_name)
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error restoring database %s/%s/%s", cluster, namespace, reference_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring database: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 # Bucket Restore Endpoints
@@ -2019,11 +2027,12 @@ async def restore_bucket(
         if "lock" in str(e).lower():
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error restoring bucket %s/%s/%s", cluster, namespace, reference_name)
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error restoring bucket %s/%s/%s", cluster, namespace, reference_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring bucket: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 # Deployment Restore Endpoint (versioned restore for PVC, database, and bucket)
@@ -2261,11 +2270,11 @@ async def restore_deployment_resource(
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
         logger.exception("Error in deployment restore for %s/%s", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error in deployment restore for %s/%s", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring deployment resource: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 async def _restore_pvc_with_versioning(

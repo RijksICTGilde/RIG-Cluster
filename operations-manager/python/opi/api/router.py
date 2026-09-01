@@ -1211,8 +1211,10 @@ async def upsert_deployment(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error upserting deployment: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error upserting deployment: {e!s}")
+        logger.exception("Bijwerken van de deployment mislukt")
+        raise HTTPException(
+            status_code=500, detail="De deployment kon niet worden bijgewerkt. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -1470,8 +1472,10 @@ async def add_component(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error adding component: {e!s}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+        logger.exception("Toevoegen van het component mislukt")
+        raise HTTPException(
+            status_code=500, detail="Het component kon niet worden toegevoegd. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -1599,8 +1603,10 @@ async def update_component(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating component: {e!s}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+        logger.exception("Bijwerken van het component mislukt")
+        raise HTTPException(
+            status_code=500, detail="Het component kon niet worden bijgewerkt. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -1756,8 +1762,11 @@ async def add_component_to_deployment(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error adding component to deployment: {e!s}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+        logger.exception("Toevoegen van het component aan de deployment mislukt")
+        raise HTTPException(
+            status_code=500,
+            detail="Het component kon niet aan de deployment worden toegevoegd. Probeer het over een minuut opnieuw.",
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -1910,8 +1919,10 @@ async def add_service(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error adding service: {e!s}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+        logger.exception("Toevoegen van de dienst mislukt")
+        raise HTTPException(
+            status_code=500, detail="De dienst kon niet worden toegevoegd. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -2053,8 +2064,10 @@ async def update_deployment_image(
         return JSONResponse(content=content, status_code=200)
 
     except Exception as e:
-        logger.error(f"Error updating image: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error updating image: {e!s}")
+        logger.exception("Bijwerken van het image mislukt")
+        raise HTTPException(
+            status_code=500, detail="Het image kon niet worden bijgewerkt. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -2175,8 +2188,10 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
             }
             return JSONResponse(content=content, status_code=500)
     except Exception as e:
-        logger.error(f"Error processing project refresh request: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error refreshing project: {e!s}")
+        logger.exception("Verversen van het project mislukt")
+        raise HTTPException(
+            status_code=500, detail="Het project kon niet worden ververst. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -2294,8 +2309,10 @@ async def refresh_deployment(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing deployment refresh request: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error refreshing deployment: {e!s}")
+        logger.exception("Verversen van de deployment mislukt")
+        raise HTTPException(
+            status_code=500, detail="De deployment kon niet worden ververst. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -2386,8 +2403,10 @@ async def delete_project(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing project deletion request: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error processing project deletion: {e!s}")
+        logger.exception("Verwijderen van het project mislukt")
+        raise HTTPException(
+            status_code=500, detail="Het project kon niet worden verwijderd. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -2481,8 +2500,10 @@ async def delete_project_deployment(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing deployment deletion request: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error processing deployment deletion: {e!s}")
+        logger.exception("Verwijderen van de deployment mislukt")
+        raise HTTPException(
+            status_code=500, detail="De deployment kon niet worden verwijderd. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         # TODO: maybe the project manager should close itself when done..
         if project_manager:
@@ -2645,8 +2666,10 @@ async def clone_database_from_external(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing external database clone request: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error cloning database from external source: {e!s}")
+        logger.exception("Klonen van de externe database mislukt")
+        raise HTTPException(
+            status_code=500, detail="De database kon niet worden gekloond. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -2807,8 +2830,10 @@ async def clone_bucket_from_external(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing external bucket clone request: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error cloning bucket from external source: {e!s}")
+        logger.exception("Klonen van de externe bucket mislukt")
+        raise HTTPException(
+            status_code=500, detail="De bucket kon niet worden gekloond. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -2885,8 +2910,11 @@ async def validate_clone_configuration(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing clone validation request: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error validating clone configuration: {e!s}")
+        logger.exception("Controleren van de kloonconfiguratie mislukt")
+        raise HTTPException(
+            status_code=500,
+            detail="De kloonconfiguratie kon niet worden gecontroleerd. Probeer het over een minuut opnieuw.",
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -3064,8 +3092,10 @@ async def create_self_service_project(
             )
 
         elapsed_time = time.time() - start_time
-        logger.error(f"Error creating self-service project: {e!s} (took {elapsed_time:.2f} seconds)")
-        raise HTTPException(status_code=500, detail=f"Error creating self-service project: {e!s}")
+        logger.exception("Aanmaken van het self-serviceproject mislukt na %.2f seconden", elapsed_time)
+        raise HTTPException(
+            status_code=500, detail="Het project kon niet worden aangemaakt. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -3195,8 +3225,11 @@ async def list_subdomains(
             offset=offset,
         )
     except Exception as e:
-        logger.error(f"Error listing subdomains: {e}")
-        raise HTTPException(status_code=500, detail=f"Error listing subdomains: {e}")
+        logger.exception("Opvragen van de subdomeinen mislukt")
+        raise HTTPException(
+            status_code=500,
+            detail="De lijst met subdomeinen kon niet worden opgehaald. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 @api_router.post(
@@ -3287,8 +3320,10 @@ async def add_registry_by_secret(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error adding registry by secret: {e!s}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+        logger.exception("Toevoegen van het register via een secret mislukt")
+        raise HTTPException(
+            status_code=500, detail="Het register kon niet worden toegevoegd. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
@@ -3389,8 +3424,10 @@ async def add_registry_by_credentials(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error adding registry by credentials: {e!s}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+        logger.exception("Toevoegen van het register via inloggegevens mislukt")
+        raise HTTPException(
+            status_code=500, detail="Het register kon niet worden toegevoegd. Probeer het over een minuut opnieuw."
+        ) from e
     finally:
         if project_manager:
             await project_manager.close()
