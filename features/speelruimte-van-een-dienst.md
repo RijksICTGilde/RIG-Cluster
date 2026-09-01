@@ -109,11 +109,18 @@ dus die regel heeft de vorige versie van het bestand nodig. `ProjectStore` geeft
 koppelt de blokken op hun PLEK -- het project zelf, een component bij naam, een deployment
 bij naam -- zodat een verkleining niet met een ander component wordt vergeleken.
 
-Beide versies worden **hetzelfde gelezen**: de waarde als het veld er staat, anders de
-standaard van de dienst. Een veld weglaten is daarmee dezelfde verlaging als het veld
-expliciet verlagen, en dat is precies de bedoeling -- anders was de regel te omzeilen door
-het veld (of het hele configblok) gewoon weg te laten, en een leeg wizardveld doet dat.
-Deze drie wegen leveren dus dezelfde weigering op:
+Beide versies worden **hetzelfde gelezen**, en dat begint bij het opzoeken van de vorige:
+een blok wordt op zijn SLEUTEL (plek plus dienst) gepakt, niet op zijn waarde. Een dienst
+die er kaal in stond -- geselecteerd, zonder configblok -- is daarmee een versie die op de
+standaard staat, en geen afwezigheid. Daarna leest elke kant hetzelfde: de waarde als het
+veld er staat, anders de standaard van de dienst. Een veld weglaten is dus dezelfde
+verlaging als het veld expliciet verlagen, en dat is precies de bedoeling -- anders was de
+regel te omzeilen door het veld (of het hele configblok) gewoon weg te laten, en een leeg
+wizardveld doet dat.
+
+De regel geldt in beide richtingen: het maakt niet uit aan WELKE kant het veld of het blok
+ontbreekt. Deze drie wegen leveren dus dezelfde weigering op (en spiegelen ze de vorige
+versie, dan ook):
 
 | van `storage: 5Gi` naar | uitkomst |
 |---|---|
@@ -125,8 +132,10 @@ Deze drie wegen leveren dus dezelfde weigering op:
 Alle plekken waar een serviceconfig kan wonen staan in een wandeling,
 `iter_service_config_blocks`, die twee lezers bedient: de waardetoets gebruikt `where` en
 `from_version`, de wijzigingstoets `location`. Daar horen ook de diensten bij waarvan de
-config een component-EIGENSCHAP is (`user-env-vars`, `aliases`), zodat een setting daarop
-niet wel op zijn grenzen en nooit op zijn wijziging wordt getoetst.
+config een component-EIGENSCHAP is (`user-env-vars`, `aliases`), en beide lezers toetsen
+zo'n blok: op zijn grenzen (`_check_declared_settings`, naast het pydantic-model dat er al
+op stond) en op zijn wijziging. Niet het een zonder het ander -- dan staat dezelfde
+scheefte er weer, alleen omgekeerd.
 
 **Het wizardveld bouwen.** `setting_field(setting, service, layer)` maakt de `Editable` +
 `EditableVisualizer` uit de declaratie: het yaml-pad via `config_path`, de invoercontrole
