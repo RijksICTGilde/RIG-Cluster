@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
-from opi.core.errors import log_render_failure
+from opi.core.errors import kenmerk_van, log_render_failure, met_kenmerk
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
@@ -2798,9 +2798,13 @@ async def encrypt_text(request: Request):
 
         return JSONResponse(content={"success": True, "result": encrypted_content}, status_code=200)
 
-    except Exception as e:
-        logger.error(f"Error encrypting text: {e!s}")
-        return JSONResponse(content={"error": f"Encryption failed: {e!s}"}, status_code=500)
+    except Exception:
+        logger.exception("Versleutelen mislukt")
+        bericht = "Versleutelen is niet gelukt. Controleer de publieke sleutel en de invoer."
+        return JSONResponse(
+            content={"error": met_kenmerk(bericht, kenmerk_van(request))},
+            status_code=500,
+        )
 
 
 @web_router.post("/tools/decrypt")
@@ -2831,9 +2835,13 @@ async def decrypt_text(request: Request):
 
         return JSONResponse(content={"success": True, "result": decrypted_content}, status_code=200)
 
-    except Exception as e:
-        logger.error(f"Error decrypting text: {e!s}")
-        return JSONResponse(content={"error": f"Decryption failed: {e!s}"}, status_code=500)
+    except Exception:
+        logger.exception("Ontsleutelen mislukt")
+        bericht = "Ontsleutelen is niet gelukt. Controleer de private sleutel en of de invoer echt AGE-versleuteld is."
+        return JSONResponse(
+            content={"error": met_kenmerk(bericht, kenmerk_van(request))},
+            status_code=500,
+        )
 
 
 def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
