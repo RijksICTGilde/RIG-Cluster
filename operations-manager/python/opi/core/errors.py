@@ -43,7 +43,8 @@ _PAGE = """<!doctype html>
   main {{ text-align: center; padding: 2rem; max-width: 34rem; }}
   h1 {{ font-size: 2rem; margin: 0 0 .5rem; }}
   p {{ color: #4a4a4a; margin: 0 0 1.5rem; }}
-  code {{ font-family: ui-monospace, monospace; background: #f3f3f3; padding: .1em .35em; }}
+  code {{ font-family: ui-monospace, monospace; background: #f3f3f3; border-radius: 3px;
+         padding: .1em .3em; }}
   a {{ color: #154273; }}
 </style>
 </head>
@@ -84,7 +85,7 @@ def server_error_page(tekst: str, kenmerk: str) -> str:
     """De 5xx-pagina: wat er misging, wat je eraan kunt doen, en het kenmerk."""
     kenmerkregel = ""
     if kenmerk:
-        kenmerkregel = f"\n  <p>Blijft het misgaan, meld dan kenmerk <code>{html.escape(kenmerk)}</code>.</p>"
+        kenmerkregel = f"\n  <p>Blijft het misgaan, meld dan dit kenmerk:<br><code>{html.escape(kenmerk)}</code></p>"
     return _PAGE.format(
         titel="Er ging iets mis",
         kop="Er ging iets mis",

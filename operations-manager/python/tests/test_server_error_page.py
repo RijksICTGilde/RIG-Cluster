@@ -90,7 +90,7 @@ class TestEenBrowserKrijgtEenPagina:
     def test_de_pagina_noemt_het_kenmerk(self, foutclient: TestClient) -> None:
         """Zonder kenmerk is 'er ging iets mis' een doodlopende weg voor wie het meldt."""
         antwoord = foutclient.get("/health/fout-http", headers=HTML)
-        assert re.search(r"kenmerk <code>req-[0-9a-f]{8}</code>", antwoord.text)
+        assert re.search(r"kenmerk:<br><code>req-[0-9a-f]{8}</code>", antwoord.text)
 
     def test_elk_verzoek_krijgt_zijn_eigen_kenmerk(self, foutclient: TestClient) -> None:
         eerste = re.search(r"req-[0-9a-f]{8}", foutclient.get("/health/fout-http", headers=HTML).text)
@@ -173,3 +173,77 @@ class TestDe404BlijftWatHijWas:
         assert antwoord.status_code == 401
         assert antwoord.headers["content-type"].startswith("application/json")
         assert antwoord.json()["detail"]
+
+
+class _ToegelatenGebruikers:
+    """Genoeg gebruikersdienst voor de middleware: opslaan, en dit adres toelaten."""
+
+    def __init__(self, email: str) -> None:
+        self._email = email
+
+    def store_user(self, user: dict[str, str]) -> None:
+        pass
+
+    def is_email_allowed(self, email: str) -> bool:
+        return email == self._email
+
+
+class TestDeStoringZelf:
+    """De pagina uit de melding, met de fout die er die avond optrad.
+
+    De synthetische routes hierboven meten de handler; deze meet de weg ernaartoe. Het
+    pad, de uitzondering en de status zijn die van de storing: ``/projects/dd-mco/details``
+    terwijl de database niet antwoordde.
+    """
+
+    @pytest.fixture
+    def projectclient(self, mock_settings: object, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+        from opi.middleware import authorization
+        from opi.server import create_app
+        from opi.web import router as webrouter
+
+        gebruiker = {"email": "beheerder@voorbeeld.nl", "name": "Beheerder"}
+        monkeypatch.setattr(authorization, "get_user", lambda request: gebruiker)
+        # De middleware toetst het adres aan de allowlist en stuurt anders naar
+        # /permission-denied; dan komt de route helemaal niet aan bod.
+        monkeypatch.setattr(authorization, "get_user_service", lambda: _ToegelatenGebruikers(gebruiker["email"]))
+        monkeypatch.setattr(webrouter, "get_current_user", lambda request: gebruiker)
+        monkeypatch.setattr(webrouter, "is_user_authorized_for_project", lambda *args, **kwargs: True)
+
+        def _database_onbereikbaar() -> object:
+            raise OSError(STORING)
+
+        monkeypatch.setattr(webrouter, "get_project_store", _database_onbereikbaar)
+
+        app = create_app()
+        app.debug = False
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_de_projectpagina_geeft_een_pagina_zonder_infrastructuur(self, projectclient: TestClient) -> None:
+        antwoord = projectclient.get("/projects/dd-mco/details", headers=HTML, follow_redirects=False)
+
+        assert antwoord.status_code == 500
+        assert antwoord.headers["content-type"].startswith("text/html")
+        assert "De projectpagina kon niet worden opgebouwd" in antwoord.text
+        assert not LEKT.search(antwoord.text), "de infrastructuur staat op het scherm"
+        assert re.search(r"kenmerk:<br><code>req-[0-9a-f]{8}</code>", antwoord.text)
+
+    def test_dezelfde_aanroep_met_json_geeft_de_envelop(self, projectclient: TestClient) -> None:
+        antwoord = projectclient.get("/projects/dd-mco/details", headers=JSON, follow_redirects=False)
+
+        assert antwoord.status_code == 500
+        assert "<html" not in antwoord.text
+        assert antwoord.json()["category"] == "InternalError"
+        assert not LEKT.search(antwoord.text)
+
+    def test_de_log_heeft_wel_het_hele_verhaal(
+        self, projectclient: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("ERROR"):
+            antwoord = projectclient.get("/projects/dd-mco/details", headers=HTML, follow_redirects=False)
+
+        kenmerk = re.search(r"req-[0-9a-f]{8}", antwoord.text)
+        assert kenmerk is not None
+        regels = [r for r in caplog.records if STORING in (r.exc_text or "") or STORING in r.getMessage()]
+        assert regels, "de volledige fout staat niet in de log"
+        assert any(getattr(r, "flow_id", None) == kenmerk.group() for r in regels)
