@@ -5,7 +5,6 @@ Processing means it can create, update, or delete any resources defined in a pro
 
 import asyncio
 import base64
-import contextlib
 import copy
 import glob
 import logging
@@ -127,6 +126,7 @@ from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
     decrypt_password_smart_auto,
+    decrypt_tree,
     encrypt_age_content,
     encrypt_file_to_age_block_sync,
     get_decoded_project_private_key,
@@ -6961,30 +6961,8 @@ class ProjectManager:
         if not private_key:
             return view
 
-        await self._decrypt_tree(view, private_key)
+        await decrypt_tree(view, private_key)
         return view
-
-    async def _decrypt_tree(self, data: Any, private_key: str) -> None:
-        """Recursively walk data and decrypt any AGE-encrypted string values in place."""
-        age_header = "-----BEGIN AGE ENCRYPTED FILE-----"
-
-        if isinstance(data, dict):
-            for key in list(data.keys()):
-                value = data[key]
-                if isinstance(value, str) and age_header in value:
-                    try:
-                        data[key] = await decrypt_age_content(value, private_key)
-                    except Exception:
-                        logger.debug(f"Failed to decrypt field '{key}', leaving as-is")
-                elif isinstance(value, dict | list):
-                    await self._decrypt_tree(value, private_key)
-        elif isinstance(data, list):
-            for i, item in enumerate(data):
-                if isinstance(item, str) and age_header in item:
-                    with contextlib.suppress(Exception):
-                        data[i] = await decrypt_age_content(item, private_key)
-                elif isinstance(item, dict | list):
-                    await self._decrypt_tree(item, private_key)
 
     async def _get_by_json_path(self, json_path: str) -> Any:
         """
