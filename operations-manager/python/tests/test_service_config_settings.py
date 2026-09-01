@@ -97,6 +97,32 @@ VOLUME = QuantitySetting(
     label="Opslag",
 )
 
+#: Hetzelfde volume, maar met een standaard BOVEN de ondergrens. Dat verschil is nodig om
+#: een grendel te kunnen meten die op de standaard sluit: staat de standaard op de
+#: ondergrens, dan is er geen enkele geldige waarde onder de standaard en kan een gat in
+#: "een ontbrekend blok telt als de standaard" zich niet laten zien.
+RUIM_VOLUME = QuantitySetting(
+    path="storage",
+    layers=(ConfigLayer.PROJECT,),
+    default="5Gi",
+    minimum="1Gi",
+    maximum="10Gi",
+    kind=QuantityKind.MEMORY,
+    grow_only=True,
+    label="Opslag",
+)
+
+#: Een grens op een dienst waarvan de config een component-EIGENSCHAP is (``aliases``,
+#: ``user-env-vars``) in plaats van een blok in een ``services:``-lijst.
+EIGENSCHAP_LIMIET = IntegerSetting(
+    path="LIMIET",
+    layers=(ConfigLayer.COMPONENT,),
+    default=10,
+    minimum=1,
+    maximum=100,
+    label="Limiet",
+)
+
 IMAGE = ChoiceSetting(
     path="image",
     layers=(ConfigLayer.PROJECT,),
@@ -403,19 +429,11 @@ def test_het_veld_weglaten_is_dezelfde_verlaging_als_het_expliciet_verlagen() ->
 
 def test_verlagen_ten_opzichte_van_de_standaard_telt_ook_als_verlagen() -> None:
     """Stond het veld er niet, dan stond het op de standaard van de dienst."""
-    ruim_gestart = QuantitySetting(
-        path="storage",
-        layers=(ConfigLayer.PROJECT,),
-        default="5Gi",
-        minimum="1Gi",
-        maximum="10Gi",
-        kind=QuantityKind.MEMORY,
-        grow_only=True,
-        label="Opslag",
-    )
     with pytest.raises(SettingError, match="kan alleen omhoog"):
-        check_setting_changes([ruim_gestart], {}, {"storage": "1Gi"}, ConfigLayer.PROJECT)
-    check_setting_changes([ruim_gestart], {}, {"storage": "8Gi"}, ConfigLayer.PROJECT)
+        check_setting_changes([RUIM_VOLUME], {}, {"storage": "1Gi"}, ConfigLayer.PROJECT)
+    with pytest.raises(SettingError, match="kan alleen omhoog"):
+        check_setting_changes([RUIM_VOLUME], None, {"storage": "2Gi"}, ConfigLayer.PROJECT)
+    check_setting_changes([RUIM_VOLUME], {}, {"storage": "8Gi"}, ConfigLayer.PROJECT)
 
 
 def test_een_verlaging_wordt_bij_het_opslaan_geweigerd(declaring: Any) -> None:
@@ -525,6 +543,46 @@ def test_de_dienst_helemaal_niet_meer_gebruiken_is_geen_verlaging(
     asyncio.run(store.save("demo", _zonder_de_dienst(), message="dienst eruit", actor="test"))
 
 
+@pytest.mark.parametrize(
+    "oud",
+    [
+        pytest.param(_project({"storage": "5Gi"}), id="expliciet-5Gi"),
+        pytest.param(_project({}), id="veld-weggelaten"),
+        pytest.param(_zonder_configblok(), id="kale-dienst"),
+    ],
+)
+def test_de_vorige_versie_wordt_net_zo_gelezen_als_de_nieuwe(
+    oud: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path, declaring: Any
+) -> None:
+    """De spiegelrichting van de drie wegen hierboven: nu staat de VORIGE versie kaal.
+
+    Alle drie zeggen hetzelfde: effectief 5Gi, de standaard van de dienst. Wordt de vorige
+    versie op zijn WAARDE opgezocht in plaats van op zijn sleutel, dan vallen "de dienst
+    staat er kaal in" en "de dienst staat er niet" weer samen, en glipt een verlaging naar
+    2Gi -- keurig binnen de grenzen -- langs de grendel.
+
+    Meetbaar is dat alleen met een standaard BOVEN de ondergrens: pas dan bestaat er een
+    geldige waarde onder de standaard.
+    """
+    declaring(RUIM_VOLUME)
+    store = _store_op(oud, monkeypatch, tmp_path)
+
+    with pytest.raises(ProjectIntegrityError, match="kan alleen omhoog"):
+        asyncio.run(store.save("demo", _project({"storage": "2Gi"}), message="krimp", actor="test"))
+
+
+def test_een_kale_vorige_dienst_is_de_standaard_en_geen_afwezigheid(declaring: Any) -> None:
+    """Dezelfde meting een laag lager, met de drie uitkomsten naast elkaar."""
+    declaring(RUIM_VOLUME)
+
+    with pytest.raises(ProjectIntegrityError, match="kan alleen omhoog"):
+        asyncio.run(validate_project_structure(_project({"storage": "2Gi"}), previous=_zonder_configblok()))
+    # Omhoog vanaf diezelfde kale dienst mag wel.
+    asyncio.run(validate_project_structure(_project({"storage": "8Gi"}), previous=_zonder_configblok()))
+    # En stond de dienst er vorige keer niet, dan is dit een toevoeging: alleen grenzen.
+    asyncio.run(validate_project_structure(_project({"storage": "2Gi"}), previous=_zonder_de_dienst()))
+
+
 # --- 7b. een wandeling, twee lezers -----------------------------------------------
 
 
@@ -557,6 +615,25 @@ def test_de_wandeling_ziet_ook_de_blokken_die_een_component_eigenschap_zijn() ->
     assert env.layer is ConfigLayer.COMPONENT
     assert env.location == "component:backend"
     assert env.where == "van component 'backend'"
+
+
+def test_een_dienst_op_een_eigenschap_wordt_ook_op_zijn_grenzen_getoetst(monkeypatch: pytest.MonkeyPatch) -> None:
+    """En niet alleen op zijn wijziging -- anders staat dezelfde scheefte omgekeerd terug.
+
+    Zo'n blok ging langs het pydantic-model en verder niets, terwijl de wijzigingstoets
+    hem wel meeneemt. Dan wordt een waarde wel op zijn VERANDERING beoordeeld en nooit op
+    de speelruimte waar hij in moet blijven.
+    """
+    provider = get_service(ServiceType.ALIASES)
+    monkeypatch.setattr(provider, "config_settings", lambda: (EIGENSCHAP_LIMIET,))
+    data = _project({"storage": "1Gi"})
+    data["components"][0]["aliases"] = {"LIMIET": "500"}
+
+    with pytest.raises(ProjectIntegrityError, match="'LIMIET' moet tussen 1 en 100 liggen"):
+        validate_service_configs(data)
+
+    data["components"][0]["aliases"] = {"LIMIET": "50"}
+    validate_service_configs(data)
 
 
 # --- 8. de wizard leest dezelfde declaratie ---------------------------------------

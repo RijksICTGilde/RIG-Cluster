@@ -128,16 +128,34 @@ def _validate_one_config(
                 f"{validation_reasons(e)}.{hint}"
             ) from e
 
-    # The service's declared latitude (RC-168): a value it opened up has to stay inside
-    # the bounds the SERVICE set, and may only sit on a layer the service opened it up
-    # on. Here rather than in the model, so the bound is stated once and the wizard, the
-    # API and a hand-edited file are judged by the same declaration. A service that
-    # declares nothing -- the whole catalog today -- does no extra work here.
+    _check_declared_settings(provider, raw, layer, where, project_name)
+
+
+def _check_declared_settings(provider: Service, raw: Any, layer: ConfigLayer, where: str, project_name: str) -> None:
+    """The service's declared latitude (RC-168) for one config block.
+
+    A value the service opened up has to stay inside the bounds the SERVICE set, and may
+    only sit on a layer the service opened it up on. Here rather than in the model, so the
+    bound is stated once and the wizard, the API and a hand-edited file are judged by the
+    same declaration. A service that declares nothing -- the whole catalog today -- does
+    no extra work here.
+
+    Called for every block in the walk, including the ones whose config is a component
+    PROPERTY (``user-env-vars``, ``aliases``): a setting on such a service is judged on
+    its bounds and on its change, not on one of the two. Unlike the model failure next to
+    it, this message may name the value, and that is safe by construction -- a declared
+    setting is a bounded scalar the platform opened up (a number, a quantity, a value out
+    of a closed set), never the free-form content of the surrounding property.
+
+    Raises:
+        ProjectIntegrityError: with the sentence the user reads.
+    """
     try:
         check_settings(provider.config_settings(), raw, layer)
     except SettingError as e:
         raise ProjectIntegrityError(
-            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: {e}"
+            f"Project '{project_name}': configuratie van service '{provider.service_type.value}' {where} "
+            f"is ongeldig: {e}"
         ) from e
 
 
@@ -366,16 +384,21 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
 
 
 def _validate_owned_property_block(block: ServiceConfigBlock, project_name: str) -> None:
-    """Validate one owned-property block from the walk against its service's model."""
+    """Validate one owned-property block from the walk: its model AND its latitude.
+
+    Both, because the walk hands these blocks to the change check as well; judging them
+    on their change but not on their bounds is the same divergence the shared walk closed,
+    only the other way around.
+    """
     service = get_service(ServiceType(block.name))
     model = service.config_model
-    if model is None:
-        # property_owning_services() filters on owned_property, and a service that owns
-        # one is always modelled -- but this is a fail-closed validation path, so it
-        # narrows explicitly instead of leaning on an assert (which `python -O` strips,
-        # turning the guarantee into a silent skip).
-        return
-    _validate_owned_property(service, model, block.config, block.where, project_name)
+    # property_owning_services() filters on owned_property, and a service that owns one is
+    # always modelled -- but this is a fail-closed validation path, so it narrows
+    # explicitly instead of leaning on an assert (which `python -O` strips, turning the
+    # guarantee into a silent skip). The latitude check below does not depend on a model.
+    if model is not None:
+        _validate_owned_property(service, model, block.config, block.where, project_name)
+    _check_declared_settings(service, block.config, block.layer, block.where, project_name)
 
 
 def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any, where: str, project_name: str) -> None:
@@ -742,7 +765,9 @@ def validate_service_setting_changes(previous: dict[str, Any], project_data: dic
     to be compared against and is only judged on its bounds. A field a version does not
     mention was standing on the service default, and that is what it is compared with --
     on both sides, so a reduction cannot be smuggled in by leaving the field, or the
-    whole config block, out.
+    whole config block, out. That reading holds all the way up: the previous version is
+    looked up by its KEY, so a service referenced BARE there (no config block at all) is
+    a version standing on the defaults, not an absence.
 
     A service that is no longer referenced at that place is not in the walk and so is
     judged on nothing: dropping a service is a removal, not a reduction of its fields.
@@ -752,9 +777,15 @@ def validate_service_setting_changes(previous: dict[str, Any], project_data: dic
     project_name = project_data.get("name", "(onbekend)")
     before = {(block.location, block.name): block.config for block in iter_service_config_blocks(previous)}
     for block in iter_service_config_blocks(project_data):
-        old_config = before.get((block.location, block.name))
-        if old_config is None:
-            continue  # nothing configured there before: no change to judge
+        key = (block.location, block.name)
+        if key not in before:
+            continue  # the service was not there before: an addition, no change to judge
+        # Asked of the KEY, not of the value. A service referenced bare (config None) is
+        # standing on the service defaults, which is exactly the version a reduction has
+        # to be measured against -- reading the value here would make "bare" and "not
+        # there" the same answer again, and leaving the config block out the way around
+        # the rule.
+        old_config = before[key]
         try:
             service_type = ServiceType(block.name)
         except ValueError:
