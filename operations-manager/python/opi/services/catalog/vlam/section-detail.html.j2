@@ -1,0 +1,41 @@
+{# Het blok dat de dienst VLAM-API op de projectpagina levert: de twee paden naar VLAM
+   naast elkaar, en de CA-bundel om te downloaden.
+
+   WAAROM DIT BLOK BESTAAT. De dienst zet drie dingen in de pod die je nergens ziet: een
+   tweede adres, een regel in /etc/hosts en een bestand. Van die drie is het BESTAND het
+   enige dat je zonder de pod niet kunt bekijken -- en het is precies het ding dat afnemers
+   verkeerd begrijpen ("het certificaat van VLAM" in plaats van de uitgever waartegen je
+   VLAM's certificaat verifieert). De knop is er dus voor twee dingen: lokaal proberen, en
+   zien wat je pod vertrouwt.
+
+   De variabelenamen staan er letterlijk bij, want dit blok en de code van de afnemer zijn
+   met elkaar verbonden via die namen en niets anders. #}
+{% set ctx = section.context %}
+<c-card outline padding="lg">
+    <c-stack gap="md">
+        <c-section-head title="VLAM-API" icon="wolk" />
+        <c-paragraph size="sm">Twee wegen naar VLAM. De eerste is de eenvoudige; kies de tweede alleen als je de versleuteling tot aan VLAM zelf nodig hebt.</c-paragraph>
+
+        <c-stack gap="xs">
+            <c-heading type="h3" size="6" label="VLAM_API_URL - via onze proxy" />
+            <c-secret-field value="{{ ctx.api_url }}" revealed show-copy />
+            <c-paragraph size="sm">Gewone HTTP binnen het cluster. Onze proxy zet de beveiligde verbinding met VLAM op en controleert het certificaat. Je hoeft niets te vertrouwen.</c-paragraph>
+        </c-stack>
+
+        <c-stack gap="xs">
+            <c-heading type="h3" size="6" label="VLAM_API_URL_DIRECT - rechtstreeks" />
+            <c-secret-field value="{{ ctx.direct_url }}" revealed show-copy />
+            <c-paragraph size="sm">Je pod praat zelf met VLAM en controleert zelf het certificaat. Het verkeer is versleuteld tot aan VLAM, en wij zien het niet meer. Je applicatie moet daarvoor de CA-bundel hieronder gebruiken.</c-paragraph>
+        </c-stack>
+
+        <c-stack gap="xs">
+            <c-heading type="h3" size="6" label="VLAM_CA_BUNDLE_PATH - de bundel in je pod" />
+            <c-secret-field value="{{ ctx.ca_path }}" revealed show-copy />
+            <c-paragraph size="sm">Dit is de UITGEVER waartegen je het certificaat van VLAM verifieert, niet het certificaat van VLAM zelf. Geef hem mee aan je HTTP-client; zet hem NIET in SSL_CERT_FILE of REQUESTS_CA_BUNDLE, want die vervangen de hele vertrouwensketen van je applicatie.</c-paragraph>
+            <c-action-group align="start">
+                <c-button type="secondary" size="sm" label="Download {{ ctx.ca_filename }}" show-icon="after"
+                          icon="downloaden" href="{{ ctx.ca_download_url }}" />
+            </c-action-group>
+        </c-stack>
+    </c-stack>
+</c-card>

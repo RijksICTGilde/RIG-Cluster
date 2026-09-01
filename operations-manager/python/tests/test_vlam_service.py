@@ -25,6 +25,8 @@ tests at the bottom of this file measure exactly that.
 from __future__ import annotations
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from opi.core.cluster_config import get_vlam_config
 from opi.core.project_schema import ProjectIntegrityError
 from opi.generation.manifests import render_template
@@ -33,7 +35,7 @@ from opi.manager.project_validation import validate_service_availability
 from opi.services.catalog.base import DeploymentManifestContext, ManifestContext, ManifestContribution
 from opi.services.catalog.vlam.endpoint import vlam_endpoint
 from opi.services.registry import get_service
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
 from ruamel.yaml import YAML
 
 SERVICE = get_service(ServiceType.VLAM)
@@ -698,3 +700,92 @@ class TestDeNetwerkregelOpentBeidePoorten:
         monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
         specs = SERVICE.contribute_deployment_manifests(self._ctx())
         assert specs[0].values["egress"][0]["ports"] == [8081]
+
+
+class TestDeDownloadknop:
+    """Stap 7: de bundel is te downloaden bij het dienstblok.
+
+    Van de drie dingen die de dienst neerzet is het BESTAND het enige dat je zonder de pod
+    niet kunt bekijken, en het is het ding dat het vaakst verkeerd begrepen wordt. Wie het
+    pad lokaal wil proberen, of wil zien wat zijn pod vertrouwt, haalt het hier op.
+    """
+
+    @pytest.fixture
+    def client(self, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+        """De route zonder de rest van de applicatie: genoeg om te meten wat hij teruggeeft.
+
+        Het cluster van deze instantie is dat met VLAM -- de route kent geen project en
+        leest dus, net als het blok, ``settings.CLUSTER_MANAGER``.
+        """
+        from opi.core.config import settings
+        from opi.services.catalog.vlam.routes import vlam_router
+
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", WITH_VLAM)
+        app = FastAPI()
+        app.include_router(vlam_router)
+        return TestClient(app)
+
+    def test_hij_zit_achter_de_login(self) -> None:
+        """Er valt niets te lekken aan een publiek CA-certificaat, maar er is ook geen
+        reden waarom een route van deze app anders zou werken dan alle andere."""
+        from opi.services.catalog.vlam.routes import vlam_ca_bundle
+
+        assert getattr(vlam_ca_bundle, "_requires_sso", False) is True
+
+    def test_de_bundel_komt_er_byte_voor_byte_uit(self, client: TestClient, doorlus) -> None:
+        """Dezelfde bron als de gemounte Secret: wat je downloadt en wat je pod
+        verifieert mogen niet twee verschillende bestanden zijn."""
+        response = client.get("/services/vlam/ca-bundle")
+        assert response.status_code == 200
+        assert response.content == doorlus.read_bytes()
+
+    def test_hij_komt_binnen_als_bestand_en_niet_als_pagina(self, client: TestClient, doorlus) -> None:
+        response = client.get("/services/vlam/ca-bundle")
+        assert response.headers["content-type"].startswith("application/x-pem-file")
+        assert 'filename="rijksdienst-ca.pem"' in response.headers["content-disposition"]
+
+    def test_een_cluster_zonder_doorlus_heeft_niets_te_downloaden(
+        self, client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from opi.services.catalog.vlam import endpoint as endpoint_module
+
+        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
+        assert client.get("/services/vlam/ca-bundle").status_code == 404
+
+
+class TestHetBlokOpDeProjectpagina:
+    """Het blok bestaat alleen waar er iets te melden is."""
+
+    @pytest.fixture
+    def op_het_vlam_cluster(self, monkeypatch: pytest.MonkeyPatch):
+        from opi.core.config import settings
+
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", WITH_VLAM)
+
+    def _sections(self) -> list:
+        from opi.services.catalog.base import ProjectPageContext
+
+        return SERVICE.handle_ui(
+            UIEvent.PROJECT_SECTIONS, ProjectPageContext(project_data=_project(), user_role="admin")
+        )
+
+    def test_het_blok_noemt_beide_adressen_en_het_pad(self, doorlus, op_het_vlam_cluster) -> None:
+        sections = self._sections()
+        assert len(sections) == 1
+        context = sections[0].context
+        assert context["api_url"].startswith("http://")
+        assert context["direct_url"] == "https://vlam-api.rijksweb.nl:8443"
+        assert context["ca_path"] == "/etc/ssl/vlam/rijksdienst-ca.pem"
+
+    def test_de_knop_wijst_naar_het_endpoint_dat_bestaat(self, doorlus, op_het_vlam_cluster) -> None:
+        """Een dode knop ziet er precies zo uit als een levende."""
+        from opi.services.catalog.vlam.routes import vlam_router
+
+        context = self._sections()[0].context
+        assert context["ca_download_url"] in [route.path for route in vlam_router.routes]
+
+    def test_zonder_doorlus_geen_blok(self, tmp_path, monkeypatch: pytest.MonkeyPatch, op_het_vlam_cluster) -> None:
+        from opi.services.catalog.vlam import endpoint as endpoint_module
+
+        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
+        assert self._sections() == []

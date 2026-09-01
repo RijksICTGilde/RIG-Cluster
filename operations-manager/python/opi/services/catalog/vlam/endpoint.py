@@ -37,6 +37,10 @@ CA_BUNDLE_DIR = Path(__file__).parent
 #: the consumer's base image rather than on what the application asked for.
 CONTAINER_CA_DIR = "/etc/ssl/vlam"
 
+#: Where the bundle can be downloaded. Named here rather than in ``routes.py`` so the page
+#: block can link to it without importing the route module (which reaches into the app).
+CA_BUNDLE_URL = "/services/vlam/ca-bundle"
+
 
 @dataclass(frozen=True)
 class VlamPassthrough:
