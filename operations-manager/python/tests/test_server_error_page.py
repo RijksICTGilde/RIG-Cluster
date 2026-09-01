@@ -344,3 +344,27 @@ class TestDeEnvelopStaatInHetContract:
             assert antwoord, f"{verb.upper()} {pad} noemt de foutenvelop niet"
             schema = antwoord["content"]["application/problem+json"]["schema"]
             assert schema["$ref"] == "#/components/schemas/ProblemDetail"
+
+
+class TestDeCategorieIsEenBelofte:
+    """`InvalidInput` zegt "opnieuw proberen is zinloos"; de storing was het tegendeel."""
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 504])
+    def test_elke_5xx_zegt_dat_het_niet_aan_je_verzoek_lag(self, status: int) -> None:
+        from opi.api.v2.models import ErrorCategory, category_for_status
+
+        assert category_for_status(status) == ErrorCategory.InternalError
+
+    @pytest.mark.parametrize("status", [400, 404, 409, 422, 499])
+    def test_een_4xx_krijgt_geen_categorie_die_we_niet_kunnen_waarmaken(self, status: int) -> None:
+        """Een 4xx krijgt de envelop niet; kwam hij er toch in, dan is Unknown de eerlijke
+        waarde -- de status alleen zegt niet of het de invoer, de rechten of een race was."""
+        from opi.api.v2.models import ErrorCategory, category_for_status
+
+        assert category_for_status(status) == ErrorCategory.Unknown
+
+    def test_een_taak_met_internal_error_verandert_niet_mee(self) -> None:
+        """Bewust: `error_category` is een waarde die clients al uitlezen."""
+        from opi.api.v2.models import ErrorCategory, error_category_for
+
+        assert error_category_for("internal_error") == ErrorCategory.Unknown
