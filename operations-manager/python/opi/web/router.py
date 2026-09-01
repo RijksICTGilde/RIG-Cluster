@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
+from opi.core.errors import log_render_failure
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
@@ -342,8 +343,11 @@ async def project_progress_page(request: Request, task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error serving progress page: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error loading progress page: {e!s}")
+        logger.exception("Renderen van de voortgangspagina mislukt")
+        raise HTTPException(
+            status_code=500,
+            detail="De voortgangspagina kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 @web_router.get("/projects/progress/{task_id}/fragment", response_class=HTMLResponse)
@@ -777,8 +781,11 @@ async def test_hero(request: Request):
             request, "test-hero.html.j2", {"request": request, "navigation": get_navigation(user, current_path="")}
         )
     except Exception as e:
-        logger.error(f"Error serving test hero: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Template error: {e!s}")
+        log_render_failure(logger, "de testpagina van de hero", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De testpagina van de hero kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 @web_router.get("/forms/formulier", response_class=HTMLResponse)
@@ -798,24 +805,11 @@ async def formulier_demo_form(request: Request):
             request, "formulier-template.html.j2", {"request": request, "title": "Formulier Template"}
         )
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving Formulier demo form: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "de demopagina van het formulier", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De demopagina van het formulier kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
@@ -1369,24 +1363,10 @@ async def dashboard(request: Request):
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving dashboard: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "het dashboard", e)
+        raise HTTPException(
+            status_code=500, detail="Het dashboard kon niet worden opgebouwd. Probeer het over een minuut opnieuw."
+        ) from e
 
 
 @web_router.get("/projects/{project_name}/details", response_class=HTMLResponse)
@@ -1978,24 +1958,10 @@ async def render_project_page(request: Request, project_name: str, deployment_na
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving project details: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "de projectpagina", e)
+        raise HTTPException(
+            status_code=500, detail="De projectpagina kon niet worden opgebouwd. Probeer het over een minuut opnieuw."
+        ) from e
 
 
 def _argocd_unavailable_result(app_name: str, message: str, source: str = "Application") -> dict[str, Any]:
@@ -2610,24 +2576,11 @@ async def projects_overview(request: Request):
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving projects overview: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "het projectoverzicht", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Het projectoverzicht kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 @web_router.get("/cli", response_class=HTMLResponse)
@@ -2735,8 +2688,11 @@ async def about_platform(request: Request):
             },
         )
     except Exception as e:
-        logger.error(f"Error serving about page: {e!s}")
-        raise HTTPException(status_code=500, detail=str(e))
+        log_render_failure(logger, "de pagina Over ZAD", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Deze pagina kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 @web_router.get("/test-template-variables", response_class=HTMLResponse)
@@ -2757,8 +2713,11 @@ async def test_template_variables(request: Request):
             },
         )
     except Exception as e:
-        logger.error(f"Error serving test template variables: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Template error: {e!s}")
+        log_render_failure(logger, "de testpagina van de sjabloonvariabelen", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De testpagina van de sjabloonvariabelen kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 @web_router.get("/example", response_class=HTMLResponse)
@@ -2779,24 +2738,11 @@ async def example_page(request: Request):
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving example page: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "de voorbeeldpagina", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De voorbeeldpagina kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 @web_router.get("/tools", response_class=HTMLResponse)
@@ -2817,22 +2763,11 @@ async def tools_page(request: Request):
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving tools page: {e!s}\n{error_details}")
-
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "de gereedschapspagina", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De gereedschapspagina kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 @web_router.post("/tools/encrypt")

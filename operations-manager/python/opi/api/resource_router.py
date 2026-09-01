@@ -84,7 +84,13 @@ async def tune_resources(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
+        # De meting komt van Prometheus, en de melding daarvan draagt het adres van die
+        # dienst. Die hoort in de log, niet in het antwoord.
+        logger.exception("Afstemmen van de resources van '%s' mislukt", project_name)
+        raise HTTPException(
+            status_code=503,
+            detail="De metingen zijn nu niet beschikbaar, dus de resources konden niet worden afgestemd. Probeer het over een minuut opnieuw.",
+        ) from e
 
     return JSONResponse(
         content={
