@@ -22,13 +22,19 @@ TLS wordt **niet** getermineerd. HAProxy kopieert bytes, dus de TLS-sessie loopt
 tot aan de bestemming met diens eigen certificaat. Wij hebben nooit een sleutel en kunnen het
 verkeer niet lezen.
 
-**Er zijn sinds RC-142 twee paden, en ze delen niets behalve de RON-koppeling.** Het pad hierboven
-is voor MENSEN op een laptop: VPN, geen terminatie, end-to-end TLS. Het tweede pad is voor
-WORKLOADS die al in het cluster draaien: een eigen component `vlam-proxy-intern` op poort 8081 dat
-plat HTTP aanneemt en zelf de geverifieerde TLS naar VLAM opzet, plus de ZAD-dienst `vlam` die een
-afnemer het adres en de netwerkregel geeft. Zie "Component 4" hieronder en
-`features/vlam-service.md`. Een afnemer in het cluster heeft dus geen tunnel nodig; wie
-versleuteling tot aan VLAM zelf wil, gebruikt het VPN-pad.
+**Er zijn sinds RC-167 drie paden, en ze delen niets behalve de RON-koppeling.** Het pad hierboven
+is voor MENSEN op een laptop: VPN, geen terminatie, end-to-end TLS. De andere twee zijn voor
+WORKLOADS die al in het cluster draaien. Ze lopen allebei over het eigen component
+`vlam-proxy-intern`, met de ZAD-dienst `vlam` die een afnemer het adres en de netwerkregel geeft:
+
+- **getermineerd, poort 8081** (RC-142): de proxy neemt plat HTTP aan en zet zelf de geverifieerde
+  TLS naar VLAM op. Het CA-probleem is daarmee een keer opgelost, op de proxy.
+- **doorlus, poort 8443** (RC-167): de proxy raakt de TLS-sessie niet aan. De afnemer praat zelf met
+  VLAM en verifieert zelf het certificaat, tegen de CA-bundel die de dienst in zijn pod zet.
+
+Zie "Component 4" hieronder en `features/vlam-service.md`. Een afnemer in het cluster heeft dus geen
+tunnel nodig, ook niet als hij versleuteling tot aan VLAM zelf nodig heeft: dan kiest hij het
+doorlus-pad. Het VPN-pad blijft bestaan, voor laptops.
 
 ## De RON-koppeling
 
@@ -368,12 +374,12 @@ pod erbij.
 | | |
 |---|---|
 | image | `docker.io/library/haproxy:lts-alpine` |
-| ports | inbound `[8081]`, outbound `[443]` |
+| ports | inbound `[8081]` (getermineerd) en `[8443]` (doorlus), outbound `[443]` |
 | services | `attachments` (de Rijksdienst-CA-keten als bijlage, als bestand gemount) |
 | probe | `scheme: http` op een `monitor-uri /healthz` |
 | resources | `auto-tune-resources: false`, vast op 64Mi/256Mi |
 
-Het verschil met component 3 is de terminatie. Deze proxy draait `mode http`, zet de TLS naar
+Het verschil met component 3 is de terminatie. Op 8081 draait deze proxy `mode http`, zet de TLS naar
 `vlam-api.rijksweb.nl` zelf op en VERIFIEERT daarbij het certificaat tegen de meegeleverde
 CA-keten:
 
@@ -414,6 +420,12 @@ Een afnemer heeft daarna genoeg aan de ZAD-dienst `vlam` (uitgaande regel plus
 alleen nog de bereikbaarheid. De wildcard geldt alleen inkomend, alleen op die ene poort van
 dat ene component, en `deployment`/`component` moeten er leeg blijven -- het model weigert
 een wildcard die er toch een noemt.
+
+**Voor de doorlus-poort bestaat die regel nog niet.** De wildcard hierboven noemt 8443 niet, en een
+inbound-regel geldt per poort. De ZAD-dienst opent sinds RC-167 de UITGAANDE weg naar beide poorten,
+dus zolang deze tweede regel ontbreekt loopt doorlus-verkeer aan deze kant vast. Hij is een kopie van
+de regel hierboven met `port: 8443`, en hoort bij de eerste keer dat het doorlus-pad echt gebruikt
+wordt. Zie `features/vlam-service.md` onder Open punten.
 
 **CA-rotatie.** De keten zit in een `subPath`-mount, en die wordt NOOIT vanzelf ververst: de pod
 draait stil door op de oude inhoud, zonder foutmelding. Roteren is dus bijlage vervangen EN alleen
