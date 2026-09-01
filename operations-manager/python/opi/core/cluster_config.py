@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from opi.core.config import settings
-from opi.utils.naming import generate_keycloak_sender_address
 
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
@@ -299,7 +298,6 @@ def get_selectable_clusters() -> list[str]:
     accident, while a development overlay sets the key to offer several. Unknown names
     are dropped, so a typo in the config cannot surface a non-existent cluster.
     """
-    from opi.core.config import settings
 
     manager = settings.CLUSTER_MANAGER
     configured = get_cluster_config(manager).get("create_wizard_clusters", [manager])
@@ -811,8 +809,22 @@ def get_mail_from_address(cluster_name: str) -> str:
     out under exactly this address, without a display name. So is the mail from ZAD's own
     platform account, which is not a project and has no plus part to fill.
 
+    And so is KEYCLOAK's login mail. It used to have a local part of its own, which was one
+    derivation too many for one platform: this is the address we want everywhere, and login
+    mail now leaves under exactly it, telling itself apart from the portal's post by its
+    display name (``MAIL_KEYCLOAK_FROM_NAME``) alone. What that gives up, knowingly: a
+    bounce can no longer be traced back to login mail rather than portal mail. Today that is
+    theoretical -- there is no bounce mailbox -- and it is the price of ONE recognisable
+    sender address.
+
     OPI and the relay must agree on this value -- if they drift, a developer is shown one
-    address while another one leaves the building.
+    address while another one leaves the building. For login mail the same value is written
+    down in THREE places that have to agree: the relay gets it as the sender of
+    ``zad-keycloak`` (``MailManager.ensure_keycloak_account``), the Keycloak pod gets it as
+    ``ZAD_MAIL_RELAY_FROM``, and OPI writes it into every realm's minimal ``smtpServer``.
+    Drift between them shows up as a message that leaves under one address while a realm
+    claims another, so it is pinned by a test rather than by care
+    (``test_de_drie_plekken_noemen_hetzelfde_afzenderadres``).
 
     It is a domain we do NOT own: mail goes out over the Rijksoverheid mail server, so it
     carries their domain. That is also the only arrangement that survives DMARC, because
@@ -830,28 +842,6 @@ def get_mail_from_address(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["mail_from_address"]
-
-
-def get_keycloak_mail_from_address(cluster_name: str) -> str:
-    """The address KEYCLOAK's login mail leaves under on this cluster.
-
-    Its own local part next to the portal's, on the cluster's own domain. ONE derivation
-    for the whole platform and not two, because this address is written down in three
-    places that have to agree: the relay gets it as this account's sender (MailManager),
-    the Keycloak pod gets it as ``ZAD_MAIL_RELAY_FROM``, and OPI writes it into every
-    realm's minimal ``smtpServer``. Drift between them shows up as a message that leaves
-    under one address while a realm claims another.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Keycloak's sender address (e.g. ``noreply-inloggen@rijksoverheid.nl``)
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
-    return generate_keycloak_sender_address(get_mail_from_address(cluster_name), settings.MAIL_KEYCLOAK_FROM_LOCAL)
 
 
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:

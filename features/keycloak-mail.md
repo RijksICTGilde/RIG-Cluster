@@ -89,7 +89,7 @@ te testen overblijft.
 Elke door OPI beheerde realm krijgt een `smtpServer` met **precies één sleutel**:
 
 ```json
-{"from": "noreply-inloggen@rijksoverheid.nl"}
+{"from": "noreply-rijksapp@rijksoverheid.nl"}
 ```
 
 Geen host, geen gebruiker, geen wachtwoord.
@@ -200,7 +200,7 @@ De keten:
 | 1. De generatie zet een willekeurig wachtwoord in het Secret | `infrastructure/bootstrap/infrastructure/secrets/templates/keycloak-mail-secret.yaml` |
 | 2. De Keycloak-pod leest het als `ZAD_MAIL_RELAY_PASSWORD` | `secretKeyRef` in `.../keycloak/controller/base/deployment.yaml`, `optional: true` |
 | 3. OPI leest hetzelfde Secret en zorgt dat de relay het account draagt | `MailManager.ensure_keycloak_account()`, fase 3b van het opstarten |
-| 4. Het account krijgt een eigen `From:` in het gegenereerde sieve-script | `MAIL_SENDER_ADDRESS_PREFIX` in `opi/connectors/mail.py` |
+| 4. Het account krijgt zijn `From:` (het kale adres plus de weergavenaam) in het gegenereerde sieve-script | `MAIL_SENDER_ADDRESS_PREFIX` in `opi/connectors/mail.py` |
 
 **`optional: true` op stap 2 is een afweging.** Zonder die vlag start Keycloak niet zolang het
 Secret er niet is, en dan blokkeert een mailgeheim de hele identiteitsvoorziening van het
@@ -209,21 +209,46 @@ omgeving`, en faalt elke verzending luid.
 
 ### Het afzenderadres
 
-`noreply-inloggen@<domein>`, met een eigen lokaal deel naast dat van de portal
-(`noreply-rijksapp@<domein>`), zodat een ontvanger - en een bounce - inlogpost van de post van
-de portal kan onderscheiden. Het **domein** is dat van het cluster en is niet instelbaar:
-envelope en `From:` moeten in één domein blijven of DMARC valt om, want wij ondertekenen niet
-met DKIM.
+`noreply-rijksapp@<domein>`: het **kale basisadres** van het cluster, zonder eigen lokaal deel
+en zonder plusdeel. Dat is het adres dat we overal willen, dus vertrekt inlogpost er ook onder,
+en niet onder een eigen `noreply-inloggen@...` zoals tot RC-175. Het **domein** is dat van het
+cluster en is niet instelbaar: envelope en `From:` moeten in één domein blijven of DMARC valt
+om, want wij ondertekenen niet met DKIM.
 
-Bijzonderheid: de **envelope houdt het afgeleide adres** (`noreply-rijksapp@...`), alleen de
-`From:` wordt overschreven. Dat ziet eruit als een vergissing en is het niet: DMARC vergelijkt
-de domeinen, die blijven gelijk, en het plusdeel in de envelope blijft de bounce dragen. Het
-staat in `config.toml` van de relay en in `opi/connectors/mail.py` allebei opgeschreven, want
-wie de twee regels naast elkaar leest ziet er anders een fout in.
+Een plusdeel kan hier sowieso niet: `zad-keycloak` verstuurt voor alle realms tegelijk, dus er
+is geen project om te noemen. Dat is precies de beperking die deze opzet zou beëindigen als er
+ooit branding per realm gewenst is.
 
-Anders dan een projectadres draagt dit geen plusdeel: `zad-keycloak` verstuurt voor alle
-realms tegelijk, dus er is geen project om te noemen. Dat is precies de beperking die deze
-opzet zou beëindigen als er ooit branding per realm gewenst is.
+**Wat we hiermee opgeven, bewust.** `zad-platform` en `zad-keycloak` versturen nu onder
+hetzelfde adres en verschillen alleen in weergavenaam, dus een bounce is niet meer te herleiden
+tot inlogpost in plaats van portalpost. Dat is vandaag theoretisch - er is nog geen
+bounce-postbus, een openstaand punt in `plans/mail-vervolgpunten.md` - en het is de prijs voor
+één herkenbaar afzenderadres.
+
+Dit adres staat op **drie plekken** die hetzelfde moeten noemen: de afzender die OPI voor
+`zad-keycloak` op de relay zet (`MailManager.ensure_keycloak_account`), de
+`ZAD_MAIL_RELAY_FROM` in de Keycloak-deployment, en de `smtpServer.from` die OPI op elke realm
+schrijft. Beweegt er één niet mee, dan vertrekt post onder een ander adres dan een realm
+claimt, en dat ziet niemand: de relay stelt de `From:` zelf vast en de realm liegt alleen in
+zijn eigen configuratie. Daarom ligt het vast in een toets
+(`test_de_drie_plekken_noemen_hetzelfde_afzenderadres`) en niet in zorgvuldigheid.
+
+### De weergavenaam
+
+`Rijksapps`, en dat blijft zo. De naam in de `From:` beantwoordt de vraag **van wie** een
+bericht komt; het onderwerp beantwoordt waar het over gaat. `Rijksapps` sluit aan bij het adres
+en bij wat de ontvanger ziet op de plek waar hij zojuist inlogde. Nu het adres samenvalt met dat
+van de portal, is deze naam ook het enige dat inlogpost nog van portalpost onderscheidt.
+
+Afgewezen, met de reden:
+
+- **`Keycloak`** - onze productnaam. Zegt een ontvanger niets en lekt onnodig welke techniek
+  eronder ligt.
+- **`Toegangsbeheer`** - beschrijft wat wij doen, in beheerdersjargon, niet wat de ontvanger
+  herkent.
+
+En de beperking die elke naamkeuze stuurt: dit is één account voor alle realms, dus de naam kan
+nooit een project noemen. Zou dat ooit moeten, dan eindigt daarmee de eenaccountopzet.
 
 ### Rotatie: de volgorde, en wat er tussendoor faalt
 
