@@ -3,6 +3,7 @@ import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
@@ -28,12 +29,14 @@ from opi.api.restore_router import restore_router
 from opi.api.router import api_router
 from opi.api.task_router import task_router
 from opi.api.user_token_auth import REQUIRES_USER_TOKEN
+from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
 # Initialize logging first, before any other imports that might log
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
+from opi.core.errors import GENERIEKE_FOUTTEKST, NOT_FOUND_PAGE, kenmerk_van, met_kenmerk, server_error_page
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks
 from opi.core.static_files import CacheControlledStaticFiles
@@ -47,34 +50,9 @@ from opi.web.router import web_router
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-logger = logging.getLogger(__name__)
+    from starlette.responses import Response
 
-#: De 404-pagina. Bewust zelfstandig: hij moet ook renderen als het thema, de
-#: sjablonenmap of de sessie juist het probleem is.
-_NOT_FOUND_PAGE = """<!doctype html>
-<html lang="nl">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pagina niet gevonden - ZAD</title>
-<style>
-  body { font-family: system-ui, sans-serif; margin: 0; display: grid; place-items: center;
-         min-height: 100vh; color: #154273; background: #fff; }
-  main { text-align: center; padding: 2rem; }
-  h1 { font-size: 2rem; margin: 0 0 .5rem; }
-  p { color: #4a4a4a; margin: 0 0 1.5rem; }
-  a { color: #154273; }
-</style>
-</head>
-<body>
-<main>
-  <h1>Deze pagina bestaat niet</h1>
-  <p>De link klopt niet meer, of de pagina is verplaatst.</p>
-  <a href="/dashboard">Naar het dashboard</a>
-</main>
-</body>
-</html>
-"""
+logger = logging.getLogger(__name__)
 
 
 # todo(berry): move lifespan to own file
@@ -537,28 +515,80 @@ def create_app() -> FastAPI:
     from opi.middleware.maintenance import MaintenanceMiddleware
     from opi.utils.csrf import CSRFMiddleware
 
+    def _wil_een_pagina(request) -> bool:  # type: ignore[no-untyped-def]
+        """Of deze aanroeper HTML wil, of de JSON die elke client vandaag parseert.
+
+        De ``Accept``-header beslist, niet het pad -- op een uitzondering na: onder
+        ``/api`` mag nooit markup uitkomen, ook niet als een browser hem opvraagt.
+        """
+        if request.url.path.startswith("/api"):
+            return False
+        return "text/html" in request.headers.get("accept", "")
+
+    def _fout_antwoord(request, status_code: int, detail: object) -> Response:  # type: ignore[no-untyped-def]
+        """Het antwoord op een 5xx: een pagina voor een browser, een envelop voor de rest.
+
+        Wat hier NIET in komt is de uitzondering. Die stond tot nu toe kaal op het scherm
+        van de gebruiker -- inclusief het interne IP-adres en de databasepoort van de
+        server die niet antwoordde -- en staat vanaf nu alleen in de log. Het kenmerk is
+        de koppeling: dezelfde tekens op het scherm en op elke logregel van dit verzoek.
+        """
+        tekst = detail if isinstance(detail, str) and detail.strip() else GENERIEKE_FOUTTEKST
+        if tekst == HTTPStatus(status_code).phrase:
+            # De standaardtekst van FastAPI ("Internal Server Error"). Zegt de lezer niets
+            # en zeker niet wat hij eraan kan doen, dus vervangen door de zin die dat wel doet.
+            tekst = GENERIEKE_FOUTTEKST
+        kenmerk = kenmerk_van(request)
+        if _wil_een_pagina(request):
+            return HTMLResponse(server_error_page(tekst, kenmerk), status_code=status_code)
+        probleem = ProblemDetail(
+            title=HTTPStatus(status_code).phrase,
+            status=status_code,
+            detail=met_kenmerk(tekst, kenmerk),
+            instance=request.url.path,
+            category=category_for_status(status_code),
+            reference=kenmerk or None,
+        )
+        return JSONResponse(
+            content=probleem.model_dump(),
+            status_code=status_code,
+            media_type="application/problem+json",
+        )
+
     # Log all unhandled exceptions through Python logging so they appear in
     # kubectl logs.  Starlette's ServerErrorMiddleware only prints to stderr
     # via traceback.print_exc() which may not reach the log stream.
     @app.exception_handler(Exception)
     async def _log_unhandled_exceptions(request, exc):  # type: ignore[no-untyped-def]
+        """Log de uitzondering en antwoord met iets dat een mens verder helpt.
+
+        Tot nu toe gooide deze handler opnieuw op en kreeg de aanroeper wat de server
+        er zelf van maakte: een kale 500 zonder opmaak, zonder weg terug en zonder iets
+        om te melden. Starlette gooit na dit antwoord alsnog opnieuw op, dus de server
+        blijft de fout zien; alleen de aanroeper krijgt nu een pagina in plaats van niets.
+        """
         logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
-        raise exc
+        return _fout_antwoord(request, 500, None)
 
     @app.exception_handler(StarletteHTTPException)
-    async def _not_found_page(request, exc):  # type: ignore[no-untyped-def]
-        """Serve a 404 as a page to a browser and as JSON to everything else.
+    async def _foutpagina(request, exc):  # type: ignore[no-untyped-def]
+        """Serve an error as a page to a browser and as JSON to everything else.
 
         A browser asking for a page that is not there got the API's answer:
         ``{"detail":"Not Found"}`` on a white screen. The client says which one it
         wants, so read it: an /api path or a caller that does not ask for HTML keeps
         the JSON body every client parses today.
+
+        Een 5xx viel daar tot nu toe doorheen naar de standaard-JSON van FastAPI, en dat
+        is precies wat er tijdens de databasestoring op het scherm stond. Hij loopt nu
+        langs dezelfde keuze, met een envelop in plaats van een los ``detail``-veld.
+        Elke andere 4xx blijft onveranderd: daar leest een client op wat er staat.
         """
-        if exc.status_code != 404 or request.url.path.startswith("/api"):
+        if exc.status_code >= 500:
+            return _fout_antwoord(request, exc.status_code, exc.detail)
+        if exc.status_code != 404 or not _wil_een_pagina(request):
             return await http_exception_handler(request, exc)
-        if "text/html" not in request.headers.get("accept", ""):
-            return await http_exception_handler(request, exc)
-        return HTMLResponse(_NOT_FOUND_PAGE, status_code=404)
+        return HTMLResponse(NOT_FOUND_PAGE, status_code=404)
 
     from opi.middleware.security_headers import SecurityHeadersMiddleware
 
@@ -594,7 +624,11 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def flow_id_middleware(request, call_next):  # type: ignore[no-untyped-def]
-        set_flow_id("req")
+        # Ook in de scope, niet alleen in de contextvar: de handler voor een onafgevangen
+        # uitzondering draait in ServerErrorMiddleware, buiten deze middleware, en een
+        # contextvar reist niet naar buiten. De scope wel, en die draagt het kenmerk dat
+        # de foutpagina noemt.
+        request.state.flow_id = set_flow_id("req")
         return await call_next(request)
 
     # Initialize OAuth client (registration happens during startup after Keycloak setup)
