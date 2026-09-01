@@ -179,9 +179,7 @@ class TestDeGrendelWerkt:
         assert overtredingen(bron, "toets.py")
 
     def test_een_onbekende_status_telt_als_fout(self) -> None:
-        bron = (
-            "try:\n    doe()\nexcept ValueError as e:\n    raise HTTPException(status_code=code, detail=str(e))\n"
-        )
+        bron = "try:\n    doe()\nexcept ValueError as e:\n    raise HTTPException(status_code=code, detail=str(e))\n"
         assert overtredingen(bron, "toets.py")
 
     @pytest.mark.parametrize(
