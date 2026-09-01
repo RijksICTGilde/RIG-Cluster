@@ -3,7 +3,6 @@ import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
-from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
@@ -36,7 +35,14 @@ from opi.core.database_pools import close_database_pools
 
 # Initialize logging first, before any other imports that might log
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
-from opi.core.errors import GENERIEKE_FOUTTEKST, NOT_FOUND_PAGE, kenmerk_van, met_kenmerk, server_error_page
+from opi.core.errors import (
+    GENERIEKE_FOUTTEKST,
+    NOT_FOUND_PAGE,
+    kenmerk_van,
+    met_kenmerk,
+    server_error_page,
+    statusomschrijving,
+)
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks
 from opi.core.static_files import CacheControlledStaticFiles
@@ -534,7 +540,7 @@ def create_app() -> FastAPI:
         de koppeling: dezelfde tekens op het scherm en op elke logregel van dit verzoek.
         """
         tekst = detail if isinstance(detail, str) and detail.strip() else GENERIEKE_FOUTTEKST
-        if tekst == HTTPStatus(status_code).phrase:
+        if tekst == statusomschrijving(status_code):
             # De standaardtekst van FastAPI ("Internal Server Error"). Zegt de lezer niets
             # en zeker niet wat hij eraan kan doen, dus vervangen door de zin die dat wel doet.
             tekst = GENERIEKE_FOUTTEKST
@@ -542,7 +548,7 @@ def create_app() -> FastAPI:
         if _wil_een_pagina(request):
             return HTMLResponse(server_error_page(tekst, kenmerk), status_code=status_code)
         probleem = ProblemDetail(
-            title=HTTPStatus(status_code).phrase,
+            title=statusomschrijving(status_code),
             status=status_code,
             detail=met_kenmerk(tekst, kenmerk),
             instance=request.url.path,
