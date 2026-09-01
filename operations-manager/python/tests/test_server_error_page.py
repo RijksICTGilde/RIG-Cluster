@@ -229,6 +229,20 @@ class TestDeStoringZelf:
         assert not LEKT.search(antwoord.text), "de infrastructuur staat op het scherm"
         assert re.search(r"kenmerk:<br><code>req-[0-9a-f]{8}</code>", antwoord.text)
 
+    def test_er_staat_niets_op_de_pagina_dat_van_de_fout_afhangt(self, projectclient: TestClient) -> None:
+        """Sterker dan een reguliere expressie op bekende vormen: de pagina heeft GEEN
+        variabele tekst behalve het kenmerk, dus er valt niets uit te lekken -- ook geen
+        hostnaam of infrastructuurpad dat een patroon op IP-adressen zou missen."""
+        antwoord = projectclient.get("/projects/dd-mco/details", headers=HTML, follow_redirects=False)
+
+        alineas = re.findall(r"<p>(.*?)</p>", antwoord.text, re.DOTALL)
+        kenmerk = re.search(r"req-[0-9a-f]{8}", antwoord.text)
+        assert kenmerk is not None
+        assert alineas == [
+            "De projectpagina kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+            f"Blijft het misgaan, meld dan dit kenmerk:<br><code>{kenmerk.group()}</code>",
+        ]
+
     def test_dezelfde_aanroep_met_json_geeft_de_envelop(self, projectclient: TestClient) -> None:
         antwoord = projectclient.get("/projects/dd-mco/details", headers=JSON, follow_redirects=False)
 
