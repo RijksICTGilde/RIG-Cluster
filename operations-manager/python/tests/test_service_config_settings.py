@@ -53,6 +53,7 @@ from opi.utils.yaml_util import dump_yaml_to_string
 from test_project_store import RELATIVE_PATH, FakeGitConnector, FakeRemote  # type: ignore[import-not-found]
 
 _DATABASE = ServiceType.POSTGRESQL_DATABASE
+_REDIS = ServiceType.NAMESPACE_REDIS
 
 
 # --- declaraties die alleen hier bestaan ------------------------------------------
@@ -121,6 +122,20 @@ EIGENSCHAP_LIMIET = IntegerSetting(
     minimum=1,
     maximum=100,
     label="Limiet",
+)
+
+#: Hetzelfde grow_only-volume, maar op de DEPLOYMENTlaag. Een veld dat een wijziging
+#: beoordeelt mag op precies een laag staan; dat die ene laag ook een andere dan het
+#: project mag zijn, is wat ``namespace-redis`` hieronder meet.
+DEPLOYMENT_VOLUME = QuantitySetting(
+    path="storage",
+    layers=(ConfigLayer.DEPLOYMENT,),
+    default="5Gi",
+    minimum="1Gi",
+    maximum="10Gi",
+    kind=QuantityKind.MEMORY,
+    grow_only=True,
+    label="Opslag",
 )
 
 IMAGE = ChoiceSetting(
@@ -306,6 +321,58 @@ def test_een_ondergrens_boven_de_bovengrens() -> None:
             kind=QuantityKind.MEMORY,
             label="X",
         )
+
+
+def test_een_veld_dat_een_wijziging_beoordeelt_staat_op_precies_een_laag() -> None:
+    """Anders is de wijzigingsregel te omzeilen door hem een laag lager op te schrijven.
+
+    De regel vergelijkt per configBLOK, terwijl de effectieve waarde uit de MEEST
+    SPECIFIEKE laag komt die iets zegt. Staat hetzelfde grow_only-veld op twee lagen, dan
+    is 8Gi op projectniveau met een nieuwe deployment-override van 2Gi effectief een
+    verkleining, zonder dat er ook maar een blok kleiner wordt -- en dan ziet de regel
+    niets. Zolang de opgeloste waarde niet per plek wordt vergeleken, is de declaratie
+    zelf de plek om dat af te snijden: hardop, bij het inladen.
+    """
+    with pytest.raises(ValueError, match="beoordeelt een WIJZIGING"):
+        QuantitySetting(
+            path="storage",
+            layers=(ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT),
+            default="5Gi",
+            minimum="1Gi",
+            maximum="10Gi",
+            kind=QuantityKind.MEMORY,
+            grow_only=True,
+            label="Opslag",
+        )
+
+    # Zonder die regel mag hetzelfde veld wel op twee lagen staan: dan is er geen
+    # wijziging te beoordelen en doet 'specifieker wint' gewoon zijn werk.
+    QuantitySetting(
+        path="storage",
+        layers=(ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT),
+        default="5Gi",
+        minimum="1Gi",
+        maximum="10Gi",
+        kind=QuantityKind.MEMORY,
+        label="Opslag",
+    )
+    # En met de regel op een laag -- welke laag dat is, maakt niet uit.
+    assert VOLUME.judges_changes is True
+    assert DEPLOYMENT_VOLUME.judges_changes is True
+    assert MEMORY.judges_changes is False
+    assert CONNECTIONS.judges_changes is False
+
+
+def test_met_een_laag_is_het_blok_de_plek_waar_de_waarde_wordt_opgelost() -> None:
+    """Waarom vergelijken per BLOK dan hetzelfde is als vergelijken per effectieve waarde.
+
+    ``resolve_setting`` raadpleegt alleen lagen die de dienst openzet. Staat het veld op
+    een laag, dan is het blok op die laag het enige dat de uitkomst kan veranderen -- dus
+    een blok dat niet krimpt is een waarde die niet krimpt.
+    """
+    assert resolve_setting(VOLUME, {ConfigLayer.PROJECT: "8Gi", ConfigLayer.DEPLOYMENT: "2Gi"}) == "8Gi"
+    assert resolve_setting(DEPLOYMENT_VOLUME, {ConfigLayer.PROJECT: "2Gi", ConfigLayer.DEPLOYMENT: "8Gi"}) == "8Gi"
+    assert resolve_setting(DEPLOYMENT_VOLUME, {ConfigLayer.PROJECT: "2Gi"}) == "5Gi"
 
 
 def test_een_veld_zonder_laag_kan_nergens_gezet_worden_en_wordt_geweigerd() -> None:
@@ -583,6 +650,66 @@ def test_een_kale_vorige_dienst_is_de_standaard_en_geen_afwezigheid(declaring: A
     asyncio.run(validate_project_structure(_project({"storage": "2Gi"}), previous=_zonder_de_dienst()))
 
 
+def _redis_project(dep_config: dict[str, Any] | None, *, in_deployment: bool = True) -> dict[str, Any]:
+    """Een project met ``namespace-redis``, met de configuratie op de DEPLOYMENTlaag.
+
+    Die dienst heeft geen configmodel, dus het model laat een gedeclareerd veld hier door
+    en de speelruimte is het enige dat er iets van vindt -- precies de situatie waarin een
+    dienst straks iets op de deploymentlaag openzet.
+    """
+    deployment: dict[str, Any] = {
+        "name": "deployment-1",
+        "cluster": "local",
+        "namespace": "demo",
+        "components": [{"reference": "backend"}],
+    }
+    if in_deployment:
+        deployment["services"] = [
+            {"name": _REDIS.value, "config": dict(dep_config)} if dep_config is not None else _REDIS.value
+        ]
+    return {
+        "schema-version": 2,
+        "name": "demo",
+        "display-name": "Demo",
+        "description": "test project",
+        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "clusters": ["local"],
+        "services": [_REDIS.value],
+        "components": [{"name": "backend", "type": "single", "services": [_REDIS.value]}],
+        "deployments": [deployment],
+        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+    }
+
+
+def test_de_regel_draait_net_zo_op_de_deploymentlaag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Een grow_only-veld hoeft niet op het project te staan; het staat op EEN laag.
+
+    De grendel op de declaratie zegt "precies een laag", niet "de projectlaag". Deze
+    meting is de tegenhanger van de projectrijen hierboven, op de laag waar de reviewer
+    de omzeiling vond: hetzelfde blok, per deployment gekoppeld, met dezelfde drie
+    uitkomsten.
+    """
+    provider = get_service(_REDIS)
+    monkeypatch.setattr(provider, "config_settings", lambda: (DEPLOYMENT_VOLUME,))
+    vorige = _redis_project({"storage": "8Gi"})
+
+    # Expliciet verlagen op de deploymentlaag.
+    with pytest.raises(ProjectIntegrityError, match="kan alleen omhoog"):
+        asyncio.run(validate_project_structure(_redis_project({"storage": "2Gi"}), previous=vorige))
+    # Het blok weglaten is dezelfde verlaging: effectief de standaard, 5Gi.
+    with pytest.raises(ProjectIntegrityError, match="kan alleen omhoog"):
+        asyncio.run(validate_project_structure(_redis_project(None), previous=vorige))
+    # Omhoog mag, en de dienst uit de deployment halen is een verwijdering.
+    asyncio.run(validate_project_structure(_redis_project({"storage": "10Gi"}), previous=vorige))
+    asyncio.run(validate_project_structure(_redis_project(None, in_deployment=False), previous=vorige))
+    # En stond de dienst er in die deployment nog niet, dan is dit een toevoeging.
+    asyncio.run(
+        validate_project_structure(
+            _redis_project({"storage": "2Gi"}), previous=_redis_project(None, in_deployment=False)
+        )
+    )
+
+
 # --- 7b. een wandeling, twee lezers -----------------------------------------------
 
 
@@ -629,11 +756,40 @@ def test_een_dienst_op_een_eigenschap_wordt_ook_op_zijn_grenzen_getoetst(monkeyp
     data = _project({"storage": "1Gi"})
     data["components"][0]["aliases"] = {"LIMIET": "500"}
 
-    with pytest.raises(ProjectIntegrityError, match="'LIMIET' moet tussen 1 en 100 liggen"):
+    with pytest.raises(ProjectIntegrityError, match="'LIMIET' valt buiten zijn speelruimte"):
         validate_service_configs(data)
 
     data["components"][0]["aliases"] = {"LIMIET": "50"}
     validate_service_configs(data)
+
+
+def test_de_weigering_op_een_eigenschapsblok_noemt_de_waarde_niet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dezelfde reden waarom de modelfout ernaast de waarde ook niet noemt.
+
+    ``user-env-vars`` is de eigen omgeving van een component en accepteert een platte
+    ``dict[str, str]``, dus een waarde op een gedeclareerd pad kan daar een geplakt geheim
+    zijn -- en deze zin gaat zowel het centrale log in als het antwoord aan de aanroeper.
+    De weigering wordt daarom uit de DECLARATIE opgebouwd: het veld en zijn speelruimte,
+    niet wat er gelezen is. Voor een blok in een ``services:``-lijst blijft de waarde er
+    wel in staan, want daar is het de grens zelf die wordt teruggeciteerd.
+    """
+    provider = get_service(ServiceType.USER_ENV_VARS)
+    monkeypatch.setattr(provider, "config_settings", lambda: (EIGENSCHAP_LIMIET,))
+    data = _project({"storage": "1Gi"})
+    data["components"][0]["user-env-vars"] = {"LIMIET": "hunter2"}
+
+    with pytest.raises(ProjectIntegrityError) as fout:
+        validate_service_configs(data)
+
+    assert "hunter2" not in str(fout.value)
+    assert "'LIMIET' valt buiten zijn speelruimte" in str(fout.value)
+    assert EIGENSCHAP_LIMIET.latitude() in str(fout.value)
+
+    # Een blok in een services:-lijst citeert de waarde wel: dat is de grens zelf.
+    declarerend = get_service(_DATABASE)
+    monkeypatch.setattr(declarerend, "config_settings", lambda: (VOLUME,))
+    with pytest.raises(ProjectIntegrityError, match="je gaf 50Gi"):
+        validate_service_configs(_project({"storage": "50Gi"}))
 
 
 # --- 8. de wizard leest dezelfde declaratie ---------------------------------------
