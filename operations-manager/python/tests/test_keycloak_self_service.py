@@ -307,6 +307,52 @@ async def test_dezelfde_taalvelden_nog_eens_schrijven_doet_niets() -> None:
     assert keycloak.update_realm_settings.await_args.args[1] == {}
 
 
+@pytest.mark.usefixtures("_met_relay")
+async def test_de_volgorde_van_de_talen_is_geen_wijziging() -> None:
+    """Keycloak bewaart ``supportedLocales`` als een SET en geeft hem in een eigen volgorde
+    terug: een blauwdruk die ``["nl", "en"]`` zegt krijgt ``["en", "nl"]`` terug.
+
+    Gemeten op de sandbox met een kale ``!=``: twee verwerkingen achter elkaar leverden twee
+    keer ``Updated realm ...: ['supportedLocales']``. Elke verwerking van elk project zou dus
+    een wijziging schrijven die niets wijzigt, in het admin-event-logboek van elke realm.
+    Deze toets is de grendel daarop, en hij is de reden dat ``_veld_is_gelijk`` bestaat.
+    """
+    handler, keycloak = _handler_with_fake_connector(
+        realm={
+            "registrationAllowed": False,
+            "loginWithEmailAllowed": False,
+            "resetPasswordAllowed": False,
+            "verifyEmail": True,
+            "internationalizationEnabled": True,
+            "supportedLocales": ["en", "nl"],
+            "defaultLocale": "nl",
+        }
+    )
+
+    await handler._apply_realm_fields(
+        "rig-demo",
+        {"internationalizationEnabled": True, "supportedLocales": ["nl", "en"], "defaultLocale": "nl"},
+        await keycloak.get_realm("rig-demo"),
+    )
+
+    assert keycloak.update_realm_settings.await_args.args[1] == {}
+
+
+@pytest.mark.usefixtures("_met_relay")
+async def test_een_echt_andere_talenlijst_wordt_wel_geschreven() -> None:
+    """De tegenproef: ``_veld_is_gelijk`` mag alleen de VOLGORDE wegstrepen, niet de inhoud.
+    Zonder deze toets zou een grendel die altijd ``True`` teruggeeft er net zo uitzien."""
+    handler, keycloak = _handler_with_fake_connector(realm={"supportedLocales": ["en"]})
+
+    await handler._apply_realm_fields(
+        "rig-demo",
+        {"supportedLocales": ["nl", "en"]},
+        await keycloak.get_realm("rig-demo"),
+    )
+
+    assert keycloak.update_realm_settings.await_args.args[1] == {"supportedLocales": ["nl", "en"]}
+
+
 @pytest.mark.parametrize("template", ["sso-only", "sso-support"])
 def test_de_projectblauwdrukken_zetten_nederlands_als_standaardtaal(template: str) -> None:
     """De glob-toets hierboven eist alleen dat een blauwdruk de velden NOEMT; dit is de

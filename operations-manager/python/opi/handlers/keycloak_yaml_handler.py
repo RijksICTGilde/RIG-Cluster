@@ -69,6 +69,25 @@ _BLUEPRINT_REALM_FIELDS = (
 _SMTP_CONNECTION_KEYS = ("host", "port", "auth", "user", "password", "ssl", "starttls")
 
 
+def _veld_is_gelijk(huidig: Any, gewenst: Any) -> bool:
+    """Draagt de realm dit veld al, zodat er niets geschreven hoeft te worden?
+
+    Voor bijna elk veld is dat gewoon ``==``. Voor een LIJST niet, en dat is gemeten: Keycloak
+    bewaart ``supportedLocales`` als een SET en geeft hem in een eigen volgorde terug. Een
+    blauwdruk die ``["nl", "en"]`` zegt krijgt ``["en", "nl"]`` terug, en met een kale ``!=``
+    schrijft ELKE verwerking van ELK project dat veld opnieuw - een wijziging die niets
+    wijzigt, in het admin-event-logboek van elke realm, precies de ruis die deze vergelijking
+    hoort te voorkomen. Waargenomen op de sandbox: twee verwerkingen achter elkaar leverden
+    twee keer ``Updated realm ...: ['supportedLocales']``.
+
+    De volgorde is dus geen bewering en wordt zo ook niet gemeten. Wat we WEL schrijven is de
+    volgorde uit de blauwdruk; Keycloak maakt er alsnog een set van.
+    """
+    if isinstance(huidig, list) and isinstance(gewenst, list):
+        return sorted(huidig) == sorted(gewenst)
+    return huidig == gewenst
+
+
 class KeycloakYamlHandler:
     """Handler for processing Keycloak YAML configurations."""
 
@@ -531,6 +550,9 @@ class KeycloakYamlHandler:
 
         A blueprint is not wrong for asking; the CLUSTER is not ready. So this warns and
         carries on, and the next reconcile after the relay is configured completes it.
+
+        Comparing is done through ``_veld_is_gelijk``, because a LIST does not come back the
+        way it went in -- see there.
         """
         gewenst = {veld: item[veld] for veld in _BLUEPRINT_REALM_FIELDS if veld in item}
         if gewenst.get("verifyEmail") and not self._platform_can_send_mail():
@@ -543,7 +565,7 @@ class KeycloakYamlHandler:
         if not gewenst:
             return
 
-        verschil = {veld: waarde for veld, waarde in gewenst.items() if realm.get(veld) != waarde}
+        verschil = {veld: waarde for veld, waarde in gewenst.items() if not _veld_is_gelijk(realm.get(veld), waarde)}
         await self.keycloak.update_realm_settings(realm_name, verschil)
 
     async def _apply_smtp_server(self, realm_name: str, realm: dict[str, Any]) -> None:
