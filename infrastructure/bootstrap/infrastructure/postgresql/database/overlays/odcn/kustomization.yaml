@@ -76,3 +76,23 @@ patches:
       - op: add
         path: /spec/postgresql/parameters/shared_buffers
         value: 1GB
+      # Zonder dit start de database niet meer zodra zijn pod opnieuw wordt
+      # aangemaakt. ODCN herschrijft imageName bij admission van
+      # ghcr.io/cloudnative-pg/postgresql:17 naar
+      # rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17, en die proxy vraagt
+      # authenticatie. De pod had geen enkele pull secret en zijn serviceaccount
+      # ook niet, dus de pull faalt op 'invalid username/password'.
+      #
+      # Dat bleef 83 dagen onzichtbaar omdat de pod al die tijd niet opnieuw is
+      # aangemaakt; het image stond op de node. Op 1 september ging hij eruit bij
+      # de eerste de beste wijziging die een nieuwe pod afdwong, en toen lag de
+      # hele platformdatabase plat. Elke andere aanleiding tot herplaatsing
+      # (nodeonderhoud, eviction, CNPG-upgrade) had hetzelfde gedaan.
+      #
+      # Dezelfde twee secrets die de operations-manager gebruikt om van rcr te
+      # pullen. Ze bestaan al in rig-prd-operations.
+      - op: add
+        path: /spec/imagePullSecrets
+        value:
+          - name: rig-robot-pull-secret
+          - name: ghcr-rig-robot-pull-secret
