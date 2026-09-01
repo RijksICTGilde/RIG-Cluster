@@ -244,6 +244,12 @@ and a reduction can be written on the layer that wins without any block getting 
 One layer makes "this block did not shrink" and "this value did not shrink" the same
 sentence. Which layer it is does not matter.
 
+That pairing is per *place*, and a place goes finer than a layer: where a service keeps a
+record per mount (the storage services, on the deployment-component layer), each mount is
+its own effective value, so the walk names the mount in the location. Give a place more
+than one block of the same service without saying which is which and the comparison runs
+between unrelated values.
+
 What a service does not declare is not settable, and a layer it does not name is refused.
 A service that declares nothing -- the whole catalog today -- behaves exactly as before.
 See `features/speelruimte-van-een-dienst.md`.
