@@ -130,21 +130,25 @@ def category_for_status(status_code: int) -> ErrorCategory:
     return ErrorCategory.InternalError if status_code >= 500 else ErrorCategory.Unknown
 
 
+#: Drie keuzes in :class:`ProblemDetail` die het vermelden waard zijn, en die in de
+#: veldbeschrijvingen niet passen omdat ze in het OPENAPI-document terechtkomen:
+#:
+#: * ``detail`` blijft staan en blijft een gewone zin. Dat is het veld dat elke bestaande
+#:   client vandaag afdrukt (zad-cli voorop) en het is ook het veld waar RFC 7807 de
+#:   menselijke uitleg wil hebben, dus de envelop is een uitbreiding en geen breuk. Wat er
+#:   NIET in staat is de onbewerkte uitzondering: die reisde tot nu toe mee naar buiten en
+#:   nam het interne IP-adres en de databasepoort mee.
+#: * ``reference`` is het kenmerk uit :mod:`opi.core.flow_id`, hetzelfde dat op het scherm
+#:   staat en op elke logregel van dit verzoek. Dat is wat een melding bruikbaar maakt
+#:   zonder iets prijs te geven.
+#: * er is GEEN ``explanation`` naast ``detail``, zoals :class:`StatusError` die wel heeft.
+#:   Daar staat in ``message`` de ruwe clustertekst en in ``explanation`` de uitleg; hier is
+#:   er geen ruwe tekst -- dat is de hele reparatie -- dus zou ``explanation`` een tweede
+#:   kopie van ``detail`` zijn.
 class ProblemDetail(BaseModel):
-    """De envelop van een gefaald HTTP-antwoord, in de vorm van ``application/problem+json``.
+    """Wat een gefaald HTTP-antwoord meestuurt: RFC 7807, plus een categorie en een kenmerk.
 
-    De NL GOV API Design Rules schrijven RFC 7807 voor, dus geen eigen bedenksel. Twee
-    keuzes zijn het vermelden waard:
-
-    ``detail`` blijft staan en blijft een gewone zin. Dat is het veld dat elke bestaande
-    client vandaag afdrukt (zad-cli voorop) en het is ook het veld waar RFC 7807 de
-    menselijke uitleg wil hebben, dus de envelop is een uitbreiding en geen breuk. Wat er
-    NIET in staat is de onbewerkte uitzondering: die reisde tot nu toe mee naar buiten en
-    nam het interne IP-adres en de databasepoort mee.
-
-    ``reference`` is het kenmerk uit :mod:`opi.core.flow_id`, hetzelfde dat op het scherm
-    staat en op elke logregel van dit verzoek. Dat is wat een melding bruikbaar maakt
-    zonder iets prijs te geven.
+    Alleen bij een 5xx. Een 4xx houdt het kale ``{"detail": ...}`` dat clients vandaag lezen.
     """
 
     type: str = Field(

@@ -296,3 +296,37 @@ class TestDeLogKrijgtHetRegelnummer:
                 log_render_failure(logger, "de projectpagina", exc)
 
         assert STORING in caplog.records[-1].getMessage()
+
+
+class TestDeEnvelopStaatInHetContract:
+    """Een envelop die niet in het OpenAPI-document staat, kan een client niet vinden.
+
+    De spec is volgens `workflow/outline.md` de gezaghebbende beschrijving van het
+    API-oppervlak, dus daar hoort hij te staan -- en op elke operatie, niet bij een paar.
+    """
+
+    def test_het_schema_staat_erin_met_zijn_categorie(self, foutclient: TestClient) -> None:
+        schemas = foutclient.get("/openapi.json").json()["components"]["schemas"]
+
+        assert "ProblemDetail" in schemas
+        assert "ErrorCategory" in schemas, "de categorie is een los schema, niet een losse $defs"
+        velden = schemas["ProblemDetail"]["properties"]
+        assert {"type", "title", "status", "detail", "instance", "category", "reference"} <= set(velden)
+        assert "InternalError" in schemas["ErrorCategory"]["enum"]
+
+    def test_elke_api_operatie_noemt_hem(self, foutclient: TestClient) -> None:
+        spec = foutclient.get("/openapi.json").json()
+        operaties = [
+            (pad, verb)
+            for pad, methoden in spec["paths"].items()
+            if pad.startswith("/api/")
+            for verb, methode in methoden.items()
+            if isinstance(methode, dict) and "operationId" in methode
+        ]
+
+        assert len(operaties) > 50, "deze meting kijkt naar de verkeerde operaties"
+        for pad, verb in operaties:
+            antwoord = spec["paths"][pad][verb]["responses"].get("5XX")
+            assert antwoord, f"{verb.upper()} {pad} noemt de foutenvelop niet"
+            schema = antwoord["content"]["application/problem+json"]["schema"]
+            assert schema["$ref"] == "#/components/schemas/ProblemDetail"
