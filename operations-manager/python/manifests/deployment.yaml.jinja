@@ -48,6 +48,20 @@ spec:
         {{ k }}: {{ v | tojson }}
 {% endfor %}
     spec:
+      {% if host_aliases is defined and host_aliases %}
+      # Extra regels in /etc/hosts van de pod. Een dienst zet ze wanneer een naam naar een
+      # adres BINNEN het cluster moet wijzen terwijl de naam zelf buiten hoort: TLS
+      # vergelijkt de hostnaam uit de URL met het certificaat, dus die naam moet in de URL
+      # blijven staan ook als het verkeer bij onze eigen proxy uitkomt.
+      hostAliases:
+      {% for alias in host_aliases %}
+        - ip: {{ alias.ip | tojson }}
+          hostnames:
+          {% for hostname in alias.hostnames %}
+            - {{ hostname | tojson }}
+          {% endfor %}
+      {% endfor %}
+      {% endif %}
       {% if imagePullSecretsMap and imageURL in imagePullSecretsMap %}
       imagePullSecrets:
         - name: {{ imagePullSecretsMap[imageURL] }}
