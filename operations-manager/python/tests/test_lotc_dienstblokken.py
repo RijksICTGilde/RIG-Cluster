@@ -65,6 +65,17 @@ BLOKKEN: dict[str, dict[str, Any]] = {
         # interessant, en die moet in beide vormgevingen dezelfde bestemming opleveren.
         "url_for": lambda naam, **kw: f"https://zad.example/invite/{kw['key']}",
     },
+    "vlam/section-detail.html.j2": {
+        "section": _section(
+            {
+                "api_url": "http://productie-vlam-proxy-intern.rig-prd-vlam-wt8.svc.cluster.local:8081",
+                "direct_url": "https://vlam-api.rijksweb.nl:8443",
+                "ca_path": "/etc/ssl/vlam/rijksdienst-ca.pem",
+                "ca_filename": "rijksdienst-ca.pem",
+                "ca_download_url": "/services/vlam/ca-bundle",
+            }
+        ),
+    },
     "keycloak/section-detail.html.j2": {
         "section": _section(
             {

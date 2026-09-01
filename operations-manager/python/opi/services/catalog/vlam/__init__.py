@@ -45,18 +45,22 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from opi.core.config import settings
 from opi.services.catalog.base import (
     DeploymentManifestContext,
     DeploymentManifestSpec,
+    DetailPageSection,
     ManifestContext,
     ManifestContribution,
+    ProjectPageContext,
     SecretFileSpec,
     Service,
 )
-from opi.services.catalog.vlam.endpoint import vlam_endpoint
+from opi.services.catalog.events import on
+from opi.services.catalog.vlam.endpoint import CA_BUNDLE_URL, vlam_endpoint
 from opi.services.catalog.vlam.variables import VlamVariables
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceType, UIEvent
 from opi.utils.naming import generate_network_policy_name
 
 logger = logging.getLogger(__name__)
@@ -93,6 +97,38 @@ class VlamService(Service):
         change. Both the wizard card and the save-time refusal go through here.
         """
         return vlam_endpoint(cluster) is not None
+
+    def web_routers(self) -> list[Any]:
+        """The endpoints its page block needs. Imported here, not at module scope: a
+        route module reaches into the app, which the catalog itself must not do."""
+        from opi.services.catalog.vlam.routes import vlam_router
+
+        return [*super().web_routers(), vlam_router]
+
+    @on(UIEvent.PROJECT_SECTIONS)
+    def vlam_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
+        """The two paths to VLAM side by side, with the CA bundle to download.
+
+        Only on a cluster that offers the doorlus: without it there is no second address,
+        no bundle and nothing to download, and a block that shows one address the user
+        already has in an env var would be a page telling them nothing.
+        """
+        endpoint = vlam_endpoint(settings.CLUSTER_MANAGER)
+        if endpoint is None or endpoint.passthrough is None:
+            return []
+        passthrough = endpoint.passthrough
+        return [
+            DetailPageSection(
+                template="vlam/section-detail.html.j2",
+                context={
+                    "api_url": endpoint.api_url,
+                    "direct_url": passthrough.api_url,
+                    "ca_path": passthrough.container_path,
+                    "ca_filename": passthrough.ca_bundle_filename,
+                    "ca_download_url": CA_BUNDLE_URL,
+                },
+            )
+        ]
 
     def _selected(self, project_data: dict[str, Any]) -> bool:
         """Whether this project has the service in its project-level services list."""
