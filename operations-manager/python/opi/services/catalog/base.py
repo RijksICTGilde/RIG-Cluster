@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.actions import ServiceAction
     from opi.services.catalog.approval import ApprovalSpec
+    from opi.services.catalog.config_settings import ConfigSetting
     from opi.services.services_enums import ActionEvent, ManagerKey, ServiceEvent, ServiceType, UIEvent
     from opi.utils.secrets import BaseSecret
 
@@ -929,6 +930,42 @@ class Service(ABC):
         """The DATA editables this service contributes at ``layer`` (default none)."""
         return []
 
+    def config_settings(self) -> tuple[ConfigSetting, ...]:
+        """The config fields a project may set, each with the room this service allows.
+
+        A bound on a user-settable field is a platform decision, so it belongs to the
+        service and not to whoever writes the project file. Declaring it here puts it in
+        ONE place: the merge (``resolve_setting``), the project-file validation and the
+        wizard field all read this, instead of a ``le=`` in the model, a number in a
+        connector and a dropdown each carrying their own copy.
+
+        The default is no settings at all, which is what every service in the catalog
+        answers today and is exactly the behaviour it had before this hook existed:
+        nothing declared means nothing extra is checked and nothing extra is settable.
+        See ``opi/services/catalog/config_settings.py`` for the three kinds of bound.
+        """
+        return ()
+
+    def config_setting(self, path: str) -> ConfigSetting:
+        """The declaration for one field, or a refusal.
+
+        What a service does not declare is not settable -- there is no "it happens to be
+        in the model, so you can set it". A caller that asks for the room of an
+        undeclared field gets told it has none, rather than a silent None it can read
+        past.
+
+        Raises:
+            SettingError: if this service does not open ``path`` up at all.
+        """
+        # Imported here and not at module scope: config_settings imports ConfigLayer and
+        # config_path from this module, so the runtime dependency only goes one way.
+        from opi.services.catalog.config_settings import SettingError
+
+        for setting in self.config_settings():
+            if setting.path == path:
+                return setting
+        raise SettingError(f"Dienst '{self.service_type.value}' heeft geen instelbaar veld '{path}'.")
+
     def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         """The wizard/edit config section this service contributes at ``layer``, or None.
 
@@ -1037,9 +1074,10 @@ class Service(ABC):
         """The layers at which this service carries config, measured from its own hooks.
 
         A layer counts when the service declares editables for it, accepts API fields
-        for it, hooks layout nodes into that layer's form, or carries a DEFINE-side
-        payload there. Derived rather than declared, so it cannot drift from the
-        implementation -- the same trick ``registry.provisioning_services()`` uses.
+        for it, hooks layout nodes into that layer's form, opens a config setting up on
+        it, or carries a DEFINE-side payload there. Derived rather than declared, so it
+        cannot drift from the implementation -- the same trick
+        ``registry.provisioning_services()`` uses.
         """
         layers = []
         for layer in ConfigLayer:
@@ -1053,7 +1091,8 @@ class Service(ABC):
                 if layer is ConfigLayer.DEPLOYMENT_COMPONENT
                 else False
             )
-            if self.config_editables(layer) or self.config_api_fields(layer) or has_layout:
+            has_setting = any(setting.allows(layer) for setting in self.config_settings())
+            if self.config_editables(layer) or self.config_api_fields(layer) or has_layout or has_setting:
                 layers.append(layer)
         return layers
 

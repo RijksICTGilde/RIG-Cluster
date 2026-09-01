@@ -21,6 +21,7 @@ from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.config_settings import SettingError, check_setting_changes, check_settings
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.postgres_scope import get_postgres_schemas
@@ -37,6 +38,8 @@ from opi.utils.naming import generate_extra_database_schema, registry_tag_owner
 from opi.utils.project_utils import ComponentValidationError, validate_root_component
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from opi.forms.editables.editable import Editable
 
 logger = logging.getLogger(__name__)
@@ -108,21 +111,32 @@ def _validate_one_config(
         return  # unknown service name -- other validation handles it
     provider = get_service(service_type)
     model = provider.config_model_for(layer)
-    if model is None:
-        return  # service takes no typed config at this layer
+    if model is not None:
+        try:
+            if model is provider.config_model:
+                provider.validate_config(raw, from_version=from_version, context=STORED_PROJECT_CONTEXT)
+            else:
+                # A layer-specific model (per-mount clone state). OPI writes it, so there is no
+                # stamped version to migrate from; validate the shape directly.
+                model.model_validate(raw)
+        except ValidationError as e:
+            accepted = _accepted_config_fields(provider, layer)
+            hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
+            raise ProjectIntegrityError(
+                f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: "
+                f"{validation_reasons(e)}.{hint}"
+            ) from e
+
+    # The service's declared latitude (RC-168): a value it opened up has to stay inside
+    # the bounds the SERVICE set, and may only sit on a layer the service opened it up
+    # on. Here rather than in the model, so the bound is stated once and the wizard, the
+    # API and a hand-edited file are judged by the same declaration. A service that
+    # declares nothing -- the whole catalog today -- does no extra work here.
     try:
-        if model is provider.config_model:
-            provider.validate_config(raw, from_version=from_version, context=STORED_PROJECT_CONTEXT)
-        else:
-            # A layer-specific model (per-mount clone state). OPI writes it, so there is no
-            # stamped version to migrate from; validate the shape directly.
-            model.model_validate(raw)
-    except ValidationError as e:
-        accepted = _accepted_config_fields(provider, layer)
-        hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
+        check_settings(provider.config_settings(), raw, layer)
+    except SettingError as e:
         raise ProjectIntegrityError(
-            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: "
-            f"{validation_reasons(e)}.{hint}"
+            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: {e}"
         ) from e
 
 
@@ -657,12 +671,104 @@ def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
     return errors
 
 
-async def validate_project_structure(project_data: dict[str, Any]) -> None:
+def _iter_service_configs(project_data: dict[str, Any]) -> Iterator[tuple[str, str, ConfigLayer, Any]]:
+    """Every service config block in a project file, as ``(location, service, layer, config)``.
+
+    ``location`` identifies the block ACROSS two versions of the same file -- the
+    project itself, a named component, a named deployment -- so a rule about a change
+    can line up the same block in the old file and the new one. Without that key a
+    reduction would compare a component's value against an unrelated component's.
+    """
+    view = Project(project_data)
+    for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
+        config = view.service_config(name)
+        if config is not None:
+            yield "project", name, ConfigLayer.PROJECT, config
+
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        where = f"component:{component.get('name')}"
+        for entry in component.get("services", []) or []:
+            name = service_entry_name(entry)
+            config = service_entry_config(entry)
+            if name is not None and config is not None:
+                yield where, name, ConfigLayer.COMPONENT, config
+
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        dep_name = deployment.get("name")
+        for entry in deployment.get("services", []) or []:
+            name = service_entry_name(entry)
+            config = service_entry_config(entry)
+            if name is not None and config is not None:
+                yield f"deployment:{dep_name}", name, ConfigLayer.DEPLOYMENT, config
+
+        for component in deployment.get("components", []) or []:
+            if not isinstance(component, dict):
+                continue
+            comp_name = component.get("reference") or component.get("name")
+            where = f"deployment:{dep_name}/component:{comp_name}"
+            services = component.get("services")
+            if isinstance(services, dict):
+                for name, body in services.items():
+                    for entry in body if isinstance(body, list) else [body]:
+                        config = entry.get("config") if isinstance(entry, dict) else None
+                        if config is not None:
+                            yield where, name, ConfigLayer.DEPLOYMENT_COMPONENT, config
+            elif isinstance(services, list):
+                for entry in services:
+                    name = service_entry_name(entry)
+                    config = service_entry_config(entry)
+                    if name is not None and config is not None:
+                        yield where, name, ConfigLayer.DEPLOYMENT_COMPONENT, config
+
+
+def validate_service_setting_changes(previous: dict[str, Any], project_data: dict[str, Any]) -> None:
+    """Judge what this save CHANGES about a service's declared settings (RC-168).
+
+    Some fields cannot move both ways: a PVC cannot shrink, so accepting a smaller
+    ``storage`` because it happens to sit between the declared bounds means a value that
+    then silently does nothing or wedges the rollout. That is a rule about a change, not
+    about a value, so it needs the version being replaced -- which is why it lives here
+    and not in the per-block walk.
+
+    Blocks are matched by location, so a newly added component or deployment has nothing
+    to be compared against and is only judged on its bounds. A field the previous version
+    did not mention was standing on the service default, and is compared against that.
+
+    Fails closed: raises ProjectIntegrityError on the first refused change.
+    """
+    project_name = project_data.get("name", "(onbekend)")
+    before = {(location, name): config for location, name, _layer, config in _iter_service_configs(previous)}
+    for location, name, layer, config in _iter_service_configs(project_data):
+        old_config = before.get((location, name))
+        if old_config is None:
+            continue  # nothing there before: no change to judge
+        try:
+            service_type = ServiceType(name)
+        except ValueError:
+            continue  # unknown service name -- other validation handles it
+        try:
+            check_setting_changes(get_service(service_type).config_settings(), old_config, config, layer)
+        except SettingError as e:
+            raise ProjectIntegrityError(
+                f"Project '{project_name}': configuratie van service '{name}' kan niet zo worden gewijzigd: {e}"
+            ) from e
+
+
+async def validate_project_structure(project_data: dict[str, Any], *, previous: dict[str, Any] | None = None) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
     Runs the reference/uniqueness/path/root/domain checks against the final merged
     dict so they hold no matter which caller produced it. Raises
     ProjectIntegrityError on the first violation; fails closed.
+
+    ``previous`` is the version this one replaces, when the caller has it. Only the
+    rules that judge a CHANGE rather than a value need it (see
+    ``validate_service_setting_changes``); everything else reads ``project_data`` alone,
+    so a caller without a previous version -- a create, a replay -- loses nothing else.
     """
     project_name = project_data.get("name", "(onbekend)")
     components = project_data.get("components", []) or []
@@ -804,3 +910,8 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
     # Per-service typed config validation (RC-5 A). Runs last: the envelope and
     # cross-field structure are valid by here, so this only judges the config values.
     validate_service_configs(project_data)
+
+    # And what the save CHANGES about those values, for the fields a service declared
+    # can only move one way. Only when the caller handed over the version being replaced.
+    if previous is not None:
+        validate_service_setting_changes(previous, project_data)
