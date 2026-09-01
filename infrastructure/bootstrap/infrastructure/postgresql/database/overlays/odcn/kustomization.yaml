@@ -96,3 +96,15 @@ patches:
         value:
           - name: rig-robot-pull-secret
           - name: ghcr-rig-robot-pull-secret
+      # Vraag exact wat het cluster tóch gaat maken, anders draait CNPG in een lus.
+      # ODCN herschrijft imageName bij admission naar het rcr-pad. Blijft hier
+      # ghcr.io staan, dan ziet CNPG een pod die niet is wat hij vroeg, vervangt
+      # hij hem (UpgradingInstance), herschrijft admission opnieuw, en begint het
+      # van voren af aan. Gemeten op 1 september: de pod werd elke ~45 seconden
+      # vervangen en de database was daardoor niet stabiel bereikbaar.
+      #
+      # Alleen in deze overlay. Base en de lokale overlays hebben geen
+      # admission-herschrijving en geen toegang tot rcr, dus die houden ghcr.io.
+      - op: replace
+        path: /spec/imageName
+        value: rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17
