@@ -30,13 +30,13 @@ patches:
       # Give production real headroom.
       - op: replace
         path: /spec/resources/limits/memory
-        value: 6Gi
+        value: 4Gi
       - op: replace
         path: /spec/resources/limits/cpu
         value: "2"
       - op: replace
         path: /spec/resources/requests/memory
-        value: 2Gi
+        value: 1Gi
       - op: replace
         path: /spec/resources/requests/cpu
         value: 250m
@@ -49,16 +49,30 @@ patches:
       # met 512Mi, waar 500 verbindingen onzin zijn. Alleen productie gaat omhoog,
       # net als bij de resources hierboven.
       #
-      # Het geheugen moet mee. Gemeten kost een verbinding ongeveer 6,5Mi bovenop
-      # een basis van zo'n 250Mi (shared_buffers 128Mi plus postmaster), dus 500
-      # verbindingen komen op ongeveer 3,5Gi. De 6Gi hierboven is die schatting
-      # plus marge voor work_mem, dat 4Mi per sorteerstap pakt en per query
-      # meerdere keren kan aanslaan.
+      # Het geheugen moet mee, maar bescheidener dan het plafond suggereert.
+      # Gemeten kost een verbinding ongeveer 5 tot 6,5Mi. Bij de realistische
+      # belasting van vandaag (piek 121) zit je met 1Gi shared_buffers rond de
+      # 2Gi; de 4Gi is ruimte voor groei, niet een verwachting. Requests gaan naar
+      # 1Gi en niet hoger: requests worden echt op de node gereserveerd, en het
+      # werkelijke verbruik is 753Mi.
       #
-      # LET OP: max_connections is een postmaster-parameter, dus dit vraagt een
-      # herstart. Met instances: 1 is dat downtime voor Keycloak, Forgejo, de
-      # mailrelay en elke projectdatabase tegelijk. Rol dit uit op een gepland
-      # moment, niet terloops.
+      # shared_buffers stond op de PostgreSQL-standaard van 128Mi en was nooit op
+      # deze container afgestemd. Dat is te weinig gebleken: de trefkans van de
+      # cache is 78,6% over alles, en regel_k4c_regelrecht haalt 31,3% op een
+      # database van 81 MB. Die past ruim tien keer in het geheugen, maar wordt
+      # steeds verdrongen door de tachtig andere databases.
+      #
+      # 1Gi komt van twee kanten op hetzelfde uit: alle databases samen zijn
+      # 1113 MB, dus je cachet er praktisch alles mee, en het is de gebruikelijke
+      # 25% van de 4Gi hierboven.
+      #
+      # LET OP: max_connections en shared_buffers zijn allebei postmaster-
+      # parameters, dus dit vraagt een herstart. Met instances: 1 is dat downtime
+      # voor Keycloak, Forgejo, de mailrelay en elke projectdatabase tegelijk. Rol
+      # dit uit op een gepland moment, niet terloops.
       - op: replace
         path: /spec/postgresql/parameters/max_connections
         value: "500"
+      - op: add
+        path: /spec/postgresql/parameters/shared_buffers
+        value: 1GB
