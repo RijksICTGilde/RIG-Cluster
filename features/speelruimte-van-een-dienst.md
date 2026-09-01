@@ -107,9 +107,26 @@ ongeldig: 'storage' moet tussen 1Gi en 10Gi liggen; je gaf 50Gi.
 dus die regel heeft de vorige versie van het bestand nodig. `ProjectStore` geeft die mee
 (`validate_project_structure(data, previous=...)`), en `validate_service_setting_changes`
 koppelt de blokken op hun PLEK -- het project zelf, een component bij naam, een deployment
-bij naam -- zodat een verkleining niet met een ander component wordt vergeleken. Stond het
-veld er in de vorige versie niet, dan stond het op de standaard van de dienst, en telt
-zakken onder die standaard ook als verlagen.
+bij naam -- zodat een verkleining niet met een ander component wordt vergeleken.
+
+Beide versies worden **hetzelfde gelezen**: de waarde als het veld er staat, anders de
+standaard van de dienst. Een veld weglaten is daarmee dezelfde verlaging als het veld
+expliciet verlagen, en dat is precies de bedoeling -- anders was de regel te omzeilen door
+het veld (of het hele configblok) gewoon weg te laten, en een leeg wizardveld doet dat.
+Deze drie wegen leveren dus dezelfde weigering op:
+
+| van `storage: 5Gi` naar | uitkomst |
+|---|---|
+| `storage: 2Gi` | geweigerd -- "kan alleen omhoog" |
+| `storage` weggelaten uit het configblok | geweigerd (effectief de standaard) |
+| het hele configblok weg, dienst als kale string | geweigerd (idem) |
+| de dienst helemaal niet meer gebruiken | toegestaan -- dat is een verwijdering |
+
+Alle plekken waar een serviceconfig kan wonen staan in een wandeling,
+`iter_service_config_blocks`, die twee lezers bedient: de waardetoets gebruikt `where` en
+`from_version`, de wijzigingstoets `location`. Daar horen ook de diensten bij waarvan de
+config een component-EIGENSCHAP is (`user-env-vars`, `aliases`), zodat een setting daarop
+niet wel op zijn grenzen en nooit op zijn wijziging wordt getoetst.
 
 **Het wizardveld bouwen.** `setting_field(setting, service, layer)` maakt de `Editable` +
 `EditableVisualizer` uit de declaratie: het yaml-pad via `config_path`, de invoercontrole
