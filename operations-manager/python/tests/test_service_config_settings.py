@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -130,6 +131,20 @@ EIGENSCHAP_LIMIET = IntegerSetting(
 DEPLOYMENT_VOLUME = QuantitySetting(
     path="storage",
     layers=(ConfigLayer.DEPLOYMENT,),
+    default="5Gi",
+    minimum="1Gi",
+    maximum="10Gi",
+    kind=QuantityKind.MEMORY,
+    grow_only=True,
+    label="Opslag",
+)
+
+#: Hetzelfde grow_only-volume, maar op de laag waar een dienst meer dan een blok per plek
+#: kan hebben: de deployment-component, waar de opslagdiensten een record per MOUNT
+#: bijhouden. Een laag, dus de declaratiegrendel laat hem toe.
+MOUNT_VOLUME = QuantitySetting(
+    path="storage",
+    layers=(ConfigLayer.DEPLOYMENT_COMPONENT,),
     default="5Gi",
     minimum="1Gi",
     maximum="10Gi",
@@ -361,6 +376,33 @@ def test_een_veld_dat_een_wijziging_beoordeelt_staat_op_precies_een_laag() -> No
     assert DEPLOYMENT_VOLUME.judges_changes is True
     assert MEMORY.judges_changes is False
     assert CONNECTIONS.judges_changes is False
+
+
+def test_een_volgende_soort_grens_kan_het_vlaggetje_niet_vergeten() -> None:
+    """``judges_changes`` vraagt het aan de KLASSE, niet aan een los bij te houden vlaggetje.
+
+    Een volgende soort grens die ``check_change`` een body geeft en het vlaggetje vergat,
+    erfde precies de omzeiling die de grendel hierboven sluit. Nu is de body zelf het
+    antwoord: hetzelfde veld op twee lagen wordt geweigerd zonder dat de nieuwe soort er
+    iets voor hoeft te zeggen.
+    """
+
+    @dataclass(frozen=True, kw_only=True)
+    class AlleenLangerSetting(IntegerSetting):
+        def check_change(self, previous: Any, new: Any) -> None:
+            if new < previous:
+                raise SettingError(f"'{self.path}' kan alleen omhoog.")
+
+    assert AlleenLangerSetting(path="x", layers=(ConfigLayer.PROJECT,), default=5, minimum=1, maximum=10, label="X")
+    with pytest.raises(ValueError, match="beoordeelt een WIJZIGING"):
+        AlleenLangerSetting(
+            path="x",
+            layers=(ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT),
+            default=5,
+            minimum=1,
+            maximum=10,
+            label="X",
+        )
 
 
 def test_met_een_laag_is_het_blok_de_plek_waar_de_waarde_wordt_opgelost() -> None:
@@ -708,6 +750,111 @@ def test_de_regel_draait_net_zo_op_de_deploymentlaag(monkeypatch: pytest.MonkeyP
             _redis_project({"storage": "2Gi"}), previous=_redis_project(None, in_deployment=False)
         )
     )
+
+
+def _mount_project(mounts: dict[str, str] | None) -> dict[str, Any]:
+    """Een project waarin de dienst een record PER MOUNT bijhoudt op de deployment-component.
+
+    Dat is de vorm die het schema daar zelf beschrijft (``deployment-component-service``:
+    of een record met een config, of een LIJST van records per ``reference``) en die de
+    opslagdiensten gebruiken. Hier op ``namespace-redis``, want die dienst heeft geen
+    configmodel op deze laag, zodat het model een gedeclareerd veld doorlaat en de
+    speelruimte het enige is dat er iets van vindt.
+    """
+    component: dict[str, Any] = {"reference": "backend"}
+    if mounts is not None:
+        component["services"] = {
+            _REDIS.value: [{"reference": naam, "config": {"storage": maat}} for naam, maat in mounts.items()]
+        }
+    return {
+        "schema-version": 2,
+        "name": "demo",
+        "display-name": "Demo",
+        "description": "test project",
+        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "clusters": ["local"],
+        "services": [_REDIS.value],
+        "components": [{"name": "backend", "type": "single", "services": [_REDIS.value]}],
+        "deployments": [
+            {
+                "name": "deployment-1",
+                "cluster": "local",
+                "namespace": "demo",
+                "components": [component],
+            }
+        ],
+        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+    }
+
+
+def test_twee_mounts_van_dezelfde_dienst_zijn_twee_plekken() -> None:
+    """Een plek is fijnmaziger dan een laag: de mount hoort erbij.
+
+    Op de deployment-componentlaag draagt een component meerdere blokken van dezelfde
+    dienst, een per mount. Deelden die een sleutel, dan overleefde van de vorige versie
+    alleen de LAATSTE mount en werd elke mount daartegen gelegd.
+    """
+    blokken = iter_service_config_blocks(_mount_project({"data": "8Gi", "logs": "2Gi"}))
+    per_mount = {b.location: b.config for b in blokken if b.name == _REDIS.value and "/mount:" in b.location}
+    assert per_mount == {
+        "deployment:deployment-1/component:backend/mount:data": {"storage": "8Gi"},
+        "deployment:deployment-1/component:backend/mount:logs": {"storage": "2Gi"},
+    }
+
+
+def test_een_mount_verkleinen_wordt_niet_gedekt_door_een_ANDERE_mount(monkeypatch: pytest.MonkeyPatch) -> None:
+    """De verkleining van mount 'data' mag niet tegen mount 'logs' worden weggestreept.
+
+    Dezelfde klasse als het veld weglaten, het blok weglaten en de laag verwisselen: een
+    echte verkleining van dezelfde PVC, opgeschreven op een plek waar de koppeling hem
+    niet zag. Twee rijen: naast een kleinere mount en naast een ongewijzigde mount.
+    """
+    provider = get_service(_REDIS)
+    monkeypatch.setattr(provider, "config_settings", lambda: (MOUNT_VOLUME,))
+
+    # 'data' krimpt van 8Gi naar 2Gi terwijl 'logs' op 2Gi blijft staan.
+    with pytest.raises(ProjectIntegrityError, match="kan alleen omhoog"):
+        asyncio.run(
+            validate_project_structure(
+                _mount_project({"data": "2Gi", "logs": "2Gi"}), previous=_mount_project({"data": "8Gi", "logs": "2Gi"})
+            )
+        )
+    # En naast een mount die niet verandert.
+    with pytest.raises(ProjectIntegrityError, match="kan alleen omhoog"):
+        asyncio.run(
+            validate_project_structure(
+                _mount_project({"data": "2Gi", "logs": "8Gi"}), previous=_mount_project({"data": "8Gi", "logs": "8Gi"})
+            )
+        )
+    # Omhoog mag hier net zo goed, en een mount erbij is een toevoeging.
+    asyncio.run(
+        validate_project_structure(
+            _mount_project({"data": "10Gi", "logs": "2Gi"}), previous=_mount_project({"data": "8Gi", "logs": "2Gi"})
+        )
+    )
+    asyncio.run(
+        validate_project_structure(
+            _mount_project({"data": "8Gi", "logs": "2Gi"}), previous=_mount_project({"data": "8Gi"})
+        )
+    )
+
+
+def test_een_ongewijzigd_bestand_met_ongelijke_mounts_blijft_opslaanbaar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """De vervelendste kant van dezelfde sleutel: niets veranderen en toch geweigerd worden.
+
+    Met een sleutel per component werd 'data' vergeleken met de laatste mount van de
+    vorige versie ('logs', 8Gi), dus was een project met twee ongelijke mounts daarna
+    voor ELKE wijziging onopslaanbaar -- ook voor een wijziging die de opslag niet raakt.
+    """
+    provider = get_service(_REDIS)
+    monkeypatch.setattr(provider, "config_settings", lambda: (MOUNT_VOLUME,))
+    bestand = _mount_project({"data": "2Gi", "logs": "8Gi"})
+
+    asyncio.run(validate_project_structure(copy.deepcopy(bestand), previous=copy.deepcopy(bestand)))
+
+    gewijzigd = copy.deepcopy(bestand)
+    gewijzigd["description"] = "iets anders"
+    asyncio.run(validate_project_structure(gewijzigd, previous=copy.deepcopy(bestand)))
 
 
 # --- 7b. een wandeling, twee lezers -----------------------------------------------

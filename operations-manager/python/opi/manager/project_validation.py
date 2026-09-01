@@ -205,10 +205,12 @@ class ServiceConfigBlock:
 
     ``location`` identifies the block ACROSS two versions of the same file -- the
     project itself, a named component, a named deployment, a named component inside a
-    named deployment -- so a rule about a CHANGE can line the same block up in the old
-    file and the new one. Without that key a reduction would be compared against an
-    unrelated component's value. ``where`` is that same place phrased for a user, and
-    ``from_version`` is the entry's stamped schema version; both are for the value check.
+    named deployment, and inside that a named mount where the service keeps a record per
+    mount -- so a rule about a CHANGE can line the same block up in the old file and the
+    new one. Without that key a reduction would be compared against an unrelated
+    component's, or an unrelated mount's, value. ``where`` is that same place phrased for
+    a user, and ``from_version`` is the entry's stamped schema version; both are for the
+    value check.
 
     ``config`` is None for a service that is referenced without configuration, which is
     not the same as a service that is not referenced at all. That difference is the
@@ -303,6 +305,12 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
         # services, a list of per-mount records under that key. Both are walked, because
         # the global schema no longer guards this layer: opening up the deployment
         # envelope moved that job here.
+        #
+        # In that list shape one place carries MORE THAN ONE block of the same service,
+        # one per mount, so the mount belongs in the location: the change rule pairs a
+        # block with its previous version by (location, name), and without the mount two
+        # mounts of the same service would share that key -- comparing one mount's size
+        # with another's.
         for component in deployment.get("components", []) or []:
             if not isinstance(component, dict):
                 continue
@@ -312,9 +320,11 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
             services = component.get("services")
             if isinstance(services, dict):
                 for name, body in services.items():
+                    per_mount = isinstance(body, list)
                     for entry in body if isinstance(body, list) else [body]:
+                        mount = entry.get("reference") if per_mount and isinstance(entry, dict) else None
                         yield ServiceConfigBlock(
-                            location=location,
+                            location=location if mount is None else f"{location}/mount:{mount}",
                             where=where,
                             name=name,
                             layer=ConfigLayer.DEPLOYMENT_COMPONENT,
@@ -781,8 +791,11 @@ def validate_service_setting_changes(previous: dict[str, Any], project_data: dic
     to be compared against and is only judged on its bounds. Comparing per block is the
     same as comparing the EFFECTIVE value because a setting that judges a change may name
     only one layer -- ``ConfigSetting.__post_init__`` refuses the declaration otherwise --
-    so the block at this location is the only one ``resolve_setting`` would read for that
-    field.
+    so the block at that PLACE is the only one ``resolve_setting`` would read for that
+    field. Which is why the location goes down to the mount where a service keeps a
+    record per mount: there one layer still carries several blocks under one component,
+    each with its own effective value, and one key for all of them would both let a
+    shrink through and refuse a file in which nothing changed at all.
 
     A field a version does not mention was standing on the service default, and that is
     what it is compared with -- on both sides, so a reduction cannot be smuggled in by
