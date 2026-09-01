@@ -468,6 +468,23 @@ def create_app() -> FastAPI:
             for method in getattr(route, "methods", None) or []
         }
 
+        # De foutenvelop, een keer als schema en daarna op elke /api/-operatie. Hier en
+        # niet als ``responses={500: ...}`` bij elk endpoint: hij geldt overal hetzelfde,
+        # en honderd decorators zijn honderd plekken die uit de pas kunnen lopen. ``5XX``
+        # is de bereikvorm die OpenAPI daarvoor heeft.
+        schemas = openapi_schema["components"].setdefault("schemas", {})
+        envelop = ProblemDetail.model_json_schema(ref_template="#/components/schemas/{model}")
+        schemas.update(envelop.pop("$defs", {}))
+        schemas["ProblemDetail"] = envelop
+        vijf_xx = {
+            "description": (
+                "Er ging iets mis aan onze kant. Het lag niet aan je verzoek, dus opnieuw "
+                "proberen kan helpen; 'reference' is het kenmerk waarmee een beheerder deze "
+                "fout in de log terugvindt."
+            ),
+            "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetail"}}},
+        }
+
         for path, methods in openapi_schema["paths"].items():
             if not path.startswith("/api/"):
                 continue
@@ -476,6 +493,7 @@ def create_app() -> FastAPI:
                     continue
                 scheme = "BearerToken" if (path, verb) in bearer_operations else "APIKeyHeader"
                 method["security"] = [{scheme: []}]
+                method.setdefault("responses", {})["5XX"] = vijf_xx
 
         # Sort paths: V2 first, then v1, for clarity in docs
         paths = openapi_schema.get("paths", {})
