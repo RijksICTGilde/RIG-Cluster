@@ -131,9 +131,14 @@ except SkopeoValidationError as e:
 * naar een **5xx** ook niet uit een smalle vangst -- dat is de laag waarvan de aanroeper
   niets hoort te weten.
 
+Beide gelden voor elke deur naar buiten, niet alleen voor `detail=`: ook de body van een
+`JSONResponse`, `HTMLResponse`, `PlainTextResponse` of `Response`. Twee gereedschapsroutes
+gaven hun uitzondering via die deur mee.
+
 De controle volgt tussenstappen (`error_msg = str(e)` en daarna `detail=f"...{error_msg}"`),
 en een statuscode die niet uit de aanroep is af te lezen telt als fout: een grendel die bij
-twijfel doorlaat is geen grendel.
+twijfel doorlaat is geen grendel. Een antwoordklasse zonder `status_code` telt als 200 --
+daar mag een smalle, eigen uitzondering zijn boodschap wel meegeven.
 
 ## Bestanden
 
