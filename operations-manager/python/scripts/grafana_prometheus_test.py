@@ -86,12 +86,27 @@ def get_datasources(token: str) -> list[dict] | None:
 
 
 def find_prometheus_datasource(datasources: list[dict]) -> dict | None:
-    """Find the Prometheus or Mimir datasource."""
-    for ds in datasources:
-        ds_type = ds.get("type", "")
-        if ds_type in ("prometheus", "mimir"):
+    """
+    Find the Prometheus or Mimir datasource.
+
+    Grafana lists several, and the first one is 'Mimir billing', which only holds billing
+    series. Set GRAFANA_DATASOURCE_UID to pick one explicitly; otherwise prefer 'prd'.
+    """
+    candidates = [ds for ds in datasources if ds.get("type", "") in ("prometheus", "mimir")]
+    if not candidates:
+        return None
+
+    wanted = os.environ.get("GRAFANA_DATASOURCE_UID")
+    if wanted:
+        for ds in candidates:
+            if ds.get("uid") == wanted:
+                return ds
+        print(f"Warning: GRAFANA_DATASOURCE_UID={wanted} not found, falling back")
+
+    for ds in candidates:
+        if "prd" in str(ds.get("uid", "")) and "billing" not in str(ds.get("uid", "")):
             return ds
-    return None
+    return candidates[0]
 
 
 def query_prometheus(token: str, datasource: dict, query: str = "up") -> dict | None:
@@ -134,6 +149,29 @@ def query_prometheus(token: str, datasource: dict, query: str = "up") -> dict | 
     except requests.RequestException as e:
         print(f"Error executing query: {e}")
         return None
+
+
+def report_result_problems(result: dict) -> None:
+    """
+    Show what Grafana put inside a 200 OK body.
+
+    /api/ds/query answers 200 even when the datasource itself fails and hides the reason
+    in results[refId].error, so an empty answer and a broken datasource look identical
+    unless you look here.
+    """
+    ref_results = result.get("results", {})
+    if not ref_results:
+        print("  !! 200 OK but no 'results' key at all")
+        return
+
+    for ref_id, ref_result in ref_results.items():
+        error = ref_result.get("error")
+        if error:
+            print(
+                f"  !! {ref_id} error (status={ref_result.get('status', '?')}, source={ref_result.get('errorSource', 'unknown')}): {error}"
+            )
+        elif not ref_result.get("frames"):
+            print(f"  -- {ref_id}: no error, but zero frames (datasource has no data for this query)")
 
 
 def print_query_results(result: dict, max_results: int = 15) -> None:
@@ -214,7 +252,17 @@ def main() -> int:
 
     print(f"\nUsing datasource: {prometheus_ds.get('name')} (uid: {prometheus_ds.get('uid')})")
 
-    # Step 4: Execute test queries
+    # Step 4: Execute queries - the ones given on the command line, else the built-in set
+    if sys.argv[1:]:
+        test_queries = [(q, "from command line") for q in sys.argv[1:]]
+        for query, _ in test_queries:
+            print(f"\n--- {query} ---")
+            result = query_prometheus(token, prometheus_ds, query)
+            if result:
+                report_result_problems(result)
+                print_query_results(result)
+        return 0
+
     test_queries = [
         ("up", "Basic connectivity check"),
         # Resource limits queries (from prometheus.py connector)
@@ -237,6 +285,7 @@ def main() -> int:
         print(f"\n--- {description} ---")
         result = query_prometheus(token, prometheus_ds, query)
         if result:
+            report_result_problems(result)
             print_query_results(result)
 
     print("\n" + "=" * 60)
