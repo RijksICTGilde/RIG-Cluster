@@ -30,13 +30,35 @@ patches:
       # Give production real headroom.
       - op: replace
         path: /spec/resources/limits/memory
-        value: 2Gi
+        value: 6Gi
       - op: replace
         path: /spec/resources/limits/cpu
         value: "2"
       - op: replace
         path: /spec/resources/requests/memory
-        value: 512Mi
+        value: 2Gi
       - op: replace
         path: /spec/resources/requests/cpu
         value: 250m
+      # Ademruimte, geen noodgreep: op 1 september zat productie op 77 verbindingen
+      # met een piek van 121 in 24 uur, dus de 250 kneep nog niet. Wel liep een
+      # project vast op zijn eigen rollimiet, en dat gesprek gaat de komende tijd
+      # vaker over meer verbindingen per project.
+      #
+      # max_connections staat in base op 250 en dat blijft zo: base draait op Kind
+      # met 512Mi, waar 500 verbindingen onzin zijn. Alleen productie gaat omhoog,
+      # net als bij de resources hierboven.
+      #
+      # Het geheugen moet mee. Gemeten kost een verbinding ongeveer 6,5Mi bovenop
+      # een basis van zo'n 250Mi (shared_buffers 128Mi plus postmaster), dus 500
+      # verbindingen komen op ongeveer 3,5Gi. De 6Gi hierboven is die schatting
+      # plus marge voor work_mem, dat 4Mi per sorteerstap pakt en per query
+      # meerdere keren kan aanslaan.
+      #
+      # LET OP: max_connections is een postmaster-parameter, dus dit vraagt een
+      # herstart. Met instances: 1 is dat downtime voor Keycloak, Forgejo, de
+      # mailrelay en elke projectdatabase tegelijk. Rol dit uit op een gepland
+      # moment, niet terloops.
+      - op: replace
+        path: /spec/postgresql/parameters/max_connections
+        value: "500"
