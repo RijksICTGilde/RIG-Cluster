@@ -237,6 +237,13 @@ it runs where both versions are in hand (`ProjectStore` hands the previous one t
 there, the service default if it is not -- so leaving the field, or the whole config block,
 out is the same reduction as writing a smaller number.
 
+A `grow_only` field may name **exactly one layer**, and any other declaration is refused
+at import time. The change is compared per config block, while the effective value comes
+from the most specific layer that says something: spread the same field over two layers
+and a reduction can be written on the layer that wins without any block getting smaller.
+One layer makes "this block did not shrink" and "this value did not shrink" the same
+sentence. Which layer it is does not matter.
+
 What a service does not declare is not settable, and a layer it does not name is refused.
 A service that declares nothing -- the whole catalog today -- behaves exactly as before.
 See `features/speelruimte-van-een-dienst.md`.
