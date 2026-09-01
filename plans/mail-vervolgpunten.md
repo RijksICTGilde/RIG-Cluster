@@ -258,6 +258,30 @@ voor platformcomponenten, met een eigen `directory` - is **niet gemeten**.
 
 **Open**: die meting. Zonder die uitkomst is dit geen plan maar een wens.
 
+## Eigen mailsjablonen voor Keycloak, en de vork eronder
+
+**Stand**: open, en er ligt een ontwerpvraag onder die eerst beslist moet worden.
+
+RC-175 heeft de inlogpost Nederlands gemaakt door `internationalizationEnabled`,
+`supportedLocales` en `defaultLocale` op elke realm te zetten. Dat gebruikt Keycloaks eigen
+vertalingen, en die zijn onvolledig (406 regels tegen 534 Engelse op het moment van
+schrijven), dus een enkele zin valt terug op het Engels. `emailTheme` is bewust leeg
+gebleven: het MinBZK-thema levert geen bruikbaar mailthema (waargenomen: kale Engelse tekst
+met dat thema geladen).
+
+**De vork, en hij moet in die taak beslist worden en niet erbuiten:**
+
+- Wil je **EEN taal per bericht**, op basis van de locale van de gebruiker, dan is het
+  locale-mechanisme van RC-175 de goede weg en zijn eigen sjablonen alleen een kwestie van
+  mooiere teksten.
+- Wil je **BEIDE talen in EEN bericht**, dan werkt dat mechanisme juist tegen je: Keycloak
+  rendert precies een locale. Dan schrijf je eigen FreeMarker-sjablonen die beide talen zelf
+  bevatten.
+
+**Wat het NIET vraagt**: geen Java en geen build. De bezorging bestaat al - een ConfigMap
+gemount onder `/opt/keycloak/themes/`, dezelfde weg die de relay-emailSender-jar al gebruikt
+(zie de `zad-providers`-volume in het Keycloak-manifest).
+
 ## Wat hier bewust NIET staat
 
 De fundament-migratie van de sandbox (app-of-apps): eigen traject, en er ligt op dit
