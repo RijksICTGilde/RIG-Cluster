@@ -26,7 +26,11 @@ from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.validators import ConfigSettingValidator
 from opi.forms.visualizers.config_setting_fields import setting_field
-from opi.manager.project_validation import validate_project_structure, validate_service_configs
+from opi.manager.project_validation import (
+    iter_service_config_blocks,
+    validate_project_structure,
+    validate_service_configs,
+)
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.config_settings import (
     MISSING,
@@ -373,8 +377,28 @@ def test_een_veld_zonder_die_regel_mag_beide_kanten_op() -> None:
 
 
 def test_een_wijziging_wordt_alleen_beoordeeld_op_een_laag_die_de_dienst_openzet() -> None:
+    """VOLUME staat alleen op projectniveau open, dus per deployment valt er niets te zeggen."""
     check_setting_changes([VOLUME], {"storage": "5Gi"}, {"storage": "2Gi"}, ConfigLayer.DEPLOYMENT)
-    check_setting_changes([VOLUME], {"storage": "5Gi"}, {"iets-anders": 1}, ConfigLayer.PROJECT)
+    check_setting_changes([VOLUME], {"storage": "5Gi"}, {"iets-anders": 1}, ConfigLayer.DEPLOYMENT)
+
+
+def test_het_veld_weglaten_is_dezelfde_verlaging_als_het_expliciet_verlagen() -> None:
+    """Beide kanten worden hetzelfde gelezen: de waarde, of anders de standaard.
+
+    Alleen de velden beoordelen die de NIEUWE versie noemt maakt de regel omzeilbaar
+    door het veld weg te laten -- de effectieve waarde zakt dan naar de standaard, en
+    dat is precies de verlaging die de regel weigert.
+    """
+    with pytest.raises(SettingError, match="kan alleen omhoog"):
+        check_setting_changes([VOLUME], {"storage": "5Gi"}, {"storage": "1Gi"}, ConfigLayer.PROJECT)
+    with pytest.raises(SettingError, match="kan alleen omhoog"):
+        check_setting_changes([VOLUME], {"storage": "5Gi"}, {"iets-anders": 1}, ConfigLayer.PROJECT)
+    with pytest.raises(SettingError, match="kan alleen omhoog"):
+        check_setting_changes([VOLUME], {"storage": "5Gi"}, {}, ConfigLayer.PROJECT)
+    with pytest.raises(SettingError, match="kan alleen omhoog"):
+        check_setting_changes([VOLUME], {"storage": "5Gi"}, None, ConfigLayer.PROJECT)
+    # Noemt geen van beide versies het veld, dan staan ze allebei op de standaard.
+    check_setting_changes([VOLUME], {}, {}, ConfigLayer.PROJECT)
 
 
 def test_verlagen_ten_opzichte_van_de_standaard_telt_ook_als_verlagen() -> None:
@@ -420,6 +444,21 @@ def test_een_verlaging_elders_in_het_bestand_verwart_de_vergelijking_niet(declar
     asyncio.run(validate_project_structure(nieuw, previous=oud))
 
 
+def _store_op(vorige: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> GitProjectStore:
+    """Een echte ``GitProjectStore`` met ``vorige`` als de vastgelegde versie."""
+    get_project_service().clear_all_projects()
+    remote = FakeRemote()
+    remote.commit("initial", {RELATIVE_PATH: dump_yaml_to_string(vorige)})
+    connector = FakeGitConnector(remote, str(tmp_path))
+    store = GitProjectStore(working_dir=str(tmp_path))
+
+    async def _get_connector() -> FakeGitConnector:
+        return connector
+
+    monkeypatch.setattr(store, "get_connector", _get_connector)
+    return store
+
+
 def test_de_opslagroute_geeft_de_vorige_versie_door(monkeypatch: pytest.MonkeyPatch, tmp_path, declaring: Any) -> None:
     """De regel moet ook echt afgaan op de weg die een projectbestand wegschrijft.
 
@@ -428,21 +467,96 @@ def test_de_opslagroute_geeft_de_vorige_versie_door(monkeypatch: pytest.MonkeyPa
     de store zou de regel decoratie zijn: groen in een unittest en nooit in productie.
     """
     declaring(VOLUME)
-    get_project_service().clear_all_projects()
-    remote = FakeRemote()
-    remote.commit("initial", {RELATIVE_PATH: dump_yaml_to_string(_project({"storage": "5Gi"}))})
-    connector = FakeGitConnector(remote, str(tmp_path))
-    store = GitProjectStore(working_dir=str(tmp_path))
-
-    async def _get_connector() -> FakeGitConnector:
-        return connector
-
-    monkeypatch.setattr(store, "get_connector", _get_connector)
+    store = _store_op(_project({"storage": "5Gi"}), monkeypatch, tmp_path)
 
     with pytest.raises(ProjectIntegrityError, match="kan alleen omhoog"):
         asyncio.run(store.save("demo", _project({"storage": "2Gi"}), message="krimp", actor="test"))
 
     asyncio.run(store.save("demo", _project({"storage": "8Gi"}), message="groei", actor="test"))
+
+
+def _zonder_configblok() -> dict[str, Any]:
+    """Hetzelfde project, maar de dienst staat er als kale string in."""
+    data = _project({})
+    data["services"] = [_DATABASE.value]
+    return data
+
+
+def _zonder_de_dienst() -> dict[str, Any]:
+    """Hetzelfde project, maar de dienst wordt niet meer gebruikt."""
+    data = _project({})
+    data["services"] = []
+    data["components"] = [{"name": "backend", "type": "single", "services": []}]
+    return data
+
+
+@pytest.mark.parametrize(
+    "nieuw",
+    [
+        pytest.param(_project({"storage": "2Gi"}), id="expliciet-verlaagd"),
+        pytest.param(_project({}), id="veld-weggelaten"),
+        pytest.param(_zonder_configblok(), id="configblok-weg"),
+    ],
+)
+def test_dezelfde_verlaging_wordt_langs_elke_weg_geweigerd(
+    nieuw: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path, declaring: Any
+) -> None:
+    """Van 5Gi naar effectief 1Gi, op drie manieren opgeschreven -- en drie keer nee.
+
+    De uitkomst is elke keer dezelfde: de standaard van de dienst, kleiner dan wat er
+    stond. Weigeren langs de ene weg en doorlaten langs de andere zou de grendel
+    omzeilbaar maken door het veld gewoon leeg te laten, en dat is precies wat een leeg
+    wizardveld doet.
+    """
+    declaring(VOLUME)
+    store = _store_op(_project({"storage": "5Gi"}), monkeypatch, tmp_path)
+
+    with pytest.raises(ProjectIntegrityError, match="kan alleen omhoog"):
+        asyncio.run(store.save("demo", nieuw, message="krimp", actor="test"))
+
+
+def test_de_dienst_helemaal_niet_meer_gebruiken_is_geen_verlaging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, declaring: Any
+) -> None:
+    """Een dienst opzeggen is een verwijdering, geen verkleining van zijn volume."""
+    declaring(VOLUME)
+    store = _store_op(_project({"storage": "5Gi"}), monkeypatch, tmp_path)
+
+    asyncio.run(store.save("demo", _zonder_de_dienst(), message="dienst eruit", actor="test"))
+
+
+# --- 7b. een wandeling, twee lezers -----------------------------------------------
+
+
+def test_een_dienst_zonder_configblok_staat_toch_in_de_wandeling() -> None:
+    """Anders is 'het blok is weg' niet te onderscheiden van 'de dienst is weg'.
+
+    Het eerste is een wijziging om te beoordelen (alles valt terug op de standaard), het
+    tweede is een verwijdering. Zonder het kale blok in de wandeling ziet de
+    wijzigingstoets ze allebei als niets.
+    """
+    (blok,) = [b for b in iter_service_config_blocks(_zonder_configblok()) if b.location == "project"]
+    assert blok.name == _DATABASE.value
+    assert blok.config is None
+    assert [b for b in iter_service_config_blocks(_zonder_de_dienst()) if b.name == _DATABASE.value] == []
+
+
+def test_de_wandeling_ziet_ook_de_blokken_die_een_component_eigenschap_zijn() -> None:
+    """Een wandeling, twee lezers: de waardetoets en de wijzigingstoets zien hetzelfde.
+
+    ``user-env-vars`` en ``aliases`` zijn diensten waarvan de config een eigenschap van
+    het component is in plaats van een blok in een ``services:``-lijst. Stonden ze in
+    maar een van de twee wandelingen, dan werd een setting op zo'n dienst wel op zijn
+    grenzen getoetst en nooit op zijn wijziging.
+    """
+    data = _project({"storage": "1Gi"})
+    data["components"][0]["user-env-vars"] = "API_KEY=x"
+
+    (env,) = [b for b in iter_service_config_blocks(data) if b.owned_property == "user-env-vars" and b.config]
+    assert env.name == ServiceType.USER_ENV_VARS.value
+    assert env.layer is ConfigLayer.COMPONENT
+    assert env.location == "component:backend"
+    assert env.where == "van component 'backend'"
 
 
 # --- 8. de wizard leest dezelfde declaratie ---------------------------------------
