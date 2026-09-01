@@ -17,7 +17,7 @@ from opi.connectors.keycloak import (
     RealmType,
     role_gate_flow_alias,
 )
-from opi.core.cluster_config import get_keycloak_mail_from_address
+from opi.core.cluster_config import get_mail_from_address
 from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -555,8 +555,8 @@ class KeycloakYamlHandler:
 
         ``from`` is DESCRIPTIVE, not steering. The relay rewrites the sender itself, so what
         belongs here is the address that actually comes out; it comes from
-        ``get_keycloak_mail_from_address``, the same derivation ``MailManager`` hands to the
-        relay, so the two cannot drift.
+        ``get_mail_from_address``, the same value ``MailManager`` hands to the relay, so the
+        two cannot drift.
 
         Nothing happens on a cluster with no relay, and that is not laziness: on such a
         cluster the post does not work either way, and writing this key would take the
@@ -592,7 +592,7 @@ class KeycloakYamlHandler:
         property, and it holds only as long as this map names no destination. What a tenant
         writes there anyway is swept off again; see ``_SMTP_CONNECTION_KEYS``.
         """
-        return {"from": get_keycloak_mail_from_address(settings.CLUSTER_MANAGER)}
+        return {"from": get_mail_from_address(settings.CLUSTER_MANAGER)}
 
     async def ensure_realm_self_service(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
         """Reconcile every realm in this blueprint against what the blueprint says (idempotent).
