@@ -56,6 +56,7 @@ from opi.web.router import web_router
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from starlette.requests import Request
     from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
@@ -539,7 +540,7 @@ def create_app() -> FastAPI:
     from opi.middleware.maintenance import MaintenanceMiddleware
     from opi.utils.csrf import CSRFMiddleware
 
-    def _wil_een_pagina(request) -> bool:  # type: ignore[no-untyped-def]
+    def _wil_een_pagina(request: Request) -> bool:
         """Of deze aanroeper HTML wil, of de JSON die elke client vandaag parseert.
 
         De ``Accept``-header beslist, niet het pad -- op een uitzondering na: onder
@@ -549,7 +550,7 @@ def create_app() -> FastAPI:
             return False
         return "text/html" in request.headers.get("accept", "")
 
-    def _fout_antwoord(request, status_code: int, detail: object) -> Response:  # type: ignore[no-untyped-def]
+    def _fout_antwoord(request: Request, status_code: int, detail: object) -> Response:
         """Het antwoord op een 5xx: een pagina voor een browser, een envelop voor de rest.
 
         Wat hier NIET in komt is de uitzondering. Die stond tot nu toe kaal op het scherm

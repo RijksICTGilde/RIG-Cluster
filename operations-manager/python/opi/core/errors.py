@@ -80,6 +80,16 @@ def statusomschrijving(status_code: int) -> str:
         return str(status_code)
 
 
+def kenmerk_nu() -> str:
+    """Het kenmerk van het verzoek dat nu loopt, of een lege string.
+
+    Voor een plek die geen ``request`` in handen heeft -- een hulpfunctie die een
+    fragment vult -- maar wel binnen hetzelfde verzoek draait.
+    """
+    huidig = get_flow_id()
+    return "" if huidig == "-" else huidig
+
+
 def kenmerk_van(request: Request) -> str:
     """Het kenmerk van dit verzoek, of een lege string als er geen is.
 
@@ -90,8 +100,7 @@ def kenmerk_van(request: Request) -> str:
     uit_scope = request.scope.get("state", {}).get("flow_id")
     if isinstance(uit_scope, str) and uit_scope not in ("", "-"):
         return uit_scope
-    huidig = get_flow_id()
-    return "" if huidig == "-" else huidig
+    return kenmerk_nu()
 
 
 def server_error_page(tekst: str, kenmerk: str) -> str:

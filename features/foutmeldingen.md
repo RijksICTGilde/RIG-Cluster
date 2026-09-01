@@ -103,6 +103,18 @@ except Exception as e:
 De handler zet er "Blijft het misgaan, meld dan kenmerk req-xxxxxxxx." achter; die zin
 schrijf je dus niet zelf.
 
+**Antwoord je zelf, dan komt de handler er niet aan te pas.** Een fragment, een dict die
+verderop een body wordt, een regel in een lijst: daar zet je het kenmerk er zelf achter met
+`met_kenmerk(zin, kenmerk_van(request))`. Heb je geen `request` in handen -- een
+hulpfunctie die een kaart vult -- dan geeft `kenmerk_nu()` het kenmerk van het verzoek dat
+nu loopt:
+
+```python
+except Exception:
+    logger.exception("Ophalen van het resourcegebruik voor %s mislukt", project_name)
+    ctx["usage_error"] = met_kenmerk("Probeer het over een minuut opnieuw.", kenmerk_van(request))
+```
+
 Voor een mislukte render is er `log_render_failure`, die het regelnummer en de bronregel
 van Jinja2 in de log zet in plaats van in het antwoord:
 
@@ -131,14 +143,42 @@ except SkopeoValidationError as e:
 * naar een **5xx** ook niet uit een smalle vangst -- dat is de laag waarvan de aanroeper
   niets hoort te weten.
 
-Beide gelden voor elke deur naar buiten, niet alleen voor `detail=`: ook de body van een
-`JSONResponse`, `HTMLResponse`, `PlainTextResponse` of `Response`. Twee gereedschapsroutes
-gaven hun uitzondering via die deur mee.
+### Welke deuren de grendel kent
+
+Niet "elke deur naar buiten" -- dat is een belofte die een AST-sweep niet waar kan maken.
+Hij kent er vijf, en dat is precies wat hij dekt:
+
+| deur | de vorm die erachter stond |
+|---|---|
+| `HTTPException` | `detail=f"Template error: {e}"` -- de storing zelf |
+| antwoordklassen | `JSONResponse({"error": f"Encryption failed: {e}"}, 500)` in de gereedschapsroutes |
+| sjabloon-render | `ctx["usage_error"] = str(e)` en daarna `render(..., context=ctx)` -- de Prometheus-fout op het tabblad Project |
+| een teruggegeven waarde | `return {"success": False, "error": f"Database restore error: {e}"}`, die de aanroeper in een 500-body zet |
+| `list.append(...)` | een regel per onderdeel in de logs-body |
+
+Wat hij **niet** ziet, en dus niet belooft: een waarde die via een attribuut of een
+buitenstaand object weglekt, iets dat eerst `opi/web`/`opi/api` verlaat (de managerlaag
+valt buiten de gemeten mappen), en een uitzondering die wordt opgeslagen en pas bij een
+later verzoek getoond.
+
+De besmetting reist mee de handler **uit**: bij het resourcegebruik stond de toekenning in
+het except-blok en de `render` eronder, buiten de `try`. De naam van de uitzondering zelf
+blijft binnen de handler -- Python maakt hem aan het eind van het blok los -- dus een
+tweede blok met dezelfde naam `e` raakt er niet door besmet.
 
 De controle volgt tussenstappen (`error_msg = str(e)` en daarna `detail=f"...{error_msg}"`),
 en een statuscode die niet uit de aanroep is af te lezen telt als fout: een grendel die bij
 twijfel doorlaat is geen grendel. Een antwoordklasse zonder `status_code` telt als 200 --
-daar mag een smalle, eigen uitzondering zijn boodschap wel meegeven.
+daar mag een smalle, eigen uitzondering zijn boodschap wel meegeven, net als een render of
+een teruggegeven dict.
+
+### Een gewogen uitzondering
+
+Een plek die de regel bewust niet volgt draagt `# foutmelding-gewogen: <reden>` in zijn
+except-blok. Zonder reden telt het teken niet, en een test houdt het aantal op ten hoogste
+twee: een uitzondering die je moet opschrijven blijft zichtbaar, een gat in het model niet.
+Vandaag is er één, in `opi/api/federation_router.py`: de health-check zet de fout van een
+peer naast de url van diezelfde peer, achter de master-sleutel.
 
 ## Bestanden
 
@@ -148,7 +188,8 @@ daar mag een smalle, eigen uitzondering zijn boodschap wel meegeven.
 | `opi/api/v2/models.py` | `ProblemDetail`, `ErrorCategory`, `category_for_status` |
 | `opi/server.py` | de twee handlers die kiezen tussen pagina en envelop |
 | `tests/test_server_error_page.py` | wat een aanroeper krijgt, en de storing zelf nagespeeld |
-| `tests/test_geen_uitzondering_in_foutmelding.py` | de grendel plus tegenproeven |
+| `tests/test_geen_uitzondering_in_foutmelding.py` | de grendel plus een tegenproef per deur |
+| `tests/test_geen_uitzondering_via_de_andere_deuren.py` | dezelfde deuren gemeten op de route zelf |
 
 ## Wat hierna kan
 

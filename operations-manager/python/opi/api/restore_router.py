@@ -14,6 +14,7 @@ from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
+from opi.core.errors import kenmerk_van, met_kenmerk
 from opi.handlers.project_file_handler import (
     create_project_file_handler,
     extract_storage_from_component_services,
@@ -2184,10 +2185,21 @@ async def restore_deployment_resource(
             )
 
         if not result["success"]:
+            # ``result["error"]`` is hier een zin voor de lezer -- "de doeldatabase is
+            # niet leeg, verhoog de generatie" -- en die blijft staan. Wat de laag
+            # eronder erover zei staat in de log; zie de hulpfuncties hieronder.
+            logger.error(
+                "Terugzetten van %s %s voor %s/%s mislukt: %s",
+                body.resource_type,
+                body.reference_name,
+                project_name,
+                deployment_name,
+                result["error"],
+            )
             return JSONResponse(
                 content={
                     "status": "failed",
-                    "message": result["error"],
+                    "message": met_kenmerk(result["error"], kenmerk_van(request)),
                     "resource_type": body.resource_type,
                     "reference_name": body.reference_name,
                     "old_generation": result.get("old_generation"),
@@ -2349,9 +2361,12 @@ async def _restore_pvc_with_versioning(
     )
 
     if not result.success:
+        # De melding van de terugzetlaag noemt de pod en de laatste 500 tekens van zijn
+        # log; dat hoort in de log en niet in een antwoord.
+        logger.error("Terugzetten van PVC %s mislukt: %s", target_pvc_name, result.error)
         return {
             "success": False,
-            "error": f"PVC restore failed: {result.error}",
+            "error": TERUGZETTEN_MISLUKT,
             "old_generation": current_generation,
             "new_generation": next_generation,
             "old_resource_name": source_pvc_name,
@@ -2517,9 +2532,10 @@ async def _restore_database_with_versioning(
         )
 
         if not restore_result.success:
+            logger.error("Terugzetten van database %s mislukt: %s", new_database_name, restore_result.error)
             return {
                 "success": False,
-                "error": f"Database restore failed: {restore_result.error}",
+                "error": TERUGZETTEN_MISLUKT,
                 "old_generation": current_generation,
                 "new_generation": next_generation,
                 "old_resource_name": old_database_name,
@@ -2535,11 +2551,11 @@ async def _restore_database_with_versioning(
             "new_resource_name": new_database_name,
         }
 
-    except Exception as e:
-        logger.exception(f"Error in database versioned restore: {e}")
+    except Exception:
+        logger.exception("Error in database versioned restore")
         return {
             "success": False,
-            "error": f"Database restore error: {e}",
+            "error": TERUGZETTEN_MISLUKT,
             "old_generation": current_generation,
             "new_generation": next_generation,
             "old_resource_name": old_database_name,
@@ -2677,9 +2693,10 @@ async def _restore_bucket_with_versioning(
         )
 
         if not restore_result.success:
+            logger.error("Terugzetten van bucket %s mislukt: %s", new_bucket_name, restore_result.error)
             return {
                 "success": False,
-                "error": f"Bucket restore failed: {restore_result.error}",
+                "error": TERUGZETTEN_MISLUKT,
                 "old_generation": current_generation,
                 "new_generation": next_generation,
                 "old_resource_name": old_bucket_name,
@@ -2695,11 +2712,11 @@ async def _restore_bucket_with_versioning(
             "new_resource_name": new_bucket_name,
         }
 
-    except Exception as e:
-        logger.exception(f"Error in bucket versioned restore: {e}")
+    except Exception:
+        logger.exception("Error in bucket versioned restore")
         return {
             "success": False,
-            "error": f"Bucket restore error: {e}",
+            "error": TERUGZETTEN_MISLUKT,
             "old_generation": current_generation,
             "new_generation": next_generation,
             "old_resource_name": old_bucket_name,
