@@ -16,7 +16,8 @@ De regel die de test afdwingt, in twee helften:
 Beide gelden voor elke deur naar buiten, niet alleen voor ``detail=``: twee
 gereedschapsroutes gaven hun uitzondering mee in de body van een ``JSONResponse``.
 
-Wat wel mag: een smalle, eigen uitzondering die zijn boodschap aan een **4xx** meegeeft.
+Wat wel mag: een smalle, eigen uitzondering die zijn boodschap meegeeft aan alles wat
+GEEN 5xx is - een 4xx, of de 200 waarmee een formulier terugkomt.
 ``SkopeoValidationError("tag mag geen spaties bevatten")`` IS de tekst voor de lezer, en
 het plan vraagt uitdrukkelijk om een eigen boodschap waar die hoort.
 
