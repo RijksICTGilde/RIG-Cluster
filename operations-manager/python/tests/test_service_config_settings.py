@@ -283,6 +283,16 @@ def test_een_veld_zonder_laag_kan_nergens_gezet_worden_en_wordt_geweigerd() -> N
         IntegerSetting(path="x", layers=(), default=1, minimum=1, maximum=10, label="X")
 
 
+def test_een_veld_zonder_pad_wijst_nergens_heen() -> None:
+    with pytest.raises(ValueError, match="heeft een pad nodig"):
+        IntegerSetting(path="", layers=(ConfigLayer.PROJECT,), default=1, minimum=1, maximum=10, label="X")
+
+
+def test_een_verzameling_zonder_waarden_laat_niets_toe() -> None:
+    with pytest.raises(ValueError, match="geen enkele toegestane waarde"):
+        ChoiceSetting(path="image", layers=(ConfigLayer.PROJECT,), default="x", allowed=(), label="Image")
+
+
 # --- 5. wat een dienst niet declareert, is niet instelbaar ------------------------
 
 
@@ -302,6 +312,7 @@ def test_een_veld_op_een_laag_die_de_dienst_niet_openzet_wordt_geweigerd() -> No
 
 def test_een_ongenoemd_veld_wordt_overgeslagen() -> None:
     assert read_setting_value({"iets-anders": 3}, CONNECTIONS) is MISSING
+    assert repr(MISSING) == "MISSING"  # zodat "ontbreekt" in een foutmelding leesbaar is
     check_settings([CONNECTIONS, MEMORY], {"iets-anders": 3}, ConfigLayer.PROJECT)
 
 
@@ -359,6 +370,11 @@ def test_een_volume_verkleinen_wordt_geweigerd_ook_binnen_de_grenzen() -> None:
 
 def test_een_veld_zonder_die_regel_mag_beide_kanten_op() -> None:
     MEMORY.check_change("1Gi", "512Mi")
+
+
+def test_een_wijziging_wordt_alleen_beoordeeld_op_een_laag_die_de_dienst_openzet() -> None:
+    check_setting_changes([VOLUME], {"storage": "5Gi"}, {"storage": "2Gi"}, ConfigLayer.DEPLOYMENT)
+    check_setting_changes([VOLUME], {"storage": "5Gi"}, {"iets-anders": 1}, ConfigLayer.PROJECT)
 
 
 def test_verlagen_ten_opzichte_van_de_standaard_telt_ook_als_verlagen() -> None:
@@ -462,6 +478,17 @@ def test_het_formulier_weigert_precies_wat_de_validatie_weigert() -> None:
     with pytest.raises(SettingError) as opgeslagen:
         CONNECTIONS.check(200)
     assert melding == str(opgeslagen.value)
+
+
+def test_een_gesloten_verzameling_kan_een_keuzelijst_dragen() -> None:
+    """De widget mag anders, de declaratie blijft wat het veld beoordeelt."""
+    veld = setting_field(IMAGE, _DATABASE, ConfigLayer.PROJECT, widget=WidgetType.SELECT, values_provider="images")
+
+    assert veld.widget is WidgetType.SELECT
+    assert veld.editable.values_provider == "images"
+    assert veld.examples == list(IMAGE.allowed)
+    assert veld.editable.validator is not None
+    assert veld.editable.validator.validate("docker.io/library/postgres:latest")
 
 
 def test_een_genest_veld_wijst_naar_de_geneste_plek() -> None:
