@@ -27,16 +27,28 @@ logger = logging.getLogger(__name__)
 #: Before this list existed they were hardcoded in ``create_realm()`` and the blueprints
 #: that named them were simply not read -- so ``sso-support.yaml`` promised self-registration,
 #: password reset and login-by-email and delivered none of the three. The blueprints now
-#: DESCRIBE what happens, which for three of these four fields meant writing down the value
-#: that was already live rather than the one that had been promised.
+#: DESCRIBE what happens, which for three of the first four fields meant writing down the
+#: value that was already live rather than the one that had been promised.
 #:
 #: A key that is absent from a blueprint is not touched, so a realm keeps whatever it has
 #: and a blueprint that says nothing about a field claims nothing about it.
+#:
+#: The last three are the LANGUAGE of what a realm shows and sends. Keycloak's texts are
+#: English until a realm turns internationalisation on and picks a default: the three fields
+#: appeared in no blueprint and in no code, so every confirmation mail went out in English
+#: no matter which theme was loaded. Note that this reaches further than the post -- the
+#: LOGIN SCREEN of these realms becomes Dutch too, which is wanted but is a visible change
+#: for existing users. ``supportedLocales`` keeps ``en`` alongside ``nl`` so a user can still
+#: switch, and Keycloak's own Dutch translation is incomplete (406 lines against 534 English
+#: at the time of writing), so an occasional sentence falls back to English.
 _BLUEPRINT_REALM_FIELDS = (
     "registrationAllowed",
     "loginWithEmailAllowed",
     "resetPasswordAllowed",
     "verifyEmail",
+    "internationalizationEnabled",
+    "supportedLocales",
+    "defaultLocale",
 )
 
 #: The ``smtpServer`` keys that describe a CONNECTION, and that OPI therefore removes.

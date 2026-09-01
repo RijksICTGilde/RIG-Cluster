@@ -277,6 +277,51 @@ kubectl -n rig-system rollout restart deployment/keycloak
 
 Andersom (eerst Keycloak) is het venster juist zo lang als het duurt voordat OPI weer draait.
 
+## De taal: Nederlands, met Engels ernaast
+
+Tot RC-175 kwam er **Engelse standaardtekst** uit Keycloak, ongeacht welk thema er geladen
+was. De reden is prozaisch: internationalisatie stond nergens aan. De drie velden die dat
+bepalen kwamen in de hele codebase niet voor, en zonder die velden rendert Keycloak zijn
+ingebouwde Engelse berichten.
+
+Elke blauwdruk zet ze nu:
+
+```yaml
+internationalizationEnabled: true
+supportedLocales: ["nl", "en"]
+defaultLocale: "nl"
+```
+
+Ze gaan mee in `_BLUEPRINT_REALM_FIELDS`, dus ze landen op de aanmaakweg **en** bij elke
+verwerking - anders zou geen enkele bestaande realm ze ooit krijgen. De glob-toets die eist
+dat elke blauwdruk elk gelezen realmveld noemt, leest diezelfde lijst, dus een nieuwe
+blauwdruk die de taalvelden vergeet is rood in plaats van stil Engels.
+
+Drie dingen om te weten:
+
+- **Dit raakt meer dan de post.** Het **inlogscherm** van deze realms wordt er ook Nederlands
+  van. Dat is gewenst, maar het is een zichtbare wijziging voor bestaande gebruikers en hoort
+  geen verrassing te zijn.
+- **De Nederlandse vertaling van Keycloak is onvolledig** - op het moment van schrijven 406
+  regels tegen 534 Engelse - dus een enkele zin valt terug op het Engels. Dat is geen defect
+  van ons. `en` blijft naast `nl` in `supportedLocales` staan, zodat een gebruiker kan
+  omschakelen.
+- **Een taal is pas beschikbaar als login-, account- EN emailthema hem ondersteunen.** Voor
+  `nl` is dat het geval: Keycloak levert `messages_nl.properties` mee in zijn base/email-thema.
+
+**`emailTheme` blijft leeg.** Het MinBZK-thema levert geen bruikbaar mailthema (waargenomen:
+kale Engelse tekst met dat thema geladen). Eigen mailsjablonen zijn een eigen taak, met een
+echte ontwerpvraag eronder - zie `plans/mail-vervolgpunten.md`.
+
+### Wanneer het landt
+
+De relay krijgt de nieuwe afzender wanneer OPI zijn afzendertabel wegschrijft, dus bij een
+start. Een realm krijgt de taalvelden en de nieuwe `smtpServer.from` bij zijn eerstvolgende
+verwerking. Die twee lopen dus niet gelijk op, en in dat venster kan een realm een
+`smtpServer.from` claimen die de relay nog niet kent. Dat is onschuldig - de relay bepaalt de
+`From:` zelf en negeert de `smtpServer` van een realm volledig - maar wie de twee naast elkaar
+leest ziet er anders een fout in.
+
 ## `verifyEmail`: wie wordt geraakt
 
 Sinds deze taak staat `verifyEmail: true` op de blauwdrukken `sso-support` en

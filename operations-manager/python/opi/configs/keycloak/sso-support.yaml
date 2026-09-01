@@ -64,6 +64,24 @@ realms:
     resetPasswordAllowed: false
     editUsernameAllowed: false
     verifyEmail: true
+    # De TAAL van wat deze realm toont en verstuurt. Zonder deze drie velden staat
+    # internationalisatie uit en komt er Engelse standaardtekst uit Keycloak, ongeacht
+    # welk thema er staat - dat was de staat tot RC-175, en het gold ook voor de
+    # bevestigingsmail bij het inloggen.
+    #
+    # LET OP: dit raakt meer dan de post. Het INLOGSCHERM van deze realm wordt er ook
+    # Nederlands van. Dat is gewenst, maar het is een zichtbare wijziging voor bestaande
+    # gebruikers. `en` blijft in de lijst staan zodat een gebruiker kan omschakelen, en de
+    # Nederlandse vertaling van Keycloak zelf is onvolledig (406 regels tegen 534 Engelse),
+    # dus een enkele zin valt terug op het Engels. Dat is geen defect van ons.
+    #
+    # emailTheme blijft leeg: het MinBZK-thema levert geen bruikbaar mailthema (waargenomen:
+    # kale Engelse tekst met dat thema geladen). Keycloak levert messages_nl.properties mee
+    # in zijn base/email-thema, en dat is wat `nl` hier bruikbaar maakt. Eigen mailsjablonen
+    # zijn een eigen taak.
+    internationalizationEnabled: true
+    supportedLocales: ["nl", "en"]
+    defaultLocale: "nl"
     bruteForceProtected: true
     loginTheme: "nl-design-system"
     # Audit events: persist user events (incl. UPDATE_PROFILE/UPDATE_EMAIL) and admin
