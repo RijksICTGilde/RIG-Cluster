@@ -205,6 +205,40 @@ carries one derived line ("Geen projectbrede instellingen; u stelt deze dienst p
 component, bij Componenten in."). A new service needs no template change to get it: the
 sentence is built from the layers the service declares.
 
+### How far may a project go: the declared latitude
+
+A bound on a user-settable field belongs to the *service*, not to whoever writes the
+project file. `config_settings()` is where a service says it, per field: the minimum, the
+maximum (or the allowed set), the default, and the layers a project may set it on.
+
+```python
+def config_settings(self):
+    return (
+        IntegerSetting(path="connection-limit", layers=(ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT),
+                       default=20, minimum=1, maximum=100, label="Connectielimiet"),
+        QuantitySetting(path="storage", layers=(ConfigLayer.PROJECT,), default="1Gi",
+                        minimum="1Gi", maximum="100Gi", kind=QuantityKind.MEMORY,
+                        grow_only=True, label="Opslag"),
+    )
+```
+
+Three consumers read that one declaration, which is the whole reason it exists: the merge
+across layers (`resolve_setting`, "more specific wins" -- deployment over project over the
+service default), the project-file validation (`project_validation`, so the wizard, the
+API and a hand-edited file are judged alike), and the wizard field
+(`setting_field(...)`, which takes its yaml path, its input check, its help text and its
+prefill from here). A bound restated as `le=100` next to it is a second rule that drifts.
+
+Three kinds and no fourth: `IntegerSetting`, `QuantitySetting` (parsed and compared as a
+number -- `1Gi` is larger than `512Mi`, `2` larger than `100m`) and `ChoiceSetting`.
+`grow_only=True` marks a field that can only move up; that is a rule about a *change*, so
+it runs where both versions are in hand (`ProjectStore` hands the previous one to
+`validate_project_structure`).
+
+What a service does not declare is not settable, and a layer it does not name is refused.
+A service that declares nothing -- the whole catalog today -- behaves exactly as before.
+See `features/speelruimte-van-een-dienst.md`.
+
 ## Forms and wizard screens
 
 **Registering a service gives it no UI at all.** The enum, the `ServiceDefinition` and the
