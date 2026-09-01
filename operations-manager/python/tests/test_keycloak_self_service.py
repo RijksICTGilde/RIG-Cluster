@@ -238,7 +238,94 @@ async def test_een_blueprint_zonder_deze_velden_schrijft_niets() -> None:
     keycloak.update_realm_settings.assert_not_awaited()
 
 
-def test_elk_blueprint_noemt_de_vier_velden() -> None:
+# --- de taal van wat een realm toont en verstuurt ----------------------------------
+
+
+@pytest.mark.usefixtures("_met_relay")
+@pytest.mark.parametrize("template", ["sso-only", "sso-support"])
+async def test_een_bestaande_realm_krijgt_de_drie_taalvelden(template: str) -> None:
+    """Zonder deze drie staat internationalisatie uit en komt er Engelse standaardtekst uit
+    Keycloak, ongeacht welk thema er staat - dat was de staat tot RC-175, en het gold ook
+    voor de bevestigingsmail bij het inloggen.
+
+    De toets loopt over de RECONCILE-weg en niet over de aanmaakweg, want dat is de weg die
+    een BESTAANDE realm raakt: ``create_realm()`` wordt overgeslagen zodra de realm er is,
+    dus zonder deze weg zou geen enkele realm van vandaag ze ooit krijgen.
+
+    En hij eist dat er verder NIETS meebeweegt: alles wat de blauwdruk niet noemt houdt de
+    realm zoals het is, en de vier velden die hij wel noemt staan hier al goed.
+    """
+    realm = {
+        "registrationAllowed": False,
+        "loginWithEmailAllowed": False,
+        "resetPasswordAllowed": False,
+        "verifyEmail": template == "sso-support",
+        "smtpServer": {"from": "noreply-rijksapp@rijksoverheid.nl"},
+        "loginTheme": "iets-eigens",
+    }
+    handler, keycloak = _handler_with_fake_connector(realm=realm)
+
+    await handler.ensure_realm_self_service(
+        BLUEPRINT_DIR / f"{template}.yaml",
+        {"project_realm_name": "rig-demo", "project_display_name": "demo"},
+    )
+
+    geschreven = keycloak.update_realm_settings.await_args.args[1]
+    assert geschreven == {
+        "internationalizationEnabled": True,
+        "supportedLocales": ["nl", "en"],
+        "defaultLocale": "nl",
+    }
+
+
+@pytest.mark.usefixtures("_met_relay")
+async def test_dezelfde_taalvelden_nog_eens_schrijven_doet_niets() -> None:
+    """Elke verwerking van elk project komt hier langs en elke ``update_realm`` landt in het
+    admin-event-logboek, dus een reconcile die op elke run schrijft vult dat met ruis.
+
+    Gemeten op de LADING en niet op "is er aangeroepen": ``update_realm_settings`` neemt een
+    lege lading zelf als no-op aan, precies zodat de aanroeper niet hoeft te tellen.
+    """
+    handler, keycloak = _handler_with_fake_connector(
+        realm={
+            "registrationAllowed": False,
+            "loginWithEmailAllowed": False,
+            "resetPasswordAllowed": False,
+            "verifyEmail": True,
+            "internationalizationEnabled": True,
+            "supportedLocales": ["nl", "en"],
+            "defaultLocale": "nl",
+            "smtpServer": {"from": "noreply-rijksapp@rijksoverheid.nl"},
+        }
+    )
+
+    await handler.ensure_realm_self_service(
+        BLUEPRINT_DIR / "sso-support.yaml",
+        {"project_realm_name": "rig-demo", "project_display_name": "demo"},
+    )
+
+    assert keycloak.update_realm_settings.await_args.args[1] == {}
+
+
+@pytest.mark.parametrize("template", ["sso-only", "sso-support"])
+def test_de_projectblauwdrukken_zetten_nederlands_als_standaardtaal(template: str) -> None:
+    """De glob-toets hierboven eist alleen dat een blauwdruk de velden NOEMT; dit is de
+    waarde. Een blauwdruk die ``defaultLocale: en`` zou zetten noemt het veld keurig en
+    levert alsnog Engelse post op de realms waar een gebruiker inlogt.
+
+    ``en`` blijft naast ``nl`` staan zodat een gebruiker kan omschakelen; de Nederlandse
+    vertaling van Keycloak is onvolledig, dus een enkele zin valt daarop terug.
+    """
+    from ruamel.yaml import YAML
+
+    realm = (YAML().load((BLUEPRINT_DIR / f"{template}.yaml").read_text()) or {})["realms"][0]
+
+    assert realm["internationalizationEnabled"] is True
+    assert realm["defaultLocale"] == "nl"
+    assert list(realm["supportedLocales"]) == ["nl", "en"]
+
+
+def test_elk_blueprint_noemt_elk_gelezen_realmveld() -> None:
     """De blauwdruk BESCHRIJFT de realm, dus zwijgen is hier geen geldige toestand.
 
     Dit is de toets die de val van deze wijziging dichthoudt: OPI raakt een veld dat het
@@ -248,12 +335,14 @@ def test_elk_blueprint_noemt_de_vier_velden() -> None:
 
     Daarom LEEST deze toets de map in plaats van een lijst namen op te sommen: een opsomming
     dekt de blauwdrukken die er waren toen hij geschreven werd, en juist de nieuwe is degene
-    die het veld vergeet.
+    die het veld vergeet. En daarom leest hij ``_BLUEPRINT_REALM_FIELDS`` in plaats van de
+    velden zelf te noemen: de lijst is met de drie taalvelden van RC-175 gegroeid, en die
+    groei hoort de eis vanzelf mee te nemen.
 
     En daarom leest hij het bestand ZOALS HET ER STAAT, zonder de ``extends``-keten op te
-    lossen: een geerfde waarde is geen besluit. ``operations-manager-realm.yaml`` erfde deze
-    vier velden van ``sso-support`` en kreeg zo stil ``verifyEmail: true`` op de realm van
-    ZAD zelf; sinds die blauwdruk ze zelf noemt, doet hij hier gewoon mee.
+    lossen: een geerfde waarde is geen besluit. ``operations-manager-realm.yaml`` erfde de
+    toenmalige vier velden van ``sso-support`` en kreeg zo stil ``verifyEmail: true`` op de
+    realm van ZAD zelf; sinds die blauwdruk ze zelf noemt, doet hij hier gewoon mee.
     """
     from opi.handlers.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
     from ruamel.yaml import YAML
@@ -279,7 +368,7 @@ def test_geen_blauwdruk_erft_zijn_realmvelden() -> None:
     """Een blauwdruk die een realm KRIJGT via ``extends`` moet die realm zelf noemen.
 
     Dit is de val waar de toets hierboven doorheen viel. ``operations-manager-realm.yaml``
-    zei niets over de vier velden en had ook geen ``realms``-sleutel, dus de sweep sloeg hem
+    zei niets over die velden en had ook geen ``realms``-sleutel, dus de sweep sloeg hem
     over - terwijl de realm van ZAD zelf via ``extends: sso-support`` wel degelijk
     ``verifyEmail: true`` kreeg. Erven is stil: er staat nergens een besluit, en de sweep
     hierboven meet niets.
