@@ -149,7 +149,7 @@ geven is een gat, geen voorziening.
 
 ## Drie smaken, en waarom ze zo zijn
 
-Er zijn twee paden naar VLAM, en ze bestaan naast elkaar:
+Er zijn drie paden naar VLAM, en ze bestaan naast elkaar:
 
 | | VPN-pad (poort 8080) | deze dienst, getermineerd (8081) | deze dienst, doorlus (8443) |
 |---|---|---|---|
@@ -158,7 +158,7 @@ Er zijn twee paden naar VLAM, en ze bestaan naast elkaar:
 | CA-probleem | lost de gebruiker zelf op | een keer opgelost, op de proxy | de dienst levert de bundel, de applicatie gebruikt hem |
 | toegang | Keycloak-login met rolfilter | netwerkregel + de API-sleutel van VLAM | netwerkregel + de API-sleutel van VLAM |
 
-De keuze voor terminatie is de kern van het EERSTE pad, en het pad dat je hoort te kiezen tenzij je
+De keuze voor terminatie is de kern van het GETERMINEERDE pad, en het pad dat je hoort te kiezen tenzij je
 een reden hebt om dat niet te doen. Het certificaat van `vlam-api.rijksweb.nl` komt
 van `Rijksdienst Issuing CA2` en zit in geen enkele publieke bundel, dus zonder terminatie moet elke
 afnemer die keten in zijn eigen runtime vertrouwen. Dat is per taal anders, en in de meeste runtimes

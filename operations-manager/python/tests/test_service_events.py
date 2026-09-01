@@ -126,6 +126,7 @@ class TestParticipationIsDerived:
             ServiceType.KEYCLOAK,
             ServiceType.ATTACHMENTS,
             ServiceType.INVITE,
+            ServiceType.VLAM,
         }
         # LEEG, en dat is geen vergissing. Twee bewoners zijn hier vertrokken, allebei naar
         # een eigen tabblad en allebei om dezelfde reden: het blok stond op twee plekken en
