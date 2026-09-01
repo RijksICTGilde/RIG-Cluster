@@ -86,6 +86,17 @@ in `opi/services/resource_analyzer.py` zodat die vraag op een plek wordt beantwo
 krimpen: een grens die alleen "tussen 1Gi en 100Gi" zegt laat een verkleining door die
 daarna stilletjes niets doet of de uitrol laat vastlopen.
 
+**Een veld dat een wijziging beoordeelt staat op precies een laag.** `grow_only` op meer
+dan een laag wordt bij het inladen geweigerd, met een `ValueError` in de declaratie zelf.
+De reden staat een stukje verderop bij de wijzigingsregel: die vergelijkt per configBLOK,
+terwijl de effectieve waarde uit de meest specifieke laag komt die iets zegt. Staat
+hetzelfde `grow_only`-veld op twee lagen, dan is 8Gi op projectniveau met een NIEUWE
+deployment-override van 2Gi effectief een verkleining zonder dat er ook maar een blok
+kleiner wordt -- dezelfde omzeiling als het veld weglaten, een laag lager opgeschreven.
+Welke laag het is maakt niet uit, als het er maar een is; wie zo'n veld op meer dan een
+laag nodig heeft, moet eerst de OPGELOSTE waarde per plek laten vergelijken, en dat is niet
+gebouwd.
+
 ## Wat het mechanisme dan doet
 
 **Samenvoegen.** `resolve_setting(setting, {laag: waarde})` geeft de effectieve waarde: de
@@ -120,7 +131,9 @@ wizardveld doet dat.
 
 De regel geldt in beide richtingen: het maakt niet uit aan WELKE kant het veld of het blok
 ontbreekt. Deze drie wegen leveren dus dezelfde weigering op (en spiegelen ze de vorige
-versie, dan ook):
+versie, dan ook). Ze staan hier op de projectlaag, maar de laag doet er niet toe: op een
+dienst die het veld per deployment openzet leveren dezelfde drie wegen dezelfde weigering
+per deployment op.
 
 | van `storage: 5Gi` naar | uitkomst |
 |---|---|
@@ -129,6 +142,12 @@ versie, dan ook):
 | het hele configblok weg, dienst als kale string | geweigerd (idem) |
 | de dienst helemaal niet meer gebruiken | toegestaan -- dat is een verwijdering |
 
+Vergelijken per BLOK is hier hetzelfde als vergelijken per EFFECTIEVE waarde, en dat is
+geen toeval maar de reden voor de eis hierboven: staat het veld op een laag, dan is het
+blok op die laag het enige dat `resolve_setting` voor dat veld leest, dus een blok dat niet
+krimpt is een waarde die niet krimpt. Zonder die eis houdt die gelijkstelling niet, en dan
+is de grendel te omzeilen door de verlaging op de laag te schrijven die wint.
+
 Alle plekken waar een serviceconfig kan wonen staan in een wandeling,
 `iter_service_config_blocks`, die twee lezers bedient: de waardetoets gebruikt `where` en
 `from_version`, de wijzigingstoets `location`. Daar horen ook de diensten bij waarvan de
@@ -136,6 +155,14 @@ config een component-EIGENSCHAP is (`user-env-vars`, `aliases`), en beide lezers
 zo'n blok: op zijn grenzen (`_check_declared_settings`, naast het pydantic-model dat er al
 op stond) en op zijn wijziging. Niet het een zonder het ander -- dan staat dezelfde
 scheefte er weer, alleen omgekeerd.
+
+Op zo'n eigenschapsblok **noemt de weigering de waarde niet**, om dezelfde reden waarom de
+modelfout ernaast dat ook niet doet: `user-env-vars` is de eigen omgeving van een component
+en accepteert een platte `dict[str, str]`, dus een waarde op een gedeclareerd pad kan daar
+een geplakt geheim zijn -- en die zin gaat zowel het centrale log in als het antwoord aan de
+aanroeper. De weigering wordt daar uit de DECLARATIE opgebouwd ("`'X'` valt buiten zijn
+speelruimte", plus de speelruimte). Voor een blok in een `services:`-lijst blijft de waarde
+er wel in staan: daar is het de grens zelf die wordt teruggeciteerd.
 
 **Het wizardveld bouwen.** `setting_field(setting, service, layer)` maakt de `Editable` +
 `EditableVisualizer` uit de declaratie: het yaml-pad via `config_path`, de invoercontrole

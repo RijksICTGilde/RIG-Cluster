@@ -131,7 +131,9 @@ def _validate_one_config(
     _check_declared_settings(provider, raw, layer, where, project_name)
 
 
-def _check_declared_settings(provider: Service, raw: Any, layer: ConfigLayer, where: str, project_name: str) -> None:
+def _check_declared_settings(
+    provider: Service, raw: Any, layer: ConfigLayer, where: str, project_name: str, *, name_value: bool = True
+) -> None:
     """The service's declared latitude (RC-168) for one config block.
 
     A value the service opened up has to stay inside the bounds the SERVICE set, and may
@@ -142,10 +144,16 @@ def _check_declared_settings(provider: Service, raw: Any, layer: ConfigLayer, wh
 
     Called for every block in the walk, including the ones whose config is a component
     PROPERTY (``user-env-vars``, ``aliases``): a setting on such a service is judged on
-    its bounds and on its change, not on one of the two. Unlike the model failure next to
-    it, this message may name the value, and that is safe by construction -- a declared
-    setting is a bounded scalar the platform opened up (a number, a quantity, a value out
-    of a closed set), never the free-form content of the surrounding property.
+    its bounds and on its change, not on one of the two.
+
+    ``name_value=False`` for exactly those property blocks, and the reason is the one
+    ``_validate_owned_property`` next door already acts on: the surrounding property holds
+    the component's own environment, and ``UserEnvVarsConfig`` accepts a plain
+    ``dict[str, str]``, so a value read at a declared path there can be a pasted secret --
+    which this message both logs at WARNING and returns to the caller. The refusal is then
+    rendered from the DECLARATION (the field and its room) instead, which says the same
+    thing without repeating what was read. For a block in a ``services:`` list the value is
+    named, as it is the bound itself that is being quoted back.
 
     Raises:
         ProjectIntegrityError: with the sentence the user reads.
@@ -153,9 +161,16 @@ def _check_declared_settings(provider: Service, raw: Any, layer: ConfigLayer, wh
     try:
         check_settings(provider.config_settings(), raw, layer)
     except SettingError as e:
+        # ``setting`` is set only on a refusal that names a value; a wrong-layer refusal
+        # names none and reads the same either way.
+        reason = (
+            f"'{e.setting.path}' valt buiten zijn speelruimte. {e.setting.latitude()}"
+            if not name_value and e.setting is not None
+            else str(e)
+        )
         raise ProjectIntegrityError(
             f"Project '{project_name}': configuratie van service '{provider.service_type.value}' {where} "
-            f"is ongeldig: {e}"
+            f"is ongeldig: {reason}"
         ) from e
 
 
@@ -388,7 +403,8 @@ def _validate_owned_property_block(block: ServiceConfigBlock, project_name: str)
 
     Both, because the walk hands these blocks to the change check as well; judging them
     on their change but not on their bounds is the same divergence the shared walk closed,
-    only the other way around.
+    only the other way around. Neither of the two names the value: see
+    ``_check_declared_settings`` for why the latitude check is asked not to either.
     """
     service = get_service(ServiceType(block.name))
     model = service.config_model
@@ -398,7 +414,7 @@ def _validate_owned_property_block(block: ServiceConfigBlock, project_name: str)
     # guarantee into a silent skip). The latitude check below does not depend on a model.
     if model is not None:
         _validate_owned_property(service, model, block.config, block.where, project_name)
-    _check_declared_settings(service, block.config, block.layer, block.where, project_name)
+    _check_declared_settings(service, block.config, block.layer, block.where, project_name, name_value=False)
 
 
 def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any, where: str, project_name: str) -> None:
@@ -762,10 +778,15 @@ def validate_service_setting_changes(previous: dict[str, Any], project_data: dic
     and not in the per-block walk.
 
     Blocks are matched by location, so a newly added component or deployment has nothing
-    to be compared against and is only judged on its bounds. A field a version does not
-    mention was standing on the service default, and that is what it is compared with --
-    on both sides, so a reduction cannot be smuggled in by leaving the field, or the
-    whole config block, out. That reading holds all the way up: the previous version is
+    to be compared against and is only judged on its bounds. Comparing per block is the
+    same as comparing the EFFECTIVE value because a setting that judges a change may name
+    only one layer -- ``ConfigSetting.__post_init__`` refuses the declaration otherwise --
+    so the block at this location is the only one ``resolve_setting`` would read for that
+    field.
+
+    A field a version does not mention was standing on the service default, and that is
+    what it is compared with -- on both sides, so a reduction cannot be smuggled in by
+    leaving the field, or the whole config block, out. That reading holds all the way up: the previous version is
     looked up by its KEY, so a service referenced BARE there (no config block at all) is
     a version standing on the defaults, not an absence.
 

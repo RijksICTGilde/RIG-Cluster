@@ -63,7 +63,17 @@ class SettingError(ValueError):
 
     Carries the message a user reads, so every road into a project file -- wizard, API,
     hand-edited YAML -- reports the same sentence.
+
+    ``setting`` is set when the refusal is about a VALUE, so a caller that may not repeat
+    the value it read (a block whose surrounding content is free-form and may hold a
+    secret) can render the same refusal from the declaration instead. It stays None for a
+    refusal that names no value at all, such as a field set on a layer the service does
+    not open up.
     """
+
+    def __init__(self, message: str, *, setting: ConfigSetting | None = None) -> None:
+        super().__init__(message)
+        self.setting = setting
 
 
 class QuantityKind(Enum):
@@ -146,10 +156,29 @@ class ConfigSetting(ABC):
             raise ValueError("Een instelbaar veld heeft een pad nodig")
         if not self.layers:
             raise ValueError(f"Instelbaar veld '{self.path}' noemt geen enkele laag waarop het gezet mag worden")
+        if self.judges_changes and len(self.layers) > 1:
+            raise ValueError(
+                f"Instelbaar veld '{self.path}' beoordeelt een WIJZIGING en mag daarom op precies een laag "
+                f"staan; het noemt er {len(self.layers)}. De wijzigingsregel vergelijkt per configBLOK, "
+                f"terwijl de effectieve waarde uit de meest specifieke laag komt die iets zegt -- staat het "
+                f"veld op twee lagen, dan is dezelfde verlaging een laag lager op te schrijven zonder dat "
+                f"een blok kleiner wordt. Wie dit veld op meer dan een laag nodig heeft, moet eerst de "
+                f"OPGELOSTE waarde per plek laten vergelijken."
+            )
         try:
             self.check(self.default)
         except SettingError as e:
             raise ValueError(f"De standaardwaarde van '{self.path}' valt buiten zijn eigen speelruimte: {e}") from e
+
+    @property
+    def judges_changes(self) -> bool:
+        """Whether this setting overrides ``check_change``, i.e. judges a CHANGE.
+
+        Read by ``__post_init__``, because a rule about a change is only sound on a field
+        that lives on exactly one layer -- see the refusal there. A subclass that gives
+        ``check_change`` a body says so here; the base judges no change at all.
+        """
+        return False
 
     @property
     def path_parts(self) -> tuple[str, ...]:
@@ -236,7 +265,9 @@ class QuantitySetting(ConfigSetting):
 
     Compared as a number, never as text. ``grow_only`` marks a field that cannot move
     back down -- a PVC cannot shrink, so a bound of "between 1Gi and 100Gi" would let a
-    reduction through that then silently does nothing or wedges the rollout.
+    reduction through that then silently does nothing or wedges the rollout. Because that
+    is a rule about a change, and changes are judged per config block, a ``grow_only``
+    field may name exactly one layer (enforced in ``ConfigSetting.__post_init__``).
     """
 
     minimum: str
@@ -269,6 +300,10 @@ class QuantitySetting(ConfigSetting):
         if not self._parse(self.minimum) <= amount <= self._parse(self.maximum):
             raise SettingError(f"'{self.path}' moet tussen {self.minimum} en {self.maximum} liggen; je gaf {value}.")
         return value
+
+    @property
+    def judges_changes(self) -> bool:
+        return self.grow_only
 
     def check_change(self, previous: Any, new: Any) -> None:
         if not self.grow_only:
@@ -365,8 +400,14 @@ def check_settings(settings: Sequence[ConfigSetting], config: Any, layer: Config
         if value is MISSING:
             continue
         if not setting.allows(layer):
+            # No value in this message, so it carries no ``setting`` either.
             raise SettingError(wrong_layer_message(setting, layer))
-        setting.check(value)
+        try:
+            setting.check(value)
+        except SettingError as e:
+            # Re-raised with the declaration attached, so a caller that may not repeat the
+            # value can say the same thing from the bounds instead.
+            raise SettingError(str(e), setting=setting) from None
 
 
 def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, config: Any, layer: ConfigLayer) -> None:
@@ -379,7 +420,13 @@ def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, conf
     road to it. So each side is read the same way -- the value if it is there, the
     default if it is not -- and a field neither version mentions is not a change at all.
 
-    Only settings that declare a rule about changes (``grow_only``) do anything here.
+    Only settings that declare a rule about changes (``grow_only``) do anything here, and
+    such a setting lives on exactly one layer -- ``ConfigSetting.__post_init__`` refuses
+    the declaration otherwise. That is what makes comparing per BLOCK the same thing as
+    comparing the EFFECTIVE value: with one layer open, the block at this location is the
+    only thing ``resolve_setting`` would consult for that field, so a value that does not
+    shrink here cannot shrink there. Spread the same field over two layers and that stops
+    holding, because the reduction can then be written on the layer that wins.
 
     Raises:
         SettingError: with the sentence the user reads.
