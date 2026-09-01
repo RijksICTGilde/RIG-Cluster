@@ -69,7 +69,7 @@ from opi.manager.project_validation import validate_project_structure
 from opi.services.project_service import ProjectSummary, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
-from opi.utils.age import decrypt_age_content, get_decoded_project_private_key
+from opi.utils.age import decrypt_tree, get_decoded_project_private_key
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,6 @@ _LOCK_WAIT_WARN_SECONDS = 2.0
 # one refresh later -- which is what the project cache itself already does.
 _LAST_MODIFIED_TTL_SECONDS = 30.0
 _PERSIST_WARN_SECONDS = 3.0
-AGE_HEADER = "-----BEGIN AGE ENCRYPTED FILE-----"
 
 # Version tokens travel to the browser and back, so they are validated before they
 # reach git: a blob SHA is exactly 40 hex characters, anything else is not asked for.
@@ -353,36 +352,8 @@ class GitProjectStore(ProjectStore):
         if not private_key:
             return view
 
-        await self._decrypt_tree(view, private_key)
+        await decrypt_tree(view, private_key)
         return view
-
-    async def _decrypt_tree(self, data: Any, private_key: str) -> None:
-        """Recursively decrypt AGE-encrypted string values in place."""
-        if isinstance(data, dict):
-            for key in list(data.keys()):
-                value = data[key]
-                if isinstance(value, str) and AGE_HEADER in value:
-                    decrypted = await self._try_decrypt(value, private_key, key)
-                    if decrypted is not None:
-                        data[key] = decrypted
-                elif isinstance(value, dict | list):
-                    await self._decrypt_tree(value, private_key)
-        elif isinstance(data, list):
-            for index, item in enumerate(data):
-                if isinstance(item, str) and AGE_HEADER in item:
-                    decrypted = await self._try_decrypt(item, private_key, str(index))
-                    if decrypted is not None:
-                        data[index] = decrypted
-                elif isinstance(item, dict | list):
-                    await self._decrypt_tree(item, private_key)
-
-    @staticmethod
-    async def _try_decrypt(value: str, private_key: str, field: str) -> str | None:
-        try:
-            return await decrypt_age_content(value, private_key)
-        except ValueError, RuntimeError:
-            logger.debug("Failed to decrypt field '%s', leaving as-is", field)
-            return None
 
     # ------------------------------------------------------------------
     # mutations
