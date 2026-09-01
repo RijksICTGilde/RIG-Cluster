@@ -13,6 +13,9 @@ De regel die de test afdwingt, in twee helften:
 * naar een **5xx** mag hij ook uit een smalle vangst niet mee. Een 5xx komt uit de
   infrastructuur, en dat is precies de laag waarvan de aanroeper niets hoort te weten.
 
+Beide gelden voor elke deur naar buiten, niet alleen voor ``detail=``: twee
+gereedschapsroutes gaven hun uitzondering mee in de body van een ``JSONResponse``.
+
 Wat wel mag: een smalle, eigen uitzondering die zijn boodschap aan een **4xx** meegeeft.
 ``SkopeoValidationError("tag mag geen spaties bevatten")`` IS de tekst voor de lezer, en
 het plan vraagt uitdrukkelijk om een eigen boodschap waar die hoort.
@@ -34,8 +37,14 @@ GEMETEN_MAPPEN = ("opi/web", "opi/api")
 #: Vangsten waarvan de inhoud onbekend is.
 BREDE_VANGSTEN = frozenset({"Exception", "BaseException"})
 
-#: Aanroepen die een tekst naar buiten dragen.
-UITGANGEN = frozenset({"HTTPException"})
+#: Aanroepen die een tekst naar buiten dragen. Niet alleen ``HTTPException``: twee
+#: gereedschapsroutes gaven hun uitzondering mee in een ``JSONResponse``-body, wat
+#: hetzelfde lek is door een andere deur.
+UITGANGEN = frozenset({"HTTPException", "JSONResponse", "HTMLResponse", "PlainTextResponse", "Response"})
+
+#: De status van een antwoordklasse die er zelf geen meekrijgt. ``HTTPException`` heeft er
+#: altijd een (het eerste argument), dus dit raakt alleen de responses.
+STANDAARDSTATUS = 200
 
 
 def _wortel() -> Path:
@@ -80,30 +89,44 @@ def _besmet(handler: ast.ExceptHandler) -> set[str]:
     return besmet
 
 
+def _naam_van(functie: ast.expr) -> str | None:
+    if isinstance(functie, ast.Name):
+        return functie.id
+    return functie.attr if isinstance(functie, ast.Attribute) else None
+
+
 def _uitgang(knoop: ast.AST) -> ast.Call | None:
     if not isinstance(knoop, ast.Call):
         return None
-    functie = knoop.func
-    naam = functie.id if isinstance(functie, ast.Name) else functie.attr if isinstance(functie, ast.Attribute) else None
-    return knoop if naam in UITGANGEN else None
+    return knoop if _naam_van(knoop.func) in UITGANGEN else None
+
+
+def _is_http_exception(aanroep: ast.Call) -> bool:
+    return _naam_van(aanroep.func) == "HTTPException"
 
 
 def _status(aanroep: ast.Call) -> int | None:
     """De statuscode, of None als hij niet uit de aanroep zelf is af te lezen."""
-    voor_status: ast.expr | None = aanroep.args[0] if aanroep.args else None
+    voor_status: ast.expr | None = aanroep.args[0] if (_is_http_exception(aanroep) and aanroep.args) else None
     for kw in aanroep.keywords:
         if kw.arg == "status_code":
             voor_status = kw.value
+    if voor_status is None:
+        return None if _is_http_exception(aanroep) else STANDAARDSTATUS
     if isinstance(voor_status, ast.Constant) and isinstance(voor_status.value, int):
         return voor_status.value
     return None
 
 
-def _detail(aanroep: ast.Call) -> ast.expr | None:
+def _tekst(aanroep: ast.Call) -> ast.expr | None:
+    """Wat deze aanroep aan de aanroeper meegeeft: ``detail`` of de body."""
+    sleutel = "detail" if _is_http_exception(aanroep) else "content"
     for kw in aanroep.keywords:
-        if kw.arg == "detail":
+        if kw.arg == sleutel:
             return kw.value
-    return aanroep.args[1] if len(aanroep.args) > 1 else None
+    if _is_http_exception(aanroep):
+        return aanroep.args[1] if len(aanroep.args) > 1 else None
+    return aanroep.args[0] if aanroep.args else None
 
 
 def overtredingen(bron: str, herkomst: str) -> list[str]:
@@ -118,17 +141,17 @@ def overtredingen(bron: str, herkomst: str) -> list[str]:
             aanroep = _uitgang(knoop)
             if aanroep is None:
                 continue
-            detail = _detail(aanroep)
-            if detail is None or not (_namen(detail) & besmet):
+            tekst = _tekst(aanroep)
+            if tekst is None or not (_namen(tekst) & besmet):
                 continue
             status = _status(aanroep)
-            # Een smalle vangst mag zijn eigen boodschap aan een 4xx meegeven. Een status
-            # die niet uit de aanroep is af te lezen telt als onbekend, en dus als fout:
-            # een grendel die bij twijfel doorlaat is geen grendel.
-            if not breed and status is not None and 400 <= status < 500:
+            # Een smalle vangst mag zijn eigen boodschap meegeven zolang het geen 5xx is.
+            # Een status die niet uit de aanroep is af te lezen telt als onbekend, en dus
+            # als fout: een grendel die bij twijfel doorlaat is geen grendel.
+            if not breed and status is not None and status < 500:
                 continue
             waarom = "brede vangst" if breed else f"status {status}"
-            gevonden.append(f"{herkomst}:{aanroep.lineno} ({waarom}): detail={ast.unparse(detail)}")
+            gevonden.append(f"{herkomst}:{aanroep.lineno} ({waarom}): {ast.unparse(tekst)[:100]}")
     return gevonden
 
 
@@ -181,6 +204,23 @@ class TestDeGrendelWerkt:
     def test_een_onbekende_status_telt_als_fout(self) -> None:
         bron = "try:\n    doe()\nexcept ValueError as e:\n    raise HTTPException(status_code=code, detail=str(e))\n"
         assert overtredingen(bron, "toets.py")
+
+    def test_een_uitzondering_in_een_json_body_wordt_gezien(self) -> None:
+        """De andere deur: twee gereedschapsroutes gaven hem mee in een JSONResponse."""
+        bron = (
+            "try:\n"
+            "    versleutel()\n"
+            "except Exception as e:\n"
+            '    return JSONResponse(content={"error": f"Encryption failed: {e!s}"}, status_code=500)\n'
+        )
+        assert overtredingen(bron, "toets.py")
+
+    def test_een_body_zonder_status_telt_als_200(self) -> None:
+        """Een Response krijgt 200 als er niets bij staat; uit een BREDE vangst mag ook dat niet."""
+        breed = 'try:\n    doe()\nexcept Exception as e:\n    return HTMLResponse(content=f"<p>{e}</p>")\n'
+        smal = 'try:\n    doe()\nexcept ProjectSchemaError as e:\n    return HTMLResponse(content=f"<p>{e}</p>")\n'
+        assert overtredingen(breed, "toets.py")
+        assert not overtredingen(smal, "toets.py"), "een validatiemelding op een 200 is de tekst voor de lezer"
 
     @pytest.mark.parametrize(
         "bron",
