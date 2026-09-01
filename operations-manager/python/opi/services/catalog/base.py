@@ -342,6 +342,14 @@ class ManifestContribution:
     sidecars: list[str] = field(default_factory=list)
     #: SOPS secret manifests this service needs written (RC-5 Phase 6c).
     secret_files: list[SecretFileSpec] = field(default_factory=list)
+    #: Read-only file mounts from a Secret this service owns, as
+    #: ``{name, secret_name, mount_path, sub_path}`` (RC-167). **Additive**: the loop
+    #: appends them to the ``attachment_secret_mounts`` template var, which is the one
+    #: existing way from a Secret through a volume to a ``volumeMount`` in
+    #: ``manifests/deployment.yaml.jinja``. Reusing it rather than adding a second
+    #: channel is the point; a ``template_vars`` entry would not do, because that is an
+    #: override and would drop the component's own attachment mounts.
+    secret_mounts: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
