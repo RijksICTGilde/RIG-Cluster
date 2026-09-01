@@ -73,9 +73,18 @@ voorschrijven. Alleen voor 5xx.
 * `reference` is het kenmerk. Op het scherm heet dat "kenmerk"; in de API houdt het de
   Engelse naam die de rest van de velden ook heeft.
 
+Er zit bewust **geen `explanation`** naast `detail`. Bij `StatusError` scheidt dat veld de
+ruwe clustertekst van de uitleg voor mensen; hier is er geen ruwe tekst meer, dus zou het
+een tweede kopie van `detail` zijn.
+
 `InternalError` is nieuw. Een taak met `error_type: internal_error` houdt voorlopig
 `error_category: Unknown`: dat is een waarde die clients al uitlezen, en die verplaatsen is
 een API-wijziging op zichzelf.
+
+De envelop staat in het OpenAPI-document: `ProblemDetail` als schema, en elke
+`/api/`-operatie noemt hem als `5XX`. Dat gebeurt in `custom_openapi()` in `opi/server.py`
+en niet als `responses={500: ...}` bij elk endpoint - de envelop geldt overal hetzelfde, en
+honderd decorators zijn honderd plekken die uit de pas kunnen lopen.
 
 ## Een foutmelding schrijven
 
