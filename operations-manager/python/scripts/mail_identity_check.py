@@ -18,14 +18,13 @@ toetst dus vijf dingen, en alle vijf zijn ze eerder stuk geweest of ongemeten:
    publiceert p=reject en wij ondertekenen niet met DKIM, dus SPF-uitlijning tussen
    envelope en From: is het ENIGE dat een bericht door DMARC krijgt.
 
-   Uitlijnen is niet hetzelfde als GELIJK zijn, en sinds RC-159 lopen de twee voor een
-   account met een eigen afzenderadres bewust uiteen. De relay leidt de ENVELOPE altijd af
-   uit de accountnaam (`[session.mail] rewrite` in zijn config.toml, waar geen
-   sieve-variabele bij komt) terwijl het sieve-script alleen de From: overschrijft. Voor
-   `zad-keycloak` is dat dus `noreply-inloggen@...` in de From: en `noreply-rijksapp@...`
-   in de envelope. DMARC vergelijkt de DOMEINEN en die blijven gelijk, en het plusdeel in
-   de envelope blijft de bounce dragen. Vandaar --verwacht-envelope: de toets is
-   domeinuitlijning plus het adres dat je opgeeft, en niet "de twee zijn dezelfde string".
+   Uitlijnen is niet hetzelfde als GELIJK zijn - de relay leidt de ENVELOPE altijd af uit
+   de accountnaam (`[session.mail] rewrite` in zijn config.toml, waar geen sieve-variabele
+   bij komt) terwijl het sieve-script alleen de From: overschrijft. RC-159 gaf `zad-keycloak`
+   een eigen lokaal deel in de From: en liet de twee daarmee uiteenlopen, waarvoor dit
+   script een --verwacht-envelope kreeg. Sinds RC-175 vertrekt inlogpost onder het KALE
+   adres en vallen de twee weer samen, dus die uitzondering is eruit: elk account toetst
+   op domeinuitlijning EN op hetzelfde adres.
 4. De Reply-To: van de applicatie komt ONGEWIJZIGD aan. Dat is de scheiding waar het
    ontwerp op staat: de From: is identiteit en ligt vast, de Reply-To: zegt alleen waar
    een antwoord heen moet en is dus wel van de applicatie.
@@ -41,12 +40,12 @@ Draaien tegen de sandbox, met twee port-forwards open:
         --verwacht-adres noreply-rijksapp+ai1-uit@rijksoverheid.nl \\
         --verwacht-naam "Robbert Uittenbroek"
 
-Voor het Keycloak-account van het platform, waarvan de From: en de envelope uiteenlopen:
+Voor het Keycloak-account van het platform, dat onder het kale adres vertrekt en zich
+alleen door zijn weergavenaam onderscheidt:
 
     MAIL_RELAY_PASSWORD=<geheim> uv run python scripts/mail_identity_check.py \\
         --user zad-keycloak \\
-        --verwacht-adres noreply-inloggen@rijksoverheid.nl \\
-        --verwacht-envelope noreply-rijksapp@rijksoverheid.nl \\
+        --verwacht-adres noreply-rijksapp@rijksoverheid.nl \\
         --verwacht-naam "Rijksapps"
 
 Het wachtwoord komt uit de omgevingsvariabele MAIL_RELAY_PASSWORD, of anders uit een
@@ -130,15 +129,17 @@ def envelope_fouten(envelope: str, from_adres: str, verwacht: str) -> list[str]:
     p=reject en wij ondertekenen niet met DKIM, dus SPF-UITLIJNING tussen envelope en From:
     is het enige dat een bericht door DMARC krijgt. Uitlijning kijkt naar het DOMEIN.
 
-    Hier stond "envelope == From: == een adres", en dat is sinds RC-159 aantoonbaar te
-    streng: de relay leidt de envelope af uit de ACCOUNTNAAM (`[session.mail] rewrite`)
-    terwijl het sieve-script alleen de From: overschrijft, dus een account met een eigen
-    afzenderadres LOOPT UITEEN in het lokale deel. Voor `zad-keycloak` is dat expres zo, en
-    de oude toets kon voor dat account dus nooit slagen - hij mat een gelijkheid die het
-    ontwerp niet belooft.
+    De twee eisen staan los van elkaar, en dat is de reden dat ze allebei blijven staan. De
+    relay leidt de ENVELOPE af uit de accountnaam (`[session.mail] rewrite`) terwijl het
+    sieve-script alleen de From: overschrijft: twee wegen naar hetzelfde adres, die dus
+    uiteen KUNNEN lopen. RC-159 liet ze voor `zad-keycloak` expres uiteenlopen (een eigen
+    lokaal deel in de From:) en dit script kreeg daar een --verwacht-envelope voor. Sinds
+    RC-175 heeft geen enkel account nog een eigen lokaal deel en vallen de twee wegen weer
+    samen, dus de uitzondering is eruit en `verwacht` is voor elk account gewoon het adres
+    dat ook in de From: hoort te staan.
 
-    Wat hij WEL belooft: hetzelfde domein (anders faalt DMARC) en het adres dat de beller
-    opgeeft (anders is de bounce niet meer te herleiden tot het account).
+    Wat het ontwerp belooft: hetzelfde domein (anders faalt DMARC) en het adres dat de
+    beller opgeeft (anders is de bounce niet meer te herleiden tot het account).
     """
     fouten = []
     if envelope.rpartition("@")[2] != from_adres.rpartition("@")[2]:
@@ -219,14 +220,6 @@ def main() -> int:
         "platformadres, wat de terugval toetst voor een account zonder afzender.",
     )
     parser.add_argument(
-        "--verwacht-envelope",
-        default="",
-        help="Het adres dat in Return-Path hoort te staan. Leeg betekent: hetzelfde als "
-        "--verwacht-adres, wat voor een projectaccount en voor de terugval klopt. Een "
-        "account met een eigen afzenderadres (zad-keycloak) loopt hier bewust uiteen: de "
-        "relay leidt de envelope af uit de accountnaam en overschrijft alleen de From:.",
-    )
-    parser.add_argument(
         "--verwacht-naam",
         default="",
         help="De weergavenaam die de relay ernaast hoort te zetten. Leeg is een geldige "
@@ -234,7 +227,6 @@ def main() -> int:
     )
     args = parser.parse_args()
     wachtwoord = _wachtwoord()
-    verwacht_envelope = args.verwacht_envelope or args.verwacht_adres
 
     stempel = str(int(time.time()))
     # Alle drie de gevallen bieden een andere From: aan, en alle drie horen ze dezelfde
@@ -263,7 +255,7 @@ def main() -> int:
 
         # 3: de envelope lijnt uit met de From: op DOMEIN, en is het verwachte adres.
         envelope = (bericht.get("ReturnPath") or "").strip("<>")
-        fouten.extend(f"[{naam}] {fout}" for fout in envelope_fouten(envelope, afzender, verwacht_envelope))
+        fouten.extend(f"[{naam}] {fout}" for fout in envelope_fouten(envelope, afzender, args.verwacht_adres))
 
         headers = _headers(args.api, bericht["ID"])
         aanwezig = {k.lower(): v for k, v in headers.items()}

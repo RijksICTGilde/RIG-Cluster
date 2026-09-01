@@ -365,9 +365,10 @@ async def test_de_smtpserver_noemt_geen_enkele_bestemming() -> None:
 @pytest.mark.usefixtures("_met_relay")
 async def test_het_afzenderadres_is_dat_van_het_keycloak_account() -> None:
     """Beschrijvend, niet sturend: de relay stelt de afzender zelf vast, dus wat hier hoort
-    te staan is het adres dat er daadwerkelijk uit komt. Dezelfde afleiding als die
-    MailManager aan de relay geeft, zodat de twee niet uiteen kunnen lopen."""
-    from opi.core.cluster_config import get_keycloak_mail_from_address
+    te staan is het adres dat er daadwerkelijk uit komt. Dat is het KALE clusteradres, geen
+    eigen lokaal deel meer - dezelfde waarde die MailManager aan de relay geeft, zodat de
+    twee niet uiteen kunnen lopen."""
+    from opi.core.cluster_config import get_mail_from_address
     from opi.core.config import settings
 
     handler, keycloak = _handler_with_fake_connector(realm={"smtpServer": {}})
@@ -375,7 +376,7 @@ async def test_het_afzenderadres_is_dat_van_het_keycloak_account() -> None:
     await handler._apply_realm_self_service("rig-demo", {})
 
     smtp = keycloak.update_realm_settings.await_args.args[1]["smtpServer"]
-    assert smtp == {"from": get_keycloak_mail_from_address(settings.CLUSTER_MANAGER)}
+    assert smtp == {"from": get_mail_from_address(settings.CLUSTER_MANAGER)}
 
 
 @pytest.mark.usefixtures("_met_relay")

@@ -144,8 +144,14 @@ spec:
               value: "587"
             - name: ZAD_MAIL_RELAY_USERNAME
               value: "zad-keycloak"
+            # Het KALE afzenderadres van het platform, zonder eigen lokaal deel. Dit is
+            # een van DRIE plekken die deze waarde noemen (de andere twee zijn de afzender
+            # die OPI voor zad-keycloak op de relay zet en de smtpServer.from die OPI op
+            # elke realm schrijft); lopen ze uiteen, dan vertrekt post onder een ander
+            # adres dan een realm claimt. Vastgepind in
+            # test_de_drie_plekken_noemen_hetzelfde_afzenderadres.
             - name: ZAD_MAIL_RELAY_FROM
-              value: "noreply-inloggen@rijksoverheid.nl"
+              value: "noreply-rijksapp@rijksoverheid.nl"
             # STARTTLS UIT, en dat is een expliciete beslissing. De submission-listener van
             # de relay biedt geen STARTTLS aan (met EHLO nagemeten in RC-158), dus dit is
             # platte AUTH binnen het cluster - precies wat elk project vandaag ook doet met
