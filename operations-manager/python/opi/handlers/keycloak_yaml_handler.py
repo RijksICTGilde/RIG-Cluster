@@ -17,7 +17,7 @@ from opi.connectors.keycloak import (
     RealmType,
     role_gate_flow_alias,
 )
-from opi.core.cluster_config import get_keycloak_mail_from_address
+from opi.core.cluster_config import get_mail_from_address
 from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -27,16 +27,28 @@ logger = logging.getLogger(__name__)
 #: Before this list existed they were hardcoded in ``create_realm()`` and the blueprints
 #: that named them were simply not read -- so ``sso-support.yaml`` promised self-registration,
 #: password reset and login-by-email and delivered none of the three. The blueprints now
-#: DESCRIBE what happens, which for three of these four fields meant writing down the value
-#: that was already live rather than the one that had been promised.
+#: DESCRIBE what happens, which for three of the first four fields meant writing down the
+#: value that was already live rather than the one that had been promised.
 #:
 #: A key that is absent from a blueprint is not touched, so a realm keeps whatever it has
 #: and a blueprint that says nothing about a field claims nothing about it.
+#:
+#: The last three are the LANGUAGE of what a realm shows and sends. Keycloak's texts are
+#: English until a realm turns internationalisation on and picks a default: the three fields
+#: appeared in no blueprint and in no code, so every confirmation mail went out in English
+#: no matter which theme was loaded. Note that this reaches further than the post -- the
+#: LOGIN SCREEN of these realms becomes Dutch too, which is wanted but is a visible change
+#: for existing users. ``supportedLocales`` keeps ``en`` alongside ``nl`` so a user can still
+#: switch, and Keycloak's own Dutch translation is incomplete (406 lines against 534 English
+#: at the time of writing), so an occasional sentence falls back to English.
 _BLUEPRINT_REALM_FIELDS = (
     "registrationAllowed",
     "loginWithEmailAllowed",
     "resetPasswordAllowed",
     "verifyEmail",
+    "internationalizationEnabled",
+    "supportedLocales",
+    "defaultLocale",
 )
 
 #: The ``smtpServer`` keys that describe a CONNECTION, and that OPI therefore removes.
@@ -55,6 +67,25 @@ _BLUEPRINT_REALM_FIELDS = (
 #: Everything not in this list survives, ``replyTo`` above all: the relay does not touch
 #: ``Reply-To:``, so that is the one field a realm can really have of its own.
 _SMTP_CONNECTION_KEYS = ("host", "port", "auth", "user", "password", "ssl", "starttls")
+
+
+def _veld_is_gelijk(huidig: Any, gewenst: Any) -> bool:
+    """Draagt de realm dit veld al, zodat er niets geschreven hoeft te worden?
+
+    Voor bijna elk veld is dat gewoon ``==``. Voor een LIJST niet, en dat is gemeten: Keycloak
+    bewaart ``supportedLocales`` als een SET en geeft hem in een eigen volgorde terug. Een
+    blauwdruk die ``["nl", "en"]`` zegt krijgt ``["en", "nl"]`` terug, en met een kale ``!=``
+    schrijft ELKE verwerking van ELK project dat veld opnieuw - een wijziging die niets
+    wijzigt, in het admin-event-logboek van elke realm, precies de ruis die deze vergelijking
+    hoort te voorkomen. Waargenomen op de sandbox: twee verwerkingen achter elkaar leverden
+    twee keer ``Updated realm ...: ['supportedLocales']``.
+
+    De volgorde is dus geen bewering en wordt zo ook niet gemeten. Wat we WEL schrijven is de
+    volgorde uit de blauwdruk; Keycloak maakt er alsnog een set van.
+    """
+    if isinstance(huidig, list) and isinstance(gewenst, list):
+        return sorted(huidig) == sorted(gewenst)
+    return huidig == gewenst
 
 
 class KeycloakYamlHandler:
@@ -519,6 +550,9 @@ class KeycloakYamlHandler:
 
         A blueprint is not wrong for asking; the CLUSTER is not ready. So this warns and
         carries on, and the next reconcile after the relay is configured completes it.
+
+        Comparing is done through ``_veld_is_gelijk``, because a LIST does not come back the
+        way it went in -- see there.
         """
         gewenst = {veld: item[veld] for veld in _BLUEPRINT_REALM_FIELDS if veld in item}
         if gewenst.get("verifyEmail") and not self._platform_can_send_mail():
@@ -531,7 +565,7 @@ class KeycloakYamlHandler:
         if not gewenst:
             return
 
-        verschil = {veld: waarde for veld, waarde in gewenst.items() if realm.get(veld) != waarde}
+        verschil = {veld: waarde for veld, waarde in gewenst.items() if not _veld_is_gelijk(realm.get(veld), waarde)}
         await self.keycloak.update_realm_settings(realm_name, verschil)
 
     async def _apply_smtp_server(self, realm_name: str, realm: dict[str, Any]) -> None:
@@ -555,8 +589,8 @@ class KeycloakYamlHandler:
 
         ``from`` is DESCRIPTIVE, not steering. The relay rewrites the sender itself, so what
         belongs here is the address that actually comes out; it comes from
-        ``get_keycloak_mail_from_address``, the same derivation ``MailManager`` hands to the
-        relay, so the two cannot drift.
+        ``get_mail_from_address``, the same value ``MailManager`` hands to the relay, so the
+        two cannot drift.
 
         Nothing happens on a cluster with no relay, and that is not laziness: on such a
         cluster the post does not work either way, and writing this key would take the
@@ -592,7 +626,7 @@ class KeycloakYamlHandler:
         property, and it holds only as long as this map names no destination. What a tenant
         writes there anyway is swept off again; see ``_SMTP_CONNECTION_KEYS``.
         """
-        return {"from": get_keycloak_mail_from_address(settings.CLUSTER_MANAGER)}
+        return {"from": get_mail_from_address(settings.CLUSTER_MANAGER)}
 
     async def ensure_realm_self_service(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
         """Reconcile every realm in this blueprint against what the blueprint says (idempotent).

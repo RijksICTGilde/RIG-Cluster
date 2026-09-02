@@ -95,6 +95,12 @@ realms:
     resetPasswordAllowed: false
     editUsernameAllowed: false
     verifyEmail: true
+    # De TAAL van wat deze realm toont en verstuurt; zonder deze drie komt er Engelse
+    # standaardtekst uit Keycloak. Zie sso-support.yaml voor de volledige afweging, ook
+    # over het inlogscherm dat hier in meegaat.
+    internationalizationEnabled: true
+    supportedLocales: ["nl", "en"]
+    defaultLocale: "nl"
     bruteForceProtected: true
     # Audit events: persist user events (incl. UPDATE_PROFILE/UPDATE_EMAIL) and admin
     # events so identity changes are traceable afterwards (see docs/post-mortems/
