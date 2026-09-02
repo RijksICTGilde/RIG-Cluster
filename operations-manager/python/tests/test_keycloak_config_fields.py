@@ -152,3 +152,108 @@ def test_de_manager_leest_de_koppeltekenvorm_ook() -> None:
     genormaliseerd = KeycloakManager._get_keycloak_service_config(cast("KeycloakManager", None), project)
 
     assert genormaliseerd["additional_redirect_uris"] == ["http://localhost:8080/*"]
+
+
+# ---------------------------------------------------------------------------
+# De template verzint zichzelf niet
+# ---------------------------------------------------------------------------
+#
+# Het veld droeg ``default="sso-support"`` terwijl het configmodel, het API-schema en
+# ``KeycloakManager`` alle drie sso-only als default hebben. Een projectbestand zonder
+# ``template`` liet het scherm dus een andere blauwdruk zien dan het platform bouwde, en
+# opslaan schreef dat verzinsel ook nog in het bestand. Er is nu geen default meer: het veld
+# toont wat er staat, en anders niets.
+
+
+def _template_veld(project: dict[str, Any]) -> Any:
+    from opi.forms.visualizers.bridge import editable_to_form_field
+    from opi.services.catalog.keycloak.visualizers import KEYCLOAK_TEMPLATE
+
+    return editable_to_form_field(KEYCLOAK_TEMPLATE, project)
+
+
+def test_de_opgeslagen_template_staat_geselecteerd() -> None:
+    assert _template_veld(_project()).value == "sso-only"
+
+
+def test_zonder_template_verzint_het_scherm_er_geen() -> None:
+    project = _project()
+    project["services"][1]["keycloak"]["config"] = {}
+
+    veld = _template_veld(project)
+
+    assert veld.value is None, f"scherm toont {veld.value!r} terwijl het projectbestand niets zegt"
+    assert veld.required, "zonder default moet het veld een keuze afdwingen"
+    assert veld.placeholder, "zonder lege optie kiest de browser de eerste, en dat is weer een verzinsel"
+
+
+@pytest.mark.asyncio
+async def test_een_lege_template_wordt_geweigerd() -> None:
+    """De keuze overslaan mag niet stilzwijgend een blauwdruk opleveren."""
+    section = _section()
+    inzending = {"_services-config": {"keycloak": {"config": {"template": ""}}}}
+
+    _resultaat, errors = await EditableFormProcessor().process_json_submission(
+        inzending, section.editables, _project(), edit_mode=True
+    )
+
+    assert "services/keycloak/config/template" in errors
+
+
+def _gerenderde_keuzelijst(project: dict[str, Any]) -> str:
+    from opi.forms.widgets.lotc import LOTCWidgetAdapter
+
+    return LOTCWidgetAdapter().render_select(_template_veld(project))
+
+
+def test_de_keuzelijst_begint_met_een_lege_optie() -> None:
+    """De lege optie IS de "nog niets gekozen"-stand.
+
+    Een keuzelijst heeft altijd iets geselecteerd, dus zonder lege optie bovenaan kiest de
+    browser de eerste echte - en dan toont het scherm weer een blauwdruk die nergens staat.
+    Deze toets zit op de gerenderde HTML omdat de bedrading ervan (``:placeholder`` in
+    ``widgets/select.html.j2``) nergens anders in de applicatie gebruikt wordt en dus stil
+    kan verdwijnen.
+    """
+    project = _project()
+    project["services"][1]["keycloak"]["config"] = {}
+
+    html = _gerenderde_keuzelijst(project)
+
+    assert '<option value="">Kies een template</option>' in html
+    assert "selected" not in html, "niets gekozen betekent niets geselecteerd"
+
+
+def test_de_opgeslagen_waarde_staat_geselecteerd_in_de_html() -> None:
+    html = _gerenderde_keuzelijst(_project())
+
+    assert '<option value="sso-only" selected>' in html
+    assert '<option value="sso-support">' in html
+
+
+def test_het_formulier_heeft_geen_eigen_mening_over_de_default() -> None:
+    """De bug in één regel: het formulier kende sso-support, de rest van het platform sso-only.
+
+    Twee defaults voor hetzelfde veld betekent dat het scherm iets anders toont dan het
+    platform doet, en dat een opslag dat verschil ook nog uitschrijft. Er is er daarom nog
+    maar één, en die staat niet in de formulierlaag.
+    """
+    from opi.manager.keycloak_manager import SSO_ONLY_TEMPLATE
+    from opi.services.catalog.keycloak.editables import KEYCLOAK_TEMPLATE_EDITABLE
+
+    assert KEYCLOAK_TEMPLATE_EDITABLE.default is None, (
+        "een default in het formulier gaat een eigen leven leiden naast die van het platform"
+    )
+    assert KeycloakConfig.model_fields["template"].default == SSO_ONLY_TEMPLATE, (
+        "configmodel en manager horen dezelfde blauwdruk te bedoelen; het API-schema volgt het model"
+    )
+
+
+@pytest.mark.asyncio
+async def test_de_manager_bouwt_de_blauwdruk_van_het_configmodel_als_het_bestand_zwijgt() -> None:
+    """De derde kant van dezelfde waarheid: wat er gebeurt als niemand iets zegt."""
+    project: dict[str, Any] = {"name": "toets", "services": ["keycloak"]}
+
+    config = KeycloakManager._get_keycloak_service_config(cast("KeycloakManager", None), project)
+
+    assert config["template"] == KeycloakConfig.model_fields["template"].default
