@@ -8,6 +8,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from opi.core.config import settings
+from opi.utils.naming import generate_keycloak_sender_address
+
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
     "local": {
@@ -27,6 +30,9 @@ CLUSTER_CONFIG = {
         "backup_namespace": "rig-backup-destination",
         "mail_relay_namespace": "rig-ron",
         "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
+        # De namespaces van de diensten die WIJ draaien; zie service_namespaces bij
+        # odcn-production voor waarom dit een lijst is en geen afleiding.
+        "service_namespaces": ["rig-system", "rig-backup-destination", "rig-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
@@ -95,6 +101,9 @@ CLUSTER_CONFIG = {
         "backup_namespace": "rig-backup-destination",
         "mail_relay_namespace": "rig-ron",
         "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
+        # De namespaces van de diensten die WIJ draaien; zie service_namespaces bij
+        # odcn-production voor waarom dit een lijst is en geen afleiding.
+        "service_namespaces": ["rig-system", "rig-backup-destination", "rig-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator, which must reach the dedicated
@@ -172,6 +181,16 @@ CLUSTER_CONFIG = {
         # backup_namespace hierboven.
         "mail_relay_namespace": "rig-prd-ron",
         "mail_relay_host": "rig-mail-relay.rig-prd-ron.svc.cluster.local",
+        # De namespaces van de diensten die WIJ draaien, voor het resourceblok op
+        # /admin/diensten. Een EXPLICIETE lijst en geen afleiding uit de sleutels
+        # hierboven: dit is een keuze over wat er op die pagina hoort, en die hoort
+        # zichtbaar te zijn op de plek waar hij gemaakt wordt.
+        #
+        # rig-prd-ron staat erbij omdat de mail relay een platformdienst is en geen
+        # project, ook al draagt de namespace de projectprefix. Wie hier een namespace
+        # vergeet ziet dat aan een blok dat te weinig toont; daarom staat het aantal
+        # namespaces op de pagina zelf.
+        "service_namespaces": ["rig-prd-operations", "rig-prd-backup", "rig-prd-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator (see the note in the other clusters).
@@ -319,6 +338,27 @@ def get_namespace_prefix(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["namespace_prefix"]
+
+
+def get_service_namespaces(cluster_name: str) -> list[str]:
+    """De namespaces waarin het platform zijn EIGEN diensten draait.
+
+    Gebruikt door het resourceblok op /admin/diensten. Een cluster zonder deze sleutel
+    levert een lege lijst op en het blok zegt dan dat er niets ingesteld is; dat is beter
+    dan terugvallen op "alles", want dan zou de pagina stilzwijgend gebruikersprojecten
+    tonen.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        De ingestelde servicenamespaces, of een lege lijst.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return list(cluster_config.get("service_namespaces", []))
 
 
 def get_argo_namespace(cluster_name: str) -> str:
@@ -790,6 +830,28 @@ def get_mail_from_address(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["mail_from_address"]
+
+
+def get_keycloak_mail_from_address(cluster_name: str) -> str:
+    """The address KEYCLOAK's login mail leaves under on this cluster.
+
+    Its own local part next to the portal's, on the cluster's own domain. ONE derivation
+    for the whole platform and not two, because this address is written down in three
+    places that have to agree: the relay gets it as this account's sender (MailManager),
+    the Keycloak pod gets it as ``ZAD_MAIL_RELAY_FROM``, and OPI writes it into every
+    realm's minimal ``smtpServer``. Drift between them shows up as a message that leaves
+    under one address while a realm claims another.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Keycloak's sender address (e.g. ``noreply-inloggen@rijksoverheid.nl``)
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    return generate_keycloak_sender_address(get_mail_from_address(cluster_name), settings.MAIL_KEYCLOAK_FROM_LOCAL)
 
 
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:

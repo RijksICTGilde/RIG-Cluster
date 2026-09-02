@@ -31,6 +31,7 @@ _VALUES: dict[str, Any] = {
     "min_delta_m": 10,
     "min_limit_headroom_mi": 64,
     "min_observed_mi": 5.0,
+    "max_growth_factor": 8.0,
 }
 
 _config: ResourceTuningConfig | None = None

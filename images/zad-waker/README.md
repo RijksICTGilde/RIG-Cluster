@@ -34,6 +34,7 @@ Supplied by the waker ConfigMap (`<unique_name>-waker-config`) and Secret
 | `ZAD_WAKE_MODE` | `auto` \| `confirm` \| `manual` |
 | `ZAD_POLL_INTERVAL_SEC` | Seconds between status polls to ZAD (default 3) |
 | `ZAD_WAKE_TOKEN` | Per-deployment wake token, sent as `X-Wake-Token` (from the Secret) |
+| `ZAD_PORT` | Port to listen on (default 8080). Must equal the port the application's Service targets: the waker has no Service of its own, it joins the application's by carrying the same `app` label. |
 
 ## Routes
 

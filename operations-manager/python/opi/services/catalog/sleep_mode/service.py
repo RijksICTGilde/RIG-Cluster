@@ -78,6 +78,22 @@ def to_awake(project_data: dict, deployment_name: str, now: datetime, sleep_afte
     )
 
 
+def wake_without_deadline(project_data: dict, deployment_name: str) -> bool:
+    """Wake a deployment and give it no sleep deadline at all.
+
+    For a deployment outside the ``match`` scope: the sweeper does not manage it, so it
+    must not be handed a bedtime either. ``SleepState()`` is awake with no expiry and no
+    token, which ``state.write`` records by dropping the whole ``sleep`` block -- a
+    deployment nobody schedules carries no runtime state.
+
+    Stamping a deadline on it instead would be a delayed trap: nothing acts on that
+    deadline while the deployment is out of scope, but the day someone adds a matching
+    pattern it is long past, and the deployment falls asleep the moment the sweeper
+    first looks at it.
+    """
+    return write(project_data, deployment_name, SleepState())
+
+
 def set_sleep_deadline(project_data: dict, deployment_name: str, now: datetime, sleep_after: timedelta) -> bool:
     """Reset a deployment to awake with a fresh sleep deadline (now + sleep_after).
 

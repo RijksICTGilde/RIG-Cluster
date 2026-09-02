@@ -33,6 +33,26 @@ data:
 
     KEYCLOAK_URL=https://keycloak.rijksapp.nl
 
+    # Gedeelde OTP voor de realm-adminaccounts van projecten. Stond sinds de bouw alleen in
+    # de sandbox aan; hier aangezet zodat productie hem ook krijgt.
+    #
+    # WAT ER GEBEURT ZODRA DIT LANDT: elk project krijgt bij zijn EERSTVOLGENDE verwerking
+    # de retrofit uit `_retrofit_admin_otp`, en die verwijdert de adminaccount in master en
+    # maakt hem opnieuw aan met het bestaande wachtwoord plus een OTP-credential, omdat
+    # Keycloak 25 een OTP alleen bij het aanmaken van een gebruiker importeert. Dat gebeurt
+    # hoogstens een keer per realm (zodra `totp_secret` in het projectbestand staat, slaat
+    # hij over) en op een moment dat de verwerking van dat project bepaalt, dus verspreid
+    # over de vloot.
+    #
+    # WAT ER MISGAAT ALS HET MISGAAT: faalt het heraanmaken na het verwijderen, dan kan
+    # niemand die ene projectrealm beheren tot een volgende verwerking hem herstelt; het
+    # wachtwoord staat versleuteld in het projectbestand, dus het is terug te draaien. Wat
+    # verder aan dat account hing (handmatige rollen, groepen, sessies) is dan weg.
+    #
+    # WAT ER NIET GERAAKT WORDT: de hoofdbeheerder van Keycloak. De retrofit werkt alleen op
+    # `{project}_{cluster}_admin` in master, nooit op het account uit keycloak-admin-credentials.
+    KEYCLOAK_ENFORCE_ADMIN_OTP=true
+
     PROMETHEUS_URL=http://prometheus.rig-prd-operations:9090
     PROMETHEUS_EXTERNAL_URL=https://prometheus.rig.prd1.gn2.quattro.rijksapps.nl
 

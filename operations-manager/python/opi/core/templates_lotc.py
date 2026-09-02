@@ -25,12 +25,14 @@ from opi.core.template_helpers import (
     format_rrule_schedule,
     get_service_definition_for_entry,
     get_service_name,
+    shorten_image_digest,
     static_url,
 )
 from opi.core.version import get_version_info
 from opi.forms.lotc_attrs import attr_escape, bedraad_foutmelding, field_attrs
 from opi.services.catalog.aliases.overzicht import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
+from opi.services.event_interpreter import group_component_failures
 from opi.services.registry import deployment_action_key
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,10 @@ templates_lotc.env.globals["version"] = VERSION
 templates_lotc.env.globals["build_date"] = BUILD_DATE
 templates_lotc.env.globals["version_info"] = get_version_info
 templates_lotc.env.globals["static_url"] = static_url
+# De groepering van componentfouten. Als global en niet als contextsleutel, zodat elke
+# renderweg van het voortgangsfragment hem krijgt: hij afleiden in een van de twee
+# contextbouwers betekent dat de andere weg stilzwijgend het ongegroepeerde beeld toont.
+templates_lotc.env.globals["group_component_failures"] = group_component_failures
 # De attribuutbundel van een formulierveld, voor LOTC's :attrs-spread. Vervangt de
 # macro's die in de roos-templates attribuut-TEKST in de tag schreven; zie
 # opi/forms/lotc_attrs.py voor waarom dat bij LOTC niet kan.
@@ -136,6 +142,10 @@ templates_lotc.env.filters["is_verwijzing"] = _alias_is_reference
 templates_lotc.env.filters["dutch_date"] = format_dutch_date
 templates_lotc.env.filters["rrule_schedule"] = format_rrule_schedule
 templates_lotc.env.filters["deployment_action_key"] = deployment_action_key
+# De digest in een imageverwijzing afgekort tot twaalf tekens. Als filter en niet als
+# ``[:19]`` in het sjabloon: de deploymentkaart toont twee imageverwijzingen (de draaiende
+# en de ingestelde), dus anders staat de grens op twee plekken.
+templates_lotc.env.filters["korte_digest"] = shorten_image_digest
 
 # Als GLOBAL en niet als context: de hulproute rendert een .html.j2 met alleen het verzoek
 # erin (router_wizard.service_help), dus een hulptekst die gegevens nodig heeft kan er

@@ -11,11 +11,17 @@ and logs at debug level. The returned shape is always valid.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from opi.api.v2.models import ErrorCategory
 from opi.core.cluster_config import get_prefixed_namespace
+from opi.core.config import settings
+from opi.extensions.pipeline import get_registry_rewrite_mappings
+from opi.extensions.registry_rewrite import original_image
+from opi.manager.project_validation import _split_image_reference
 from opi.services.event_interpreter import _friendly_resource_name
+from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
     from opi.connectors.argo import ArgoConnector
@@ -339,3 +345,121 @@ def gather_sync_deviations(
         ]
 
     return deviations
+
+
+@dataclass(frozen=True)
+class ComponentPodSummary:
+    """What is actually serving traffic for one component of a deployment.
+
+    ``is_serving`` False is a RESULT, not a missing value: it says the platform looked and
+    found no pod behind the Service. That is the difference between "the rollout of a new
+    version failed while the previous one keeps serving" and "the application is down",
+    and those two deserve opposite words on the card.
+    """
+
+    #: The component reference as it stands in the project file.
+    reference: str
+    #: Whether a pod is serving traffic for this component right now.
+    is_serving: bool
+    #: The serving pod's name, or None when nothing serves.
+    pod_name: str | None = None
+    #: The image it actually runs, in its SOURCE-registry spelling (not the proxy rewrite).
+    image: str | None = None
+    #: ``state.running.startedAt`` of its ``app`` container.
+    running_since: str | None = None
+    #: The image the project file configures for this component, source-registry spelling.
+    configured_image: str | None = None
+    #: Whether the running image is the configured one. ``None`` means the question was
+    #: not answerable: a digest reference and a tag reference say nothing about each other,
+    #: so a mismatch between them is not a finding.
+    runs_configured_image: bool | None = None
+
+
+def summarize_component_pods(
+    pods: list[dict[str, Any]],
+    *,
+    deployment: dict[str, Any],
+) -> list[ComponentPodSummary]:
+    """Per component of ``deployment``: what is serving, on which image, since when.
+
+    ``pods`` is what :meth:`KubectlConnector.get_application_pods` returned for this
+    deployment.
+
+    Pods are matched to components through a pre-built ``{unique name: reference}`` map
+    rather than by stripping the deployment name off the ``app`` label:
+    ``generate_unique_name`` is the function that produced those names and is free to stop
+    being a plain join, and a pod attributed to the wrong component is worse than no pod
+    at all.
+
+    Components the project file marks ``disabled`` are left out entirely. Their zero
+    replicas are the intended end state, the card already names them and their reason, and
+    a red "nothing is running" next to that would contradict it.
+    """
+    mappings = get_registry_rewrite_mappings(settings.CLUSTER_MANAGER)
+    deployment_name = deployment.get("name") or ""
+
+    components = [
+        comp
+        for comp in deployment.get("components", []) or []
+        if isinstance(comp, dict) and comp.get("reference") and not comp.get("disabled")
+    ]
+    reference_by_unique_name = {
+        generate_unique_name(deployment_name, comp["reference"]): comp["reference"] for comp in components
+    }
+
+    # The serving pod: not being deleted, and its ``app`` container reports ready. A pod
+    # that is terminating still carries the label and would otherwise look like the answer
+    # during the seconds a rollout takes to hand over.
+    serving_by_reference: dict[str, dict[str, Any]] = {}
+    for pod in pods:
+        reference = reference_by_unique_name.get(pod.get("app", ""))
+        if reference is None or reference in serving_by_reference:
+            continue
+        if pod.get("deleting") or not pod.get("ready"):
+            continue
+        serving_by_reference[reference] = pod
+
+    summaries: list[ComponentPodSummary] = []
+    for comp in components:
+        reference = comp["reference"]
+        configured = comp.get("image")
+        configured_source = original_image(configured, mappings) if isinstance(configured, str) and configured else None
+
+        pod = serving_by_reference.get(reference)
+        if pod is None:
+            summaries.append(
+                ComponentPodSummary(reference=reference, is_serving=False, configured_image=configured_source)
+            )
+            continue
+
+        running_source = original_image(pod.get("image", ""), mappings) or None
+        summaries.append(
+            ComponentPodSummary(
+                reference=reference,
+                is_serving=True,
+                pod_name=pod.get("name") or None,
+                image=running_source,
+                running_since=pod.get("started_at"),
+                configured_image=configured_source,
+                runs_configured_image=_compare_image_references(running_source, configured_source),
+            )
+        )
+
+    return summaries
+
+
+def _compare_image_references(running: str | None, configured: str | None) -> bool | None:
+    """Whether ``running`` and ``configured`` are the same image, or None when unanswerable.
+
+    A digest reference and a tag reference name the same image just as often as they name
+    different ones -- ``app:2.1`` and ``app@sha256:...`` are simply not comparable as
+    strings. Saying "it runs a different image" on that basis would be a guess dressed as
+    a fact, so only same-shape references get a verdict.
+    """
+    if not running or not configured:
+        return None
+    _, _, running_has_digest = _split_image_reference(running)
+    _, _, configured_has_digest = _split_image_reference(configured)
+    if running_has_digest != configured_has_digest:
+        return None
+    return running == configured

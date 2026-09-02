@@ -142,9 +142,13 @@ class TestTheUpsertPath:
         assert result["state_cleared"], "the caller must be able to show what was cleared"
 
     @pytest.mark.asyncio
-    async def test_creating_a_deployment_has_no_earlier_state_to_clear(self) -> None:
-        """A brand-new deployment: the hook has nothing to say, and the create branch must
-        not trip over a deployment dict that does not exist yet."""
+    async def test_creating_a_deployment_runs_the_hook_too(self) -> None:
+        """A brand-new deployment is a rollout as well, so the services get the moment.
+
+        There is nothing to clear -- nothing ran here yet, so the hook reports nothing --
+        but a service that acts on a rollout acts here: sleep-mode starts the sleep clock
+        in the commit that creates the deployment, instead of leaving a fresh preview
+        without a deadline until the next sweep."""
         saved: dict[str, Any] = {}
         project = _project()
         project["repositories"] = [{"name": "main", "url": "https://example.invalid/app.git"}]
@@ -155,6 +159,7 @@ class TestTheUpsertPath:
 
         assert result["success"] is True
         assert result["created"] is True
-        assert "state_cleared" not in result
+        assert "state_cleared" not in result, "nothing ran here yet, so nothing was cleared"
         new_deployment = next(d for d in saved["data"]["deployments"] if d["name"] == "preview-99")
-        assert "sleep" not in new_deployment
+        assert new_deployment["sleep"]["state"] == STATE_AWAKE
+        assert new_deployment["sleep"]["expires-at"]

@@ -22,7 +22,6 @@ from opi.core.task_supersede import (
     RunningTask,
     TaskSuperseded,
     reset_current_task,
-    scope_of,
     set_current_task,
 )
 
@@ -265,13 +264,15 @@ class TaskWorker:
 
             # Bind this task's identity and deployment scope so the ArgoCD waits
             # deep in the call chain can give way to a newer task that will redo
-            # this task's work. Scope is computed from the real work (payload for
-            # add_component), not the deployment_name column alone.
+            # this task's work. The scope comes from the affects_deployments column,
+            # written by create_task: one definition, one writer. A row from before
+            # the migration carries NULL, and that is project-wide - the safe side.
+            stored_scope = task.get("affects_deployments")
             supersede_token = set_current_task(
                 RunningTask(
                     task_id=task_id,
                     project_name=project_name,
-                    scope=scope_of(task_type, deployment_name, task.get("payload")),
+                    scope=None if stored_scope is None else frozenset(stored_scope),
                     task_service=self._task_service,
                 )
             )
@@ -317,10 +318,24 @@ class TaskWorker:
                 # task whose scope covers this one will reprocess from that state.
                 # Completing (rather than failing) keeps retries and alerts off a
                 # deliberate hand-over.
+                #
+                # The result says exactly one thing: this task did not finish its work,
+                # and who took it over. No urls and no partial handler result: the ArgoCD
+                # sync is precisely the part being dropped, and the task that took over is
+                # about to regenerate those same manifests. Returning urls here would
+                # assert a cluster state nobody verified any more.
                 await progress.close()
                 await self._task_service.complete_task(
                     task_id,
-                    {"status": "superseded", "message": str(superseded)},
+                    {
+                        "status": "superseded",
+                        "message": str(superseded),
+                        "superseded_by": {
+                            "task_id": superseded.task_id,
+                            "task_type": superseded.task_type,
+                            "project_name": superseded.project_name,
+                        },
+                    },
                 )
                 progress.mark_legacy_completed()
                 logger.info("Task %s superseded after %.1fs: %s", task_id, time.monotonic() - started, superseded)

@@ -329,6 +329,56 @@ class TestHandleCloneBucket:
 # ---------------------------------------------------------------------------
 
 
+class TestRefreshDeploymentOomBudget:
+    """The refresh a tune queues for itself must NOT clear the OOM tune budget.
+
+    That refresh carries ``automated_remediation: True`` precisely so it can be told
+    apart from a user asking for a refresh. Clearing the budget on it reset the brake
+    once per escalation round (asses-k2n/pr-494: 45Mi to 4096Mi in nine rounds).
+    """
+
+    @pytest.mark.parametrize(
+        ("automated_remediation", "expected_budget_after"),
+        [(True, 3), (False, 0)],
+    )
+    @pytest.mark.asyncio
+    async def test_only_a_user_refresh_clears_the_budget(self, automated_remediation, expected_budget_after):
+        from opi.core.task_handlers_operations import handle_refresh_deployment
+        from opi.services.oom_watcher import _oom_tune_attempts
+
+        _oom_tune_attempts.clear()
+        _oom_tune_attempts["test-project/dev"] = 3
+
+        progress = _make_progress()
+
+        mock_project = MagicMock()
+        mock_project.filename = "test-project.yaml"
+
+        mock_store = MagicMock()
+        mock_store.get.return_value = mock_project
+
+        mock_pm = AsyncMock()
+        mock_pm.process_project_from_git = AsyncMock(return_value=True)
+        mock_pm.get_deployment_results = MagicMock(return_value={})
+        mock_pm.close = AsyncMock()
+
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "dev",
+            "automated_remediation": automated_remediation,
+        }
+
+        with (
+            patch("opi.core.task_handlers_operations.get_project_store", return_value=mock_store),
+            patch(CREATE_PM_PATH, return_value=mock_pm),
+            patch("opi.services.oom_watcher.schedule_oom_check", return_value=None),
+        ):
+            result = await handle_refresh_deployment(payload, progress)
+
+        assert result["status"] == "success"
+        assert _oom_tune_attempts.get("test-project/dev", 0) == expected_budget_after
+
+
 class TestHandleRefreshDeployment:
     @pytest.fixture
     def payload(self):

@@ -21,7 +21,6 @@ from __future__ import annotations
 from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING, SleepState, write
 from opi.services.deployment_state import collect_deployment_state
-from opi.services.services import ServiceAdapter
 
 TEMPLATE = "bg/_argocd-deployment-card.html.j2"
 CLUSTER = "odcn-production"
@@ -47,7 +46,8 @@ def _render(project_data: dict) -> str:
         argocd_status={deployment["name"]: {"health": "Healthy", "sync": "Synced", "errors": []}},
         current_cluster=CLUSTER,
         deployment_states={deployment["name"]: collect_deployment_state(project_data, deployment["name"])},
-        ServiceAdapter=ServiceAdapter,
+        # Alleen wat argocd_status_fragment (opi/web/router.py) meegeeft; zie
+        # tests/test_state_badge.py voor wat een ruimere context hier verborgen hield.
     )
 
 

@@ -75,6 +75,24 @@ UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 5
 #: anders aan de hand dan een verloren wekker en helpt doorprikken niet meer.
 UMBRELLA_REFRESH_MAX_POGINGEN = 6
 
+#: Hoe vaak we tijdens het wachten zelf een refresh vragen zolang de status op
+#: ``Progressing`` blijft staan. ArgoCD hertoetst een applicatie alleen op een watch-event
+#: van een beheerde resource, en anders pas na ``timeout.reconciliation`` (op productie 15
+#: minuten). Gaat zo'n event verloren, dan bevriest de health op de laatste waarneming en
+#: wachten wij 300 seconden onder een hertoetsing van 900: elk gemist event wordt dan
+#: automatisch een gebruikerszichtbare fout. Zelf om een refresh vragen trekt die ene
+#: applicatie los, zonder de clusterbrede knop lager te zetten.
+HERVERVERS_ELKE_SECONDEN = 60
+
+
+class ApplicationGone(RuntimeError):
+    """De Application bestond tijdens deze wacht en is er nu niet meer.
+
+    Geen mislukking van de app zelf: iets anders heeft hem verwijderd, meestal een
+    delete_deployment voor dezelfde deployment. Doorwachten heeft geen zin, want er
+    komt niets meer terug om op te wachten.
+    """
+
 
 class ArgoManager:
     """Manager for ArgoCD-related operations and resources."""
@@ -1118,6 +1136,8 @@ class ArgoManager:
 
         Raises:
             TimeoutError: If application doesn't become ready within timeout
+            ApplicationGone: If the application was visible during this wait and then
+                disappeared (another task deleted it); waiting on further is pointless
             RuntimeError: If application enters a terminal failure state
         """
         from opi.connectors.argo import create_argo_connector
@@ -1134,16 +1154,26 @@ class ArgoManager:
         import asyncio
 
         elapsed_time = 0
+        # Is de applicatie in DEZE wacht ooit met succes uitgelezen? Zolang dat niet zo is,
+        # is een leeg antwoord "hij moet nog verschijnen" en polt de lus door. Daarna is
+        # hetzelfde lege antwoord "hij is weg", en dat is geen leesfout maar een einde.
+        seen = False
         while elapsed_time < timeout:
             await raise_if_superseded(f"waiting for ArgoCD application '{app_name}' to sync")
             try:
                 status_data = await argo_connector.get_application_status(app_name)
 
                 if not status_data:
+                    if seen:
+                        raise ApplicationGone(
+                            f"Application '{app_name}' verdween tijdens het wachten "
+                            f"(na {elapsed_time}s); een andere taak heeft hem waarschijnlijk verwijderd"
+                        )
                     logger.debug(f"Could not get status for '{app_name}', retrying...")
                     await asyncio.sleep(poll_interval)
                     elapsed_time += poll_interval
                     continue
+                seen = True
 
                 sync_status = status_data.get("status", {}).get("sync", {}).get("status")
                 health_status = status_data.get("status", {}).get("health", {}).get("status")
@@ -1151,6 +1181,25 @@ class ArgoManager:
                 if sync_status == "Synced" and health_status == "Healthy":
                     logger.info(f"Application '{app_name}' is synced and healthy")
                     return True
+
+                # Staat de status al een minuut op Progressing, vraag dan zelf om een
+                # refresh: ArgoCD hertoetst uit zichzelf pas na timeout.reconciliation, dus
+                # een gemist watch-event laat de health anders bevroren staan tot onze
+                # time-out. Alleen op Progressing - Degraded heeft verderop zijn eigen
+                # afhandeling en die moet niet uitgesteld worden.
+                if elapsed_time and elapsed_time % HERVERVERS_ELKE_SECONDEN == 0 and health_status == "Progressing":
+                    logger.info(
+                        "Application '%s' staat %ds op Progressing; opnieuw een refresh gevraagd "
+                        "(ArgoCD hertoetst zelf pas na timeout.reconciliation)",
+                        app_name,
+                        elapsed_time,
+                    )
+                    # Alleen overschrijven als de refresh een tijdstempel oplevert: een
+                    # mislukte refresh geeft None terug, en dat zou de versheidsdrempel
+                    # wissen waardoor een oude status alsnog als vers zou tellen.
+                    opnieuw_gereconcilieerd = await argo_connector.refresh_application(app_name)
+                    if opnieuw_gereconcilieerd:
+                        refreshed_after = opnieuw_gereconcilieerd
 
                 # Determine whether the status reflects our refresh.
                 # If reconciledAt is still <= refreshed_after, ArgoCD

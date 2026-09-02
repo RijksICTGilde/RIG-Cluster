@@ -350,6 +350,23 @@ tasks:
         echo "📝 Edit the file: $OUTPUT_FILE"
         echo "🔐 When done, encrypt with: task encrypt-secret FILE=$OUTPUT_FILE"
 
+  project-decrypt:
+    desc: "Print a project file with every AGE-encrypted value decrypted (stdout only)"
+    vars:
+      FILE: '{{.FILE | default ""}}'
+      KEY: '{{.KEY | default "security/key.txt"}}'
+    cmds:
+      - |
+        if [[ -z "{{.FILE}}" ]]; then
+          echo "❌ Usage: task project-decrypt FILE=path/to/project.yaml [KEY=security/sandbox-key.txt]"
+          exit 1
+        fi
+        # Absolute paden, want uv moet vanuit operations-manager/python draaien
+        ROOT="$(pwd)"
+        FILE_ABS="$(cd "$(dirname "{{.FILE}}")" && pwd)/$(basename "{{.FILE}}")"
+        cd operations-manager/python
+        uv run python "$ROOT/scripts/project_decrypt.py" "$ROOT/{{.KEY}}" "$FILE_ABS"
+
   encrypt-secret:
     desc: "Encrypt a secret YAML file with SOPS (creates .sops.yaml version)"
     vars:
@@ -1733,6 +1750,63 @@ tasks:
         ./test-local-docker.sh
     silent: false
 
+  build-keycloak-relay-email-sender:
+    desc: "Bouw de relay-emailSender-jar en zet hem naast het Keycloak-manifest"
+    vars:
+      JAR: keycloak-relay-email-sender-1.0.0.jar
+      DOEL: infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers
+    cmds:
+      - |
+        echo "🔨 Bouwen van de relay-emailSender..."
+        cd keycloak-migration/relay-email-sender
+        mvn clean package
+        cd ../..
+        cp "keycloak-migration/relay-email-sender/target/{{.JAR}}" "{{.DOEL}}/{{.JAR}}"
+        echo "✅ JAR gebouwd en gekopieerd naar {{.DOEL}}/{{.JAR}}"
+        echo "   Commit de jar SAMEN met de broncode: de pod krijgt hem uit een ConfigMap,"
+        echo "   niet uit een build. Zie keycloak-migration/relay-email-sender/README.md."
+    silent: false
+
+  test-keycloak-relay-email-sender:
+    desc: "Draai de tests van de relay-emailSender"
+    cmds:
+      - |
+        echo "🧪 Tests van de relay-emailSender..."
+        cd keycloak-migration/relay-email-sender
+        mvn test
+    silent: false
+
+  check-keycloak-relay-email-sender:
+    desc: "Toets dat de ingecheckte relay-emailSender-jar bij de broncode ernaast hoort"
+    vars:
+      JAR: keycloak-relay-email-sender-1.0.0.jar
+      DOEL: infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers
+    cmds:
+      - |
+        # De jar staat in git omdat de pod hem uit een ConfigMap krijgt en niet van het
+        # netwerk (zie de initContainer). Een gebouwd artefact in git kan gaan afwijken van
+        # de bron ernaast, en dan draait er iets anders dan er te lezen valt. Deze taak
+        # bouwt opnieuw en vergelijkt byte voor byte; CI draait hem bij elke PR.
+        #
+        # Dat kan alleen omdat de bouw reproduceerbaar is (project.build.outputTimestamp in
+        # de pom) EN met dezelfde JDK-major draait: de manifest van de jar noemt
+        # Build-Jdk-Spec. CI pint daarom Temurin 21.
+        set -e
+        echo "🔁 Herbouwen van de relay-emailSender..."
+        cd keycloak-migration/relay-email-sender
+        mvn -q -B clean package
+        cd ../..
+        if cmp -s "keycloak-migration/relay-email-sender/target/{{.JAR}}" "{{.DOEL}}/{{.JAR}}"; then
+          echo "✅ De ingecheckte jar is de bron ernaast."
+        else
+          echo "❌ {{.DOEL}}/{{.JAR}} wijkt af van een verse bouw van de bron."
+          echo "   Draai 'task build-keycloak-relay-email-sender' en commit de jar mee."
+          echo "   Bouw je met een andere JDK-major dan 21, dan verschilt alleen het"
+          echo "   manifest (Build-Jdk-Spec); gebruik dan Temurin 21."
+          exit 1
+        fi
+    silent: false
+
   publish-keycloak-custom-mapper:
     desc: "Build and publish the Keycloak custom mapper JAR to GitHub Releases"
     deps: [build-keycloak-custom-mapper]
@@ -1943,6 +2017,25 @@ tasks:
       - uv run pytest tests/ --ignore=tests/integration/ -v
     silent: false
 
+  test-db-stop:
+    desc: "Stop and remove the shared test Postgres (zad-test-postgres)"
+    summary: |
+      The ORM tests share one long-lived Postgres container instead of creating a
+      throwaway one per run, so it stays up between runs on purpose. This removes it;
+      the next test run creates it again. Safe at any moment when no suite is running.
+    cmds:
+      - docker rm -f zad-test-postgres
+
+  test-db-reset:
+    desc: "Recreate the shared test Postgres from scratch"
+    summary: |
+      Removes the container and lets the test fixture create it again, by running one
+      ORM test. The fixture stays the only place that knows the image and the port.
+    dir: operations-manager/python
+    cmds:
+      - docker rm -f zad-test-postgres
+      - uv run pytest tests/test_user_admin_service.py -q
+
   test-upgrade-safety:
     desc: "RC-19 Layer 1: replay every project file through migrate + validate (offline, no cluster/key)"
     summary: |
@@ -1955,6 +2048,28 @@ tasks:
     cmds:
       - uv run pytest tests/test_upgrade_safety_replay.py -v
     silent: false
+
+  oom-growth-report:
+    desc: "Rapporteer welke componenten de OOM auto-tune boven zijn plafond heeft laten groeien"
+    summary: |
+      Vergelijkt per project de huidige geheugenlimiet van elk deployment-component met
+      de in de catalogus verklaarde limiet, en somt de gevallen op waarvan de verhouding
+      buiten de auto-tune-bovengrens valt. De oude, onbegrensde escalatie liet die
+      gevallen achter; de grens uit RC-157 begrenst alleen NIEUWE groei.
+
+      Alleen lezen: er wordt niets geschreven, niets gecommit en geen cluster geraakt.
+
+        PROJECTS=/path/to/zad-projects/projects task oom-growth-report
+        PROJECTS=... FACTOR=4 task oom-growth-report      # strengere grens verkennen
+        PROJECTS=... ALL=1 task oom-growth-report         # ook de gevallen binnen de grens
+    dir: operations-manager/python
+    requires:
+      vars: [PROJECTS]
+    cmds:
+      - >-
+        uv run python scripts/oom_growth_report.py "{{.PROJECTS}}"
+        {{if .FACTOR}}--factor {{.FACTOR}}{{end}} {{if .ALL}}--all{{end}}
+    silent: true
 
   upgrade-safety-diff:
     desc: "RC-19 Layer 2: summarize what a zad-deployments upgrade removed, per project"
