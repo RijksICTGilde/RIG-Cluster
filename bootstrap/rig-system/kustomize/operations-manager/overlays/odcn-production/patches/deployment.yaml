@@ -10,13 +10,26 @@ spec:
       containers:
       - name: operations-manager
         image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.08.28.2009-b3a4e682-dirty
+        # Limits boven requests, want de pieken zijn kortstondig en het gemiddelde is
+        # laag. OPI splitst per aanroep een kubectl af; bij gelijktijdige verzoeken
+        # lopen dat er tientallen tegelijk zijn (gemeten: 27), en elk kost tientallen
+        # MB's bovenop een rustige basislijn van zo'n 270Mi. Stonden requests en limits
+        # allebei op 1Gi, dan was er geen enkele speling en tikte zo'n uitwaaiering
+        # meteen tegen het plafond: 9 OOMKills, waarvan 8 op 2 september alleen.
+        #
+        # De pieken vallen bovendien tussen twee scrapes van 30 seconden, dus in de
+        # grafieken blijft het een vlakke lijn van ongeveer 300Mi terwijl de zelfgemeten
+        # hoogwaterlijn opi_peak_memory_bytes op 990Mi stond, 97% van de oude limiet.
+        #
+        # Requests op 512Mi: dat is wat hij werkelijk continu gebruikt, en daarmee
+        # reserveert de scheduler niet een halve gigabyte die stil blijft liggen.
         resources:
           limits:
             cpu: "3"
-            memory: 1Gi
+            memory: 2Gi
           requests:
             cpu: "500m"
-            memory: 1Gi
+            memory: 512Mi
         env:
         # OPI's eigen confidential master-client (client-credentials), zodat het
         # gedeelde admin-wachtwoord geen dagelijkse sleutel meer is en het menselijke
