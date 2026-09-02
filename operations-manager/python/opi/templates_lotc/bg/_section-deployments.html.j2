@@ -68,6 +68,19 @@
         </div>
     {% endif %}
 
+    {# Geheugengebrek, apart van de ArgoCD-stand hierboven. Die kaart meldt wat er NU mis is;
+       dit meldt wat er in het afgelopen etmaal gebeurd is, en dat is precies wat uit die kaart
+       verdwijnt zodra de auto-tuner het heeft rechtgezet. Een eigen fragment omdat het een
+       eigen bron heeft (Prometheus), en een onbereikbare metriekbron de ArgoCD-stand niet mag
+       ophouden - zie oom_status_fragment.
+
+       Buiten de argocd_available-poort: het deel dat uit het projectbestand komt (wat de tuner
+       gedaan heeft) is waar zonder dat ArgoCD iets hoeft te zeggen. Rendert niets als er niets
+       te melden is, dus een gezonde deployment krijgt geen leeg kader. #}
+    <div hx-get="/projects/details/{{ project.name }}/oom-status/{{ deployment.name }}"
+         hx-trigger="intersect once"
+         hx-swap="innerHTML"></div>
+
     {# Goedkeuringen die nog niet verleend zijn, zoals de eigenaardienst ze meldt. Dezelfde
        vorm als naast de publieke links, want het is dezelfde melding: zie approval_alerts
        in bg/_patterns.html.j2. #}

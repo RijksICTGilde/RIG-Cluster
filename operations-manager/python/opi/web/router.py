@@ -2374,6 +2374,90 @@ async def argocd_status_fragment(
     )
 
 
+@web_router.get("/projects/details/{project_name}/oom-status/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def oom_status_fragment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Geheugengebrek van EEN deployment, als los fragment (HTMX, lui geladen).
+
+    WAAROM DIT EEN EIGEN FRAGMENT IS EN NIET EEN BLOK IN DE ARGOCD-KAART
+
+    Twee redenen, allebei gemeten gedrag. Ten eerste kijkt dit naar iets anders: de
+    ArgoCD-kaart meldt wat er NU mis is, dit meldt wat er in het afgelopen etmaal is
+    gebeurd -- en juist dat verdwijnt uit die kaart zodra de auto-tuner het heeft
+    rechtgezet. Ten tweede praat dit met Prometheus en de kaart niet; een metriekbron die
+    niet oplost kost de volledige DNS- en retryketen (zie custom_query in
+    connectors/prometheus.py), en dan hoort de ArgoCD-stand niet mee te wachten.
+
+    Er staat er precies EEN per pagina, net als de ArgoCD-kaart: het deploymentpaneel
+    rendert alleen de deployment uit het pad. Dit is dus geen bevraging per rij. Dat
+    onderscheid is de reden dat het oude blok in juni werd weggehaald (commit 2df6b507):
+    dat hing aan elke deploymentkaart op de projectpagina.
+    """
+    from opi.services.resource_tuning_service import (
+        OOM_OBSERVATION_WINDOW_HOURS,
+        observe_recent_oom_kills,
+    )
+
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_data = project.data or {}
+    deployment = next(
+        (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name),
+        None,
+    )
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    # Wat de tuner al heeft gedaan. Gratis: het staat in het projectbestand dat hierboven
+    # toch al geladen is, en anders dan de meting overleeft het elke bewaartermijn --
+    # Prometheus, de Events en de pod zelf. Nieuwste eerst, dus het eerste oom-watcher-item
+    # per component is het laatste dat de tuner deed.
+    tunes: list[dict[str, Any]] = []
+    for comp in deployment.get("components") or []:
+        reference = comp.get("reference")
+        if not reference:
+            continue
+        entries = [
+            entry
+            for entry in ((comp.get("resources") or {}).get("history") or [])
+            if entry.get("source") == "oom-watcher"
+        ]
+        if not entries:
+            continue
+        newest = entries[0]
+        tunes.append(
+            {
+                "component": reference,
+                "timestamp": newest.get("timestamp"),
+                "limit": (newest.get("limits") or {}).get("memory"),
+                "count": len(entries),
+            }
+        )
+
+    observations = await observe_recent_oom_kills(project_data, deployment_name)
+
+    return render(
+        request,
+        template="bg/_oom-status.html.j2",
+        context={
+            "request": request,
+            "project": project,
+            "deployment": deployment,
+            "oom_components": [o.component for o in observations],
+            "oom_tunes": sorted(tunes, key=lambda t: t["component"]),
+            "oom_window_hours": OOM_OBSERVATION_WINDOW_HOURS,
+        },
+    )
+
+
 #: De reeksen die het metingenfragment tekent. Een meting kan ook alleen limieten
 #: bevatten (cpu_limit, memory_limit): die komen uit de deploymentdefinitie en niet uit
 #: een meting, dus ze tellen niet mee voor "is er iets gemeten".

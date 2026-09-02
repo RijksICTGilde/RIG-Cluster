@@ -1,0 +1,63 @@
+{#
+  Geheugengebrek van EEN deployment, als los fragment.
+
+  WAAROM DIT BLOK BESTAAT
+
+  Tot 30 juni 2026 stond hier een kaart die precies dit zei (project-details/_memory-check.html.j2).
+  Commit 2df6b507 haalde hem weg met de redenering "The deployment card's ArgoCD health badge
+  still surfaces crashing/OOM pods". Die aanname klopt niet: die badge toont een OOM alleen
+  zolang ArgoCD ongezond is, en de auto-tuner heeft als hele taak om dat zo snel mogelijk weer
+  gezond te maken. Het signaal wist dus zichzelf uit. Wie 's nachts omvalt en 's ochtends kijkt,
+  ziet groen en weet van niets.
+
+  De knop "Tune resources" komt NIET terug. Tunen is automatisch, dat was een bewust besluit;
+  wat ontbrak is niet de knop maar het bericht.
+
+  TWEE BRONNEN, EN DAT IS GEEN DUBBELING
+
+  - oom_components komt uit de metriekbron en zegt WAT ER GEBEURD IS, ook als de tuner het
+    inmiddels heeft rechtgezet.
+  - oom_tunes komt uit het projectbestand en zegt WAT DE TUNER GEDAAN HEEFT. Dat overleeft
+    elke bewaartermijn: de metriekvensters, de Kubernetes-events en de pod zelf.
+
+  Ze verschijnen los van elkaar, want ze kunnen los voorkomen. Een OOM zonder tune betekent dat
+  er nog iets moet gebeuren; een tune zonder OOM in het venster is de normale toestand een dag
+  na een incident, en juist dan is dit het enige spoor dat er nog is.
+
+  Verwacht: deployment, oom_components (lijst met namen), oom_tunes (component/timestamp/limit/count),
+  oom_window_hours.
+#}
+{% if oom_components or oom_tunes %}
+<c-stack gap="md">
+    {% if oom_components %}
+        {% set kop = (oom_components | length | string)
+                     ~ (' component is' if oom_components | length == 1 else ' componenten zijn')
+                     ~ ' gestopt wegens geheugengebrek' %}
+        <c-alert type="warning" heading="{{ kop }}">
+            <c-stack gap="xs">
+                <c-paragraph size="sm">In de afgelopen {{ oom_window_hours }} uur is dit gebeurd, ook als de deployment nu gezond is.</c-paragraph>
+                {% for component in oom_components %}
+                    <c-paragraph size="sm">{{ component }}</c-paragraph>
+                {% endfor %}
+                {# Het platform verhoogt het geheugen zelf. Dat hier zeggen scheelt de lezer de
+                   vraag of hij nu iets moet doen, en het zegt ook wanneer dat NIET genoeg is:
+                   blijft dit terugkomen, dan zit de oorzaak in de applicatie of tegen het
+                   plafond aan, en dan helpt nog een verhoging niet. #}
+                <c-paragraph size="sm">Het platform verhoogt het geheugen hierna automatisch. Komt dit terug, dan is meer geheugen niet het antwoord: kijk dan naar het geheugengebruik van de applicatie zelf, of neem contact op.</c-paragraph>
+            </c-stack>
+        </c-alert>
+    {% endif %}
+
+    {% if oom_tunes %}
+        <c-stack gap="xs">
+            <c-cluster gap="xs" align="center">
+                <c-icon icon="info-circle" size="sm" />
+                <c-span>Automatisch bijgestelde geheugenlimiet</c-span>
+            </c-cluster>
+            {% for tune in oom_tunes %}
+                <c-paragraph size="sm">{{ tune.component }}: {{ tune.limit }}{% if tune.timestamp %} sinds {{ tune.timestamp | dutch_date }}{% endif %}{% if tune.count > 1 %} ({{ tune.count }} keer verhoogd){% endif %}</c-paragraph>
+            {% endfor %}
+        </c-stack>
+    {% endif %}
+</c-stack>
+{% endif %}
