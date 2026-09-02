@@ -67,14 +67,49 @@ HEALTH_CHECK_MAX_ELAPSED_SECONDS = 120
 # so silence during a stuck rollout becomes an actionable message.
 STALL_NOTICE_SECONDS = 45
 
-# Maximum number of inline OOM → tune → reprocess cycles per deployment.
+# Maximum number of OOM → tune → reprocess cycles per deployment.
 # With the sliding bump factor (3x/2x/1.5x), 3 attempts covers:
 #   25Mi → 75Mi → 150Mi → 300Mi  (should be enough for any boot)
-OOM_INLINE_MAX_ATTEMPTS = 3
+#
+# The budget counts ATTEMPTED tune cycles, not realised changes -- weighed and kept
+# (RC-160 task D). The two paths therefore charge at different moments, and that
+# asymmetry is deliberate rather than an oversight:
+#
+#   - Fire-and-forget (``_run_oom_check``) charges only after the tune committed
+#     something (``observation.requeue_refresh``). It can afford to: when nothing was
+#     committed it queues no refresh AND schedules no follow-up check, so the chain
+#     ends by itself. The counter is only there to bound it ACROSS rounds.
+#   - Inline (``_callback``) charges on detection, before raising
+#     ``DeploymentHealthError``. It has no choice: the tune runs afterwards in
+#     ``project_manager``, outside the callback, so the callback cannot know the
+#     outcome. The counter is its only brake, and a brake that only engages once the
+#     work is proven wasted is no brake at all.
+#
+# The cost of charging early -- a detection blocked by the 8x ceiling spending budget
+# without anything being adjusted -- is near-unreachable in practice. A non-committing
+# inline detection queues no automated refresh, so a next round can only start from a
+# user action (deploy, upsert, manual refresh, image bump), and every one of those
+# calls ``reset_oom_tune_attempts`` first. Three such detections in a row therefore
+# cannot stack up. And where the budget does close on a ceiling-blocked deployment,
+# closing it is the correct outcome: nothing can be adjusted, so the honest answer is
+# "manual intervention required" instead of aborting every sync wait for ever.
+OOM_MAX_TUNE_ATTEMPTS = 3
 
-# Tracks how many inline OOM tune cycles have fired per deployment
-# during the current process lifetime.  Keyed by "project/deployment".
-_inline_oom_attempts: dict[str, int] = {}
+# Tracks how many OOM tune cycles have fired per deployment during the current
+# process lifetime.  Keyed by "project/deployment".
+#
+# ONE counter for BOTH paths (inline and fire-and-forget), and it deliberately
+# survives a round: every committed tune queues a refresh_deployment task, and that
+# task schedules a fresh check. A per-round counter therefore resets the very brake
+# it is meant to be (asses-k2n/pr-494, 24 August: 45Mi → 4096Mi in nine steps, each
+# round restarting at 1/3). Only an explicit reset -- a real new deploy, a user
+# action, an image bump -- clears it; see ``reset_oom_tune_attempts``.
+_oom_tune_attempts: dict[str, int] = {}
+
+# The pod-template-hash the last OOM tune acted on, per "project/deployment/component".
+# A detection on that same hash is not new evidence: the pod that OOM'd is still the
+# one from before the previous increase, so that increase has not rolled out yet.
+_last_tuned_pod_template_hash: dict[str, str] = {}
 
 # Module-level task service reference for the fire-and-forget path.
 # Set during app startup via ``set_task_service()``.
@@ -85,6 +120,75 @@ def set_task_service(task_service: AsyncTaskService) -> None:
     """Store a reference to the task service for fire-and-forget use."""
     global _task_service_ref
     _task_service_ref = task_service
+
+
+def _oom_attempt_key(project_name: str, deployment_name: str) -> str:
+    """The key both paths share for one deployment's OOM tune budget."""
+    return f"{project_name}/{deployment_name}"
+
+
+def oom_tune_budget_spent(project_name: str, deployment_name: str) -> bool:
+    """True when this deployment has used up its OOM tune cycles."""
+    return _oom_tune_attempts.get(_oom_attempt_key(project_name, deployment_name), 0) >= OOM_MAX_TUNE_ATTEMPTS
+
+
+def _oom_hash_key(project_name: str, deployment_name: str, component_name: str) -> str:
+    return f"{project_name}/{deployment_name}/{component_name}"
+
+
+def oom_is_fresh_evidence(
+    project_name: str,
+    deployment_name: str,
+    component_name: str,
+    pod_template_hash: str | None,
+) -> bool:
+    """False when this OOM was observed on the same pod generation as the last tune.
+
+    A tune only means something once it is running. During the incident the health
+    error broke off the ArgoCD sync wait before the previous increase had rolled out,
+    so the watcher kept reading the SAME unchanged pod as fresh evidence: all twelve
+    detections came from ``pr-494-api-fb654fcc5-rcf6g``. The existing superseded-
+    generation filter could not catch that -- at that moment the pod still WAS the
+    current generation.
+
+    An unknown hash (kubectl hiccup, unparsable output) deliberately counts as fresh.
+    Blocking there would silence the auto-tune exactly when the cluster is already
+    having trouble, which is worse than one tune too many.
+    """
+    if not pod_template_hash:
+        logger.info(
+            "Health watcher: no pod-template-hash for %s/%s component %s, treating the OOM as fresh evidence",
+            project_name,
+            deployment_name,
+            component_name,
+        )
+        return True
+    return _last_tuned_pod_template_hash.get(_oom_hash_key(project_name, deployment_name, component_name)) != (
+        pod_template_hash
+    )
+
+
+def _record_oom_tune_hash(
+    project_name: str,
+    deployment_name: str,
+    component_name: str,
+    pod_template_hash: str | None,
+) -> None:
+    """Remember which pod generation this tune answered."""
+    if pod_template_hash:
+        _last_tuned_pod_template_hash[_oom_hash_key(project_name, deployment_name, component_name)] = pod_template_hash
+
+
+def _record_oom_tune_attempt(project_name: str, deployment_name: str) -> int:
+    """Count one OOM tune cycle for this deployment and return the new total.
+
+    Read-modify-write on the shared dict rather than on a snapshot, so two callbacks
+    (or a callback and a background check) racing on the same deployment see each
+    other's increments.
+    """
+    key = _oom_attempt_key(project_name, deployment_name)
+    _oom_tune_attempts[key] = _oom_tune_attempts.get(key, 0) + 1
+    return _oom_tune_attempts[key]
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +202,10 @@ class PodHealthResult:
 
     component_name: str
     oom_detected: bool = False
+    # pod-template-hash of the pod the OOM was observed on; None when it could not be
+    # determined. Same hash on a later detection means the previous increase has not
+    # rolled out yet, so that detection is not new evidence.
+    oom_pod_template_hash: str | None = None
     image_pull_error: str | None = None
     image_pull_container: str | None = None  # which container failed (main "app" vs a sidecar)
     image_pull_image: str | None = None  # the image reference that could not be pulled
@@ -309,6 +417,7 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
                             exit_code,
                         )
                         result.oom_detected = True
+                        result.oom_pod_template_hash = pod_template_hash or current_pod_template_hash
 
                 # Check waiting state for ImagePull and CrashLoop
                 waiting = container_status.get("state", {}).get("waiting", {})
@@ -352,12 +461,30 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
     return result
 
 
+# De kubelet-message hoort op EEN regel te passen: wat deze functie teruggeeft komt in de
+# voortgangslijst terecht als de titel van een lijstitem, niet als lopende tekst. Gemeten
+# op productie is een image-pull-message van CRI-O 762 tekens, omdat dezelfde fout er twee
+# keer in staat (eerst als ``pull image err``, daarna als ``artifact err``). Die kwam
+# integraal in die titel terecht, maal twee componenten maal vijftien deployments.
+#
+# Vandaar deze grens. Het volledige bericht verdwijnt niet: dat blijft staan in
+# ``component_failures`` (met een vertaalde titel en een suggestie) en in de logs.
+_MAX_WAITING_DETAIL = 120
+
+
+def _short_detail(message: str) -> str:
+    """Vouw een kubelet-message op tot iets dat als regeltitel leesbaar blijft."""
+    collapsed = " ".join(message.split())
+    if len(collapsed) <= _MAX_WAITING_DETAIL:
+        return collapsed
+    return collapsed[: _MAX_WAITING_DETAIL - 1].rstrip() + "\u2026"
+
+
 def _describe_pod_waiting(pod: dict) -> str | None:
     """Return a plain-language reason a pod is not Ready yet, or None if it looks ready.
 
-    Passes the raw Kubernetes reason/message through so the user gets the full
-    detail (and something to search for), wrapped in Dutch framing for the
-    common cases.
+    Keeps the Kubernetes reason (something to search for) and a shortened form of the
+    message, wrapped in Dutch framing for the common cases.
     """
     status = pod.get("status", {})
     phase = status.get("phase", "")
@@ -368,17 +495,21 @@ def _describe_pod_waiting(pod: dict) -> str | None:
         for cond in status.get("conditions", []):
             if cond.get("type") == "PodScheduled" and cond.get("status") == "False":
                 msg = cond.get("message") or cond.get("reason") or "geen geschikte node beschikbaar"
-                return f"kan niet worden ingepland: {msg}"
+                return f"kan niet worden ingepland: {_short_detail(msg)}"
 
-    # Container-level waiting reasons (pass the raw reason + message through).
+    # Container-level waiting reasons (the Kubernetes reason, plus a shortened message).
     for cs in container_statuses:
         waiting = cs.get("state", {}).get("waiting")
         if waiting:
             reason = waiting.get("reason", "")
             message = waiting.get("message", "")
-            suffix = f": {message}" if message else ""
+            suffix = f": {_short_detail(message)}" if message else ""
             if reason in _IMAGE_PULL_REASONS:
-                return f"image ophalen mislukt ({reason}){suffix}"
+                # Bewust helemaal zonder message, ook niet ingekort: hier is dat altijd
+                # de registry-dump uit de toelichting bij _MAX_WAITING_DETAIL, en de eerste
+                # 120 tekens daarvan zeggen niets wat de reden hierboven niet al zegt. Welk
+                # image het is en wat eraan te doen valt staat in component_failures.
+                return f"image ophalen mislukt ({reason})"
             if reason in _CRASH_LOOP_REASONS:
                 return f"blijft herstarten na een crash{suffix}"
             if reason == "ContainerCreating":
@@ -588,6 +719,7 @@ async def _run_oom_check(
     # service decides what an observation means.
     health_service = deployment_health_service()
     oom_component_refs: list[str] = []
+    oom_pod_hashes: dict[str, str | None] = {}  # unique_name -> the generation that OOM'd
     image_pull_errors: list[tuple[str, str]] = []  # (component_ref, error_message)
     components = target_dep.get("components", [])
     for comp in components:
@@ -603,7 +735,18 @@ async def _run_oom_check(
             continue
 
         if health.oom_detected:
-            oom_component_refs.append(component_ref)
+            if oom_is_fresh_evidence(project_name, deployment_name, unique_name, health.oom_pod_template_hash):
+                oom_component_refs.append(component_ref)
+                oom_pod_hashes[unique_name] = health.oom_pod_template_hash
+            else:
+                logger.info(
+                    "Health watcher: OOM for %s/%s component %s is on pod generation %s, "
+                    "the same one the previous tune answered — waiting for that increase to roll out",
+                    project_name,
+                    deployment_name,
+                    component_ref,
+                    health.oom_pod_template_hash,
+                )
         if health.image_pull_error:
             if is_transient_registry_error(health.image_pull_error):
                 logger.warning(
@@ -639,6 +782,22 @@ async def _run_oom_check(
             )
         return
 
+    # The shared budget decides, not the ``attempt`` parameter. That parameter only
+    # counts within one chain of scheduled checks, and every committed tune queues a
+    # refresh whose handler starts a brand new chain at attempt=1 -- so it reset the
+    # brake it was supposed to be. ``attempt`` stays in the log lines only.
+    if oom_tune_budget_spent(project_name, deployment_name):
+        logger.warning(
+            "Health watcher: OOM tune budget (%d cycles) spent for %s/%s, no further auto-tune "
+            "(attempt %d/%d) — manual intervention required",
+            OOM_MAX_TUNE_ATTEMPTS,
+            project_name,
+            deployment_name,
+            attempt,
+            max_attempts,
+        )
+        return
+
     logger.info(
         "Health watcher: OOM detected for %s/%s, triggering auto-tune (attempt %d/%d)",
         project_name,
@@ -656,10 +815,15 @@ async def _run_oom_check(
     try:
         observation = await run_after_sync_observation(project_name, deployment_name, component_health)
         if observation.requeue_refresh:
+            used = _record_oom_tune_attempt(project_name, deployment_name)
+            for unique_name, pod_hash in oom_pod_hashes.items():
+                _record_oom_tune_hash(project_name, deployment_name, unique_name, pod_hash)
             logger.info(
-                "Health watcher: auto-tune committed changes for %s/%s",
+                "Health watcher: auto-tune committed changes for %s/%s (%d/%d OOM tune cycles used)",
                 project_name,
                 deployment_name,
+                used,
+                OOM_MAX_TUNE_ATTEMPTS,
             )
             await _queue_refresh_task(project_name, deployment_name)
             schedule_oom_check(
@@ -824,24 +988,12 @@ def create_health_check_callback(
         ImagePullBackOff and CrashLoopBackOff and raises ``DeploymentHealthError``.
     """
     attempt_key = f"{project_name}/{deployment_name}"
-    current_attempts = _inline_oom_attempts.get(attempt_key, 0)
-    # When the OOM auto-tune budget is spent, only the OOM branch is suppressed —
-    # image-pull and crash-loop detection must keep working, otherwise a broken
-    # image on an OOM-exhausted deployment sits in Progressing until ArgoCD's
-    # progress deadline. Never return None here.
-    oom_budget_exhausted = current_attempts >= OOM_INLINE_MAX_ATTEMPTS
-    if oom_budget_exhausted:
-        logger.warning(
-            "Health check: max OOM tune attempts (%d) reached for %s, "
-            "OOM auto-tune disabled (image-pull/crash-loop still checked)",
-            OOM_INLINE_MAX_ATTEMPTS,
-            attempt_key,
-        )
-
     last_check_at = 0
+    exhaustion_logged = False
+    stale_generation_logged: set[str] = set()
 
     async def _callback(elapsed_seconds: int) -> None:
-        nonlocal last_check_at
+        nonlocal last_check_at, exhaustion_logged
 
         # Stop checking after max elapsed (boot-time failures are fast)
         if elapsed_seconds > HEALTH_CHECK_MAX_ELAPSED_SECONDS:
@@ -850,6 +1002,24 @@ def create_health_check_callback(
         # Throttle checks
         if last_check_at > 0 and (elapsed_seconds - last_check_at) < HEALTH_CHECK_INTERVAL_SECONDS:
             return
+
+        # Read the budget LIVE, on every call. Snapshotting it while building the
+        # callback meant it could never flip from "room left" to "spent" inside a
+        # callback's lifetime, and two callbacks alive on the same deployment each
+        # counted from their own zero. When the budget is spent, only the OOM branch
+        # is suppressed -- image-pull and crash-loop detection must keep working,
+        # otherwise a broken image on an OOM-exhausted deployment sits in Progressing
+        # until ArgoCD's progress deadline. Never return None here.
+        current_attempts = _oom_tune_attempts.get(attempt_key, 0)
+        oom_budget_exhausted = current_attempts >= OOM_MAX_TUNE_ATTEMPTS
+        if oom_budget_exhausted and not exhaustion_logged:
+            exhaustion_logged = True
+            logger.warning(
+                "Health check: max OOM tune attempts (%d) reached for %s, "
+                "OOM auto-tune disabled (image-pull/crash-loop still checked)",
+                OOM_MAX_TUNE_ATTEMPTS,
+                attempt_key,
+            )
 
         # CrashLoopBackOff and ImagePullBackOff are visible immediately —
         # no grace period needed.  OOM needs the grace period because
@@ -868,7 +1038,7 @@ def create_health_check_callback(
             elapsed_seconds,
             check_oom,
             current_attempts,
-            OOM_INLINE_MAX_ATTEMPTS,
+            OOM_MAX_TUNE_ATTEMPTS,
         )
 
         unhealthy = await check_all_components_health(namespace, component_names, state)
@@ -897,8 +1067,28 @@ def create_health_check_callback(
             # the OOM is guaranteed to be from the current lifecycle. Without this
             # exception, pods that OOM instantly on boot (e.g. 25Mi limit) get reported
             # only as CrashLoopBackOff and the auto-tune path never runs.
-            if not oom_budget_exhausted and health.oom_detected and (check_oom or health.crash_loop_detected):
+            oom_actionable = (
+                not oom_budget_exhausted and health.oom_detected and (check_oom or health.crash_loop_detected)
+            )
+            # Only ask about the generation for an OOM we would otherwise act on, and
+            # say so once per component: this runs on every poll iteration.
+            if oom_actionable and not oom_is_fresh_evidence(
+                project_name, deployment_name, health.component_name, health.oom_pod_template_hash
+            ):
+                oom_actionable = False
+                if health.component_name not in stale_generation_logged:
+                    stale_generation_logged.add(health.component_name)
+                    logger.info(
+                        "Health check: OOM for %s is on pod generation %s, the same one the previous tune "
+                        "answered — waiting for that increase to roll out",
+                        health.component_name,
+                        health.oom_pod_template_hash,
+                    )
+            if oom_actionable:
                 has_oom = True
+                _record_oom_tune_hash(
+                    project_name, deployment_name, health.component_name, health.oom_pod_template_hash
+                )
                 failures.append(
                     ComponentFailure(
                         component_name=health.component_name,
@@ -938,16 +1128,26 @@ def create_health_check_callback(
             return
 
         if has_oom:
-            _inline_oom_attempts[attempt_key] = current_attempts + 1
+            _record_oom_tune_attempt(project_name, deployment_name)
 
         raise DeploymentHealthError(failures, namespace)
 
-    # Reset OOM attempts when callback is created — a fresh deploy starts clean.
-    _inline_oom_attempts.pop(attempt_key, None)
-
+    # Deliberately NO reset here. Building a callback is not proof of a fresh deploy:
+    # the automated refresh queued by a tune builds one too, so popping the counter on
+    # creation wiped the budget once per escalation round. Only an explicit reset
+    # (``reset_oom_tune_attempts``, called for a real deploy / user action / image
+    # bump) clears it.
     return _callback
 
 
-def reset_inline_oom_attempts(project_name: str, deployment_name: str) -> None:
-    """Reset the inline OOM attempt counter for a deployment (e.g. after manual tune)."""
-    _inline_oom_attempts.pop(f"{project_name}/{deployment_name}", None)
+def reset_oom_tune_attempts(project_name: str, deployment_name: str) -> None:
+    """Clear a deployment's OOM tune budget: a real new deploy starts clean.
+
+    Called for user-initiated work only (a deploy, an upsert, a manual refresh, an
+    image bump) — never for the automated refresh a tune queues for itself, which
+    carries ``automated_remediation: True`` precisely so it can be told apart.
+    """
+    _oom_tune_attempts.pop(_oom_attempt_key(project_name, deployment_name), None)
+    prefix = f"{project_name}/{deployment_name}/"
+    for key in [k for k in _last_tuned_pod_template_hash if k.startswith(prefix)]:
+        del _last_tuned_pod_template_hash[key]

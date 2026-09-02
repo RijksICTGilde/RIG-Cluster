@@ -130,7 +130,8 @@ CREATE TABLE IF NOT EXISTS async_tasks (
     completed_at TIMESTAMPTZ,
     created_by VARCHAR(255),
     attempt_count SMALLINT NOT NULL DEFAULT 0,
-    max_attempts SMALLINT NOT NULL DEFAULT 3
+    max_attempts SMALLINT NOT NULL DEFAULT 3,
+    affects_deployments VARCHAR(63)[]
 );
 
 CREATE INDEX IF NOT EXISTS idx_async_tasks_pending
@@ -150,6 +151,9 @@ CREATE INDEX IF NOT EXISTS idx_async_tasks_deployment
 CREATE INDEX IF NOT EXISTS idx_async_tasks_completed
     ON async_tasks(status, completed_at)
     WHERE status IN ('completed', 'failed', 'cancelled');
+
+CREATE INDEX IF NOT EXISTS idx_async_tasks_affects
+    ON async_tasks USING GIN (affects_deployments);
 ```
 
 ### Design Decisions
@@ -157,6 +161,10 @@ CREATE INDEX IF NOT EXISTS idx_async_tasks_completed
 - **JSONB for payload**: Each task type has different request parameters. Storing as JSONB avoids schema proliferation.
 - **subtasks as JSONB array**: Mirrors the existing `TaskProgressManager.tasks` dict but stored persistently. At most ~15 subtasks per operation.
 - **heartbeat_at**: Essential for stale task recovery when a pod dies mid-task.
+- **affects_deployments**: The deployments a task reprocesses, written once by `create_task()`
+  from `scope_of()`. NULL means project-wide. Claiming compares these scopes for OVERLAP, so a
+  project-wide task and a deployment-scoped task of the same project no longer run at the same
+  time. Added in migration 005 - see `features/taakscope-en-de-uitrolwacht.md`.
 - **cluster column**: Each task records which cluster it targets. Workers only claim tasks matching their own `CLUSTER_MANAGER`. This is also the foundation for federation routing later.
 - **No separate subtasks table**: The subtask count is small enough that a JSONB array is sufficient.
 
@@ -213,6 +221,8 @@ SELECT id, task_type, payload, ...
 FROM async_tasks
 WHERE status = 'pending'
   AND cluster = $cluster_manager
+  -- geen actieve taak van dit project met een overlappende scope, en geen oudere
+  -- wachtende taak van dit project met een overlappende scope (RC-166)
 ORDER BY created_at ASC
 LIMIT 1
 FOR UPDATE SKIP LOCKED;

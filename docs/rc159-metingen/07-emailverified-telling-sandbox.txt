@@ -1,0 +1,7 @@
+realm                                         gebruikers  niet geverifieerd  verifyEmail
+jc-77j-sandboxed-local                                 0                  0        False
+master                                                 3                  1        False
+operations-manager                                     1                  0        False
+rc159-omleiding                                        1                  1        False
+rig-platform                                           0                  0        False
+TOTAAL                                                 5                  2

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from opi.handlers.project_file_handler import is_transient_registry_error
+from opi.utils.naming import generate_unique_name
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,11 @@ class InterpretedEvent:
 # constante, omdat de probe-oorzaak hieronder hem gericht moet kunnen vervangen: de
 # kubelet meldt namelijk hetzelfde als hij een container kilt op een falende probe.
 _CRASH_TITLE = "Applicatie crasht herhaaldelijk"
+#: De crashmelding voor het geval waarin er NOG iets draait: een mislukte uitrol naast een
+#: applicatie die het gewoon doet. Bewust een eigen titel en geen extra zin achter de oude:
+#: de titel is wat er in de opsomming staat, en "crasht herhaaldelijk" is precies de zin
+#: die de lezer op het verkeerde been zet.
+_CRASH_WITH_SERVING_TITLE = "Nieuwe versie start niet op"
 
 _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
     # (title, suggestion, severity)
@@ -426,7 +432,9 @@ def _resource_base_name(resource: str) -> str:
     return _extract_base_name(name)
 
 
-def _suppress_symptoms(errors: list[dict[str, str]]) -> list[dict[str, str]]:
+def _suppress_symptoms(
+    errors: list[dict[str, str]], serving_components: set[str] | None = None
+) -> list[dict[str, str]]:
     """Remove symptom errors when a root cause exists for the same component.
 
     Bovenop de symptoomregel geldt er een tussen twee OORZAKEN: staat er voor hetzelfde
@@ -434,6 +442,15 @@ def _suppress_symptoms(errors: list[dict[str, str]]) -> list[dict[str, str]]:
     komen namelijk van dezelfde kubelet-backoff, maar alleen de probe-kill weet WAAROM
     de container omging. Andersom - een component dat echt crasht - is er geen
     probe-kill, en dan blijft de crashmelding gewoon staan.
+
+    En er is een derde geval, dat geen melding wegneemt maar hem BIJSTELT. Draait er voor
+    hetzelfde component nog een pod die verkeer afhandelt (``serving_components``, de
+    unieke namen), dan is "de applicatie crasht herhaaldelijk" niet onwaar maar wel
+    misleidend: de vorige versie bedient de gebruikers gewoon door en alleen de NIEUWE pod
+    komt niet omhoog. Dat is een mislukte uitrol en geen storing, en dat verschil bepaalt
+    of iemand 's nachts opstaat. Zelfde soort correctie als de probe-kill hierboven: een
+    preciezere waarneming verdringt een minder precieze, op dezelfde plek en niet in een
+    tweede mechanisme ernaast.
     """
     root_cause_components: set[str] = set()
     probe_kill_components: set[str] = set()
@@ -456,7 +473,32 @@ def _suppress_symptoms(errors: list[dict[str, str]]) -> list[dict[str, str]]:
         if title == _CRASH_TITLE and component in probe_kill_components:
             continue
         result.append(error)
-    return result
+    return _restate_crash_with_serving_pod(result, serving_components)
+
+
+def _restate_crash_with_serving_pod(
+    errors: list[dict[str, str]], serving_components: set[str] | None
+) -> list[dict[str, str]]:
+    """Reword the crash message for a component whose previous version keeps serving.
+
+    Applied AFTER the suppression above so it cannot disturb it: that pass reads titles to
+    decide what is a root cause, and a crash entry only stops being ``_CRASH_TITLE`` once
+    every one of those decisions has been made.
+    """
+    if not serving_components:
+        return errors
+    for error in errors:
+        if error.get("message") != _CRASH_TITLE:
+            continue
+        if _resource_base_name(error.get("resource", "")) not in serving_components:
+            continue
+        error["message"] = _CRASH_WITH_SERVING_TITLE
+        error["suggestion"] = (
+            "De vorige versie draait door, dus je applicatie blijft bereikbaar. Alleen de nieuwe pod "
+            "komt niet omhoog; de oorzaak staat in de logs van die pod. Kies hem in het logpaneel, en "
+            "zet 'vorige poging' aan als hij tussen twee pogingen in niets laat zien."
+        )
+    return errors
 
 
 def _dedupe_cross_source(errors: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -563,6 +605,7 @@ def interpret_argocd_errors(
     errors: list[dict[str, str]],
     deployment_name: str = "",
     component_names: list[str] | None = None,
+    serving_components: set[str] | None = None,
 ) -> list[dict[str, str]]:
     """
     Interpret a mixed list of ArgoCD errors and K8s events.
@@ -570,6 +613,11 @@ def interpret_argocd_errors(
     K8s events (resource starts with "Event/") are translated and deduplicated.
     ArgoCD errors are passed through but enriched with pattern matching.
     Resource names are simplified to component names when deployment_name is provided.
+
+    ``serving_components`` names the component REFERENCES for which a pod is currently
+    serving traffic (see ``summarize_component_pods``). Only the crash message uses it, and
+    only to say what is really the case: the previous version is still serving and the new
+    one is what fails.
 
     When ``component_names`` is a non-empty list, entries whose resource belongs
     to a component no longer present in the deployment are flagged with
@@ -625,7 +673,12 @@ def interpret_argocd_errors(
         result.append(entry)
 
     # Other errors first, then interpreted events — then suppress symptoms and dedupe
-    combined = _suppress_symptoms(other_errors + result)
+    serving_unique_names = (
+        {generate_unique_name(deployment_name, ref) for ref in serving_components if ref}
+        if deployment_name and serving_components
+        else None
+    )
+    combined = _suppress_symptoms(other_errors + result, serving_unique_names)
     deduped = _dedupe_cross_source(combined)
 
     # Flag leftovers from components no longer in the deployment (must run on the
@@ -748,3 +801,86 @@ def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
             enriched["original_message"] = message
             return enriched
     return error
+
+
+# --- Componentfouten groeperen voor de voortgangspagina --------------------------------
+#
+# Zestien kapotte componenten leverden zestien losse meldingen op, elk met dezelfde
+# suggestie van ruim vierhonderd tekens eronder. Dat leest niet als zes problemen maar als
+# een muur, en juist het verband -- welke componenten hebben HETZELFDE probleem -- was
+# nergens te zien.
+#
+# Groeperen gebeurt op de vertaalde titel, niet op de rauwe message: twee componenten die
+# allebei hun image niet kunnen ophalen zijn voor de lezer één ding, ook al verschilt de
+# registry-tekst per image. De suggestie is per titel praktisch identiek (dezelfde raad,
+# een ander voorbeeld-image), dus daarvan blijft er één staan.
+
+
+def group_component_failures(failures: list[dict] | None) -> list[dict]:
+    """Vat een platte lijst componentfouten samen tot één groep per soort probleem.
+
+    Elke groep draagt de vertaalde titel, de ernst, de betrokken componenten (per
+    deployment) en één suggestie. De volgorde van binnenkomst blijft behouden, zodat de
+    lijst niet van run tot run wisselt.
+
+    Returns:
+        Een lijst groepen met ``title``, ``severity``, ``failure_type``, ``suggestion``,
+        ``suggestion_is_example`` (waar als de leden verschillende suggesties hadden),
+        ``component_count``, ``deployments`` (lijst van ``{"name", "components"}``) en
+        ``members`` (de oorspronkelijke fouten, voor de logboeklinks per component).
+    """
+    if not failures:
+        return []
+
+    groups: dict[tuple[str, str], dict] = {}
+    for failure in failures:
+        title = failure.get("title") or failure.get("message") or "Onbekend probleem"
+        failure_type = failure.get("failure_type") or ""
+        key = (title, failure_type)
+        group = groups.get(key)
+        if group is None:
+            group = {
+                "title": title,
+                "failure_type": failure_type,
+                # Een groep is zo ernstig als zijn ernstigste lid: één component waar de
+                # gebruiker iets aan moet doen maakt de hele groep actionable.
+                "severity": failure.get("severity") or EventSeverity.ACTIONABLE.value,
+                "suggestion": failure.get("suggestion") or "",
+                # De suggesties binnen een groep verschillen als ze een image noemen: elk
+                # component heeft zijn eigen image. Er wordt er EEN getoond -- twaalf keer
+                # dezelfde raad met een ander voorbeeld erin is de muur die we juist
+                # weghalen -- maar dan moet er wel bij staan dat het een voorbeeld is.
+                "suggestions_seen": set(),
+                "deployments": {},
+                "members": [],
+            }
+            groups[key] = group
+        elif failure.get("severity") == EventSeverity.ACTIONABLE.value:
+            group["severity"] = EventSeverity.ACTIONABLE.value
+
+        if failure.get("suggestion"):
+            group["suggestions_seen"].add(failure["suggestion"])
+
+        deployment = failure.get("deployment") or ""
+        component = failure.get("component") or ""
+        components = group["deployments"].setdefault(deployment, [])
+        if component and component not in components:
+            components.append(component)
+        group["members"].append(failure)
+
+    result = []
+    for group in groups.values():
+        deployments = [{"name": name, "components": comps} for name, comps in group["deployments"].items()]
+        result.append(
+            {
+                "title": group["title"],
+                "failure_type": group["failure_type"],
+                "severity": group["severity"],
+                "suggestion": group["suggestion"],
+                "suggestion_is_example": len(group["suggestions_seen"]) > 1,
+                "deployments": deployments,
+                "component_count": sum(len(d["components"]) for d in deployments),
+                "members": group["members"],
+            }
+        )
+    return result

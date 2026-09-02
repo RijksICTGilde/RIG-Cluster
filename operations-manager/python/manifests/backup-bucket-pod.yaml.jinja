@@ -170,10 +170,24 @@ spec:
           value: "/tmp/kopia-cache"
         - name: KOPIA_LOG_DIR
           value: "/tmp/kopia-logs"
+      volumeMounts:
+        # /tmp holds the plaintext bucket mirror plus the Kopia cache, config and
+        # logs. Without a volume that all lands on the node's own disk, unbounded:
+        # a bucket larger than the node's free space fills it and kubelet starts
+        # evicting pods, including neighbours. An emptyDir with a sizeLimit turns
+        # that into a failed backup for this bucket only.
+        - name: staging
+          mountPath: /tmp
       resources:
         requests:
           memory: "512Mi"
           cpu: "100m"
+          ephemeral-storage: "1Gi"
         limits:
           memory: "4Gi"
           cpu: "2000m"
+          ephemeral-storage: "{{ staging_size_limit | default('5Gi') }}"
+  volumes:
+    - name: staging
+      emptyDir:
+        sizeLimit: {{ staging_size_limit | default('5Gi') }}

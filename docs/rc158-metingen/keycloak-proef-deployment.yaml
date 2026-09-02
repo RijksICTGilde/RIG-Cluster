@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rc158-keycloak
+  namespace: rig-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: rc158-keycloak}
+  template:
+    metadata:
+      labels: {app: rc158-keycloak}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: providers
+          image: busybox:1.37.0
+          command: ["sh", "-c", "cp /proef/proef.jar /opt/keycloak/providers/keycloak-relay-email-sender-proef.jar && ls -l /opt/keycloak/providers/"]
+          securityContext:
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {mountPath: /opt/keycloak/providers/, name: providers}
+            - {mountPath: /proef, name: proefjar}
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:25.0.6
+          args: ["start", "--proxy-headers=forwarded", "--hostname-strict=false"]
+          env:
+            - {name: KEYCLOAK_ADMIN, value: "admin"}
+            - {name: KEYCLOAK_ADMIN_PASSWORD, value: "<beheerderswachtwoord>"}
+            - {name: KC_HEALTH_ENABLED, value: "true"}
+            - {name: KC_HTTP_ENABLED, value: "true"}
+            - {name: KC_HOSTNAME, value: "http://localhost:8081"}
+            - {name: KC_HOSTNAME_STRICT, value: "false"}
+            - {name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC, value: "true"}
+            - {name: KC_DB, value: "postgres"}
+            - {name: KC_DB_URL, value: "jdbc:postgresql://rig-db-rw:5432/keycloak_rc158"}
+            - name: KC_DB_USERNAME
+              valueFrom: {secretKeyRef: {name: keycloak-db-credentials, key: username}}
+            - name: KC_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak-db-credentials, key: password}}
+            # De relay, uit de OMGEVING VAN DE POD. Dit is de hele opzet.
+            - {name: ZAD_MAIL_RELAY_HOST, value: "rig-mail-relay.rig-ron.svc.cluster.local"}
+            - {name: ZAD_MAIL_RELAY_PORT, value: "587"}
+            - {name: ZAD_MAIL_RELAY_USERNAME, value: "keycloak-proef"}
+            - {name: ZAD_MAIL_RELAY_PASSWORD, value: "<wachtwoord van het relayaccount>"}
+            - {name: ZAD_MAIL_RELAY_FROM, value: "noreply-rijksapp@rijksoverheid.nl"}
+            # De submission-listener van de relay biedt in de sandbox GEEN STARTTLS aan
+            # (gemeten met EHLO), dus hier uit. In productie hoort dit aan te staan.
+            - {name: ZAD_MAIL_RELAY_STARTTLS, value: "false"}
+          resources:
+            requests: {cpu: 100m, memory: 768Mi}
+            limits: {memory: 1500Mi}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /realms/master, port: 8080}
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 60
+          securityContext:
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: providers, mountPath: /opt/keycloak/providers/}
+            - {name: tmp, mountPath: /opt/keycloak/data/tmp}
+      volumes:
+        - {name: providers, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+        - {name: proefjar, configMap: {name: rc158-proef-jar}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: rc158-keycloak, namespace: rig-system}
+spec:
+  selector: {app: rc158-keycloak}
+  ports: [{name: http, port: 8080, targetPort: 8080}]

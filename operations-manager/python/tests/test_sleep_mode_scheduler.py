@@ -37,6 +37,19 @@ class TestDecideAction:
     def test_sleeping_no_action(self) -> None:
         assert decide_action("sleeping", PAST, matches=True, now=NOW) is None
 
+    def test_a_deployment_slept_by_hand_outside_the_match_is_left_alone(self) -> None:
+        """The load-bearing half of "``match`` scopes the sweeper, the button does not".
+
+        The manual sleep button is not scoped by ``match``, so a deployment outside the
+        selection can be asleep. The sweeper must neither wake it nor re-sleep it: it
+        stays down until a person or a visitor wakes it, which is what manual means. A
+        wake that IS under way still finishes, matched or not, or a manual wake could
+        hang forever.
+        """
+        assert decide_action("sleeping", PAST, matches=False, now=NOW) is None
+        assert decide_action("waking", FUTURE, matches=False, now=NOW) == CHECK_AWAKE
+        assert decide_action("waking", PAST, matches=False, now=NOW) == REVERT
+
 
 class TestPlanSweep:
     def _project(self, deployments: list[dict]) -> dict:

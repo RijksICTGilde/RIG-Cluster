@@ -26,6 +26,7 @@ from opi.services.gedeelde_diensten import (
     haal_databases,
     haal_keycloak,
     haal_opslag,
+    haal_resources,
 )
 from opi.web.lotc_switch import build_lotc_admin, render
 from opi.web.menu import get_menu_items
@@ -51,6 +52,20 @@ async def gedeelde_diensten_overzicht(request: Request) -> Response:
             "ongemeten": ONGEMETEN_DIENSTEN,
             **build_lotc_admin(user=user, current_path="/admin/diensten"),
         },
+    )
+
+
+@shared_services_router.get("/resources", response_class=HTMLResponse)
+@requires_sso
+async def gedeelde_diensten_resources(request: Request) -> Response:
+    """Het resourceblok, apart opgehaald."""
+    require_platform_admin(request)
+
+    blok = await haal_resources()
+    return render(
+        request,
+        template="bg/_gedeelde-diensten-resources.html.j2",
+        context={"request": request, "blok": blok},
     )
 
 

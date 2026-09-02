@@ -24,6 +24,16 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: keycloak-theme-puller
+          # DRIE jars, en de derde komt NIET van het netwerk. Het thema en de SAML-mapper
+          # worden bij elke podstart van github.com gehaald; dat risico bestaat al. De
+          # relay-emailSender mag er niet bij, want aan die jar hangt de startvlag
+          # --spi-email-sender-provider: Keycloak WEIGERT TE STARTEN als de provider er niet
+          # is (gemeten, RC-158), en dat is precies wat een stille terugval op de
+          # standaardprovider onmogelijk maakt. Zou hij van GitHub komen, dan legt een
+          # hapering daar het inloggen van het hele platform plat.
+          #
+          # Hij komt daarom uit een ConfigMap (zie de volumes onderaan). De generator zet
+          # een hash van de inhoud in de naam, dus een nieuwe jar is vanzelf een rollout.
           command:
             - sh
             - -c
@@ -33,6 +43,7 @@ spec:
               wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar
               cp keycloak-nl-design-system.jar /opt/keycloak/providers/
               cp keycloak-saml-nameid-mapper-1.1.0.jar /opt/keycloak/providers/
+              cp /zad-providers/keycloak-relay-email-sender-1.0.0.jar /opt/keycloak/providers/
           image: busybox:1.37.0
           securityContext:
             runAsNonRoot: true
@@ -48,11 +59,27 @@ spec:
               name: keycloak-provider
             - mountPath: /tmp
               name: tmp-volume
+            - mountPath: /zad-providers
+              name: zad-providers
+              readOnly: true
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:25.0.6
+          # DE VLAG DIE DE EIGEN VERZENDER AANWIJST. Zonder hem verstuurt de
+          # standaardprovider, en die leest de smtpServer van de realm - de weg waarlangs
+          # een projectbeheerder de post naar een eigen luisteraar kan sturen.
+          #
+          # LET OP DE VORM: de SPI heet intern emailSender en dat wordt in de vlag
+          # email-sender. Schrijf je --spi-emailSender-provider (camelCase), dan wordt de
+          # vlag STIL genegeerd en verstuurt de standaardprovider alsnog; er is geen
+          # waarschuwing en geen enkel signaal. Gemeten in RC-158, en gepind door
+          # RelayEmailSenderProviderFactoryTest en test_keycloak_relay_email_sender.py.
+          #
+          # Tegenover die val staat een cadeau: een provider-id dat niet bestaat laat
+          # Keycloak WEIGEREN TE STARTEN. Een pod die opkomt heeft zijn provider dus
+          # aantoonbaar gevonden.
           args:
-            ["start", "--proxy-headers=forwarded", "--hostname-strict=false", "--spi-theme-welcome-theme=nl-design-system" ]
+            ["start", "--proxy-headers=forwarded", "--hostname-strict=false", "--spi-theme-welcome-theme=nl-design-system", "--spi-email-sender-provider=zad-relay" ]
           env:
             - name: KEYCLOAK_ADMIN
               valueFrom:
@@ -104,6 +131,41 @@ spec:
               value: "true"
             - name: KEYCLOAK_ADMIN_EXPORT_ENABLED
               value: "true"
+            # DE MAILRELAY, ZOALS DE POD HEM KENT. Deze vijf zijn de HELE configuratie van
+            # de eigen verzender: geen realm draagt nog een bestemming, dus er is nergens
+            # een veld dat een projectbeheerder kan omzetten. Zie
+            # keycloak-migration/relay-email-sender/ en features/keycloak-mail.md.
+            #
+            # De basis is het cluster met de relay in rig-ron (local en sandboxed-local);
+            # de odcn-overlay zet de host om naar rig-prd-ron.
+            - name: ZAD_MAIL_RELAY_HOST
+              value: "rig-mail-relay.rig-ron.svc.cluster.local"
+            - name: ZAD_MAIL_RELAY_PORT
+              value: "587"
+            - name: ZAD_MAIL_RELAY_USERNAME
+              value: "zad-keycloak"
+            - name: ZAD_MAIL_RELAY_FROM
+              value: "noreply-inloggen@rijksoverheid.nl"
+            # STARTTLS UIT, en dat is een expliciete beslissing. De submission-listener van
+            # de relay biedt geen STARTTLS aan (met EHLO nagemeten in RC-158), dus dit is
+            # platte AUTH binnen het cluster - precies wat elk project vandaag ook doet met
+            # zijn SMTP_HOST/SMTP_PORT, en dus geen nieuwe blootstelling. De provider heeft
+            # hem standaard AAN staan, zodat het uitzetten hier zichtbaar is en niet stil.
+            # STARTTLS op die listener aanzetten helpt alle tenants tegelijk en is een
+            # eigen taak; zie plans/mail-vervolgpunten.md.
+            - name: ZAD_MAIL_RELAY_STARTTLS
+              value: "false"
+            # optional: true, want dit geheim komt uit de generatie van de clustergeheimen
+            # en een cluster dat die generatie nog niet heeft gedraaid, moet WEL kunnen
+            # inloggen. Zonder deze vlag is een ontbrekend geheim een BOOTBLOKKADE voor de
+            # hele identiteitsvoorziening. Ontbreekt hij, dan start Keycloak, logt de
+            # provider "geen bruikbare relayconfiguratie" en faalt elke verzending luid.
+            - name: ZAD_MAIL_RELAY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-mail-credentials
+                  key: smtp-password
+                  optional: true
           resources:
             limits:
               memory: "1Gi"
@@ -138,3 +200,8 @@ spec:
           emptyDir: {}
         - name: tmp-volume
           emptyDir: {}
+        # De jar van de eigen verzender, uit git. De naam hier is de NAAM VAN DE GENERATOR;
+        # kustomize hangt er een hash van de inhoud aan en werkt deze verwijzing mee bij.
+        - name: zad-providers
+          configMap:
+            name: keycloak-zad-providers

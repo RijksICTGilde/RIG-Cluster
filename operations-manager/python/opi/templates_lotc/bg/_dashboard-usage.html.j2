@@ -59,7 +59,12 @@
                 <canvas id="memory-gauge" class="gauge"></canvas>
                 <div class="gauge-value">
                     <span class="gauge-percentage">{{ metrics.memory_percentage }}%</span>
-                    <span class="gauge-label">{{ metrics.memory_usage_display }} / {{ metrics.memory_limit_display }}</span>
+                    {# Drie getallen en niet twee: de meter loopt op gebruik tegen limiet, maar
+                       de REKENING loopt op de request (per pod het hoogste van request en
+                       gebruik, zie de PrometheusRule operations-manager-billing). Zonder de
+                       gevraagde waarde erbij is op deze pagina niet te zien waarvoor betaald
+                       wordt. #}
+                    <span class="gauge-label">{{ metrics.memory_usage_display }} gebruikt / {{ metrics.memory_request_display }} gevraagd / {{ metrics.memory_limit_display }} limiet</span>
                 </div>
             </div>
         {% endcall %}

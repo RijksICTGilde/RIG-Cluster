@@ -4,7 +4,7 @@ Tests for the opi.core.template_helpers module.
 Tests format_dutch_date and get_service_name utility functions.
 """
 
-from opi.core.template_helpers import format_dutch_date, get_service_name
+from opi.core.template_helpers import format_dutch_date, get_service_name, shorten_image_digest
 
 
 class TestFormatDutchDate:
@@ -145,3 +145,32 @@ class TestGetServiceName:
         string -- the format-agnostic resolver treats them like an empty dict,
         which is safe to render in a template."""
         assert get_service_name(42) == ""
+
+
+class TestShortenImageDigest:
+    """Tests for shorten_image_digest, het filter ``korte_digest``."""
+
+    def test_digest_wordt_twaalf_tekens(self):
+        """De grens uit het plan: twaalf tekens van de digest, de repository blijft heel."""
+        volledig = (
+            "ghcr.io/minbzk/moza-profiel-service@"
+            "sha256:25ab6344a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef123456789"
+        )
+        assert shorten_image_digest(volledig) == "ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344a1b2"
+
+    def test_een_tag_blijft_heel(self):
+        """Aan een tag valt niets af te korten, en afkappen zou hem onherkenbaar maken."""
+        assert shorten_image_digest("ghcr.io/minbzk/moza:2026.08.21") == "ghcr.io/minbzk/moza:2026.08.21"
+
+    def test_lege_waarde(self):
+        """Een ontbrekende image geeft een lege tekst, geen "None" op het scherm."""
+        assert shorten_image_digest(None) == ""
+        assert shorten_image_digest("") == ""
+
+    def test_digest_zonder_algoritme(self):
+        """Een verwijzing met een @ maar zonder ``sha256:`` wordt op twaalf tekens gekapt.
+
+        Zo'n vorm is geen geldige imageverwijzing, maar het filter mag er niet op omvallen:
+        wat de pod meldt komt van buiten.
+        """
+        assert shorten_image_digest("ghcr.io/minbzk/moza@abcdefghijklmnop") == "ghcr.io/minbzk/moza@abcdefghijkl"

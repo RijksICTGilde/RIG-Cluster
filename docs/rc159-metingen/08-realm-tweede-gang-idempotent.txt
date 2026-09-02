@@ -1,0 +1,4 @@
+VERSCHIL: {}
+verifyEmail: True
+smtpServer: {"from": "noreply-inloggen@rijksoverheid.nl"}
+host aanwezig: False

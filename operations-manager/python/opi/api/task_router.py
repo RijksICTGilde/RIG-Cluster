@@ -197,8 +197,23 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
 
     await _validate_task_access(request, task)
 
-    response_body = task_response_from_dict(task)
     status = task.get("status", "")
+
+    if status == "pending":
+        # Waarom deze taak nog niet aan de beurt is. Zonder dit lijkt een geblokkeerde taak
+        # gewoon te hangen, en dat is precies wat we niet willen ruilen voor de fout die we
+        # weghalen: wie een delete start terwijl er een projectbrede taak loopt, moet kunnen
+        # zien dat er niets stuk is.
+        blocker = await task_service.find_blocking_task(task_id)
+        if blocker:
+            task["waiting_for"] = {
+                "task_id": str(blocker["task_id"]),
+                "task_type": blocker["task_type"],
+                "deployment_name": blocker.get("deployment_name"),
+                "reason": "running" if blocker["status"] in ("claimed", "running") else "queued_ahead",
+            }
+
+    response_body = task_response_from_dict(task)
 
     if status not in ("pending", "claimed", "running"):
         # De teller hoort bij het antwoord dat zegt dat de schrijfactie klaar is, en niet bij
