@@ -252,3 +252,49 @@ func TestDefaultIdleInterval(t *testing.T) {
 		t.Fatal("the idle cadence must be slower than the fast one, or nothing is saved")
 	}
 }
+
+// TestListenPortComesFromTheEnv: the waker joins the application's Service, so it has to
+// listen on the port that Service targets. Hardcoding 8080 made the whole feature work
+// only for applications that happen to use 8080; for the others the Service selected a
+// healthy pod that answered nothing.
+func TestListenPortComesFromTheEnv(t *testing.T) {
+	t.Setenv("ZAD_PORT", "8000")
+
+	if got := loadConfig().port; got != 8000 {
+		t.Fatalf("port should come from ZAD_PORT, got %d", got)
+	}
+}
+
+// TestListenPortFallsBackTo8080: an OPI that does not pass ZAD_PORT yet must keep the
+// behaviour it has today. This is what makes publishing this image ahead of the OPI change
+// a no-op rather than a change in production.
+func TestListenPortFallsBackTo8080(t *testing.T) {
+	if got := loadConfig().port; got != defaultPort {
+		t.Fatalf("without ZAD_PORT the waker should stay on %d, got %d", defaultPort, got)
+	}
+}
+
+// TestSurroundingWhitespaceIsIgnored: the same courtesy ZAD_WAKE_MODE already gets. A
+// value that plainly means 8000 must not silently land on the fallback -- listening on the
+// wrong port is the failure this whole change is about.
+func TestSurroundingWhitespaceIsIgnored(t *testing.T) {
+	t.Setenv("ZAD_PORT", "  8000\n")
+
+	if got := loadConfig().port; got != 8000 {
+		t.Fatalf("a padded ZAD_PORT should still be read, got %d", got)
+	}
+}
+
+// TestAnUnusablePortFallsBackInsteadOfFailing: the waker is what a visitor sees instead of
+// an error page. A typo in the value must not turn that into a CrashLoopBackOff.
+func TestAnUnusablePortFallsBackInsteadOfFailing(t *testing.T) {
+	for _, value := range []string{"", "http", "0", "-1", "65536"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("ZAD_PORT", value)
+
+			if got := loadConfig().port; got != defaultPort {
+				t.Fatalf("ZAD_PORT=%q should fall back to %d, got %d", value, defaultPort, got)
+			}
+		})
+	}
+}

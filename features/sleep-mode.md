@@ -176,6 +176,16 @@ de twee `zadctl service sleep-mode`-commando's waren onbruikbaar.
   `kubectl scale` buiten ArgoCD om, `selfHeal` blijft aan. Elke overgang schrijft eerst
   naar het projectbestand en commit dat; pas daarna worden manifesten hergenereerd (alleen
   die deployment, `argocd_resources_changed=False`).
+- **Een kloon erft de slaapstand niet.** `deployments[].sleep` is het verslag van sleep-mode
+  over *die ene* deployment: welke slaapt, en met welk wektoken. Een preview die uit een
+  slapende bron wordt gekloond (ZAD actions doet dat) kwam daardoor slapend ter wereld, op
+  `replicas: 0` voordat iemand ernaar kon kijken, met het wektoken van de bron erbij -- dus
+  een token dat twee deployments wekte in plaats van een. De kloon laat die sleutel nu weg.
+  Generieke code noemt daarvoor geen dienst: sleep-mode declareert de sleutel zelf via
+  `Service.deployment_runtime_keys()`, en `registry.deployment_runtime_keys()` verzamelt ze.
+  Aanmaken vuurt bovendien dezelfde `ActionEvent.REDEPLOY`-hook als een image-update, dus de
+  slaapklok begint in de commit die de deployment aanmaakt in plaats van bij de volgende
+  sweep.
 - **Commit-storm voorkomen.** De wekker doet single-flight (één wek-call per pod-leven), het
   wek-endpoint is idempotent, en de sweeper paced tussen projecten.
 - **De wekker vraagt alleen door als er iemand wacht.** Zie de volgende sectie; dat is de

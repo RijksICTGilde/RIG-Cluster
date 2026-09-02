@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.argo import ArgoConnector
-from opi.manager.argo_manager import ArgoManager
+from opi.manager.argo_manager import ApplicationGone, ArgoManager
 
 
 def _make_status(
@@ -617,3 +617,112 @@ class TestGetApplicationManifests:
 
         assert ok is False
         assert "boom" in detail
+
+
+class TestApplicationDisappearsDuringWait:
+    """Een verdwenen Application is iets anders dan een onbereikbare ArgoCD.
+
+    Op 31 augustus 2026 verwijderde een ``delete_deployment`` voor ``mpfb-8wh/pr-244``
+    de Application waar een gelijktijdige projectbrede taak net op was gaan wachten.
+    ``get_application_status`` gaf daarna None (403: bestaat niet), en de wachtlus las
+    dat als een tijdelijke leesfout: 144 keer opnieuw vragen en na 300 seconden
+    "Timed out after 300s waiting for sync" - een uitrolfout die geen uitrolfout was.
+    """
+
+    @pytest.mark.asyncio
+    async def test_disappearing_app_raises_immediately(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Eerst zichtbaar, dan weg: ApplicationGone binnen een pollinterval, geen 300s."""
+        mock_connector.get_application_status = AsyncMock(side_effect=[_make_status("Synced", "Progressing"), None])
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            pytest.raises(ApplicationGone, match="verdween tijdens het wachten"),
+        ):
+            await argo_manager.wait_for_application_synced("my-app", timeout=300, poll_interval=2)
+
+        assert mock_connector.get_application_status.call_count == 2
+        assert mock_sleep.call_count == 1, "niet doorpollen tot de time-out"
+
+    @pytest.mark.asyncio
+    async def test_app_that_still_has_to_appear_is_not_gone(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Nooit gezien betekent 'moet nog verschijnen', en dan is doorpollen juist goed."""
+        mock_connector.get_application_status = AsyncMock(
+            side_effect=[None, None, _make_status("Synced", "Progressing"), _make_status("Synced", "Healthy")]
+        )
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await argo_manager.wait_for_application_synced("my-app", timeout=300, poll_interval=2)
+
+        assert result is True
+        assert mock_connector.get_application_status.call_count == 4
+
+
+class TestFrozenProgressingIsRefreshed:
+    """Een status die blijft staan trekken we zelf los.
+
+    ``asses-k2n/pr-537`` stond op 30 augustus 2026 de volle 300 seconden op
+    ``health=Progressing`` terwijl de resourceVersion 285 van die 300 seconden stilstond:
+    het vervolg-watch-event kwam niet aan en ArgoCD hertoetst uit zichzelf pas na
+    ``timeout.reconciliation`` (15 minuten). Wij wachten korter dan dat, dus elk gemist
+    event werd automatisch een gebruikerszichtbare fout.
+    """
+
+    @pytest.mark.asyncio
+    async def test_refresh_after_a_minute_and_the_freshness_threshold_moves(
+        self, argo_manager: ArgoManager, mock_connector: AsyncMock
+    ):
+        """Na 60s Progressing volgt een refresh, en refreshed_after gaat mee.
+
+        Dat laatste is niet cosmetisch: de nieuwe drempel bepaalt of een status vers
+        genoeg is om er een terminale toestand op te baseren. De Degraded die na de
+        refresh binnenkomt draagt een oude ``reconciledAt`` en mag dus niet als fout
+        gelden - zonder het bijwerken van ``refreshed_after`` zou hij dat wel doen.
+        """
+        polls = {"n": 0}
+
+        def _status(_app_name: str) -> dict:
+            polls["n"] += 1
+            # De 32e poll (elapsed 62s) is de eerste na de refresh op 60s.
+            if polls["n"] >= 32:
+                return _make_status("Synced", "Degraded", reconciled_at="2026-08-30T21:07:00Z")
+            return _make_status("Synced", "Progressing", reconciled_at="2026-08-30T21:07:00Z")
+
+        mock_connector.get_application_status = AsyncMock(side_effect=_status)
+        mock_connector.refresh_application = AsyncMock(return_value="2026-08-30T21:12:00Z")
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(TimeoutError),
+        ):
+            await argo_manager.wait_for_application_synced(
+                "my-app",
+                timeout=80,
+                poll_interval=2,
+                refreshed_after="2026-08-30T21:00:00Z",
+            )
+
+        mock_connector.refresh_application.assert_awaited_once_with("my-app")
+
+    @pytest.mark.asyncio
+    async def test_no_refresh_while_degraded(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Degraded heeft zijn eigen afhandeling; die mag een refresh niet uitstellen."""
+        mock_connector.get_application_status = AsyncMock(
+            return_value=_make_status("Synced", "Degraded", reconciled_at="2026-08-30T21:07:00Z")
+        )
+        mock_connector.refresh_application = AsyncMock(return_value="2026-08-30T21:12:00Z")
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(RuntimeError, match="is degraded"),
+        ):
+            await argo_manager.wait_for_application_synced(
+                "my-app", timeout=80, poll_interval=2, refreshed_after="2026-08-30T21:00:00Z"
+            )
+
+        mock_connector.refresh_application.assert_not_awaited()

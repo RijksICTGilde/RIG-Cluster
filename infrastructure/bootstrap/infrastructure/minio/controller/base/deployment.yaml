@@ -52,6 +52,12 @@ spec:
         env:
         - name: MINIO_BROWSER_LOGIN_ANIMATION
           value: "off"
+        # Without this, /minio/v2/metrics/cluster demands a bearer token and the
+        # Prometheus scrape job gets a 403, so no minio_* series exist at all.
+        # The endpoint serves counters and gauges, never object data, and is
+        # only reachable inside the namespace.
+        - name: MINIO_PROMETHEUS_AUTH_TYPE
+          value: "public"
         volumeMounts:
         - name: minio-storage
           mountPath: /data

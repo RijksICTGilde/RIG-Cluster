@@ -7,9 +7,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jsonpath_ng.ext import parse as jsonpath_parse
+from keycloak.exceptions import KeycloakError
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector
+from opi.connectors.keycloak import (
+    KeycloakConnector,
+    create_keycloak_connector,
+    legacy_restricted_flow_alias,
+    role_gate_flow_alias,
+)
 from opi.core.cluster_config import (
     get_ingress_postfix,
     get_keycloak_discovery_url,
@@ -83,6 +89,43 @@ def build_project_realm_context(
         # Per-realm SSO account-linking mode (automatic | confirm; None -> Keycloak's stock flow)
         "account_link": account_link,
     }
+
+
+def merge_user_variables(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    """Merge a project's own ``variables:`` under the context the platform computed.
+
+    THE PLATFORM KEYS WIN, and that is the whole point of this function. ``variables`` is a
+    free-form dict on the keycloak service config with no ``PLATFORM_MANAGED`` marker, so a
+    project may write it through the API. The context it used to be merged ON TOP of holds
+    ``realm_name``, ``project_realm_name``, ``platform_realm_name``, ``platform_client_id``
+    and ``keycloak_url`` -- the names that decide WHICH realm the blueprint is applied to.
+    A project that set ``project_realm_name`` to another project's realm had the blueprint
+    land there, and nothing anywhere checked that the target realm belonged to the caller.
+
+    That override predates this task; what RC-159 added is what then gets WRITTEN through
+    it -- ``registrationAllowed``, ``loginWithEmailAllowed``, ``resetPasswordAllowed``,
+    ``verifyEmail`` and an ``smtpServer``. Turning ``resetPasswordAllowed`` off on somebody
+    else's realm is a cross-tenant write, so the direction of the merge is now the other way
+    around: a user variable only ever fills a name the platform did NOT compute.
+
+    An ignored key is logged and not refused: the blueprints ship template-level variables
+    of their own and a project that carries an old, harmless override should keep being
+    processed rather than fail at realm reconcile time.
+    """
+    user_variables = config.get("variables") or {}
+    if not isinstance(user_variables, dict):
+        # Non-dicts are already refused where the config is read (_get_keycloak_service_config);
+        # reaching this with anything else means the config was not read there, and silently
+        # ignoring it would hide that.
+        raise TypeError(f"Template variables must be a dict, got {type(user_variables).__name__}")
+
+    genegeerd = sorted(set(user_variables) & set(context))
+    if genegeerd:
+        logger.warning(
+            f"Genegeerde template-variabelen uit de projectconfiguratie: {genegeerd}. Deze namen worden "
+            "door het platform bepaald en mogen niet door een project worden overschreven."
+        )
+    return {**user_variables, **context}
 
 
 def find_realm_entry_for_admin(project_data: dict[str, Any], admin_username: str) -> dict[str, Any] | None:
@@ -1131,10 +1174,20 @@ class KeycloakManager:
 
         This creates:
         1. A role (client or realm) that users need to access the application
-        2. A restricted browser flow that checks for the role (for direct logins)
-        3. Sets the flow as an authentication override on the client
+        2. A role gate browser flow that checks for the role on every login
+        3. Sets the flow as an authentication override on the client and on its public client
         4. A post-broker login flow for SSO/IdP authentication (if IdPs are configured)
         5. Sets the post-broker login flow on all identity providers in the realm
+
+        Wat dit NIET afdekt, en dat is een scherpe rand om te kennen: andere clients in
+        dezelfde realm houden de standaard browser flow. Dat zijn de ingebouwde
+        account-console, de invite-client (bewust, anders kan niemand een uitnodiging
+        inwisselen) en alles wat via ``additional-clients`` wordt aangemaakt. Wie daar
+        inlogt zonder de rol krijgt wel een realm-sessie en wel tokens VOOR DIE CLIENT.
+        Sinds de rolcontrole naast de authenticators staat opent zo'n sessie de beschermde
+        deployment niet meer, maar de applicatie achter zo'n andere client heeft geen
+        rolcontrole. Een nieuwe client toevoegen valt er dus buiten tot iemand hem hier
+        bijzet.
 
         Args:
             keycloak: KeycloakConnector instance
@@ -1147,7 +1200,7 @@ class KeycloakManager:
                 - error_message: str (theme message key)
         """
         error_message = restrict_access.get("error_message", "${accessDeniedNoPermission}")
-        browser_flow_alias = f"browser-restricted-{client_id}"
+        browser_flow_alias = role_gate_flow_alias(client_id)
         post_broker_flow_alias = f"post-broker-restricted-{client_id}"
 
         # Determine if using realm role or client role
@@ -1212,6 +1265,30 @@ class KeycloakManager:
                 realm_name=realm_name,
                 client_id=client_id,
                 browser_flow_alias=browser_flow_alias,
+            )
+
+            # Step 3b: dezelfde poort op de publieke client van deze deployment.
+            # ``create_deployment_client`` maakt naast de vertrouwelijke client altijd
+            # ``<client>-public`` voor browsergebaseerde OIDC. Die stond zonder override,
+            # dus dezelfde gebruiker kon daar zonder rol een token halen voor dezelfde
+            # applicatie. Best effort: oudere deployments hebben nog geen publieke client,
+            # en dat mag de uitrol niet breken.
+            public_client_id = f"{client_id}-public"
+            try:
+                await keycloak.set_client_authentication_flow_override(
+                    realm_name=realm_name,
+                    client_id=public_client_id,
+                    browser_flow_alias=browser_flow_alias,
+                )
+            except KeycloakError as e:
+                logger.info(f"No flow override set on '{public_client_id}': {e}")
+
+            # Step 3c: de voorganger opruimen. Die zette de rolcontrole in de forms-subflow,
+            # waar de Cookie-stap hem oversloeg; hij is vervangen, niet bijgewerkt (zie
+            # ``role_gate_flow_alias``). Pas verwijderen NA het omhangen, anders staat de
+            # client even zonder poort.
+            await keycloak.delete_authentication_flow_by_alias(
+                realm_name=realm_name, flow_alias=legacy_restricted_flow_alias(client_id)
             )
 
             # Step 4: Check for identity providers and set up post-broker login flow
@@ -1394,10 +1471,8 @@ class KeycloakManager:
             "project_realm_name": realm_name,
         }
 
-        # Merge user-provided variables
-        user_variables = config.get("variables", {})
-        if isinstance(user_variables, dict):
-            context.update(user_variables)
+        # Merge the project's own variables UNDER the platform context (merge_user_variables).
+        context = merge_user_variables(context, config)
 
         # Process authentication flows (idempotent - updates if needed). This MUST run
         # before the browser flow is pointed at them: Keycloak rejects a browserFlow
@@ -1480,10 +1555,8 @@ class KeycloakManager:
             context["frontend_redirect_uris"] = first_redirect_uri
             logger.debug(f"Added frontend_redirect_uris to context: {first_redirect_uri}")
 
-        # Merge user-provided variables
-        user_variables = config.get("variables", {})
-        if isinstance(user_variables, dict):
-            context.update(user_variables)
+        # Merge the project's own variables UNDER the platform context (merge_user_variables).
+        context = merge_user_variables(context, config)
 
         # Process clients (idempotent - skips existing clients)
         handler = KeycloakYamlHandler(keycloak)
@@ -1535,9 +1608,7 @@ class KeycloakManager:
             "account_link": config.get("account_link"),  # None = stock flow (opt-in)
         }
 
-        user_variables = config.get("variables", {})
-        if isinstance(user_variables, dict):
-            context.update(user_variables)
+        context = merge_user_variables(context, config)
 
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_identity_providers(yaml_path, context)
@@ -1579,9 +1650,7 @@ class KeycloakManager:
             "realm_display_name": display_name,
         }
 
-        user_variables = config.get("variables", {})
-        if isinstance(user_variables, dict):
-            context.update(user_variables)
+        context = merge_user_variables(context, config)
 
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_realm_self_service(yaml_path, context)
@@ -1869,12 +1938,9 @@ class KeycloakManager:
                     f"Additional hosts: {', '.join(ingress_hosts[1:])}"
                 )
 
-        # Merge user-provided variables (overrides defaults)
-        user_variables = config.get("variables", {})
-        if not isinstance(user_variables, dict):
-            raise TypeError(f"Template variables must be a dict, got {type(user_variables).__name__}")
-
-        context.update(user_variables)
+        # Merge the project's own variables UNDER the platform context: a project may fill a
+        # name the platform did not compute, never move one it did. See merge_user_variables.
+        context = merge_user_variables(context, config)
 
         logger.debug(f"Template context variables: {list(context.keys())}")
 

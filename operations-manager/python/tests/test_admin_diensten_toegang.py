@@ -20,14 +20,18 @@ import pytest
 from fastapi import HTTPException
 from opi.web.router_shared_services import (
     gedeelde_diensten_databases,
+    gedeelde_diensten_keycloak,
     gedeelde_diensten_opslag,
     gedeelde_diensten_overzicht,
+    gedeelde_diensten_resources,
 )
 
 ROUTES = [
     pytest.param(gedeelde_diensten_overzicht, id="pagina"),
     pytest.param(gedeelde_diensten_opslag, id="fragment-opslag"),
     pytest.param(gedeelde_diensten_databases, id="fragment-databases"),
+    pytest.param(gedeelde_diensten_keycloak, id="fragment-keycloak"),
+    pytest.param(gedeelde_diensten_resources, id="fragment-resources"),
 ]
 
 

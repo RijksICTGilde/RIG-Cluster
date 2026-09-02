@@ -12,6 +12,7 @@ from opi.services.deployment_diagnostics import (
     conditions_to_errors,
     gather_deployment_errors,
     gather_sync_deviations,
+    summarize_component_pods,
 )
 
 
@@ -677,3 +678,215 @@ class TestGatherSyncDeviations:
             status_data, deployment_name="productie", disabled_components=frozenset({"typesense"})
         )
         assert [d["resource"] for d in deviations] == ["Deployment/productie-web"]
+
+
+# ---------------------------------------------------------------------------
+# summarize_component_pods (RC-162)
+# ---------------------------------------------------------------------------
+#
+# De vraag die de kaart niet kon beantwoorden: WELKE pod handelt er verkeer af. Bij
+# psd-law/pr-114 waren dat er twee voor hetzelfde component -- een die sinds 18 augustus
+# bediende en een die al negentien uur niet opkwam -- en ArgoCD noemde het geheel Degraded.
+
+
+def _pod(
+    name: str,
+    *,
+    app: str,
+    ready: bool,
+    image: str = "",
+    started_at: str | None = None,
+    restart_count: int = 0,
+    deleting: bool = False,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "app": app,
+        "pod_template_hash": name.split("-")[-2] if "-" in name else "",
+        "deleting": deleting,
+        "ready": ready,
+        "image": image,
+        "restart_count": restart_count,
+        "started_at": started_at,
+        "has_previous_attempt": restart_count > 0,
+    }
+
+
+def _deployment(image: str) -> dict[str, Any]:
+    return {"name": "pr-114", "components": [{"reference": "profielservice", "image": image}]}
+
+
+def test_summarize_reports_the_serving_pod_with_its_image_and_start():
+    """Draait de ingestelde image: een gewone regel, geen verdict dat iets afwijkt."""
+    deployment = _deployment("ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344")
+    pods = [
+        _pod(
+            "pr-114-profielservice-849d475c4-4qp6p",
+            app="pr-114-profielservice",
+            ready=True,
+            image="ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344",
+            started_at="2026-08-18T11:59:12Z",
+        ),
+        _pod(
+            "pr-114-profielservice-58cb9567c5-9t87d",
+            app="pr-114-profielservice",
+            ready=False,
+            image="ghcr.io/minbzk/moza-profiel-service@sha256:2c0728ed",
+            restart_count=5,
+        ),
+    ]
+
+    (summary,) = summarize_component_pods(pods, deployment=deployment)
+
+    assert summary.reference == "profielservice"
+    assert summary.is_serving is True
+    assert summary.pod_name == "pr-114-profielservice-849d475c4-4qp6p"
+    assert summary.image == "ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344"
+    assert summary.running_since == "2026-08-18T11:59:12Z"
+    assert summary.runs_configured_image is True
+
+
+def test_summarize_reports_a_serving_pod_on_a_different_image():
+    """De uitrol is niet doorgekomen: er draait iets, maar niet wat er is ingesteld."""
+    deployment = _deployment("ghcr.io/minbzk/moza-profiel-service@sha256:2c0728ed")
+    pods = [
+        _pod(
+            "pr-114-profielservice-849d475c4-4qp6p",
+            app="pr-114-profielservice",
+            ready=True,
+            image="ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344",
+            started_at="2026-08-18T11:59:12Z",
+        )
+    ]
+
+    (summary,) = summarize_component_pods(pods, deployment=deployment)
+
+    assert summary.is_serving is True
+    assert summary.runs_configured_image is False
+    assert summary.configured_image == "ghcr.io/minbzk/moza-profiel-service@sha256:2c0728ed"
+
+
+def test_summarize_reports_that_nothing_is_serving():
+    """Geen enkele pod is ready: dan LIGT de applicatie eruit, en dat is een eigen uitkomst."""
+    deployment = _deployment("ghcr.io/minbzk/moza-profiel-service:2.1")
+    pods = [
+        _pod(
+            "pr-114-profielservice-58cb9567c5-9t87d",
+            app="pr-114-profielservice",
+            ready=False,
+            image="ghcr.io/minbzk/moza-profiel-service:2.2",
+            restart_count=5,
+        )
+    ]
+
+    (summary,) = summarize_component_pods(pods, deployment=deployment)
+
+    assert summary.is_serving is False
+    assert summary.pod_name is None
+    assert summary.image is None
+    assert summary.running_since is None
+
+
+def test_summarize_reports_nothing_serving_when_there_are_no_pods_at_all():
+    (summary,) = summarize_component_pods([], deployment=_deployment("ghcr.io/x/y:1"))
+    assert summary.is_serving is False
+
+
+def test_summarize_ignores_a_terminating_pod():
+    """Een pod met een deletionTimestamp draagt het label nog en is toch geen antwoord."""
+    deployment = _deployment("ghcr.io/x/y:1")
+    pods = [
+        _pod(
+            "pr-114-profielservice-849d475c4-4qp6p",
+            app="pr-114-profielservice",
+            ready=True,
+            image="ghcr.io/x/y:1",
+            started_at="2026-08-18T11:59:12Z",
+            deleting=True,
+        )
+    ]
+    (summary,) = summarize_component_pods(pods, deployment=deployment)
+    assert summary.is_serving is False
+
+
+def test_summarize_gives_no_verdict_when_a_digest_faces_a_tag():
+    """Een digest en een tag zeggen niets over elkaar, dus er komt geen uitspraak."""
+    deployment = _deployment("ghcr.io/minbzk/moza-profiel-service:2.1")
+    pods = [
+        _pod(
+            "pr-114-profielservice-849d475c4-4qp6p",
+            app="pr-114-profielservice",
+            ready=True,
+            image="ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344",
+            started_at="2026-08-18T11:59:12Z",
+        )
+    ]
+
+    (summary,) = summarize_component_pods(pods, deployment=deployment)
+
+    assert summary.is_serving is True
+    assert summary.runs_configured_image is None
+    assert summary.image == "ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344"
+
+
+def test_summarize_shows_the_source_registry_not_the_proxy():
+    """De gebruiker kent zijn eigen registry; de rcr-proxyvorm is een platformdetail."""
+    mappings = [{"from": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig"}]
+    deployment = _deployment("ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344")
+    pods = [
+        _pod(
+            "pr-114-profielservice-849d475c4-4qp6p",
+            app="pr-114-profielservice",
+            ready=True,
+            image="rcr.rijksapps.nl/ghcr-rig/minbzk/moza-profiel-service@sha256:25ab6344",
+            started_at="2026-08-18T11:59:12Z",
+        )
+    ]
+
+    with patch("opi.services.deployment_diagnostics.get_registry_rewrite_mappings", return_value=mappings):
+        (summary,) = summarize_component_pods(pods, deployment=deployment)
+
+    assert summary.image == "ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344"
+    assert "rcr.rijksapps.nl" not in (summary.image or "")
+    assert summary.runs_configured_image is True
+
+
+def test_summarize_matches_pods_through_the_unique_name_map():
+    """Een pod van een ANDER component belandt niet bij dit component.
+
+    De koppeling loopt via ``{generate_unique_name(...): reference}`` en niet via het
+    afknippen van een prefix; ``pr-114-profielservice-extra`` begint met dezelfde letters
+    als ``pr-114-profielservice`` en is toch iets anders.
+    """
+    deployment = {
+        "name": "pr-114",
+        "components": [
+            {"reference": "profielservice", "image": "ghcr.io/x/y:1"},
+            {"reference": "profielservice-extra", "image": "ghcr.io/x/z:1"},
+        ],
+    }
+    pods = [
+        _pod(
+            "pr-114-profielservice-extra-abc123456-aaaaa",
+            app="pr-114-profielservice-extra",
+            ready=True,
+            image="ghcr.io/x/z:1",
+            started_at="2026-08-18T11:59:12Z",
+        )
+    ]
+
+    eerste, tweede = summarize_component_pods(pods, deployment=deployment)
+
+    assert eerste.reference == "profielservice"
+    assert eerste.is_serving is False
+    assert tweede.reference == "profielservice-extra"
+    assert tweede.is_serving is True
+
+
+def test_summarize_leaves_out_a_disabled_component():
+    """Nul replicas is daar de bedoeling; de kaart noemt die componenten al met hun reden."""
+    deployment = {
+        "name": "pr-114",
+        "components": [{"reference": "profielservice", "image": "ghcr.io/x/y:1", "disabled": True}],
+    }
+    assert summarize_component_pods([], deployment=deployment) == []

@@ -4,10 +4,11 @@ Age encryption/decryption utilities.
 
 import asyncio
 import base64
+import contextlib
 import logging
 import subprocess
 import tempfile
-from typing import cast
+from typing import Any, cast
 
 from opi.core.config import settings
 
@@ -402,6 +403,49 @@ async def decrypt_password_smart(password: str, private_key: str | None) -> str:
             raise ValueError(f"Failed to decode base64 content: {e}") from e
 
     raise ValueError(f"Unknown encoding type: {encoding_type}")
+
+
+async def decrypt_tree(data: Any, private_key: str, *, include_prefixed: bool = False) -> None:
+    """Recursively walk ``data`` and decrypt every encrypted string value in place.
+
+    Values that will not decrypt with this key are left untouched, so the walk can be
+    run more than once with different keys: a project file carries values encrypted
+    with the project key and values encrypted with the system key, and a second pass
+    picks up what the first could not open.
+
+    Args:
+        data: Nested dict/list structure, mutated in place.
+        private_key: AGE private key to try.
+        include_prefixed: Also decrypt the one-line ``base64+age:`` form. Off by default
+            because the caller that predates this flag (the decrypted project view) only
+            ever opened armored blocks, and widening that silently would start showing
+            repository passwords and api keys where they were not shown before.
+    """
+    carries = carries_encrypted_value if include_prefixed else is_age_encrypted
+
+    async def _decrypt(value: str) -> str:
+        return (
+            await decrypt_password_smart(value, private_key)
+            if include_prefixed
+            else await decrypt_age_content(value, private_key)
+        )
+
+    if isinstance(data, dict):
+        for key, value in list(data.items()):
+            if isinstance(value, str) and carries(value):
+                try:
+                    data[key] = await _decrypt(value)
+                except Exception:
+                    logger.debug(f"Failed to decrypt field '{key}', leaving as-is")
+            elif isinstance(value, dict | list):
+                await decrypt_tree(value, private_key, include_prefixed=include_prefixed)
+    elif isinstance(data, list):
+        for i, item in enumerate(data):
+            if isinstance(item, str) and carries(item):
+                with contextlib.suppress(Exception):
+                    data[i] = await _decrypt(item)
+            elif isinstance(item, dict | list):
+                await decrypt_tree(item, private_key, include_prefixed=include_prefixed)
 
 
 def get_project_public_key(project_config: dict) -> str | None:

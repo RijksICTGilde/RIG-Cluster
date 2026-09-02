@@ -1,0 +1,77 @@
+{#
+  Het resourceblok van /admin/diensten, apart opgehaald.
+
+  Wat er staat: per namespace waarin WIJ een dienst draaien hoeveel CPU en geheugen er
+  gevraagd, gebruikt en toegestaan is, plus hoeveel van de volumes vol zit.
+
+  DRIE KOLOMMEN EN NIET TWEE, en dat is de hele reden voor dit blok. ODCN factureert
+  geheugen per pod als het hoogste van gevraagd en gebruikt. Wie alleen gebruik tegen
+  limiet ziet, kijkt naar twee getallen waarvan er geen enkel op de rekening staat: op
+  28 augustus 2026 gebruikte het platform 25,5 GiB waar 43,1 GiB gevraagd was, en het
+  verschil van bijna 18 GiB werd wel betaald. De maandbedragen zelf staan op /admin/usage.
+
+  GEEN TOESTANDSKOLOM, anders dan bij opslag en databases. Op namespaceniveau bestaat er
+  geen grens die ergens op slaat: een namespace telt tientallen pods op, en een enkele pod
+  die tegen zijn limiet aan zit verdwijnt in die som. De drempel die hier wel hoort staat
+  in het opslagblok, per PVC. Een kleur zonder betekenis is erger dan geen kleur.
+
+  De opslagkolom is een OPTELLING van wat het opslagblok per PVC uitsplitst. Dezelfde
+  cijfers, een niveau hoger, zodat een namespace die uit de hand loopt hier opvalt en
+  daar na te zoeken is.
+
+  De namespaces komen uit service_namespaces in cluster_config, per cluster. Ze staan
+  daarom OP de pagina: een vergeten namespace is anders niet van een lege namespace te
+  onderscheiden.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% from "bg/_resource-formats.html.j2" import cores, gib %}
+{% from "bg/_diensten-status.html.j2" import leeg_of_stuk %}
+
+{# Een cel met gevraagd, gebruikt en limiet, of een streepje waar niet gemeten is. Als
+   macro, want de CPU- en de geheugenkolom schrijven hetzelfde op met een andere eenheid;
+   twee keer uitgeschreven zou morgen uit de pas lopen. #}
+{% macro drieluik(gebruikt, gevraagd, limiet, eenheid) %}
+    {%- if gebruikt is none and gevraagd is none and limiet is none -%}
+        -
+    {%- else -%}
+        {{ eenheid(gebruikt) if gebruikt is not none else '?' }}
+        / {{ eenheid(gevraagd) if gevraagd is not none else '?' }}
+        / {{ eenheid(limiet) if limiet is not none else '?' }}
+    {%- endif -%}
+{% endmacro %}
+
+{% call panel("Resourcegebruik", "chart-x-y-axis-line") %}
+    {% if not blok.gemeten or not blok.rijen %}
+        {{ leeg_of_stuk(blok, "Er zijn geen servicenamespaces met resourcemetrieken gevonden.") }}
+    {% else %}
+        <c-stack gap="md">
+            <c-paragraph size="sm">
+                Per kolom: gebruikt / gevraagd / limiet. Geheugen wordt gefactureerd op de
+                gevraagde waarde, of op het gebruik als dat hoger ligt; de maandbedragen
+                staan onder Gebruik &amp; Kosten.
+            </c-paragraph>
+            <c-table columns="1.6fr 1.4fr 1.6fr 1.2fr">
+                <c-table-head>
+                    <c-th>Namespace</c-th>
+                    <c-th>CPU (cores)</c-th>
+                    <c-th>Geheugen</c-th>
+                    <c-th>Opslag gebruikt / capaciteit</c-th>
+                </c-table-head>
+                {% for rij in blok.rijen + blok.extra_rijen %}
+                    <c-table-row>
+                        <c-td>{{ rij.namespace }}</c-td>
+                        <c-td>{{ drieluik(rij.cpu_gebruikt, rij.cpu_gevraagd, rij.cpu_limiet, cores) }}</c-td>
+                        <c-td>{{ drieluik(rij.geheugen_gebruikt, rij.geheugen_gevraagd, rij.geheugen_limiet, gib) }}</c-td>
+                        <c-td>
+                            {%- if rij.opslag_gebruikt is not none and rij.opslag_capaciteit is not none -%}
+                                {{ gib(rij.opslag_gebruikt) }} / {{ gib(rij.opslag_capaciteit) }}
+                            {%- else -%}
+                                -
+                            {%- endif -%}
+                        </c-td>
+                    </c-table-row>
+                {% endfor %}
+            </c-table>
+        </c-stack>
+    {% endif %}
+{% endcall %}

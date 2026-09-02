@@ -472,8 +472,13 @@ async def _analyze_component_resources(
         logger.warning(f"Failed to query memory usage for {unique_name}: {e}")
         return None
 
-    # Check for OOM kills
-    has_oom_kills = False
+    # Check for OOM kills. Start from the watcher's signal: it read reason=OOMKilled
+    # straight off the pod status, so it is a FACT, not a measurement to be confirmed.
+    # Precisely on the path where the tuner MUST act there is by definition no metric
+    # data -- the faster something OOMs, the emptier the backend (asses-k2n/pr-469,
+    # 21 August: 45Mi, no scrape interval reached, tune skipped entirely).
+    # Initialising here rather than after the query keeps it true when the query throws.
+    has_oom_kills = oom_triggered
     try:
         oom_query = (
             f"kube_pod_container_status_last_terminated_reason{{"
@@ -482,7 +487,7 @@ async def _analyze_component_resources(
             f'pod=~"{unique_name}.*"}}'
         )
         oom_results = await connector.custom_query(oom_query)
-        has_oom_kills = bool(oom_results)
+        has_oom_kills = has_oom_kills or bool(oom_results)
     except Exception as e:
         logger.warning(f"Failed to query OOM kills for {unique_name}: {e}, assuming none")
 
@@ -685,6 +690,37 @@ async def _analyze_component_resources(
     if _k8s_memory_to_mb(new_limit) < new_request_mb + margin_mb:
         new_limit = _mb_to_k8s_memory(min(new_request_mb + margin_mb, float(get_max_memory_limit_mi(cluster))))
 
+    # Ceiling relative to the DECLARED root: the automatic path may raise a deployment
+    # override to at most ``max_growth_factor`` times the memory declared on the catalog
+    # component. Until now the only upper bound was the cluster ceiling, so a component
+    # declared at 45Mi was free to climb to 4096Mi (asses-k2n/pr-494, nine rounds).
+    #
+    # Two things make this bound actually bite:
+    # * the anchor stands still. The tuner writes deployment overrides only, never the
+    #   catalog component, so the denominator does not grow along with the numerator.
+    # * it looks at DIRECTION. Clamping to min(new, ceiling) unconditionally would also
+    #   refuse a DECREASE that is still above the ceiling, freezing exactly the blown-up
+    #   deployments this bound exists to prevent. The working ceiling is therefore
+    #   ``max(ceiling, current limit)``: never below what is already there.
+    ceiling_mb = root_limit_mb * cfg.max_growth_factor
+    if _k8s_memory_to_mb(new_limit) > ceiling_mb and _k8s_memory_to_mb(new_limit) > current_limit_mb:
+        allowed_mb = max(ceiling_mb, current_limit_mb)
+        logger.warning(
+            f"Auto-tune ceiling for {component_ref} in {dep_name}: recommendation {new_limit} exceeds "
+            f"{cfg.max_growth_factor:g}x the declared {root_resources['limits_memory']} "
+            f"({_mb_to_k8s_memory(ceiling_mb)}), capping at {_mb_to_k8s_memory(allowed_mb)} — "
+            f"raise the declared limit by hand if the component really needs more"
+        )
+        new_limit = _mb_to_k8s_memory(allowed_mb)
+        # Re-apply the headroom margin, on the REQUEST side this time. The margin was
+        # enforced just above, but lowering the limit to the ceiling can close it again
+        # -- and setting the request to the capped limit would leave headroom 0, which
+        # is precisely the burst-death this margin exists to prevent. The declared root
+        # request stays the floor: never starve a component to buy headroom.
+        max_request_mb = max(allowed_mb - margin_mb, root_request_mb)
+        if _k8s_memory_to_mb(new_request) > max_request_mb:
+            new_request = _mb_to_k8s_memory(max_request_mb)
+
     # A value the user set by hand wins over the tuner for exactly the fields they set,
     # for as long as that intent lives (RC-141). Applied here, at the end: everything
     # above may compute freely, this puts the pinned fields back before anything is
@@ -735,6 +771,48 @@ async def _analyze_component_resources(
         new_cpu_limit=new_cpu_limit,
         new_cpu_request=new_cpu_request,
         cpu_reason=cpu_reason,
+    )
+
+
+def describe_growth_ceiling_block(
+    project_data: dict[str, Any],
+    file_handler: ProjectFileHandler,
+    dep_name: str,
+    component_ref: str,
+) -> str | None:
+    """Explain why the auto-tune ceiling refuses to raise this component, or None.
+
+    Read-only counterpart to the ceiling enforced in ``_analyze_component_resources``:
+    it answers "is this component already at the top of its automatic range", so the
+    caller can say that instead of the misleading "could not determine new limits" --
+    a limit WAS determined, it was refused.
+
+    The ratio alone is not enough to claim the ceiling is the reason. A component with
+    auto-tuning switched off returns before the ceiling is ever evaluated, so it may
+    well sit above the factor while the real reason for the missing change is the
+    opt-out. Same gate, same order as the analysis, so the answer matches why.
+    """
+    if not file_handler.extract_auto_tune_enabled(project_data, dep_name, component_ref):
+        return None
+
+    root_resources = file_handler.extract_component_resources(project_data, component_ref)
+    current_resources = dict(root_resources)
+    overrides = file_handler.extract_deployment_component_resources(project_data, dep_name, component_ref)
+    if overrides:
+        current_resources.update(overrides)
+
+    factor = resource_tuning_config().max_growth_factor
+    root_limit_mb = _k8s_memory_to_mb(root_resources["limits_memory"])
+    current_limit_mb = _k8s_memory_to_mb(current_resources["limits_memory"])
+    if current_limit_mb < root_limit_mb * factor:
+        return None
+
+    return (
+        f"OOM detected for {component_ref} in {dep_name}, but its memory limit is already "
+        f"{current_resources['limits_memory']} — {current_limit_mb / root_limit_mb:.1f}x the "
+        f"{root_resources['limits_memory']} declared for this component, at or above the "
+        f"{factor:g}x auto-tune ceiling. Auto-tune stops here: raise the declared limit by hand "
+        f"or fix the component's memory use."
     )
 
 

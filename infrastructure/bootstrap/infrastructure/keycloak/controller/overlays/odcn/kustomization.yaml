@@ -54,3 +54,10 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/env/6/value
         value: "https://keycloak.rijksapp.nl"
+  # De mailrelay draait op productie in rig-prd-ron; de basis noemt rig-ron. Een
+  # samenvoegpatch en geen JSON-patch met een index: de env-lijst wordt op naam
+  # samengevoegd, dus deze regel blijft staan als er elders een variabele bijkomt.
+  - path: patch-mail-relay-host.yaml
+    target:
+      kind: Deployment
+      name: keycloak

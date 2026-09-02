@@ -33,8 +33,12 @@ SLEEP_WAKE_MODE = EditableVisualizer(
 SLEEP_MATCH = EditableVisualizer(
     editable=SLEEP_MATCH_EDITABLE,
     widget=WidgetType.TEXT,
-    label="Van toepassing op",
-    help_text="Comma-gescheiden. Alleen begint-met (pr-*) of eindigt-met (*-preview), geen andere patronen.",
+    label="Vanzelf laten slapen",
+    help_text=(
+        "Welke deployments vanzelf gaan slapen na de deadline. Comma-gescheiden; alleen begint-met "
+        "(pr-*) of eindigt-met (*-preview), geen andere patronen. Leeg laten mag: dan gaat er niets "
+        "vanzelf slapen en houd je alleen de knop op de deploymentpagina."
+    ),
     placeholder="pr-*, *-preview",
     # Ook voor de API-documentatie: dit veld is een vrije string, dus zonder voorbeeld weet
     # een client wel dat er tekst in moet maar niet dat het om een glob op de deploymentnaam

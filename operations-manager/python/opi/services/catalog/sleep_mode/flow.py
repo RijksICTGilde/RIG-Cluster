@@ -142,7 +142,10 @@ async def wake(
 
         cluster = deployment.get("cluster", "")
         config = sleep_config.load(project_data, cluster)
-        if config is None or not config.matches(deployment_name):
+        # Not scoped by ``match``: that selects what the sweeper puts to sleep on a
+        # deadline, and waking is the manual half. A deployment slept by hand outside the
+        # scope must be wakeable by hand too, or the button that put it there strands it.
+        if config is None:
             steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
             # ``disabled``, not the stored state: sleep-mode does not apply here, and
             # ``/status`` already says exactly that for this same case. Reporting the
@@ -214,9 +217,10 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
 
         cluster = deployment.get("cluster", "")
         config = sleep_config.load(project_data, cluster)
-        if config is None or not config.matches(deployment_name):
+        # Same as in ``wake``: enabled is the gate, ``match`` is the sweeper's scope.
+        if config is None:
             steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
-            # Same as in ``wake``: sleep-mode does not apply, so the state is ``disabled``.
+            # Sleep-mode does not apply at all here, so the state is ``disabled``.
             return WakeResult(changed=False, state=DISABLED)
 
         # Mint a wake token only when a waker will actually be generated, mirroring the
@@ -292,7 +296,10 @@ async def status(project_name: str, deployment_name: str, *, presented_token: st
 
     cluster = deployment.get("cluster", "")
     config = sleep_config.load(project_data, cluster)
-    if config is None or not config.matches(deployment_name):
+    # ``match`` must NOT gate this. The waker page of a deployment slept by hand outside
+    # the scope polls exactly here; answering ``disabled`` would leave it waiting forever
+    # in front of a deployment that really is asleep.
+    if config is None:
         # Sleep-mode does not apply here, so there is no sleep state and no pod worth
         # asking about. The waker field stays 'starting': its contract is untouched, and
         # no waker is polling this anyway.

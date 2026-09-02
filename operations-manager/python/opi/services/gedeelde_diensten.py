@@ -237,6 +237,77 @@ _KEYCLOAK_QUERIES: dict[str, str] = {
 }
 
 
+# CPU, geheugen en opslag van de namespaces waarin WIJ onze diensten draaien.
+#
+# HIER STAAT WEL EEN NAMESPACEFILTER IN DE PROMQL, en dat gaat niet in tegen de reden om
+# hem bij opslag en databases weg te laten. Daar zou een filter de lijst van ALLE projecten
+# in elke query bakken en weglopen zodra er een project bij komt. Deze lijst is een korte,
+# vaste, per cluster ingestelde opsomming (``service_namespaces`` in cluster_config) die
+# niet meegroeit met het platform. Filteren is hier dus juist goedkoper dan alles ophalen
+# en de projecten er in Python weer aftrekken.
+#
+# GEVRAAGD STAAT ERBIJ, EN DAT IS DE HELE REDEN VOOR DIT BLOK. ODCN factureert geheugen als
+# request + clamp_min(gebruik - request, 0): per pod het hoogste van gevraagd en gebruikt.
+# Gebruik alleen zegt dus niets over de rekening, en een namespace die ruim vraagt en weinig
+# gebruikt is hier meteen te zien.
+#
+# De containermetrieken zonder last_over_time: cadvisor wordt op een normaal interval
+# gescrapet, anders dan de tweeuurlijkse jobs onder de blokken hierboven. De volumecijfers
+# krijgen het WEL, om precies de reden die bij _OPSLAG_QUERIES staat.
+_RESOURCE_QUERIES: dict[str, str] = {
+    "cpu_gebruikt": (
+        'sum by (namespace) (rate(container_cpu_usage_seconds_total{{namespace=~"{namespaces}",container!=""}}[5m]))'
+    ),
+    "cpu_gevraagd": 'sum by (namespace) (kube_pod_container_resource_requests{{namespace=~"{namespaces}",resource="cpu"}})',
+    "cpu_limiet": 'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{namespaces}",resource="cpu"}})',
+    "geheugen_gebruikt": (
+        'sum by (namespace) (container_memory_working_set_bytes{{namespace=~"{namespaces}",container!=""}})'
+    ),
+    "geheugen_gevraagd": (
+        'sum by (namespace) (kube_pod_container_resource_requests{{namespace=~"{namespaces}",resource="memory"}})'
+    ),
+    "geheugen_limiet": (
+        'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{namespaces}",resource="memory"}})'
+    ),
+    # max by (namespace, persistentvolumeclaim) binnen de som, om dezelfde reden als bij
+    # _OPSLAG_QUERIES: dezelfde PVC wordt door twee jobs gescrapet en een kale sum telt hem
+    # dan dubbel.
+    "opslag_gebruikt": (
+        "sum by (namespace) (max by (namespace, persistentvolumeclaim) ("
+        'last_over_time(kubelet_volume_stats_used_bytes{{namespace=~"{namespaces}"}}[6h])))'
+    ),
+    "opslag_capaciteit": (
+        "sum by (namespace) (max by (namespace, persistentvolumeclaim) ("
+        'last_over_time(kubelet_volume_stats_capacity_bytes{{namespace=~"{namespaces}"}}[6h])))'
+    ),
+}
+
+
+@dataclass(frozen=True)
+class ResourceRij:
+    """Wat een servicenamespace vraagt, gebruikt en mag.
+
+    GEEN status, om dezelfde reden als bij :class:`RealmRij`: op namespaceniveau is er geen
+    grens die ergens op slaat. Een namespace telt tientallen pods bij elkaar op, en een
+    enkele pod die tegen zijn limiet aan zit verdwijnt in die som. De drempel die hier wel
+    hoort staat een blok hoger, per PVC.
+
+    De CPU-waarden zijn cores, de geheugen- en opslagwaarden bytes. None is "niet gemeten"
+    en nadrukkelijk niet nul: een namespace zonder pods en een namespace waarvan de meting
+    mislukte zien er anders uit.
+    """
+
+    namespace: str
+    cpu_gebruikt: float | None
+    cpu_gevraagd: float | None
+    cpu_limiet: float | None
+    geheugen_gebruikt: float | None
+    geheugen_gevraagd: float | None
+    geheugen_limiet: float | None
+    opslag_gebruikt: float | None
+    opslag_capaciteit: float | None
+
+
 @dataclass(frozen=True)
 class OpslagRij:
     """Een PVC."""
@@ -407,6 +478,88 @@ async def _voer_queries_uit(queries: dict[str, str]) -> dict[str, list[dict[str,
     namen = list(queries)
     resultaten = await asyncio.gather(*(connector.custom_query(queries[naam]) for naam in namen))
     return dict(zip(namen, resultaten, strict=True))
+
+
+def servicenamespaces() -> list[str]:
+    """De namespaces waarin het platform zijn eigen diensten draait, voor DIT cluster.
+
+    De tegenhanger van :func:`projectnamespaces`. Daar wordt afgetrokken omdat de lijst
+    projecten meegroeit; hier wordt opgesomd omdat de lijst diensten dat niet doet en per
+    cluster anders is. Zie ``service_namespaces`` in cluster_config.
+    """
+    from opi.core.cluster_config import get_service_namespaces
+    from opi.core.config import settings
+
+    try:
+        return get_service_namespaces(settings.CLUSTER_MANAGER)
+    except ValueError:
+        logger.warning("Onbekend cluster %s; servicenamespaces niet af te leiden", settings.CLUSTER_MANAGER)
+        return []
+
+
+async def haal_resources() -> Blok:
+    """CPU, geheugen en opslag per servicenamespace.
+
+    De rijen komen uit de INGESTELDE lijst en niet uit het queryresultaat. Een namespace die
+    niets terugmeet hoort zichtbaar te blijven met streepjes: anders is "hier draait niets"
+    niet te onderscheiden van "deze namespace is nooit ingesteld", en dat laatste is precies
+    de fout die je wilt zien.
+    """
+    namespaces = servicenamespaces()
+    if not namespaces:
+        return Blok(gemeten=False, fout="Voor dit cluster staan er geen service_namespaces in de clusterconfiguratie.")
+
+    # Namespacenamen zijn DNS-labels (kleine letters, cijfers, koppelteken), dus er zit
+    # niets in dat in een PromQL-regex een andere betekenis krijgt.
+    filter_regex = "|".join(namespaces)
+    queries = {naam: sjabloon.format(namespaces=filter_regex) for naam, sjabloon in _RESOURCE_QUERIES.items()}
+
+    try:
+        antwoorden = await _voer_queries_uit(queries)
+    except Exception as fout:
+        # Breed gevangen om dezelfde reden als bij haal_opslag: dit blok mag de pagina niet
+        # meenemen in zijn val, en een mislukte meting hoort op WARNING in de log en als
+        # fout op het scherm.
+        logger.warning("Kon de resourcemetrieken niet ophalen: %s", fout, exc_info=True)
+        return Blok(gemeten=False, fout=str(fout))
+
+    tabellen = {naam: _op_labels(antwoorden[naam], ("namespace",)) for naam in queries}
+
+    rijen = [
+        ResourceRij(
+            namespace=namespace,
+            cpu_gebruikt=tabellen["cpu_gebruikt"].get((namespace,)),
+            cpu_gevraagd=tabellen["cpu_gevraagd"].get((namespace,)),
+            cpu_limiet=tabellen["cpu_limiet"].get((namespace,)),
+            geheugen_gebruikt=tabellen["geheugen_gebruikt"].get((namespace,)),
+            geheugen_gevraagd=tabellen["geheugen_gevraagd"].get((namespace,)),
+            geheugen_limiet=tabellen["geheugen_limiet"].get((namespace,)),
+            opslag_gebruikt=tabellen["opslag_gebruikt"].get((namespace,)),
+            opslag_capaciteit=tabellen["opslag_capaciteit"].get((namespace,)),
+        )
+        for namespace in namespaces
+    ]
+
+    # De totaalrij is wat het platform bij elkaar aan zichzelf besteedt; die staat als
+    # extra_rijen apart, zodat het sjabloon hem onderaan kan zetten zonder hem uit de
+    # gewone rijen te moeten herkennen.
+    def _totaal(veld: str) -> float | None:
+        waarden = [getattr(rij, veld) for rij in rijen if getattr(rij, veld) is not None]
+        return sum(waarden) if waarden else None
+
+    totaal = ResourceRij(
+        namespace="Totaal",
+        cpu_gebruikt=_totaal("cpu_gebruikt"),
+        cpu_gevraagd=_totaal("cpu_gevraagd"),
+        cpu_limiet=_totaal("cpu_limiet"),
+        geheugen_gebruikt=_totaal("geheugen_gebruikt"),
+        geheugen_gevraagd=_totaal("geheugen_gevraagd"),
+        geheugen_limiet=_totaal("geheugen_limiet"),
+        opslag_gebruikt=_totaal("opslag_gebruikt"),
+        opslag_capaciteit=_totaal("opslag_capaciteit"),
+    )
+
+    return Blok(gemeten=True, rijen=rijen, extra_rijen=[totaal])
 
 
 async def haal_opslag() -> Blok:

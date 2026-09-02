@@ -12,12 +12,13 @@ import uuid
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, tuple_, update
 from sqlalchemy.orm import aliased
 
 from opi.core.db import session_scope
 from opi.core.task_rollout import PAYLOAD_KEY as ROLLOUT_PAYLOAD_KEY
 from opi.core.task_rollout import ROLLOUT_CLEARING_TASK_TYPES
+from opi.core.task_supersede import scope_of
 from opi.services.persistence.async_tasks import AsyncTask
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,25 @@ def _rolled_out(task=AsyncTask):
 _ACTIVE_STATES = ("claimed", "running")
 _OPEN_STATES = ("pending", "claimed", "running")
 _TERMINAL_STATES = ("completed", "failed", "cancelled")
+
+# Taaktypes die niet meedoen aan de volgorde binnen een project, omdat ze wereldwijd
+# zijn afgeknepen (BACKUP_MAX_CONCURRENT) en dus lang kunnen blijven staan om een reden
+# die niets met dit project te maken heeft. Ze blokkeren wel zolang ze draaien.
+_UNORDERED_TASK_TYPES = ("backup", "restore")
+
+
+def _scopes_overlap(a, b):
+    """Twee taken kunnen elkaar in de weg zitten.
+
+    NULL is projectbreed en overlapt met alles, inclusief met een andere NULL. Twee
+    concrete scopes overlappen als ze een deploymentnaam delen; ``&&`` is de
+    array-overlapoperator van Postgres en gebruikt de GIN-index.
+    """
+    return or_(
+        a.affects_deployments.is_(None),
+        b.affects_deployments.is_(None),
+        a.affects_deployments.overlap(b.affects_deployments),
+    )
 
 
 class TaskType(StrEnum):
@@ -156,6 +176,13 @@ class AsyncTaskService:
                     deployment_name,
                 )
 
+            # De scope wordt hier bepaald en opgeslagen, en nergens anders opnieuw afgeleid:
+            # scope_of() is de enige schrijver, de kolom de enige lezer. Twee afleidingen die
+            # het oneens waren over dezelfde twee taken zijn precies het defect dat dit
+            # oplost. sorted() omdat een frozenset geen vaste volgorde heeft en een stabiele
+            # kolomwaarde makkelijker te lezen en te vergelijken is.
+            scope = scope_of(task_type, deployment_name, payload)
+
             row = AsyncTask(
                 task_type=task_type,
                 project_name=project_name,
@@ -163,6 +190,7 @@ class AsyncTaskService:
                 cluster=cluster,
                 payload=payload,
                 created_by=created_by,
+                affects_deployments=None if scope is None else sorted(scope),
             )
             if max_attempts is not None:
                 row.max_attempts = max_attempts
@@ -187,10 +215,11 @@ class AsyncTaskService:
         """Claim the next pending task for the given cluster.
 
         Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` to safely claim a task without
-        conflicting with other workers. Tasks are skipped when another task for the
-        same project/deployment is already in-flight (prevents concurrent git/ArgoCD
-        operations on the same deployment), and when a per-type concurrency limit is
-        already reached.
+        conflicting with other workers. Tasks are skipped for three reasons: another
+        task of the same project with an OVERLAPPING deployment scope is already
+        in-flight (prevents concurrent git/ArgoCD operations on the same deployment),
+        an OLDER pending task of the same project overlaps with it (first in, first
+        run, per project), or a per-type concurrency limit is already reached.
 
         Args:
             cluster: The cluster to claim a task for.
@@ -201,17 +230,39 @@ class AsyncTaskService:
             A dict representing the claimed task, or None if no task is available.
         """
         async with session_scope() as session:
-            # Skip pending tasks when another task for the same project/deployment
-            # is already claimed/running.
+            # Clausule 1: een overlappende taak die draait. Blokkeert altijd, ongeacht
+            # tasktype en ongeacht wie ouder is.
             running = aliased(AsyncTask)
             inflight = (
                 select(1)
                 .select_from(running)
                 .where(
                     running.project_name == AsyncTask.project_name,
-                    running.deployment_name.is_not_distinct_from(AsyncTask.deployment_name),
                     running.status.in_(_ACTIVE_STATES),
                     running.id != AsyncTask.id,
+                    _scopes_overlap(running, AsyncTask),
+                )
+                .exists()
+            )
+
+            # Clausule 2: volgorde binnen het project. Zonder deze kan een stroom smalle
+            # taken in een druk PR-project willekeurig lang voor een projectbrede taak
+            # blijven springen, want claimen gaat op created_at ASC en slaat geblokkeerde
+            # taken over. De vergelijking gaat op (created_at, id): twee taken kunnen
+            # dezelfde tijdstempel dragen, en dan is er zonder tweede sleutel geen totale
+            # ordening en kunnen ze elkaar wederzijds blokkeren. Een deadlock kan niet:
+            # een taak wordt alleen door een OUDERE geblokkeerd, en de oudste wachtende
+            # taak van een project heeft per definitie niemand voor zich.
+            earlier = aliased(AsyncTask)
+            queued_ahead = (
+                select(1)
+                .select_from(earlier)
+                .where(
+                    earlier.project_name == AsyncTask.project_name,
+                    earlier.status == "pending",
+                    earlier.task_type.notin_(_UNORDERED_TASK_TYPES),
+                    tuple_(earlier.created_at, earlier.id) < tuple_(AsyncTask.created_at, AsyncTask.id),
+                    _scopes_overlap(earlier, AsyncTask),
                 )
                 .exists()
             )
@@ -220,6 +271,7 @@ class AsyncTaskService:
                 AsyncTask.status == "pending",
                 AsyncTask.cluster == cluster,
                 ~inflight,
+                ~queued_ahead,
             )
 
             # Per-type concurrency: skip pending tasks of a type at/over its limit.
@@ -527,6 +579,44 @@ class AsyncTaskService:
             row = (
                 await session.execute(select(AsyncTask).where(*conds).order_by(AsyncTask.created_at.asc()).limit(1))
             ).scalar_one_or_none()
+            return row.to_dict() if row else None
+
+    async def find_blocking_task(self, task_id: str) -> dict | None:
+        """De taak waardoor deze pending taak nog niet geclaimd is, of None.
+
+        Dezelfde twee redenen als in claim_next_task, in dezelfde volgorde: een
+        overlappende taak die draait, anders een oudere overlappende taak die wacht.
+        Op leesmoment berekend en niet op de rij geschreven: de wachtrij verandert
+        continu, en een opgeslagen reden zou vrijwel altijd verouderd zijn.
+
+        Een taak die niet (meer) pending is wordt door niets geblokkeerd en levert None.
+        """
+        me = aliased(AsyncTask)
+        basis = (
+            select(AsyncTask)
+            .join(me, me.id == uuid.UUID(task_id))
+            .where(
+                me.status == "pending",
+                AsyncTask.project_name == me.project_name,
+                AsyncTask.id != me.id,
+                _scopes_overlap(AsyncTask, me),
+            )
+        )
+        draait = basis.where(AsyncTask.status.in_(_ACTIVE_STATES)).order_by(AsyncTask.created_at.asc()).limit(1)
+        eerder = (
+            basis.where(
+                AsyncTask.status == "pending",
+                AsyncTask.task_type.notin_(_UNORDERED_TASK_TYPES),
+                tuple_(AsyncTask.created_at, AsyncTask.id) < tuple_(me.created_at, me.id),
+            )
+            .order_by(AsyncTask.created_at.asc())
+            .limit(1)
+        )
+
+        async with session_scope() as session:
+            row = (await session.execute(draait)).scalar_one_or_none()
+            if row is None:
+                row = (await session.execute(eerder)).scalar_one_or_none()
             return row.to_dict() if row else None
 
     async def find_newer_active_tasks(

@@ -325,3 +325,59 @@ class TestUpsertDeploymentClone:
 
         source = next(d for d in project_data["deployments"] if d["name"] == "production")
         assert source["backup"]["schedule"] == "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"
+
+    async def test_clone_does_not_inherit_sleep_state(self):
+        """Regression (asses-k2n, 24 August): a preview cloned from a sleeping source
+        was created asleep.
+
+        ``deployments[].sleep`` is sleep-mode's own record about the SOURCE: which
+        deployment is asleep, and that deployment's wake token. Copied along, the new
+        preview rendered at ``replicas: 0`` on its very first sync -- rolled out asleep
+        before anyone could look at it -- and carried the source's wake token, so one
+        token woke two deployments.
+        """
+        pm = _make_manager()
+        project_data = _project_with_scheduled_source()
+        source = project_data["deployments"][0]
+        source["sleep"] = {"state": "sleeping", "wake-token": "-----BEGIN AGE ENCRYPTED FILE-----"}
+        _wire_create_mocks(pm, project_data)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr-123",
+                components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
+                clone_from="production",
+            )
+
+        assert result["success"] is True
+        new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr-123")
+        assert "sleep" not in new_deployment
+        # And the source keeps its own state: the clone reads it, never moves it.
+        assert source["sleep"]["state"] == "sleeping"
+
+    async def test_create_runs_the_redeploy_hooks(self):
+        """Creating a deployment is a rollout, so the services get that moment too.
+
+        For sleep-mode that means the sleep clock starts in the commit that creates the
+        deployment, instead of the new preview waiting for the next sweep to be given a
+        deadline.
+        """
+        pm = _make_manager()
+        project_data = _project_with_scheduled_source()
+        project_data["services"] = [
+            {"name": "sleep-mode", "config": {"enabled": True, "match": ["pr-*"], "sleep-after-deploy": "4h"}}
+        ]
+        _wire_create_mocks(pm, project_data)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr-123",
+                components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
+                clone_from="production",
+            )
+
+        assert result["success"] is True
+        new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr-123")
+        assert new_deployment["sleep"]["state"] == "awake"
+        assert new_deployment["sleep"]["expires-at"]
+        assert "wake-token" not in new_deployment["sleep"]
