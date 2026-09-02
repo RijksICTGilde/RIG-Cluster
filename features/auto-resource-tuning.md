@@ -149,11 +149,47 @@ system already does (and the card surfaced sub-deadband savings the tuner ignore
 which read as inconsistent). Removing it also dropped an expensive per-card
 Prometheus + kubectl call on every project-page load.
 
-What still surfaces a problem: the deployment card's **ArgoCD health badge**
-(a crashing or OOM pod shows `Degraded`). The one case this no longer spells out
-explicitly is "OOM while already at the cluster max" (needs manual intervention);
-the proper home for that is service-level monitoring/alerting, not a page-load
-call. Programmatic tuning remains available via `POST /api/resources/{project}/tune`.
+The manual trigger stays gone. Programmatic tuning remains available via
+`POST /api/resources/{project}/tune`.
+
+### Reporting an OOM, without a tune button
+
+The removal above also took away the only place that *reported* an OOM, on the
+assumption that "the deployment card's ArgoCD health badge still surfaces
+crashing/OOM pods". That assumption does not hold, and the gap it left was real.
+
+The badge shows an OOM only while ArgoCD reports the deployment unhealthy, and the
+whole job of the reactive watcher is to make it healthy again within minutes. The
+signal therefore erases itself: on `rig-prd-dd-mco`, 1 September 2026, a component
+was OOM-killed twice in one evening and half an hour later the entire screen was
+green with no trace anywhere. Kubernetes events expire after roughly an hour, and
+the pod's own `lastState` disappears with the pod. Worse, the watcher only runs
+post-deploy (`schedule_oom_check` is called from the task handlers, never from a
+timer), so an application that falls over at night, outside any deployment, is seen
+by nobody.
+
+The **OOM status fragment** (`bg/_oom-status.html.j2`, route
+`GET /projects/details/{project}/oom-status/{deployment}`) reports it, and reports
+only. It reads two sources, which can occur independently:
+
+- `observe_recent_oom_kills` queries the metrics backend for
+  `max_over_time(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}[24h])`.
+  **The range is the point.** The bare selector is exported only while the killed
+  pod still exists, so it reads empty precisely after the tuner replaced the pod.
+  Measured against `mimir-prd` on 1 September 2026: the instant query returned
+  nothing while the 24h range returned both killed pods.
+- The `resources.history` entries with `source: oom-watcher` from the project file.
+  Free (the file is already loaded) and durable: this outlives the metrics window,
+  the events and the pod.
+
+It sits on the deployment panel as its own lazy fragment, not inside the ArgoCD
+card, so an unreachable metrics backend cannot hold up the ArgoCD status. There is
+exactly one per page (the deployment from the path), so it does not reintroduce the
+per-card cost that motivated the original removal.
+
+Still open: "OOM while already at the cluster max" needs its own wording, and
+nothing detects an OOM outside a deployment window in the first place. The nightly
+full-fleet sweep is the answer to the second, and is not rolled out to production.
 
 ### OOM Kill Handling
 
@@ -164,6 +200,26 @@ OOM-killed containers produce misleading usage data (the pod was killed before r
 - The limit is set using a sliding factor: at least **3x** the current limit below 64Mi, 2x below 256Mi, else 1.5x — regardless of observed usage.
 - If the pod was OOM-killed on startup with zero Prometheus metrics, the current YAML values are used as a baseline. This fallback hangs on the OOM signal, and until RC-160 it silently did not fire for a watcher-reported OOM that Prometheus knew nothing about: the tuner discarded the watcher's fact and re-asked the backend, so `has_oom_kills` fell back to `False` and the whole deploy task ended on "auto-tune could not determine new limits" (asses-k2n/pr-469, 21 August, 45Mi).
 - OOM kills bypass the change threshold - any OOM kill triggers an update.
+
+**Detection window.** The Prometheus OOM query is a *range*, not an instant read:
+kube-state-metrics only exports
+`kube_pod_container_status_last_terminated_reason` while the killed pod still
+exists. An OOM-killed container restarts inside the same pod, so an instant read
+still sees it; once a rollout replaces the pod it is gone, and a rollout is exactly
+what the tuner itself causes.
+
+How far that range looks back is bounded, and the bound is load-bearing. Because
+`has_oom_kills` both bypasses the deadband and forces a raise of at least
+`current_limit x factor` *regardless of observed usage*, an OOM the watcher already
+answered would force another raise on every subsequent run. On the dd-mco shape
+(64Mi declared, 192Mi override, 40Mi actually used) that runs 192 → 384 → 576 →
+864Mi until the growth ceiling stops it: the `asses-k2n/pr-494` escalation again.
+
+`_unanswered_oom_window_minutes` therefore ends the window at the newest
+`source: oom-watcher` history entry for that deployment-component. Everything before
+it is answered, everything after it is new. No such entry means the full
+`window_hours`. An unreadable timestamp fails safe to the full window (better one
+look too many than a missed OOM).
 
 ### Root Component
 
