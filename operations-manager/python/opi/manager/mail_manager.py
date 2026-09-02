@@ -26,7 +26,6 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
 from opi.core.cluster_config import (
-    get_keycloak_mail_from_address,
     get_mail_from_address,
     get_mail_relay_host,
     get_mail_relay_port,
@@ -429,12 +428,12 @@ class MailManager:
             return None
 
         username = settings.MAIL_KEYCLOAK_ACCOUNT
-        # ``get_keycloak_mail_from_address`` is ook wat de YAML-handler in de ``smtpServer.from``
-        # van elke realm schrijft: een afleiding, dus het adres dat de relay krijgt en het adres
-        # dat een realm noemt kunnen niet uit elkaar lopen. Anders dan een projectadres draagt
-        # dit geen plusdeel - ``zad-keycloak`` verstuurt voor alle realms tegelijk, dus er is
-        # geen project om te noemen.
-        from_address = get_keycloak_mail_from_address(settings.CLUSTER_MANAGER)
+        # Het KALE clusteradres, zonder eigen lokaal deel en zonder plusdeel: dit is het
+        # basisadres dat we overal willen, en het is ook wat de YAML-handler in de
+        # ``smtpServer.from`` van elke realm schrijft. Een plusdeel kan hier sowieso niet:
+        # ``zad-keycloak`` verstuurt voor alle realms tegelijk, dus er is geen project om te
+        # noemen. Wat inlogpost van portalpost onderscheidt is de WEERGAVENAAM hieronder.
+        from_address = get_mail_from_address(settings.CLUSTER_MANAGER)
 
         connector = await create_mail_connector()
         account = await MailManager.ensure_account(
