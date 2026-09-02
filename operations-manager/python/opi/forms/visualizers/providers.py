@@ -461,14 +461,23 @@ class StorageSizeOptionsProvider:
 class KeycloakTemplateOptionsProvider:
     """The two realm blueprints, named after what a user gets rather than after the file.
 
-    The difference is who can log in, and the blueprints say it plainly:
-    ``sso-only`` sets ``registrationAllowed`` and ``loginWithEmailAllowed`` to false, so
-    SSO Rijk is the only way in; ``sso-support`` sets both to true and adds
-    ``resetPasswordAllowed``, so local Keycloak accounts exist alongside it.
+    What actually differs is the LOGIN SCREEN, and only that. ``sso-only`` points the realm's
+    browser flow at "External IDP Redirector", so whoever opens the application travels
+    straight on to SSO Rijk and never sees a screen of Keycloak's own. ``sso-support`` keeps
+    the standard browser flow, so Keycloak asks the question: continue with SSO Rijk, or sign
+    in with a local account of this realm.
 
-    The old labels did not say that. "SSO met ondersteuning voor applicatie-specifieke
-    configuratie" describes something else entirely, and someone picking it had no way
-    to know they were also turning on local accounts.
+    The labels used to promise something else. They said ``sso-support`` turned on local
+    accounts by setting ``registrationAllowed`` / ``loginWithEmailAllowed`` /
+    ``resetPasswordAllowed``, and that has not been true since RC-159: BOTH blueprints keep
+    those three off (``sso-support.yaml`` says so itself, in a comment that also parks the
+    question of whether they should be turned on). Local accounts do exist under
+    ``sso-support`` -- OPI's invite flow creates them -- there is simply no self-registration
+    and no password reset next to it.
+
+    A user of ``sso-only`` never reaches a screen where a local account could be typed in, so
+    that is the one that really excludes them. ``InviteAuthMethodOptionsProvider`` reads the
+    same difference for the invite auth methods.
     """
 
     # De lijst ligt vast: elk project krijgt deze keuzes.
@@ -480,12 +489,19 @@ class KeycloakTemplateOptionsProvider:
             {
                 "value": "sso-only",
                 "label": "Alleen SSO Rijk",
-                "description": "Inloggen kan uitsluitend via SSO Rijk. Geen lokale accounts, geen gebruikersbeheer.",
+                "description": (
+                    "Wie de applicatie opent gaat meteen door naar SSO Rijk. Keycloak toont geen eigen "
+                    "inlogscherm, dus een lokaal account is geen weg naar binnen."
+                ),
             },
             {
                 "value": "sso-support",
-                "label": "SSO Rijk en lokale Keycloak-accounts",
-                "description": "Naast SSO Rijk kunnen er accounts in het Keycloak-realm van dit project bestaan.",
+                "label": "SSO Rijk of een lokaal account",
+                "description": (
+                    "Het inlogscherm van Keycloak laat de keuze: doorgaan met SSO Rijk, of inloggen met een "
+                    "lokaal account uit het realm van dit project. Lokale accounts maak je met uitnodigingen; "
+                    "aanmelden kan niemand zichzelf."
+                ),
             },
         ]
 
@@ -1719,8 +1735,9 @@ class InviteAuthMethodOptionsProvider:
     computes ``realm_auth[x] and invite_auth_config[x]``). The realm follows the keycloak
     template, and the two blueprints differ exactly here:
 
-    * ``sso-only``    -- registrationAllowed / loginWithEmailAllowed false: SSO only
-    * ``sso-support`` -- both true: SSO and local accounts
+    * ``sso-only``    -- the browser flow redirects straight to SSO Rijk, so there is no
+      screen on which a local account could ever be typed in;
+    * ``sso-support`` -- Keycloak's own login screen, which offers both.
 
     Offering "Lokaal account" under sso-only would therefore be a choice that silently does
     nothing. Empty selection still means "fall back to whatever the realm allows".

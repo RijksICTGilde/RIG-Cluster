@@ -59,6 +59,24 @@ a hand-written, partial PUT on an execution's requirement, which resets its prio
 `_ensure_execution_in_flow` and `_ensure_subflow` helpers send the fetched object back whole
 and therefore do not.
 
+**The gate replaces the realm's browser flow, so it carries the redirect itself.** This flow is
+bound as a `browserFlowOverride` on the client, and a client override beats the realm's
+`browserFlow`. Everything the `sso-only` blueprint puts on the realm therefore does not apply
+to these clients, the automatic redirect to SSO Rijk included: that lives in the flow
+"External IDP Redirector", whose `identity-provider-redirector` carries
+`defaultProvider: rig-platform-oidc`. The redirector in the gate had no configuration at all,
+and an unconfigured redirector does nothing, so the flow fell through to the username and
+password form. A project with `template: sso-only` **and** `restrict-access` therefore got
+Keycloak's own login screen, which is the very thing that blueprint promises to skip
+(measured on regel-k4c, 2 September 2026: its project file had said `sso-only` since the
+service was added, and a login form appeared all the same). The gate now configures the
+redirector with the same identity provider whenever the project's template is `sso-only`, and
+strips that configuration again under `sso-support`, because there the login screen is the
+point. Both directions, deliberately: a configuration that is only ever added and never
+removed would keep redirecting after a project switched template, so the file would change
+and the screen would not. An existing realm converges on the next processing run of its
+project, which is also what makes this repair reach realms built before the fix.
+
 **What this does not cover.** Other clients in the same realm keep the default browser flow:
 Keycloak's built-in `account-console`, the invite client (deliberately, or nobody could redeem
 an invitation), and anything created through `additional-clients`. Signing in there without the

@@ -70,17 +70,27 @@ def test_the_stamp_does_not_overwrite_a_section_that_set_its_own() -> None:
     assert stamped.help_template == "eigen.html.j2"
 
 
-def test_the_keycloak_choice_says_who_can_log_in() -> None:
-    """The old labels described something else. sso-only sets registrationAllowed and
-    loginWithEmailAllowed to false in the blueprint, sso-support sets both to true, so
-    the difference is local accounts and the label has to say that."""
+def test_the_keycloak_choice_says_what_the_login_screen_does() -> None:
+    """What differs between the blueprints is the LOGIN SCREEN, and only that.
+
+    The labels used to promise that sso-support turned on local accounts by setting
+    registrationAllowed / loginWithEmailAllowed / resetPasswordAllowed, and that stopped
+    being true in RC-159: both blueprints keep those three off. What sso-support really
+    gives is Keycloak's own screen, where the user picks between SSO Rijk and a local
+    account; sso-only sends them straight on to SSO Rijk and shows no screen at all.
+    """
     from opi.forms.visualizers.providers import KeycloakTemplateOptionsProvider
 
-    labels = {option["value"]: option["label"] for option in KeycloakTemplateOptionsProvider().get_options()}
+    options = {option["value"]: option for option in KeycloakTemplateOptionsProvider().get_options()}
 
-    assert labels["sso-only"] == "Alleen SSO Rijk"
-    assert "lokale" in labels["sso-support"].lower()
-    assert "SSO Rijk" in labels["sso-support"]
+    assert options["sso-only"]["label"] == "Alleen SSO Rijk"
+    assert "SSO Rijk" in options["sso-support"]["label"]
+    assert "lokaal account" in options["sso-support"]["label"].lower()
+
+    # The description carries the actual difference, so it may not claim self-registration.
+    beschrijvingen = " ".join(option["description"] for option in options.values()).lower()
+    assert "inlogscherm" in beschrijvingen
+    assert "uitnodiging" in beschrijvingen, "lokale accounts komen uit uitnodigingen, niet uit zelfregistratie"
 
 
 def test_every_service_still_has_an_explanation_to_stamp() -> None:

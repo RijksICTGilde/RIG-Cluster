@@ -34,7 +34,7 @@ from opi.web.lotc_switch import project_tab_url
 from tests.e2e.helpers.edit_modal import EditModalHelper
 from tests.e2e.helpers.htmx import wait_for_htmx_quiet
 from tests.e2e.helpers.service_config import modal_advance_to_field
-from tests.e2e.helpers.wizard import WizardHelper, aanvinkvakje, aanvinkvakjes
+from tests.e2e.helpers.wizard import WizardHelper, aanvinkvakje, aanvinkvakjes, kies_verplichte_keuzelijsten
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -149,6 +149,8 @@ def test_groep_stuurt_alleen_de_aangevinkte_keuzes_mee(app_server: str, auth_pag
     for _ in range(8):
         if aanvinkvakjes(page, GROEP).count():
             break
+        # De keycloak-configstap ligt op de weg hierheen en wil een template gekozen zien.
+        kies_verplichte_keuzelijsten(page)
         wizard.click_next()
         wait_for_htmx_quiet(page)
     vakjes = aanvinkvakjes(page, GROEP)
