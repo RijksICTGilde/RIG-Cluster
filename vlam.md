@@ -8,6 +8,8 @@ De onderbouwing (waarom een VPN, waarom headscale, wat er is afgevallen) staat i
 
 Alles wat over het gebruik van VLAM gaat is verhuisd naar een eigen project, `~/IdeaProjects/vlam`: het gebruikersdocument voor deelnemers, de CISO-samenvatting, het script dat nagaat welke API-routes openstaan, en de scripts om de tunnel te starten en er een agent tegenaan te zetten. Dit document blijft hier, want de valkuilen hieronder gaan over ZAD en niet over VLAM.
 
+**Welk document wanneer.** Er is ook `inrichting.md` in `~/IdeaProjects/vlam`, en die lijkt hierop maar dient iets anders. Dit document is het **bouwverslag**: waarom elke instelling er staat en wat er stukgaat als je hem weglaat. `inrichting.md` is de **momentopname**: hoe het er nu uitziet, wat er onlangs is gewijzigd en wat je moet aanpassen. Ga je iets bouwen of begrijpen, lees dan dit. Wil je weten wat er vandaag draait, lees dan die. Loopt er iets uiteen, dan wint `inrichting.md`, want die wordt bij elke wijziging bijgewerkt.
+
 ## Wat we bouwen
 
 ```
@@ -196,18 +198,35 @@ dns:
     - name: vlam-api.rijksweb.nl
       type: A
       value: <tailnet-IP van de gateway>
+    - name: vlam-api.overheid-i.nl
+      type: A
+      value: <tailnet-IP van de gateway>
     - name: chat.rijksweb.nl
+      type: A
+      value: <tailnet-IP van de gateway>
+    - name: chat.overheid-i.nl
       type: A
       value: <tailnet-IP van de gateway>
   nameservers:
     split:
       rijksweb.nl:
         - 100.100.100.100
+      overheid-i.nl:
+        - 100.100.100.100
 ```
 
 Die split-route is de kern: zonder een route voor die suffix stuurt de client zijn
 `rijksweb.nl`-vragen nooit naar de tunnel-resolver en blijven de extra records ongebruikt. Met
-`override_local_dns: false` pusht headscale namelijk geen resolvers.
+`override_local_dns: false` pusht headscale namelijk geen resolvers. Elke zone die je erbij neemt
+heeft dus zowel een `extra_records`-regel als een eigen split-route nodig; vergeet je de tweede,
+dan lekt de naam naar de publieke DNS en komt er niets terug.
+
+**Dit werkt alleen voor wie de gewone Tailscale-client draait.** Via `bin/vonk` draait tailscaled
+in userspace, zet het de DNS van de machine niet om, en zoekt de proxy namen op via de
+systeemresolver. Die kent deze namen niet. Daar zijn dus regels in `/etc/hosts` nodig, en doen de
+`extra_records` niets. De faalwijze is misleidend: je krijgt `CONNECT tunnel failed, response 500`
+en dus geen certificaatfout of iets anders dat de richting wijst. Zie de `README.md` in
+`~/IdeaProjects/vlam`.
 
 Controleren of het aankomt, van binnenuit:
 
@@ -347,9 +366,17 @@ command:
     exec haproxy -f /tmp/haproxy.cfg -db
 ```
 
-**Twee bestemmingen op een allowlist, gekozen op SNI.** De client kiest de bestemming niet; hij
-kiest alleen welke van de twee toegestane namen hij aanroept, en alles daarbuiten wordt geweigerd
-voordat er verbinding is. Frontend en backend mogen sinds HAProxy 3.3 niet dezelfde naam hebben.
+**Bestemmingen op een allowlist, gekozen op SNI.** De client kiest de bestemming niet; hij kiest
+alleen welke van de toegestane namen hij aanroept, en alles daarbuiten wordt geweigerd voordat er
+verbinding is. Frontend en backend mogen sinds HAProxy 3.3 niet dezelfde naam hebben.
+
+Het fragment hierboven toont de vorm, niet de huidige inhoud. Sinds 2026-09-01 staan er vier namen
+op de lijst: de twee rijksweb-namen en hun overheid-i-tegenhangers, elk met een eigen backend. Elke
+naam die je toevoegt heeft drie dingen nodig, en het vergeten van een ervan geeft drie verschillende
+storingen: een `acl`, vermelding in de `tcp-request content reject unless`-regel, en een
+`use_backend`. Zonder de acl wordt het verkeer geweigerd, zonder de reject-vermelding staat de deur
+te ver open, en zonder de use_backend beland je stil op de default. De actuele configuratie staat in
+`inrichting.md`.
 
 **`maxconn` is niet optioneel.** Zonder die regel leidt HAProxy zijn maximum af van de fd-limiet
 van de container en schaalt hij zijn interne structuren daarop, wat in rust al 196Mi kostte. In
@@ -395,9 +422,20 @@ bestemming niet bepaalt. Redirects worden teruggegeven, niet gevolgd.
 De RON-egress werkt vanzelf mee: de `rig-ron`-annotatie staat op de NAMESPACE, niet op een
 component.
 
-**Toegang.** Eenmalig, en daarna nooit meer per afnemer. In `vlam-wt8` staat EEN
-cross-domain-access-regel die poort 8081 van `vlam-proxy-intern` zonder projectlimiet
-openzet:
+**Sinds 2026-09-01 heeft dit component drie poorten**, niet één. 8081 termineert naar rijksweb,
+8082 termineert naar overheid-i, en 8443 lust door zonder te termineren voor afnemers die zelf de
+TLS-sessie met VLAM willen opzetten. Het nieuwe adres kreeg een eigen poort in plaats van een
+vervanging van 8081, zodat afnemers in eigen tempo kunnen omzetten. De doorlus op 8443 blijft de
+bestemming vastzetten via dezelfde SNI-allowlist, dus de eigenschap dat er geen netwerkpad naar RON
+bestaat blijft overeind. Details in `inrichting.md`.
+
+Let op dat het adres van overheid-i tijdelijk hardgecodeerd staat in plaats van de naam, omdat
+ODC-Noord de DNS-forwardzone heeft moeten terugdraaien. Dat hoort terug zodra die zone er weer is;
+de reden staat als comment bij de betreffende regels.
+
+**Toegang.** Eenmalig, en daarna nooit meer per afnemer. In `vlam-wt8` staan
+cross-domain-access-regels die de poorten van `vlam-proxy-intern` zonder projectlimiet
+openzetten (hieronder de oorspronkelijke voor 8081; er staan er nu drie, ook voor 8082 en 8443):
 
 ```yaml
   - name: cross-domain-access
