@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
+import yaml
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from opi.connectors.mail import (
@@ -40,13 +41,13 @@ from opi.connectors.mail import (
     render_sender_table,
 )
 from opi.core.cluster_config import (
-    get_keycloak_mail_from_address,
     get_mail_from_address,
     get_mail_relay_host,
     get_mail_relay_namespace,
     get_mail_relay_port,
 )
 from opi.core.config import settings
+from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.mail_manager import MailAccountNameError, MailManager
 from opi.services.catalog.approval import ApproverScope
 from opi.services.catalog.base import ConfigLayer, DeploymentManifestContext
@@ -1860,8 +1861,8 @@ class TestHetKeycloakAccountKomtUitDeBootstrap:
         ensured = AsyncMock(
             return_value=MailAccount(
                 username="zad-keycloak",
-                from_address="noreply-inloggen@rijksoverheid.nl",
-                bounce_address="noreply-inloggen@rijksoverheid.nl",
+                from_address="noreply-rijksapp@rijksoverheid.nl",
+                bounce_address="noreply-rijksapp@rijksoverheid.nl",
                 messages_per_day=2000,
             )
         )
@@ -1912,29 +1913,67 @@ class TestHetKeycloakAccountKomtUitDeBootstrap:
         assert ensured.await_args.kwargs["password"] == "tweede-waarde"
 
     @pytest.mark.asyncio
-    async def test_het_account_krijgt_zijn_eigen_adres_en_naam(self, monkeypatch) -> None:
-        """Anders vertrekt inlogpost onder het kale adres van de portal, en is een bounce
-        erop niet te onderscheiden van een bounce op de post van ZAD zelf."""
+    async def test_het_account_krijgt_het_kale_adres_en_de_eigen_naam(self, monkeypatch) -> None:
+        """Inlogpost vertrekt onder het BASISadres van het cluster - geen eigen lokaal deel,
+        geen plusdeel - en onderscheidt zich alleen nog door zijn weergavenaam.
+
+        Wat we daarmee bewust opgeven: een bounce is niet meer te herleiden tot inlogpost in
+        plaats van portalpost. Er is geen bounce-postbus, dus dat is vandaag theoretisch, en
+        het is de prijs van EEN herkenbaar afzenderadres.
+        """
         monkeypatch.setattr(MailManager, "_read_keycloak_secret", AsyncMock(return_value="w"))
         ensured = self._record_relay(monkeypatch)
 
         await MailManager.ensure_keycloak_account()
 
         kwargs = ensured.await_args.kwargs
-        assert kwargs["sender_address"] == "noreply-inloggen@rijksoverheid.nl"
+        assert kwargs["sender_address"] == get_mail_from_address(settings.CLUSTER_MANAGER)
+        assert kwargs["sender_address"] == "noreply-rijksapp@rijksoverheid.nl"
         assert kwargs["from_address"] == kwargs["sender_address"]
+        assert kwargs["bounce_address"] == kwargs["sender_address"]
         assert kwargs["from_name"] == settings.MAIL_KEYCLOAK_FROM_NAME
 
-    def test_het_adres_blijft_in_het_afzenderdomein(self) -> None:
-        """Het lokale deel is eigen, het domein is dat van het cluster en is niet instelbaar:
-        envelope en From: moeten in EEN domein blijven of DMARC valt om."""
-        for cluster in ("local", "sandboxed-local", "odcn-production"):
-            _, _, basisdomein = get_mail_from_address(cluster).partition("@")
-            _, _, domein = get_keycloak_mail_from_address(cluster).partition("@")
-            assert domein == basisdomein
+    @pytest.mark.asyncio
+    async def test_de_drie_plekken_noemen_hetzelfde_afzenderadres(self, monkeypatch) -> None:
+        """Het adres van inlogpost staat op DRIE plekken, en die moeten hetzelfde noemen.
 
-    def test_het_adres_verschilt_van_dat_van_de_portal(self) -> None:
-        assert get_keycloak_mail_from_address("odcn-production") != get_mail_from_address("odcn-production")
+        Beweegt er een niet mee, dan vertrekt post onder een ander adres dan een realm
+        claimt - precies de faalvorm die niemand ziet, want de relay stelt de ``From:`` zelf
+        vast en de realm liegt dan alleen in zijn eigen configuratie. Twee van de drie zijn
+        dezelfde aanroep, de derde is een LETTERLIJKE waarde in een manifest dat geen enkele
+        Python-toets anders leest; die is de reden dat deze toets bestaat.
+
+        Knip er een los - zet een ander adres in ``ZAD_MAIL_RELAY_FROM``, of laat
+        ``_smtp_server_settings`` iets anders teruggeven - en deze toets valt om.
+        """
+        monkeypatch.setattr(MailManager, "_read_keycloak_secret", AsyncMock(return_value="w"))
+        ensured = self._record_relay(monkeypatch)
+        await MailManager.ensure_keycloak_account()
+
+        # 1. Wat de relay als afzender van zad-keycloak krijgt.
+        op_de_relay = ensured.await_args.kwargs["sender_address"]
+
+        # 2. Wat OPI in de smtpServer van elke realm schrijft.
+        op_de_realm = KeycloakYamlHandler._smtp_server_settings()["from"]
+
+        # 3. Wat de Keycloak-pod uit zijn omgeving leest.
+        deployment = yaml.safe_load(
+            (
+                Path(__file__).resolve().parents[3]
+                / "infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml"
+            ).read_text()
+        )
+        container = next(c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "keycloak")
+        in_de_pod = next(v["value"] for v in container["env"] if v["name"] == "ZAD_MAIL_RELAY_FROM")
+
+        assert op_de_relay == op_de_realm == in_de_pod
+
+    def test_het_adres_is_het_kale_adres_van_de_portal(self) -> None:
+        """De aparte afleiding is VERVALLEN: er is geen eigen lokaal deel meer, dus er is
+        ook niets meer dat van het basisadres kan afdrijven. Wat overblijft is de eis die er
+        altijd al onder lag: envelope en From: in EEN domein, anders valt DMARC om."""
+        for cluster in ("local", "sandboxed-local", "odcn-production"):
+            assert get_mail_from_address(cluster) == "noreply-rijksapp@rijksoverheid.nl"
 
     @pytest.mark.asyncio
     async def test_de_projectweg_mag_ook_het_keycloak_account_niet_aanraken(self, monkeypatch) -> None:
@@ -2073,8 +2112,8 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
 
         account = MailAccount(
             username=settings.MAIL_KEYCLOAK_ACCOUNT,
-            from_address="noreply-inloggen@rijksoverheid.nl",
-            bounce_address="noreply-inloggen@rijksoverheid.nl",
+            from_address="noreply-rijksapp@rijksoverheid.nl",
+            bounce_address="noreply-rijksapp@rijksoverheid.nl",
             messages_per_day=settings.MAIL_KEYCLOAK_MESSAGES_PER_DAY,
         )
         monkeypatch.setattr(MailManager, "ensure_keycloak_account", AsyncMock(return_value=account))
