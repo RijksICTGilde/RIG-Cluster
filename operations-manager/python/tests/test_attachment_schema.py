@@ -395,11 +395,24 @@ def test_strip_and_preserve_attachment_content_roundtrip() -> None:
     assert "content" not in fv["attachments"]["data"][0]
 
 
-def test_modal_edit_attachments_flow_carries_services_for_display() -> None:
-    """The standalone modal-edit-attachments flow (single ATTACHMENTS_SECTION) must carry
-    `services` into step_data via the read-only carrier, so the upload partial can list
-    existing attachments even without the services-selection section present."""
+def test_modal_edit_attachments_flow_leaves_services_in_base_data() -> None:
+    """De uploadstap ziet de bestaande bijlagen, maar via base_data en niet via step_data.
+
+    De bijlagensectie heeft een READONLY carrier op ``services``: die schrijft nooit, hij
+    is er alleen zodat de uploadpartial de bestaande bijlagen kan tonen. Waar die lijst
+    vandaan komt is niet vrijblijvend (559eaa60): een kopie in step_data is gezaghebbend,
+    en de naam-unie in merge_service_lists bracht daarmee elke dienst terug die de
+    gebruiker in de dienstenmodal had uitgevinkt.
+
+    De verdeling die daaruit volgt, en die deze test vastlegt:
+
+    - ``_split_data_across_sections`` slaat de carrier over, dus step_data krijgt geen
+      dienstenlijst;
+    - ``_fully_owned_list_keys`` rekent de carrier niet als eigenaar, dus ``services``
+      blijft in base_data staan en de uploadstap houdt zijn context.
+    """
     from opi.forms.visualizers.flows import get_flow
+    from opi.web.router_detail_edit import _fully_owned_list_keys
     from opi.web.router_wizard import _split_data_across_sections
 
     flow = get_flow("modal-edit-attachments")
@@ -412,9 +425,13 @@ def test_modal_edit_attachments_flow_carries_services_for_display() -> None:
         ]
     }
     step_data = _split_data_across_sections(flow, project)
-    carried = step_data.get("attachments", {}).get("services")
-    assert carried, "services not carried into the attachments step"
-    catalog = [d for s in carried if isinstance(s, dict) and "attachments" in s for d in s["attachments"]["data"]]
+    assert "services" not in step_data.get("attachments", {}), "de readonly carrier hoort niets in step_data te zetten"
+
+    # Wat base_data overhoudt is wat de uploadpartial leest: de lijst zelf, met de catalogus erin.
+    base_data = {k: v for k, v in project.items() if k not in _fully_owned_list_keys(flow)}
+    catalog = [
+        d for s in base_data["services"] if isinstance(s, dict) and "attachments" in s for d in s["attachments"]["data"]
+    ]
     assert [(d["id"], d["filename"]) for d in catalog] == [("sso", "cert.pem")]
 
 
