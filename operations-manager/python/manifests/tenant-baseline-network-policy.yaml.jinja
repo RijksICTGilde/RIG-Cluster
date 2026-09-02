@@ -121,9 +121,18 @@ spec:
               kubernetes.io/metadata.name: "{{ project_infra_namespace }}"
 {% endif %}
     # Internet egress (HTTP/HTTPS) zodat tenant-apps externe APIs kunnen aanroepen.
+    # Beide adresfamilies: het cluster is dual-stack, dus een pod krijgt naast zijn
+    # IPv4-adres ook een IPv6-adres en een resolver geeft AAAA voor onze eigen hosts.
+    # Stond hier alleen 0.0.0.0/0, dan probeert een client eerst IPv6, loopt daarop in
+    # een timeout (gedropt, niet geweigerd) en valt pas daarna terug op IPv4. Elke
+    # uitgaande verbinding kost dan seconden extra. Gemeten in wies op 2 september:
+    # IPv4 naar keycloak.rijksapp.nl verbond in 0,00s, IPv6 liep na 6s in een timeout,
+    # en /inloggen/ tilde daardoor de gunicorn-worker over zijn WORKER TIMEOUT heen.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
+        - ipBlock:
+            cidr: ::/0
       ports:
         - protocol: TCP
           port: 443
