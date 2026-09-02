@@ -436,13 +436,20 @@ class Settings(BaseSettings):
     #: one side does not stop anything -- it just makes every login mail fail authentication
     #: at the relay, far away from the rename.
     MAIL_KEYCLOAK_SECRET_KEY: str = "smtp-password"
-    #: The local part Keycloak's login mail leaves under. A different one from the portal's
-    #: (``noreply-rijksapp``) so a recipient and a bounce can tell login mail apart. The
-    #: DOMAIN is the cluster's own (see ``get_keycloak_mail_from_address``) and is not
-    #: settable: leaving it would break DMARC alignment, which is the only thing carrying
-    #: our mail.
-    MAIL_KEYCLOAK_FROM_LOCAL: str = "noreply-inloggen"
-    #: The display name in front of that address.
+    #: The display name in front of the sender address of login mail.
+    #:
+    #: There is no own local part any more: login mail leaves under the cluster's BARE
+    #: address (``get_mail_from_address``), the same one the portal uses, so the whole
+    #: platform has ONE recognisable sender. The display name is the only thing that still
+    #: differs between ``zad-platform`` and ``zad-keycloak``.
+    #:
+    #: ``Rijksapps`` answers the question a display name is for -- FROM WHOM is this? -- and
+    #: matches the address and the place the recipient just logged in. ``Keycloak`` is our
+    #: product name, says nothing to a recipient and needlessly leaks the technology;
+    #: ``Toegangsbeheer`` describes what we do in administrator jargon.
+    #:
+    #: The constraint behind every naming choice: this is ONE account for ALL realms, so the
+    #: name can never carry a project. Wanting that ends the one-account arrangement.
     MAIL_KEYCLOAK_FROM_NAME: str = "Rijksapps"
 
     # Default daily message budget for a project account when it sets none itself.
