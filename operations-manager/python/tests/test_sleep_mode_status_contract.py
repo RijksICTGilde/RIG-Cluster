@@ -137,26 +137,48 @@ class TestSleepModeOn:
         assert result == {"state": "starting", "sleep_state": "waking"}
 
     @pytest.mark.asyncio
-    async def test_a_deployment_the_config_does_not_match_is_disabled(self) -> None:
-        # Sleep-mode configured for the project but not for THIS deployment: it never
-        # sleeps, so it has no sleep state of its own.
+    async def test_sleep_mode_off_for_the_project_is_disabled(self) -> None:
+        # Sleep-mode does not apply here at all, so there is no sleep state to report.
         project = self._with_sleep_mode("awake")
-        config = MagicMock()
-        config.matches.return_value = False
         with (
             patch("opi.services.project_store.get_project_store", return_value=_store(project)),
-            patch("opi.services.catalog.sleep_mode.config.load", return_value=config),
+            patch("opi.services.catalog.sleep_mode.config.load", return_value=None),
         ):
             result = await flow.status(PROJECT, DEPLOYMENT)
 
         assert result["sleep_state"] == "disabled"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stored", ["awake", "sleeping", "waking"])
+    async def test_a_deployment_outside_the_match_reports_its_real_state(self, stored: str) -> None:
+        """``match`` scopes the sweeper, not this endpoint.
+
+        A deployment can be slept by hand outside the selection -- the button is not
+        scoped by ``match`` -- and its waker page polls exactly here. Answering
+        ``disabled`` for it would leave that page waiting forever in front of a
+        deployment that really is asleep.
+        """
+        project = self._with_sleep_mode(stored)
+        config = MagicMock()
+        config.matches.return_value = False
+        kubectl = MagicMock()
+        kubectl.return_value.get_deployment_status = AsyncMock(return_value=[{"ready": "1/1"}])
+        with (
+            patch("opi.services.project_store.get_project_store", return_value=_store(project)),
+            patch("opi.services.catalog.sleep_mode.config.load", return_value=config),
+            patch("opi.services.catalog.sleep_mode.manifests.select_waker_component", return_value="web"),
+            patch("opi.connectors.kubectl.KubectlConnector", kubectl),
+        ):
+            result = await flow.status(PROJECT, DEPLOYMENT)
+
+        assert result["sleep_state"] == stored
 
 
 class TestWakeUsesTheSameWord:
     """``/wake`` has to say ``disabled`` where ``/status`` says it, or the word splits again."""
 
     @pytest.mark.asyncio
-    async def test_a_deployment_the_config_does_not_match_is_disabled(self) -> None:
+    async def test_sleep_mode_off_for_the_project_is_disabled(self) -> None:
         # It reported the stored state (``awake``) here, while /status called the very
         # same situation ``disabled`` -- one word, two meanings, on the pair of endpoints
         # this field exists to keep aligned.
@@ -164,12 +186,10 @@ class TestWakeUsesTheSameWord:
         project = _project(deployment)
         manager = AsyncMock()
         manager.get_contents = AsyncMock(return_value=project.data)
-        config = MagicMock()
-        config.matches.return_value = False
         with (
             patch("opi.services.project_store.get_project_store", return_value=_store(project)),
             patch("opi.manager.project_manager.ProjectManager", lambda **kwargs: manager),
-            patch("opi.services.catalog.sleep_mode.config.load", return_value=config),
+            patch("opi.services.catalog.sleep_mode.config.load", return_value=None),
         ):
             result = await flow.wake(PROJECT, DEPLOYMENT)
 

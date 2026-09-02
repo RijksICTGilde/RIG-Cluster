@@ -404,6 +404,20 @@ def deployment_component_service_visualizers() -> list[EditableVisualizer]:
     return visualizers
 
 
+def deployment_runtime_keys() -> tuple[str, ...]:
+    """Every ``deployments[]`` key any service uses for its own runtime state.
+
+    The catalog walk behind ``Service.deployment_runtime_keys``. Asked of every service,
+    not only of the ones a project selected: a service can be switched on cluster-wide
+    (sleep-mode is), so the state can be there without the project listing the service.
+    A service that records nothing contributes nothing, so asking everyone costs nothing.
+    """
+    keys: list[str] = []
+    for service in SERVICES.values():
+        keys.extend(service.deployment_runtime_keys())
+    return tuple(keys)
+
+
 def property_owning_services() -> list[Service]:
     """System services that own a plain project-file property (RC-25).
 

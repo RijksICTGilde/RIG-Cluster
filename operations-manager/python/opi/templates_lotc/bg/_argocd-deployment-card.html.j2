@@ -111,17 +111,22 @@
            bericht dat niet te herhalen - de foutmelding noemt bovendien de OORZAAK, en dat
            is het enige waar je iets aan hebt.
 
+           WIE dat mag zeggen is de dienst, niet deze kaart. Hier stond een check op de
+           WOORDEN van de melding ('uitgeschakeld', 'staat uit'); een herformulering in de
+           dienst brak de ontdubbeling dan stil. Het feit draagt het nu zelf
+           (superseded_by_component_details) en de kaart weegt alleen nog of de opsomming
+           er staat.
+
            Alleen dat ene bericht wordt onderdrukt, niet alle. Slaapstand is ook een
            dienstenbericht en daar weet ArgoCD niets van; die stil laten verdwijnen zou een
            echte toestand onzichtbaar maken. #}
         {% set facts = (deployment_states | default({})).get(deployment.name) %}
         {% for fact in (facts.facts if facts else []) %}
-            {% set zegt_uitgeschakeld = 'uitgeschakeld' in (fact.summary | lower) or 'staat uit' in (fact.summary | lower) %}
-            {% if not (disabled_components and zegt_uitgeschakeld) %}
+            {% if not (disabled_components and fact.superseded_by_component_details) %}
                 <c-cluster gap="md" align="center">
                     <c-icon icon="info-circle" size="lg" />
                     <c-stack gap="xs">
-                        <strong>{{ ServiceAdapter.get_service_definition(ServiceAdapter.get_service_by_value(fact.service)).name }}</strong>
+                        <strong>{{ fact.service_name }}</strong>
                         <c-span>{{ fact.summary }}</c-span>
                     </c-stack>
                 </c-cluster>
@@ -236,6 +241,68 @@
                     {% if deviations|length > 5 %}
                         <c-paragraph size="sm">en {{ deviations|length - 5 }} meer</c-paragraph>
                     {% endif %}
+                </c-stack>
+            {% endif %}
+
+            {# WAT ER OP DIT MOMENT DRAAIT, EN WAAROM DAT BOVEN HET ALARM STAAT.
+
+               De kaart las tot RC-162 alleen ArgoCD, en ArgoCD weet niet welke pod verkeer
+               afhandelt. Daardoor vielen twee situaties samen die niets met elkaar te maken
+               hebben: een RollingUpdate waarbij de vorige versie gewoon doordraait en alleen
+               de nieuwe niet opkomt, en een Recreate waarbij er echt niets meer staat. Beide
+               kregen "Applicatie crasht herhaaldelijk". Bij psd-law/pr-114 (productie,
+               21 augustus 2026) las de gebruiker dus dat zijn applicatie eruit lag terwijl
+               die sinds drie dagen verkeer bediende.
+
+               Dit blok staat daarom BOVEN de foutenlijst: eerst lezen wat er draait, dan pas
+               het alarm. Zonder die volgorde leest het alarm als het hele verhaal.
+
+               De lijst is er alleen bij een niet-gezonde kaart - een gezonde deployment
+               kost geen podaanroep. Zie _fetch_argocd_deployment_status. #}
+            {% set pod_summaries = status.get('pods', []) %}
+            {% if pod_summaries %}
+                <c-stack gap="xs">
+                    {% for pod in pod_summaries %}
+                        {% if pod.is_serving %}
+                            {# De aanroep boven de tag opgebouwd, en door forceescape. Dat
+                               is dezelfde val als bij "Logs bekijken" hieronder: tojson
+                               levert MARKUP op ("dit is al veilig") en het gewone
+                               escapefilter dat LOTC op :attrs loslaat slaat markup over,
+                               waardoor een aanhalingsteken het attribuut vroegtijdig
+                               sluit en de rest van de aanroep als losse attributen wordt
+                               gelezen. Staat uitgeschreven in de kop van dat blok. #}
+                            {% set pod_logs_js = ('openLogViewer('
+                                ~ (project.name | tojson) ~ ', '
+                                ~ (deployment.name | tojson) ~ ', '
+                                ~ (pod.reference | tojson) ~ ', '
+                                ~ (deployment.components | tojson) ~ ', '
+                                ~ (pod.pod_name | tojson) ~ ')') | forceescape %}
+                            <c-cluster gap="xs" align="center">
+                                <c-icon icon="check-mark-circle" size="sm" />
+                                <c-span>{{ pod.reference }} draait sinds {{ pod.running_since | dutch_date }} op {{ pod.image | korte_digest }}</c-span>
+                                {# secondary en niet tertiary. Gemeten in een browser: een
+                                   tertiaire knop is randloos en las achter een lange
+                                   regel als losse tekst, niet als iets waar je op klikt.
+                                   Dezelfde vorm als "Logs bekijken" hieronder dus. #}
+                                <c-button
+                                    type="secondary"
+                                    size="sm"
+                                    label="Logs"
+                                    icon="file-text"
+                                    :attrs="{'onclick': pod_logs_js, 'title': 'Bekijk de logs van deze pod'}" />
+                            </c-cluster>
+                            {% if pod.runs_configured_image is false %}
+                                <c-paragraph size="sm">Dat is niet de image die in je projectbestand staat: daar staat {{ pod.configured_image | korte_digest }}. De uitrol van die versie is dus niet doorgekomen.</c-paragraph>
+                            {% endif %}
+                        {% else %}
+                            {# Geen bedienende pod: dan is de applicatie WEL plat, en dat is een
+                               ander bericht dan een mislukte uitrol. Dit is de Recreate-stand,
+                               waar de oude pod eerst weg moet voordat de nieuwe mag starten. #}
+                            <c-alert type="error" heading="Er draait niets voor {{ pod.reference }}">
+                                Er is op dit moment geen pod die verkeer afhandelt voor dit component, dus dit deel van je applicatie is niet bereikbaar. De meldingen hieronder zeggen waarom de pod niet omhoog komt.
+                            </c-alert>
+                        {% endif %}
+                    {% endfor %}
                 </c-stack>
             {% endif %}
 

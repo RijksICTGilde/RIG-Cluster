@@ -22,8 +22,13 @@ realms:
   - name: "{{ realm_name }}"
     displayName: "{{ realm_display_name }}"
     enabled: true
+    # Deze vier velden BESCHRIJVEN wat er op de realm staat; sinds RC-159 leest OPI ze uit
+    # dit blauwdruk en zet ze op de realm, op de aanmaakweg EN bij elke verwerking.
+    # Voorheen stonden ze hardgecodeerd in create_realm() en deed wat hier stond niets.
     registrationAllowed: false
     loginWithEmailAllowed: false
+    resetPasswordAllowed: false
+    verifyEmail: false
     bruteForceProtected: true
     loginTheme: "nl-design-system"
     # Audit events: persist user events (incl. UPDATE_PROFILE/UPDATE_EMAIL) and admin

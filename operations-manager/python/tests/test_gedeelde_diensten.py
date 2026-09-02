@@ -25,15 +25,19 @@ import pytest
 from opi.services.gedeelde_diensten import (
     _DATABASE_QUERIES,
     _OPSLAG_QUERIES,
+    _RESOURCE_QUERIES,
     DREMPELS,
     ONGEMETEN_DIENSTEN,
     STATUS_KRITIEK,
     STATUS_OK,
     STATUS_ONBEKEND,
     STATUS_WAARSCHUWING,
+    Blok,
+    ResourceRij,
     beoordeel,
     haal_databases,
     haal_opslag,
+    haal_resources,
     zwaarste,
 )
 
@@ -330,3 +334,186 @@ class TestHaalDatabases:
             blok = await haal_databases()
 
         assert blok.rijen[0].langste_transactie_seconden is None
+
+
+# ---------------------------------------------------------------------------
+# Resourcegebruik
+# ---------------------------------------------------------------------------
+
+
+class _ResourceConnector:
+    """Zoals ``_Connector``, maar voor de queries met een namespacefilter erin.
+
+    De sleutel kan hier niet de kale querytekst zijn: die wordt pas op het moment van
+    meten samengesteld uit de ingestelde namespaces. Er wordt daarom teruggezocht via het
+    SJABLOON, zodat een gewijzigde query nog steeds een test breekt in plaats van
+    stilzwijgend een leeg blok te leveren.
+    """
+
+    def __init__(self, antwoorden: dict[str, list[dict[str, Any]]], namespaces: list[str]) -> None:
+        self.antwoorden = antwoorden
+        self.queries: list[str] = []
+        filter_regex = "|".join(namespaces)
+        self.per_query = {
+            sjabloon.format(namespaces=filter_regex): naam for naam, sjabloon in _RESOURCE_QUERIES.items()
+        }
+
+    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+        self.queries.append(query)
+        return self.antwoorden.get(self.per_query[query], [])
+
+
+def _ns(namespace: str, waarde: str) -> dict[str, Any]:
+    return _reeks({"namespace": namespace}, waarde)
+
+
+def _met_namespaces(namespaces: list[str]) -> Any:
+    return patch("opi.core.cluster_config.get_service_namespaces", return_value=namespaces)
+
+
+class TestHaalResources:
+    @pytest.mark.asyncio
+    async def test_gevraagd_staat_naast_gebruikt(self) -> None:
+        """De hele reden voor dit blok: er wordt op de REQUEST gefactureerd, niet op gebruik."""
+        namespaces = ["rig-prd-operations", "rig-prd-backup"]
+        connector = _ResourceConnector(
+            {
+                "geheugen_gebruikt": [_ns("rig-prd-operations", "1073741824")],
+                "geheugen_gevraagd": [_ns("rig-prd-operations", "3221225472")],
+                "geheugen_limiet": [_ns("rig-prd-operations", "4294967296")],
+            },
+            namespaces,
+        )
+        with _met_namespaces(namespaces), _met_connector(connector):
+            blok = await haal_resources()
+
+        rij = blok.rijen[0]
+        assert rij.geheugen_gebruikt == pytest.approx(1073741824)
+        assert rij.geheugen_gevraagd == pytest.approx(3221225472)
+        assert rij.geheugen_limiet == pytest.approx(4294967296)
+
+    @pytest.mark.asyncio
+    async def test_een_namespace_zonder_meting_blijft_staan(self) -> None:
+        """Ingesteld maar niets gemeten is iets anders dan nooit ingesteld.
+
+        De rijen komen daarom uit de CONFIGURATIE en niet uit het queryresultaat: een
+        namespace die stilletjes uit de tabel valt is niet van een lege namespace te
+        onderscheiden, en dat is precies de fout die je wilt zien.
+        """
+        namespaces = ["rig-prd-operations", "rig-prd-ron"]
+        connector = _ResourceConnector({"cpu_gebruikt": [_ns("rig-prd-operations", "0.5")]}, namespaces)
+        with _met_namespaces(namespaces), _met_connector(connector):
+            blok = await haal_resources()
+
+        assert [rij.namespace for rij in blok.rijen] == namespaces
+        assert blok.rijen[1].cpu_gebruikt is None
+
+    @pytest.mark.asyncio
+    async def test_de_totaalrij_telt_op(self) -> None:
+        namespaces = ["rig-prd-operations", "rig-prd-backup"]
+        connector = _ResourceConnector(
+            {
+                "geheugen_gevraagd": [
+                    _ns("rig-prd-operations", "1000"),
+                    _ns("rig-prd-backup", "500"),
+                ],
+            },
+            namespaces,
+        )
+        with _met_namespaces(namespaces), _met_connector(connector):
+            blok = await haal_resources()
+
+        (totaal,) = blok.extra_rijen
+        assert totaal.geheugen_gevraagd == pytest.approx(1500)
+        # Niets gemeten blijft None en wordt geen nul: een lege som is geen meting.
+        assert totaal.cpu_limiet is None
+
+    @pytest.mark.asyncio
+    async def test_alleen_de_ingestelde_namespaces_worden_bevraagd(self) -> None:
+        """Er mag geen projectnamespace in glippen; deze pagina gaat over ONZE diensten."""
+        namespaces = ["rig-prd-operations", "rig-prd-backup"]
+        connector = _ResourceConnector({}, namespaces)
+        with _met_namespaces(namespaces), _met_connector(connector):
+            await haal_resources()
+
+        assert len(connector.queries) == len(_RESOURCE_QUERIES)
+        for query in connector.queries:
+            assert 'namespace=~"rig-prd-operations|rig-prd-backup"' in query
+
+    @pytest.mark.asyncio
+    async def test_zonder_ingestelde_namespaces_wordt_er_niet_gemeten(self) -> None:
+        """Geen configuratie is geen "alles": dan zou de pagina projecten gaan tonen."""
+        connector = _ResourceConnector({}, [])
+        with _met_namespaces([]), _met_connector(connector):
+            blok = await haal_resources()
+
+        assert blok.gemeten is False
+        assert "service_namespaces" in (blok.fout or "")
+        assert connector.queries == []
+
+    @pytest.mark.asyncio
+    async def test_een_mislukte_meting_zegt_dat_hij_mislukte(self, caplog: pytest.LogCaptureFixture) -> None:
+        connector = AsyncMock()
+        connector.custom_query.side_effect = RuntimeError("mimir onbereikbaar")
+
+        with (
+            _met_namespaces(["rig-prd-operations"]),
+            _met_connector(connector),
+            caplog.at_level(logging.WARNING, logger="opi.services.gedeelde_diensten"),
+        ):
+            blok = await haal_resources()
+
+        assert blok.gemeten is False
+        assert "mimir onbereikbaar" in (blok.fout or "")
+        assert [record.levelno for record in caplog.records] == [logging.WARNING]
+
+
+class TestResourceSjabloon:
+    """Dat het resourceblok ook RENDERT, in alle drie zijn toestanden.
+
+    De meetlaag hierboven kan kloppen terwijl het scherm leeg blijft: een componenttag met
+    een attribuut dat niet bestaat breekt pas bij het renderen. Deze drie gevallen zijn de
+    drie uitkomsten die de route kan opleveren, en het derde - "kon niet meten" - is
+    degene die op het scherm te zien moet zijn en niet in een log.
+    """
+
+    SJABLOON = "bg/_gedeelde-diensten-resources.html.j2"
+
+    def _render(self, blok: Any) -> str:
+        from opi.core.templates_lotc import templates_lotc
+
+        html = templates_lotc.env.get_template(self.SJABLOON).render({"blok": blok})
+        assert "<c-" not in html, "onvervangen componenttag"
+        return html
+
+    def test_de_drie_getallen_staan_op_het_scherm(self) -> None:
+        rij = ResourceRij(
+            namespace="rig-prd-operations",
+            cpu_gebruikt=0.464,
+            cpu_gevraagd=2.0,
+            cpu_limiet=8.0,
+            geheugen_gebruikt=27_379_029_474.0,
+            geheugen_gevraagd=46_285_265_305.0,
+            geheugen_limiet=76_890_000_000.0,
+            opslag_gebruikt=1_073_741_824.0,
+            opslag_capaciteit=10_737_418_240.0,
+        )
+        html = self._render(Blok(gemeten=True, rijen=[rij], extra_rijen=[]))
+
+        assert "rig-prd-operations" in html
+        # Gevraagd is de reden voor dit blok; als die kolom wegvalt is het blok zinloos.
+        assert "43.1 GiB" in html
+        assert "25.5 GiB" in html
+        assert "71.6 GiB" in html
+
+    def test_een_namespace_zonder_meting_krijgt_streepjes(self) -> None:
+        leeg = ResourceRij("rig-prd-ron", None, None, None, None, None, None, None, None)
+        html = self._render(Blok(gemeten=True, rijen=[leeg], extra_rijen=[]))
+
+        assert "rig-prd-ron" in html
+
+    def test_kon_niet_meten_staat_op_het_scherm(self) -> None:
+        html = self._render(Blok(gemeten=False, fout="mimir onbereikbaar"))
+
+        assert "Kon niet meten" in html
+        assert "mimir onbereikbaar" in html

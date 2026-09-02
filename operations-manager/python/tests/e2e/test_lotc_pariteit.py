@@ -122,6 +122,7 @@ FRAGMENT_CONTEXT = {
         "cpu_usage_display": "0.42",
         "cpu_limit_display": "1.00",
         "memory_usage_display": "1.4 GB",
+        "memory_request_display": "1.8 GB",
         "memory_limit_display": "2.0 GB",
         "storage_usage_display": "10 GB",
         "storage_capacity_display": "20 GB",

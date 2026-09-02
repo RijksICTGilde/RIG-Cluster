@@ -89,6 +89,27 @@ Advanced pass-through fields (`groups`, `client-roles`, and the deprecated `role
 for `realm-roles`) validate but are not offered in the UI. Keys are hyphenated on disk; the
 service model also accepts the underscore spelling that predates this service.
 
+## Wie een account krijgt, bevestigt voortaan eerst zijn adres
+
+Op een realm die verifieert (vandaag: de blauwdrukken `sso-support` en `algoritmeregister`)
+komt een nieuw account binnen met `emailVerified: false`, en Keycloak stuurt een
+bevestigingsmail. De uitgenodigde kiest zijn wachtwoord in het formulier hierboven zoals
+altijd, en loopt bij zijn eerste login tegen het bevestigingsscherm aan.
+
+Dat is nieuw sinds RC-159. `create_user()` zette `emailVerified` onvoorwaardelijk op `True`
+zodra er een adres was meegegeven, dus elke via deze weg aangemaakte gebruiker was vooraf
+geverifieerd zonder dat er ooit iets bevestigd was. De waarde volgt nu de realm.
+
+Twee dingen om te weten als een uitgenodigde meldt dat hij niet binnenkomt:
+
+- **De post gaat via de mailrelay van het platform**, met één account voor heel Keycloak. Er
+  staat geen SMTP-configuratie in de realm die je kunt nakijken - dat is opzet. Zie
+  `features/keycloak-mail.md`.
+- **"Geen foutmelding" is geen bewijs van aankomst.** Kijk in de sink (sandbox) of vraag de
+  postbus na; een mislukte bezorging verdwijnt bij de relay als dubbele bounce.
+
+Op een realm die niet verifieert verandert er niets.
+
 ## Configuring via the API
 
 Because the service owns a config model (`InviteConfig`), it is configurable through the

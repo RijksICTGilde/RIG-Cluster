@@ -373,7 +373,14 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
 
             # Schedule fire-and-forget OOM watcher
             from opi.core.config import settings
-            from opi.services.oom_watcher import schedule_oom_check
+            from opi.services.oom_watcher import reset_oom_tune_attempts, schedule_oom_check
+
+            # A user-initiated refresh is a fresh start, so its OOM tune budget is
+            # cleared. The automated refresh a tune queues for itself carries
+            # ``automated_remediation`` and must NOT clear it -- doing so reset the
+            # brake once per escalation round (asses-k2n/pr-494).
+            if not automated_remediation:
+                reset_oom_tune_attempts(project_name, deployment_name)
 
             if settings.OOM_WATCHER_ENABLED:
                 oom_attempt = payload.get("oom_watch_attempt", 1)
@@ -392,6 +399,14 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                     "status": "completed",
                     "message": f"Deployment '{deployment_name}' processed successfully",
                     "result": processing_result,
+                    # Ook op de geslaagde tak. "Uitgerold, maar niet gezond" is formeel een
+                    # succes, en juist daar viel het per-component-verhaal weg: er was geen
+                    # gestructureerd kanaal, dus werd het als proza in een staplabel geduwd.
+                    **(
+                        {"component_failures": component_failures}
+                        if (component_failures := project_manager.get_component_failures())
+                        else {}
+                    ),
                 },
             }
         else:
@@ -513,6 +528,14 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
                     "status": "completed",
                     "message": "All project resources processed successfully",
                     "result": processing_result,
+                    # Ook op de geslaagde tak. "Uitgerold, maar niet gezond" is formeel een
+                    # succes, en juist daar viel het per-component-verhaal weg: er was geen
+                    # gestructureerd kanaal, dus werd het als proza in een staplabel geduwd.
+                    **(
+                        {"component_failures": component_failures}
+                        if (component_failures := project_manager.get_component_failures())
+                        else {}
+                    ),
                 },
             }
         else:

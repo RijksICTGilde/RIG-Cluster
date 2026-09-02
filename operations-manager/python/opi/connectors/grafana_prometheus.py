@@ -295,11 +295,57 @@ class GrafanaPrometheusConnector:
                 raise GrafanaQueryError(f"Query failed with status {resp.status_code}")
 
             grafana_result = resp.json()
+            self._log_response_problems(grafana_result, queries)
             return self._convert_batch_grafana_response(grafana_result, queries.keys(), instant)
 
         except httpx.HTTPError as e:
             logger.error(f"Grafana request error: {e}")
             raise GrafanaQueryError(f"Request failed: {e}") from e
+
+    def _log_response_problems(self, grafana_result: dict[str, Any], queries: dict[str, str]) -> None:
+        """
+        Report problems that Grafana returns inside a 200 OK body.
+
+        /api/ds/query answers 200 even when the datasource itself fails, and puts the
+        reason in results[refId].error. Without this the caller sees an empty result and
+        nothing is logged at all.
+        """
+        ref_results = grafana_result.get("results", {})
+
+        if not ref_results:
+            logger.error(f"Grafana returned 200 without any results for {len(queries)} quer(y|ies)")
+            return
+
+        empty: list[str] = []
+        for ref_id, ref_result in ref_results.items():
+            error = ref_result.get("error")
+            if error:
+                source = ref_result.get("errorSource", "unknown")
+                status = ref_result.get("status", "?")
+                logger.error(
+                    f"Grafana query {ref_id} failed (status={status}, source={source}): {str(error)[:300]} "
+                    f":: {queries.get(ref_id, '?')[:200]}"
+                )
+            elif not self._count_datapoints(ref_result.get("frames", [])):
+                # A frame with an empty value column still counts as no data: that is what
+                # a datasource returns when the series stopped being ingested.
+                empty.append(ref_id)
+
+        if empty and len(empty) == len(ref_results):
+            logger.warning(
+                f"Grafana returned no data for all {len(empty)} quer(y|ies); "
+                f"first query was: {queries.get(empty[0], '?')[:200]}"
+            )
+
+    @staticmethod
+    def _count_datapoints(frames: list[dict[str, Any]]) -> int:
+        """Count the actual values in a set of frames, ignoring empty value columns."""
+        total = 0
+        for frame in frames:
+            values = frame.get("data", {}).get("values", [])
+            if len(values) > 1 and values[1]:
+                total += len(values[1])
+        return total
 
     def _convert_batch_grafana_response(
         self,

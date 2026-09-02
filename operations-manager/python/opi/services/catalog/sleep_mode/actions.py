@@ -24,13 +24,23 @@ def _find_deployment(project_data: dict[str, Any], deployment_name: str) -> dict
 
 
 def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[DeploymentAction]:
-    """The wake/sleep toggle for a deployment, or no button when out of scope.
+    """The wake/sleep toggle for a deployment, or no button when sleep-mode is off.
 
-    Shown only when sleep-mode is enabled for the deployment's cluster and the deployment
-    is in the ``match`` scope -- otherwise the buttons would do nothing when clicked. While
-    awake, offer a manual sleep; while sleeping or waking, offer a wake. Both target the
-    session-authenticated web routes (admin/owner), so a manual sleep and a manual wake are
-    the two halves of one toggle.
+    Shown whenever sleep-mode is enabled for this project/cluster. Deliberately NOT
+    scoped by ``match``: that selects which deployments the sweeper puts to sleep on a
+    deadline, and this button is the manual half. Gating both on it meant that switching
+    the service on and leaving ``match`` empty produced no button anywhere, on any
+    deployment, with nothing to say why -- and ``match`` is empty by default.
+
+    Nothing in the mechanism needs the scope. Sleeping is carried out from the stored
+    state: replicas go to zero and the waker renders on ``sleep.state`` alone (see
+    ``project_manager``). The sweeper stays out of it by itself -- ``decide_action`` only
+    consults ``matches`` in the ``awake`` branch, so a deployment slept by hand outside
+    the scope stays asleep until someone wakes it, which is what "manual" should mean.
+
+    While awake, offer a manual sleep; while sleeping or waking, offer a wake. Both
+    target the session-authenticated web routes (admin/owner), so a manual sleep and a
+    manual wake are the two halves of one toggle.
     """
     deployment = _find_deployment(project_data, deployment_name)
     if deployment is None:
@@ -40,7 +50,7 @@ def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[De
     except SleepModeConfigError:
         # A broken sleep-mode config should not crash the details page; show no button.
         return []
-    if config is None or not config.matches(deployment_name):
+    if config is None:
         return []
 
     project_name = project_data.get("name", "")

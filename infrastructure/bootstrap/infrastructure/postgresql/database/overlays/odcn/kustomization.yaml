@@ -30,13 +30,81 @@ patches:
       # Give production real headroom.
       - op: replace
         path: /spec/resources/limits/memory
-        value: 2Gi
+        value: 4Gi
       - op: replace
         path: /spec/resources/limits/cpu
         value: "2"
       - op: replace
         path: /spec/resources/requests/memory
-        value: 512Mi
+        value: 1Gi
       - op: replace
         path: /spec/resources/requests/cpu
         value: 250m
+      # Ademruimte, geen noodgreep: op 1 september zat productie op 77 verbindingen
+      # met een piek van 121 in 24 uur, dus de 250 kneep nog niet. Wel liep een
+      # project vast op zijn eigen rollimiet, en dat gesprek gaat de komende tijd
+      # vaker over meer verbindingen per project.
+      #
+      # max_connections staat in base op 250 en dat blijft zo: base draait op Kind
+      # met 512Mi, waar 500 verbindingen onzin zijn. Alleen productie gaat omhoog,
+      # net als bij de resources hierboven.
+      #
+      # Het geheugen moet mee, maar bescheidener dan het plafond suggereert.
+      # Gemeten kost een verbinding ongeveer 5 tot 6,5Mi. Bij de realistische
+      # belasting van vandaag (piek 121) zit je met 1Gi shared_buffers rond de
+      # 2Gi; de 4Gi is ruimte voor groei, niet een verwachting. Requests gaan naar
+      # 1Gi en niet hoger: requests worden echt op de node gereserveerd, en het
+      # werkelijke verbruik is 753Mi.
+      #
+      # shared_buffers stond op de PostgreSQL-standaard van 128Mi en was nooit op
+      # deze container afgestemd. Dat is te weinig gebleken: de trefkans van de
+      # cache is 78,6% over alles, en regel_k4c_regelrecht haalt 31,3% op een
+      # database van 81 MB. Die past ruim tien keer in het geheugen, maar wordt
+      # steeds verdrongen door de tachtig andere databases.
+      #
+      # 1Gi komt van twee kanten op hetzelfde uit: alle databases samen zijn
+      # 1113 MB, dus je cachet er praktisch alles mee, en het is de gebruikelijke
+      # 25% van de 4Gi hierboven.
+      #
+      # LET OP: max_connections en shared_buffers zijn allebei postmaster-
+      # parameters, dus dit vraagt een herstart. Met instances: 1 is dat downtime
+      # voor Keycloak, Forgejo, de mailrelay en elke projectdatabase tegelijk. Rol
+      # dit uit op een gepland moment, niet terloops.
+      - op: replace
+        path: /spec/postgresql/parameters/max_connections
+        value: "500"
+      - op: add
+        path: /spec/postgresql/parameters/shared_buffers
+        value: 1GB
+      # Zonder dit start de database niet meer zodra zijn pod opnieuw wordt
+      # aangemaakt. ODCN herschrijft imageName bij admission van
+      # ghcr.io/cloudnative-pg/postgresql:17 naar
+      # rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17, en die proxy vraagt
+      # authenticatie. De pod had geen enkele pull secret en zijn serviceaccount
+      # ook niet, dus de pull faalt op 'invalid username/password'.
+      #
+      # Dat bleef 83 dagen onzichtbaar omdat de pod al die tijd niet opnieuw is
+      # aangemaakt; het image stond op de node. Op 1 september ging hij eruit bij
+      # de eerste de beste wijziging die een nieuwe pod afdwong, en toen lag de
+      # hele platformdatabase plat. Elke andere aanleiding tot herplaatsing
+      # (nodeonderhoud, eviction, CNPG-upgrade) had hetzelfde gedaan.
+      #
+      # Dezelfde twee secrets die de operations-manager gebruikt om van rcr te
+      # pullen. Ze bestaan al in rig-prd-operations.
+      - op: add
+        path: /spec/imagePullSecrets
+        value:
+          - name: rig-robot-pull-secret
+          - name: ghcr-rig-robot-pull-secret
+      # Vraag exact wat het cluster tóch gaat maken, anders draait CNPG in een lus.
+      # ODCN herschrijft imageName bij admission naar het rcr-pad. Blijft hier
+      # ghcr.io staan, dan ziet CNPG een pod die niet is wat hij vroeg, vervangt
+      # hij hem (UpgradingInstance), herschrijft admission opnieuw, en begint het
+      # van voren af aan. Gemeten op 1 september: de pod werd elke ~45 seconden
+      # vervangen en de database was daardoor niet stabiel bereikbaar.
+      #
+      # Alleen in deze overlay. Base en de lokale overlays hebben geen
+      # admission-herschrijving en geen toegang tot rcr, dus die houden ghcr.io.
+      - op: replace
+        path: /spec/imageName
+        value: rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17

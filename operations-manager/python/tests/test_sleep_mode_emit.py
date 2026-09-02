@@ -25,7 +25,7 @@ def _project(state: str | None) -> dict:
     }
 
 
-async def _emit(project: dict, monkeypatch) -> list[str]:
+async def _emit(project: dict, monkeypatch, *, service_port: int | None = 8080) -> list[str]:
     from opi.services.catalog.sleep_mode import token as sleep_token
 
     async def fake_decrypt(encrypted: str, project_data: dict) -> str:
@@ -48,6 +48,7 @@ async def _emit(project: dict, monkeypatch) -> list[str]:
         namespace="rig-proj",
         cluster="local",
         project_name="proj",
+        service_port=service_port,
         output_dir="/tmp/out",
         created_files=created_files,
     )
@@ -79,3 +80,42 @@ async def test_skips_when_no_token(monkeypatch) -> None:
     project = _project("sleeping")
     project["deployments"][0]["sleep"].pop("wake-token")
     assert await _emit(project, monkeypatch) == []
+
+
+@pytest.mark.asyncio
+async def test_no_service_port_means_no_waker(monkeypatch) -> None:
+    """Without a Service there is nothing for the waker to sit behind.
+
+    Emitting one anyway would put a pod in the namespace that no hostname reaches, which
+    is the shape of the bug this port work came from. The deployment still sleeps and is
+    still wakeable from the portal or the API.
+    """
+    project = _project("sleeping")
+
+    assert await _emit(project, monkeypatch, service_port=None) == []
+
+
+@pytest.mark.asyncio
+async def test_the_waker_is_rendered_on_the_service_port(monkeypatch) -> None:
+    """End to end through the emit path: the port the caller resolved for the Service is
+    the port the waker declares and the port the image is told to listen on."""
+    from opi.services.catalog.sleep_mode import manifests as sleep_manifests
+
+    seen: dict[str, int] = {}
+    real_deployment = sleep_manifests.build_waker_deployment_values
+    real_configmap = sleep_manifests.build_waker_configmap_values
+
+    def spy_deployment(**kwargs):
+        seen["deployment"] = kwargs["port"]
+        return real_deployment(**kwargs)
+
+    def spy_configmap(**kwargs):
+        seen["configmap"] = kwargs["port"]
+        return real_configmap(**kwargs)
+
+    monkeypatch.setattr(sleep_manifests, "build_waker_deployment_values", spy_deployment)
+    monkeypatch.setattr(sleep_manifests, "build_waker_configmap_values", spy_configmap)
+
+    await _emit(_project("sleeping"), monkeypatch, service_port=8000)
+
+    assert seen == {"deployment": 8000, "configmap": 8000}

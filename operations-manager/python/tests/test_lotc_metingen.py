@@ -338,6 +338,7 @@ def _dashboard(**extra: Any) -> str:
         "cpu_limit_display": "10",
         "memory_percentage": 20,
         "memory_usage_display": "1 GiB",
+        "memory_request_display": "3 GiB",
         "memory_limit_display": "5 GiB",
         "storage_percentage": 5,
         "storage_usage_display": "1G",
@@ -375,6 +376,22 @@ def _dashboard(**extra: Any) -> str:
     }
     context.update(extra)
     return _render(DASHBOARD_TEMPLATE, context)
+
+
+def test_de_geheugenmeter_toont_gebruikt_gevraagd_en_limiet() -> None:
+    """Drie getallen, want er wordt op de GEVRAAGDE waarde gefactureerd.
+
+    ODCN rekent geheugen af als request + clamp_min(gebruik - request, 0): per pod het
+    hoogste van gevraagd en gebruikt. De meter toonde alleen gebruik tegen limiet, en dat
+    zijn allebei niet het getal waar de rekening op staat.
+
+    Deze test is er omdat de omgeving op de gewone ``Undefined`` staat en niet op
+    ``StrictUndefined``: valt de sleutel weg, dan verdwijnt het getal STIL uit de regel in
+    plaats van een fout op te leveren, en dan staat er "1 GiB gebruikt /  gevraagd".
+    """
+    tekst = _tekst(_dashboard())
+
+    assert "1 GiB gebruikt / 3 GiB gevraagd / 5 GiB limiet" in tekst, tekst
 
 
 def test_netwerkverkeer_zonder_meetpunten_zegt_dat() -> None:

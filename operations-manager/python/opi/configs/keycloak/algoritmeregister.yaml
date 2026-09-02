@@ -65,9 +65,34 @@ realms:
   - name: "{{ realm_name }}"
     displayName: "{{ realm_display_name }}"
     enabled: true
-    registrationAllowed: true
-    loginWithEmailAllowed: true
-    resetPasswordAllowed: true
+    # LET OP: hier stond registrationAllowed/loginWithEmailAllowed/resetPasswordAllowed op
+    # true, en dat gebeurde NIET - deze blauwdruk werd voor deze velden niet gelezen en
+    # create_realm() zette ze hardgecodeerd op false. Er stond dus een BELOFTE; er staat nu
+    # een BESCHRIJVING van wat er werkelijk op deze realms staat.
+    #
+    # Sinds RC-159 leest OPI ze wel, op de aanmaakweg EN bij elke verwerking. Ze hier op
+    # true zetten zou dus zelfregistratie AANZETTEN op elke bestaande realm van deze
+    # blauwdruk, en of dat hoort te gebeuren is een productbeslissing en geen opruimklus.
+    # De tekst in de UI (KeycloakTemplateOptionsProvider) beschrijft de blauwdruk nog wel
+    # met deze drie velden en klopt dus niet meer met wat hier staat.
+    #
+    # verifyEmail is de UITZONDERING en gaat wel om. Een realm die verifieert en niet kan
+    # mailen sluit nieuwe gebruikers buiten, dus deze regel is een VERZOEK en geen bevel:
+    # OPI zet verifyEmail alleen AAN als het PLATFORM een mailrelay heeft
+    # (MAIL_RELAY_API_URL gevuld, zie _apply_realm_fields). Heeft het die niet - clustertype
+    # 'local', of productie tijdens de crashlus van de relay op 21-08-2026 - dan blijft
+    # verifyEmail hier op true staan en op de REALM uit, met een waarschuwing in de log. De
+    # eerstvolgende verwerking nadat de relay er is, zet het alsnog aan.
+    #
+    # De maat is de RELAY en niet de smtpServer van de realm. Die laatste zei hier ooit iets
+    # over, maar sinds RC-159 draagt elke realm een minimale smtpServer met alleen een
+    # afzenderadres en gaat de post via de eigen verzender uit de omgeving van de pod.
+    #
+    # Wie wordt hierdoor geraakt: nieuwe LOKALE gebruikers, en iedereen die zijn adres
+    # wijzigt. SSO-gebruikers niet - die komen via trustEmail al geverifieerd binnen.
+    registrationAllowed: false
+    loginWithEmailAllowed: false
+    resetPasswordAllowed: false
     editUsernameAllowed: false
     verifyEmail: true
     bruteForceProtected: true

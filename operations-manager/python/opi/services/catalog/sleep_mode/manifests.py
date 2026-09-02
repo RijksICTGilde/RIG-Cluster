@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 # Built from the platform key so "this pod is not the application" stays one concept:
 # every application-level pod lookup excludes anything carrying it.
 WAKER_ROLE_LABEL: dict[str, str] = {SERVICE_ROLE_LABEL_KEY: "waker"}
-#: The waker container/HTTP port.
-WAKER_PORT = 8080
 #: TLS modes the waker cannot serve (it holds no certificate of its own).
 _UNSUPPORTED_TLS = ("passthrough", "provided")
 
@@ -65,6 +63,14 @@ def select_waker_component(
     3. Zero, or two-or-more without ``waker-component`` -> no waker, and a log line
        naming the candidates. Not picking is honest: the deployment still sleeps and is
        wakeable via the UI/API, and one waker per hostname would waste a pod each.
+
+    A component behind an authorization wall IS a candidate. The wall moves the Service
+    to the oauth2-proxy port and the caller hands that port straight to the waker, so the
+    waker answers there -- without the proxy, because the waker pod carries no sidecars.
+    While the deployment sleeps, that hostname therefore serves the waker page (title,
+    description, wake button) to anyone who knows the address, and the wall only applies
+    again once the application pod is back. Deliberate: a walled deployment that cannot
+    be woken from its own hostname is the bigger complaint.
     """
     deployment_name = deployment.get("name", "")
     web: list[str] = []
@@ -110,6 +116,7 @@ def build_waker_deployment_values(
     project_name: str,
     deployment_name: str,
     cluster: str,
+    port: int,
     pod_replacement_mode: str = "RollingUpdate",
     generated_at: str = "",
     image_pull_secrets_map: dict[str, str] | None = None,
@@ -119,6 +126,13 @@ def build_waker_deployment_values(
     Only the fields that differ from a normal component; everything app-specific
     (storage, sidecars, app env/secrets) is explicitly emptied so the waker pod is
     minimal and never mounts the app's resources.
+
+    ``port`` is the port the component's Service targets, and it is a parameter rather
+    than a constant because the waker has no Service of its own: it joins the
+    application's by carrying the same ``app`` label. A waker on any other port is still
+    selected by that Service, still passes its own probes -- they go straight to the
+    container port -- and answers nothing. That is how a hardcoded 8080 left every
+    project whose component listens elsewhere with a healthy pod and a dead hostname.
     """
     image = settings.SLEEP_MODE_WAKER_IMAGE
     # A moving :latest tag must be re-pulled; a pinned tag (incl. a kind-loaded local
@@ -138,8 +152,8 @@ def build_waker_deployment_values(
         "imagePullPolicy": image_pull_policy,
         "imagePullSecretsMap": image_pull_secrets_map or {},
         "replicas": 1,
-        "inbound_ports": [WAKER_PORT],
-        "application_port": WAKER_PORT,
+        "inbound_ports": [port],
+        "application_port": port,
         "probe_scheme": "http",
         "probe_liveness_path": "/__zad/healthz",
         "probe_readiness_path": "/__zad/ready",
@@ -171,8 +185,14 @@ def build_waker_configmap_values(
     component_reference: str,
     config: SleepModeConfig,
     cluster: str,
+    port: int,
 ) -> dict[str, Any]:
-    """Values for ``configmap.yaml.jinja`` holding the waker's presentation config."""
+    """Values for ``configmap.yaml.jinja`` holding the waker's presentation config.
+
+    ``ZAD_PORT`` is the other half of the port fix: the manifest declares the container
+    port, this tells the process inside to listen there. The image defaults to 8080 when
+    the variable is absent, so an older waker image keeps behaving as it did.
+    """
     title_template = config.title or "{deployment}"
     title = title_template.format(project=project_name, deployment=deployment_name, component=component_reference)
     data = {
@@ -183,6 +203,7 @@ def build_waker_configmap_values(
         "ZAD_APP_DESCRIPTION": config.description,
         "ZAD_WAKE_MODE": config.wake_mode,
         "ZAD_POLL_INTERVAL_SEC": "3",
+        "ZAD_PORT": str(port),
     }
     return {
         "name": waker_config_name(app_name),
