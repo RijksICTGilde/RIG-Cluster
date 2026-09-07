@@ -36,6 +36,7 @@ from opi.utils.naming import (
     generate_infrastructure_argocd_folder_path,
     get_output_filename_from_template,
 )
+from opi.utils.project_utils import project_level_deployment
 
 logger = logging.getLogger(__name__)
 
@@ -722,8 +723,15 @@ class DeleteProjectManager:
         per-deployment opruiming raakt het nooit. Zonder deze stap blijft de map staan
         nadat de laatste deployment weg is, en wijst de ArgoCD-applicatie van het
         projectniveau naar iets waar niemand meer eigenaar van is.
+
+        WELKE repository de map draagt beslist ``project_level_deployment``, dezelfde
+        functie die de schrijver (``ProjectManager._process_repository_manifests``) en de
+        applicatie (``ArgoManager.create_project_application``) gebruiken. Dat is precies
+        waarvoor die functie bestaat: op bestandsvolgorde kiezen zou bij twee repositories
+        in de verkeerde repo gaan zoeken, en dan blijft de map met zijn SOPS-secrets staan.
         """
-        repository_name = next((d.get("repository") for d in deployments if d.get("repository")), None)
+        owner = project_level_deployment(deployments)
+        repository_name = owner.get("repository") if owner else None
         repo_config = next(
             (r for r in project_data.get("repositories", []) or [] if r.get("name") == repository_name), None
         )
