@@ -216,6 +216,17 @@ for a user: sleep-mode shipped that way, fully working, with no wizard presence 
 
 A service therefore has two independent UI questions, and you must answer both.
 
+**One path for the form and the API.** Whatever a user can configure, the form and the REST
+API reach through the *same* declarations: the editables define the yaml path and the
+validators, the `config_model` defines the shape, and `validate_service_configs` is the one
+gate both go through. So: no endpoint written by hand for a service that has a config model,
+no validator that only the form runs, no second place where a value is normalised, and no
+field the API accepts that the form silently drops. Where the two genuinely differ, that
+difference is declared and lives with the service (`api_actions()`, see "When editables are
+not enough"), never improvised on one side. The two failure modes this rules out are a form
+that writes a shape the API rejects, and an API that writes a shape the form cannot show.
+Start from the editables; the rest follows from them.
+
 ### 1. Does the user pick the service? The selection card
 
 The services step renders one card per service (`SERVICES_EDITABLE` in
