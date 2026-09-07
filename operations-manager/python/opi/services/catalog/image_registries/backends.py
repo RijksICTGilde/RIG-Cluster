@@ -43,7 +43,16 @@ DEFAULT_ORGANIZATION_API_VERSION = "quay.redhat.com/v1"
 
 
 class RegistryBackend(Protocol):
-    """Wat er moet worden aangemaakt voor een registry die een afnemer opgeeft."""
+    """Wat er moet worden aangemaakt voor een registry die een afnemer opgeeft.
+
+    Alleen ``ensure``, geen ``remove``. Het VERWIJDEREN is hier declaratief: haalt een
+    project een registry weg, dan levert deze backend er geen spec meer voor, ruimt de
+    symmetrische prune het bestand uit ``_project/`` op, en verwijdert ArgoCD de resource
+    -- waarna de operator de organisatie in RCR opruimt. Een imperatieve ``remove``
+    ernaast zou een tweede weg naar dezelfde uitkomst zijn, en die twee kunnen uiteenlopen.
+    Verwijderen mag direct (D8): bij een proxy cache verliest de afnemer alleen de kopie,
+    bovenstrooms staat alles er nog.
+    """
 
     def manifests(self, ctx: ProjectManifestContext, registry: dict[str, Any]) -> list[ProjectManifestSpec]:
         """De projectbrede manifesten voor één registry. Replay-safe: dezelfde invoer

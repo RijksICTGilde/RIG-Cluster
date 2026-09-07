@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -125,4 +126,30 @@ async def _organization_status(
         "state": "ready" if (ready and credentials) else "pending",
         "message": message,
         "expires_at": expires,
+        "expires_soon": _expires_soon(str(expires)),
     }
+
+
+#: Hoeveel dagen voor het verlopen van het token de melding dringend wordt. Het token
+#: roteert elke 90 dagen en er is niemand die het uit zichzelf ververst, dus de afnemer
+#: moet het zien aankomen terwijl er nog tijd is om er iets aan te doen.
+EXPIRY_WARNING_DAYS = 14
+
+
+def _expires_soon(expires_at: str) -> bool:
+    """Of het token binnen ``EXPIRY_WARNING_DAYS`` verloopt (of al verlopen is).
+
+    Een datum die we niet kunnen lezen is GEEN waarschuwing: dan weten we het niet, en
+    dringend melden op een aanname is erger dan zwijgen over iets wat misschien niets is.
+    """
+    if not expires_at:
+        return False
+    try:
+        # Python 3.11+ leest de Z-suffix zelf; geen .replace() nodig.
+        moment = datetime.fromisoformat(expires_at)
+    except ValueError:
+        logger.info(f"Onleesbare tokenverloopdatum '{expires_at}'; geen waarschuwing")
+        return False
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment - datetime.now(UTC) <= timedelta(days=EXPIRY_WARNING_DAYS)

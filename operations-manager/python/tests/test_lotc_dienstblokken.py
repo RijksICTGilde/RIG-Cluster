@@ -124,13 +124,17 @@ FRAGMENTEN: dict[str, dict[str, Any]] = {
                 "state": "ready",
                 "message": "De proxy is klaar.",
                 "expires_at": "2026-12-06T00:00:00Z",
+                "expires_soon": False,
             },
             {
                 "registry": "tweede",
                 "organization": "ghcr-rig-voorbeeld",
                 "state": "pending",
                 "message": "De proxy wordt klaargezet.",
-                "expires_at": "",
+                # De dringende tak: die tekent een alert in plaats van een alinea, dus hij
+                # hoort net zo goed gerenderd te worden als de rustige.
+                "expires_at": "2026-09-20T00:00:00Z",
+                "expires_soon": True,
             },
         ],
     },
