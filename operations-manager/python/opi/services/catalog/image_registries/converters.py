@@ -35,11 +35,16 @@ class ProjectAgeSecretConverter:
         if _AGE_MARKER not in value:
             return value
         private_key = resolve_project_private_key(context_data)
-        if not private_key:
-            logger.warning("[ProjectAgeSecretConverter] Geen project-sleutel beschikbaar; token niet ontsleuteld")
-            return ""
-        decrypted = decrypt_age_content_sync(value, private_key)
-        return decrypted if decrypted is not None else ""
+        decrypted = decrypt_age_content_sync(value, private_key) if private_key else None
+        if decrypted is not None:
+            return decrypted
+        # NIET "" teruggeven. Het formulier zou dan een leeg tokenveld tonen, de gebruiker
+        # slaat op zonder het aan te raken, en de schrijfkant leest die lege waarde als
+        # "gewist" -- weg token, zonder dat iemand daarom vroeg. Het blok ongewijzigd
+        # teruggeven is lelijk op het scherm maar eerlijk: de schrijfkant ziet de
+        # AGE-markering en laat hem staan, en overschrijven kan gewoon.
+        logger.warning("[ProjectAgeSecretConverter] Token niet te ontsleutelen; het opgeslagen blok blijft staan")
+        return value
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
         if value is None:
