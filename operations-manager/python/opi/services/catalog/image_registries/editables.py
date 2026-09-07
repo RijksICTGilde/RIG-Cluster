@@ -12,9 +12,13 @@ definitie is en geen tweeling die uit elkaar loopt.
 from __future__ import annotations
 
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import KubernetesNameValidator, ModelFieldValidator, RequiredValidator
+from opi.forms.editables.validators import ModelFieldValidator, RequiredValidator
 from opi.services.catalog.base import ConfigLayer, config_path
-from opi.services.catalog.image_registries.config_model import UPSTREAM_MESSAGE, RegistryEntry
+from opi.services.catalog.image_registries.config_model import (
+    REGISTRY_NAME_MESSAGE,
+    UPSTREAM_MESSAGE,
+    RegistryEntry,
+)
 from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
 from opi.services.services_enums import ServiceType
 
@@ -25,9 +29,12 @@ def _project(*parts: str) -> str:
     return config_path(ConfigLayer.PROJECT, _SVC, "config", *parts)
 
 
+# Ook deze regel staat in het MODEL, en om dezelfde reden als bij ``upstream``: het
+# formulier mag niet iets anders toelaten dan de API en dan een met de hand geschreven
+# projectbestand.
 REGISTRY_NAME_EDITABLE = Editable(
     yaml_path=_project("registries[*]", "name"),
-    validator=KubernetesNameValidator("Registrynaam"),
+    validator=ModelFieldValidator(RegistryEntry, "name", REGISTRY_NAME_MESSAGE),
     required=True,
 )
 

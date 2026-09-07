@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.v2.models import ErrorCategory
+from opi.services.catalog.image_registries.naming import registry_destination
 from opi.services.deployment_diagnostics import (
     categorize_error,
     conditions_to_errors,
@@ -923,7 +924,13 @@ _PRIVATE_PROJECT: dict[str, Any] = {
         }
     ],
 }
-_RCR_IMAGE = "rcr.rijksapps.nl/codeoverheid-rig-demo-robbert-uittenbroek/zad-deployment-demo:0a611d9d"
+# De organisatienaam wordt BEREKEND (projectnaam plus een hash van de upstream), dus hij
+# hoort hier ook berekend te worden -- een letterlijke naam zou stil naast de naamregel
+# komen te staan zodra die verandert.
+_RCR_IMAGE = (
+    f"{registry_destination('code.overheid.nl/robbert.uittenbroek', 'rcr.rijksapps.nl', 'rig', 'demo')}"
+    f"/zad-deployment-demo:0a611d9d"
+)
 _UPSTREAM_IMAGE = "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo:0a611d9d"
 
 

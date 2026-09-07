@@ -68,16 +68,32 @@ De naamregels staan in `opi/services/catalog/image_registries/naming.py`:
 | Naam | Regel |
 |---|---|
 | `friendlyName` | de host zonder TLD en zonder punten (`code.overheid.nl` -> `codeoverheid`) |
-| `suffix` | `<project>-<upstream-namespace>`, of alleen `<project>` als de upstream geen pad heeft |
+| `suffix` | `<project>-<hash>`, met `<hash>` de eerste acht hex-tekens van sha256 over de hele upstream |
 | organisatie | `<friendlyName>-<customerName>-<suffix>` |
 | pull-secret | `<organisatie>-robot-pull-secret`, expliciet gezet want de operator laat de suffix weg |
 | image-omzetting | host vervangen, namespace-segment eruit |
 
-De upstream-namespace hoort in de suffix omdat `friendlyName` alleen de HOST draagt. Zonder
-dat deel komen `ghcr.io/orga` en `ghcr.io/orgb` van hetzelfde project op één
+De upstream hoort in de suffix omdat `friendlyName` alleen de HOST draagt, en die zonder
+TLD. Zonder dat deel komen `ghcr.io/orga` en `ghcr.io/orgb` van hetzelfde project op één
 organisatienaam uit -- en daarmee op één bestandsnaam op het projectniveau, één
 credentials-secret en één bestemming, waarna de tweede registry de eerste stil overschrijft
 en twee componenten die verschillende images bedoelen dezelfde ophalen.
+
+Waarom een **hash** en niet de leesbare namespace: beide delen van de suffix gaan door
+`sanitize_kubernetes_name`, en die maakt van `.` en `/` ook een koppelteken. Er blijft dus
+geen teken over dat als grens kan dienen, en dan is de samenvoeging niet omkeerbaar.
+Gemeten: project `demo` met upstream `ghcr.io/team` en project `demo-team` met upstream
+`ghcr.io` kwamen allebei op suffix `demo-team` uit, dus op één tenantbrede organisatie, één
+pull-secretnaam en één bestemming -- twee projecten die elkaars proxy besturen. Binnen één
+project deed hetzelfde zich voor tussen `.../robbert.uittenbroek`, `.../robbert/uittenbroek`
+en `.../robbert-uittenbroek`. De hash loopt over de HELE upstream en niet alleen over het
+pad, want `code.overheid.nl/x` en `code.overheid.com/x` leveren allebei `codeoverheid` op.
+
+De naam is daarmee eenduidig, maar de naamREGEL is niet de enige grendel: bij het opslaan
+weigert `validate_proxy_organization_claims` een organisatienaam die een ander project al
+claimt (en twee entries van één project die op dezelfde naam uitkomen). Die toets meet de
+uitkomst in plaats van de aanname, dus hij vangt ook afkapping op 63 tekens en een latere
+naamwijziging.
 
 ## Eén regelvorm, twee bronnen
 
@@ -334,6 +350,9 @@ daar staat het secret in de resource-spec zelf.
 |---|---|---|
 | Het token wordt bij het opslaan getoetst | `enforcers.RegistryTokenEnforcer` | Een te smal token komt anders pas naar boven als `ImagePullBackOff` met de melding `repository not found`, en die wijst de verkeerde kant op |
 | Een verwijzing naar de proxy-organisatie van een ander project | `validate_proxy_organization_ownership` | Wie de naam van andermans organisatie kent leest er met ANDERMANS credentials uit |
+| Een registry-ENTRY die naar de organisatie van een ander project wijst (`upstream` of `secretName`) | `validate_registry_entry_ownership` | De entry maakt een regel die op elke image onder die upstream slaat en het opgegeven secret eraan hangt -- ook op routes zonder projectbestand |
+| Een organisatienaam die een ander project al claimt, of twee entries van één project op één naam | `validate_proxy_organization_claims` | De organisatienaam is tenantbreed: twee CR's met dezelfde naam sturen één organisatie in RCR aan |
+| De ingetypte image van een ad-hoc job | `foreign_proxy_organization_owner` in `JobManager.begin` | Die image komt uit een formulierveld en ziet geen enkele validator bij het opslaan, terwijl `apply_bundle` er wel de projectregels op toepast |
 | Een registrynaam die niet bestaat | `values_must_exist` op de componentkeuze | Een typefout hoort bij het opslaan te sneuvelen, niet pas bij het pullen |
 | `project` als deploymentnaam | `RESERVED_DEPLOYMENT_NAMES` | De ArgoCD-applicatie van het projectniveau heet `{project}-project` |
 

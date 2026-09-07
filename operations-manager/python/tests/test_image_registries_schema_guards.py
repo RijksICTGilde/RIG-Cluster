@@ -30,6 +30,7 @@ from opi.manager.project_validation import find_plaintext_service_config_violati
 from opi.services.catalog.base import ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.config_model import UPSTREAM_PATTERN
+from pydantic import ValidationError
 
 #: Een upstream die uit zijn scalar breekt en er twee documenten achteraan hangt, waarvan
 #: het tweede een RoleBinding is naar de privileged SCC. Binnen de ``max_length=512`` van
@@ -263,3 +264,48 @@ class TestHetPatroonStaatOpEenPlek:
             ).read_text()
         )
         assert fragment["$defs"]["RegistryEntry"]["properties"]["upstream"]["pattern"] == UPSTREAM_PATTERN
+
+
+class TestDeRegistrynaamHeeftDezelfdeRegelAlsHetFormulier:
+    """De derde tweeling uit de securityreview: het formulier zette een
+    ``KubernetesNameValidator`` op ``name`` en het model droeg er geen patroon, dus de API
+    liet namen door die het formulier weigert. De regel staat nu in het model en het
+    formulier wijst ernaar, net als bij ``upstream``.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Hoofdletters",
+            "met spatie",
+            "1-begint-met-cijfer",
+            "eindigt-op-streepje-",
+            "punt.in.de.naam",
+            "onder_streep",
+            "a" * 64,
+        ],
+    )
+    def test_geweigerde_namen(self, name: str) -> None:
+        with pytest.raises((ProjectSchemaError, ProjectIntegrityError)):
+            poorten(_project({"name": name, "upstream": "ghcr.io"}))
+
+    @pytest.mark.parametrize("name", ["code-overheid", "ghcr", "a", "registry-2"])
+    def test_toegestane_namen(self, name: str) -> None:
+        poorten(_project({"name": name, "upstream": "ghcr.io"}))
+
+    def test_het_api_model_draagt_dezelfde_regel(self) -> None:
+        """Het endpoint schrijft rechtstreeks tegen dit model; zonder het patroon daar komt
+        een naam die het formulier weigert alsnog het projectbestand in."""
+        from opi.api.router import AddRegistryByCredentialsRequest, AddRegistryBySecretRequest
+
+        for model in (AddRegistryBySecretRequest, AddRegistryByCredentialsRequest):
+            velden = {"name": "Hoofdletters", "url": "ghcr.io", "secretName": "s", "username": "u", "password": "p"}
+            with pytest.raises(ValidationError):
+                model(**velden)
+
+    def test_het_formulier_en_het_model_wijzen_naar_dezelfde_regel(self) -> None:
+        from opi.services.catalog.image_registries.editables import REGISTRY_NAME_EDITABLE
+
+        assert REGISTRY_NAME_EDITABLE.validator is not None
+        assert REGISTRY_NAME_EDITABLE.validator.validate("Hoofdletters")
+        assert REGISTRY_NAME_EDITABLE.validator.validate("code-overheid") == []
