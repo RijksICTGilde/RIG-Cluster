@@ -171,6 +171,7 @@ from opi.utils.project_utils import (
     ComponentValidationError,
     build_component_config,
     normalize_container_image,
+    project_level_deployment,
     validate_root_component,
 )
 from opi.utils.secrets import (
@@ -3807,12 +3808,16 @@ class ProjectManager:
         # project dezelfde (enforce_namespace_pin). De schrijver zelf slaat over wat niet
         # veranderd is, dus dit levert geen commit op als er niets te doen was -- dat is de
         # bestaande skip-if-unchanged, en zonder die zou SOPS elke run opnieuw versleutelen.
-        if deployments:
-            first = min(deployments, key=lambda d: str(d.get("name", "")))
+        # In PRECIES EEN repository, ook als het project deployments over twee repo's heeft:
+        # er is een ArgoCD-applicatie die naar deze map wijst, en een tweede kopie zou
+        # blijven rondslingeren zonder eigenaar. Welke repository dat is, beslist
+        # project_level_deployment -- dezelfde functie die de applicatie gebruikt.
+        owner = project_level_deployment(await self.get_deployments(cluster_filter=True))
+        if owner is not None and owner.get("repository") == repo_config.get("name"):
             await self._process_project_manifests(
                 repo_config,
-                str(first["cluster"]),
-                get_prefixed_namespace(str(first["cluster"]), str(first["namespace"])),
+                str(owner["cluster"]),
+                get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
                 project_repo_connector,
             )
             await project_repo_connector.commit_changes(f"Update project manifests for {project_name}")

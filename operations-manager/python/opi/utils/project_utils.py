@@ -288,6 +288,25 @@ def normalize_container_image(image: str) -> tuple[str, bool]:
     return normalized, was_normalized
 
 
+def project_level_deployment(deployments: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """De deployment die het PROJECTNIVEAU van dit project draagt, of None.
+
+    Het projectniveau (``<cluster>/<project>/_project/``) hangt aan de namespace en niet
+    aan een deployment, maar het moet WEL in precies een repository landen: er is een
+    ArgoCD-applicatie die ernaar wijst, en twee kopieen in twee repo's zouden betekenen
+    dat de ene beheerd wordt en de andere blijft rondslingeren.
+
+    De regel is daarom een keuze die BEIDE kanten maken: de alfabetisch eerste deployment
+    op dit cluster wijst de repository aan. Hij staat hier zodat de schrijver
+    (``ProjectManager._process_repository_manifests``) en de applicatie
+    (``ArgoManager.create_project_application``) niet elk hun eigen versie kunnen krijgen.
+    """
+    on_cluster = [d for d in deployments if isinstance(d, dict) and d.get("name")]
+    if not on_cluster:
+        return None
+    return min(on_cluster, key=lambda d: str(d["name"]))
+
+
 def validate_project_name(name: str) -> bool:
     """
     Validate project name: must start with lowercase letter, then lowercase a-z, numbers 0-9, dash -, max 20 characters.

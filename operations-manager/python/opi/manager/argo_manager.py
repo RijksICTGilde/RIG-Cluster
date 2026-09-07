@@ -22,6 +22,7 @@ from opi.utils.naming import (
     get_output_filename_from_template,
     make_argocd_repository_url_unique,
 )
+from opi.utils.project_utils import project_level_deployment
 from opi.utils.sops import encrypt_to_sops_files_or_fail
 
 if TYPE_CHECKING:
@@ -665,7 +666,11 @@ class ArgoManager:
             logger.debug(f"Geen deployments op dit cluster voor '{project_name}'; geen projectapplicatie")
             return True
 
-        deployment = min(deployments, key=lambda d: str(d.get("name", "")))
+        # Dezelfde regel als de schrijver van het projectniveau gebruikt, zodat de
+        # applicatie nooit naar een andere repository wijst dan waar de map geschreven is.
+        deployment = project_level_deployment(deployments)
+        if deployment is None:
+            return True
         cluster_name = str(deployment.get("cluster"))
         base_namespace = str(deployment.get("namespace"))
         namespace = get_prefixed_namespace(cluster_name, base_namespace)

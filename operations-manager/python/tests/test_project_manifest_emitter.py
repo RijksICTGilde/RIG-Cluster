@@ -30,6 +30,7 @@ from opi.utils.naming import (
     RESERVED_DEPLOYMENT_NAMES,
     generate_argocd_project_application_name,
 )
+from opi.utils.project_utils import project_level_deployment
 
 PREFIXES = {f"{service.value}-" for service in ServiceType}
 
@@ -105,6 +106,36 @@ class TestDeMapNaam:
             "deployments": [{"name": "prod", "cluster": "odcn-production", "namespace": "demo", "components": []}],
         }
         asyncio.run(validate_project_structure(data))
+
+
+class TestWieHetProjectniveauDraagt:
+    """Het projectniveau moet in PRECIES EEN repository landen, ook als een project
+    deployments over twee repo's heeft: er is een ArgoCD-applicatie die ernaar wijst, en
+    een tweede kopie zou zonder eigenaar blijven rondslingeren. Daarom maken de schrijver
+    en de applicatie dezelfde keuze, met dezelfde functie."""
+
+    def test_de_alfabetisch_eerste_deployment_wijst_de_repository_aan(self) -> None:
+        deployments = [
+            {"name": "productie", "repository": "b"},
+            {"name": "acceptatie", "repository": "a"},
+        ]
+        gekozen = project_level_deployment(deployments)
+        assert gekozen is not None
+        assert gekozen["repository"] == "a"
+
+    def test_de_volgorde_in_het_bestand_beslist_niet(self) -> None:
+        """De tegenproef: omgekeerd ingevoerd komt dezelfde keuze eruit, anders zou een
+        herschikking van het projectbestand de map laten verhuizen."""
+        omgekeerd = [{"name": "acceptatie", "repository": "a"}, {"name": "productie", "repository": "b"}]
+        gekozen = project_level_deployment(omgekeerd)
+        assert gekozen is not None
+        assert gekozen["repository"] == "a"
+
+    def test_zonder_deployments_is_er_geen_eigenaar(self) -> None:
+        assert project_level_deployment([]) is None
+
+    def test_een_deployment_zonder_naam_telt_niet_mee(self) -> None:
+        assert project_level_deployment([{"repository": "a"}]) is None
 
 
 class TestDeArgoApplicatie:
