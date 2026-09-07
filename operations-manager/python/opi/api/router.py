@@ -27,6 +27,7 @@ from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
+from opi.services.catalog.image_registries.config_model import UPSTREAM_PATTERN
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_store import get_project_store
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
@@ -809,11 +810,20 @@ class SelfServiceComponent(BaseModel):
     root: bool = False  # Whether this component receives the root path in nice-url mode
 
 
+#: The shape rule for ``url`` on both registry endpoints below. It is a REFERENCE to the
+#: image-registries config model, not a second definition: these two endpoints write into
+#: that service's config (``upstream``), so a caller must be judged by the same rule the
+#: form, the generic service-config API and a hand-written project file are judged by.
+#: Without it the value was only refused at the save chokepoint, one layer deeper and with
+#: a message about a schema instead of about this field.
+_REGISTRY_URL_DESCRIPTION = "Registry host without protocol, optionally with a path (lowercase, no tag or digest)"
+
+
 class AddRegistryBySecretRequest(BaseModel):
     """Request to add a registry that references a pre-existing Kubernetes secret."""
 
     name: str = Field(..., max_length=63, description="Unique registry identifier")
-    url: str = Field(..., max_length=512, description="Registry URL without protocol (may include path)")
+    url: str = Field(..., max_length=512, pattern=UPSTREAM_PATTERN, description=_REGISTRY_URL_DESCRIPTION)
     secret_name: str = Field(
         ..., max_length=253, alias="secretName", description="Name of existing K8s dockerconfigjson secret"
     )
@@ -823,7 +833,7 @@ class AddRegistryByCredentialsRequest(BaseModel):
     """Request to add a registry with username/password credentials."""
 
     name: str = Field(..., max_length=63, description="Unique registry identifier")
-    url: str = Field(..., max_length=512, description="Registry URL without protocol (may include path)")
+    url: str = Field(..., max_length=512, pattern=UPSTREAM_PATTERN, description=_REGISTRY_URL_DESCRIPTION)
     username: str = Field(..., max_length=256, description="Registry username or token name")
     password: str = Field(..., max_length=4096, description="Registry password or token (will be AGE-encrypted)")
 
