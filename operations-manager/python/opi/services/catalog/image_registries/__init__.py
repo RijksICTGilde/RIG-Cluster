@@ -32,15 +32,18 @@ from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.base import (
     ConfigLayer,
+    DetailPageSection,
     ProjectManifestContext,
     ProjectManifestSpec,
+    ProjectPageContext,
     Service,
     config_path,
 )
+from opi.services.catalog.events import on
 from opi.services.catalog.image_registries.config_model import ComponentRegistryConfig, ImageRegistriesConfig
 from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -172,6 +175,7 @@ class ImageRegistriesService(Service):
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
             from opi.forms.visualizers.sections import FormSection
+            from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer
             from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE
 
             cached = FormSection(
@@ -183,9 +187,38 @@ class ImageRegistriesService(Service):
                 post_save_action="process_project",
                 editables=[REGISTRIES_SEQUENCE],
                 layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "registries")],
+                # D5: het token wordt bij het OPSLAAN getoetst. Anders komt een te smal
+                # token pas naar boven als ImagePullBackOff met de melding
+                # "repository not found", en die wijst de verkeerde kant op.
+                enforcer=RegistryTokenEnforcer(),
             )
             self._config_section_cache = cached
         return cached
+
+    # --- de projectpagina ---------------------------------------------------------
+
+    @on(UIEvent.PROJECT_SECTIONS)
+    def registries_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
+        """Wat dit project aan eigen registries heeft, en hoe ver de proxy is.
+
+        Antwoordt uit het PROJECTBESTAND, zoals een synchrone haak hoort te doen. De
+        toestand van de proxy staat in het cluster en wordt door het blok zelf lazy
+        opgehaald (``web.py``), want een blok dat rendert mag geen connector aanroepen.
+        """
+        registries = project_registries(ctx.project_data)
+        if not registries:
+            return []
+        return [
+            DetailPageSection(
+                template="image_registries/section-detail.html.j2",
+                context={"registries": registries, "project_name": ctx.project_data.get("name", "")},
+            )
+        ]
+
+    def web_routers(self) -> list[Any]:
+        from opi.services.catalog.image_registries.web import image_registries_router
+
+        return [*super().web_routers(), image_registries_router]
 
     # --- projectbrede manifesten ------------------------------------------------------
 

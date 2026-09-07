@@ -179,3 +179,53 @@ organisatie in RCR. Bovenstrooms verandert er niets: de images staan er nog.
 | Projectniveau-haak | `contribute_project_manifests` in `opi/services/catalog/base.py` |
 | Emitter en prune | `_process_project_manifests` in `opi/manager/project_manager.py` |
 | ArgoCD-applicatie | `create_project_application` in `opi/manager/argo_manager.py` |
+
+## De eigen serviceaccount per project
+
+De ``default`` serviceaccount is geen vangnet dat we willen houden, om twee redenen. Hij
+draagt elk pull-secret dat het platform in de namespace repliceert, dus ook dat van de
+proxy-organisatie van een ander project: zolang onze pods daarop draaien is een private
+registry alleen op papier privé. En technisch is het ook geen goed idee -- alle secrets
+wijzen naar dezelfde host en kubelet moet daar de juiste uit halen, wat bij negen secrets
+al onzeker is en bij honderd een probleem.
+
+Daarom draagt het projectniveau ook een eigen serviceaccount, `{project}-sa`, zonder
+pull-secrets, bijgedragen door de **platform**-dienst (en niet door image-registries: elk
+project heeft hem nodig, ook een project dat nooit een eigen registry opgeeft). Elke
+gegenereerde podspec draagt de secrets die hij zelf nodig heeft, geleverd door
+`resolve_image()`. Meestal is dat er precies één.
+
+Gemeten op 2026-09-07 met een lege serviceaccount in `rig-prd-test`: een pod met
+`alpine:3.20.3` faalt, dezelfde pod met het RCR-pad faalt, en dezelfde pod met een expliciet
+secret in de podspec slaagt. De eerste rij is de belangrijkste: na admission stond er
+`rcr.rijksapps.nl/dockerhub-rig/library/alpine:3.20.3`, inclusief het `library/`-segment.
+Elke image belandt op een RCR-pad, elk RCR-pad vraagt authenticatie, en dus heeft élke pod
+een secret nodig -- ook voor een doodgewone publieke image.
+
+Operators die hun eigen serviceaccount maken (CNPG met `rig-db`) draaien niet op de onze;
+daar staat het secret in de resource-spec zelf.
+
+## Validaties
+
+| Wat | Waar | Waarom |
+|---|---|---|
+| Het token wordt bij het opslaan getoetst | `enforcers.RegistryTokenEnforcer` | Een te smal token komt anders pas naar boven als `ImagePullBackOff` met de melding `repository not found`, en die wijst de verkeerde kant op |
+| Een verwijzing naar de proxy-organisatie van een ander project | `validate_proxy_organization_ownership` | Wie de naam van andermans organisatie kent leest er met ANDERMANS credentials uit |
+| Een registrynaam die niet bestaat | `values_must_exist` op de componentkeuze | Een typefout hoort bij het opslaan te sneuvelen, niet pas bij het pullen |
+| `project` als deploymentnaam | `RESERVED_DEPLOYMENT_NAMES` | De ArgoCD-applicatie van het projectniveau heet `{project}-project` |
+
+De tokentoets meet wat er te meten valt: het tag-overzicht (`list-tags`, dus de
+`tags/list`-aanroep die het leesrecht nodig heeft) van een repository waar dit project
+werkelijk een image uit haalt. Is er nog geen zo'n image -- de normale toestand in de
+wizard, waar de registry vóór de componenten komt -- dan wordt er niets geweigerd: een
+weigering op iets wat we niet gemeten hebben blokkeert een gebruiker op een aanname.
+
+## Op de projectpagina
+
+De dienst levert een blok met wat de afnemer heeft ingevuld, en haalt de toestand van de
+proxy er met een htmx-lazyload bij (`web.py`): `proxyCache.ready`,
+`credentialsConfigured` en de verloopdatum van het token. Dat staat namelijk niet in het
+projectbestand maar in het cluster, en een blok dat rendert mag geen connector aanroepen.
+
+Een organisatie die er nog niet is, is geen fout: de proef mat 20 tot 25 seconden. Het blok
+is er zodat een wachtende afnemer ziet wáárom hij wacht.

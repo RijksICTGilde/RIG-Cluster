@@ -184,6 +184,62 @@ class SkopeoConnector:
                 masked[i + 1] = f"{parts[0]}:***" if len(parts) == 2 else "***"
         return masked
 
+    async def check_repository_access(
+        self, repository: str, username: str, password: str, timeout_seconds: int = 20
+    ) -> tuple[bool, str]:
+        """Can these credentials READ this repository? Returns (ok, reason).
+
+        The check the platform owes a user when they hand over a token: a token with too
+        little scope is answered upstream with ``reqPackageAccess`` (401), which Quay then
+        translates into ``name unknown: repository not found`` -- so the failure arrives as
+        an ImagePullBackOff with a message pointing the wrong way. Asking here means the
+        form can say what is actually wrong.
+
+        ``skopeo list-tags`` is the tag listing the registry API calls ``tags/list``, which
+        is exactly the call that needs the read scope. Availability of the CLI is not a
+        verdict about the token: with no skopeo this returns ok, because refusing a save
+        over a check we could not run would block a user for a platform gap.
+        """
+        if not self.is_skopeo_available:
+            logger.info("Skopeo CLI not available; registry credentials not verified")
+            return True, ""
+
+        cmd = ["skopeo", "list-tags", "--creds", f"{username}:{password}", f"docker://{repository}"]
+        logger.info(f"Verifying registry access: {' '.join(self._mask_list_tags_credentials(cmd))}")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            _stdout, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+        except TimeoutError:
+            logger.warning(f"Registry access check timed out for {repository}")
+            return True, ""
+        except FileNotFoundError:
+            return True, ""
+
+        if process.returncode == 0:
+            return True, ""
+        # The registry's own words are the only thing that says what went wrong, but they
+        # can carry the credentials back (skopeo echoes the URL it tried). Keep the first
+        # line and strip anything that looks like a userinfo part.
+        reason = stderr_bytes.decode(errors="replace").strip().splitlines()
+        return False, self._mask_userinfo(reason[0]) if reason else "de registry gaf geen reden"
+
+    @staticmethod
+    def _mask_list_tags_credentials(cmd: list[str]) -> list[str]:
+        """A copy of the command with ``--creds`` masked, for logging."""
+        masked = list(cmd)
+        for index, argument in enumerate(masked):
+            if argument == "--creds" and index + 1 < len(masked):
+                user, _, _password = masked[index + 1].partition(":")
+                masked[index + 1] = f"{user}:***"
+        return masked
+
+    @staticmethod
+    def _mask_userinfo(text: str) -> str:
+        """Remove a ``user:token@`` part from a message before it is shown or logged."""
+        return re.sub(r"//[^/\s]*:[^/\s]*@", "//***@", text)
+
     async def push_image(self, tarball_path: str, project_name: str, image_name: str, tag: str) -> str:
         """
         Push a Docker image tarball to the configured registry.

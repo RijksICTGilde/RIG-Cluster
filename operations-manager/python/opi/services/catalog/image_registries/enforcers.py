@@ -1,0 +1,121 @@
+"""De tokentoets bij het opslaan.
+
+Waarom hier en niet bij het pullen: upstream antwoordt op een te smal token met
+``reqPackageAccess`` (401), Quay vertaalt dat naar ``name unknown: repository not found``,
+en de afnemer ziet ``ImagePullBackOff`` met een melding die de verkeerde kant op wijst.
+Gemeten in de proef op 2026-09-07. De enige plek waar we hem een bruikbare fout kunnen
+geven is het formulier waar hij het token invult.
+
+De toets meet wat er te meten valt: het TAG-OVERZICHT van een repository waar dit project
+werkelijk een image uit haalt. Zonder zo'n image is er geen repository om tegen te toetsen
+-- dat is de normale toestand in de wizard, waar de registry vóór de componenten komt --
+en dan wordt er niets geweigerd. Een weigering op iets wat we niet gemeten hebben zou een
+gebruiker blokkeren op een aanname.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from opi.forms.editables.enforcers import FieldError
+from opi.forms.editables.service_path import smart_get_value
+from opi.services.catalog.base import ConfigLayer, config_path
+from opi.services.catalog.image_registries.rules import normalize_image
+from opi.services.services_enums import ServiceType
+
+logger = logging.getLogger(__name__)
+
+_REGISTRIES_PATH = config_path(ConfigLayer.PROJECT, ServiceType.IMAGE_REGISTRIES, "config", "registries")
+
+
+class RegistryTokenEnforcer:
+    """Toetst per registry of de inloggegevens een repository van dit project mogen lezen."""
+
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        registries = smart_get_value(value, _REGISTRIES_PATH) or []
+        if not isinstance(registries, list):
+            return value
+
+        images = _project_images(value)
+        connector = _connector()
+        if connector is None:
+            return value
+
+        for index, registry in enumerate(registries):
+            if not isinstance(registry, dict):
+                continue
+            upstream = registry.get("upstream")
+            username = registry.get("username")
+            password = registry.get("password")
+            if not upstream or not username or not password:
+                # Zonder inloggegevens valt er niets uit te wisselen; een publieke upstream
+                # is een geldige invoer.
+                continue
+            repository = _repository_under(str(upstream), images)
+            if repository is None:
+                logger.info(
+                    f"Registry '{registry.get('name')}' heeft nog geen image in dit project; token niet getoetst"
+                )
+                continue
+            ok, reason = await connector.check_repository_access(repository, str(username), str(password))
+            if not ok:
+                raise FieldError(
+                    f"{_REGISTRIES_PATH}[{index}]/password",
+                    f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen. "
+                    f"Het token heeft leesrecht op packages nodig. De registry zei: {reason}",
+                )
+        return value
+
+
+def _connector() -> Any:
+    """De skopeo-connector, of None als hij niet te maken is.
+
+    Een dienst praat nooit zelf met de buitenwereld; dit is de connector die het doet.
+    """
+    from opi.connectors.skopeo import SkopeoConnector
+
+    try:
+        return SkopeoConnector()
+    except Exception:
+        logger.warning("Skopeo-connector niet beschikbaar; token niet getoetst", exc_info=True)
+        return None
+
+
+def _project_images(data: dict[str, Any]) -> list[str]:
+    """Elke image die dit project ergens noemt, genormaliseerd."""
+
+    def images_of(components: Any) -> list[str]:
+        return [
+            normalize_image(component["image"])
+            for component in components or []
+            if isinstance(component, dict) and isinstance(component.get("image"), str) and component["image"]
+        ]
+
+    images = images_of(data.get("components"))
+    for deployment in data.get("deployments", []) or []:
+        if isinstance(deployment, dict):
+            images.extend(images_of(deployment.get("components")))
+    return images
+
+
+def _repository_under(upstream: str, images: list[str]) -> str | None:
+    """De eerste repository uit deze images die onder ``upstream`` valt, zonder tag.
+
+    De tag hoort bij de image en niet bij de repository: ``list-tags`` vraagt juist naar
+    de tags, dus een tag meegeven zou de vraag onbeantwoordbaar maken.
+    """
+    prefix = normalize_image(upstream)
+    for image in images:
+        if image == prefix or image.startswith(prefix + "/"):
+            return _strip_reference(image)
+    return None
+
+
+def _strip_reference(image: str) -> str:
+    """``host/pad/app:tag`` en ``host/pad/app@sha256:..`` -> ``host/pad/app``."""
+    reference = image.split("@", 1)[0]
+    repository, separator, tag = reference.rpartition(":")
+    if not separator or "/" in tag:
+        return reference
+    return repository
