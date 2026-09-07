@@ -43,8 +43,9 @@ REGISTRY_PASSWORD = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Token",
     help_text=(
-        "Een token met leesrecht op je packages. Het wordt versleuteld opgeslagen en is daarna "
-        "niet meer terug te lezen. Op productie verloopt het token na 90 dagen en moet je het opnieuw invullen."
+        "Een token met leesrecht op je packages. Het wordt versleuteld opgeslagen in het projectbestand; "
+        "wie dit formulier mag openen ziet het hier weer staan. Op productie verloopt het token na 90 dagen "
+        "en moet je het opnieuw invullen."
     ),
 )
 

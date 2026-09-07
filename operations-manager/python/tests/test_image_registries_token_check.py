@@ -107,11 +107,22 @@ class TestDeToets:
             "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo", "robbert.uittenbroek", "een-token"
         )
 
-    async def test_zonder_connector_wordt_er_niets_geweigerd(self) -> None:
-        """Geen skopeo is geen oordeel over het token."""
-        data = _data([REGISTRY], [IMAGE])
-        with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=None):
-            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+    async def test_zonder_skopeo_wordt_er_niets_geweigerd(self) -> None:
+        """Geen skopeo is geen oordeel over het token, en die beslissing zit in de
+        CONNECTOR zelf -- daarom staat er in de enforcer geen tweede vangnet omheen.
+        Gemeten op de echte methode met een connector die niet beschikbaar is."""
+        from types import SimpleNamespace
+
+        from opi.connectors.skopeo import SkopeoConnector
+
+        niet_beschikbaar = SimpleNamespace(is_skopeo_available=False)
+        ok, reason = await SkopeoConnector.check_repository_access(
+            niet_beschikbaar,  # type: ignore[arg-type]
+            "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo",
+            "robbert.uittenbroek",
+            "een-token",
+        )
+        assert (ok, reason) == (True, "")
 
     async def test_de_tweede_registry_wordt_ook_gemeten(self) -> None:
         """De fout wijst het VELD aan, dus de index moet die van de echte registry zijn."""
