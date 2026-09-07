@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
 from opi.services.catalog.base import ProjectPageContext
 from opi.services.catalog.image_registries import ImageRegistriesService
@@ -258,3 +259,18 @@ class TestDeLeeswegVanHetStatusEndpoint:
         await registry_status_fragment(self._request(), "demo")
 
         assert gerenderd == [{"applicable": True, "statuses": []}]
+
+    async def test_wie_geen_lid_is_krijgt_403_en_ziet_niets(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """De weigering van het endpoint zelf. Zonder deze test is de eigendomscontrole
+        ongedekt: hem weghalen laat de rest van de suite groen, terwijl het fragment dan de
+        namen en upstreams van andermans registries teruggeeft."""
+        import opi.services.project_authorization as authorization
+
+        gerenderd = self._patch(monkeypatch, [REGISTRY])
+        monkeypatch.setattr(authorization, "is_user_authorized_for_project", lambda project_name, email: False)
+
+        with pytest.raises(HTTPException) as opgevangen:
+            await registry_status_fragment(self._request(), "demo")
+
+        assert opgevangen.value.status_code == 403
+        assert gerenderd == []

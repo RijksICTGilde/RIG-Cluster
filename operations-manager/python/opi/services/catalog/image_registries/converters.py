@@ -19,31 +19,41 @@ from typing import Any
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.forms.editables.converters import resolve_project_private_key
-from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync
+from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync, encrypt_age_content_sync
 
 logger = logging.getLogger(__name__)
 
-_AGE_MARKER = "BEGIN AGE ENCRYPTED FILE"
-
 
 class ProjectAgeSecretConverter:
-    """Leest een AGE-blok als leesbare tekst en schrijft leesbare tekst terug als AGE-blok."""
+    """Leest een opgeslagen geheim als leesbare tekst en schrijft het terug als AGE-blok.
+
+    De leeskant kent alle vormen die het veld mag dragen (armored blok, ``base64+age:``,
+    ``plain:``), de schrijfkant maakt er een armored blok van. Een vorm die de leeskant
+    niet herkent zou als cijfertekst op het scherm komen en bij de eerstvolgende opslag als
+    NIEUW token versleuteld worden -- weg echte token.
+    """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
         if not isinstance(value, str) or not value:
             return ""
-        if _AGE_MARKER not in value:
-            return value
+        if not carries_encrypted_value(value):
+            # Niet versleuteld, maar wel mogelijk een opslagVORM: ``plain:`` markeert een
+            # bewust leesbaar token en die prefix hoort niet op het scherm en niet in de
+            # nieuwe cijfertekst. ``decrypt_password_smart_sync`` haalt hem eraf en laat
+            # kale tekst met rust; zonder sleutel kan hij op deze vormen niet falen.
+            return decrypt_password_smart_sync(value, None)
         private_key = resolve_project_private_key(context_data)
-        decrypted = decrypt_age_content_sync(value, private_key) if private_key else None
-        if decrypted is not None:
-            return decrypted
+        if private_key:
+            try:
+                return decrypt_password_smart_sync(value, private_key)
+            except ValueError:
+                logger.warning("[ProjectAgeSecretConverter] Token niet te ontsleutelen met de projectsleutel")
         # NIET "" teruggeven. Het formulier zou dan een leeg tokenveld tonen, de gebruiker
         # slaat op zonder het aan te raken, en de schrijfkant leest die lege waarde als
-        # "gewist" -- weg token, zonder dat iemand daarom vroeg. Het blok ongewijzigd
-        # teruggeven is lelijk op het scherm maar eerlijk: de schrijfkant ziet de
-        # AGE-markering en laat hem staan, en overschrijven kan gewoon.
-        logger.warning("[ProjectAgeSecretConverter] Token niet te ontsleutelen; het opgeslagen blok blijft staan")
+        # "gewist" -- weg token, zonder dat iemand daarom vroeg. De opgeslagen waarde
+        # ongewijzigd teruggeven is lelijk op het scherm maar eerlijk: de schrijfkant ziet
+        # dat het een versleutelde vorm is en laat hem staan, en overschrijven kan gewoon.
+        logger.warning("[ProjectAgeSecretConverter] Token niet te ontsleutelen; de opgeslagen waarde blijft staan")
         return value
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
@@ -52,7 +62,10 @@ class ProjectAgeSecretConverter:
         text = str(value).strip()
         if not text:
             return ""
-        if _AGE_MARKER in text:
+        # Beide versleutelde vormen, niet alleen het armored blok: een ``base64+age:``
+        # waarde die hier als NIEUW token opnieuw versleuteld wordt, maakt het echte token
+        # onbereikbaar -- precies wat de comment in ``read()`` probeert te voorkomen.
+        if carries_encrypted_value(text):
             return value
         public_key = (context_data or {}).get("config", {}).get("age-public-key")
         if not public_key:

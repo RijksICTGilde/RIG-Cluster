@@ -29,6 +29,11 @@ from opi.services.catalog.image_registries.naming import (
 )
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
 from opi.services.services_enums import ServiceType
+from opi.utils.age import (
+    carries_encrypted_value,
+    decrypt_password_smart_sync,
+    get_decoded_project_private_key_sync,
+)
 from opi.utils.secrets import RegistrySecret
 
 logger = logging.getLogger(__name__)
@@ -170,19 +175,25 @@ def backend_for_cluster(cluster: str) -> RegistryBackend:
 
 
 def _plain_password(registry: dict[str, Any], ctx: ProjectManifestContext) -> str | None:
-    """Het token in leesbare vorm, of None als het er niet is of niet te lezen valt."""
-    from opi.forms.editables.converters import resolve_project_private_key
-    from opi.utils.age import decrypt_age_content_sync
+    """Het token in leesbare vorm, of None als er geen token is opgegeven.
 
+    Het veld draagt niet EEN opslagvorm maar drie: het armored AGE-blok, de eenregelige
+    ``base64+age:``-vorm en een expliciet als platte tekst gemarkeerde ``plain:``-waarde
+    (``AGE_ENCRYPTED_OR_PLAIN_PATTERN`` in ``config_model.py``, en de huisvorm van elk
+    eenregelig geheim in een projectbestand -- de repository-password, de api-key en de
+    projectsleutel dragen hem allemaal). Alleen op de armored markering toetsen zou de
+    andere twee LETTERLIJK in de ``.dockerconfigjson`` zetten: geen fout, wel een
+    credential dat niet klopt en een pod die op ``invalid username/password`` blijft
+    hangen. Vandaar ``carries_encrypted_value`` (die beide versleutelde vormen kent) en
+    ``decrypt_password_smart_sync`` (die alle drie de vormen uitpakt), net als de
+    CNPG-route dat met ``decrypt_password_smart`` doet.
+
+    Geen sleutel is hier geen waarschuwing maar een fout: een secret dat stil niet
+    geschreven wordt levert een deployment op die aan de pull blijft hangen zonder dat er
+    iets in de weg stond. ``get_decoded_project_private_key_sync`` blaast daarom op.
+    """
     stored = registry.get("password")
     if not isinstance(stored, str) or not stored:
         return None
-    if "BEGIN AGE ENCRYPTED FILE" not in stored:
-        return stored
-    private_key = resolve_project_private_key(ctx.project_data)
-    if not private_key:
-        logger.warning(
-            f"Token van registry '{registry.get('name')}' in project '{ctx.project_name}' is niet te ontsleutelen"
-        )
-        return None
-    return decrypt_age_content_sync(stored, private_key)
+    private_key = get_decoded_project_private_key_sync(ctx.project_data) if carries_encrypted_value(stored) else None
+    return decrypt_password_smart_sync(stored, private_key)

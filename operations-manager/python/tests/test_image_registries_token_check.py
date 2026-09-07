@@ -8,12 +8,16 @@ bruikbare fout krijgt.
 
 from __future__ import annotations
 
+import base64
+import shutil
+import subprocess
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.forms.editables.enforcers import FieldError
 from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer, _repository_under
+from opi.utils.age import encrypt_age_content_sync
 
 REGISTRY = {
     "name": "code-overheid",
@@ -191,3 +195,74 @@ class TestDeTokenConverter:
         """Een token weggooien omdat we hem niet kunnen versleutelen is erger dan hem
         opslaan zoals hij is; de opslag zelf is SOPS-versleuteld."""
         assert self._converter().write("geheim", context_data={}) == "geheim"
+
+
+def _keypair() -> tuple[str, str]:
+    """Een echt AGE-sleutelpaar; de tests die het gebruiken slaan over zonder de binary."""
+    result = subprocess.run(["age-keygen"], capture_output=True, text=True, check=True)
+    lines = result.stdout.splitlines() + result.stderr.splitlines()
+    private_key = next(line for line in lines if line.startswith("AGE-SECRET-KEY"))
+    public_key = next(line.split(": ", 1)[1].strip() for line in lines if "public key:" in line.lower())
+    return public_key, private_key
+
+
+@pytest.mark.skipif(
+    shutil.which("age") is None or shutil.which("age-keygen") is None,
+    reason="age/age-keygen binary not available",
+)
+class TestDeConverterKentAlleDrieDeOpslagvormen:
+    """Openen en ONGEWIJZIGD opslaan, per opslagvorm die het veld mag dragen.
+
+    Dit is de gevaarlijkste kant van dezelfde vraag: toetst ``read()`` alleen op het
+    armored blok, dan toont het formulier de cijfertekst van de eenregelige vorm, ziet
+    ``write()`` daar geen AGE-markering in en versleutelt hem als NIEUW token -- waarna het
+    echte token weg is zonder dat iemand het veld heeft aangeraakt.
+    """
+
+    TOKEN = "ghp_HET_ECHTE_TOKEN"
+
+    @pytest.fixture
+    def project(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+        system_public, system_private = _keypair()
+        project_public, project_private = _keypair()
+        monkeypatch.setattr("opi.core.config.settings.SOPS_AGE_PRIVATE_KEY", system_private)
+        return {
+            "config": {
+                "age-public-key": project_public,
+                "age-private-key": encrypt_age_content_sync(project_private, system_public),
+            }
+        }
+
+    def _converter(self) -> Any:
+        from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
+
+        return ProjectAgeSecretConverter()
+
+    def _opgeslagen(self, project: dict[str, Any], vorm: str) -> str:
+        armored = encrypt_age_content_sync(self.TOKEN, project["config"]["age-public-key"])
+        return {
+            "armored": armored,
+            "base64+age": "base64+age:" + base64.b64encode(armored.encode()).decode(),
+            "plain": f"plain:{self.TOKEN}",
+        }[vorm]
+
+    @pytest.mark.parametrize("vorm", ["armored", "base64+age", "plain"])
+    def test_het_veld_toont_het_token_en_nooit_de_cijfertekst(self, project: dict[str, Any], vorm: str) -> None:
+        assert self._converter().read(self._opgeslagen(project, vorm), context_data=project) == self.TOKEN
+
+    @pytest.mark.parametrize("vorm", ["armored", "base64+age", "plain"])
+    def test_ongewijzigd_opslaan_houdt_het_token(self, project: dict[str, Any], vorm: str) -> None:
+        converter = self._converter()
+        opgeslagen = self._opgeslagen(project, vorm)
+
+        getoond = converter.read(opgeslagen, context_data=project)
+        opnieuw = converter.write(getoond, context_data=project)
+
+        assert converter.read(opnieuw, context_data=project) == self.TOKEN
+
+    def test_een_eenregelige_cijfertekst_wordt_niet_opnieuw_versleuteld(self, project: dict[str, Any]) -> None:
+        """De schrijfkant moet BEIDE versleutelde vormen herkennen, niet alleen het blok:
+        anders komt de cijfertekst als nieuw token in een tweede laag AGE terecht."""
+        opgeslagen = self._opgeslagen(project, "base64+age")
+
+        assert self._converter().write(opgeslagen, context_data=project) == opgeslagen
