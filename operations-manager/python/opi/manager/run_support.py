@@ -13,9 +13,8 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
-from opi.extensions.pipeline import load_extensions
+from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_document
+from opi.services.catalog.image_registries.resolution import build_rules, cluster_rules
 from opi.services.project import Project
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
 
@@ -138,27 +137,28 @@ BUNDLE_KINDS = "pod,service,ingress,secret,configmap"
 
 
 async def apply_bundle(
-    kubectl: KubectlConnector, namespace: str, manifests: list[str], cluster: str
+    kubectl: KubectlConnector,
+    namespace: str,
+    manifests: list[str],
+    cluster: str,
+    project_data: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Apply a bundle as one multi-document manifest. Returns (ok, stderr).
 
-    Runs the cluster's manifest extension pipeline (e.g. the ghcr->rcr registry
-    rewrite on ODCN) over each document first - the exact same extensions the git
-    deployment pipeline uses - so direct-applied run bundles get the same image
-    rewriting without duplicating that logic. On clusters with no extensions
-    (local/sandbox) the manifests pass through unchanged.
+    Runs the image-registries pass over each document first - the same rules and the
+    same resolve_image() the git deployment pipeline uses - so a directly applied run
+    bundle gets its image resolved and its pull secret attached without a second
+    mechanism. With ``project_data`` the project's own private registries are part of
+    those rules, which is what a job on an image from the project's own registry needs.
+    On a cluster with no rules (local/sandbox) the manifests pass through unchanged.
     """
-    pipeline = load_extensions(cluster)
+    rules = build_rules(project_data, cluster) if project_data else cluster_rules(cluster)
     docs: list[str] = []
     for manifest in manifests:
         text = manifest.strip()
         if not text:
             continue
-        if pipeline.has_extensions:
-            parsed = yaml.safe_load(text)
-            if isinstance(parsed, dict):
-                text = yaml.safe_dump(pipeline.process_manifest(parsed), default_flow_style=False, sort_keys=False)
-        docs.append(text)
+        docs.append(apply_rules_to_document(text, rules))
 
     combined = "\n---\n".join(docs)
     _stdout, stderr, code = await kubectl.run_command(["apply", "-f", "-", "-n", namespace], stdin_input=combined)

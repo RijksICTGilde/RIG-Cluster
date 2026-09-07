@@ -34,7 +34,7 @@ from opi.manager.run_support import (
 )
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
-from opi.utils.naming import generate_job_name
+from opi.utils.naming import generate_job_name, generate_project_service_account_name
 from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
@@ -210,6 +210,7 @@ class JobManager:
                 "cluster": cluster,
                 "extra_labels": extra_labels,
                 "extra_annotations": extra_annotations,
+                "service_account_name": generate_project_service_account_name(project_name),
             }
             pod = render_template(
                 "job-pod.yaml.jinja",
@@ -223,7 +224,10 @@ class JobManager:
                     "db_secret_name": db_secret_name,
                 },
             )
-            ok, stderr = await apply_bundle(self._kubectl, namespace, [pod], cluster)
+            # Met project_data erbij tellen de eigen private registries van dit project
+            # mee in de regels, want een job kan op een image uit de eigen registry draaien.
+            project_data = await get_project_store().get_decrypted(project_name)
+            ok, stderr = await apply_bundle(self._kubectl, namespace, [pod], cluster, project_data)
             if not ok:
                 raise JobError(f"Kon de job niet starten: {stderr.strip() or 'onbekende fout'}")
             logger.info("Started job '%s' for %s/%s by %s", name, project_name, deployment_name, started_by)

@@ -48,6 +48,13 @@ spec:
         {{ k }}: {{ v | tojson }}
 {% endfor %}
     spec:
+      {% if service_account_name %}
+      # De eigen serviceaccount van het project, zonder pull-secrets. De default
+      # serviceaccount draagt elk secret dat het platform in de namespace repliceert,
+      # ook dat van een ander project; deze pod draagt hieronder alleen wat hij zelf
+      # nodig heeft.
+      serviceAccountName: {{ service_account_name }}
+      {% endif %}
       {% if imagePullSecretsMap and imageURL in imagePullSecretsMap %}
       imagePullSecrets:
         - name: {{ imagePullSecretsMap[imageURL] }}

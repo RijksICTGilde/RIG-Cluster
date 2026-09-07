@@ -118,7 +118,6 @@ RUN chmod +x /app/entrypoint.sh
 # Copy application code and resources (change frequently - put last for optimal caching)
 COPY operations-manager/python/opi ./opi
 COPY operations-manager/python/manifests ./manifests
-COPY operations-manager/python/extensions ./extensions
 COPY operations-manager/python/static ./static
 
 RUN chown -R appuser:appuser /app && \

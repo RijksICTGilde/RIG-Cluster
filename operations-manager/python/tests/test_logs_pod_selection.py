@@ -192,10 +192,9 @@ async def test_endpoint_lists_the_pods_with_the_source_registry_image():
             "opi.api.logs_router.resolve_component_pods",
             AsyncMock(return_value=[_pod(EIGEN_POD, "pr-114-profielservice", ready=False, restarts=5)]),
         ),
-        patch(
-            "opi.api.logs_router.get_registry_rewrite_mappings",
-            return_value=[{"from": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig"}],
-        ),
+        # De regels komen sinds RC-177 van de dienst image-registries; door het cluster te
+        # zetten wordt de echte tabel gemeten in plaats van een gemockte mapping.
+        patch("opi.api.logs_router.settings.CLUSTER_MANAGER", "odcn-production"),
     ):
         user_service.return_value.is_email_allowed.return_value = True
         response = await get_component_pods(
