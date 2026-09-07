@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from opi.connectors.skopeo import SkopeoConnector
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path
@@ -39,8 +40,6 @@ class RegistryTokenEnforcer:
 
         images = _project_images(value)
         connector = _connector()
-        if connector is None:
-            return value
 
         for index, registry in enumerate(registries):
             if not isinstance(registry, dict):
@@ -68,18 +67,15 @@ class RegistryTokenEnforcer:
         return value
 
 
-def _connector() -> Any:
-    """De skopeo-connector, of None als hij niet te maken is.
+def _connector() -> SkopeoConnector:
+    """De skopeo-connector; een dienst praat nooit zelf met de buitenwereld.
 
-    Een dienst praat nooit zelf met de buitenwereld; dit is de connector die het doet.
+    Geen vangnet eromheen. ``SkopeoConnector.__init__`` vangt zijn eigen fouten al af en
+    zet ``is_skopeo_available``, en ``check_repository_access`` geeft dan ok terug: een
+    opslag weigeren op een toets die we niet hebben kunnen draaien zou een gebruiker
+    blokkeren op een platformgat.
     """
-    from opi.connectors.skopeo import SkopeoConnector
-
-    try:
-        return SkopeoConnector()
-    except Exception:
-        logger.warning("Skopeo-connector niet beschikbaar; token niet getoetst", exc_info=True)
-        return None
+    return SkopeoConnector()
 
 
 def _project_images(data: dict[str, Any]) -> list[str]:

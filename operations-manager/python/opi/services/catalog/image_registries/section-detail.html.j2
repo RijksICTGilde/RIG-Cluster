@@ -3,8 +3,10 @@
    Wat er in het projectbestand staat is de INVOER van de afnemer: de naam van de registry
    en waar hij staat. De RCR-URL, de organisatienaam en de naam van het pull-secret staan
    er bewust niet in - het zijn berekeningen, en ze opslaan zou een tweede waarheid geven
-   die kan gaan afwijken van de organisatie zoals die er werkelijk staat. Het token wordt
-   niet getoond: het is versleuteld opgeslagen en er is geen leesweg naar terug.
+   die kan gaan afwijken van de organisatie zoals die er werkelijk staat. Het token staat
+   hier niet op: het is versleuteld opgeslagen, en het bewerkformulier is de enige plek waar
+   het weer leesbaar wordt (ProjectAgeSecretConverter.read) - een detailpagina die iedereen
+   met leesrecht ziet is dat niet.
 
    De TOESTAND komt uit het cluster en wordt daarom apart opgehaald (status-fragment). #}
 <c-card outline padding="lg">
